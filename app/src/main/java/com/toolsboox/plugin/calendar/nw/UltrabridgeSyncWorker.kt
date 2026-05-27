@@ -123,25 +123,23 @@ class UltrabridgeSyncWorker(
                 return Result.success()
             }
 
-            val modifiedFiles = mutableListOf<File>()
+            val allFiles = mutableListOf<File>()
             Files.walk(Paths.get(calendarDir.toURI())).use { stream ->
                 stream.map(Path::toFile)
                     .filter(File::isFile)
                     .filter { it.name.endsWith(".json") }
                     .filter { !it.name.startsWith("pattern-") }
-                    .filter { it.lastModified() > lastSyncMs }
-                    .forEach { modifiedFiles.add(it) }
+                    .forEach { allFiles.add(it) }
             }
 
-            if (modifiedFiles.isEmpty()) {
-                Timber.i("$TAG: No files modified since last sync")
+            if (allFiles.isEmpty()) {
+                Timber.i("$TAG: No calendar files found")
                 return Result.success()
             }
 
-            Timber.i("$TAG: Found ${modifiedFiles.size} modified files to process")
+            Timber.i("$TAG: Found ${allFiles.size} calendar files to process")
 
-            // Group files by type and period
-            val groupedFiles = groupFilesByTypeAndPeriod(modifiedFiles, calendarDir)
+            val groupedFiles = groupFilesByTypeAndPeriod(allFiles, calendarDir)
 
             // Set up services
             val moshi = buildMoshi()
