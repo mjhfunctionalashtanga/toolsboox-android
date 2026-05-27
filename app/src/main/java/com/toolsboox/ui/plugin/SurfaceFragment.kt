@@ -501,12 +501,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         val earlyAdopter = earlyAdopterDeviceIds?.contains(androidId) ?: false
         Timber.i("Early adopter: $earlyAdopter")
 
-        // Show the cloud sync feature in case of early adopter or enable it generally.
-        if (earlyAdopter or googleDrivePluginEnabled) {
-            provideToolbarDrawing().toolbarCloudSync.visibility = View.VISIBLE
-        } else {
-            provideToolbarDrawing().toolbarCloudSync.visibility = View.GONE
-        }
+        provideToolbarDrawing().toolbarCloudSync.visibility = View.VISIBLE
 
         provideToolbarDrawing().toolbarSettings.setOnClickListener {
             CalendarNavigator.toSettings(this)
