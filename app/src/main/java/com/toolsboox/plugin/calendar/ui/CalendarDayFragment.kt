@@ -318,6 +318,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         toolbar.toolbarPager.visibility = View.GONE
         timer.cancel()
+        syncPresenter.backgroundSync(this@CalendarDayFragment, UUID.randomUUID())
     }
 
     /**
