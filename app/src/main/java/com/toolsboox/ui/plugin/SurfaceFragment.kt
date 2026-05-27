@@ -332,6 +332,15 @@ abstract class SurfaceFragment : ScreenFragment() {
             CalendarNavigator.toSettings(this)
         }
 
+        val toolbarCollapsed = sharedPreferences.getBoolean("toolbarCollapsed", false)
+        applyToolbarCollapsedState(toolbarCollapsed)
+
+        provideToolbarDrawing().toolbarToggle.setOnClickListener {
+            val collapsed = !sharedPreferences.getBoolean("toolbarCollapsed", false)
+            sharedPreferences.edit().putBoolean("toolbarCollapsed", collapsed).apply()
+            applyToolbarCollapsedState(collapsed)
+        }
+
         templateBitmap = Bitmap.createBitmap(1404, 1872, Bitmap.Config.ARGB_8888)
         templateCanvas = Canvas(templateBitmap)
 
@@ -355,9 +364,26 @@ abstract class SurfaceFragment : ScreenFragment() {
         bitmap?.recycle()
     }
 
-    /**
-     * Export bitmap to the external storage.
-     */
+    private fun applyToolbarCollapsedState(collapsed: Boolean) {
+        val toolbar = provideToolbarDrawing()
+        val group = toolbar.toolbarButtonGroup
+        if (collapsed) {
+            group.visibility = View.GONE
+            toolbar.toolbarToggle.setImageResource(R.drawable.ic_toolbar_expand)
+            toolbar.root.layoutParams?.let { lp ->
+                lp.width = (16 * resources.displayMetrics.density).toInt()
+                toolbar.root.layoutParams = lp
+            }
+        } else {
+            group.visibility = View.VISIBLE
+            toolbar.toolbarToggle.setImageResource(R.drawable.ic_toolbar_collapse)
+            toolbar.root.layoutParams?.let { lp ->
+                lp.width = (50 * resources.displayMetrics.density).toInt()
+                toolbar.root.layoutParams = lp
+            }
+        }
+    }
+
     fun exportBitmap() {
         if (!checkPermission(Manifest.permission.READ_EXTERNAL_STORAGE)) {
             showError(null, R.string.main_read_external_storage_permission_missing, provideSurfaceView())

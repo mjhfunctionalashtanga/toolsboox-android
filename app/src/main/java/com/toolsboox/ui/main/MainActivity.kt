@@ -1,9 +1,7 @@
 package com.toolsboox.ui.main
 
-import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -133,24 +131,6 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                 R.id.drawer_item_dashboard -> {
                     val bundle = bundleOf()
                     binding.fragmentContent.findNavController().navigate(R.id.action_to_dashboard, bundle)
-                }
-
-                R.id.drawer_item_website -> {
-                    intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://toolsboox.com"))
-                    this.startActivity(intent)
-                }
-
-                R.id.drawer_item_forum -> {
-                    intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://forum.toolsboox.com"))
-                    this.startActivity(intent)
-                }
-
-                R.id.drawer_item_facebook -> {
-                    Timber.i("Not implemented yet...")
-                }
-
-                R.id.drawer_item_twitter -> {
-                    Timber.i("Not implemented yet...")
                 }
 
                 R.id.drawer_item_logout -> {

@@ -9,26 +9,6 @@
                 android:title="@string/drawer_menu_dashboard"/>
     </group>
     <group
-            android:id="@+id/menu_social"
-            android:checkableBehavior="single">
-        <item
-                android:id="@+id/drawer_item_website"
-                android:icon="@drawable/ic_menu_website"
-                android:title="@string/drawer_menu_website"/>
-        <item
-                android:id="@+id/drawer_item_forum"
-                android:icon="@drawable/ic_menu_forum"
-                android:title="@string/drawer_menu_forum"/>
-        <item
-                android:id="@+id/drawer_item_facebook"
-                android:icon="@drawable/ic_menu_facebook"
-                android:title="@string/drawer_menu_facebook"/>
-        <item
-                android:id="@+id/drawer_item_twitter"
-                android:icon="@drawable/ic_menu_twitter"
-                android:title="@string/drawer_menu_twitter"/>
-    </group>
-    <group
             android:id="@+id/menu_logout"
             android:checkableBehavior="single">
         <item

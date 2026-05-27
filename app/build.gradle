@@ -3,8 +3,6 @@ plugins {
 
     id 'com.google.devtools.ksp'
     id 'com.google.dagger.hilt.android'
-    id 'com.google.firebase.crashlytics'
-    id 'com.google.firebase.firebase-perf'
 
     id 'kotlin-android'
 }
@@ -18,7 +16,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.toolsboox"
+        applicationId "com.toolsboox.mjh"
         minSdkVersion 26
         targetSdkVersion 36
 
@@ -51,12 +49,12 @@ android {
     flavorDimensions = ['tier']
     productFlavors {
         dev {
-            resValue "string", "app_name", "Tools for Boox - Dev"
+            resValue "string", "app_name", "Tools for Boox (MJH) - Dev"
             applicationIdSuffix ""
             dimension 'tier'
         }
         prod {
-            resValue "string", "app_name", "Tools for Boox"
+            resValue "string", "app_name", "Tools for Boox (MJH)"
             applicationIdSuffix ""
             dimension 'tier'
         }
@@ -86,7 +84,7 @@ android {
             debuggable true
 
             applicationIdSuffix ".debug"
-            resValue "string", "app_name", "Tools for Boox (debug)"
+            resValue "string", "app_name", "Tools for Boox (MJH debug)"
 
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
 
@@ -167,11 +165,9 @@ dependencies {
     // Deprecated, use suspend functions
     implementation 'com.jakewharton.retrofit:retrofit2-kotlin-coroutines-adapter:0.9.2'
 
-    // Firebase integrations
+    // Firebase integrations (analytics kept for source compat; collection disabled in manifest)
     implementation platform('com.google.firebase:firebase-bom:34.2.0')
     implementation 'com.google.firebase:firebase-analytics'
-    implementation 'com.google.firebase:firebase-crashlytics'
-    implementation 'com.google.firebase:firebase-perf'
 
     // Test dependencies
     testImplementation 'junit:junit:4.13.2'

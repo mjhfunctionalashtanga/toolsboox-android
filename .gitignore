@@ -6,3 +6,4 @@ app/build
 build
 README.md
 local.properties
+keystore.jks

@@ -12,13 +12,31 @@
         app:layout_constraintEnd_toEndOf="parent">
 
     <ImageButton
+            android:id="@+id/toolbarToggle"
+            android:layout_width="16dp"
+            android:layout_height="32dp"
+            android:scaleType="fitCenter"
+            android:background="@android:color/transparent"
+            app:srcCompat="@drawable/ic_toolbar_collapse"
+
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            android:contentDescription="@string/calendar_drawing_toolbar_touch"/>
+
+    <androidx.constraintlayout.widget.Group
+            android:id="@+id/toolbarButtonGroup"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:constraint_referenced_ids="toolbarHandTouch,toolbarPen,toolbarEraser,toolbarProcrastinator,toolbarTrash,toolbarCalendarView,toolbarHealthView,toolbarTimeboxView,toolbarSwipeUp,toolbarSwipeDown,toolbarSwitchSide,toolbarCloudSync,toolbarSettings"/>
+
+    <ImageButton
             android:id="@+id/toolbarHandTouch"
             android:layout_width="50dp"
             android:layout_height="50dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_hand_touch"
 
-            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/toolbarToggle"
             app:layout_constraintBottom_toTopOf="@id/toolbarPen"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
@@ -31,7 +49,7 @@
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_pen"
 
-            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/toolbarHandTouch"
             app:layout_constraintBottom_toTopOf="@id/toolbarEraser"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
