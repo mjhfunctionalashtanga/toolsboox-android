@@ -9,7 +9,7 @@
       "client_info": {
         "mobilesdk_app_id": "1:1042846930616:android:e98f641f0081accbe5864d",
         "android_client_info": {
-          "package_name": "com.toolsboox"
+          "package_name": "com.toolsboox.mjh"
         }
       },
       "oauth_client": [
@@ -38,7 +38,7 @@
       "client_info": {
         "mobilesdk_app_id": "1:1042846930616:android:c612bca19656bb4ce5864d",
         "android_client_info": {
-          "package_name": "com.toolsboox.debug"
+          "package_name": "com.toolsboox.mjh.debug"
         }
       },
       "oauth_client": [
@@ -46,7 +46,7 @@
           "client_id": "1042846930616-p4k9mf233gsjs5vqtuhc7acch4v1aopj.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
-            "package_name": "com.toolsboox.debug",
+            "package_name": "com.toolsboox.mjh.debug",
             "certificate_hash": "35fd27b5dbabfbdbc6a975ab33bc811fc4679b92"
           }
         },

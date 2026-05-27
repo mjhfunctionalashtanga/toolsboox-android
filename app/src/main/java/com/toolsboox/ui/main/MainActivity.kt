@@ -128,9 +128,16 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
         binding.navigationView.setNavigationItemSelectedListener { menuItem ->
             when (menuItem.itemId) {
-                R.id.drawer_item_dashboard -> {
-                    val bundle = bundleOf()
-                    binding.fragmentContent.findNavController().navigate(R.id.action_to_dashboard, bundle)
+                R.id.drawer_item_calendar -> {
+                    val calendarStartActionId = when (sharedPreferences.getInt("calendarStartView", 0)) {
+                        0 -> R.id.action_to_calendar_day
+                        1 -> R.id.action_to_calendar_week
+                        2 -> R.id.action_to_calendar_month
+                        3 -> R.id.action_to_calendar_quarter
+                        4 -> R.id.action_to_calendar_year
+                        else -> R.id.action_to_calendar_day
+                    }
+                    binding.fragmentContent.findNavController().navigate(calendarStartActionId, bundleOf())
                 }
 
                 R.id.drawer_item_logout -> {

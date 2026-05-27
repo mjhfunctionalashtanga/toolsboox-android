@@ -117,14 +117,14 @@
 
     <ImageButton
             android:id="@+id/toolbarText"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_text"
 
             app:layout_constraintTop_toBottomOf="@id/toolbarPaste"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
             android:contentDescription="@string/calendar_drawing_toolbar_text"/>
 
     <ImageButton
@@ -134,7 +134,7 @@
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_trash"
 
-            app:layout_constraintTop_toBottomOf="@id/toolbarText"
+            app:layout_constraintTop_toBottomOf="@id/toolbarPaste"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             android:contentDescription="@string/calendar_drawing_toolbar_trash"/>
@@ -154,26 +154,26 @@
 
     <ImageButton
             android:id="@+id/toolbarHealthView"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_health"
 
             app:layout_constraintTop_toBottomOf="@id/toolbarCalendarView"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
             android:contentDescription="@string/calendar_drawing_toolbar_health"/>
 
     <ImageButton
             android:id="@+id/toolbarTimeboxView"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone"
             android:scaleType="fitCenter"
             app:srcCompat="@drawable/ic_toolbar_time_box"
 
             app:layout_constraintTop_toBottomOf="@id/toolbarHealthView"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
             android:contentDescription="@string/calendar_drawing_toolbar_health"/>
 
     <ImageButton

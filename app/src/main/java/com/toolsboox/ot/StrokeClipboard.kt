@@ -118,7 +118,7 @@ class StrokeClipboard @Inject constructor() {
          */
         fun isStrokeInsidePolygon(stroke: Stroke, polygon: List<PointF>): Boolean {
             if (polygon.size < 3) return false
-            return stroke.strokePoints.all { pt ->
+            return stroke.strokePoints.any { pt ->
                 isPointInPolygon(PointF(pt.x, pt.y), polygon)
             }
         }

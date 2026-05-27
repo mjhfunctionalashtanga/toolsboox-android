@@ -401,9 +401,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                 showMessage(R.string.calendar_drawing_toolbar_clipboard_empty, provideSurfaceView())
                 return@setOnClickListener
             }
-            // Enter paste-placement mode: next touch places the strokes
             pasteMode = true
             selectionMode = false
+            textMode = false
             hasSelection = false
             selectedStrokes.clear()
             selectionPoints.clear()
@@ -413,6 +413,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             provideToolbarDrawing().toolbarEraser.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
+            provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarPaste.background.setTint(Color.GRAY)
             showMessage(R.string.calendar_drawing_toolbar_paste, provideSurfaceView())
         }
@@ -1009,16 +1010,16 @@ abstract class SurfaceFragment : ScreenFragment() {
             }
 
             // --- Paste mode: tap to place clipboard contents ---
-            if (pasteMode && strokeClipboard.hasContent) {
-                if (actionDown) {
+            if (pasteMode) {
+                if (actionDown && strokeClipboard.hasContent) {
                     val pastedStrokes = strokeClipboard.stampAt(x, y)
                     strokes.addAll(pastedStrokes)
                     onStrokesAdded(pastedStrokes)
                     applyStrokes(strokes, true)
                     onStrokeChanged(strokes)
                     showMessage(R.string.calendar_drawing_toolbar_pasted, provideSurfaceView())
-
-                    // Exit paste mode, return to pen
+                }
+                if (actionUp) {
                     pasteMode = false
                     provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
                     provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
@@ -1103,6 +1104,7 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     private fun onMoveDrawing(touchPoints: List<StrokePoint>) {
+        if (stylusPointList.isEmpty()) return
         val path = Path()
         path.moveTo(stylusPointList[0].x, stylusPointList[0].y)
         stylusPointList.forEach {

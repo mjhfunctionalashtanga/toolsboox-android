@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
     <group
-            android:id="@+id/menu_dashboard"
+            android:id="@+id/menu_calendar"
             android:checkableBehavior="single">
         <item
-                android:id="@+id/drawer_item_dashboard"
-                android:icon="@drawable/ic_menu_dashboard"
-                android:title="@string/drawer_menu_dashboard"/>
+                android:id="@+id/drawer_item_calendar"
+                android:icon="@drawable/ic_calendar_today"
+                android:title="@string/calendar_settings_title"/>
     </group>
     <group
             android:id="@+id/menu_logout"
