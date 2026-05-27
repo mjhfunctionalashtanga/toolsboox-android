@@ -14,9 +14,9 @@
     <ImageButton
             android:id="@+id/toolbarToggle"
             android:layout_width="0dp"
-            android:layout_height="40dp"
+            android:layout_height="36dp"
             android:scaleType="fitCenter"
-            android:background="@android:color/transparent"
+            android:backgroundTint="#CCCCCC"
             app:srcCompat="@drawable/ic_toolbar_collapse"
 
             app:layout_constraintBottom_toBottomOf="parent"
@@ -28,7 +28,7 @@
             android:id="@+id/toolbarButtonGroup"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            app:constraint_referenced_ids="toolbarHandTouch,toolbarPen,toolbarEraser,toolbarProcrastinator,toolbarLasso,toolbarCopy,toolbarPaste,toolbarText,toolbarTrash,toolbarCalendarView,toolbarHealthView,toolbarTimeboxView,toolbarSwipeUp,toolbarSwipeDown,toolbarSwitchSide,toolbarCloudSync,toolbarSettings"/>
+            app:constraint_referenced_ids="toolbarHandTouch,toolbarPen,toolbarEraser,toolbarProcrastinator,toolbarLasso,toolbarCopy,toolbarPaste,toolbarText,toolbarUndo,toolbarRedo,toolbarTrash,toolbarCalendarView,toolbarHealthView,toolbarTimeboxView,toolbarSwipeUp,toolbarSwipeDown,toolbarSwitchSide,toolbarCloudSync,toolbarSettings"/>
 
     <ImageButton
             android:id="@+id/toolbarHandTouch"
@@ -129,13 +129,37 @@
             android:contentDescription="@string/calendar_drawing_toolbar_text"/>
 
     <ImageButton
+            android:id="@+id/toolbarUndo"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:scaleType="fitXY"
+            app:srcCompat="@drawable/ic_toolbar_undo"
+
+            app:layout_constraintTop_toBottomOf="@id/toolbarPaste"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            android:contentDescription="Undo"/>
+
+    <ImageButton
+            android:id="@+id/toolbarRedo"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:scaleType="fitXY"
+            app:srcCompat="@drawable/ic_toolbar_redo"
+
+            app:layout_constraintTop_toBottomOf="@id/toolbarUndo"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            android:contentDescription="Redo"/>
+
+    <ImageButton
             android:id="@+id/toolbarTrash"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_trash"
 
-            app:layout_constraintTop_toBottomOf="@id/toolbarPaste"
+            app:layout_constraintTop_toBottomOf="@id/toolbarRedo"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             android:contentDescription="@string/calendar_drawing_toolbar_trash"/>

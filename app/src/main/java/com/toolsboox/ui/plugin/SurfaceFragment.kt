@@ -113,6 +113,10 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** True while in paste-placement mode (next tap places the clipboard contents). */
     private var pasteMode = false
 
+    // --- Undo/redo history ---
+    private val undoStack = mutableListOf<List<Stroke>>()
+    private val redoStack = mutableListOf<List<Stroke>>()
+
     // --- Text tool state ---
     /** True while in text placement mode (next tap opens text input dialog). */
     private var textMode = false
@@ -457,6 +461,24 @@ abstract class SurfaceFragment : ScreenFragment() {
                 provideToolbarDrawing().toolbarHandTouch.setImageResource(R.drawable.ic_toolbar_hand_touch)
         }
 
+        provideToolbarDrawing().toolbarUndo.setOnClickListener {
+            if (undoStack.isNotEmpty()) {
+                redoStack.add(Stroke.listDeepCopy(strokes))
+                strokes = undoStack.removeAt(undoStack.size - 1).toMutableList()
+                applyStrokes(strokes, true)
+                onStrokeChanged(strokes)
+            }
+        }
+
+        provideToolbarDrawing().toolbarRedo.setOnClickListener {
+            if (redoStack.isNotEmpty()) {
+                undoStack.add(Stroke.listDeepCopy(strokes))
+                strokes = redoStack.removeAt(redoStack.size - 1).toMutableList()
+                applyStrokes(strokes, true)
+                onStrokeChanged(strokes)
+            }
+        }
+
         provideToolbarDrawing().toolbarTrash.setOnClickListener {
             val builder: AlertDialog.Builder = AlertDialog.Builder(this.requireContext())
             builder.setTitle(R.string.calendar_drawing_toolbar_trash_dialog_title)
@@ -514,11 +536,13 @@ abstract class SurfaceFragment : ScreenFragment() {
         val toolbarCollapsed = sharedPreferences.getBoolean("toolbarCollapsed", false)
         applyToolbarCollapsedState(toolbarCollapsed)
 
-        provideToolbarDrawing().toolbarToggle.setOnClickListener {
+        val toggleAction = View.OnClickListener {
             val collapsed = !sharedPreferences.getBoolean("toolbarCollapsed", false)
             sharedPreferences.edit().putBoolean("toolbarCollapsed", collapsed).apply()
             applyToolbarCollapsedState(collapsed)
         }
+        provideToolbarDrawing().toolbarToggle.setOnClickListener(toggleAction)
+        provideToolbarDrawing().root.setOnClickListener(toggleAction)
 
         templateBitmap = Bitmap.createBitmap(1404, 1872, Bitmap.Config.ARGB_8888)
         templateCanvas = Canvas(templateBitmap)
@@ -548,14 +572,16 @@ abstract class SurfaceFragment : ScreenFragment() {
         val group = toolbar.toolbarButtonGroup
         if (collapsed) {
             group.visibility = View.GONE
-            toolbar.toolbarToggle.setImageResource(R.drawable.ic_toolbar_expand)
+            toolbar.toolbarToggle.visibility = View.GONE
+            toolbar.root.setBackgroundColor(Color.LTGRAY)
             toolbar.root.layoutParams?.let { lp ->
-                lp.width = (20 * resources.displayMetrics.density).toInt()
+                lp.width = (12 * resources.displayMetrics.density).toInt()
                 toolbar.root.layoutParams = lp
             }
         } else {
             group.visibility = View.VISIBLE
-            toolbar.toolbarToggle.setImageResource(R.drawable.ic_toolbar_collapse)
+            toolbar.toolbarToggle.visibility = View.VISIBLE
+            toolbar.root.setBackgroundColor(Color.TRANSPARENT)
             toolbar.root.layoutParams?.let { lp ->
                 lp.width = (40 * resources.displayMetrics.density).toInt()
                 toolbar.root.layoutParams = lp
@@ -1248,6 +1274,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         Timber.i("onEndDrawing (${touchPoint.x}/${touchPoint.y})")
         touchPoint.t = Instant.now().toEpochMilli() - firstPointTimestamp
         stylusPointList.add(touchPoint)
+
+        undoStack.add(Stroke.listDeepCopy(strokes))
+        if (undoStack.size > 50) undoStack.removeAt(0)
+        redoStack.clear()
 
         if (!penState || erasing) {
             val strokesToRemove: MutableSet<UUID> = mutableSetOf()
