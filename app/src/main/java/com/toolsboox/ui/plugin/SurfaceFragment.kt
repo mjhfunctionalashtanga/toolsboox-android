@@ -708,41 +708,52 @@ abstract class SurfaceFragment : ScreenFragment() {
      * @param y the y coordinate on the surface
      */
     private fun showPenSettingsDialog() {
-        val context = this.requireContext()
-        val colorNames = arrayOf("Black", "Red #FF0000", "Blue #0000FF", "Green #008000")
+        val colorNames = arrayOf("Black", "Red", "Blue", "Green")
         val colorValues = intArrayOf(Color.BLACK, Color.RED, Color.BLUE, Color.rgb(0, 128, 0))
-        val widthNames = arrayOf("Fine (1px)", "Medium (3px)", "Thick (5px)", "Bold (8px)")
+        val widthNames = arrayOf("Fine", "Med", "Thick", "Bold")
         val widthValues = floatArrayOf(1.0f, 3.0f, 5.0f, 8.0f)
 
-        val currentColor = colorValues.indexOfFirst { it == paint.color }.coerceAtLeast(0)
-        val currentWidth = widthValues.indexOfFirst { it == paint.strokeWidth }.coerceAtLeast(1)
+        var selColor = colorValues.indexOfFirst { it == paint.color }.coerceAtLeast(0)
+        var selWidth = widthValues.indexOfFirst { it == paint.strokeWidth }.coerceAtLeast(1)
 
-        val builder = AlertDialog.Builder(context)
-        builder.setTitle("Color: ${colorNames[currentColor]}")
-        builder.setSingleChoiceItems(colorNames, currentColor) { dialog, which ->
-            paint.color = colorValues[which]
-            dialog.dismiss()
-            showWidthDialog(widthNames, widthValues, currentWidth)
+        val dp = resources.displayMetrics.density
+        val ctx = requireContext()
+        val root = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (4 * dp).toInt())
         }
-        builder.setNegativeButton("Cancel", null)
-        builder.create().show()
-    }
 
-    private fun showWidthDialog(widthNames: Array<String>, widthValues: FloatArray, currentWidth: Int) {
-        val builder = AlertDialog.Builder(this.requireContext())
-        builder.setTitle("Width")
-        builder.setSingleChoiceItems(widthNames, currentWidth) { dialog, which ->
-            paint.strokeWidth = widthValues[which]
-            touchHelper?.setStrokeWidth(paint.strokeWidth)
-            dialog.dismiss()
-            if (paint.color == Color.BLACK) {
-                provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
-            } else {
-                provideToolbarDrawing().toolbarPen.background.setTint(paint.color)
+        val colorGroup = android.widget.RadioGroup(ctx).apply { orientation = android.widget.RadioGroup.HORIZONTAL }
+        val colorBtns = colorNames.mapIndexed { i, name ->
+            android.widget.RadioButton(ctx).apply {
+                text = name; id = i; isChecked = i == selColor
+                textSize = 14f
+            }.also { colorGroup.addView(it) }
+        }
+        colorGroup.setOnCheckedChangeListener { _, id -> selColor = id }
+        root.addView(colorGroup)
+
+        val widthGroup = android.widget.RadioGroup(ctx).apply { orientation = android.widget.RadioGroup.HORIZONTAL }
+        widthNames.forEachIndexed { i, name ->
+            android.widget.RadioButton(ctx).apply {
+                text = name; id = i + 10; isChecked = i == selWidth
+                textSize = 14f
+            }.also { widthGroup.addView(it) }
+        }
+        widthGroup.setOnCheckedChangeListener { _, id -> selWidth = id - 10 }
+        root.addView(widthGroup)
+
+        AlertDialog.Builder(ctx).setView(root)
+            .setPositiveButton("OK") { _, _ ->
+                paint.color = colorValues[selColor]
+                paint.strokeWidth = widthValues[selWidth]
+                touchHelper?.setStrokeWidth(paint.strokeWidth)
+                provideToolbarDrawing().toolbarPen.background.setTint(
+                    if (paint.color == Color.BLACK) Color.GRAY else paint.color
+                )
             }
-        }
-        builder.setNegativeButton("Cancel", null)
-        builder.create().show()
+            .setNegativeButton("Cancel", null)
+            .create().show()
     }
 
     private fun showTextInputDialog(x: Float, y: Float) {
