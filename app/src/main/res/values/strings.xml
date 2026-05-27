@@ -135,13 +135,13 @@
     <string name="calendar_settings_auto_sync_interval_1_hr">Every hour</string>
     <string name="calendar_settings_auto_sync_interval_6_hr">Every 6 hours</string>
     <string name="calendar_settings_auto_sync_interval_daily">Daily</string>
-    <string name="calendar_settings_ultrabridge_title">Ultrabridge Backup</string>
+    <string name="calendar_settings_ultrabridge_title">WebCal Backup</string>
     <string name="calendar_settings_ultrabridge_enable">Enable PDF backup to WebDAV</string>
     <string name="calendar_settings_ultrabridge_url_hint">WebDAV URL</string>
     <string name="calendar_settings_ultrabridge_user_hint">Username</string>
     <string name="calendar_settings_ultrabridge_pass_hint">Password</string>
-    <string name="calendar_settings_ultrabridge_enabled_toast">Ultrabridge backup enabled</string>
-    <string name="calendar_settings_ultrabridge_disabled_toast">Ultrabridge backup disabled</string>
+    <string name="calendar_settings_ultrabridge_enabled_toast">WebCal backup enabled</string>
+    <string name="calendar_settings_ultrabridge_disabled_toast">WebCal backup disabled</string>
     <string name="calendar_settings_ultrabridge_missing_fields">Please fill in all WebDAV fields</string>
 
     <string name="calendar_settings_button_save">Save</string>
