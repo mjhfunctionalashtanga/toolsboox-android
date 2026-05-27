@@ -129,18 +129,6 @@ class DashboardFragment @Inject constructor() : ScreenFragment() {
         )
         squareItems.add(
             SquareItem(
-                getString(R.string.dashboard_item_teamdrawer_title), R.drawable.ic_dashboard_item_teamdrawer,
-                R.id.action_to_teamdrawer_room, bundleOf()
-            )
-        )
-        squareItems.add(
-            SquareItem(
-                getString(R.string.dashboard_item_kanban_planner_title), R.drawable.ic_dashboard_item_kanban,
-                R.id.action_to_kanban_main, bundleOf()
-            )
-        )
-        squareItems.add(
-            SquareItem(
                 getString(R.string.dashboard_item_about_title), R.drawable.ic_dashboard_item_about,
                 R.id.action_to_about, bundleOf()
             )
