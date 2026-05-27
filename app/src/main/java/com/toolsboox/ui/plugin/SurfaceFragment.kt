@@ -709,110 +709,40 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     private fun showPenSettingsDialog() {
         val context = this.requireContext()
+        val colorNames = arrayOf("Black", "Red #FF0000", "Blue #0000FF", "Green #008000")
         val colorValues = intArrayOf(Color.BLACK, Color.RED, Color.BLUE, Color.rgb(0, 128, 0))
+        val widthNames = arrayOf("Fine (1px)", "Medium (3px)", "Thick (5px)", "Bold (8px)")
         val widthValues = floatArrayOf(1.0f, 3.0f, 5.0f, 8.0f)
 
-        var selectedColor = colorValues.indexOfFirst { it == paint.color }.coerceAtLeast(0)
-        var selectedWidth = widthValues.indexOfFirst { it == paint.strokeWidth }.coerceAtLeast(1)
+        val currentColor = colorValues.indexOfFirst { it == paint.color }.coerceAtLeast(0)
+        val currentWidth = widthValues.indexOfFirst { it == paint.strokeWidth }.coerceAtLeast(1)
 
-        val dp = resources.displayMetrics.density
-        val layout = android.widget.LinearLayout(context).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding((24 * dp).toInt(), (16 * dp).toInt(), (24 * dp).toInt(), (8 * dp).toInt())
+        val builder = AlertDialog.Builder(context)
+        builder.setTitle("Color: ${colorNames[currentColor]}")
+        builder.setSingleChoiceItems(colorNames, currentColor) { dialog, which ->
+            paint.color = colorValues[which]
+            dialog.dismiss()
+            showWidthDialog(widthNames, widthValues, currentWidth)
         }
+        builder.setNegativeButton("Cancel", null)
+        builder.create().show()
+    }
 
-        val colorRow = android.widget.LinearLayout(context).apply {
-            orientation = android.widget.LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER
-        }
-        val colorButtons = mutableListOf<android.widget.ImageButton>()
-        for (i in colorValues.indices) {
-            val btn = android.widget.ImageButton(context).apply {
-                val size = (48 * dp).toInt()
-                layoutParams = android.widget.LinearLayout.LayoutParams(size, size).apply {
-                    setMargins((8 * dp).toInt(), 0, (8 * dp).toInt(), 0)
-                }
-                val drawable = android.graphics.drawable.GradientDrawable().apply {
-                    shape = android.graphics.drawable.GradientDrawable.OVAL
-                    setColor(colorValues[i])
-                    setStroke((if (i == selectedColor) 4 else 1) * dp.toInt(), Color.DKGRAY)
-                }
-                background = drawable
+    private fun showWidthDialog(widthNames: Array<String>, widthValues: FloatArray, currentWidth: Int) {
+        val builder = AlertDialog.Builder(this.requireContext())
+        builder.setTitle("Width")
+        builder.setSingleChoiceItems(widthNames, currentWidth) { dialog, which ->
+            paint.strokeWidth = widthValues[which]
+            touchHelper?.setStrokeWidth(paint.strokeWidth)
+            dialog.dismiss()
+            if (paint.color == Color.BLACK) {
+                provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
+            } else {
+                provideToolbarDrawing().toolbarPen.background.setTint(paint.color)
             }
-            btn.setOnClickListener {
-                selectedColor = i
-                colorButtons.forEachIndexed { idx, b ->
-                    val d = b.background as android.graphics.drawable.GradientDrawable
-                    d.setStroke((if (idx == i) 4 else 1) * dp.toInt(), Color.DKGRAY)
-                }
-            }
-            colorButtons.add(btn)
-            colorRow.addView(btn)
         }
-        layout.addView(colorRow)
-
-        val spacer = android.view.View(context).apply {
-            layoutParams = android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, (16 * dp).toInt()
-            )
-        }
-        layout.addView(spacer)
-
-        val widthRow = android.widget.LinearLayout(context).apply {
-            orientation = android.widget.LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER_VERTICAL
-        }
-        val widthButtons = mutableListOf<android.widget.ImageButton>()
-        for (i in widthValues.indices) {
-            val btn = android.widget.ImageButton(context).apply {
-                val size = (56 * dp).toInt()
-                layoutParams = android.widget.LinearLayout.LayoutParams(size, size).apply {
-                    setMargins((6 * dp).toInt(), 0, (6 * dp).toInt(), 0)
-                }
-                background = android.graphics.drawable.GradientDrawable().apply {
-                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                    setColor(if (i == selectedWidth) Color.LTGRAY else Color.WHITE)
-                    setStroke((1 * dp).toInt(), Color.DKGRAY)
-                    cornerRadius = 4 * dp
-                }
-                setImageBitmap(Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).also { bmp ->
-                    val c = Canvas(bmp)
-                    val p = Paint().apply {
-                        color = Color.BLACK; strokeWidth = widthValues[i] * dp
-                        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
-                    }
-                    val cy = size / 2f
-                    c.drawLine(8 * dp, cy, size - 8 * dp, cy, p)
-                })
-                scaleType = android.widget.ImageView.ScaleType.CENTER
-            }
-            btn.setOnClickListener {
-                selectedWidth = i
-                widthButtons.forEachIndexed { idx, b ->
-                    (b.background as android.graphics.drawable.GradientDrawable)
-                        .setColor(if (idx == i) Color.LTGRAY else Color.WHITE)
-                }
-            }
-            widthButtons.add(btn)
-            widthRow.addView(btn)
-        }
-        layout.addView(widthRow)
-
-        AlertDialog.Builder(context)
-            .setTitle("Pen")
-            .setView(layout)
-            .setPositiveButton("OK") { _, _ ->
-                paint.color = colorValues[selectedColor]
-                paint.strokeWidth = widthValues[selectedWidth]
-                touchHelper?.setStrokeWidth(paint.strokeWidth)
-                if (paint.color == Color.BLACK) {
-                    provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
-                } else {
-                    provideToolbarDrawing().toolbarPen.background.setTint(paint.color)
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .create().show()
+        builder.setNegativeButton("Cancel", null)
+        builder.create().show()
     }
 
     private fun showTextInputDialog(x: Float, y: Float) {

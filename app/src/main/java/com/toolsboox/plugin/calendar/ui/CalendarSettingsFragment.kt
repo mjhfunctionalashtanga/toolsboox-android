@@ -364,7 +364,6 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             if (ubEnabled) {
                 val ubConstraints = Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .setRequiresCharging(true)
                     .build()
                 val ubRequest = PeriodicWorkRequestBuilder<UltrabridgeSyncWorker>(
                     15, TimeUnit.MINUTES
