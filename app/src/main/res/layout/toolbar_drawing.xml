@@ -31,8 +31,8 @@
 
     <ImageButton
             android:id="@+id/toolbarHandTouch"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_hand_touch"
 
@@ -44,8 +44,8 @@
 
     <ImageButton
             android:id="@+id/toolbarPen"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_pen"
 
@@ -57,8 +57,8 @@
 
     <ImageButton
             android:id="@+id/toolbarEraser"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_eraser"
 
@@ -69,32 +69,32 @@
 
     <ImageButton
             android:id="@+id/toolbarProcrastinator"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_procrastinator"
 
             app:layout_constraintTop_toBottomOf="@id/toolbarEraser"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
             android:contentDescription="@string/calendar_drawing_toolbar_eraser"/>
 
     <ImageButton
             android:id="@+id/toolbarLasso"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_lasso"
 
-            app:layout_constraintTop_toBottomOf="@id/toolbarProcrastinator"
+            app:layout_constraintTop_toBottomOf="@id/toolbarEraser"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             android:contentDescription="@string/calendar_drawing_toolbar_lasso"/>
 
     <ImageButton
             android:id="@+id/toolbarCopy"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_copy"
 
@@ -105,8 +105,8 @@
 
     <ImageButton
             android:id="@+id/toolbarPaste"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_paste"
 
@@ -129,8 +129,8 @@
 
     <ImageButton
             android:id="@+id/toolbarTrash"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_trash"
 
@@ -141,8 +141,8 @@
 
     <ImageButton
             android:id="@+id/toolbarCalendarView"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:layout_marginTop="16dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_calendar_today"
@@ -178,8 +178,8 @@
 
     <ImageButton
             android:id="@+id/toolbarSwipeUp"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_swipe_up"
 
@@ -190,8 +190,8 @@
 
     <ImageButton
             android:id="@+id/toolbarSwipeDown"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_swipe_down"
 
@@ -202,8 +202,8 @@
 
     <ImageButton
             android:id="@+id/toolbarSwitchSide"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_switch_side"
 
@@ -214,8 +214,8 @@
 
     <ImageButton
             android:id="@+id/toolbarCloudSync"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_cloud_sync"
 
@@ -226,8 +226,8 @@
 
     <ImageButton
             android:id="@+id/toolbarSettings"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_settings"
 

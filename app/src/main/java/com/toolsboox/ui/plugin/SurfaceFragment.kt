@@ -553,7 +553,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             group.visibility = View.VISIBLE
             toolbar.toolbarToggle.setImageResource(R.drawable.ic_toolbar_collapse)
             toolbar.root.layoutParams?.let { lp ->
-                lp.width = (50 * resources.displayMetrics.density).toInt()
+                lp.width = (40 * resources.displayMetrics.density).toInt()
                 toolbar.root.layoutParams = lp
             }
         }
