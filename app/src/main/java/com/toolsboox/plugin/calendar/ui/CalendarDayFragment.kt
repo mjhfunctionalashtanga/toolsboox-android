@@ -7,6 +7,7 @@ import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.analytics.logEvent
 import com.toolsboox.R
 import com.toolsboox.da.Stroke
+import com.toolsboox.da.TextElement
 import com.toolsboox.databinding.FragmentCalendarBinding
 import com.toolsboox.databinding.ToolbarDrawingBinding
 import com.toolsboox.plugin.calendar.CalendarNavigator
@@ -135,6 +136,17 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         calendarPattern.updateDay(calendarDay)
 
+        presenter.save(this, binding, calendarDay, calendarPattern, currentDate)
+    }
+
+    /**
+     * Text elements changed callback.
+     *
+     * @param textElements the current text elements
+     */
+    override fun onTextElementsChanged(textElements: MutableList<TextElement>) {
+        calendarDay.textElements = textElements
+        calendarPattern.updateDay(calendarDay)
         presenter.save(this, binding, calendarDay, calendarPattern, currentDate)
     }
 
@@ -321,6 +333,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         this.calendarDay = calendarDay
         this.calendarPattern = calendarPattern
         updateNavigator()
+
+        // Load text elements from the calendar data
+        setTextElements(calendarDay.textElements)
 
         if (notePage != null) {
             binding.toolbarDrawing.toolbarProcrastinator.visibility = View.GONE

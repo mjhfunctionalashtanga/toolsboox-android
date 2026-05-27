@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+        android:width="80dp"
+        android:height="80dp"
+        android:viewportWidth="512"
+        android:viewportHeight="512"
+
+        android:tint="?attr/colorControlNormal">
+
+    <group
+            android:translateX="16">
+        <!-- Based on Font Awesome copy icon (regular) -->
+        <path
+                android:fillColor="#FF000000"
+                android:pathData="M224,0c-35.3,0 -64,28.7 -64,64l0,288c0,35.3 28.7,64 64,64l224,0c35.3,0 64,-28.7 64,-64l0,-288c0,-35.3 -28.7,-64 -64,-64L224,0zM224,64l224,0 0,288 -224,0L224,64zM64,160c-35.3,0 -64,28.7 -64,64l0,224c0,35.3 28.7,64 64,64l224,0c35.3,0 64,-28.7 64,-64l0,0 -64,0 0,0 -224,0 0,-224 0,0 0,-64z"/>
+    </group>
+</vector>

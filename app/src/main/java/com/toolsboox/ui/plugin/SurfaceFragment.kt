@@ -12,7 +12,10 @@ import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
+import android.widget.EditText
+import android.widget.FrameLayout
 import androidx.appcompat.app.AlertDialog
+import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.GestureDetectorCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.firebase.analytics.FirebaseAnalytics
@@ -34,8 +37,10 @@ import com.squareup.moshi.Types
 import com.toolsboox.R
 import com.toolsboox.da.Stroke
 import com.toolsboox.da.StrokePoint
+import com.toolsboox.da.TextElement
 import com.toolsboox.databinding.ToolbarDrawingBinding
 import com.toolsboox.ot.OnGestureListener
+import com.toolsboox.ot.StrokeClipboard
 import com.toolsboox.plugin.calendar.CalendarNavigator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -87,9 +92,67 @@ abstract class SurfaceFragment : ScreenFragment() {
     lateinit var moshi: Moshi
 
     /**
+     * The stroke clipboard singleton.
+     */
+    @Inject
+    lateinit var strokeClipboard: StrokeClipboard
+
+    // --- Lasso selection state ---
+    /** True while the lasso tool is active (drawing the selection polygon). */
+    private var selectionMode = false
+
+    /** True after a lasso is completed and strokes are selected, waiting for copy/paste. */
+    private var hasSelection = false
+
+    /** Points of the lasso polygon being drawn. */
+    private var selectionPoints = mutableListOf<PointF>()
+
+    /** Strokes that fell inside the lasso polygon. */
+    private var selectedStrokes = mutableListOf<Stroke>()
+
+    /** True while in paste-placement mode (next tap places the clipboard contents). */
+    private var pasteMode = false
+
+    // --- Text tool state ---
+    /** True while in text placement mode (next tap opens text input dialog). */
+    private var textMode = false
+
+    /** The list of text elements on the current page. */
+    private var textElements: MutableList<TextElement> = mutableListOf()
+
+    /** Paint used for rendering text elements on canvas. */
+    private var textPaint = Paint().apply {
+        isAntiAlias = true
+        style = Paint.Style.FILL
+        color = Color.BLACK
+        textSize = 24f
+    }
+
+    /**
      * The paint in the bitmap.
      */
     private var paint = Paint()
+
+    /**
+     * Paint for the lasso polygon line.
+     */
+    private var lassoPaint = Paint().apply {
+        isAntiAlias = true
+        style = Paint.Style.STROKE
+        color = Color.DKGRAY
+        strokeWidth = 2.0f
+        pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
+    }
+
+    /**
+     * Paint for highlighting selected strokes.
+     */
+    private var selectionHighlightPaint = Paint().apply {
+        isAntiAlias = true
+        style = Paint.Style.STROKE
+        color = Color.DKGRAY
+        strokeWidth = 5.0f
+    }
 
     /**
      * TouchHelper of the Onyx's pen.
@@ -225,6 +288,13 @@ abstract class SurfaceFragment : ScreenFragment() {
     open fun onStrokesProcrastinated(strokes: List<Stroke>) {}
 
     /**
+     * Text elements changed callback.
+     *
+     * @param textElements the current text elements
+     */
+    open fun onTextElementsChanged(textElements: MutableList<TextElement>) {}
+
+    /**
      * OnResume hook.
      */
     override fun onResume() {
@@ -235,9 +305,19 @@ abstract class SurfaceFragment : ScreenFragment() {
         touchHelper?.isRawDrawingRenderEnabled = true
 
         penState = true
+        selectionMode = false
+        hasSelection = false
+        pasteMode = false
+        textMode = false
+        selectionPoints.clear()
+        selectedStrokes.clear()
         provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
         provideToolbarDrawing().toolbarEraser.background.setTint(Color.WHITE)
         provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
+        provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
+        provideToolbarDrawing().toolbarCopy.background.setTint(Color.WHITE)
+        provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
+        provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
 
         if (touchDrawingState)
             provideToolbarDrawing().toolbarHandTouch.setImageResource(R.drawable.ic_toolbar_hand_draw)
@@ -247,26 +327,121 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideToolbarDrawing().toolbarPen.setOnClickListener {
             penState = true
             procrastinator = false
+            textMode = false
+            exitSelectionMode()
             provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
             provideToolbarDrawing().toolbarEraser.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
+            provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
+            provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
         }
 
         provideToolbarDrawing().toolbarEraser.setOnClickListener {
             penState = false
             procrastinator = false
+            textMode = false
+            exitSelectionMode()
             provideToolbarDrawing().toolbarPen.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarEraser.background.setTint(Color.GRAY)
             provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
+            provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
+            provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
         }
 
         provideToolbarDrawing().toolbarProcrastinator.visibility = View.GONE
         provideToolbarDrawing().toolbarProcrastinator.setOnClickListener {
             penState = false
             procrastinator = true
+            textMode = false
+            exitSelectionMode()
             provideToolbarDrawing().toolbarPen.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarEraser.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.GRAY)
+            provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
+            provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
+        }
+
+        // --- Lasso selection button ---
+        provideToolbarDrawing().toolbarLasso.setOnClickListener {
+            if (selectionMode || hasSelection) {
+                // Toggle off: exit selection mode
+                exitSelectionMode()
+                penState = true
+                provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
+                provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
+                applyStrokes(strokes, true)
+            } else {
+                // Enter lasso mode
+                selectionMode = true
+                pasteMode = false
+                textMode = false
+                penState = true // keep pen state so stylus draws the lasso
+                procrastinator = false
+                provideToolbarDrawing().toolbarPen.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarEraser.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarLasso.background.setTint(Color.GRAY)
+                provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
+            }
+        }
+
+        // --- Copy button ---
+        provideToolbarDrawing().toolbarCopy.setOnClickListener {
+            if (selectedStrokes.isNotEmpty()) {
+                strokeClipboard.copy(selectedStrokes.toList())
+                showMessage(R.string.calendar_drawing_toolbar_copied, provideSurfaceView())
+            } else {
+                showMessage(R.string.calendar_drawing_toolbar_nothing_selected, provideSurfaceView())
+            }
+        }
+
+        // --- Paste button ---
+        provideToolbarDrawing().toolbarPaste.setOnClickListener {
+            if (!strokeClipboard.hasContent) {
+                showMessage(R.string.calendar_drawing_toolbar_clipboard_empty, provideSurfaceView())
+                return@setOnClickListener
+            }
+            // Enter paste-placement mode: next touch places the strokes
+            pasteMode = true
+            selectionMode = false
+            hasSelection = false
+            selectedStrokes.clear()
+            selectionPoints.clear()
+            penState = true
+            procrastinator = false
+            provideToolbarDrawing().toolbarPen.background.setTint(Color.WHITE)
+            provideToolbarDrawing().toolbarEraser.background.setTint(Color.WHITE)
+            provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
+            provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
+            provideToolbarDrawing().toolbarPaste.background.setTint(Color.GRAY)
+            showMessage(R.string.calendar_drawing_toolbar_paste, provideSurfaceView())
+        }
+
+        // --- Text tool button ---
+        provideToolbarDrawing().toolbarText.setOnClickListener {
+            if (textMode) {
+                // Toggle off: exit text mode, return to pen
+                textMode = false
+                penState = true
+                provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
+            } else {
+                // Enter text placement mode
+                textMode = true
+                pasteMode = false
+                selectionMode = false
+                hasSelection = false
+                penState = true
+                procrastinator = false
+                selectedStrokes.clear()
+                selectionPoints.clear()
+                provideToolbarDrawing().toolbarPen.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarEraser.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarText.background.setTint(Color.GRAY)
+            }
         }
 
         provideToolbarDrawing().toolbarHandTouch.setOnClickListener {
@@ -288,6 +463,10 @@ abstract class SurfaceFragment : ScreenFragment() {
                     }
                     strokes.clear()
                     onStrokesDeleted(strokesToRemove.toList())
+
+                    // Also clear text elements
+                    textElements.clear()
+                    onTextElementsChanged(textElements)
 
                     applyStrokes(strokes, true)
                     onStrokeChanged(strokes)
@@ -382,6 +561,167 @@ abstract class SurfaceFragment : ScreenFragment() {
                 toolbar.root.layoutParams = lp
             }
         }
+    }
+
+    /**
+     * Exit lasso selection / paste mode and reset all selection state.
+     */
+    private fun exitSelectionMode() {
+        selectionMode = false
+        hasSelection = false
+        pasteMode = false
+        textMode = false
+        selectionPoints.clear()
+        selectedStrokes.clear()
+        provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
+        provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
+        provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
+    }
+
+    /**
+     * Redraw the current strokes with selected strokes highlighted (thicker stroke).
+     * Also draws the lasso polygon if points exist.
+     */
+    private fun drawWithSelection() {
+        val lockCanvas = provideSurfaceView().holder.lockCanvas() ?: return
+
+        val fillPaint = Paint()
+        fillPaint.style = Paint.Style.FILL
+        fillPaint.color = Color.TRANSPARENT
+        val rect = Rect(0, 0, provideSurfaceView().width, provideSurfaceView().height)
+        lockCanvas.drawRect(rect, fillPaint)
+        lockCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+
+        val selectedIds = selectedStrokes.map { it.strokeId }.toSet()
+
+        for (stroke in strokes) {
+            val points = stroke.strokePoints
+            if (points.isNotEmpty()) {
+                val path = Path()
+                val prePoint = PointF(points[0].x, points[0].y)
+                if (points.size == 1) {
+                    path.moveTo(prePoint.x - 1f, prePoint.y - 1f)
+                } else {
+                    path.moveTo(prePoint.x, prePoint.y)
+                }
+                for (point in points) {
+                    path.quadTo(prePoint.x, prePoint.y, point.x, point.y)
+                    prePoint.x = point.x
+                    prePoint.y = point.y
+                }
+
+                val usePaint = if (stroke.strokeId in selectedIds) selectionHighlightPaint else paint
+                lockCanvas.drawPath(path, usePaint)
+            }
+        }
+
+        // Draw lasso polygon
+        if (selectionPoints.size > 1) {
+            val lassoPath = Path()
+            lassoPath.moveTo(selectionPoints[0].x, selectionPoints[0].y)
+            for (i in 1 until selectionPoints.size) {
+                lassoPath.lineTo(selectionPoints[i].x, selectionPoints[i].y)
+            }
+            if (hasSelection) {
+                lassoPath.close()
+            }
+            lockCanvas.drawPath(lassoPath, lassoPaint)
+        }
+
+        touchHelper?.setRawDrawingEnabled(false)
+        touchHelper?.isRawDrawingRenderEnabled = false
+        provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
+        touchHelper?.setRawDrawingEnabled(true)
+        touchHelper?.isRawDrawingRenderEnabled = true
+    }
+
+    /**
+     * Set the text elements for the current page and redraw.
+     *
+     * @param elements the text elements to display
+     */
+    fun setTextElements(elements: MutableList<TextElement>) {
+        this.textElements = elements
+    }
+
+    /**
+     * Render all text elements onto the given canvas.
+     *
+     * @param targetCanvas the canvas to draw on
+     */
+    private fun renderTextElements(targetCanvas: Canvas) {
+        val typeface = try {
+            ResourcesCompat.getFont(requireContext(), R.font.atkinson_hyperlegible)
+        } catch (e: Exception) {
+            Typeface.DEFAULT
+        }
+
+        for (element in textElements) {
+            textPaint.textSize = element.fontSize
+            textPaint.color = element.color
+            textPaint.typeface = typeface ?: Typeface.DEFAULT
+
+            // Draw each line of the text (split on newline)
+            val lines = element.text.split("\n")
+            val lineHeight = textPaint.fontSpacing
+            for ((index, line) in lines.withIndex()) {
+                targetCanvas.drawText(
+                    line,
+                    element.x,
+                    element.y + lineHeight * (index + 1),
+                    textPaint
+                )
+            }
+        }
+    }
+
+    /**
+     * Show a text input dialog at the given canvas coordinates.
+     *
+     * @param x the x coordinate on the surface
+     * @param y the y coordinate on the surface
+     */
+    private fun showTextInputDialog(x: Float, y: Float) {
+        val context = this.requireContext()
+
+        val editText = EditText(context)
+        editText.hint = getString(R.string.calendar_text_dialog_hint)
+        editText.setSingleLine(false)
+        editText.setLines(3)
+
+        val container = FrameLayout(context)
+        val params = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        )
+        val margin = (16 * resources.displayMetrics.density).toInt()
+        params.setMargins(margin, 0, margin, 0)
+        editText.layoutParams = params
+        container.addView(editText)
+
+        val builder = AlertDialog.Builder(context)
+            .setTitle(R.string.calendar_text_dialog_title)
+            .setView(container)
+            .setPositiveButton(R.string.ok) { dialog, _ ->
+                val text = editText.text.toString().trim()
+                if (text.isNotEmpty()) {
+                    val element = TextElement(
+                        x = x,
+                        y = y,
+                        text = text
+                    )
+                    textElements.add(element)
+                    applyStrokes(strokes, true)
+                    onTextElementsChanged(textElements)
+                }
+                dialog.dismiss()
+            }
+            .setNegativeButton(R.string.cancel) { dialog, _ ->
+                dialog.cancel()
+            }
+
+        builder.create().show()
+        editText.requestFocus()
     }
 
     fun exportBitmap() {
@@ -523,6 +863,10 @@ abstract class SurfaceFragment : ScreenFragment() {
             }
         }
 
+        // Render text elements on top of strokes
+        renderTextElements(lockCanvas)
+        renderTextElements(canvas)
+
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
         provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
@@ -656,6 +1000,62 @@ abstract class SurfaceFragment : ScreenFragment() {
             val t = Instant.now().toEpochMilli()
             val strokePoint = StrokePoint(x, y, p, t)
 
+            // --- Text mode: tap to place a text element ---
+            if (textMode) {
+                if (actionDown) {
+                    showTextInputDialog(x, y)
+                }
+                return true
+            }
+
+            // --- Paste mode: tap to place clipboard contents ---
+            if (pasteMode && strokeClipboard.hasContent) {
+                if (actionDown) {
+                    val pastedStrokes = strokeClipboard.stampAt(x, y)
+                    strokes.addAll(pastedStrokes)
+                    onStrokesAdded(pastedStrokes)
+                    applyStrokes(strokes, true)
+                    onStrokeChanged(strokes)
+                    showMessage(R.string.calendar_drawing_toolbar_pasted, provideSurfaceView())
+
+                    // Exit paste mode, return to pen
+                    pasteMode = false
+                    provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
+                    provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
+                }
+                return true
+            }
+
+            // --- Lasso selection mode: collect polygon points ---
+            if (selectionMode && !hasSelection) {
+                if (actionDown) {
+                    selectionPoints.clear()
+                    selectionPoints.add(PointF(x, y))
+                } else if (actionMove) {
+                    selectionPoints.add(PointF(x, y))
+                    drawWithSelection()
+                } else if (actionUp) {
+                    selectionPoints.add(PointF(x, y))
+                    // Close polygon and test strokes
+                    if (selectionPoints.size >= 3) {
+                        selectedStrokes.clear()
+                        for (stroke in strokes) {
+                            if (StrokeClipboard.isStrokeInsidePolygon(stroke, selectionPoints)) {
+                                selectedStrokes.add(stroke)
+                            }
+                        }
+                        hasSelection = true
+                        selectionMode = false
+                        drawWithSelection()
+                        if (selectedStrokes.isEmpty()) {
+                            showMessage(R.string.calendar_drawing_toolbar_nothing_selected, provideSurfaceView())
+                        }
+                    }
+                }
+                return true
+            }
+
+            // --- Normal drawing / erasing path ---
             if (actionDown) {
                 onBeginDrawing(strokePoint)
             } else if (actionMove) {

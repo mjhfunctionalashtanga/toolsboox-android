@@ -1,0 +1,32 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+        android:width="80dp"
+        android:height="80dp"
+        android:viewportWidth="512"
+        android:viewportHeight="512"
+
+        android:tint="?attr/colorControlNormal">
+
+    <group
+            android:scaleX="0.85"
+            android:scaleY="0.85"
+            android:translateX="38"
+            android:translateY="38">
+        <!-- Lasso loop (ellipse) -->
+        <path
+                android:fillColor="#00000000"
+                android:strokeColor="#FF000000"
+                android:strokeWidth="36"
+                android:pathData="M256,160 C380,160 440,220 440,280 C440,340 380,400 256,400 C132,400 72,340 72,280 C72,220 132,160 256,160 Z"/>
+        <!-- Lasso tail / rope -->
+        <path
+                android:fillColor="#00000000"
+                android:strokeColor="#FF000000"
+                android:strokeWidth="32"
+                android:strokeLineCap="round"
+                android:pathData="M400,320 Q440,380 420,430 Q400,470 360,470"/>
+        <!-- Small circle at cursor end -->
+        <path
+                android:fillColor="#FF000000"
+                android:pathData="M360,470 m-18,0 a18,18 0,1 1,36 0 a18,18 0,1 1,-36 0"/>
+    </group>
+</vector>

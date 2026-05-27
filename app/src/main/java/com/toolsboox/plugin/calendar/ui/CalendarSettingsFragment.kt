@@ -6,12 +6,22 @@ import android.os.Bundle
 import android.text.format.DateFormat
 import android.view.View
 import android.view.inputmethod.InputMethodManager
+import android.widget.Toast
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.toolsboox.R
 import com.toolsboox.da.LocaleItem
 import com.toolsboox.databinding.FragmentCalendarSettingsBinding
 import com.toolsboox.ot.LocaleItemAdapter
 import com.toolsboox.ot.NoFilterAdapter
+import com.toolsboox.plugin.calendar.nw.CalendarSyncWorker
+import com.toolsboox.plugin.calendar.nw.UltrabridgeSyncWorker
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import java.time.DayOfWeek
@@ -21,6 +31,7 @@ import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.time.temporal.WeekFields
 import java.util.*
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 /**
@@ -78,6 +89,43 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
      * The selected note template.
      */
     private var selectedNoteTemplate: Int = 0
+
+    /**
+     * Whether auto-sync is enabled.
+     */
+    private var autoSyncEnabled: Boolean = false
+
+    /**
+     * The selected auto-sync interval index (maps to SYNC_INTERVAL_MINUTES).
+     */
+    private var selectedAutoSyncInterval: Int = 1
+
+    companion object {
+        private const val WORK_NAME = "calendar-cloud-sync"
+        private const val ULTRABRIDGE_ENCRYPTED_PREFS_NAME = "ultrabridge_encrypted_prefs"
+
+        /**
+         * Interval options in minutes, indexed to match the spinner.
+         */
+        private val SYNC_INTERVAL_MINUTES = longArrayOf(15, 60, 360, 1440)
+    }
+
+    /**
+     * Get or create EncryptedSharedPreferences for Ultrabridge WebDAV credentials.
+     */
+    private fun getUltrabridgeEncryptedPrefs(): SharedPreferences {
+        val masterKey = MasterKey.Builder(requireContext())
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+
+        return EncryptedSharedPreferences.create(
+            requireContext(),
+            ULTRABRIDGE_ENCRYPTED_PREFS_NAME,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    }
 
     /**
      * OnViewCreated hook.
@@ -191,6 +239,53 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             selectedNoteTemplate = position
         }
 
+        // Auto-sync settings
+        autoSyncEnabled = sharedPreferences.getBoolean("autoSyncEnabled", false)
+        selectedAutoSyncInterval = sharedPreferences.getInt("autoSyncIntervalIndex", 1)
+
+        binding.autoSyncSwitch.isChecked = autoSyncEnabled
+
+        val listOfIntervals = mutableListOf<String>()
+        listOfIntervals.add(getString(R.string.calendar_settings_auto_sync_interval_15_min))
+        listOfIntervals.add(getString(R.string.calendar_settings_auto_sync_interval_1_hr))
+        listOfIntervals.add(getString(R.string.calendar_settings_auto_sync_interval_6_hr))
+        listOfIntervals.add(getString(R.string.calendar_settings_auto_sync_interval_daily))
+
+        val intervalAdapter = NoFilterAdapter(this.requireContext(), R.layout.list_item_locale, listOfIntervals)
+        binding.autoSyncIntervalSpinner.setAdapter(intervalAdapter)
+        intervalAdapter.notifyDataSetChanged()
+
+        binding.autoSyncIntervalSpinner.inputType = 0
+        binding.autoSyncIntervalSpinner.setOnItemClickListener { _, _, position, _ ->
+            requireActivity().currentFocus?.let {
+                imm.hideSoftInputFromWindow(it.windowToken, 0)
+            }
+            selectedAutoSyncInterval = position
+        }
+
+        binding.autoSyncIntervalSpinner.setText(listOfIntervals[selectedAutoSyncInterval])
+
+        // Toggle interval spinner visibility based on switch state
+        updateAutoSyncIntervalVisibility()
+        binding.autoSyncSwitch.setOnCheckedChangeListener { _, isChecked ->
+            autoSyncEnabled = isChecked
+            updateAutoSyncIntervalVisibility()
+        }
+
+        // Ultrabridge Backup settings
+        val ultrabridgePrefs = getUltrabridgeEncryptedPrefs()
+        val ultrabridgeEnabled = sharedPreferences.getBoolean("ultrabridgeEnabled", false)
+        binding.ultrabridgeEnableSwitch.isChecked = ultrabridgeEnabled
+        binding.ultrabridgeUrlInput.setText(ultrabridgePrefs.getString("ultrabridge_webdav_url", ""))
+        binding.ultrabridgeUserInput.setText(ultrabridgePrefs.getString("ultrabridge_webdav_user", ""))
+        binding.ultrabridgePassInput.setText(ultrabridgePrefs.getString("ultrabridge_webdav_pass", ""))
+
+        // Toggle field visibility based on switch state
+        updateUltrabridgeFieldsVisibility(ultrabridgeEnabled)
+        binding.ultrabridgeEnableSwitch.setOnCheckedChangeListener { _, isChecked ->
+            updateUltrabridgeFieldsVisibility(isChecked)
+        }
+
         // Create shortcut of calendar
         binding.buttonShortcut.setOnClickListener {
             presenter.createShortcut(this@CalendarSettingsFragment, binding)
@@ -214,6 +309,82 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             sharedPreferences.edit().putInt("calendarStartView", selectedStartView).apply()
             sharedPreferences.edit().putInt("calendarStartHour", selectedStartHour).apply()
             sharedPreferences.edit().putInt("calendarNoteTemplate", selectedNoteTemplate).apply()
+
+            // Persist auto-sync settings
+            sharedPreferences.edit().putBoolean("autoSyncEnabled", autoSyncEnabled).apply()
+            sharedPreferences.edit().putInt("autoSyncIntervalIndex", selectedAutoSyncInterval).apply()
+
+            // Enqueue or cancel periodic sync work
+            val workManager = WorkManager.getInstance(requireContext())
+            if (autoSyncEnabled) {
+                val intervalMinutes = SYNC_INTERVAL_MINUTES[selectedAutoSyncInterval]
+                val constraints = Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+                val syncRequest = PeriodicWorkRequestBuilder<CalendarSyncWorker>(
+                    intervalMinutes, TimeUnit.MINUTES
+                )
+                    .setConstraints(constraints)
+                    .build()
+                workManager.enqueueUniquePeriodicWork(
+                    WORK_NAME,
+                    ExistingPeriodicWorkPolicy.UPDATE,
+                    syncRequest
+                )
+            } else {
+                workManager.cancelUniqueWork(WORK_NAME)
+            }
+
+            // Persist Ultrabridge settings
+            val ubEnabled = binding.ultrabridgeEnableSwitch.isChecked
+            val ubUrl = binding.ultrabridgeUrlInput.text?.toString()?.trim() ?: ""
+            val ubUser = binding.ultrabridgeUserInput.text?.toString()?.trim() ?: ""
+            val ubPass = binding.ultrabridgePassInput.text?.toString() ?: ""
+
+            if (ubEnabled && (ubUrl.isEmpty() || ubUser.isEmpty() || ubPass.isEmpty())) {
+                Toast.makeText(
+                    requireContext(),
+                    R.string.calendar_settings_ultrabridge_missing_fields,
+                    Toast.LENGTH_LONG
+                ).show()
+                return@setOnClickListener
+            }
+
+            sharedPreferences.edit().putBoolean("ultrabridgeEnabled", ubEnabled).apply()
+
+            // Store credentials in EncryptedSharedPreferences
+            val ubPrefs = getUltrabridgeEncryptedPrefs()
+            ubPrefs.edit()
+                .putString("ultrabridge_webdav_url", ubUrl)
+                .putString("ultrabridge_webdav_user", ubUser)
+                .putString("ultrabridge_webdav_pass", ubPass)
+                .apply()
+
+            // Enqueue or cancel Ultrabridge periodic work
+            if (ubEnabled) {
+                val ubConstraints = Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .setRequiresCharging(true)
+                    .build()
+                val ubRequest = PeriodicWorkRequestBuilder<UltrabridgeSyncWorker>(
+                    15, TimeUnit.MINUTES
+                )
+                    .setConstraints(ubConstraints)
+                    .build()
+                workManager.enqueueUniquePeriodicWork(
+                    UltrabridgeSyncWorker.WORK_NAME,
+                    ExistingPeriodicWorkPolicy.UPDATE,
+                    ubRequest
+                )
+                Toast.makeText(
+                    requireContext(),
+                    R.string.calendar_settings_ultrabridge_enabled_toast,
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else {
+                workManager.cancelUniqueWork(UltrabridgeSyncWorker.WORK_NAME)
+            }
+
             this@CalendarSettingsFragment.requireActivity().onBackPressed()
         }
 
@@ -230,6 +401,25 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.startViewSpinner.setText(listOfStartViews[selectedStartView])
         binding.startHourSpinner.setText(listOfStartHours[selectedStartHour + 1])
         binding.noteTemplateSpinner.setText(listOfNoteTemplates[selectedNoteTemplate])
+    }
+
+    /**
+     * Show or hide the auto-sync interval spinner based on the switch state.
+     */
+    private fun updateAutoSyncIntervalVisibility() {
+        val visibility = if (autoSyncEnabled) View.VISIBLE else View.GONE
+        binding.autoSyncIntervalText.visibility = visibility
+        binding.autoSyncIntervalSpinnerLayout.visibility = visibility
+    }
+
+    /**
+     * Show or hide the Ultrabridge WebDAV fields based on the enable switch state.
+     */
+    private fun updateUltrabridgeFieldsVisibility(enabled: Boolean) {
+        val visibility = if (enabled) View.VISIBLE else View.GONE
+        binding.ultrabridgeUrlLayout.visibility = visibility
+        binding.ultrabridgeUserLayout.visibility = visibility
+        binding.ultrabridgePassLayout.visibility = visibility
     }
 
     /**

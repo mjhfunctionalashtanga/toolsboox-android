@@ -18,6 +18,18 @@
             android:theme="@style/App.Theme"
             android:requestLegacyExternalStorage="true">
 
+        <!-- Disable default WorkManager initializer; BaseApplication provides custom config -->
+        <provider
+                android:name="androidx.startup.InitializationProvider"
+                android:authorities="${applicationId}.androidx-startup"
+                android:exported="false"
+                tools:node="merge">
+            <meta-data
+                    android:name="androidx.work.WorkManagerInitializer"
+                    android:value="androidx.startup"
+                    tools:node="remove"/>
+        </provider>
+
         <meta-data
                 android:name="firebase_analytics_collection_deactivated"
                 android:value="true"/>

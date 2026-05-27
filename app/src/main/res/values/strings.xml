@@ -128,6 +128,22 @@
     <string name="calendar_settings_backup_done">Calendar backup exported to the Downloads</string>
     <string name="calendar_settings_button_restore">Import backup</string>
     <string name="calendar_settings_restore_done">Calendar backup imported from the Downloads</string>
+    <string name="calendar_settings_auto_sync_label">Automatic cloud sync</string>
+    <string name="calendar_settings_auto_sync_enabled">Enable auto-sync</string>
+    <string name="calendar_settings_auto_sync_interval_text">Sync interval:</string>
+    <string name="calendar_settings_auto_sync_interval_15_min">Every 15 minutes</string>
+    <string name="calendar_settings_auto_sync_interval_1_hr">Every hour</string>
+    <string name="calendar_settings_auto_sync_interval_6_hr">Every 6 hours</string>
+    <string name="calendar_settings_auto_sync_interval_daily">Daily</string>
+    <string name="calendar_settings_ultrabridge_title">Ultrabridge Backup</string>
+    <string name="calendar_settings_ultrabridge_enable">Enable PDF backup to WebDAV</string>
+    <string name="calendar_settings_ultrabridge_url_hint">WebDAV URL</string>
+    <string name="calendar_settings_ultrabridge_user_hint">Username</string>
+    <string name="calendar_settings_ultrabridge_pass_hint">Password</string>
+    <string name="calendar_settings_ultrabridge_enabled_toast">Ultrabridge backup enabled</string>
+    <string name="calendar_settings_ultrabridge_disabled_toast">Ultrabridge backup disabled</string>
+    <string name="calendar_settings_ultrabridge_missing_fields">Please fill in all WebDAV fields</string>
+
     <string name="calendar_settings_button_save">Save</string>
     <string name="calendar_settings_button_back">Back</string>
 
@@ -144,6 +160,16 @@
     <string name="calendar_drawing_toolbar_switch_side">Switch side</string>
     <string name="calendar_drawing_toolbar_cloud_sync">Cloud sync</string>
     <string name="calendar_drawing_toolbar_settings">Settings</string>
+    <string name="calendar_drawing_toolbar_lasso">Lasso select</string>
+    <string name="calendar_drawing_toolbar_copy">Copy</string>
+    <string name="calendar_drawing_toolbar_paste">Paste</string>
+    <string name="calendar_drawing_toolbar_copied">Copied</string>
+    <string name="calendar_drawing_toolbar_pasted">Pasted</string>
+    <string name="calendar_drawing_toolbar_clipboard_empty">Clipboard empty</string>
+    <string name="calendar_drawing_toolbar_nothing_selected">Nothing selected</string>
+    <string name="calendar_drawing_toolbar_text">Text</string>
+    <string name="calendar_text_dialog_title">Enter text</string>
+    <string name="calendar_text_dialog_hint">Type here…</string>
 
     <string name="calendar_navigator_prev_button_text">&lt;</string>
     <string name="calendar_navigator_next_button_text">&gt;</string>
