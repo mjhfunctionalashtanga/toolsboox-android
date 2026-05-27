@@ -112,11 +112,12 @@ class UltrabridgeSyncWorker(
 
             val lastSyncMs = mainPrefs.getLong(PREF_LAST_SYNC_MS, 0L)
 
-            // Scan local calendar directory for JSON files modified since last sync
-            val calendarDir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
-                "calendar/"
-            )
+            val rootDir = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                applicationContext.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)!!
+            } else {
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+            }
+            val calendarDir = File(rootDir, "calendar/")
             if (!calendarDir.exists()) {
                 Timber.i("$TAG: No local calendar directory, nothing to sync")
                 return Result.success()

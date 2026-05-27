@@ -157,11 +157,12 @@ class CalendarSyncWorker(
             // Build a lookup map for cloud items: "path|baseName|version" -> CalendarSyncItem
             val cloudMap = cloudItems.associateBy { "${it.path}|${it.baseName}|${it.version}" }
 
-            // Scan local calendar JSON files
-            val calendarDir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
-                "calendar/"
-            )
+            val rootDir = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                applicationContext.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)!!
+            } else {
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+            }
+            val calendarDir = File(rootDir, "calendar/")
             if (!calendarDir.exists()) {
                 Timber.i("$TAG: No local calendar directory, nothing to sync")
                 return Result.success()
