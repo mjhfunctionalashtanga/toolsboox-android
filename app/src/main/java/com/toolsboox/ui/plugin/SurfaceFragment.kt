@@ -565,6 +565,10 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         touchHelper?.closeRawDrawing()
         bitmap?.recycle()
+
+        try {
+            com.toolsboox.plugin.calendar.nw.UltrabridgeSyncWorker.syncNow(requireContext())
+        } catch (_: Exception) {}
     }
 
     private fun applyToolbarCollapsedState(collapsed: Boolean) {

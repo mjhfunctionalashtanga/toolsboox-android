@@ -47,9 +47,22 @@ class UltrabridgeSyncWorker(
     companion object {
         private const val TAG = "UltrabridgeSyncWorker"
         const val WORK_NAME = "ultrabridge-sync"
+        private const val ONE_SHOT_WORK_NAME = "ultrabridge-sync-now"
         private const val ENCRYPTED_PREFS_NAME = "ultrabridge_encrypted_prefs"
         private const val MAIN_PREFS_NAME = "MAIN"
         private const val PREF_LAST_SYNC_MS = "ultrabridgeLastSyncMs"
+
+        fun syncNow(context: Context) {
+            val request = androidx.work.OneTimeWorkRequestBuilder<UltrabridgeSyncWorker>()
+                .setConstraints(
+                    androidx.work.Constraints.Builder()
+                        .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                        .build()
+                )
+                .build()
+            androidx.work.WorkManager.getInstance(context)
+                .enqueueUniqueWork(ONE_SHOT_WORK_NAME, androidx.work.ExistingWorkPolicy.REPLACE, request)
+        }
 
         /**
          * Build a Moshi instance matching the app's NetworkModule.provideMoshi().
