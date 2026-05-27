@@ -13,7 +13,7 @@
 
     <ImageButton
             android:id="@+id/toolbarToggle"
-            android:layout_width="40dp"
+            android:layout_width="0dp"
             android:layout_height="40dp"
             android:scaleType="fitCenter"
             android:background="@android:color/transparent"
