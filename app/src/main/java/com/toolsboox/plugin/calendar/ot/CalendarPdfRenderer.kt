@@ -135,10 +135,10 @@ object CalendarPdfRenderer {
             path.lineTo(points[i].x, points[i].y)
         }
 
-        // Use average pressure to modulate width (clamp to sensible range)
         val avgPressure = points.map { it.p }.average().toFloat().coerceIn(0.1f, 2.0f)
         val paint = Paint(basePaint).apply {
-            strokeWidth = basePaint.strokeWidth * avgPressure
+            color = stroke.color
+            strokeWidth = stroke.strokeWidth * avgPressure
         }
 
         canvas.drawPath(path, paint)

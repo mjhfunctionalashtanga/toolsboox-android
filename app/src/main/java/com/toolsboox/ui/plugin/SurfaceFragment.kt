@@ -336,6 +336,11 @@ abstract class SurfaceFragment : ScreenFragment() {
             provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
         }
 
+        provideToolbarDrawing().toolbarPen.setOnLongClickListener {
+            showPenSettingsDialog()
+            true
+        }
+
         provideToolbarDrawing().toolbarEraser.setOnClickListener {
             penState = false
             procrastinator = false
@@ -546,7 +551,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             group.visibility = View.GONE
             toolbar.toolbarToggle.setImageResource(R.drawable.ic_toolbar_expand)
             toolbar.root.layoutParams?.let { lp ->
-                lp.width = (8 * resources.displayMetrics.density).toInt()
+                lp.width = (20 * resources.displayMetrics.density).toInt()
                 toolbar.root.layoutParams = lp
             }
         } else {
@@ -677,6 +682,53 @@ abstract class SurfaceFragment : ScreenFragment() {
      * @param x the x coordinate on the surface
      * @param y the y coordinate on the surface
      */
+    private fun showPenSettingsDialog() {
+        val context = this.requireContext()
+        val colors = arrayOf("Black", "Red", "Blue", "Green")
+        val colorValues = intArrayOf(Color.BLACK, Color.RED, Color.BLUE, Color.rgb(0, 128, 0))
+        val widths = arrayOf("Fine (1px)", "Medium (3px)", "Thick (5px)", "Bold (8px)")
+        val widthValues = floatArrayOf(1.0f, 3.0f, 5.0f, 8.0f)
+
+        val currentColorIndex = colorValues.indexOfFirst { it == paint.color }.coerceAtLeast(0)
+        val currentWidthIndex = widthValues.indexOfFirst { it == paint.strokeWidth }.coerceAtLeast(1)
+
+        val builder = AlertDialog.Builder(context)
+        builder.setTitle("Pen Settings")
+
+        val layout = android.widget.LinearLayout(context).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(48, 24, 48, 24)
+        }
+
+        val colorLabel = android.widget.TextView(context).apply { text = "Color"; textSize = 16f }
+        layout.addView(colorLabel)
+        val colorSpinner = android.widget.Spinner(context)
+        colorSpinner.adapter = android.widget.ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, colors)
+        colorSpinner.setSelection(currentColorIndex)
+        layout.addView(colorSpinner)
+
+        val widthLabel = android.widget.TextView(context).apply { text = "Width"; textSize = 16f }
+        layout.addView(widthLabel)
+        val widthSpinner = android.widget.Spinner(context)
+        widthSpinner.adapter = android.widget.ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, widths)
+        widthSpinner.setSelection(currentWidthIndex)
+        layout.addView(widthSpinner)
+
+        builder.setView(layout)
+        builder.setPositiveButton("OK") { _, _ ->
+            paint.color = colorValues[colorSpinner.selectedItemPosition]
+            paint.strokeWidth = widthValues[widthSpinner.selectedItemPosition]
+            touchHelper?.setStrokeWidth(paint.strokeWidth)
+            if (paint.color == Color.BLACK) {
+                provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
+            } else {
+                provideToolbarDrawing().toolbarPen.background.setTint(paint.color)
+            }
+        }
+        builder.setNegativeButton("Cancel", null)
+        builder.create().show()
+    }
+
     private fun showTextInputDialog(x: Float, y: Float) {
         val context = this.requireContext()
 
@@ -838,9 +890,13 @@ abstract class SurfaceFragment : ScreenFragment() {
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
         }
 
+        val strokePaint = Paint(paint)
         for (stroke in strokes) {
             val points = stroke.strokePoints
             if (points.isNotEmpty()) {
+                strokePaint.color = stroke.color
+                strokePaint.strokeWidth = stroke.strokeWidth
+
                 val path = Path()
                 val prePoint = PointF(points[0].x, points[0].y)
                 if (points.size == 1) {
@@ -854,8 +910,8 @@ abstract class SurfaceFragment : ScreenFragment() {
                     prePoint.y = point.y
                 }
 
-                lockCanvas.drawPath(path, paint)
-                canvas.drawPath(path, paint)
+                lockCanvas.drawPath(path, strokePaint)
+                canvas.drawPath(path, strokePaint)
             }
         }
 
@@ -1114,7 +1170,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             }
         }
 
-        if (touchHelper == null) {
+        if (touchHelper == null && penState) {
             val sigma = paint.strokeWidth * 4.0f
             val rectLeft = (Math.min(lastPoint!!.x, touchPoints.map { it.x }.min()) - sigma).toInt()
             val rectRight = (Math.max(lastPoint!!.x, touchPoints.map { it.x }.max()) + sigma).toInt()
@@ -1153,7 +1209,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             applyStrokes(strokes, true)
             onStrokeChanged(strokes)
         } else {
-            val stroke = Stroke(UUID.randomUUID(), firstPointTimestamp, stylusPointList.toList())
+            val stroke = Stroke(UUID.randomUUID(), firstPointTimestamp, stylusPointList.toList(), paint.color, paint.strokeWidth)
             strokes.add(stroke)
             strokesToAdd.add(stroke)
 
