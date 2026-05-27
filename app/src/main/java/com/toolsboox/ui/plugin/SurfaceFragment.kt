@@ -325,20 +325,19 @@ abstract class SurfaceFragment : ScreenFragment() {
             provideToolbarDrawing().toolbarHandTouch.setImageResource(R.drawable.ic_toolbar_hand_touch)
 
         provideToolbarDrawing().toolbarPen.setOnClickListener {
-            penState = true
-            procrastinator = false
-            textMode = false
-            exitSelectionMode()
-            provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
-            provideToolbarDrawing().toolbarEraser.background.setTint(Color.WHITE)
-            provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
-            provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
-            provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
-        }
-
-        provideToolbarDrawing().toolbarPen.setOnLongClickListener {
-            showPenSettingsDialog()
-            true
+            if (penState && !procrastinator) {
+                showPenSettingsDialog()
+            } else {
+                penState = true
+                procrastinator = false
+                textMode = false
+                exitSelectionMode()
+                provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
+                provideToolbarDrawing().toolbarEraser.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
+            }
         }
 
         provideToolbarDrawing().toolbarEraser.setOnClickListener {
