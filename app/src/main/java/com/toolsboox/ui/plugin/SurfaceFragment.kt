@@ -19,6 +19,9 @@ import android.widget.FrameLayout
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.GestureDetectorCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.analytics.logEvent
@@ -332,6 +335,31 @@ abstract class SurfaceFragment : ScreenFragment() {
     override fun onResume() {
         super.onResume()
 
+        // Immersive fullscreen: hide system bars + action bar, draw into the display
+        // cutout area, so the canvas truly fills the whole screen. System bars can
+        // still be revealed by swiping from the edge for back/home access.
+        (requireActivity() as? androidx.appcompat.app.AppCompatActivity)?.supportActionBar?.hide()
+        requireActivity().window.let { window ->
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                window.attributes = window.attributes.apply {
+                    layoutInDisplayCutoutMode =
+                        android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
+            WindowInsetsControllerCompat(window, window.decorView).apply {
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                hide(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+        // The activity's DrawerLayout has fitsSystemWindows="true" which reserves
+        // space for the now-hidden bars (visible as black strips). Turn it off here
+        // and restore in onPause so the settings/about screens still inset correctly.
+        requireActivity().findViewById<View>(R.id.drawerLayout)?.let { drawer ->
+            drawer.fitsSystemWindows = false
+            drawer.setPadding(0, 0, 0, 0)
+        }
+
         initializeSurface()
         touchHelper?.setRawDrawingEnabled(true)
         touchHelper?.isRawDrawingRenderEnabled = true
@@ -612,6 +640,15 @@ abstract class SurfaceFragment : ScreenFragment() {
     override fun onPause() {
         super.onPause()
 
+        // Restore system bars and action bar so other screens (settings, etc.) behave normally.
+        (requireActivity() as? androidx.appcompat.app.AppCompatActivity)?.supportActionBar?.show()
+        requireActivity().window.let { window ->
+            WindowCompat.setDecorFitsSystemWindows(window, true)
+            WindowInsetsControllerCompat(window, window.decorView)
+                .show(WindowInsetsCompat.Type.systemBars())
+        }
+        requireActivity().findViewById<View>(R.id.drawerLayout)?.fitsSystemWindows = true
+
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
 
@@ -657,15 +694,18 @@ abstract class SurfaceFragment : ScreenFragment() {
 
     /**
      * Reposition the toolbar buttons into one or two vertical columns based on
-     * available height. In single-column mode all buttons are centered horizontally
-     * (anchored to both start and end). In two-column mode roughly half the buttons
-     * anchor to the start (left column) and the rest to the end (right column).
+     * available height. In single-column mode buttons stay as the XML defines them
+     * (start+end anchored, vertically chained). In two-column mode the right-column
+     * buttons are re-anchored to flow top-down from the toolbar top.
      */
     private fun applyToolbarTwoColumnLayout(twoColumns: Boolean) {
+        if (!twoColumns) return  // rely on fresh XML on activity recreation (rotation)
+
         val toolbar = provideToolbarDrawing()
-        // IDs that should move to the RIGHT column when two-column mode is active.
-        // Picked from the bottom half of the existing vertical chain.
-        val rightColumnIds = listOf(
+        val unset = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
+        val parentId = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+        // Right column flows top-down from parent top.
+        val rightChain = listOf(
             toolbar.toolbarCalendarView.id,
             toolbar.toolbarSwipeUp.id,
             toolbar.toolbarSwipeDown.id,
@@ -674,19 +714,17 @@ abstract class SurfaceFragment : ScreenFragment() {
             toolbar.toolbarCloudSync.id,
             toolbar.toolbarSettings.id,
         )
-        for (i in 0 until toolbar.root.childCount) {
-            val child = toolbar.root.getChildAt(i)
-            if (child !is android.widget.ImageButton) continue
-            val lp = child.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams ?: continue
-            val unset = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
-            if (twoColumns && child.id in rightColumnIds) {
-                lp.startToStart = unset
-                lp.endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
-            } else {
-                lp.startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
-                lp.endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
-            }
-            child.layoutParams = lp
+        for ((idx, id) in rightChain.withIndex()) {
+            val view = toolbar.root.findViewById<View>(id) ?: continue
+            val lp = view.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams ?: continue
+            lp.startToStart = unset
+            lp.endToEnd = parentId
+            lp.topToTop = if (idx == 0) parentId else unset
+            lp.topToBottom = if (idx == 0) unset else rightChain[idx - 1]
+            lp.bottomToBottom = unset
+            lp.bottomToTop = unset
+            lp.topMargin = 0
+            view.layoutParams = lp
         }
     }
 

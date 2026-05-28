@@ -5,16 +5,18 @@ A fork of [Tools for Boox](https://github.com/gaborauth/toolsboox-android) by [G
 ## What's different in this fork
 
 ### Drawing & navigation
-- **Full-screen calendar** — no top toolbar, no dashboard; the planner page fills the entire screen
+- **Full-screen immersive mode** — no system bars, no action bar, no dashboard; the planner page fills the entire screen edge-to-edge (including display cutout area). Swipe from a screen edge to briefly reveal back/home if you need them.
 - **Pinch-zoom + two-finger pan** — the 1404x1872 canvas renders at native resolution on any device. Pinch to zoom (up to 4x), two-finger drag to pan, double-tap to toggle 2x zoom / reset. Designed for the Palma 2 Pro where the page would otherwise be cramped. Strokes are stored in canvas space, so zoom never distorts handwriting or affects export/sync.
-- **Two-finger swipes for navigation** — left/right to change days, up/down for week/notes. Single-finger gestures are ignored to prevent accidental swipes while resting your hand on the screen.
-- **Rotate screen** — toolbar button cycles through portrait, landscape, reverse-portrait, reverse-landscape. The canvas auto-fits any orientation.
+- **Two-finger swipes for navigation** by default — left/right to change days, up/down for week/notes. Single-finger gestures are ignored to prevent accidental swipes while resting your hand on the screen. The top toolbar "hand" button toggles single-finger mode for when you want easier one-handed navigation.
+- **Rotate screen** — toolbar button cycles through portrait, landscape, reverse-portrait, reverse-landscape. Choose which orientations the button visits in Settings → Rotation.
+- **Adaptive toolbar** — single 40dp column on tall screens; expands to a 100dp two-column layout when the screen height drops below 720dp (Palma in landscape, Mini, etc.) so every icon stays reachable.
 - **Pen color picker** — tap the pen while active to choose Black / Red / Blue / Green and Fine / Med / Thick / Bold
 - **Red ink = tasks** — write in red and [Ultrabridge](https://github.com/jdkruzr/ultrabridge) automatically creates a todo from your handwriting
 - **Lasso, copy, paste** — select strokes, move them around, paste with per-stroke color persistence
 - **Undo / Redo** — 50-step history
 - **Collapsible toolbar** — grey strip when collapsed, tap to expand; keeps the drawing area clean
 - **Phosphor icons throughout** — clean outline-style toolbar from [Phosphor Icons](https://github.com/phosphor-icons/core)
+- **Redesigned navigator strip** — clean Atkinson Hyperlegible typography, current granularity in bold focal type, siblings in muted context. Same look across Day / Week / Month / Quarter / Year views.
 
 ### Gratitude page
 Swiping down from the day view lands on a dedicated gratitude / journal page before the regular blank notes:
