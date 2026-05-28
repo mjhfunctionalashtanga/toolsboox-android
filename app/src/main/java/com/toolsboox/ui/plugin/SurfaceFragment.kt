@@ -73,6 +73,13 @@ abstract class SurfaceFragment : ScreenFragment() {
          */
         private var touchDrawingState: Boolean = false
 
+        /**
+         * When true, a single finger can pan / swipe-navigate (convenient for browsing).
+         * When false (default), gestures require two fingers — palm rejection while
+         * writing with a stylus.
+         */
+        @JvmStatic protected var singleFingerGesturesEnabled: Boolean = false
+
         // List of unrecognized actions.
         private val actions = mutableListOf<String>()
 
@@ -344,7 +351,9 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
         provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
 
-        if (touchDrawingState)
+        // Restore the single-finger-gestures preference, then sync the toolbar icon.
+        singleFingerGesturesEnabled = sharedPreferences.getBoolean("singleFingerGesturesEnabled", false)
+        if (singleFingerGesturesEnabled)
             provideToolbarDrawing().toolbarHandTouch.setImageResource(R.drawable.ic_toolbar_hand_draw)
         else
             provideToolbarDrawing().toolbarHandTouch.setImageResource(R.drawable.ic_toolbar_hand_touch)
@@ -475,11 +484,14 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
 
         provideToolbarDrawing().toolbarHandTouch.setOnClickListener {
-            touchDrawingState = !touchDrawingState
-            if (touchDrawingState)
+            singleFingerGesturesEnabled = !singleFingerGesturesEnabled
+            sharedPreferences.edit().putBoolean("singleFingerGesturesEnabled", singleFingerGesturesEnabled).apply()
+            if (singleFingerGesturesEnabled)
                 provideToolbarDrawing().toolbarHandTouch.setImageResource(R.drawable.ic_toolbar_hand_draw)
             else
                 provideToolbarDrawing().toolbarHandTouch.setImageResource(R.drawable.ic_toolbar_hand_touch)
+            val msg = if (singleFingerGesturesEnabled) "One-finger gestures on" else "Two-finger gestures required"
+            showMessage(msg, provideSurfaceView())
         }
 
         provideToolbarDrawing().toolbarUndo.setOnClickListener {
@@ -537,17 +549,20 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideToolbarDrawing().toolbarRotate.setOnClickListener {
             val activity = requireActivity()
             val current = activity.requestedOrientation
-            // Cycle: portrait → landscape → reverse-portrait → reverse-landscape → portrait
-            activity.requestedOrientation = when (current) {
-                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT ->
-                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE ->
-                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
-                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT ->
-                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
-                else ->
-                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            }
+
+            // Build the cycle order from the user's preference (bitmask).
+            // SCREEN_ORIENTATION_LANDSCAPE == landscape CCW (top tilts left in Android terms)
+            // SCREEN_ORIENTATION_REVERSE_LANDSCAPE == landscape CW (top tilts right)
+            val mask = sharedPreferences.getInt("rotationOrientationMask", 0b1111)
+            val cycle = mutableListOf<Int>()
+            if (mask and 0b0001 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
+            if (mask and 0b0010 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE)
+            if (mask and 0b0100 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT)
+            if (mask and 0b1000 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
+            if (cycle.isEmpty()) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
+
+            val idx = cycle.indexOf(current).takeIf { it >= 0 } ?: -1
+            activity.requestedOrientation = cycle[(idx + 1) % cycle.size]
         }
 
         // Hide the cloud sync feature in case of regular users or enable it generally.
@@ -611,22 +626,67 @@ abstract class SurfaceFragment : ScreenFragment() {
     private fun applyToolbarCollapsedState(collapsed: Boolean) {
         val toolbar = provideToolbarDrawing()
         val group = toolbar.toolbarButtonGroup
+        val density = resources.displayMetrics.density
         if (collapsed) {
             group.visibility = View.GONE
             toolbar.toolbarToggle.visibility = View.GONE
             toolbar.root.setBackgroundColor(Color.LTGRAY)
             toolbar.root.layoutParams?.let { lp ->
-                lp.width = (12 * resources.displayMetrics.density).toInt()
+                lp.width = (12 * density).toInt()
                 toolbar.root.layoutParams = lp
             }
         } else {
             group.visibility = View.VISIBLE
             toolbar.toolbarToggle.visibility = View.VISIBLE
             toolbar.root.setBackgroundColor(Color.TRANSPARENT)
+            // Decide column count from the available height.
+            // Single column needs ~17 buttons * 40dp + bottom toggle ≈ 720dp.
+            // If the screen is shorter than that (e.g. Palma 2 Pro in landscape),
+            // widen the toolbar to 80dp and split buttons into two columns.
+            val needsTwoColumns = resources.configuration.screenHeightDp < 720
+            // In two-column mode use 100dp so there's ~20dp of breathing room
+            // between the left (40dp) and right (40dp) columns.
+            val toolbarWidthDp = if (needsTwoColumns) 100 else 40
             toolbar.root.layoutParams?.let { lp ->
-                lp.width = (40 * resources.displayMetrics.density).toInt()
+                lp.width = (toolbarWidthDp * density).toInt()
                 toolbar.root.layoutParams = lp
             }
+            applyToolbarTwoColumnLayout(needsTwoColumns)
+        }
+    }
+
+    /**
+     * Reposition the toolbar buttons into one or two vertical columns based on
+     * available height. In single-column mode all buttons are centered horizontally
+     * (anchored to both start and end). In two-column mode roughly half the buttons
+     * anchor to the start (left column) and the rest to the end (right column).
+     */
+    private fun applyToolbarTwoColumnLayout(twoColumns: Boolean) {
+        val toolbar = provideToolbarDrawing()
+        // IDs that should move to the RIGHT column when two-column mode is active.
+        // Picked from the bottom half of the existing vertical chain.
+        val rightColumnIds = listOf(
+            toolbar.toolbarCalendarView.id,
+            toolbar.toolbarSwipeUp.id,
+            toolbar.toolbarSwipeDown.id,
+            toolbar.toolbarSwitchSide.id,
+            toolbar.toolbarRotate.id,
+            toolbar.toolbarCloudSync.id,
+            toolbar.toolbarSettings.id,
+        )
+        for (i in 0 until toolbar.root.childCount) {
+            val child = toolbar.root.getChildAt(i)
+            if (child !is android.widget.ImageButton) continue
+            val lp = child.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams ?: continue
+            val unset = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
+            if (twoColumns && child.id in rightColumnIds) {
+                lp.startToStart = unset
+                lp.endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+            } else {
+                lp.startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+                lp.endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+            }
+            child.layoutParams = lp
         }
     }
 
@@ -699,7 +759,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         if (motionEvent.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER) return false
 
         if (motionEvent.actionMasked == MotionEvent.ACTION_DOWN) twoFingerGesture = false
-        if (motionEvent.pointerCount >= 2) twoFingerGesture = true
+        if (motionEvent.pointerCount >= 2 || singleFingerGesturesEnabled) twoFingerGesture = true
 
         if (scaleGestureDetector == null) {
             scaleGestureDetector = ScaleGestureDetector(requireContext(), object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -771,12 +831,23 @@ abstract class SurfaceFragment : ScreenFragment() {
         scaleGestureDetector!!.onTouchEvent(motionEvent)
         doubleTapDetector!!.onTouchEvent(motionEvent)
 
-        // Two-finger pan when zoomed (tracked manually, not via ScaleGestureDetector)
-        if (motionEvent.pointerCount >= 2) {
-            val cx = (motionEvent.getX(0) + motionEvent.getX(1)) / 2f
-            val cy = (motionEvent.getY(0) + motionEvent.getY(1)) / 2f
+        // Pan handling. By default we require two fingers (palm rejection). The user
+        // can toggle the top toolbar button to allow single-finger panning while zoomed.
+        // We only consume single-finger events for pan when actually zoomed in — at
+        // zoom=1 single-finger events fall through to swipe-navigation.
+        val allowOneFingerPan = singleFingerGesturesEnabled && isZoomed()
+        if (motionEvent.pointerCount >= 2 || (allowOneFingerPan && motionEvent.pointerCount == 1)) {
+            val cx: Float
+            val cy: Float
+            if (motionEvent.pointerCount >= 2) {
+                cx = (motionEvent.getX(0) + motionEvent.getX(1)) / 2f
+                cy = (motionEvent.getY(0) + motionEvent.getY(1)) / 2f
+            } else {
+                cx = motionEvent.x
+                cy = motionEvent.y
+            }
             when (motionEvent.actionMasked) {
-                MotionEvent.ACTION_POINTER_DOWN -> {
+                MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_DOWN -> {
                     lastFingerX = cx
                     lastFingerY = cy
                     isPanning = true
@@ -1014,12 +1085,25 @@ abstract class SurfaceFragment : ScreenFragment() {
      * @param first first initialization flag
      */
     fun initializeSurface(first: Boolean = false) {
-        val hasOnyxStylus = DeviceFeatureUtil.hasStylus(requireContext())
-
         if (first) {
-            if (hasOnyxStylus) touchHelper = TouchHelper.create(provideSurfaceView(), callback)
+            // Try to create the Onyx TouchHelper on any Boox device. The SDK's
+            // hasStylus() heuristic can return false on some models (e.g. Palma 2 Pro)
+            // even when raw stylus drawing is supported, which forces the slow
+            // MotionEvent fallback rendering path. Catch and fall back only on real
+            // failure (non-Onyx device or SDK incompatibility).
+            try {
+                touchHelper = TouchHelper.create(provideSurfaceView(), callback)
+                Timber.i("TouchHelper created successfully on ${Build.MODEL}")
+            } catch (e: Throwable) {
+                Timber.w(e, "TouchHelper creation failed on ${Build.MODEL}; falling back to MotionEvent rendering")
+                touchHelper = null
+            }
             provideSurfaceView().setZOrderOnTop(true)
             provideSurfaceView().holder.setFormat(PixelFormat.TRANSPARENT)
+            // Keep the screen on while the planner is showing — prevents the Onyx
+            // power manager from idling the device every few seconds (which causes
+            // first-stroke-after-idle latency on Palma 2 Pro).
+            provideSurfaceView().keepScreenOn = true
         }
 
         paint.isAntiAlias = true
@@ -1031,8 +1115,13 @@ abstract class SurfaceFragment : ScreenFragment() {
             surfaceCallback = object : SurfaceHolder.Callback {
                 override fun surfaceCreated(holder: SurfaceHolder) {
                     Timber.i("surfaceCreated")
-                    val limit = Rect()
-                    provideSurfaceView().getLocalVisibleRect(limit)
+                    val view = provideSurfaceView()
+                    // Use the SurfaceView's full dimensions for the TouchHelper limit rect.
+                    // getLocalVisibleRect() can return a clipped rect when system bars or
+                    // window insets overlap the view, which caused pen events near the
+                    // bottom of the screen to fall through to Android's slow touch path
+                    // instead of being captured by Onyx's raw drawing.
+                    val limit = Rect(0, 0, view.width, view.height)
                     bitmap = Bitmap.createBitmap(CANVAS_WIDTH, CANVAS_HEIGHT, Bitmap.Config.ARGB_8888)
                     bitmap!!.eraseColor(Color.TRANSPARENT)
                     canvas = Canvas(bitmap!!)
@@ -1052,6 +1141,20 @@ abstract class SurfaceFragment : ScreenFragment() {
                     Timber.i("surfaceChanged: ${width}x${height}")
                     surfaceSize = Rect(0, 0, width, height)
                     updateTransformMatrix()
+                    // Re-apply the limit rect with the new dimensions (e.g. after rotation).
+                    touchHelper?.let { th ->
+                        th.setRawDrawingEnabled(false)
+                        th.setLimitRect(Rect(0, 0, width, height), ArrayList())
+                        th.setRawDrawingEnabled(true)
+                    }
+                    // On Android 10+, claim the whole SurfaceView area back from the
+                    // system gesture-navigation handler. Without this, the bottom ~10%
+                    // of the screen (the back-gesture strip) intercepts pen touches and
+                    // never delivers them to the app — strokes there silently vanish.
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        provideSurfaceView().systemGestureExclusionRects =
+                            listOf(Rect(0, 0, width, height))
+                    }
                 }
 
                 override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -1100,6 +1203,13 @@ abstract class SurfaceFragment : ScreenFragment() {
     /**
      * Apply strokes on the surface. Strokes are in 1404x1872 canvas space.
      *
+     * When clearPage is true we wipe and re-render the shadow bitmap too (used on page
+     * load, undo/redo, paste etc.). When false (e.g. routine post-stroke refresh) we
+     * skip the shadow redraw entirely — the shadow stays consistent because
+     * [convertStrokes] appends new strokes to it incrementally. This keeps the per-stroke
+     * cost on weaker devices (Palma 2 Pro) low while still committing the surface to the
+     * e-ink layer.
+     *
      * @param strokes the list of strokes
      * @param clearPage the clear page flag
      */
@@ -1108,9 +1218,6 @@ abstract class SurfaceFragment : ScreenFragment() {
         val lockCanvas = provideSurfaceView().holder.lockCanvas() ?: return
 
         lockCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-        if (clearPage) {
-            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-        }
 
         val strokePaint = Paint(paint)
 
@@ -1123,11 +1230,15 @@ abstract class SurfaceFragment : ScreenFragment() {
         renderTextElements(lockCanvas)
         lockCanvas.restore()
 
-        // Draw to shadow canvas in canvas space (for export)
-        for (stroke in strokes) {
-            drawStrokePath(canvas, strokePaint, stroke)
+        // Shadow canvas full rebuild only when caller explicitly wants it (page load,
+        // undo/redo, paste — anything that may have removed or relocated strokes).
+        if (clearPage) {
+            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+            for (stroke in strokes) {
+                drawStrokePath(canvas, strokePaint, stroke)
+            }
+            renderTextElements(canvas)
         }
-        renderTextElements(canvas)
 
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
@@ -1263,7 +1374,13 @@ abstract class SurfaceFragment : ScreenFragment() {
             val t = Instant.now().toEpochMilli()
             val strokePoint = StrokePoint(x, y, p, t)
 
-            if (x < 0f || x > CANVAS_WIDTH || y < 0f || y > CANVAS_HEIGHT) return false
+            // Note: we intentionally do NOT reject strokes whose coordinates fall outside
+            // the 1404x1872 canvas. On devices whose aspect ratio doesn't match (Palma 2
+            // Pro, Tab Mini, anything rotated), the canvas is fit-to-surface with
+            // whitespace at the edges. The user can see and pen on those whitespace
+            // regions — rejecting them caused the TouchHelper to paint a brief preview
+            // that vanished on the next applyStrokes refresh, looking like the pen was
+            // "blocked" near the edge of the screen.
 
             // --- Text mode: tap to place a text element ---
             if (textMode) {

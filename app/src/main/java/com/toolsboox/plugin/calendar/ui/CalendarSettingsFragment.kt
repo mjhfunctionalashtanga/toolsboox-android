@@ -239,6 +239,14 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             selectedNoteTemplate = position
         }
 
+        // Rotation orientation preferences — bitmask of allowed orientations
+        // bit 0 = portrait, 1 = landscape CW, 2 = reverse portrait, 3 = landscape CCW
+        val rotationMask = sharedPreferences.getInt("rotationOrientationMask", 0b1111)
+        binding.rotationPortraitCheck.isChecked = (rotationMask and 0b0001) != 0
+        binding.rotationLandscapeCwCheck.isChecked = (rotationMask and 0b0010) != 0
+        binding.rotationReversePortraitCheck.isChecked = (rotationMask and 0b0100) != 0
+        binding.rotationLandscapeCcwCheck.isChecked = (rotationMask and 0b1000) != 0
+
         // Auto-sync settings
         autoSyncEnabled = sharedPreferences.getBoolean("autoSyncEnabled", false)
         selectedAutoSyncInterval = sharedPreferences.getInt("autoSyncIntervalIndex", 1)
@@ -309,6 +317,15 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             sharedPreferences.edit().putInt("calendarStartView", selectedStartView).apply()
             sharedPreferences.edit().putInt("calendarStartHour", selectedStartHour).apply()
             sharedPreferences.edit().putInt("calendarNoteTemplate", selectedNoteTemplate).apply()
+
+            // Persist rotation orientation mask
+            var rotMask = 0
+            if (binding.rotationPortraitCheck.isChecked) rotMask = rotMask or 0b0001
+            if (binding.rotationLandscapeCwCheck.isChecked) rotMask = rotMask or 0b0010
+            if (binding.rotationReversePortraitCheck.isChecked) rotMask = rotMask or 0b0100
+            if (binding.rotationLandscapeCcwCheck.isChecked) rotMask = rotMask or 0b1000
+            if (rotMask == 0) rotMask = 0b0001  // never empty — fall back to portrait
+            sharedPreferences.edit().putInt("rotationOrientationMask", rotMask).apply()
 
             // Persist auto-sync settings
             sharedPreferences.edit().putBoolean("autoSyncEnabled", autoSyncEnabled).apply()

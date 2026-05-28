@@ -7,6 +7,12 @@
     <string name="widget_description">Today\'s full planner page with strokes and events</string>
     <string name="widget_schedule_description">Today\'s schedule column with hour grid and events</string>
     <string name="widget_tasks_notes_description">Today\'s tasks and notes columns</string>
+    <string name="calendar_settings_rotation_label">Rotation</string>
+    <string name="calendar_settings_rotation_hint">Pick which orientations the toolbar rotate button cycles through:</string>
+    <string name="calendar_settings_rotation_portrait">Portrait (upright)</string>
+    <string name="calendar_settings_rotation_landscape_cw">Landscape — clockwise (top tilts right)</string>
+    <string name="calendar_settings_rotation_reverse_portrait">Reverse portrait (upside down)</string>
+    <string name="calendar_settings_rotation_landscape_ccw">Landscape — counter-clockwise (top tilts left)</string>
     <string name="widget_full_label">ViBook Full Page</string>
     <string name="widget_schedule_label">ViBook Schedule</string>
     <string name="widget_tasks_notes_label">ViBook Tasks &amp; Notes</string>
