@@ -63,9 +63,17 @@ $ANDROID_HOME/platform-tools/adb install -r app/build/outputs/apk/dev/debug/tool
    - **Google Drive**: sign in for bidirectional cloud sync
    - **WebCal Backup**: enter your WebDAV URL + credentials for PDF and JSON backup
 
+## Support this fork
+
+If ViBook Planner is useful to you, here are a few ways to say thanks and help fund more digital-garden projects like this one:
+
+- **Read the [Shala Daily](https://theyoga.club/)** — a free daily Ashtanga reflection from Michael Joel Hall
+- **Visit [mjh.yoga](https://mjh.yoga)** — essays, notes, and ongoing projects from the same workshop this app came out of
+- **Subscribe at [ashtanga.tech](https://ashtanga.tech/yoga-club/)** — the membership directly supports continued open development of tools like this one
+
 ## Credits
 
-This is a GPLv3 fork of [Tools for Boox](https://github.com/gaborauth/toolsboox-android) by [Gabor Auth](https://github.com/gaborauth). Please support the original project:
+This is a GPLv3 fork of [Tools for Boox](https://github.com/gaborauth/toolsboox-android) by [Gabor Auth](https://github.com/gaborauth). Please support the original project too:
 
 - [Original repo](https://github.com/gaborauth/toolsboox-android)
 - [Google Play](https://play.google.com/store/apps/details?id=com.toolsboox)
