@@ -421,6 +421,7 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.ultrabridgePassLayout.visibility = visibility
     }
 
+
     /**
      * Update the locale settings fields.
      *

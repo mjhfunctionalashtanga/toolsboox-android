@@ -57,5 +57,44 @@
                 <data android:host="app"/>
             </intent-filter>
         </activity>
+        <receiver
+                android:name=".plugin.calendar.widget.CalendarWidgetProvider"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <action android:name="com.toolsboox.widget.ACTION_REFRESH"/>
+            </intent-filter>
+
+            <meta-data
+                    android:name="android.appwidget.provider"
+                    android:resource="@xml/calendar_widget_info"/>
+        </receiver>
+
+        <receiver
+                android:name=".plugin.calendar.widget.ScheduleWidgetProvider"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <action android:name="com.toolsboox.widget.ACTION_REFRESH"/>
+            </intent-filter>
+
+            <meta-data
+                    android:name="android.appwidget.provider"
+                    android:resource="@xml/schedule_widget_info"/>
+        </receiver>
+
+        <receiver
+                android:name=".plugin.calendar.widget.TasksNotesWidgetProvider"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <action android:name="com.toolsboox.widget.ACTION_REFRESH"/>
+            </intent-filter>
+
+            <meta-data
+                    android:name="android.appwidget.provider"
+                    android:resource="@xml/tasks_notes_widget_info"/>
+        </receiver>
+
     </application>
 </manifest>

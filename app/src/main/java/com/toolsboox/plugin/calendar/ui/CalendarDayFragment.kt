@@ -1,14 +1,17 @@
 package com.toolsboox.plugin.calendar.ui
 
+import android.graphics.Matrix
 import android.os.Bundle
 import android.view.SurfaceView
 import android.view.View
+import android.widget.ImageView
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.analytics.logEvent
 import com.toolsboox.R
 import com.toolsboox.da.Stroke
 import com.toolsboox.da.TextElement
 import com.toolsboox.databinding.FragmentCalendarBinding
+import com.toolsboox.ot.OnGestureListener
 import com.toolsboox.databinding.ToolbarDrawingBinding
 import com.toolsboox.plugin.calendar.CalendarNavigator
 import com.toolsboox.plugin.calendar.da.v1.CalendarEvent
@@ -123,11 +126,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * @param strokes the actual strokes
      */
     override fun onStrokeChanged(strokes: MutableList<Stroke>) {
-        val normalizedStrokes = surfaceFrom(strokes)
+        val strokesCopy = Stroke.listDeepCopy(strokes)
         if (notePage != null) {
-            calendarDay.noteStrokes[notePage!!] = normalizedStrokes
+            calendarDay.noteStrokes[notePage!!] = strokesCopy
         } else {
-            calendarDay.calendarStrokes[calendarStyle] = normalizedStrokes
+            calendarDay.calendarStrokes[calendarStyle] = strokesCopy
         }
 
         if (calendarStyle == CalendarDay.HEALTH_V1_STYLE) {
@@ -157,7 +160,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     override fun onStrokesProcrastinated(strokes: List<Stroke>) {
         firebaseAnalytics.logEvent("procrastinator", null)
-        presenter.procrastinate(this, binding, surfaceFrom(strokes), currentDate, calendarDay, calendarStyle)
+        presenter.procrastinate(this, binding, Stroke.listDeepCopy(strokes), currentDate, calendarDay, calendarStyle)
     }
 
     /**
@@ -222,8 +225,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
         binding.surfaceView.setOnTouchListener { view, motionEvent ->
             if (callback(motionEvent, false)) return@setOnTouchListener true
+            if (handleZoomPanTouch(motionEvent)) return@setOnTouchListener true
 
-            val gestureResult = gestureListener.onTouchEvent(gestureDetector, view, motionEvent)
+            val rawGesture = gestureListener.onTouchEvent(gestureDetector, view, motionEvent)
+            val gestureResult = if (twoFingerGesture) rawGesture else OnGestureListener.NONE
 
             if (notePage != null)
                 CalendarDayPageNotes.onTouchEvent(
@@ -321,6 +326,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         syncPresenter.backgroundSync(this@CalendarDayFragment, UUID.randomUUID())
     }
 
+    override fun onTransformChanged(matrix: Matrix) {
+        if (::binding.isInitialized) {
+            binding.templateImageView.scaleType = ImageView.ScaleType.MATRIX
+            binding.templateImageView.imageMatrix = matrix
+        }
+    }
+
     /**
      * Reload the current page.
      *
@@ -343,7 +355,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             val noteTemplate = sharedPreferences.getInt("calendarNoteTemplate", 0)
             val noteStrokes = calendarDay.noteStrokes[notePage] ?: listOf()
             CalendarDayPageNotes.drawPage(this.requireContext(), templateCanvas, calendarDay, noteTemplate, notePage!!)
-            applyStrokes(surfaceTo(noteStrokes), true)
+            applyStrokes(Stroke.listDeepCopy(noteStrokes), true)
         } else {
             binding.toolbarDrawing.toolbarProcrastinator.visibility = View.VISIBLE
             val calendarStrokes = calendarDay.calendarStrokes[calendarStyle] ?: listOf()
@@ -356,7 +368,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             if (calendarStyle == CalendarDay.TIME_BOX_V1_STYLE) {
                 TimeBoxDayPage.drawPage(this.requireContext(), templateCanvas, calendarDay)
             }
-            applyStrokes(surfaceTo(calendarStrokes), true)
+            applyStrokes(Stroke.listDeepCopy(calendarStrokes), true)
         }
     }
 

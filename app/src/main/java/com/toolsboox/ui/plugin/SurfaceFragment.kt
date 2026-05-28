@@ -8,7 +8,9 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
@@ -61,6 +63,11 @@ import kotlin.math.sqrt
 abstract class SurfaceFragment : ScreenFragment() {
 
     companion object {
+        const val CANVAS_WIDTH = 1404
+        const val CANVAS_HEIGHT = 1872
+        const val MIN_ZOOM = 1.0f
+        const val MAX_ZOOM = 4.0f
+
         /**
          * Touch drawing state.
          */
@@ -116,6 +123,20 @@ abstract class SurfaceFragment : ScreenFragment() {
     // --- Undo/redo history ---
     private val undoStack = mutableListOf<List<Stroke>>()
     private val redoStack = mutableListOf<List<Stroke>>()
+
+    // --- Zoom and pan state ---
+    protected var twoFingerGesture = false
+    private var zoomScale = 1.0f
+    private var panX = 0.0f
+    private var panY = 0.0f
+    private var baseScale = 1.0f
+    private val viewMatrix = Matrix()
+    private val inverseViewMatrix = Matrix()
+    private var scaleGestureDetector: ScaleGestureDetector? = null
+    private var doubleTapDetector: GestureDetector? = null
+    private var lastFingerX = 0f
+    private var lastFingerY = 0f
+    private var isPanning = false
 
     // --- Text tool state ---
     /** True while in text placement mode (next tap opens text input dialog). */
@@ -608,6 +629,168 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
     }
 
+    // --- Zoom / pan infrastructure ---
+
+    fun isZoomed(): Boolean = zoomScale > 1.01f
+
+    fun resetZoom() {
+        zoomScale = 1.0f
+        panX = 0.0f
+        panY = 0.0f
+        updateTransformMatrix()
+        applyStrokes(strokes, true)
+    }
+
+    private fun updateTransformMatrix() {
+        val sw = surfaceSize.width().toFloat()
+        val sh = surfaceSize.height().toFloat()
+        if (sw <= 0f || sh <= 0f) return
+
+        baseScale = minOf(sw / CANVAS_WIDTH.toFloat(), sh / CANVAS_HEIGHT.toFloat())
+        val totalScale = baseScale * zoomScale
+
+        val scaledWidth = CANVAS_WIDTH * totalScale
+        val scaledHeight = CANVAS_HEIGHT * totalScale
+        val baseOffX = (sw - scaledWidth) / 2f
+        val baseOffY = (sh - scaledHeight) / 2f
+
+        if (scaledWidth > sw) {
+            val maxPan = (scaledWidth - sw) / 2f
+            panX = panX.coerceIn(-maxPan, maxPan)
+        } else {
+            panX = 0f
+        }
+        if (scaledHeight > sh) {
+            val maxPan = (scaledHeight - sh) / 2f
+            panY = panY.coerceIn(-maxPan, maxPan)
+        } else {
+            panY = 0f
+        }
+
+        viewMatrix.reset()
+        viewMatrix.postScale(totalScale, totalScale)
+        viewMatrix.postTranslate(baseOffX + panX, baseOffY + panY)
+        viewMatrix.invert(inverseViewMatrix)
+
+        touchHelper?.setStrokeWidth(paint.strokeWidth * totalScale)
+
+        onTransformChanged(viewMatrix)
+    }
+
+    open fun onTransformChanged(matrix: Matrix) {}
+
+    fun handleZoomPanTouch(motionEvent: MotionEvent): Boolean {
+        if (motionEvent.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER) return false
+
+        if (motionEvent.actionMasked == MotionEvent.ACTION_DOWN) twoFingerGesture = false
+        if (motionEvent.pointerCount >= 2) twoFingerGesture = true
+
+        if (scaleGestureDetector == null) {
+            scaleGestureDetector = ScaleGestureDetector(requireContext(), object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                override fun onScale(detector: ScaleGestureDetector): Boolean {
+                    val oldZoom = zoomScale
+                    zoomScale = (zoomScale * detector.scaleFactor).coerceIn(MIN_ZOOM, MAX_ZOOM)
+                    if (zoomScale != oldZoom) {
+                        val focusX = detector.focusX
+                        val focusY = detector.focusY
+
+                        val pts = floatArrayOf(focusX, focusY)
+                        inverseViewMatrix.mapPoints(pts)
+                        val canvasX = pts[0]
+                        val canvasY = pts[1]
+
+                        val sw = surfaceSize.width().toFloat()
+                        val sh = surfaceSize.height().toFloat()
+                        val totalScale = baseScale * zoomScale
+                        val scaledW = CANVAS_WIDTH * totalScale
+                        val scaledH = CANVAS_HEIGHT * totalScale
+                        val baseOffX = (sw - scaledW) / 2f
+                        val baseOffY = (sh - scaledH) / 2f
+
+                        val newScreenX = canvasX * totalScale + baseOffX + panX
+                        val newScreenY = canvasY * totalScale + baseOffY + panY
+                        panX += focusX - newScreenX
+                        panY += focusY - newScreenY
+
+                        updateTransformMatrix()
+                        applyStrokes(strokes, true)
+                    }
+                    return true
+                }
+            })
+        }
+
+        if (doubleTapDetector == null) {
+            doubleTapDetector = GestureDetector(requireContext(), object : GestureDetector.SimpleOnGestureListener() {
+                override fun onDoubleTap(e: MotionEvent): Boolean {
+                    if (isZoomed()) {
+                        resetZoom()
+                    } else {
+                        val pts = floatArrayOf(e.x, e.y)
+                        inverseViewMatrix.mapPoints(pts)
+
+                        zoomScale = 2.0f
+
+                        val sw = surfaceSize.width().toFloat()
+                        val sh = surfaceSize.height().toFloat()
+                        val totalScale = baseScale * zoomScale
+                        val scaledW = CANVAS_WIDTH * totalScale
+                        val scaledH = CANVAS_HEIGHT * totalScale
+                        val baseOffX = (sw - scaledW) / 2f
+                        val baseOffY = (sh - scaledH) / 2f
+
+                        val newScreenX = pts[0] * totalScale + baseOffX
+                        val newScreenY = pts[1] * totalScale + baseOffY
+                        panX = e.x - newScreenX
+                        panY = e.y - newScreenY
+
+                        updateTransformMatrix()
+                        applyStrokes(strokes, true)
+                    }
+                    return true
+                }
+            })
+        }
+
+        scaleGestureDetector!!.onTouchEvent(motionEvent)
+        doubleTapDetector!!.onTouchEvent(motionEvent)
+
+        // Two-finger pan when zoomed (tracked manually, not via ScaleGestureDetector)
+        if (motionEvent.pointerCount >= 2) {
+            val cx = (motionEvent.getX(0) + motionEvent.getX(1)) / 2f
+            val cy = (motionEvent.getY(0) + motionEvent.getY(1)) / 2f
+            when (motionEvent.actionMasked) {
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    lastFingerX = cx
+                    lastFingerY = cy
+                    isPanning = true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (isPanning && isZoomed()) {
+                        panX += cx - lastFingerX
+                        panY += cy - lastFingerY
+                        updateTransformMatrix()
+                        applyStrokes(strokes, true)
+                    }
+                    lastFingerX = cx
+                    lastFingerY = cy
+                }
+            }
+            return true
+        }
+
+        isPanning = false
+        if (isZoomed()) return true
+
+        return false
+    }
+
+    private fun screenToCanvas(screenX: Float, screenY: Float): FloatArray {
+        val pts = floatArrayOf(screenX, screenY)
+        inverseViewMatrix.mapPoints(pts)
+        return pts
+    }
+
     /**
      * Redraw the current strokes with selected strokes highlighted (thicker stroke).
      * Also draws the lasso polygon if points exist.
@@ -615,37 +798,19 @@ abstract class SurfaceFragment : ScreenFragment() {
     private fun drawWithSelection() {
         val lockCanvas = provideSurfaceView().holder.lockCanvas() ?: return
 
-        val fillPaint = Paint()
-        fillPaint.style = Paint.Style.FILL
-        fillPaint.color = Color.TRANSPARENT
-        val rect = Rect(0, 0, provideSurfaceView().width, provideSurfaceView().height)
-        lockCanvas.drawRect(rect, fillPaint)
         lockCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
         val selectedIds = selectedStrokes.map { it.strokeId }.toSet()
 
-        for (stroke in strokes) {
-            val points = stroke.strokePoints
-            if (points.isNotEmpty()) {
-                val path = Path()
-                val prePoint = PointF(points[0].x, points[0].y)
-                if (points.size == 1) {
-                    path.moveTo(prePoint.x - 1f, prePoint.y - 1f)
-                } else {
-                    path.moveTo(prePoint.x, prePoint.y)
-                }
-                for (point in points) {
-                    path.quadTo(prePoint.x, prePoint.y, point.x, point.y)
-                    prePoint.x = point.x
-                    prePoint.y = point.y
-                }
+        lockCanvas.save()
+        lockCanvas.concat(viewMatrix)
 
-                val usePaint = if (stroke.strokeId in selectedIds) selectionHighlightPaint else paint
-                lockCanvas.drawPath(path, usePaint)
-            }
+        for (stroke in strokes) {
+            val usePaint = if (stroke.strokeId in selectedIds) selectionHighlightPaint else paint
+            drawStrokePath(lockCanvas, usePaint, stroke)
         }
 
-        // Draw lasso polygon
+        // Draw lasso polygon (points are in canvas space)
         if (selectionPoints.size > 1) {
             val lassoPath = Path()
             lassoPath.moveTo(selectionPoints[0].x, selectionPoints[0].y)
@@ -657,6 +822,8 @@ abstract class SurfaceFragment : ScreenFragment() {
             }
             lockCanvas.drawPath(lassoPath, lassoPaint)
         }
+
+        lockCanvas.restore()
 
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
@@ -751,7 +918,8 @@ abstract class SurfaceFragment : ScreenFragment() {
             .setPositiveButton("OK") { _, _ ->
                 paint.color = colorValues[selColor]
                 paint.strokeWidth = widthValues[selWidth]
-                touchHelper?.setStrokeWidth(paint.strokeWidth)
+                touchHelper?.setStrokeWidth(paint.strokeWidth * baseScale * zoomScale)
+                touchHelper?.setStrokeColor(paint.color)
                 provideToolbarDrawing().toolbarPen.background.setTint(
                     if (paint.color == Color.BLACK) Color.GRAY else paint.color
                 )
@@ -849,11 +1017,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                     Timber.i("surfaceCreated")
                     val limit = Rect()
                     provideSurfaceView().getLocalVisibleRect(limit)
-                    bitmap = Bitmap.createBitmap(
-                        provideSurfaceView().width,
-                        provideSurfaceView().height,
-                        Bitmap.Config.ARGB_8888
-                    )
+                    bitmap = Bitmap.createBitmap(CANVAS_WIDTH, CANVAS_HEIGHT, Bitmap.Config.ARGB_8888)
                     bitmap!!.eraseColor(Color.TRANSPARENT)
                     canvas = Canvas(bitmap!!)
 
@@ -863,13 +1027,15 @@ abstract class SurfaceFragment : ScreenFragment() {
 
                     clearSurface()
 
-                    touchHelper?.setLimitRect(limit, ArrayList())?.setStrokeWidth(3.0f)?.openRawDrawing()
+                    touchHelper?.setLimitRect(limit, ArrayList())?.setStrokeWidth(paint.strokeWidth)?.openRawDrawing()
                     touchHelper?.setStrokeStyle(TouchHelper.STROKE_STYLE_PENCIL)
+                    touchHelper?.setStrokeColor(paint.color)
                 }
 
                 override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
                     Timber.i("surfaceChanged: ${width}x${height}")
                     surfaceSize = Rect(0, 0, width, height)
+                    updateTransformMatrix()
                 }
 
                 override fun surfaceDestroyed(holder: SurfaceHolder) {
@@ -889,65 +1055,62 @@ abstract class SurfaceFragment : ScreenFragment() {
     fun clearSurface() {
         val lockerCanvas = provideSurfaceView().holder.lockCanvas() ?: return
         EpdController.enablePost(provideSurfaceView(), 1)
-        val paint = Paint()
-        paint.style = Paint.Style.FILL
-        paint.color = Color.TRANSPARENT
-        val rect = Rect(0, 0, provideSurfaceView().width, provideSurfaceView().height)
-        lockerCanvas.drawRect(rect, paint)
+        lockerCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
         provideSurfaceView().holder.unlockCanvasAndPost(lockerCanvas)
 
-        canvas.drawRect(rect, paint)
+        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+    }
+
+    private fun drawStrokePath(targetCanvas: Canvas, strokePaint: Paint, stroke: Stroke) {
+        val points = stroke.strokePoints
+        if (points.isEmpty()) return
+        strokePaint.color = stroke.color
+        strokePaint.strokeWidth = stroke.strokeWidth
+        val path = Path()
+        val prePoint = PointF(points[0].x, points[0].y)
+        if (points.size == 1) {
+            path.moveTo(prePoint.x - 1f, prePoint.y - 1f)
+        } else {
+            path.moveTo(prePoint.x, prePoint.y)
+        }
+        for (point in points) {
+            path.quadTo(prePoint.x, prePoint.y, point.x, point.y)
+            prePoint.x = point.x
+            prePoint.y = point.y
+        }
+        targetCanvas.drawPath(path, strokePaint)
     }
 
     /**
-     * Apply strokes on the surface.
+     * Apply strokes on the surface. Strokes are in 1404x1872 canvas space.
      *
      * @param strokes the list of strokes
      * @param clearPage the clear page flag
      */
     fun applyStrokes(strokes: List<Stroke>, clearPage: Boolean) {
         this.strokes = strokes.toMutableList()
-        // TODO: render page when onSurfaceCreated
         val lockCanvas = provideSurfaceView().holder.lockCanvas() ?: return
 
-        val fillPaint = Paint()
-        fillPaint.style = Paint.Style.FILL
-        fillPaint.color = Color.TRANSPARENT
-        val rect = Rect(0, 0, provideSurfaceView().width, provideSurfaceView().height)
-        lockCanvas.drawRect(rect, fillPaint)
         lockCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
         if (clearPage) {
-            canvas.drawRect(rect, fillPaint)
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
         }
 
         val strokePaint = Paint(paint)
+
+        // Draw to screen with zoom matrix
+        lockCanvas.save()
+        lockCanvas.concat(viewMatrix)
         for (stroke in strokes) {
-            val points = stroke.strokePoints
-            if (points.isNotEmpty()) {
-                strokePaint.color = stroke.color
-                strokePaint.strokeWidth = stroke.strokeWidth
-
-                val path = Path()
-                val prePoint = PointF(points[0].x, points[0].y)
-                if (points.size == 1) {
-                    path.moveTo(prePoint.x - 1f, prePoint.y - 1f)
-                } else {
-                    path.moveTo(prePoint.x, prePoint.y)
-                }
-                for (point in points) {
-                    path.quadTo(prePoint.x, prePoint.y, point.x, point.y)
-                    prePoint.x = point.x
-                    prePoint.y = point.y
-                }
-
-                lockCanvas.drawPath(path, strokePaint)
-                canvas.drawPath(path, strokePaint)
-            }
+            drawStrokePath(lockCanvas, strokePaint, stroke)
         }
-
-        // Render text elements on top of strokes
         renderTextElements(lockCanvas)
+        lockCanvas.restore()
+
+        // Draw to shadow canvas in canvas space (for export)
+        for (stroke in strokes) {
+            drawStrokePath(canvas, strokePaint, stroke)
+        }
         renderTextElements(canvas)
 
         touchHelper?.setRawDrawingEnabled(false)
@@ -1077,11 +1240,14 @@ abstract class SurfaceFragment : ScreenFragment() {
         val erasing = motionEvent.buttonState != 0 || toolTypeEraser
 
         if (drawing) {
-            val x = (10.0f * motionEvent.x).roundToInt() / 10.0f
-            val y = (10.0f * motionEvent.y).roundToInt() / 10.0f
+            val canvasPts = screenToCanvas(motionEvent.x, motionEvent.y)
+            val x = (10.0f * canvasPts[0]).roundToInt() / 10.0f
+            val y = (10.0f * canvasPts[1]).roundToInt() / 10.0f
             val p = (10.0f * motionEvent.pressure).roundToInt() / 10.0f
             val t = Instant.now().toEpochMilli()
             val strokePoint = StrokePoint(x, y, p, t)
+
+            if (x < 0f || x > CANVAS_WIDTH || y < 0f || y > CANVAS_HEIGHT) return false
 
             // --- Text mode: tap to place a text element ---
             if (textMode) {
@@ -1144,8 +1310,9 @@ abstract class SurfaceFragment : ScreenFragment() {
             } else if (actionMove) {
                 val touchPoints = mutableListOf<StrokePoint>()
                 for (i in 0 until motionEvent.historySize) {
-                    val hx = (10.0f * motionEvent.getHistoricalX(i)).roundToInt() / 10.0f
-                    val hy = (10.0f * motionEvent.getHistoricalY(i)).roundToInt() / 10.0f
+                    val hPts = screenToCanvas(motionEvent.getHistoricalX(i), motionEvent.getHistoricalY(i))
+                    val hx = (10.0f * hPts[0]).roundToInt() / 10.0f
+                    val hy = (10.0f * hPts[1]).roundToInt() / 10.0f
                     val hp = (10.0f * motionEvent.getHistoricalPressure(i)).roundToInt() / 10.0f
                     val ht = Instant.now().toEpochMilli() + motionEvent.getHistoricalEventTime(i) - SystemClock.uptimeMillis()
                     touchPoints.add(StrokePoint(hx, hy, hp, ht))
@@ -1202,16 +1369,31 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
 
         if (touchHelper == null && penState) {
-            val sigma = paint.strokeWidth * 4.0f
-            val rectLeft = (Math.min(lastPoint!!.x, touchPoints.map { it.x }.min()) - sigma).toInt()
-            val rectRight = (Math.max(lastPoint!!.x, touchPoints.map { it.x }.max()) + sigma).toInt()
-            val rectTop = (Math.min(lastPoint!!.y, touchPoints.map { it.y }.min()) - sigma).toInt()
-            val rectBottom = (Math.max(lastPoint!!.y, touchPoints.map { it.y }.max()) + sigma).toInt()
-            val rect = Rect(rectLeft, rectTop, rectRight, rectBottom)
+            val totalScale = baseScale * zoomScale
+            val sigma = paint.strokeWidth * totalScale * 4.0f
+
+            // Transform canvas-space bounds to screen space for dirty rect
+            val allX = stylusPointList.map { it.x } + touchPoints.map { it.x }
+            val allY = stylusPointList.map { it.y } + touchPoints.map { it.y }
+            val minPt = floatArrayOf(allX.min() - sigma / totalScale, allY.min() - sigma / totalScale)
+            val maxPt = floatArrayOf(allX.max() + sigma / totalScale, allY.max() + sigma / totalScale)
+            viewMatrix.mapPoints(minPt)
+            viewMatrix.mapPoints(maxPt)
+            val rect = Rect(
+                minPt[0].toInt().coerceAtLeast(0),
+                minPt[1].toInt().coerceAtLeast(0),
+                maxPt[0].toInt().coerceAtMost(surfaceSize.width()),
+                maxPt[1].toInt().coerceAtMost(surfaceSize.height())
+            )
 
             val lockCanvas = provideSurfaceView().holder.lockCanvas(rect)
-            lockCanvas?.drawPath(path, paint)
-            provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
+            if (lockCanvas != null) {
+                lockCanvas.save()
+                lockCanvas.concat(viewMatrix)
+                lockCanvas.drawPath(path, paint)
+                lockCanvas.restore()
+                provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
+            }
         }
     }
 

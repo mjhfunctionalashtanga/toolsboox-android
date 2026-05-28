@@ -176,6 +176,23 @@ class UltrabridgeSyncWorker(
                     }
                 }
 
+                // Upload raw day JSON files to WebDAV for downstream processing
+                val dayJsonFiles = allFiles.filter { it.name.startsWith("day-") }
+                var jsonUploadCount = 0
+                webdavService.ensureDirectory("ToolsForBoox/json")
+                for (file in dayJsonFiles) {
+                    try {
+                        val remotePath = "ToolsForBoox/json/${file.name}"
+                        val uploaded = withContext(Dispatchers.IO) {
+                            webdavService.upload(file, remotePath)
+                        }
+                        if (uploaded) jsonUploadCount++
+                    } catch (e: Exception) {
+                        Timber.e(e, "$TAG: JSON upload error for ${file.name}")
+                    }
+                }
+                Timber.i("$TAG: Uploaded $jsonUploadCount of ${dayJsonFiles.size} day JSON files")
+
                 // Update sync cursor
                 mainPrefs.edit().putLong(PREF_LAST_SYNC_MS, System.currentTimeMillis()).apply()
                 Timber.i("$TAG: Sync complete. Uploaded $uploadCount PDFs.")
