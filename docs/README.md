@@ -8,11 +8,21 @@ A fork of [Tools for Boox](https://github.com/gaborauth/toolsboox-android) by [G
 - **Full-screen calendar** — no top toolbar, no dashboard; the planner page fills the entire screen
 - **Pinch-zoom + two-finger pan** — the 1404x1872 canvas renders at native resolution on any device. Pinch to zoom (up to 4x), two-finger drag to pan, double-tap to toggle 2x zoom / reset. Designed for the Palma 2 Pro where the page would otherwise be cramped. Strokes are stored in canvas space, so zoom never distorts handwriting or affects export/sync.
 - **Two-finger swipes for navigation** — left/right to change days, up/down for week/notes. Single-finger gestures are ignored to prevent accidental swipes while resting your hand on the screen.
+- **Rotate screen** — toolbar button cycles through portrait, landscape, reverse-portrait, reverse-landscape. The canvas auto-fits any orientation.
 - **Pen color picker** — tap the pen while active to choose Black / Red / Blue / Green and Fine / Med / Thick / Bold
 - **Red ink = tasks** — write in red and [Ultrabridge](https://github.com/jdkruzr/ultrabridge) automatically creates a todo from your handwriting
 - **Lasso, copy, paste** — select strokes, move them around, paste with per-stroke color persistence
 - **Undo / Redo** — 50-step history
 - **Collapsible toolbar** — grey strip when collapsed, tap to expand; keeps the drawing area clean
+- **Phosphor icons throughout** — clean outline-style toolbar from [Phosphor Icons](https://github.com/phosphor-icons/core)
+
+### Gratitude page
+Swiping down from the day view lands on a dedicated gratitude / journal page before the regular blank notes:
+- **3 Things I'm Grateful For** — left column, 11 lines for free-form elaboration on each numbered slot
+- **The Best Thing Today** — right column, 11 lines
+- **Doodle area** — full-width framed scratch space at the bottom, sized so the sketch becomes its own keepsake (see Ultrabridge Sketch notes below)
+
+Swipe down again to reach your regular note pages 0, 1, 2…
 
 ### Home screen widgets
 Three widget variants render today's planner page directly on the home screen, auto-refreshing every 30 minutes and immediately whenever you save strokes:
@@ -41,6 +51,9 @@ When paired with the [Ultrabridge Ledger Processor](https://github.com/mjhfuncti
 2. **Automatic task creation** — unchecked items in the Tasks section become CalDAV todos
 3. **Due date parsing** — write "due 6/15" in a task and it becomes a real due date
 4. **Sync everywhere** — tasks appear in Apple Reminders, tasks.org, Thunderbird, or any CalDAV client
+5. **Note page OCR** — extra note pages (including the gratitude page) get their own freeform Sonnet pass and append as "Page N" sections to the daily Ledger note on mjh.yoga
+6. **Sketch notes** — strokes inside the gratitude page's doodle area are rendered as a standalone PNG and posted as a separate `Sketch` tagged note
+7. **Multi-device merge** — write on any Boox throughout the day (Tab8, Palma 2 Pro, Tab Mini C, etc.); the processor walks all device folders on WebDAV, dedupes strokes by ID, and consolidates everything into one Ledger note per date
 
 ## Build
 

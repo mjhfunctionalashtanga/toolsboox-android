@@ -534,6 +534,22 @@ abstract class SurfaceFragment : ScreenFragment() {
             CalendarNavigator.toCloudSync(this)
         }
 
+        provideToolbarDrawing().toolbarRotate.setOnClickListener {
+            val activity = requireActivity()
+            val current = activity.requestedOrientation
+            // Cycle: portrait → landscape → reverse-portrait → reverse-landscape → portrait
+            activity.requestedOrientation = when (current) {
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT ->
+                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE ->
+                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT ->
+                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+                else ->
+                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            }
+        }
+
         // Hide the cloud sync feature in case of regular users or enable it generally.
         val androidId = sharedPreferences.getString("androidId", "")
         val earlyAdopterDeviceIdsJson = sharedPreferences.getString("earlyAdopterDeviceIds", "[]")

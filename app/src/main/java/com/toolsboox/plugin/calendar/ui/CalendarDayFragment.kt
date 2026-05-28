@@ -263,11 +263,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         binding.toolbarDrawing.toolbarSwipeUp.setOnClickListener {
             if (notePage != null) {
-                val page = notePage!!.toIntOrNull() ?: 0
-                if (page == 0) {
+                if (notePage == "gratitude") {
                     CalendarNavigator.toDayPage(this, currentDate, CalendarDay.DEFAULT_STYLE)
                 } else {
-                    CalendarNavigator.toDayNote(this, currentDate, "${page - 1}")
+                    val page = notePage!!.toIntOrNull() ?: 0
+                    if (page == 0) {
+                        CalendarNavigator.toDayNote(this, currentDate, "gratitude")
+                    } else {
+                        CalendarNavigator.toDayNote(this, currentDate, "${page - 1}")
+                    }
                 }
             } else {
                 CalendarNavigator.toWeekPage(this, currentDate, locale)
@@ -275,10 +279,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
         binding.toolbarDrawing.toolbarSwipeDown.setOnClickListener {
             if (notePage != null) {
-                val page = notePage!!.toIntOrNull() ?: 0
-                CalendarNavigator.toDayNote(this, currentDate, "${page + 1}")
+                if (notePage == "gratitude") {
+                    CalendarNavigator.toDayNote(this, currentDate, "0")
+                } else {
+                    val page = notePage!!.toIntOrNull() ?: 0
+                    CalendarNavigator.toDayNote(this, currentDate, "${page + 1}")
+                }
             } else {
-                CalendarNavigator.toDayNote(this, currentDate, "0")
+                CalendarNavigator.toDayNote(this, currentDate, "gratitude")
             }
         }
         binding.toolbarDrawing.toolbarCalendarView.setOnClickListener {
