@@ -1,65 +1,61 @@
-# Tools for Boox
+# Tools for Boox (E-Ink Planner Fork)
 
-– an Android application for Onyx Boox readers –
+A fork of [Tools for Boox](https://github.com/gaborauth/toolsboox-android) by [Gabor Auth](https://github.com/gaborauth), optimized for daily planning on Boox e-ink tablets with pen color support, full-screen drawing, and [Ultrabridge](https://github.com/jdkruzr/ultrabridge) integration for handwriting OCR and task sync.
 
-[![paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=SVJ9HDCVKAAKS)
+## What's different in this fork
 
-## Latest release
+- **Full-screen calendar** — no top toolbar, no dashboard; the planner page fills the entire screen
+- **Pen color picker** — tap the pen while active to choose Black / Red / Blue / Green and Fine / Med / Thick / Bold
+- **Red ink = tasks** — write in red and [Ultrabridge](https://github.com/jdkruzr/ultrabridge) automatically creates a todo from your handwriting
+- **Lasso, copy, paste** — select strokes, move them around, paste with per-stroke color persistence
+- **Undo / Redo** — 50-step history
+- **Collapsible toolbar** — grey strip when collapsed, tap to expand; keeps the drawing area clean
+- **Google Drive sync** — bidirectional auto-sync on page load and close
+- **WebDAV backup** — PDF + raw JSON upload to Ultrabridge (or any WebDAV server)
+- **JSON export** — day page stroke data syncs to `ToolsForBoox/json/` for downstream processing (OCR, task extraction)
+- **Atkinson Hyperlegible font** — optimized for e-ink readability
+- **No ads, no Firebase** — stripped completely
+- **Lighter alternating cells** — better contrast on e-ink displays
 
-[https://github.com/gaborauth/toolsboox-android/](https://github.com/gaborauth/toolsboox-android/)
+## Ultrabridge Integration
 
-[https://github.com/gaborauth/toolsboox-android/releases/latest](https://github.com/gaborauth/toolsboox-android/releases/latest)
+When paired with the [Ultrabridge Ledger Processor](https://github.com/mjhfunctionalashtanga/ultrabridge-ledger), your handwritten planner pages get:
 
-## How to install?
+1. **Full-page OCR** via Claude Sonnet — schedule, tasks, and notes transcribed
+2. **Automatic task creation** — unchecked items in the Tasks section become CalDAV todos
+3. **Due date parsing** — write "due 6/15" in a task and it becomes a real due date
+4. **Sync everywhere** — tasks appear in Apple Reminders, tasks.org, Thunderbird, or any CalDAV client
 
-From Google Play: [https://play.google.com/store/apps/details?id=com.toolsboox](https://play.google.com/store/apps/details?id=com.toolsboox)
+## Build
 
-From Github: [https://gaborauth.github.io/toolsboox-android/INSTALL.html](https://gaborauth.github.io/toolsboox-android/INSTALL.html)
+```bash
+export JAVA_HOME="/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"
+export ANDROID_HOME="/opt/homebrew/share/android-commandlinetools"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
 
-## Available tools
+./gradlew assembleDevDebug
 
-![image](https://user-images.githubusercontent.com/16724720/195287594-ae43d5be-73f7-43a7-aa69-faa826889a15.png)
+# Install on connected device
+$ANDROID_HOME/platform-tools/adb install -r app/build/outputs/apk/dev/debug/toolboox-dev-debug-*.apk
+```
 
-- Personal Calendar
-- Calendar template generator
-- Community templates store
-- Team drawer tool
-- Kanban planner (experimental)
+## Setup
 
-### Calendar
+1. Install the APK on your Boox tablet
+2. Open the app — it goes straight to today's calendar page
+3. To enable sync: tap the toolbar → Settings
+   - **Google Drive**: sign in for bidirectional cloud sync
+   - **WebCal Backup**: enter your WebDAV URL + credentials for PDF and JSON backup
 
-Hand writable calendars with yearly, quarterly, monthly, weekly and daily view.
+## Credits
 
-![image](https://user-images.githubusercontent.com/16724720/197599107-5bab6506-d856-42d8-aab6-10947cdec1b6.png)
+This is a GPLv3 fork of [Tools for Boox](https://github.com/gaborauth/toolsboox-android) by [Gabor Auth](https://github.com/gaborauth). Please support the original project:
 
-### Calendar template generator
+- [Original repo](https://github.com/gaborauth/toolsboox-android)
+- [Google Play](https://play.google.com/store/apps/details?id=com.toolsboox)
+- [Patreon](https://www.patreon.com/toolsboox)
+- [PayPal](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=SVJ9HDCVKAAKS)
 
-Customizable calendar template generator.
+## License
 
-![image](https://user-images.githubusercontent.com/16724720/195287157-421d4dd0-0459-42d6-a57e-4b0098d75f24.png)
-
-### Community templates store
-
-Categorized (community based) templates.
-
-![image](https://user-images.githubusercontent.com/16724720/195696626-53d0c603-ee0d-4391-898f-fa95a48037eb.png)
-
-### Team drawer
-
-You draw, we see. We draw, you see. From anywhere to anywhere.
-
-![image](https://user-images.githubusercontent.com/16724720/195288600-14d10269-c980-4bce-92be-d97314eb7b08.png)
-
-### Kanban board
-
-Experimental personal Kanban cards with calendar support. Extremely experimental.
-
-![image](https://user-images.githubusercontent.com/16724720/195289872-834565a0-835f-4cf9-8ee8-d7a30c21bf6a.png)
-
-## URLS
-
-* Web page: [https://toolsboox.com](https://toolsboox.com)
-* Facebook page: [https://www.facebook.com/toolsboox](https://www.facebook.com/toolsboox)
-* Translations: [https://poeditor.com/join/project?hash=dbYOuWr2UB](https://poeditor.com/join/project?hash=dbYOuWr2UB)
-* Patreon: [https://www.patreon.com/toolsboox](https://www.patreon.com/toolsboox)
-* GitHub: [https://github.com/gaborauth/toolsboox-android](https://github.com/gaborauth/toolsboox-android)
+GPLv3 — same as the original. See [LICENSE](../LICENSE).
