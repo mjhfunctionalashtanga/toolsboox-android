@@ -7,3 +7,5 @@ build
 README.md
 local.properties
 keystore.jks
+.DS_Store
+**/.DS_Store
