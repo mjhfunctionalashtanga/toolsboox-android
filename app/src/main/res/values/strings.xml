@@ -7,6 +7,9 @@
     <string name="widget_description">Today\'s full planner page with strokes and events</string>
     <string name="widget_schedule_description">Today\'s schedule column with hour grid and events</string>
     <string name="widget_tasks_notes_description">Today\'s tasks and notes columns</string>
+    <string name="widget_full_label">ViBook Full Page</string>
+    <string name="widget_schedule_label">ViBook Schedule</string>
+    <string name="widget_tasks_notes_label">ViBook Tasks &amp; Notes</string>
 
     <string name="validation_field_required">This field is required</string>
     <plurals name="validation_field_too_long">

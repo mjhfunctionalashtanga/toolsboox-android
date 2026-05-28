@@ -59,6 +59,7 @@
         </activity>
         <receiver
                 android:name=".plugin.calendar.widget.CalendarWidgetProvider"
+                android:label="@string/widget_full_label"
                 android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
@@ -72,6 +73,7 @@
 
         <receiver
                 android:name=".plugin.calendar.widget.ScheduleWidgetProvider"
+                android:label="@string/widget_schedule_label"
                 android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
@@ -85,6 +87,7 @@
 
         <receiver
                 android:name=".plugin.calendar.widget.TasksNotesWidgetProvider"
+                android:label="@string/widget_tasks_notes_label"
                 android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
