@@ -49,12 +49,12 @@ android {
     flavorDimensions = ['tier']
     productFlavors {
         dev {
-            resValue "string", "app_name", "ViBook Planner Dev"
+            resValue "string", "app_name", "Ledger Dev"
             applicationIdSuffix ""
             dimension 'tier'
         }
         prod {
-            resValue "string", "app_name", "ViBook Planner"
+            resValue "string", "app_name", "Ledger"
             applicationIdSuffix ""
             dimension 'tier'
         }
@@ -84,7 +84,7 @@ android {
             debuggable true
 
             applicationIdSuffix ".debug"
-            resValue "string", "app_name", "ViBook Planner Debug"
+            resValue "string", "app_name", "Ledger Debug"
 
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
 

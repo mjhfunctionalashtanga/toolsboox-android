@@ -13,9 +13,9 @@
     <string name="calendar_settings_rotation_landscape_cw">Landscape — clockwise (top tilts right)</string>
     <string name="calendar_settings_rotation_reverse_portrait">Reverse portrait (upside down)</string>
     <string name="calendar_settings_rotation_landscape_ccw">Landscape — counter-clockwise (top tilts left)</string>
-    <string name="widget_full_label">ViBook Full Page</string>
-    <string name="widget_schedule_label">ViBook Schedule</string>
-    <string name="widget_tasks_notes_label">ViBook Tasks &amp; Notes</string>
+    <string name="widget_full_label">Ledger Full Page</string>
+    <string name="widget_schedule_label">Ledger Schedule</string>
+    <string name="widget_tasks_notes_label">Ledger Tasks &amp; Notes</string>
 
     <string name="validation_field_required">This field is required</string>
     <plurals name="validation_field_too_long">

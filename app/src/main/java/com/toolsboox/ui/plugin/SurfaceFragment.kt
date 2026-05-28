@@ -127,6 +127,29 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** Strokes that fell inside the lasso polygon. */
     private var selectedStrokes = mutableListOf<Stroke>()
 
+    /** Bounding box (canvas-space) of the current selection, set when the lasso closes. */
+    private var selBox: RectF? = null
+
+    /** Which transform is currently being driven by the stylus (NONE = idle). */
+    private enum class SelectionDrag { NONE, HANDLE_TL, HANDLE_TR, HANDLE_BL, HANDLE_BR, MOVE }
+    private var selectionDrag = SelectionDrag.NONE
+
+    /** Anchor (opposite corner) for the active scale drag and the bbox snapshot at drag start. */
+    private var scaleAnchorX = 0f
+    private var scaleAnchorY = 0f
+    private var scaleOrigBox: RectF? = null
+
+    /** Pen-down canvas coords when a MOVE drag begins. */
+    private var moveStartX = 0f
+    private var moveStartY = 0f
+
+    /**
+     * Snapshot of the original (x,y) for every point of every selected stroke at the
+     * moment a scale drag starts. Each ACTION_MOVE re-derives the stroke positions from
+     * this snapshot so the math stays linear and doesn't compound across ticks.
+     */
+    private var scaleOrigPoints: Map<UUID, List<Pair<Float, Float>>> = emptyMap()
+
     /** True while in paste-placement mode (next tap places the clipboard contents). */
     private var pasteMode = false
 
@@ -738,6 +761,9 @@ abstract class SurfaceFragment : ScreenFragment() {
         textMode = false
         selectionPoints.clear()
         selectedStrokes.clear()
+        selBox = null
+        selectionDrag = SelectionDrag.NONE
+        scaleOrigBox = null
         provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
         provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
         provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
@@ -916,9 +942,68 @@ abstract class SurfaceFragment : ScreenFragment() {
         return pts
     }
 
+    // --- Selection-overlay geometry (canvas-space) ---
+
+    private val handleSize = 36f
+    private val handleHitPad = 30f
+    private val chipSize = 88f
+    private val chipGap = 16f
+
+    private fun computeSelBox(s: List<Stroke>): RectF? {
+        if (s.isEmpty()) return null
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        for (st in s) for (p in st.strokePoints) {
+            if (p.x < minX) minX = p.x
+            if (p.y < minY) minY = p.y
+            if (p.x > maxX) maxX = p.x
+            if (p.y > maxY) maxY = p.y
+        }
+        return RectF(minX, minY, maxX, maxY)
+    }
+
+    /** Y position of the chip row — above the box if there's room, otherwise below. */
+    private fun chipBaseY(box: RectF): Float {
+        return if (box.top > chipSize + 30f) box.top - chipSize - 20f else box.bottom + 20f
+    }
+
+    private fun cutChipRect(box: RectF): RectF {
+        val top = chipBaseY(box)
+        val right = box.right
+        return RectF(right - chipSize, top, right, top + chipSize)
+    }
+
+    private fun copyChipRect(box: RectF): RectF {
+        val top = chipBaseY(box)
+        val right = box.right - chipSize - chipGap
+        return RectF(right - chipSize, top, right, top + chipSize)
+    }
+
+    /** Returns which handle (if any) the canvas-space point hits. */
+    private fun hitTestHandle(x: Float, y: Float, box: RectF): SelectionDrag {
+        val pad = handleSize / 2f + handleHitPad
+        fun near(hx: Float, hy: Float) = abs(x - hx) <= pad && abs(y - hy) <= pad
+        return when {
+            near(box.left, box.top) -> SelectionDrag.HANDLE_TL
+            near(box.right, box.top) -> SelectionDrag.HANDLE_TR
+            near(box.left, box.bottom) -> SelectionDrag.HANDLE_BL
+            near(box.right, box.bottom) -> SelectionDrag.HANDLE_BR
+            else -> SelectionDrag.NONE
+        }
+    }
+
+    private fun anchorForHandle(handle: SelectionDrag, box: RectF): Pair<Float, Float> = when (handle) {
+        SelectionDrag.HANDLE_TL -> box.right to box.bottom
+        SelectionDrag.HANDLE_TR -> box.left to box.bottom
+        SelectionDrag.HANDLE_BL -> box.right to box.top
+        SelectionDrag.HANDLE_BR -> box.left to box.top
+        SelectionDrag.NONE, SelectionDrag.MOVE -> 0f to 0f
+    }
+
     /**
      * Redraw the current strokes with selected strokes highlighted (thicker stroke).
-     * Also draws the lasso polygon if points exist.
+     * Also draws the lasso polygon if points exist, plus the selection bounding box,
+     * corner handles, and Cut/Copy chips once a selection has been committed.
      */
     private fun drawWithSelection() {
         val lockCanvas = provideSurfaceView().holder.lockCanvas() ?: return
@@ -946,6 +1031,50 @@ abstract class SurfaceFragment : ScreenFragment() {
                 lassoPath.close()
             }
             lockCanvas.drawPath(lassoPath, lassoPaint)
+        }
+
+        // Selection overlay: bounding box, handles, and Cut/Copy chips
+        val box = selBox
+        if (hasSelection && box != null) {
+            // Dashed bounding box
+            lockCanvas.drawRect(box, lassoPaint)
+
+            // Corner handles (filled squares with a border)
+            val h = handleSize / 2f
+            val handleFill = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL; isAntiAlias = true }
+            val handleStroke = Paint().apply {
+                color = Color.BLACK; style = Paint.Style.STROKE; strokeWidth = 3f; isAntiAlias = true
+            }
+            val corners = listOf(
+                box.left to box.top, box.right to box.top,
+                box.left to box.bottom, box.right to box.bottom,
+            )
+            for ((cx, cy) in corners) {
+                lockCanvas.drawRect(cx - h, cy - h, cx + h, cy + h, handleFill)
+                lockCanvas.drawRect(cx - h, cy - h, cx + h, cy + h, handleStroke)
+            }
+
+            // Chips
+            val cutR = cutChipRect(box)
+            val copyR = copyChipRect(box)
+            val chipBg = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL; isAntiAlias = true }
+            val chipBorder = Paint().apply {
+                color = Color.BLACK; style = Paint.Style.STROKE; strokeWidth = 3f; isAntiAlias = true
+            }
+            for (r in listOf(cutR, copyR)) {
+                lockCanvas.drawRoundRect(r, 12f, 12f, chipBg)
+                lockCanvas.drawRoundRect(r, 12f, 12f, chipBorder)
+            }
+            // Draw icons inside chips
+            val pad = 14
+            val cutIcon = ResourcesCompat.getDrawable(resources, R.drawable.ic_toolbar_cut, null)
+            cutIcon?.setBounds((cutR.left + pad).toInt(), (cutR.top + pad).toInt(),
+                (cutR.right - pad).toInt(), (cutR.bottom - pad).toInt())
+            cutIcon?.draw(lockCanvas)
+            val copyIcon = ResourcesCompat.getDrawable(resources, R.drawable.ic_toolbar_copy, null)
+            copyIcon?.setBounds((copyR.left + pad).toInt(), (copyR.top + pad).toInt(),
+                (copyR.right - pad).toInt(), (copyR.bottom - pad).toInt())
+            copyIcon?.draw(lockCanvas)
         }
 
         lockCanvas.restore()
@@ -1436,6 +1565,13 @@ abstract class SurfaceFragment : ScreenFragment() {
                     onStrokesAdded(pastedStrokes)
                     applyStrokes(strokes, true)
                     onStrokeChanged(strokes)
+                    // Keep the freshly pasted strokes selected so the user can
+                    // immediately drag-to-move or resize them via the lasso overlay.
+                    selectedStrokes = pastedStrokes.toMutableList()
+                    hasSelection = true
+                    selectionMode = false
+                    selBox = computeSelBox(selectedStrokes)
+                    drawWithSelection()
                     showMessage(R.string.calendar_drawing_toolbar_pasted, provideSurfaceView())
                 }
                 if (actionUp) {
@@ -1444,6 +1580,116 @@ abstract class SurfaceFragment : ScreenFragment() {
                     provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
                 }
                 return true
+            }
+
+            // --- Selection committed: handle chip taps and corner-handle drags ---
+            if (hasSelection && !selectionMode) {
+                val box = selBox
+                if (box != null) {
+                    if (actionDown) {
+                        // Cut chip?
+                        if (cutChipRect(box).contains(x, y)) {
+                            undoStack.add(Stroke.listDeepCopy(strokes))
+                            if (undoStack.size > 50) undoStack.removeAt(0)
+                            redoStack.clear()
+                            strokeClipboard.copy(selectedStrokes.toList())
+                            val removedIds = selectedStrokes.map { it.strokeId }
+                            strokes.removeAll { it.strokeId in removedIds.toSet() }
+                            onStrokesDeleted(removedIds)
+                            exitSelectionMode()
+                            applyStrokes(strokes, true)
+                            onStrokeChanged(strokes)
+                            return true
+                        }
+                        // Copy chip?
+                        if (copyChipRect(box).contains(x, y)) {
+                            strokeClipboard.copy(selectedStrokes.toList())
+                            showMessage(R.string.calendar_drawing_toolbar_copied, provideSurfaceView())
+                            return true
+                        }
+                        // Corner handle?
+                        val hit = hitTestHandle(x, y, box)
+                        if (hit != SelectionDrag.NONE) {
+                            undoStack.add(Stroke.listDeepCopy(strokes))
+                            if (undoStack.size > 50) undoStack.removeAt(0)
+                            redoStack.clear()
+                            selectionDrag = hit
+                            scaleOrigBox = RectF(box)
+                            val (ax, ay) = anchorForHandle(hit, box)
+                            scaleAnchorX = ax
+                            scaleAnchorY = ay
+                            scaleOrigPoints = selectedStrokes.associate { stroke ->
+                                stroke.strokeId to stroke.strokePoints.map { it.x to it.y }
+                            }
+                            return true
+                        }
+                        // Inside the bbox (but not on a handle/chip)? Start a MOVE drag.
+                        if (box.contains(x, y)) {
+                            undoStack.add(Stroke.listDeepCopy(strokes))
+                            if (undoStack.size > 50) undoStack.removeAt(0)
+                            redoStack.clear()
+                            selectionDrag = SelectionDrag.MOVE
+                            moveStartX = x
+                            moveStartY = y
+                            scaleOrigPoints = selectedStrokes.associate { stroke ->
+                                stroke.strokeId to stroke.strokePoints.map { it.x to it.y }
+                            }
+                            return true
+                        }
+                        // Tap outside the box / chips / handles → cancel selection.
+                        exitSelectionMode()
+                        applyStrokes(strokes, true)
+                        return true
+                    } else if (actionMove && selectionDrag == SelectionDrag.MOVE) {
+                        val dx = x - moveStartX
+                        val dy = y - moveStartY
+                        for (stroke in selectedStrokes) {
+                            val origs = scaleOrigPoints[stroke.strokeId] ?: continue
+                            for ((i, pt) in stroke.strokePoints.withIndex()) {
+                                if (i >= origs.size) break
+                                val (ox, oy) = origs[i]
+                                pt.x = ox + dx
+                                pt.y = oy + dy
+                            }
+                        }
+                        selBox = computeSelBox(selectedStrokes)
+                        drawWithSelection()
+                        return true
+                    } else if (actionMove && selectionDrag != SelectionDrag.NONE) {
+                        val orig = scaleOrigBox ?: return true
+                        val origW = orig.width().coerceAtLeast(1f)
+                        val origH = orig.height().coerceAtLeast(1f)
+                        val newW = abs(x - scaleAnchorX).coerceAtLeast(1f)
+                        val newH = abs(y - scaleAnchorY).coerceAtLeast(1f)
+                        // Uniform scale based on the larger demanded factor so the
+                        // bounding-box still touches the dragged corner exactly.
+                        val s = maxOf(newW / origW, newH / origH).coerceIn(0.1f, 10.0f)
+                        for (stroke in selectedStrokes) {
+                            val origs = scaleOrigPoints[stroke.strokeId] ?: continue
+                            for ((i, pt) in stroke.strokePoints.withIndex()) {
+                                if (i >= origs.size) break
+                                val (ox, oy) = origs[i]
+                                pt.x = scaleAnchorX + (ox - scaleAnchorX) * s
+                                pt.y = scaleAnchorY + (oy - scaleAnchorY) * s
+                            }
+                        }
+                        selBox = computeSelBox(selectedStrokes)
+                        drawWithSelection()
+                        return true
+                    } else if (actionUp && selectionDrag != SelectionDrag.NONE) {
+                        selectionDrag = SelectionDrag.NONE
+                        scaleOrigBox = null
+                        scaleOrigPoints = emptyMap()
+                        applyStrokes(strokes, true)
+                        onStrokeChanged(strokes)
+                        // applyStrokes wipes the bbox/handles/chips off the surface;
+                        // redraw them so the selection stays visible and editable.
+                        drawWithSelection()
+                        return true
+                    }
+                }
+                // Hover / unhandled — let the pen still flow through to the normal
+                // drawing path so the user can write nearby; tapping outside clears.
             }
 
             // --- Lasso selection mode: collect polygon points ---
@@ -1466,6 +1712,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                         }
                         hasSelection = true
                         selectionMode = false
+                        selBox = computeSelBox(selectedStrokes)
                         drawWithSelection()
                         if (selectedStrokes.isEmpty()) {
                             showMessage(R.string.calendar_drawing_toolbar_nothing_selected, provideSurfaceView())

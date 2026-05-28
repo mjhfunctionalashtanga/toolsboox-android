@@ -290,8 +290,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             }
         }
         binding.toolbarDrawing.toolbarCalendarView.setOnClickListener {
-            calendarStyle = CalendarDay.DEFAULT_STYLE
-            presenter.load(this@CalendarDayFragment, binding, currentDate, defaultStartHour, locale)
+            // Always jump to today's day page (Default style), regardless of what
+            // date you're currently viewing or whether you're on a note page.
+            CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE)
         }
         binding.toolbarDrawing.toolbarHealthView.setOnClickListener {
             calendarStyle = CalendarDay.HEALTH_V1_STYLE
