@@ -18,6 +18,13 @@ A fork of [Tools for Boox](https://github.com/gaborauth/toolsboox-android) by [G
 - **Phosphor icons throughout** — clean outline-style toolbar from [Phosphor Icons](https://github.com/phosphor-icons/core)
 - **Redesigned navigator strip** — clean Atkinson Hyperlegible typography, current granularity in bold focal type, siblings in muted context. Same look across Day / Week / Month / Quarter / Year views.
 
+### Viwoods AiPaper Mini support
+The fork also runs on the **Viwoods AiPaper Mini** (a non-Boox, MediaTek e-ink tablet), built as a dedicated `viwoods` product flavor so the Boox builds are completely unaffected.
+
+- **Native hardware fast ink** — on the `viwoods` flavor (which targets SDK 30 so the app runs in the `untrusted_app_30` SELinux domain, like Viwoods' own apps), the planner calls `ENoteSetting.initWriting()` to hand pen rendering to the device's **T1000 timing controller** — instant, full-screen, pressure-sensitive strokes, the same engine the stock Viwoods apps use. No root required. This needs the factory-default property `persist.sys.focusmonitor.config=1`, present on stock units and only wiped by a bootloader-unlock + factory-reset (restore it with root via `resetprop -p persist.sys.focusmonitor.config 1`, or the Viwoods debug tool's "enable accessibility" command).
+- **FAST-waveform software fallback** — if that property isn't set (or on the standard build), the app instead switches the panel to the FAST e-ink waveform and renders strokes itself, so they still refresh far quicker than the default GL16 reading waveform. The Onyx raw-drawing path is skipped on Viwoods (its `TouchHelper` loads but is inert and swallows the pen).
+- Implemented in `ViwoodsFastInk.kt`; all device-specific behavior is gated so the `standard` (Boox) build is byte-for-byte the same as before. Credit to [jdkruzr's ViwoodsAppDev](https://github.com/jdkruzr/ViwoodsAppDev) reverse-engineering for the `initWriting` + targetSdk-30 recipe.
+
 ### Gratitude page
 Swiping down from the day view lands on a dedicated gratitude / journal page before the regular blank notes:
 - **3 Things I'm Grateful For** — left column, 11 lines for free-form elaboration on each numbered slot
@@ -64,11 +71,17 @@ export JAVA_HOME="/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
 export ANDROID_HOME="/opt/homebrew/share/android-commandlinetools"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 
-./gradlew assembleDevDebug
+# Boox (and everything else) — targetSdk 36
+./gradlew assembleDevStandardDebug
 
-# Install on connected device
-$ANDROID_HOME/platform-tools/adb install -r app/build/outputs/apk/dev/debug/toolboox-dev-debug-*.apk
+# Viwoods AiPaper Mini — targetSdk 30, native fast ink
+./gradlew assembleDevViwoodsDebug
+
+# Install on a connected Boox
+$ANDROID_HOME/platform-tools/adb install -r app/build/outputs/apk/devStandard/debug/toolboox-devStandard-debug-*.apk
 ```
+
+> The Viwoods Mini ships a locked-down ADB daemon (no `install`/`shell`/`push`), so sideload the `devViwoods` APK over MTP (Android File Transfer → Download → tap to install on-device).
 
 ## Setup
 

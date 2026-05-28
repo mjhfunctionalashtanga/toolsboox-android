@@ -218,6 +218,13 @@ abstract class SurfaceFragment : ScreenFragment() {
     private var touchHelper: TouchHelper? = null
 
     /**
+     * Viwoods AiPaper fast-ink backend. Non-null only on Viwoods hardware (where the Onyx
+     * TouchHelper is inert); puts the panel into the FAST e-ink waveform so our software
+     * stroke rendering refreshes quickly. Null on Boox.
+     */
+    private var viwoodsInk: com.toolsboox.ot.ViwoodsFastInk? = null
+
+    /**
      * The gesture detector
      */
     protected lateinit var gestureDetector: GestureDetectorCompat
@@ -386,6 +393,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         initializeSurface()
         touchHelper?.setRawDrawingEnabled(true)
         touchHelper?.isRawDrawingRenderEnabled = true
+        // Viwoods FAST waveform is (re)activated from surfaceChanged once dimensions are known.
 
         penState = true
         selectionMode = false
@@ -677,6 +685,9 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         touchHelper?.closeRawDrawing()
         bitmap?.recycle()
+
+        // Tear down Viwoods AutoDraw and return the panel to reading mode. No-op on Boox.
+        viwoodsInk?.disable()
 
         try {
             com.toolsboox.plugin.calendar.nw.UltrabridgeSyncWorker.syncNow(requireContext())
@@ -1253,17 +1264,32 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     fun initializeSurface(first: Boolean = false) {
         if (first) {
-            // Try to create the Onyx TouchHelper on any Boox device. The SDK's
-            // hasStylus() heuristic can return false on some models (e.g. Palma 2 Pro)
-            // even when raw stylus drawing is supported, which forces the slow
-            // MotionEvent fallback rendering path. Catch and fall back only on real
-            // failure (non-Onyx device or SDK incompatibility).
-            try {
-                touchHelper = TouchHelper.create(provideSurfaceView(), callback)
-                Timber.i("TouchHelper created successfully on ${Build.MODEL}")
-            } catch (e: Throwable) {
-                Timber.w(e, "TouchHelper creation failed on ${Build.MODEL}; falling back to MotionEvent rendering")
+            if (com.toolsboox.ot.ViwoodsFastInk.isAvailable) {
+                // Viwoods AiPaper: the Onyx TouchHelper.create() succeeds here but is inert
+                // (no Onyx hardware) AND swallows the pen, which is why strokes only showed
+                // on lift. Skip it entirely; we set the FAST e-ink waveform and render the
+                // pen ourselves. Touch events reach us via the SurfaceView's onTouchListener.
                 touchHelper = null
+                try {
+                    viwoodsInk = com.toolsboox.ot.ViwoodsFastInk().also { it.attach(requireContext()) }
+                    Timber.i("Viwoods fast-ink backend active on ${Build.MODEL}")
+                } catch (t: Throwable) {
+                    Timber.w(t, "Viwoods attach() failed")
+                    viwoodsInk = null
+                }
+            } else {
+                // Try to create the Onyx TouchHelper on any Boox device. The SDK's
+                // hasStylus() heuristic can return false on some models (e.g. Palma 2 Pro)
+                // even when raw stylus drawing is supported, which forces the slow
+                // MotionEvent fallback rendering path. Catch and fall back only on real
+                // failure (non-Onyx device or SDK incompatibility).
+                try {
+                    touchHelper = TouchHelper.create(provideSurfaceView(), callback)
+                    Timber.i("TouchHelper created successfully on ${Build.MODEL}")
+                } catch (e: Throwable) {
+                    Timber.w(e, "TouchHelper creation failed on ${Build.MODEL}; falling back to MotionEvent rendering")
+                    touchHelper = null
+                }
             }
             provideSurfaceView().setZOrderOnTop(true)
             provideSurfaceView().holder.setFormat(PixelFormat.TRANSPARENT)
@@ -1308,6 +1334,20 @@ abstract class SurfaceFragment : ScreenFragment() {
                     Timber.i("surfaceChanged: ${width}x${height}")
                     surfaceSize = Rect(0, 0, width, height)
                     updateTransformMatrix()
+                    // Activate Viwoods T1000 AutoDraw for this surface. The hardware then
+                    // renders pen strokes live; we draw nothing during the stroke. Uses
+                    // full-screen metrics (not just the surface) to register the region.
+                    if (viwoodsInk != null && width > 0 && height > 0) {
+                        try {
+                            val dm = resources.displayMetrics
+                            viwoodsInk?.enable(
+                                dm.widthPixels, dm.heightPixels,
+                                com.toolsboox.BuildConfig.VIWOODS_FAST_INK
+                            )
+                        } catch (t: Throwable) {
+                            Timber.w(t, "Viwoods enable() failed")
+                        }
+                    }
                     // Re-apply the limit rect with the new dimensions (e.g. after rotation).
                     touchHelper?.let { th ->
                         th.setRawDrawingEnabled(false)
@@ -1340,7 +1380,16 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     fun clearSurface() {
         val lockerCanvas = provideSurfaceView().holder.lockCanvas() ?: return
-        EpdController.enablePost(provideSurfaceView(), 1)
+        // EpdController is Onyx-only and relies on the SDK being initialized by
+        // TouchHelper.create(). On Viwoods we never create the TouchHelper, so this would
+        // throw — skip it (AutoDraw owns the panel refresh) and guard defensively.
+        if (viwoodsInk == null) {
+            try {
+                EpdController.enablePost(provideSurfaceView(), 1)
+            } catch (t: Throwable) {
+                Timber.w(t, "EpdController.enablePost failed")
+            }
+        }
         lockerCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
         provideSurfaceView().holder.unlockCanvasAndPost(lockerCanvas)
 
@@ -1768,6 +1817,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         firstPointTimestamp = Instant.now().toEpochMilli()
         touchPoint.t = 0L
         stylusPointList.add(touchPoint)
+        if (penState) viwoodsInk?.onStrokeStart()
     }
 
     private fun onMoveDrawing(touchPoints: List<StrokePoint>) {
@@ -1786,7 +1836,11 @@ abstract class SurfaceFragment : ScreenFragment() {
             }
         }
 
-        if (touchHelper == null && penState) {
+        // Software live rendering for the no-Onyx path. Skipped when Viwoods hardware ink is
+        // active (the T1000 renders the live stroke natively — drawing it ourselves too would
+        // double-image). On the FAST-waveform fallback the panel is in FAST mode so these
+        // partial posts refresh quickly.
+        if (touchHelper == null && penState && viwoodsInk?.hardwareInk != true) {
             val totalScale = baseScale * zoomScale
             val sigma = paint.strokeWidth * totalScale * 4.0f
 
@@ -1808,11 +1862,27 @@ abstract class SurfaceFragment : ScreenFragment() {
             if (lockCanvas != null) {
                 lockCanvas.save()
                 lockCanvas.concat(viewMatrix)
-                lockCanvas.drawPath(path, paint)
+                // Use a non-anti-aliased predraw paint: the full path is redrawn every move,
+                // and re-blending AA edge pixels each frame is what fattens the live line.
+                // On the 1-bit FAST waveform crisp pixels look the same and can't accumulate.
+                lockCanvas.drawPath(path, viwoodsPredrawPaint())
                 lockCanvas.restore()
                 provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
             }
         }
+    }
+
+    /** Lazily-built non-AA paint for the Viwoods software live preview (matches [paint] width/color). */
+    private var _viwoodsPredrawPaint: Paint? = null
+    private fun viwoodsPredrawPaint(): Paint {
+        val p = _viwoodsPredrawPaint ?: Paint().also { _viwoodsPredrawPaint = it }
+        p.style = Paint.Style.STROKE
+        p.strokeCap = Paint.Cap.ROUND
+        p.strokeJoin = Paint.Join.ROUND
+        p.isAntiAlias = false
+        p.color = paint.color
+        p.strokeWidth = paint.strokeWidth
+        return p
     }
 
     private fun onEndDrawing(touchPoint: StrokePoint, erasing: Boolean, finger: Boolean) {
@@ -1847,6 +1917,25 @@ abstract class SurfaceFragment : ScreenFragment() {
             val stroke = Stroke(UUID.randomUUID(), firstPointTimestamp, stylusPointList.toList(), paint.color, paint.strokeWidth)
             strokes.add(stroke)
             strokesToAdd.add(stroke)
+
+            // Viwoods: the T1000 overlay shows the live stroke then auto-clears ~800ms
+            // after pen-up. Re-render the committed strokes to the SurfaceView just after
+            // that, so the permanent ink replaces the overlay with no flicker or gap.
+            if (viwoodsInk != null) {
+                viwoodsInk?.onStrokeEnd()
+                if (viwoodsInk?.hardwareInk == true) {
+                    // Hardware ink: the native overlay shows the stroke then self-clears ~800ms
+                    // after pen-up. Repaint our committed strokes just after, for a seamless
+                    // hand-off from the fast (1-bit) overlay to the quality (GL16) layer.
+                    val snapshot = Stroke.listDeepCopy(strokes)
+                    Handler(Looper.getMainLooper()).postDelayed({ applyStrokes(snapshot, true) }, 900)
+                } else {
+                    // Software fallback: partial lockCanvas posts don't form a stable buffer,
+                    // so repaint immediately to persist the completed mark.
+                    applyStrokes(strokes, true)
+                }
+                onStrokeChanged(strokes)
+            }
 
             if (finger) convertStrokes()
         }
