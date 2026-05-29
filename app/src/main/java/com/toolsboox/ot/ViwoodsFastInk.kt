@@ -171,6 +171,18 @@ class ViwoodsFastInk {
         if (hardwareInk) reflect("onWritingStart", arrayOf())
     }
 
+    /**
+     * Re-assert the FAST waveform for the software path. The panel reverts to the GL16
+     * reading waveform on full-page redraws (e.g. swiping between the day and notes/journal
+     * pages), so FAST set once at surface creation isn't enough — call this on each pen-down
+     * so every page writes quickly. No-op on the hardware path (the native layer owns refresh).
+     */
+    fun reassertFastMode() {
+        if (enote == null || hardwareInk) return
+        transact(TXN_SET_PICTURE_MODE, MODE_FAST)
+            ?: reflect("setPictureMode", arrayOf(Int::class.javaPrimitiveType!!), MODE_FAST)
+    }
+
     /** Signal stroke end — triggers the native quality redraw. Hardware path only. */
     fun onStrokeEnd() {
         if (hardwareInk) reflect("onWritingEnd", arrayOf())

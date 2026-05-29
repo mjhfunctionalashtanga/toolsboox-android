@@ -1817,7 +1817,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         firstPointTimestamp = Instant.now().toEpochMilli()
         touchPoint.t = 0L
         stylusPointList.add(touchPoint)
-        if (penState) viwoodsInk?.onStrokeStart()
+        if (penState) {
+            viwoodsInk?.onStrokeStart()
+            viwoodsInk?.reassertFastMode()
+        }
     }
 
     private fun onMoveDrawing(touchPoints: List<StrokePoint>) {
