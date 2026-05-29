@@ -197,6 +197,19 @@ class ViwoodsFastInk {
         }
     }
 
+    /** Diagnostic: the raw enabled-accessibility-services component string (or ∅). */
+    fun accessibilityServicesRaw(): String {
+        val ctx = appContext ?: return "no-ctx"
+        return try {
+            android.provider.Settings.Secure.getString(
+                ctx.contentResolver,
+                android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            )?.takeIf { it.isNotBlank() } ?: "∅"
+        } catch (t: Throwable) {
+            "err:${t.javaClass.simpleName}"
+        }
+    }
+
     /** Signal stroke start to the native layer (quality-redraw bookkeeping). Hardware path only. */
     fun onStrokeStart() {
         if (hardwareInk) reflect("onWritingStart", arrayOf())

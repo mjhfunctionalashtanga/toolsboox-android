@@ -1830,7 +1830,11 @@ abstract class SurfaceFragment : ScreenFragment() {
             if (!viwoodsDiagShown) {
                 viwoodsDiagShown = true
                 viwoodsInk?.let { ink ->
-                    Toast.makeText(requireContext(), "Viwoods ink ${ink.status()}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        requireContext(),
+                        "Viwoods ${ink.status()}\nsvc: ${ink.accessibilityServicesRaw()}",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             }
         }
