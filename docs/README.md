@@ -1,4 +1,4 @@
-# ViBook Planner (Tools for Boox fork)
+# Ledger (Tools for Boox fork)
 
 A fork of [Tools for Boox](https://github.com/gaborauth/toolsboox-android) by [Gabor Auth](https://github.com/gaborauth), optimized for daily planning on Boox e-ink tablets with pen color support, full-screen drawing, pinch-zoom for smaller devices, home screen widgets, and [Ultrabridge](https://github.com/jdkruzr/ultrabridge) integration for handwriting OCR and task sync.
 
@@ -36,9 +36,9 @@ Swipe down again to reach your regular note pages 0, 1, 2…
 ### Home screen widgets
 Three widget variants render today's planner page directly on the home screen, auto-refreshing every 30 minutes and immediately whenever you save strokes:
 
-- **ViBook Planner** — full planner page (schedule + tasks + notes)
-- **ViBook Schedule** — schedule column split horizontally: morning (5am–1pm) on the left, afternoon (1pm–10pm) on the right
-- **ViBook Tasks/Notes** — right column rearranged side-by-side: tasks on the left, notes on the right
+- **Ledger Full Page** — full planner page (schedule + tasks + notes)
+- **Ledger Schedule** — schedule column split horizontally: morning (5am–1pm) on the left, afternoon (1pm–10pm) on the right
+- **Ledger Tasks & Notes** — right column rearranged side-by-side: tasks on the left, notes on the right
 
 All three include your handwritten strokes and overlay device calendar events. Tap any widget to open the app to today's page.
 
@@ -93,7 +93,7 @@ $ANDROID_HOME/platform-tools/adb install -r app/build/outputs/apk/devStandard/de
 
 ## Support this fork
 
-If ViBook Planner is useful to you, here are a few ways to say thanks and help fund more digital-garden projects like this one:
+If Ledger is useful to you, here are a few ways to say thanks and help fund more digital-garden projects like this one:
 
 - **Read the [Shala Daily](https://theyoga.club/)** — a free daily Ashtanga reflection from Michael Joel Hall
 - **Visit [mjh.yoga](https://mjh.yoga)** — essays, notes, and ongoing projects from the same workshop this app came out of
