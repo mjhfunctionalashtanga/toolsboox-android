@@ -52,3 +52,9 @@
 -keep class com.google.gson.** { *; }
 -dontnote com.google.gson.**
 -dontwarn com.google.gson.**
+
+# Viwoods fast-ink: libpaintworker.so's JNI_OnLoad RegisterNatives onto this
+# class. It has no Java references, so keep it (and its native method names)
+# intact or initWriting() crashes. Only present in the viwoods source set.
+-keep class com.iflytek.ainote.handwrite.NoteJNI { *; }
+-keep class com.iflytek.ainote.handwrite.NoteJNI$* { *; }

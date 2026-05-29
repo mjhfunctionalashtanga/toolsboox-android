@@ -10,13 +10,16 @@ import timber.log.Timber
 /**
  * Viwoods AiPaper fast-ink backend.
  *
- * Background: true hardware fast-ink (the T1000 AutoDraw / `initWriting` path used by
- * Viwoods' own apps) is NOT reachable from a sideloaded app — `libpaintworker.so`
- * crashes in JNI_OnLoad on an `untrusted_app` SELinux context (it needs `/dev/t1000_spi`,
- * the display compositor and `/dev/input`, all system-only). See jdkruzr's RE notes:
- * github.com/jdkruzr/ViwoodsAppDev. That path needs root or a system/product-app install.
+ * Background: the `initWriting` path used by Viwoods' own apps loads `libpaintworker.so`
+ * in-process; its `JNI_OnLoad` does `RegisterNatives` onto `com.iflytek.ainote.handwrite.NoteJNI`,
+ * so without that class present in our APK it throws ("JNI_OnLoad 检测到异常") and the hardware
+ * path silently fails. The `viwoods` source set ships that stub (see NoteJNI.java), so on a
+ * targetSdk-30 build running as `untrusted_app_30` the native T1000 renders pen strokes
+ * full-screen — true instant hardware ink. Confirmed reachable on stock units with
+ * `persist.sys.focusmonitor.config=1`; see jdkruzr's RE notes (github.com/jdkruzr/ViwoodsAppDev)
+ * and the project_viwoods_fast_ink memory.
  *
- * What works WITHOUT root: switch the panel to the FAST e-ink waveform via the
+ * Fallback WITHOUT the hardware path: switch the panel to the FAST e-ink waveform via the
  * `ENoteSetting` binder service (direct IBinder.transact from our process), so the app's
  * own SurfaceView stroke posts refresh quickly instead of using the slow GL16 reading
  * waveform. The app still renders the strokes itself (software). The AutoDraw enable
