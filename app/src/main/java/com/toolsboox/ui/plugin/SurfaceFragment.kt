@@ -1464,59 +1464,6 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     /**
-     * Viwoods-only: persist a freshly-committed [stroke] by reposting ONLY its bounding
-     * rect, instead of [applyStrokes]'s whole-surface repaint.
-     *
-     * Why: on write-heavy pages (the daily Journal/Gratitude notes) a full-surface clear+
-     * repost on every pen-up means a whole-screen e-ink repaint per word — fine on the
-     * sparse Schedule page, sluggish when writing prose. Here we lock just the stroke's
-     * dirty rect and redraw ALL strokes clipped to it (NOT only the new one — drawing only
-     * the new stroke is what made earlier partial posts unstable, since the rest of the
-     * locked region went stale). The region is therefore fully authoritative and stable,
-     * but only that small rect is posted to the panel. The shadow [canvas] is kept in sync
-     * so later full redraws (zoom/undo/page-load) remain correct.
-     *
-     * Falls back to a full [applyStrokes] if the rect can't be computed/locked. Returns
-     * true if the partial post happened.
-     */
-    private fun commitStrokeViwoods(stroke: Stroke): Boolean {
-        val pts = stroke.strokePoints
-        if (pts.isEmpty() || surfaceSize.width() <= 0 || surfaceSize.height() <= 0) return false
-        val totalScale = baseScale * zoomScale
-        if (totalScale <= 0f) return false
-        val sigma = paint.strokeWidth * totalScale * 4.0f
-        val pad = sigma / totalScale
-        val minPt = floatArrayOf(pts.minOf { it.x } - pad, pts.minOf { it.y } - pad)
-        val maxPt = floatArrayOf(pts.maxOf { it.x } + pad, pts.maxOf { it.y } + pad)
-        viewMatrix.mapPoints(minPt)
-        viewMatrix.mapPoints(maxPt)
-        val rect = Rect(
-            minPt[0].toInt().coerceAtLeast(0),
-            minPt[1].toInt().coerceAtLeast(0),
-            maxPt[0].toInt().coerceAtMost(surfaceSize.width()),
-            maxPt[1].toInt().coerceAtMost(surfaceSize.height())
-        )
-        if (rect.width() <= 0 || rect.height() <= 0) return false
-
-        // Keep the shadow canvas authoritative (incremental — the new stroke only).
-        drawStrokePath(canvas, Paint(paint), stroke)
-
-        val lockCanvas = provideSurfaceView().holder.lockCanvas(rect) ?: return false
-        try {
-            lockCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR) // clipped to rect
-            lockCanvas.save()
-            lockCanvas.concat(viewMatrix)
-            val strokePaint = Paint(paint)
-            for (s in strokes) drawStrokePath(lockCanvas, strokePaint, s)
-            renderTextElements(lockCanvas)
-            lockCanvas.restore()
-        } finally {
-            provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
-        }
-        return true
-    }
-
-    /**
      * Normalize strokes from surface dimensions to unified.
      *
      * @param strokes the strokes
@@ -1981,17 +1928,14 @@ abstract class SurfaceFragment : ScreenFragment() {
                 viwoodsInk?.onStrokeEnd()
                 if (viwoodsInk?.hardwareInk == true) {
                     // Hardware ink: the native overlay shows the stroke then self-clears ~800ms
-                    // after pen-up. Repaint just after, for a seamless hand-off from the fast
-                    // (1-bit) overlay to the quality (GL16) layer. Post only the stroke's rect
-                    // (the overlay only painted there) — full repaint as fallback.
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        if (!commitStrokeViwoods(stroke)) applyStrokes(Stroke.listDeepCopy(strokes), true)
-                    }, 900)
+                    // after pen-up. Repaint our committed strokes just after, for a seamless
+                    // hand-off from the fast (1-bit) overlay to the quality (GL16) layer.
+                    val snapshot = Stroke.listDeepCopy(strokes)
+                    Handler(Looper.getMainLooper()).postDelayed({ applyStrokes(snapshot, true) }, 900)
                 } else {
-                    // Software fallback. Post only the new stroke's rect so a write-heavy page
-                    // (Journal/Gratitude notes) doesn't trigger a whole-screen e-ink repaint on
-                    // every pen-up; full repaint as fallback if the rect can't be locked.
-                    if (!commitStrokeViwoods(stroke)) applyStrokes(strokes, true)
+                    // Software fallback: partial lockCanvas posts don't form a stable buffer,
+                    // so repaint immediately to persist the completed mark.
+                    applyStrokes(strokes, true)
                 }
                 onStrokeChanged(strokes)
             }
