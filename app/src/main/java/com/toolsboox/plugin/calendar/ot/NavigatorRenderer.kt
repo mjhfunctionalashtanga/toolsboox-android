@@ -98,4 +98,22 @@ object NavigatorRenderer {
 
         canvas.drawLine(0.0f, 138.4f, 1404.0f, 138.4f, underline)
     }
+
+    // --- Hit-testing geometry (must stay in sync with render() above) ---
+    const val SLOTS_LEFT = 140.0f
+    const val SLOTS_RIGHT = 1264.0f
+    const val HIT_PREV = -1   // left "<" arrow zone
+    const val HIT_NEXT = -2   // right ">" arrow zone
+
+    /**
+     * Map a touch x-coordinate (in the 1404-wide strip space) to a slot index,
+     * or [HIT_PREV] / [HIT_NEXT] for the arrow zones. Keeps tap targets aligned
+     * with the slots drawn by [render] so the two can't drift apart again.
+     */
+    fun hitTest(px: Float, slotCount: Int): Int {
+        if (px < SLOTS_LEFT) return HIT_PREV
+        if (px > SLOTS_RIGHT) return HIT_NEXT
+        val w = (SLOTS_RIGHT - SLOTS_LEFT) / slotCount
+        return ((px - SLOTS_LEFT) / w).toInt().coerceIn(0, slotCount - 1)
+    }
 }

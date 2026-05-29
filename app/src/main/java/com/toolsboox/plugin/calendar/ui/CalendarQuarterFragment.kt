@@ -213,6 +213,10 @@ class CalendarQuarterFragment @Inject constructor() : SurfaceFragment() {
 
         toolbar.toolbarPager.visibility = View.GONE
 
+        binding.toolbarDrawing.toolbarCalendarView.setOnClickListener {
+            CalendarNavigator.toDayPage(this, LocalDate.now())
+        }
+
         binding.toolbarDrawing.toolbarSwipeUp.setOnClickListener {
             if (notePage != null) {
                 val page = notePage!!.toIntOrNull() ?: 0

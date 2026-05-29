@@ -56,32 +56,15 @@ class CalendarMonthNavigator {
             when (motionEvent.action) {
                 MotionEvent.ACTION_UP -> {
                     val px = motionEvent.x * 1404.0f / view.width
-                    val py = motionEvent.y * 140.4f / view.height
-
-                    if (px >= lo + 0 * cew && px <= lo + 1 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toMonthPage(fragment, localDate.minusMonths(1L))
-                        return true
+                    // Slots drawn by NavigatorRenderer: [Month, Quarter, Year]
+                    when (NavigatorRenderer.hitTest(px, 3)) {
+                        NavigatorRenderer.HIT_PREV -> CalendarNavigator.toMonthPage(fragment, localDate.minusMonths(1L))
+                        NavigatorRenderer.HIT_NEXT -> CalendarNavigator.toMonthPage(fragment, localDate.plusMonths(1L))
+                        0 -> CalendarNavigator.toMonthPage(fragment, localDate)
+                        1 -> CalendarNavigator.toQuarterPage(fragment, localDate)
+                        2 -> CalendarNavigator.toYearPage(fragment, localDate)
                     }
-                    if (px >= lo + 1 * cew && px <= lo + 3 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toDayPage(fragment, LocalDate.now())
-                        return true
-                    }
-                    if (px >= lo + 9 * cew && px <= lo + 13 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toMonthPage(fragment, localDate)
-                        return true
-                    }
-                    if (px >= lo + 13 * cew && px <= lo + 15 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toQuarterPage(fragment, localDate)
-                        return true
-                    }
-                    if (px >= lo + 15 * cew && px <= lo + 19 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toYearPage(fragment, localDate)
-                        return true
-                    }
-                    if (px >= lo + 19 * cew && px <= lo + 20 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toMonthPage(fragment, localDate.plusMonths(1L))
-                        return true
-                    }
+                    return true
                 }
             }
 
