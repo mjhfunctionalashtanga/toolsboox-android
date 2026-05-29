@@ -208,6 +208,20 @@ class ViwoodsFastInk {
             ?: reflect("setPictureMode", arrayOf(Int::class.javaPrimitiveType!!), MODE_GL16)
     }
 
+    /** Current EPD picture mode (4=FAST, 3=GL16, 17=GC), or -1 if unreadable. Diagnostic. */
+    fun currentMode(): Int {
+        val e = enote ?: return -1
+        return try {
+            e.javaClass.getMethod("getPictureMode").invoke(e) as? Int ?: -1
+        } catch (_: Throwable) {
+            -1
+        }
+    }
+
+    /** One-line status for an on-screen diagnostic: hardware-ink flag + live EPD mode + prereq. */
+    fun status(): String =
+        "hw=$hardwareInk mode=${currentMode()} fm=${getProp("persist.sys.focusmonitor.config").ifEmpty { "∅" }}"
+
     // === reflection on the ENoteSetting wrapper ===
 
     private fun reflect(name: String, types: Array<Class<*>>, vararg args: Any?): String? {

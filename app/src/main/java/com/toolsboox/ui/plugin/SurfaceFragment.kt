@@ -15,6 +15,7 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import android.widget.EditText
+import android.widget.Toast
 import android.widget.FrameLayout
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.res.ResourcesCompat
@@ -223,6 +224,9 @@ abstract class SurfaceFragment : ScreenFragment() {
      * stroke rendering refreshes quickly. Null on Boox.
      */
     private var viwoodsInk: com.toolsboox.ot.ViwoodsFastInk? = null
+
+    /** Diagnostic: show the Viwoods ink status Toast once per surface (re)creation. */
+    private var viwoodsDiagShown = false
 
     /**
      * The gesture detector
@@ -1333,6 +1337,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
                     Timber.i("surfaceChanged: ${width}x${height}")
                     surfaceSize = Rect(0, 0, width, height)
+                    viwoodsDiagShown = false
                     updateTransformMatrix()
                     // Activate Viwoods T1000 AutoDraw for this surface. The hardware then
                     // renders pen strokes live; we draw nothing during the stroke. Uses
@@ -1820,6 +1825,14 @@ abstract class SurfaceFragment : ScreenFragment() {
         if (penState) {
             viwoodsInk?.onStrokeStart()
             viwoodsInk?.reassertFastMode()
+            // Diagnostic: surface the active ink path + EPD mode once per page so we can tell
+            // whether Schedule vs Journal land on different paths. Remove once diagnosed.
+            if (!viwoodsDiagShown) {
+                viwoodsDiagShown = true
+                viwoodsInk?.let { ink ->
+                    Toast.makeText(requireContext(), "Viwoods ink ${ink.status()}", Toast.LENGTH_LONG).show()
+                }
+            }
         }
     }
 
