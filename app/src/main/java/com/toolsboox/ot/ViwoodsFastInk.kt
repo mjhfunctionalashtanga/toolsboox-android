@@ -141,24 +141,30 @@ class ViwoodsFastInk {
         if (enote == null) return
         if (useInitWriting && !initWritingDone) {
             initWritingDone = true
-            // The native fast-ink layer only works if the system FocusMonitor service is
-            // enabled (persist.sys.focusmonitor.config=1). It's factory-set on stock units
-            // but wiped by a bootloader-unlock/factory-reset. Without it, initWriting()
-            // returns OK but WritingSurface::init fails (lock error:-22) and nothing paints —
-            // so only activate the hardware path when the prerequisite is actually present.
-            // Otherwise fall through to the FAST-waveform + software-render path.
-            if (getProp("persist.sys.focusmonitor.config") == "1") {
+            // initWriting()'s WritingSurface can only acquire the WritingBufferQueue if the
+            // system FocusMonitor handoff service is alive — otherwise it gets lock error:-22
+            // and nothing paints live. FocusMonitor comes up at boot when
+            // persist.sys.focusmonitor.config=1 (factory-set, but wiped by a bootloader-unlock
+            // + factory-reset), OR when its accessibility service ("Focus") is enabled by hand
+            // in Settings → Accessibility — the no-root way to restore it after a wipe.
+            if (focusMonitorReady()) {
+                // jdkruzr's gist recipe + ordering: initWriting → FAST → renderDelay(0) → enable.
                 val ok = reflect("initWriting", arrayOf()) != null
+                transact(TXN_SET_PICTURE_MODE, MODE_FAST)
+                    ?: reflect("setPictureMode", arrayOf(Int::class.javaPrimitiveType!!), MODE_FAST)
+                // 0 = show every input point immediately (lowest latency). Knob the fork
+                // previously never set; the SDK defaults to a non-zero buffering delay.
+                reflect("setRenderWritingDelayCount", arrayOf(Int::class.javaPrimitiveType!!), 0)
                 reflect("setWritingEnabled", arrayOf(Boolean::class.javaPrimitiveType!!), true)
                 hardwareInk = ok
                 Timber.i("ViwoodsFastInk initWriting ${if (ok) "OK — hardware ink active" else "failed"}")
             } else {
-                Timber.w("ViwoodsFastInk: focusmonitor.config not set — using software fallback")
+                Timber.w("ViwoodsFastInk: FocusMonitor not ready (prop + Focus accessibility both off) — software fallback")
             }
         }
-        transact(TXN_SET_PICTURE_MODE, MODE_FAST)
-            ?: reflect("setPictureMode", arrayOf(Int::class.javaPrimitiveType!!), MODE_FAST)
         if (!hardwareInk) {
+            transact(TXN_SET_PICTURE_MODE, MODE_FAST)
+                ?: reflect("setPictureMode", arrayOf(Int::class.javaPrimitiveType!!), MODE_FAST)
             // Binder-only AutoDraw attempt (no-op on most firmware); software render is the
             // real fallback. Skipped when hardware ink is active to avoid double-drawing.
             transact(TXN_SET_AUTODRAW_ENABLE, 1)
@@ -166,6 +172,28 @@ class ViwoodsFastInk {
             transact(TXN_SET_AUTODRAW_TOOLTYPE, 2)
             transact(TXN_SET_AUTODRAW_PENWIDTH, penMin, penMax)
             transactRect(TXN_ADD_AUTODRAW_RECT, Rect(0, 0, w, h))
+        }
+    }
+
+    /**
+     * True when the FocusMonitor handoff service should be available: the persisted prop is
+     * set (stock unit) OR its accessibility service has been manually enabled (the no-root
+     * route after a wipe). Either lets [enable] take the hardware-ink path.
+     */
+    private fun focusMonitorReady(): Boolean =
+        getProp("persist.sys.focusmonitor.config") == "1" || accessibilityFocusEnabled()
+
+    /** Scan the enabled accessibility services for a FocusMonitor / Wisky / ENote entry. */
+    private fun accessibilityFocusEnabled(): Boolean {
+        val ctx = appContext ?: return false
+        return try {
+            val enabled = android.provider.Settings.Secure.getString(
+                ctx.contentResolver,
+                android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            )?.lowercase() ?: return false
+            listOf("focusmonitor", "focus", "wisky", "enote", "handwrit").any { enabled.contains(it) }
+        } catch (_: Throwable) {
+            false
         }
     }
 
@@ -220,7 +248,7 @@ class ViwoodsFastInk {
 
     /** One-line status for an on-screen diagnostic: hardware-ink flag + live EPD mode + prereq. */
     fun status(): String =
-        "hw=$hardwareInk mode=${currentMode()} fm=${getProp("persist.sys.focusmonitor.config").ifEmpty { "∅" }}"
+        "hw=$hardwareInk mode=${currentMode()} fm=${getProp("persist.sys.focusmonitor.config").ifEmpty { "∅" }} acc=${accessibilityFocusEnabled()}"
 
     // === reflection on the ENoteSetting wrapper ===
 
