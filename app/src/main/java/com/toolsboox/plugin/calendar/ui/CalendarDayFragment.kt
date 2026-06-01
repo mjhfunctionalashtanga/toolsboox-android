@@ -107,6 +107,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private lateinit var calendarPattern: CalendarPattern
 
     /**
+     * Whether the page has unsaved-to-widget changes since it was opened. Set on every
+     * stroke/text edit, cleared by the page-leave flush in onPause() that refreshes the
+     * home-screen widgets once instead of on every stroke.
+     */
+    private var contentDirty = false
+
+    /**
      * SurfaceView provide method.
      *
      * @return the actual surfaceView
@@ -139,6 +146,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         calendarPattern.updateDay(calendarDay)
 
+        contentDirty = true
         presenter.save(this, binding, calendarDay, calendarPattern, currentDate)
     }
 
@@ -150,6 +158,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     override fun onTextElementsChanged(textElements: MutableList<TextElement>) {
         calendarDay.textElements = textElements
         calendarPattern.updateDay(calendarDay)
+        contentDirty = true
         presenter.save(this, binding, calendarDay, calendarPattern, currentDate)
     }
 
@@ -332,6 +341,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         toolbar.toolbarPager.visibility = View.GONE
         timer.cancel()
+
+        // Page-leave flush: if anything was drawn/typed this visit, do one final save that
+        // also refreshes the home-screen widgets. This replaces the per-stroke widget
+        // refresh, which forced a full 1404x1872 re-render of three widgets on every stroke.
+        if (contentDirty) {
+            contentDirty = false
+            presenter.save(this, binding, calendarDay, calendarPattern, currentDate, refreshWidgets = true)
+        }
+
         syncPresenter.backgroundSync(this@CalendarDayFragment, UUID.randomUUID())
     }
 

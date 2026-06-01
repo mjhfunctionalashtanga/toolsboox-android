@@ -693,6 +693,13 @@ abstract class SurfaceFragment : ScreenFragment() {
         // Tear down Viwoods AutoDraw and return the panel to reading mode. No-op on Boox.
         viwoodsInk?.disable()
 
+        // Release the screen-on hold set in initializeSurface(). Without this the display
+        // is kept awake for the rest of the session once the planner has been opened,
+        // which is the biggest avoidable battery drain on e-ink.
+        try {
+            provideSurfaceView().keepScreenOn = false
+        } catch (_: Exception) {}
+
         try {
             com.toolsboox.plugin.calendar.nw.UltrabridgeSyncWorker.syncNow(requireContext())
         } catch (_: Exception) {}

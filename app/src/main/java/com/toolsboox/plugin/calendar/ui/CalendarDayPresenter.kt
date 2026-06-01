@@ -123,7 +123,8 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
      */
     fun save(
         fragment: CalendarDayFragment, binding: FragmentCalendarBinding,
-        calendarDay: CalendarDay, calendarPattern: CalendarPattern, currentDate: LocalDate
+        calendarDay: CalendarDay, calendarPattern: CalendarPattern, currentDate: LocalDate,
+        refreshWidgets: Boolean = false
     ) {
         if (!checkPermissions(fragment, binding.root)) return
 
@@ -141,7 +142,11 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                         calendarDayService.save(rootPath, currentDate, calendarDay)
                         calendarPatternService.save(rootPath, currentDate, calendarPattern)
                     }
-                    CalendarWidgetProvider.refreshAll(fragment.requireContext())
+                    // Only re-render the home-screen widgets on an explicit page-leave
+                    // flush, not on every stroke — see CalendarDayFragment.onPause().
+                    if (refreshWidgets) {
+                        CalendarWidgetProvider.refreshAll(fragment.requireContext())
+                    }
                 } catch (e: IOException) {
                     withContext(Dispatchers.Main) { fragment.somethingHappened(e) }
                 }
