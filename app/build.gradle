@@ -8,7 +8,7 @@ plugins {
 }
 
 android {
-    compileSdk 36
+    compileSdk = 36
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -94,7 +94,7 @@ android {
     buildTypes {
         debug {
             minifyEnabled false
-            shrinkResources false
+            shrinkResources = false
             debuggable true
 
             applicationIdSuffix ".debug"
@@ -105,10 +105,10 @@ android {
         }
         release {
             minifyEnabled false
-            shrinkResources false
+            shrinkResources = false
             debuggable false
 
-            signingConfig signingConfigs.release
+            signingConfig = signingConfigs.release
 
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
             proguardFiles fileTree('proguard').asList().toArray()
@@ -129,7 +129,7 @@ android {
         }
     }
 
-    namespace 'com.toolsboox'
+    namespace = 'com.toolsboox'
     lint {
         disable 'MissingTranslation', 'MissingQuantity', 'GestureBackNavigation'
     }
