@@ -7,6 +7,26 @@ plugins {
     id 'kotlin-android'
 }
 
+// Short git SHA (with "-dirty" if the working tree has uncommitted changes), used to
+// stamp debug builds so the installed versionName self-reports its commit. Uses the
+// providers.exec API so it stays compatible with Gradle's configuration cache.
+def gitSha = { ->
+    try {
+        def sha = providers.exec {
+            commandLine 'git', 'rev-parse', '--short', 'HEAD'
+            ignoreExitValue = true
+        }.standardOutput.asText.get().trim()
+        if (sha.isEmpty()) return 'nogit'
+        def dirty = providers.exec {
+            commandLine 'git', 'status', '--porcelain'
+            ignoreExitValue = true
+        }.standardOutput.asText.get().trim()
+        return dirty.isEmpty() ? sha : "${sha}-dirty"
+    } catch (Exception ignored) {
+        return 'nogit'
+    }
+}()
+
 android {
     compileSdk = 36
 
@@ -98,6 +118,7 @@ android {
             debuggable true
 
             applicationIdSuffix ".debug"
+            versionNameSuffix "-${gitSha}"
             resValue "string", "app_name", "Ledger Debug"
 
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
