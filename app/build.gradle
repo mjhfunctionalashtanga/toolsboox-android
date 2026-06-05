@@ -63,7 +63,7 @@ android {
     }
 
     ext {
-        appName = 'toolboox'
+        appName = 'ledger'
     }
 
     flavorDimensions = ['tier', 'device']

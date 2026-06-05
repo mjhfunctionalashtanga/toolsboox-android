@@ -29,5 +29,5 @@ jobs:
     - name: Archive production artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: toolboox-prod-release-latest.apk
-        path: app/build/outputs/apk/prod/release/toolboox-prod-release-*.apk
+        name: ledger-prod-release-latest.apk
+        path: app/build/outputs/apk/prod/release/ledger-prod-release-*.apk

@@ -50,16 +50,16 @@ jobs:
 
       - name: Rename APK
         run: |
-          mv app/build/outputs/apk/prod/release/toolboox-prod-release-*.apk \
-             vibook-planner-${{ steps.tag.outputs.name }}.apk
+          mv app/build/outputs/apk/prod/release/ledger-prod-release-*.apk \
+             ledger-${{ steps.tag.outputs.name }}.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.name }}
-          name: ViBook Planner ${{ steps.tag.outputs.name }}
+          name: Ledger ${{ steps.tag.outputs.name }}
           body: |
-            ViBook Planner release ${{ steps.tag.outputs.name }}.
+            Ledger release ${{ steps.tag.outputs.name }}.
 
             **Installation:** Download the APK below and sideload it to your Boox device.
 
@@ -67,4 +67,4 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
-          files: vibook-planner-${{ steps.tag.outputs.name }}.apk
+          files: ledger-${{ steps.tag.outputs.name }}.apk
