@@ -689,6 +689,13 @@ abstract class SurfaceFragment : ScreenFragment() {
         // Tear down Viwoods AutoDraw and return the panel to reading mode. No-op on Boox.
         viwoodsInk?.disable()
 
+        // Release the screen-on flag so the device can enter Doze when the planner is
+        // backgrounded. Without this the SoC stays awake — on e-ink the frozen frame
+        // looks "off" but Wi-Fi/CPU never sleep, draining the battery overnight.
+        try {
+            provideSurfaceView().keepScreenOn = false
+        } catch (_: Exception) {}
+
         try {
             com.toolsboox.plugin.calendar.nw.UltrabridgeSyncWorker.syncNow(requireContext())
         } catch (_: Exception) {}
