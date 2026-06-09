@@ -6,7 +6,6 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.MenuItem
-import android.widget.TextView
 import androidx.activity.viewModels
 import androidx.annotation.StringRes
 import androidx.appcompat.app.ActionBar
@@ -103,23 +102,6 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
         val androidId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
         sharedPreferences.edit().putString("androidId", androidId).apply()
-
-        val headerUserId = binding.navigationView.getHeaderView(0).findViewById<TextView>(R.id.navigation_header_user_id)
-
-        val userId = sharedPreferences.getString("userId", null)
-        if (userId == null) {
-            headerUserId.text = getString(R.string.main_not_logged_in)
-        } else {
-            headerUserId.text = userId
-        }
-
-        val headerAndroidId = binding.navigationView.getHeaderView(0).findViewById<TextView>(R.id.navigation_header_android_id)
-        headerAndroidId.text = androidId
-
-        val headerVersion = binding.navigationView.getHeaderView(0)
-            .findViewById<TextView>(R.id.navigation_header_version)
-        headerVersion.text = getString(R.string.main_version)
-            .format(BuildConfig.VERSION_NAME, BuildConfig.BUILD_TYPE)
 
         val preferences = MainSharedPreferencesModule.provideSharedPreferences(this)
         preferences.edit().putLong("lastTimestamp", Date().time).apply()

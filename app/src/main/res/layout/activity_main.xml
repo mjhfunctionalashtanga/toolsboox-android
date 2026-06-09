@@ -44,8 +44,7 @@
             android:paddingTop="25dp"
             android:fitsSystemWindows="true"
 
-            app:menu="@menu/drawer_menu"
-            app:headerLayout="@layout/navigation_header"/>
+            app:menu="@menu/drawer_menu"/>
 
     <com.google.android.material.navigation.NavigationView
             android:id="@+id/settingsView"
