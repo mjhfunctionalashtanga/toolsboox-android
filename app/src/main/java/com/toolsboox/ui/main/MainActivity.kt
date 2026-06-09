@@ -5,12 +5,10 @@ import android.content.pm.ActivityInfo
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.view.MenuItem
 import androidx.activity.viewModels
 import androidx.annotation.StringRes
 import androidx.appcompat.app.ActionBar
 import androidx.core.os.bundleOf
-import androidx.core.view.GravityCompat
 import androidx.fragment.app.Fragment
 import androidx.navigation.findNavController
 import com.google.android.material.snackbar.Snackbar
@@ -105,30 +103,6 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
         val preferences = MainSharedPreferencesModule.provideSharedPreferences(this)
         preferences.edit().putLong("lastTimestamp", Date().time).apply()
-
-        binding.navigationView.setNavigationItemSelectedListener { menuItem ->
-            when (menuItem.itemId) {
-                R.id.drawer_item_calendar -> {
-                    val calendarStartActionId = when (sharedPreferences.getInt("calendarStartView", 0)) {
-                        0 -> R.id.action_to_calendar_day
-                        1 -> R.id.action_to_calendar_week
-                        2 -> R.id.action_to_calendar_month
-                        3 -> R.id.action_to_calendar_quarter
-                        4 -> R.id.action_to_calendar_year
-                        else -> R.id.action_to_calendar_day
-                    }
-                    binding.fragmentContent.findNavController().navigate(calendarStartActionId, bundleOf())
-                }
-
-                R.id.drawer_item_logout -> {
-                    Timber.i("Not implemented yet...")
-                }
-            }
-
-            menuItem.isChecked = true
-            binding.drawerLayout.closeDrawers()
-            true
-        }
 
         binding.mainToolbar.toolbarBack.setOnClickListener {
             onBackPressed()
@@ -260,22 +234,6 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
      */
     override fun presenter(): MainPresenter {
         return MainPresenter(this, credentialService)
-    }
-
-    /**
-     * Close the drawer menu.
-     *
-     * @param item the selected menu item
-     */
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            android.R.id.home -> {
-                binding.drawerLayout.openDrawer(GravityCompat.START)
-                true
-            }
-
-            else -> super.onOptionsItemSelected(item)
-        }
     }
 
     /**
