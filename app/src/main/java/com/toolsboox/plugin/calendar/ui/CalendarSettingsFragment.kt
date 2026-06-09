@@ -338,9 +338,9 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 val intervalMinutes = SYNC_INTERVAL_MINUTES[selectedAutoSyncInterval]
                 val constraints = Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.CONNECTED)
-                    // Only sync while charging and not on a low battery — keeps the
-                    // device asleep overnight instead of waking every interval on battery.
-                    .setRequiresCharging(true)
+                    // Skip only when the battery is genuinely low. No charging requirement —
+                    // this device often runs for days unplugged, and Doze already throttles
+                    // periodic work into occasional maintenance windows once the screen is off.
                     .setRequiresBatteryNotLow(true)
                     .build()
                 val syncRequest = PeriodicWorkRequestBuilder<CalendarSyncWorker>(
@@ -388,13 +388,14 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             if (ubEnabled) {
                 val ubConstraints = Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.CONNECTED)
-                    // Only sync while charging and not on a low battery — the periodic
-                    // PDF render + WebDAV upload is heavy, so keep it off the battery overnight.
-                    .setRequiresCharging(true)
+                    // Skip only when the battery is genuinely low. No charging requirement —
+                    // this device runs for days unplugged. Doze throttles this periodic run, the
+                    // 60-min period keeps the wake count down, and the on-exit syncNow() (network-
+                    // only, no battery gate) still pushes a full re-mirror every time you close.
                     .setRequiresBatteryNotLow(true)
                     .build()
                 val ubRequest = PeriodicWorkRequestBuilder<UltrabridgeSyncWorker>(
-                    15, TimeUnit.MINUTES
+                    60, TimeUnit.MINUTES
                 )
                     .setConstraints(ubConstraints)
                     // Back off generously on failure so a flaky network can't cause a retry storm.
