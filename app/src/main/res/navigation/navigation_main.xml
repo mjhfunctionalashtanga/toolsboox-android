@@ -426,8 +426,4 @@
             android:label="TeamDrawerPageFragment">
         <action android:id="@+id/action_to_teamdrawer_note" app:destination="@id/TeamDrawerNoteFragment"/>
     </fragment>
-    <fragment
-            android:id="@+id/KanbanMainFragment"
-            android:name="com.toolsboox.plugin.kanban.ui.KanbanMainFragment"
-            android:label="KanbanMainFragment"/>
 </navigation>
