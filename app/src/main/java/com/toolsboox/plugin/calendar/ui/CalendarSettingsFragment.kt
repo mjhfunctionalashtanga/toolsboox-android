@@ -9,6 +9,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
@@ -337,11 +338,17 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 val intervalMinutes = SYNC_INTERVAL_MINUTES[selectedAutoSyncInterval]
                 val constraints = Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.CONNECTED)
+                    // Only sync while charging and not on a low battery — keeps the
+                    // device asleep overnight instead of waking every interval on battery.
+                    .setRequiresCharging(true)
+                    .setRequiresBatteryNotLow(true)
                     .build()
                 val syncRequest = PeriodicWorkRequestBuilder<CalendarSyncWorker>(
                     intervalMinutes, TimeUnit.MINUTES
                 )
                     .setConstraints(constraints)
+                    // Back off generously on failure so a flaky network can't cause a retry storm.
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
                     .build()
                 workManager.enqueueUniquePeriodicWork(
                     WORK_NAME,
@@ -381,11 +388,17 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             if (ubEnabled) {
                 val ubConstraints = Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.CONNECTED)
+                    // Only sync while charging and not on a low battery — the periodic
+                    // PDF render + WebDAV upload is heavy, so keep it off the battery overnight.
+                    .setRequiresCharging(true)
+                    .setRequiresBatteryNotLow(true)
                     .build()
                 val ubRequest = PeriodicWorkRequestBuilder<UltrabridgeSyncWorker>(
                     15, TimeUnit.MINUTES
                 )
                     .setConstraints(ubConstraints)
+                    // Back off generously on failure so a flaky network can't cause a retry storm.
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
                     .build()
                 workManager.enqueueUniquePeriodicWork(
                     UltrabridgeSyncWorker.WORK_NAME,
