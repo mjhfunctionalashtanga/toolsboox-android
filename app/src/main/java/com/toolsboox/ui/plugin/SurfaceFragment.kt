@@ -1347,9 +1347,17 @@ abstract class SurfaceFragment : ScreenFragment() {
                     if (viwoodsInk != null && width > 0 && height > 0) {
                         try {
                             val dm = resources.displayMetrics
+                            // The Viwoods T1000 hardware-ink overlay (initWriting) only covers
+                            // ~the left third of the AiPaper Mini panel — a native writing-surface
+                            // width mismatch we can't size from our process. Until that's solved,
+                            // force the software FAST-waveform path, which renders uniformly across
+                            // the whole panel (slightly less instant than the native overlay, but
+                            // consistent everywhere). Flip this back to BuildConfig.VIWOODS_FAST_INK
+                            // to re-enable the native hardware path for testing.
+                            val useHardwareInk = false
                             viwoodsInk?.enable(
                                 dm.widthPixels, dm.heightPixels,
-                                com.toolsboox.BuildConfig.VIWOODS_FAST_INK
+                                useHardwareInk
                             )
                         } catch (t: Throwable) {
                             Timber.w(t, "Viwoods enable() failed")
