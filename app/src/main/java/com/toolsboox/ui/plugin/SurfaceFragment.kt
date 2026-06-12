@@ -225,6 +225,20 @@ abstract class SurfaceFragment : ScreenFragment() {
     private var viwoodsInk: com.toolsboox.ot.ViwoodsFastInk? = null
 
     /**
+     * Coalescing guard for the Viwoods software live-ink preview. The digitizer fires many
+     * ACTION_MOVE events per second (sometimes several per frame); each one would otherwise
+     * trigger a full-stroke lockCanvas + EPD FAST refresh. Those serialize on the panel and
+     * build a backlog, so the ink trails the pen. We capture every point but post at most
+     * once per display frame via [viwoodsLivePostRunnable], which drains the backlog and
+     * keeps the live stroke tight to the nib. Viwoods software path only.
+     */
+    private var viwoodsLivePostScheduled = false
+    private val viwoodsLivePostRunnable = Runnable {
+        viwoodsLivePostScheduled = false
+        if (penState && stylusPointList.isNotEmpty()) renderLivePreviewSoftware()
+    }
+
+    /**
      * The gesture detector
      */
     protected lateinit var gestureDetector: GestureDetectorCompat
@@ -1828,6 +1842,9 @@ abstract class SurfaceFragment : ScreenFragment() {
 
     private fun onBeginDrawing(touchPoint: StrokePoint) {
         Timber.i("onBeginDrawing (${touchPoint.x}/${touchPoint.y})")
+        // Start the coalescer from a clean slate (drop any post left scheduled from a prior stroke).
+        provideSurfaceView().removeCallbacks(viwoodsLivePostRunnable)
+        viwoodsLivePostScheduled = false
         lastPoint = touchPoint
         firstPointTimestamp = Instant.now().toEpochMilli()
         touchPoint.t = 0L
@@ -1859,35 +1876,63 @@ abstract class SurfaceFragment : ScreenFragment() {
         // double-image). On the FAST-waveform fallback the panel is in FAST mode so these
         // partial posts refresh quickly.
         if (touchHelper == null && penState && viwoodsInk?.hardwareInk != true) {
-            val totalScale = baseScale * zoomScale
-            val sigma = paint.strokeWidth * totalScale * 4.0f
-
-            // Transform canvas-space bounds to screen space for dirty rect
-            val allX = stylusPointList.map { it.x } + touchPoints.map { it.x }
-            val allY = stylusPointList.map { it.y } + touchPoints.map { it.y }
-            val minPt = floatArrayOf(allX.min() - sigma / totalScale, allY.min() - sigma / totalScale)
-            val maxPt = floatArrayOf(allX.max() + sigma / totalScale, allY.max() + sigma / totalScale)
-            viewMatrix.mapPoints(minPt)
-            viewMatrix.mapPoints(maxPt)
-            val rect = Rect(
-                minPt[0].toInt().coerceAtLeast(0),
-                minPt[1].toInt().coerceAtLeast(0),
-                maxPt[0].toInt().coerceAtMost(surfaceSize.width()),
-                maxPt[1].toInt().coerceAtMost(surfaceSize.height())
-            )
-
-            val lockCanvas = provideSurfaceView().holder.lockCanvas(rect)
-            if (lockCanvas != null) {
-                lockCanvas.save()
-                lockCanvas.concat(viewMatrix)
-                // Use a non-anti-aliased predraw paint: the full path is redrawn every move,
-                // and re-blending AA edge pixels each frame is what fattens the live line.
-                // On the 1-bit FAST waveform crisp pixels look the same and can't accumulate.
-                lockCanvas.drawPath(path, viwoodsPredrawPaint())
-                lockCanvas.restore()
-                provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
+            if (viwoodsInk != null) {
+                // Viwoods: coalesce the heavy full-stroke post to one per display frame so a
+                // burst of MotionEvents can't build a backlog of full-area FAST refreshes that
+                // makes the ink lag behind the nib. Points were already captured above; this
+                // only throttles the panel post. See [viwoodsLivePostRunnable].
+                if (!viwoodsLivePostScheduled) {
+                    viwoodsLivePostScheduled = true
+                    provideSurfaceView().postOnAnimation(viwoodsLivePostRunnable)
+                }
+            } else {
+                // Non-Onyx Boox fallback (e.g. Palma 2 Pro): render immediately, unchanged.
+                renderLivePreviewSoftware()
             }
         }
+    }
+
+    /**
+     * Software live-stroke preview: redraw the whole in-progress stroke and post it to the
+     * SurfaceView. The full path is redrawn into a whole-stroke dirty rect every time on
+     * purpose — a multi-buffered SurfaceView leaves anything outside the dirty rect undefined
+     * across buffer swaps, so a smaller/incremental post makes earlier segments blink and
+     * vanish. Used by the no-Onyx path; on Viwoods it is driven by the per-frame coalescer.
+     */
+    private fun renderLivePreviewSoftware() {
+        if (stylusPointList.isEmpty()) return
+        val path = Path()
+        path.moveTo(stylusPointList[0].x, stylusPointList[0].y)
+        for (i in 1 until stylusPointList.size) {
+            path.lineTo(stylusPointList[i].x, stylusPointList[i].y)
+        }
+
+        val totalScale = baseScale * zoomScale
+        val sigma = paint.strokeWidth * totalScale * 4.0f
+
+        // Transform canvas-space bounds to screen space for the dirty rect.
+        val allX = stylusPointList.map { it.x }
+        val allY = stylusPointList.map { it.y }
+        val minPt = floatArrayOf(allX.min() - sigma / totalScale, allY.min() - sigma / totalScale)
+        val maxPt = floatArrayOf(allX.max() + sigma / totalScale, allY.max() + sigma / totalScale)
+        viewMatrix.mapPoints(minPt)
+        viewMatrix.mapPoints(maxPt)
+        val rect = Rect(
+            minPt[0].toInt().coerceAtLeast(0),
+            minPt[1].toInt().coerceAtLeast(0),
+            maxPt[0].toInt().coerceAtMost(surfaceSize.width()),
+            maxPt[1].toInt().coerceAtMost(surfaceSize.height())
+        )
+
+        val lockCanvas = provideSurfaceView().holder.lockCanvas(rect) ?: return
+        lockCanvas.save()
+        lockCanvas.concat(viewMatrix)
+        // Use a non-anti-aliased predraw paint: the full path is redrawn every frame, and
+        // re-blending AA edge pixels each frame is what fattens the live line. On the 1-bit
+        // FAST waveform crisp pixels look the same and can't accumulate.
+        lockCanvas.drawPath(path, viwoodsPredrawPaint())
+        lockCanvas.restore()
+        provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
     }
 
     /** Lazily-built non-AA paint for the Viwoods software live preview (matches [paint] width/color). */
@@ -1940,6 +1985,10 @@ abstract class SurfaceFragment : ScreenFragment() {
             // after pen-up. Re-render the committed strokes to the SurfaceView just after
             // that, so the permanent ink replaces the overlay with no flicker or gap.
             if (viwoodsInk != null) {
+                // Drop any coalesced live post still queued, so it can't repaint the preview
+                // over the committed strokes we're about to render.
+                provideSurfaceView().removeCallbacks(viwoodsLivePostRunnable)
+                viwoodsLivePostScheduled = false
                 viwoodsInk?.onStrokeEnd()
                 if (viwoodsInk?.hardwareInk == true) {
                     // Hardware ink: the native overlay shows the stroke then self-clears ~800ms
