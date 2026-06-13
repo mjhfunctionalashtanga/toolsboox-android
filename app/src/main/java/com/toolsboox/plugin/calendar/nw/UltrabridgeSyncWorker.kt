@@ -149,6 +149,12 @@ class UltrabridgeSyncWorker(
             webdavService.ensureDirectory("ToolsForBoox")
 
             var uploadCount = 0
+            // Count uploads that were attempted but did not succeed. A single swallowed
+            // failure used to still return Result.success(), so WorkManager never retried
+            // and the on-exit push silently died on one flaky request — leaving the cloud
+            // (and the downstream OCR pipeline) stale until the next periodic window, which
+            // Boox battery management often suppresses for days. We now retry instead.
+            var failureCount = 0
             val tempDir = File(applicationContext.cacheDir, "ultrabridge-pdf")
             tempDir.mkdirs()
 
@@ -166,12 +172,14 @@ class UltrabridgeSyncWorker(
                         if (uploaded) {
                             uploadCount++
                         } else {
+                            failureCount++
                             Timber.w("$TAG: Failed to upload ${pdfFile.name}")
                         }
 
                         // Clean up temp PDF
                         pdfFile.delete()
                     } catch (e: Exception) {
+                        failureCount++
                         Timber.e(e, "$TAG: Error processing group $groupKey")
                     }
                 }
@@ -186,15 +194,25 @@ class UltrabridgeSyncWorker(
                         val uploaded = withContext(Dispatchers.IO) {
                             webdavService.upload(file, remotePath)
                         }
-                        if (uploaded) jsonUploadCount++
+                        if (uploaded) jsonUploadCount++ else failureCount++
                     } catch (e: Exception) {
+                        failureCount++
                         Timber.e(e, "$TAG: JSON upload error for ${file.name}")
                     }
                 }
                 Timber.i("$TAG: Uploaded $jsonUploadCount of ${dayJsonFiles.size} day JSON files")
 
-                // Update sync cursor
-                mainPrefs.edit().putLong(PREF_LAST_SYNC_MS, System.currentTimeMillis()).apply()
+                // If anything failed, ask WorkManager to retry with backoff rather than
+                // reporting a clean success. The worker re-uploads everything each run
+                // (self-healing), so a retry simply re-attempts the failed files.
+                if (failureCount > 0) {
+                    Timber.w("$TAG: $failureCount upload(s) failed; requesting retry")
+                    return Result.retry()
+                }
+
+                // Update sync cursor (commit, not apply: the worker may be killed
+                // immediately after returning, before an async apply() flushes).
+                mainPrefs.edit().putLong(PREF_LAST_SYNC_MS, System.currentTimeMillis()).commit()
                 Timber.i("$TAG: Sync complete. Uploaded $uploadCount PDFs.")
                 return Result.success()
 

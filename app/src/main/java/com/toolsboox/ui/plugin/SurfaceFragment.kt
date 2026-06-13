@@ -677,6 +677,17 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         gestureListener = OnGestureListener()
         gestureDetector = GestureDetectorCompat(requireActivity(), gestureListener)
+
+        // Opening the planner is the one moment the device is reliably awake and online,
+        // so push any strokes stranded on disk from a prior session. Boox battery
+        // management suppresses the 60-min periodic worker while the tablet sleeps for
+        // days, and the onPause one-shot can be lost if Doze fires before it runs — so
+        // without this trigger the cloud (and the downstream OCR pipeline) can sit stale
+        // until the next charge. syncNow() carries the full current state, so a redundant
+        // push here is harmless.
+        try {
+            com.toolsboox.plugin.calendar.nw.UltrabridgeSyncWorker.syncNow(requireContext())
+        } catch (_: Exception) {}
     }
 
     /**
