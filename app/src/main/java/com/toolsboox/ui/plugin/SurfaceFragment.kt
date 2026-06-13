@@ -2015,7 +2015,14 @@ abstract class SurfaceFragment : ScreenFragment() {
                 onStrokeChanged(strokes)
             }
 
-            if (finger) convertStrokes()
+            // Commit the stroke to storage on pen-up. Previously only finger drawing
+            // committed here; stylus drawing relied on the hover-exit handler firing
+            // convertStrokes() later. On Boox that hover-exit event isn't reliably
+            // delivered, so the stroke stayed only in memory — and a page reload
+            // (renderPage → applyStrokes with clearPage) would wipe it before it was
+            // ever saved. Committing here persists every stroke immediately, so it
+            // survives a reload. convertStrokes() no-ops if there's nothing to add.
+            convertStrokes()
         }
 
         if (actions.isNotEmpty() || buttons.isNotEmpty()) {
