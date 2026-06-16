@@ -139,7 +139,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         calendarPattern.updateDay(calendarDay)
 
-        presenter.save(this, binding, calendarDay, calendarPattern, currentDate)
+        // Per-stroke save: suppress the loading indicator so its VISIBLE/INVISIBLE flash
+        // doesn't trigger an e-ink refresh on every pen-up (reads as lag/freeze on lift).
+        presenter.save(this, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
     }
 
     /**
@@ -150,7 +152,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     override fun onTextElementsChanged(textElements: MutableList<TextElement>) {
         calendarDay.textElements = textElements
         calendarPattern.updateDay(calendarDay)
-        presenter.save(this, binding, calendarDay, calendarPattern, currentDate)
+        presenter.save(this, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
     }
 
     /**

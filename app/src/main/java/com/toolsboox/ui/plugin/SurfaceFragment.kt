@@ -72,6 +72,26 @@ abstract class SurfaceFragment : ScreenFragment() {
         const val MAX_ZOOM = 4.0f
 
         /**
+         * Debounce window for re-applying the Onyx raw-drawing limit rect after a
+         * surfaceChanged. On open the surface is resized more than once (toolbar/immersive
+         * relayout), and each limit-rect re-apply toggles setRawDrawingEnabled false->true,
+         * which cold-starts the native pen reader (seconds to spin up on the Go 6 Gen 2).
+         * Coalescing to the final size cold-starts the reader at most once.
+         */
+        private const val LIMIT_RECT_DEBOUNCE_MS = 250L
+
+        /**
+         * Delay before re-baking committed strokes to the SurfaceView after a pen-up. The
+         * live Onyx hardware overlay already shows the stroke, so the heavy full-canvas
+         * re-post (redraw all strokes + a blocking surface post) doesn't need to run on every
+         * lift — doing so hogs the main thread and delays delivery of the next pen-down
+         * (~1s "won't start writing" on the Go 6 Gen 2). Deferring and resetting it on each
+         * new stroke means rapid write-lift-write stays fluid; the bake fires once the user
+         * actually pauses. Storage save still happens immediately on pen-up.
+         */
+        private const val COMMIT_VISUAL_DEBOUNCE_MS = 700L
+
+        /**
          * Touch drawing state.
          */
         private var touchDrawingState: Boolean = false
@@ -290,6 +310,20 @@ abstract class SurfaceFragment : ScreenFragment() {
      * The actual size of the surface.
      */
     private var surfaceSize: Rect = Rect(0, 0, 0, 0)
+
+    /** Surface size for which the Onyx limit rect is currently applied (-1 = none yet). */
+    private var appliedLimitWidth = -1
+    private var appliedLimitHeight = -1
+
+    /** Latest surface size awaiting a (debounced) limit-rect apply. */
+    private var pendingLimitWidth = 0
+    private var pendingLimitHeight = 0
+
+    /** Coalesces rapid/duplicate surfaceChanged callbacks into a single reader reconfigure. */
+    private val applyLimitRectRunnable = Runnable { applyPendingLimitRect() }
+
+    /** Deferred full-canvas re-bake after a pen-up; see [COMMIT_VISUAL_DEBOUNCE_MS]. */
+    private val commitVisualRunnable = Runnable { applyStrokes(strokes, false) }
 
     /**
      * Pen or eraser state.
@@ -704,6 +738,14 @@ abstract class SurfaceFragment : ScreenFragment() {
                 .show(WindowInsetsCompat.Type.systemBars())
         }
         requireActivity().findViewById<View>(R.id.drawerLayout)?.fitsSystemWindows = true
+
+        // Drop pending debounced work (limit-rect apply, deferred stroke re-bake) so it can't
+        // run after teardown. Strokes are already persisted on pen-up; the page re-renders on
+        // return, so a missed bake is harmless.
+        try {
+            provideSurfaceView().removeCallbacks(applyLimitRectRunnable)
+            provideSurfaceView().removeCallbacks(commitVisualRunnable)
+        } catch (_: Exception) {}
 
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
@@ -1360,6 +1402,10 @@ abstract class SurfaceFragment : ScreenFragment() {
                     touchHelper?.setLimitRect(limit, ArrayList())?.setStrokeWidth(paint.strokeWidth)?.openRawDrawing()
                     touchHelper?.setStrokeStyle(TouchHelper.STROKE_STYLE_PENCIL)
                     touchHelper?.setStrokeColor(paint.color)
+                    // Record the size we just opened the reader with, so the first
+                    // surfaceChanged at the same size won't needlessly cold-start it again.
+                    appliedLimitWidth = view.width
+                    appliedLimitHeight = view.height
                 }
 
                 override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -1388,11 +1434,14 @@ abstract class SurfaceFragment : ScreenFragment() {
                             Timber.w(t, "Viwoods enable() failed")
                         }
                     }
-                    // Re-apply the limit rect with the new dimensions (e.g. after rotation).
-                    touchHelper?.let { th ->
-                        th.setRawDrawingEnabled(false)
-                        th.setLimitRect(Rect(0, 0, width, height), ArrayList())
-                        th.setRawDrawingEnabled(true)
+                    // Re-apply the limit rect with the new dimensions (e.g. after rotation),
+                    // but coalesce rapid/duplicate surfaceChanged callbacks so the pen reader
+                    // cold-starts at most once on open. See [applyPendingLimitRect].
+                    touchHelper?.let {
+                        pendingLimitWidth = width
+                        pendingLimitHeight = height
+                        provideSurfaceView().removeCallbacks(applyLimitRectRunnable)
+                        provideSurfaceView().postDelayed(applyLimitRectRunnable, LIMIT_RECT_DEBOUNCE_MS)
                     }
                     // On Android 10+, claim the whole SurfaceView area back from the
                     // system gesture-navigation handler. Without this, the bottom ~10%
@@ -1406,6 +1455,9 @@ abstract class SurfaceFragment : ScreenFragment() {
 
                 override fun surfaceDestroyed(holder: SurfaceHolder) {
                     Timber.i("surfaceDestroyed")
+                    provideSurfaceView().removeCallbacks(applyLimitRectRunnable)
+                    appliedLimitWidth = -1
+                    appliedLimitHeight = -1
                     holder.removeCallback(surfaceCallback)
                     surfaceCallback = null
                 }
@@ -1413,6 +1465,28 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
 
         provideSurfaceView().holder.addCallback(surfaceCallback)
+    }
+
+    /**
+     * Re-apply the Onyx raw-drawing limit rect for the latest surface size, but only when it
+     * actually changed. Each setRawDrawingEnabled false->true cold-starts the native pen
+     * reader (seconds to spin up on the Go 6 Gen 2), so this is coalesced via
+     * [applyLimitRectRunnable] and skipped entirely when the size already matches — the first
+     * stroke after opening a page no longer waits through repeated reader cold-starts.
+     */
+    private fun applyPendingLimitRect() {
+        val th = touchHelper ?: return
+        val w = pendingLimitWidth
+        val h = pendingLimitHeight
+        if (w <= 0 || h <= 0) return
+        if (w == appliedLimitWidth && h == appliedLimitHeight) return
+        th.setRawDrawingEnabled(false)
+        th.setLimitRect(Rect(0, 0, w, h), ArrayList())
+        th.setRawDrawingEnabled(true)
+        th.isRawDrawingRenderEnabled = true
+        appliedLimitWidth = w
+        appliedLimitHeight = h
+        Timber.i("raw limit rect applied: ${w}x${h}")
     }
 
     /**
@@ -1496,10 +1570,13 @@ abstract class SurfaceFragment : ScreenFragment() {
             renderTextElements(canvas)
         }
 
-        touchHelper?.setRawDrawingEnabled(false)
+        // Commit the canvas to the surface WITHOUT closing the native pen reader. Previously
+        // this toggled setRawDrawingEnabled(false)->(true) around the post, which closes and
+        // reopens the reader on every pen-up — a multi-second cold start on the Go 6 Gen 2,
+        // so each stroke lift stalled. Pausing only the render flag (isRawDrawingRenderEnabled)
+        // lets us post the committed strokes while the reader stays open and warm.
         touchHelper?.isRawDrawingRenderEnabled = false
         provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
-        touchHelper?.setRawDrawingEnabled(true)
         touchHelper?.isRawDrawingRenderEnabled = true
     }
 
@@ -1856,6 +1933,9 @@ abstract class SurfaceFragment : ScreenFragment() {
         // Start the coalescer from a clean slate (drop any post left scheduled from a prior stroke).
         provideSurfaceView().removeCallbacks(viwoodsLivePostRunnable)
         viwoodsLivePostScheduled = false
+        // Cancel a pending deferred re-bake so it can't fire mid-stroke (the bake toggles
+        // render + posts the canvas, which would interrupt the live stroke).
+        provideSurfaceView().removeCallbacks(commitVisualRunnable)
         lastPoint = touchPoint
         firstPointTimestamp = Instant.now().toEpochMilli()
         touchPoint.t = 0L
@@ -2045,12 +2125,22 @@ abstract class SurfaceFragment : ScreenFragment() {
     private fun convertStrokes() {
         if (strokesToAdd.isEmpty()) return
 
-        applyStrokes(strokes, false)
+        // Persist + notify immediately (the save is already off the main thread), but defer
+        // the heavy full-canvas re-bake so it doesn't block delivery of the next pen-down.
+        // The live hardware overlay keeps the stroke visible until the bake runs. On the
+        // Viwoods software path there's no persistent overlay, so bake right away.
         onStrokeChanged(strokes)
         onStrokesAdded(strokesToAdd.toList())
 
         processStrokes(strokesToAdd)
         strokesToAdd.clear()
+
+        if (touchHelper != null) {
+            provideSurfaceView().removeCallbacks(commitVisualRunnable)
+            provideSurfaceView().postDelayed(commitVisualRunnable, COMMIT_VISUAL_DEBOUNCE_MS)
+        } else {
+            applyStrokes(strokes, false)
+        }
     }
 
     /**
