@@ -187,6 +187,9 @@ abstract class SurfaceFragment : ScreenFragment() {
     private val inverseViewMatrix = Matrix()
     private var scaleGestureDetector: ScaleGestureDetector? = null
     private var doubleTapDetector: GestureDetector? = null
+    // Small floating grip that overlays the canvas to reopen the toolbar when it's collapsed to
+    // zero width (so the calendar can use the full screen width). Created lazily.
+    private var toolbarReopenHandle: View? = null
     private var lastFingerX = 0f
     private var lastFingerY = 0f
     private var isPanning = false
@@ -777,20 +780,20 @@ abstract class SurfaceFragment : ScreenFragment() {
             toolbar.toolbarToggle.visibility = View.GONE
             toolbar.root.setBackgroundColor(Color.LTGRAY)
             toolbar.root.layoutParams?.let { lp ->
-                lp.width = (12 * density).toInt()
+                // Slim collapsed handle, kept in the layout flow (zero-width + overlay broke the
+                // page rendering). The back-gesture exclusion below makes it reliably tappable
+                // without needing to be wide.
+                lp.width = (16 * density).toInt()
                 toolbar.root.layoutParams = lp
             }
+            excludeToolbarFromBackGesture()
         } else {
             group.visibility = View.VISIBLE
             toolbar.toolbarToggle.visibility = View.VISIBLE
             toolbar.root.setBackgroundColor(Color.TRANSPARENT)
-            // Keep a single column and shrink the buttons to fit the height, rather than
-            // widening into two columns. The default 40dp button can't stack ~20 buttons in a
-            // 6" panel's ~683dp, so the old code split into a wide two-column layout. Instead
-            // scale the button down to whatever fits one column (clamped to a tappable floor),
-            // which also makes the popout narrower than the old 40dp. Two columns are kept only
-            // for genuinely tiny heights (e.g. Palma 2 Pro in landscape) where even the floor
-            // size can't stack one column.
+            // Fit the buttons to the available height. Portrait has room for one comfortable
+            // column; landscape (short height) would force a single column below a tappable size,
+            // so add columns and tile every visible button into an even, column-major grid.
             val buttonViews = listOf(
                 toolbar.toolbarHandTouch, toolbar.toolbarPen, toolbar.toolbarEraser,
                 toolbar.toolbarProcrastinator, toolbar.toolbarLasso, toolbar.toolbarCopy,
@@ -799,29 +802,59 @@ abstract class SurfaceFragment : ScreenFragment() {
                 toolbar.toolbarSwipeUp, toolbar.toolbarSwipeDown, toolbar.toolbarSwitchSide,
                 toolbar.toolbarCloudSync, toolbar.toolbarRotate, toolbar.toolbarSettings
             )
-            val visibleButtons = buttonViews.count { it.visibility == View.VISIBLE }.coerceAtLeast(1)
+            val visibleList = buttonViews.filter { it.visibility == View.VISIBLE }
+            val visibleCount = visibleList.size.coerceAtLeast(1)
             val availDp = resources.configuration.screenHeightDp
             val minButtonDp = 28
-            val needsTwoColumns = visibleButtons * minButtonDp > availDp
+            val maxButtonDp = 40
+            // Below this a single column is too cramped; add a column instead of shrinking further.
+            val comfortableButtonDp = 30
 
-            if (needsTwoColumns) {
-                // Reset any shrunk buttons back to the 40dp the two-column layout expects.
-                resizeToolbarButtons(buttonViews, (40 * density).toInt())
-                // 80dp = two 40dp columns; no dead column of slack.
-                toolbar.root.layoutParams?.let { lp ->
-                    lp.width = (80 * density).toInt()
-                    toolbar.root.layoutParams = lp
-                }
-                applyToolbarTwoColumnLayout(true)
+            val singleColButtonDp = (availDp / visibleCount).coerceIn(minButtonDp, maxButtonDp)
+            val columns = if (singleColButtonDp >= comfortableButtonDp) {
+                1
             } else {
-                val buttonDp = (availDp / visibleButtons).coerceIn(minButtonDp, 40)
-                val buttonPx = (buttonDp * density).toInt()
+                val rowsPerColumn = (availDp / maxButtonDp).coerceAtLeast(1)
+                Math.ceil(visibleCount.toDouble() / rowsPerColumn).toInt().coerceAtLeast(1)
+            }
+            val rows = Math.ceil(visibleCount.toDouble() / columns).toInt().coerceAtLeast(1)
+            val buttonPx = ((availDp / rows).coerceIn(minButtonDp, maxButtonDp) * density).toInt()
+
+            if (columns <= 1) {
+                // Single column (portrait): keep the XML layout (tools at top, nav pinned to the
+                // bottom), just sized to fit. Fresh XML is restored on rotation recreation.
                 resizeToolbarButtons(buttonViews, buttonPx)
                 toolbar.root.layoutParams?.let { lp ->
                     lp.width = buttonPx
                     toolbar.root.layoutParams = lp
                 }
                 applyToolbarTwoColumnLayout(false)
+            } else {
+                // Multiple columns (landscape / short screens): tile every visible button into an
+                // even column-major grid so the columns are uniform and none overflows the height.
+                applyToolbarGridLayout(visibleList, columns, buttonPx)
+                toolbar.root.layoutParams?.let { lp ->
+                    lp.width = columns * buttonPx
+                    toolbar.root.layoutParams = lp
+                }
+            }
+            excludeToolbarFromBackGesture()
+        }
+    }
+
+    /**
+     * Claim the docked toolbar's left-edge band from the system back gesture, so swipes/taps that
+     * land on the toolbar (especially the thin collapsed handle) open it instead of navigating Back.
+     * No-op below Android 10, which has no edge back gesture. Posted so the view is measured first.
+     */
+    private fun excludeToolbarFromBackGesture() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val root = provideToolbarDrawing().root
+        root.post {
+            val w = root.width
+            val h = root.height
+            if (w > 0 && h > 0) {
+                root.systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, w, h))
             }
         }
     }
@@ -837,6 +870,46 @@ abstract class SurfaceFragment : ScreenFragment() {
             lp.width = sizePx
             lp.height = sizePx
             v.layoutParams = lp
+        }
+    }
+
+    /**
+     * Lay the given (visible) buttons out as an even, column-major grid: fill the first column
+     * top-to-bottom, then the next, and so on. Every button becomes a uniform [sizePx] square and
+     * columns tile left-to-right from the start edge. This overrides the XML constraint chains
+     * while the toolbar is expanded in a multi-column (short / landscape) configuration, so the
+     * columns stay uniform and no column overflows the screen height. Fresh XML is restored on the
+     * activity recreation that follows a rotation back to a single-column (portrait) layout.
+     */
+    private fun applyToolbarGridLayout(buttons: List<View>, columns: Int, sizePx: Int) {
+        val parentId = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+        val unset = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
+        val rows = Math.ceil(buttons.size.toDouble() / columns).toInt().coerceAtLeast(1)
+        for ((i, view) in buttons.withIndex()) {
+            val lp = view.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams ?: continue
+            val col = i / rows
+            val row = i % rows
+            lp.width = sizePx
+            lp.height = sizePx
+            // Horizontal: place each column by its index from the start edge.
+            lp.startToStart = parentId
+            lp.startToEnd = unset
+            lp.endToEnd = unset
+            lp.endToStart = unset
+            lp.marginStart = col * sizePx
+            // Vertical: top of a column anchors to the parent top; the rest chain under the
+            // previous button in the same column (the immediately-preceding visible button).
+            lp.bottomToBottom = unset
+            lp.bottomToTop = unset
+            if (row == 0) {
+                lp.topToTop = parentId
+                lp.topToBottom = unset
+            } else {
+                lp.topToTop = unset
+                lp.topToBottom = buttons[i - 1].id
+            }
+            lp.topMargin = 0
+            view.layoutParams = lp
         }
     }
 
