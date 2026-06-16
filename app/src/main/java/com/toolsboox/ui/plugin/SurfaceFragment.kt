@@ -784,19 +784,59 @@ abstract class SurfaceFragment : ScreenFragment() {
             group.visibility = View.VISIBLE
             toolbar.toolbarToggle.visibility = View.VISIBLE
             toolbar.root.setBackgroundColor(Color.TRANSPARENT)
-            // Decide column count from the available height.
-            // Single column needs ~17 buttons * 40dp + bottom toggle ≈ 720dp.
-            // If the screen is shorter than that (e.g. Palma 2 Pro in landscape),
-            // widen the toolbar to 80dp and split buttons into two columns.
-            val needsTwoColumns = resources.configuration.screenHeightDp < 720
-            // In two-column mode use 100dp so there's ~20dp of breathing room
-            // between the left (40dp) and right (40dp) columns.
-            val toolbarWidthDp = if (needsTwoColumns) 100 else 40
-            toolbar.root.layoutParams?.let { lp ->
-                lp.width = (toolbarWidthDp * density).toInt()
-                toolbar.root.layoutParams = lp
+            // Keep a single column and shrink the buttons to fit the height, rather than
+            // widening into two columns. The default 40dp button can't stack ~20 buttons in a
+            // 6" panel's ~683dp, so the old code split into a wide two-column layout. Instead
+            // scale the button down to whatever fits one column (clamped to a tappable floor),
+            // which also makes the popout narrower than the old 40dp. Two columns are kept only
+            // for genuinely tiny heights (e.g. Palma 2 Pro in landscape) where even the floor
+            // size can't stack one column.
+            val buttonViews = listOf(
+                toolbar.toolbarHandTouch, toolbar.toolbarPen, toolbar.toolbarEraser,
+                toolbar.toolbarProcrastinator, toolbar.toolbarLasso, toolbar.toolbarCopy,
+                toolbar.toolbarPaste, toolbar.toolbarText, toolbar.toolbarUndo,
+                toolbar.toolbarRedo, toolbar.toolbarTrash, toolbar.toolbarCalendarView,
+                toolbar.toolbarSwipeUp, toolbar.toolbarSwipeDown, toolbar.toolbarSwitchSide,
+                toolbar.toolbarCloudSync, toolbar.toolbarRotate, toolbar.toolbarSettings
+            )
+            val visibleButtons = buttonViews.count { it.visibility == View.VISIBLE }.coerceAtLeast(1)
+            val availDp = resources.configuration.screenHeightDp
+            val minButtonDp = 28
+            val needsTwoColumns = visibleButtons * minButtonDp > availDp
+
+            if (needsTwoColumns) {
+                // Reset any shrunk buttons back to the 40dp the two-column layout expects.
+                resizeToolbarButtons(buttonViews, (40 * density).toInt())
+                // 80dp = two 40dp columns; no dead column of slack.
+                toolbar.root.layoutParams?.let { lp ->
+                    lp.width = (80 * density).toInt()
+                    toolbar.root.layoutParams = lp
+                }
+                applyToolbarTwoColumnLayout(true)
+            } else {
+                val buttonDp = (availDp / visibleButtons).coerceIn(minButtonDp, 40)
+                val buttonPx = (buttonDp * density).toInt()
+                resizeToolbarButtons(buttonViews, buttonPx)
+                toolbar.root.layoutParams?.let { lp ->
+                    lp.width = buttonPx
+                    toolbar.root.layoutParams = lp
+                }
+                applyToolbarTwoColumnLayout(false)
             }
-            applyToolbarTwoColumnLayout(needsTwoColumns)
+        }
+    }
+
+    /**
+     * Resize every toolbar tool button to a square of [sizePx]. Some buttons declare a 0dp
+     * (constraint-driven) height in XML; forcing both dimensions makes the column uniform so
+     * the stack height is predictable when we scale to fit a single column.
+     */
+    private fun resizeToolbarButtons(buttons: List<View>, sizePx: Int) {
+        for (v in buttons) {
+            val lp = v.layoutParams ?: continue
+            lp.width = sizePx
+            lp.height = sizePx
+            v.layoutParams = lp
         }
     }
 

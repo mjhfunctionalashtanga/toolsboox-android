@@ -28,7 +28,7 @@
             android:id="@+id/toolbarButtonGroup"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            app:constraint_referenced_ids="toolbarHandTouch,toolbarPen,toolbarEraser,toolbarProcrastinator,toolbarLasso,toolbarCopy,toolbarPaste,toolbarText,toolbarUndo,toolbarRedo,toolbarTrash,toolbarCalendarView,toolbarHealthView,toolbarTimeboxView,toolbarSwipeUp,toolbarSwipeDown,toolbarSwitchSide,toolbarRotate,toolbarCloudSync,toolbarSettings"/>
+            app:constraint_referenced_ids="toolbarHandTouch,toolbarPen,toolbarEraser,toolbarProcrastinator,toolbarLasso,toolbarCopy,toolbarPaste,toolbarText,toolbarUndo,toolbarRedo,toolbarTrash,toolbarCalendarView,toolbarSwipeUp,toolbarSwipeDown,toolbarSwitchSide,toolbarRotate,toolbarCloudSync,toolbarSettings"/>
 
     <ImageButton
             android:id="@+id/toolbarHandTouch"
