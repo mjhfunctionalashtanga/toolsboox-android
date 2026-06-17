@@ -1510,7 +1510,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             title,
             title
         )
-        showMessage(getString(R.string.team_drawer_page_export_message).format(title), provideSurfaceView())
+        showMessage(getString(R.string.surface_page_export_message).format(title), provideSurfaceView())
     }
 
     /**

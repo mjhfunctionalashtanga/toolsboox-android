@@ -40,49 +40,16 @@ Strings related to dashboard fragment -->
     <string name="dashboard_new_version_message">"Dostępna jest nowa wersja 'Tools for Boox', rekomendowana jest aktualizacja, zanim niektóre funkcjonalności przestaną działać."</string>
 
     <!-- Strings related to team drawer plugin -->
-    <string name="team_drawer_title">"TeamDrawer – %1$s"</string>
 
     <!-- Strings related to team drawer page fragment -->
-    <string name="team_drawer_page_title">"'%s' stron"</string>
-    <string name="team_drawer_page_text">"Witaj w naszym zespołowym rysowniku! :)"</string>
-    <string name="team_drawer_page_button_export_text">"Eksport"</string>
-    <string name="team_drawer_page_button_erase_text">"Wymaż stronę"</string>
-    <string name="team_drawer_page_export_message">"Wyeksportowano jako %s"</string>
-    <string name="team_drawer_page_add_new_page_dialog_title">"Dodaj stronę"</string>
-    <string name="team_drawer_page_add_new_page_dialog_message">"Chcesz dodać nową stronę?
-"</string>
 
     <!-- Strings related to team drawer room fragment -->
-    <string name="team_drawer_room_title">"TeamDrawer - pokoje"</string>
-    <string name="team_drawer_room_item_image">"Obrazek elementu pokoju"</string>
-    <string name="team_drawer_room_add_dialog_title">"Dodaj nowy pokój"</string>
 
     <!-- Strings related to team drawer note fragment -->
-    <string name="team_drawer_note_title">"Notatki '%s'"</string>
-    <string name="team_drawer_note_item_image">"Obraz elementu notatki"</string>
-    <string name="team_drawer_note_add_dialog_title">"Dodaj nową notatkę"</string>
 
     <!-- Strings related to templates plugin -->
-    <string name="templates_main_title">"Szablony"</string>
-    <string name="templates_preview_button_text">"Podgląd"</string>
-    <string name="templates_settings_button_text">"Ustawienia"</string>
-    <string name="templates_export_button_text">"Eksport"</string>
-    <string name="templates_boxed_weeks_calendar_preview_description">"Podgląd obrazu"</string>
-    <string name="templates_boxed_weeks_calendar_button_export_text">"Eksport"</string>
-    <string name="templates_boxed_weeks_calendar_message">"Eksportuj ten podgląd jako wielostronicowy szablon PDF"</string>
-    <string name="templates_boxed_weeks_calendar_preview_export_message">"Wyeksportowano jako %s"</string>
-    <string name="templates_boxed_weeks_calendar_settings_days_layout_message">"Widok dni tygodnia:"</string>
-    <string name="templates_boxed_weeks_calendar_settings_days_layout_vertical">"Pionowo"</string>
-    <string name="templates_boxed_weeks_calendar_settings_days_layout_horizontal">"Poziomo"</string>
 
     <!-- Strings related to templates 'this week's calendar' fragment -->
-    <string name="templates_this_weeks_calendar_title">"Kalendarz na bieżący tydzień"</string>
-    <string name="templates_this_weeks_calendar_preview_description">"Podgląd obrazu"</string>
-    <string name="templates_this_weeks_calendar_button_export_text">"Eksport"</string>
-    <string name="templates_this_weeks_calendar_message">"Eksportuj podgląd jako lokalny szablon"</string>
-    <string name="templates_this_weeks_calendar_preview_title">"%dW%d"</string>
-    <string name="templates_this_weeks_calendar_preview_weekly_notes">"Tygodniowe notatki"</string>
-    <string name="templates_this_weeks_calendar_preview_export_message">"Wyeksportowano jako %s"</string>
 
     <!-- Strings related to utils -->
     <string name="util_fluent_unknown">"nieznany"</string>
@@ -90,21 +57,6 @@ Strings related to dashboard fragment -->
     <string name="util_fluent_hour">"godzina"</string>
     <string name="util_fluent_minute">"minuta"</string>
     <string name="util_fluent_second">"sekunda"</string>
-    <string name="templates_boxed_week_calendar_creator_title">"%dW%d"</string>
-    <string name="templates_boxed_week_calendar_creator_weekly_notes">"Notatki tygodniowe"</string>
-    <string name="templates_flat_weeks_calendar_preview_description">"Podgląd obrazu"</string>
-    <string name="templates_flat_weeks_calendar_button_export_text">"Eksport"</string>
-    <string name="templates_flat_weeks_calendar_preview_export_message">"Wyeksportowano jako %s"</string>
-    <string name="templates_flat_week_calendar_creator_title">"%dT%d"</string>
-    <string name="templates_flat_weeks_calendar_settings_with_days">"Generuj z datami"</string>
-    <string name="templates_boxed_days_calendar_preview_description">"Podgląd obrazu"</string>
-    <string name="templates_boxed_days_calendar_button_export_text">"Eksport"</string>
-    <string name="templates_boxed_days_calendar_preview_export_message">"Wyeksportowano jako %s"</string>
-    <string name="templates_boxed_days_calendar_settings_with_notes">"Wygeneruj z notatkami"</string>
-    <string name="templates_boxed_days_calendar_settings_with_tasks">"Wygeneruj z zadaniami"</string>
-    <string name="templates_boxed_day_calendar_creator_notes">"Notatki"</string>
-    <string name="templates_boxed_day_calendar_creator_tasks">"Zadania"</string>
-    <string name="templates_boxed_days_calendar_settings_with_hours">"Wygeneruj z godzinami"</string>
     <string name="dashboard_item_cancel_alt">"Anuluj"</string>
     <string name="dashboard_item_edit_alt">"Edytuj"</string>
     <string name="dashboard_item_save_alt">"Zapisz"</string>
@@ -113,10 +65,8 @@ Strings related to dashboard fragment -->
     <!-- Strings related to kanban planner plugin -->
     <string name="kanban_planner_main_title">"Planer Kanban"</string>
     <string name="kanban_planner_card_content">"Planer Kanban - podglad"</string>
-    <string name="templates_list_button_text">"Lista"</string>
 
     <!-- Strings related to templates 'community' fragment -->
-    <string name="templates_community_title">"Szablony społeczności"</string>
     <string name="dashboard_item_delete_alt">"Usuń"</string>
     <string name="dashboard_item_erase_alt">"Wymaż"</string>
     <string name="kanban_planner_lane_plannedTodayTitle">"Zaplanowane dzisiaj (%d)"</string>
@@ -126,9 +76,6 @@ Strings related to dashboard fragment -->
     <string name="list_loading">"Ładowanie listy..."</string>
     <string name="list_empty">"Pusta lista..."</string>
     <string name="export_message">"Wyeksportowano jako %s"</string>
-    <string name="templates_community_list_thumbnail">"Miniatura społeczności"</string>
-    <string name="templates_community_list_icon_star">"Gwiazdka"</string>
-    <string name="templates_community_list_icon_starred">"Oznaczone gwiazką"</string>
 
     <!-- Common messages -->
     <string name="ok">"Ok"</string>
@@ -219,14 +166,9 @@ Strings related to dashboard fragment -->
     <string name="about_this_translation_contributors_title">"Współautorzy niniejszego tłumaczenia"</string>
     <string name="about_this_translation_contributors_list">"Anonimowy współtwórca"</string>
     <string name="dashboard_item_calendar_title">"Kalendarz"</string>
-    <string name="dashboard_item_templates_title">"Szablony"</string>
-    <string name="dashboard_item_teamdrawer_title">"TeamDrawer"</string>
     <string name="dashboard_item_kanban_planner_title">"Planer Kanban"</string>
-    <string name="templates_item_community_title">"Szablony 
-społeczności"</string>
 
     <!-- translated into 'This week' to keep similar lenght of text -->
-    <string name="templates_item_this_weeks_title">"Bieżący tydzień"</string>
     <string name="cancel">"Anuluj"</string>
     <string name="calendar_drawing_toolbar_trash_dialog_title">"Na pewno?"</string>
     <string name="calendar_drawing_toolbar_trash_dialog_message">"Czy chcesz wymazać całą zawartość?"</string>
@@ -236,9 +178,6 @@ społeczności"</string>
     <string name="calendar_settings_shortcut_short_label">"Kalendarz"</string>
     <string name="calendar_settings_shortcut_long_label">"Kalendarz dla Boox"</string>
     <string name="calendar_settings_button_restore">"Import kopii zapasowej"</string>
-    <string name="templates_boxed_days_calendar_settings_date_picker_button">"Ustaw datę"</string>
-    <string name="templates_boxed_weeks_calendar_settings_date_picker_button">"Ustaw datę"</string>
-    <string name="templates_flat_weeks_calendar_settings_date_picker_button">"Ustaw datę "</string>
     <string name="week_abbreviation">"T%d"</string>
     <string name="quarter_abbreviation">"Q%d"</string>
     <string name="calendar_settings_select_start_hour_text">"Wybierz godzinę początkową widoku dziennego:"</string>
@@ -271,4 +210,5 @@ społeczności"</string>
     <string name="calendar_health_day_pain">"Ból"</string>
     <string name="calendar_health_day_productivity">"Produktywność"</string>
     <string name="calendar_health_day_overall">"Całokształt"</string>
+    <string name="surface_page_export_message">"Wyeksportowano jako %s"</string>
 </resources>

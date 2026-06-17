@@ -25,9 +25,6 @@
             android:id="@+id/action_to_calendar_year"
             app:destination="@id/CalendarYearFragment"/>
     <action
-            android:id="@+id/action_to_templates_main"
-            app:destination="@id/TemplatesMainFragment"/>
-    <action
             android:id="@+id/action_to_about"
             app:destination="@id/AboutFragment"/>
 
@@ -335,64 +332,6 @@
     </fragment>
 
     <fragment
-            android:id="@+id/TemplatesMainFragment"
-            android:name="com.toolsboox.plugin.templates.ui.TemplatesMainFragment"
-            android:label="TemplatesMainFragment"
-            tools:layout="@layout/fragment_templates_main">
-
-        <action
-                android:id="@+id/action_to_templates_boxed_days_calendar"
-                app:destination="@id/TemplatesBoxedDaysCalendarFragment"/>
-        <action
-                android:id="@+id/action_to_templates_boxed_weeks_calendar"
-                app:destination="@id/TemplatesBoxedWeeksCalendarFragment"/>
-        <action
-                android:id="@+id/action_to_templates_community"
-                app:destination="@id/TemplatesCommunityFragment"/>
-        <action
-                android:id="@+id/action_to_templates_flat_weeks_calendar"
-                app:destination="@id/TemplatesFlatWeeksCalendarFragment"/>
-        <action
-                android:id="@+id/action_to_templates_this_weeks_calendar"
-                app:destination="@id/TemplatesThisWeeksCalendarFragment"/>
-    </fragment>
-
-    <fragment
-            android:id="@+id/TemplatesBoxedDaysCalendarFragment"
-            android:name="com.toolsboox.plugin.templates.ui.BoxedDaysCalendarFragment"
-            android:label="TemplatesBoxedDaysCalendarFragment"
-            tools:layout="@layout/fragment_templates_boxed_days_calendar">
-    </fragment>
-
-    <fragment
-            android:id="@+id/TemplatesBoxedWeeksCalendarFragment"
-            android:name="com.toolsboox.plugin.templates.ui.BoxedWeeksCalendarFragment"
-            android:label="TemplatesBoxedWeeksCalendarFragment"
-            tools:layout="@layout/fragment_templates_boxed_weeks_calendar">
-    </fragment>
-
-    <fragment
-            android:id="@+id/TemplatesCommunityFragment"
-            android:name="com.toolsboox.plugin.templates.ui.CommunityFragment"
-            android:label="TemplatesCommunityFragment"
-            tools:layout="@layout/fragment_templates_community">
-    </fragment>
-
-    <fragment
-            android:id="@+id/TemplatesFlatWeeksCalendarFragment"
-            android:name="com.toolsboox.plugin.templates.ui.FlatWeeksCalendarFragment"
-            android:label="TemplatesFlatWeeksCalendarFragment"
-            tools:layout="@layout/fragment_templates_flat_weeks_calendar">
-    </fragment>
-
-    <fragment
-            android:id="@+id/TemplatesThisWeeksCalendarFragment"
-            android:name="com.toolsboox.plugin.templates.ui.ThisWeeksCalendarFragment"
-            android:label="TemplatesThisWeeksCalendarFragment"
-            tools:layout="@layout/fragment_templates_this_weeks_calendar">
-    </fragment>
-
-    <fragment
             android:id="@+id/AboutFragment"
             android:name="com.toolsboox.plugin.about.ui.AboutFragment"
             android:label="AboutFragment"
@@ -406,24 +345,4 @@
             tools:layout="@layout/fragment_cloud">
     </fragment>
 
-    <!-- Dead fragments kept for compile compatibility (never navigated to) -->
-    <fragment
-            android:id="@+id/TeamDrawerRoomFragment"
-            android:name="com.toolsboox.plugin.teamdrawer.ui.RoomFragment"
-            android:label="TeamDrawerRoomFragment">
-        <action android:id="@+id/action_to_teamdrawer_note" app:destination="@id/TeamDrawerNoteFragment"/>
-    </fragment>
-    <fragment
-            android:id="@+id/TeamDrawerNoteFragment"
-            android:name="com.toolsboox.plugin.teamdrawer.ui.NoteFragment"
-            android:label="TeamDrawerNoteFragment">
-        <action android:id="@+id/action_to_teamdrawer_note" app:destination="@id/TeamDrawerNoteFragment"/>
-        <action android:id="@+id/action_to_teamdrawer_page" app:destination="@id/TeamDrawerPageFragment"/>
-    </fragment>
-    <fragment
-            android:id="@+id/TeamDrawerPageFragment"
-            android:name="com.toolsboox.plugin.teamdrawer.ui.PageFragment"
-            android:label="TeamDrawerPageFragment">
-        <action android:id="@+id/action_to_teamdrawer_note" app:destination="@id/TeamDrawerNoteFragment"/>
-    </fragment>
 </navigation>

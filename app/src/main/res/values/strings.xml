@@ -320,8 +320,6 @@
     <string name="dashboard_device_mismatch_title">Device mismatch</string>
     <string name="dashboard_device_mismatch_message">The \'Tools for Boox\' application is developed to Onyx Boox devices, your device does not look like an Onxy Boox (%1$s - %2$s), there may be bugs and crashes.</string>
     <string name="dashboard_item_calendar_title">Calendar</string>
-    <string name="dashboard_item_templates_title">Templates</string>
-    <string name="dashboard_item_teamdrawer_title">TeamDrawer</string>
     <string name="dashboard_item_kanban_planner_title">Kanban\nplanner</string>
     <string name="dashboard_item_about_title">About</string>
     <string name="dashboard_item_cloud_title">Cloud</string>
@@ -343,90 +341,24 @@
     <string name="kanban_planner_no_due_date">no due date</string>
 
     <!-- Strings related to team drawer plugin -->
-    <string name="team_drawer_title">TeamDrawer &#8211; %1$s</string>
 
     <!-- Strings related to team drawer page fragment -->
-    <string name="team_drawer_page_title">\'%s\' pages</string>
-    <string name="team_drawer_page_text">Welcome in our team drawer! :)</string>
-    <string name="team_drawer_page_button_export_text">Export</string>
-    <string name="team_drawer_page_button_erase_text">Erase page</string>
-    <string name="team_drawer_page_export_message">Exported as %s</string>
-    <string name="team_drawer_page_add_new_page_dialog_title">Add page</string>
-    <string name="team_drawer_page_add_new_page_dialog_message">Do you want to add a new page?</string>
 
     <!-- Strings related to team drawer room fragment -->
-    <string name="team_drawer_room_title">TeamDrawer &#8211; Rooms</string>
-    <string name="team_drawer_room_item_image">Room item image</string>
-    <string name="team_drawer_room_add_dialog_title">Add new room</string>
 
     <!-- Strings related to team drawer note fragment -->
-    <string name="team_drawer_note_title">\'%s\' notes</string>
-    <string name="team_drawer_note_item_image">Note item image</string>
-    <string name="team_drawer_note_add_dialog_title">Add new note</string>
 
     <!-- Strings related to templates plugin -->
-    <string name="templates_main_title">Templates</string>
-    <string name="templates_item_boxed_days_title">Boxed days\ncalendar</string>
-    <string name="templates_item_boxed_weeks_title">Boxed weeks\ncalendar</string>
-    <string name="templates_item_community_title">Community\ntemplates</string>
-    <string name="templates_item_flat_weeks_title">Flat week\ncalendar</string>
-    <string name="templates_item_this_weeks_title">This week\'s\ncalendar</string>
-    <string name="templates_list_button_text">List</string>
-    <string name="templates_preview_button_text">Preview</string>
-    <string name="templates_settings_button_text">Settings</string>
-    <string name="templates_export_button_text">Export</string>
 
     <!-- Strings related to templates 'boxed week's calendar' fragment -->
-    <string name="templates_boxed_days_calendar_title">Boxed days of year calendar template</string>
-    <string name="templates_boxed_days_calendar_preview_description">Preview image</string>
-    <string name="templates_boxed_days_calendar_button_export_text">Export</string>
-    <string name="templates_boxed_days_calendar_message">Export this preview as multipage local PDF template</string>
-    <string name="templates_boxed_days_calendar_preview_export_message">Exported as %s</string>
-    <string name="templates_boxed_days_calendar_settings_with_notes">Generate with notes</string>
-    <string name="templates_boxed_days_calendar_settings_with_tasks">Generate with tasks</string>
-    <string name="templates_boxed_days_calendar_settings_with_hours">Generate with prefilled hours</string>
-    <string name="templates_boxed_days_calendar_settings_date_picker_button">Set date</string>
-    <string name="templates_boxed_day_calendar_creator_title">%s daily planner</string>
-    <string name="templates_boxed_day_calendar_creator_notes">Notes</string>
-    <string name="templates_boxed_day_calendar_creator_tasks">Tasks</string>
 
     <!-- Strings related to templates 'boxed week's calendar' fragment -->
-    <string name="templates_boxed_weeks_calendar_title">Boxed weeks of year calendar template</string>
-    <string name="templates_boxed_weeks_calendar_preview_description">Preview image</string>
-    <string name="templates_boxed_weeks_calendar_button_export_text">Export</string>
-    <string name="templates_boxed_weeks_calendar_message">Export this preview as multipage local PDF template</string>
-    <string name="templates_boxed_weeks_calendar_preview_export_message">Exported as %s</string>
-    <string name="templates_boxed_weeks_calendar_settings_days_layout_message">Layout of days in the week:</string>
-    <string name="templates_boxed_weeks_calendar_settings_days_layout_vertical">Vertical</string>
-    <string name="templates_boxed_weeks_calendar_settings_days_layout_horizontal">Horizontal</string>
-    <string name="templates_boxed_weeks_calendar_settings_date_picker_button">Set date</string>
-    <string name="templates_boxed_week_calendar_creator_title">%1$dW%2$d</string>
-    <string name="templates_boxed_week_calendar_creator_weekly_notes">Weekly notes</string>
 
     <!-- Strings related to templates 'community' fragment -->
-    <string name="templates_community_title">Community templates</string>
-    <string name="templates_community_list_thumbnail">Community thumbnail</string>
-    <string name="templates_community_list_icon_star">Star</string>
-    <string name="templates_community_list_icon_starred">Starred</string>
 
     <!-- Strings related to templates 'flat week's calendar' fragment -->
-    <string name="templates_flat_weeks_calendar_title">Flat weeks of year calendar template</string>
-    <string name="templates_flat_weeks_calendar_preview_description">Preview image</string>
-    <string name="templates_flat_weeks_calendar_button_export_text">Export</string>
-    <string name="templates_flat_weeks_calendar_message">Export this preview as multipage local PDF template</string>
-    <string name="templates_flat_weeks_calendar_preview_export_message">Exported as %s</string>
-    <string name="templates_flat_weeks_calendar_settings_with_days">Generate with dates</string>
-    <string name="templates_flat_weeks_calendar_settings_date_picker_button">Set date</string>
-    <string name="templates_flat_week_calendar_creator_title">%1$dW%2$d</string>
 
     <!-- Strings related to templates 'this week's calendar' fragment -->
-    <string name="templates_this_weeks_calendar_title">This week\'s calendar</string>
-    <string name="templates_this_weeks_calendar_preview_description">Preview image</string>
-    <string name="templates_this_weeks_calendar_button_export_text">Export</string>
-    <string name="templates_this_weeks_calendar_message">Export this preview as local template</string>
-    <string name="templates_this_weeks_calendar_preview_title">%1$dW%2$d</string>
-    <string name="templates_this_weeks_calendar_preview_weekly_notes">Weekly notes</string>
-    <string name="templates_this_weeks_calendar_preview_export_message">Exported as %s</string>
 
     <!-- Strings related to utils -->
     <string name="util_fluent_unknown">unknown</string>
@@ -457,4 +389,5 @@
     <!--string name="placeholder_256">But I must explain to you how all this mistaken idea of denouncing pleasure and praising pain was born and I will give you a complete account of the system, and expound the actual teachings of the great explorer of the truth, the master-builder of human we</string-->
     <!--string name="placeholder_384">But you must explain to you how all this mistaken idea of denouncing pleasure and praising pain was born and I will give you a complete account of the system, and expound the actual teachings of the great explorer of the truth, the master-builder of human happiness. No one rejects, dislikes, or avoids pleasure itself, because it is pleasure, but because those who do not know how to</string-->
     <!--string name="placeholder_512">But you must explain to you how all this mistaken idea of denouncing pleasure and praising pain was born and I will give you a complete account of the system, and expound the actual teachings of the great explorer of the truth, the master-builder of human happiness. No one rejects, dislikes, or avoids pleasure itself, because it is pleasure, but because those who do not know how to pursue pleasure rationally encounter consequences that are extremely painful. Nor again is there anyone who loves or pursues or</string-->
+    <string name="surface_page_export_message">Exported as %s</string>
 </resources>

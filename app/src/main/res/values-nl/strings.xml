@@ -44,51 +44,18 @@ Strings related to dashboard fragment -->
     <string name="dashboard_new_version_message">"Er is een nieuwe versie van 'Tools for Boox' beschikbaar, gelieve te upgraden, tenzij bepaalde functies niet werken."</string>
 
     <!-- Strings related to team drawer plugin -->
-    <string name="team_drawer_title">"Tekenaarsteam – %1$s"</string>
 
     <!-- Strings related to team drawer page fragment -->
-    <string name="team_drawer_page_title">"'%s' pagina's"</string>
-    <string name="team_drawer_page_text">"Welkom in ons tekenaarsteam! :)"</string>
-    <string name="team_drawer_page_button_export_text">"Exporteer"</string>
-    <string name="team_drawer_page_button_erase_text">"Wis pagina"</string>
-    <string name="team_drawer_page_export_message">"Geëxporteerd als %s"</string>
-    <string name="team_drawer_page_add_new_page_dialog_title">"voeg pagina toe"</string>
-    <string name="team_drawer_page_add_new_page_dialog_message">"wil je een nieuwe pagina toevoegen?"</string>
 
     <!-- Strings related to team drawer room fragment -->
-    <string name="team_drawer_room_title">"TekenTeam - Ruimtes"</string>
-    <string name="team_drawer_room_item_image">"Ruimte item afbeelding"</string>
-    <string name="team_drawer_room_add_dialog_title">"voeg nieuwe ruimte toe"</string>
 
     <!-- Strings related to team drawer note fragment -->
-    <string name="team_drawer_note_title">"'%s' notities"</string>
-    <string name="team_drawer_note_item_image">"Notitie item afbeelding"</string>
-    <string name="team_drawer_note_add_dialog_title">"Voeg nieuwe notitie toe"</string>
 
     <!-- Strings related to templates plugin -->
-    <string name="templates_main_title">"Sjablonen"</string>
-    <string name="templates_preview_button_text">"Voorbeeld"</string>
-    <string name="templates_settings_button_text">"Instellingen"</string>
-    <string name="templates_export_button_text">"Exporteer"</string>
 
     <!-- Strings related to templates 'boxed week's calendar' fragment -->
-    <string name="templates_boxed_weeks_calendar_title">"Weken van het jaar kalender sjabloon in kader"</string>
-    <string name="templates_boxed_weeks_calendar_preview_description">"Voorbeeld afbeelding"</string>
-    <string name="templates_boxed_weeks_calendar_button_export_text">"Exporteer"</string>
-    <string name="templates_boxed_weeks_calendar_message">"Exporteer dit voorbeeld als lokaal PDF sjabloon met meerdere pagina's"</string>
-    <string name="templates_boxed_weeks_calendar_preview_export_message">"Geëxporteerd als %s"</string>
-    <string name="templates_boxed_weeks_calendar_settings_days_layout_message">"Opmaak van de weekdagen:"</string>
-    <string name="templates_boxed_weeks_calendar_settings_days_layout_vertical">"Vertikaal"</string>
-    <string name="templates_boxed_weeks_calendar_settings_days_layout_horizontal">"Horizontaal"</string>
 
     <!-- Strings related to templates 'this week's calendar' fragment -->
-    <string name="templates_this_weeks_calendar_title">"Kalender van deze week"</string>
-    <string name="templates_this_weeks_calendar_preview_description">"Voorbeeld afbeelding"</string>
-    <string name="templates_this_weeks_calendar_button_export_text">"Export"</string>
-    <string name="templates_this_weeks_calendar_message">"Exporteer dit voorbeeld als lokaal sjabloon"</string>
-    <string name="templates_this_weeks_calendar_preview_title">"%1$dW%2$d"</string>
-    <string name="templates_this_weeks_calendar_preview_weekly_notes">"Week notities"</string>
-    <string name="templates_this_weeks_calendar_preview_export_message">"Geëxporteerd als %s"</string>
 
     <!-- Strings related to utils -->
     <string name="util_fluent_unknown">"Ongekend"</string>
@@ -96,30 +63,10 @@ Strings related to dashboard fragment -->
     <string name="util_fluent_hour">"Uur"</string>
     <string name="util_fluent_minute">"Minuut"</string>
     <string name="util_fluent_second">"Seconde"</string>
-    <string name="templates_boxed_week_calendar_creator_title">"%1$dW%2$d"</string>
-    <string name="templates_boxed_week_calendar_creator_weekly_notes">"Week notities"</string>
 
     <!-- Strings related to templates 'flat week's calendar' fragment -->
-    <string name="templates_flat_weeks_calendar_title">"Vlakke weken van het jaar sjabloon"</string>
-    <string name="templates_flat_weeks_calendar_preview_description">"Voorbeeld afbeelding"</string>
-    <string name="templates_flat_weeks_calendar_button_export_text">"Exporteer"</string>
-    <string name="templates_flat_weeks_calendar_message">"Exporteer dit voorbeeld als lokaal PDF sjabloon met meerdere pagina's"</string>
-    <string name="templates_flat_weeks_calendar_preview_export_message">"Geëxporteerd als %s"</string>
-    <string name="templates_flat_week_calendar_creator_title">"%1$dW%2$d"</string>
-    <string name="templates_flat_weeks_calendar_settings_with_days">"Aangemaakt met datums"</string>
 
     <!-- Strings related to templates 'boxed week's calendar' fragment -->
-    <string name="templates_boxed_days_calendar_title">"Dagen van het jaar kalender sjabloon in kader"</string>
-    <string name="templates_boxed_days_calendar_preview_description">"Voorbeeld afbeelding"</string>
-    <string name="templates_boxed_days_calendar_button_export_text">"Exporteer"</string>
-    <string name="templates_boxed_days_calendar_message">"Exporteer dit voorbeeld als lokaal PDF sjabloon met meerdere pagina's"</string>
-    <string name="templates_boxed_days_calendar_preview_export_message">"Geëxporteerd als %s"</string>
-    <string name="templates_boxed_days_calendar_settings_with_notes">"Maak aan met notities"</string>
-    <string name="templates_boxed_days_calendar_settings_with_tasks">"Maak aan met taken"</string>
-    <string name="templates_boxed_day_calendar_creator_title">"%s dagelijkse planner"</string>
-    <string name="templates_boxed_day_calendar_creator_notes">"Notities"</string>
-    <string name="templates_boxed_day_calendar_creator_tasks">"Taken"</string>
-    <string name="templates_boxed_days_calendar_settings_with_hours">"Maak aan met ingevulde uren"</string>
     <string name="dashboard_item_cancel_alt">"Annuleer"</string>
     <string name="dashboard_item_edit_alt">"Wijzig"</string>
     <string name="dashboard_item_save_alt">"Bewaar"</string>
@@ -128,10 +75,8 @@ Strings related to dashboard fragment -->
     <!-- Strings related to kanban planner plugin -->
     <string name="kanban_planner_main_title">"Kanban planner"</string>
     <string name="kanban_planner_card_content">"Kanban planner voorbeeld inhoud"</string>
-    <string name="templates_list_button_text">"Lijst"</string>
 
     <!-- Strings related to templates 'community' fragment -->
-    <string name="templates_community_title">"Sjablonen van de community"</string>
     <string name="dashboard_item_delete_alt">"Verwijder"</string>
     <string name="dashboard_item_erase_alt">"Wis"</string>
     <string name="kanban_planner_lane_dueSoonBacklogTitle">"Binnenkort verwacht (%d)"</string>
@@ -142,9 +87,6 @@ Strings related to dashboard fragment -->
     <string name="list_loading">"Lijst is aan het laden..."</string>
     <string name="list_empty">"Lege lijst"</string>
     <string name="export_message">"Geëxporteerd als %s"</string>
-    <string name="templates_community_list_thumbnail">"Community thumbnail"</string>
-    <string name="templates_community_list_icon_star">"Ster"</string>
-    <string name="templates_community_list_icon_starred">"met een ster"</string>
 
     <!-- Common messages -->
     <string name="ok">"OK"</string>
@@ -245,18 +187,9 @@ Strings related to dashboard fragment -->
     <string name="about_this_translation_contributors_title">"medewerkers aan de huidige vertaling"</string>
     <string name="about_this_translation_contributors_list">"anonieme medewerker"</string>
     <string name="dashboard_item_calendar_title">"Kalender"</string>
-    <string name="dashboard_item_templates_title">"Sjablonen"</string>
-    <string name="dashboard_item_teamdrawer_title">"Tekenteam"</string>
     <string name="dashboard_item_kanban_planner_title">"Kanban
 planner"</string>
     <string name="dashboard_item_about_title">"Over"</string>
-    <string name="templates_item_boxed_days_title">"Dag kalender
-in kader"</string>
-    <string name="templates_item_boxed_weeks_title">"Week kalender
-in kader"</string>
-    <string name="templates_item_community_title">"Sjablonen van de community"</string>
-    <string name="templates_item_flat_weeks_title">"vlakke week kalender"</string>
-    <string name="templates_item_this_weeks_title">"Kalender van deze week"</string>
     <string name="calendar_settings_button_pattern_sync">"Markeringen bijwerken"</string>
     <string name="calendar_settings_pattern_sync_done">"Kalender markeringen bijgewerkt"</string>
     <string name="cancel">"Annuleer"</string>
@@ -270,9 +203,6 @@ in kader"</string>
     <string name="calendar_settings_shortcut_long_label">"Kalender voor Boox"</string>
     <string name="calendar_settings_button_restore">"Importeer backup"</string>
     <string name="calendar_settings_restore_done">"Backup kalender geimporteerd van Downloads"</string>
-    <string name="templates_boxed_days_calendar_settings_date_picker_button">"Stel datum in"</string>
-    <string name="templates_boxed_weeks_calendar_settings_date_picker_button">"Stel datum in"</string>
-    <string name="templates_flat_weeks_calendar_settings_date_picker_button">"Stel datum in"</string>
     <string name="week_abbreviation">"W%d"</string>
     <string name="quarter_abbreviation">"Q%d"</string>
     <string name="calendar_settings_select_start_hour_text">"Selecteer het start-uur van de dag weergave"</string>
@@ -349,4 +279,5 @@ in kader"</string>
     <string name="cloud_subscription_yearly_button">"Jaarlijks abonnement
 (%s)"</string>
     <string name="dashboard_item_cloud_title">"Cloud"</string>
+    <string name="surface_page_export_message">"Geëxporteerd als %s"</string>
 </resources>
