@@ -14,6 +14,7 @@ import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
 import com.toolsboox.plugin.calendar.fi.CalendarEventsService
 import com.toolsboox.plugin.calendar.fi.CalendarPatternService
+import com.toolsboox.plugin.calendar.ot.CalendarTaskCarryOver
 import com.toolsboox.ui.plugin.FragmentPresenter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -84,6 +85,24 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                     var calendarEvents = calendarEventsService.loadEvents(fragment, currentDate)
                     calendarDay.startHour = calendarDay.startHour ?: defaultStartHour
 
+                    if (currentDate.isEqual(LocalDate.now())) {
+                        val yesterday = currentDate.minusDays(1)
+                        val yesterdayCalendarDay = calendarDayService.load(rootPath, yesterday, defaultStartHour, locale)
+
+                        if (CalendarTaskCarryOver.carryOver(yesterdayCalendarDay, calendarDay)) {
+                            CalendarPatternService.mutex.withLock {
+                                val yesterdayPattern = calendarPatternService.load(rootPath, yesterday, locale)
+                                yesterdayPattern.updateDay(yesterdayCalendarDay)
+                                calendarDayService.save(rootPath, yesterday, yesterdayCalendarDay)
+                                calendarPatternService.save(rootPath, yesterday, yesterdayPattern)
+
+                                calendarPattern.updateDay(calendarDay)
+                                calendarDayService.save(rootPath, currentDate, calendarDay)
+                                calendarPatternService.save(rootPath, currentDate, calendarPattern)
+                            }
+                        }
+                    }
+
                     if (currentDate >= LocalDate.now()) {
                         calendarDay.readingProgress.clear()
                     }
@@ -123,13 +142,18 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
      */
     fun save(
         fragment: CalendarDayFragment, binding: FragmentCalendarBinding,
-        calendarDay: CalendarDay, calendarPattern: CalendarPattern, currentDate: LocalDate
+        calendarDay: CalendarDay, calendarPattern: CalendarPattern, currentDate: LocalDate,
+        showProgress: Boolean = true
     ) {
         if (!checkPermissions(fragment, binding.root)) return
 
         GlobalScope.launch(Dispatchers.IO) {
             try {
-                withContext(Dispatchers.Main) { fragment.runOnActivity { fragment.showLoading() } }
+                // Per-stroke saves pass showProgress=false: flashing mainProgress VISIBLE/
+                // INVISIBLE on every pen-up forces an e-ink refresh + relayout, which on the
+                // Go 6 Gen 2 reads as a lag/freeze right when the pen lifts. The write itself
+                // is already off the main thread, so the indicator adds nothing here.
+                if (showProgress) withContext(Dispatchers.Main) { fragment.runOnActivity { fragment.showLoading() } }
 
                 try {
                     val rootPath = rootPath(fragment, Environment.DIRECTORY_DOCUMENTS)
@@ -146,7 +170,7 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                     withContext(Dispatchers.Main) { fragment.somethingHappened(e) }
                 }
             } finally {
-                withContext(Dispatchers.Main) { fragment.runOnActivity { fragment.hideLoading() } }
+                if (showProgress) withContext(Dispatchers.Main) { fragment.runOnActivity { fragment.hideLoading() } }
             }
         }
     }

@@ -232,6 +232,10 @@ class CalendarMonthFragment @Inject constructor() : SurfaceFragment() {
                 CalendarNavigator.toMonthNote(this, currentDate, "0")
             }
         }
+        binding.toolbarDrawing.toolbarCalendarView.setOnClickListener {
+            // Jump back to today's day page from the month view.
+            CalendarNavigator.toDayPage(this, LocalDate.now())
+        }
 
         utils.updateToolbar(binding)
         initializeSurface(true)

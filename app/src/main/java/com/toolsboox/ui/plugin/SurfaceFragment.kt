@@ -3,12 +3,14 @@ package com.toolsboox.ui.plugin
 import android.Manifest
 import android.content.SharedPreferences
 import android.graphics.*
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.SurfaceHolder
@@ -16,6 +18,8 @@ import android.view.SurfaceView
 import android.view.View
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.GestureDetectorCompat
@@ -70,6 +74,26 @@ abstract class SurfaceFragment : ScreenFragment() {
         const val CANVAS_HEIGHT = 1872
         const val MIN_ZOOM = 1.0f
         const val MAX_ZOOM = 4.0f
+
+        /**
+         * Debounce window for re-applying the Onyx raw-drawing limit rect after a
+         * surfaceChanged. On open the surface is resized more than once (toolbar/immersive
+         * relayout), and each limit-rect re-apply toggles setRawDrawingEnabled false->true,
+         * which cold-starts the native pen reader (seconds to spin up on the Go 6 Gen 2).
+         * Coalescing to the final size cold-starts the reader at most once.
+         */
+        private const val LIMIT_RECT_DEBOUNCE_MS = 250L
+
+        /**
+         * Delay before re-baking committed strokes to the SurfaceView after a pen-up. The
+         * live Onyx hardware overlay already shows the stroke, so the heavy full-canvas
+         * re-post (redraw all strokes + a blocking surface post) doesn't need to run on every
+         * lift — doing so hogs the main thread and delays delivery of the next pen-down
+         * (~1s "won't start writing" on the Go 6 Gen 2). Deferring and resetting it on each
+         * new stroke means rapid write-lift-write stays fluid; the bake fires once the user
+         * actually pauses. Storage save still happens immediately on pen-up.
+         */
+        private const val COMMIT_VISUAL_DEBOUNCE_MS = 700L
 
         /**
          * Touch drawing state.
@@ -167,6 +191,9 @@ abstract class SurfaceFragment : ScreenFragment() {
     private val inverseViewMatrix = Matrix()
     private var scaleGestureDetector: ScaleGestureDetector? = null
     private var doubleTapDetector: GestureDetector? = null
+    // Small floating grip that overlays the canvas to reopen the toolbar when it's collapsed to
+    // zero width (so the calendar can use the full screen width). Created lazily.
+    private var toolbarReopenHandle: View? = null
     private var lastFingerX = 0f
     private var lastFingerY = 0f
     private var isPanning = false
@@ -290,6 +317,20 @@ abstract class SurfaceFragment : ScreenFragment() {
      * The actual size of the surface.
      */
     private var surfaceSize: Rect = Rect(0, 0, 0, 0)
+
+    /** Surface size for which the Onyx limit rect is currently applied (-1 = none yet). */
+    private var appliedLimitWidth = -1
+    private var appliedLimitHeight = -1
+
+    /** Latest surface size awaiting a (debounced) limit-rect apply. */
+    private var pendingLimitWidth = 0
+    private var pendingLimitHeight = 0
+
+    /** Coalesces rapid/duplicate surfaceChanged callbacks into a single reader reconfigure. */
+    private val applyLimitRectRunnable = Runnable { applyPendingLimitRect() }
+
+    /** Deferred full-canvas re-bake after a pen-up; see [COMMIT_VISUAL_DEBOUNCE_MS]. */
+    private val commitVisualRunnable = Runnable { applyStrokes(strokes, false) }
 
     /**
      * Pen or eraser state.
@@ -705,6 +746,14 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
         requireActivity().findViewById<View>(R.id.drawerLayout)?.fitsSystemWindows = true
 
+        // Drop pending debounced work (limit-rect apply, deferred stroke re-bake) so it can't
+        // run after teardown. Strokes are already persisted on pen-up; the page re-renders on
+        // return, so a missed bake is harmless.
+        try {
+            provideSurfaceView().removeCallbacks(applyLimitRectRunnable)
+            provideSurfaceView().removeCallbacks(commitVisualRunnable)
+        } catch (_: Exception) {}
+
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
 
@@ -735,26 +784,136 @@ abstract class SurfaceFragment : ScreenFragment() {
             toolbar.toolbarToggle.visibility = View.GONE
             toolbar.root.setBackgroundColor(Color.LTGRAY)
             toolbar.root.layoutParams?.let { lp ->
-                lp.width = (12 * density).toInt()
+                // Slim collapsed handle, kept in the layout flow (zero-width + overlay broke the
+                // page rendering). The back-gesture exclusion below makes it reliably tappable
+                // without needing to be wide.
+                lp.width = (16 * density).toInt()
                 toolbar.root.layoutParams = lp
             }
+            excludeToolbarFromBackGesture()
         } else {
             group.visibility = View.VISIBLE
             toolbar.toolbarToggle.visibility = View.VISIBLE
             toolbar.root.setBackgroundColor(Color.TRANSPARENT)
-            // Decide column count from the available height.
-            // Single column needs ~17 buttons * 40dp + bottom toggle ≈ 720dp.
-            // If the screen is shorter than that (e.g. Palma 2 Pro in landscape),
-            // widen the toolbar to 80dp and split buttons into two columns.
-            val needsTwoColumns = resources.configuration.screenHeightDp < 720
-            // In two-column mode use 100dp so there's ~20dp of breathing room
-            // between the left (40dp) and right (40dp) columns.
-            val toolbarWidthDp = if (needsTwoColumns) 100 else 40
-            toolbar.root.layoutParams?.let { lp ->
-                lp.width = (toolbarWidthDp * density).toInt()
-                toolbar.root.layoutParams = lp
+            // Fit the buttons to the available height. Portrait has room for one comfortable
+            // column; landscape (short height) would force a single column below a tappable size,
+            // so add columns and tile every visible button into an even, column-major grid.
+            val buttonViews = listOf(
+                toolbar.toolbarHandTouch, toolbar.toolbarPen, toolbar.toolbarEraser,
+                toolbar.toolbarProcrastinator, toolbar.toolbarLasso, toolbar.toolbarCopy,
+                toolbar.toolbarPaste, toolbar.toolbarText, toolbar.toolbarUndo,
+                toolbar.toolbarRedo, toolbar.toolbarTrash, toolbar.toolbarCalendarView,
+                toolbar.toolbarSwipeUp, toolbar.toolbarSwipeDown, toolbar.toolbarSwitchSide,
+                toolbar.toolbarCloudSync, toolbar.toolbarRotate, toolbar.toolbarSettings
+            )
+            val visibleList = buttonViews.filter { it.visibility == View.VISIBLE }
+            val visibleCount = visibleList.size.coerceAtLeast(1)
+            val availDp = resources.configuration.screenHeightDp
+            val minButtonDp = 28
+            val maxButtonDp = 40
+            // Below this a single column is too cramped; add a column instead of shrinking further.
+            val comfortableButtonDp = 30
+
+            val singleColButtonDp = (availDp / visibleCount).coerceIn(minButtonDp, maxButtonDp)
+            val columns = if (singleColButtonDp >= comfortableButtonDp) {
+                1
+            } else {
+                val rowsPerColumn = (availDp / maxButtonDp).coerceAtLeast(1)
+                Math.ceil(visibleCount.toDouble() / rowsPerColumn).toInt().coerceAtLeast(1)
             }
-            applyToolbarTwoColumnLayout(needsTwoColumns)
+            val rows = Math.ceil(visibleCount.toDouble() / columns).toInt().coerceAtLeast(1)
+            val buttonPx = ((availDp / rows).coerceIn(minButtonDp, maxButtonDp) * density).toInt()
+
+            if (columns <= 1) {
+                // Single column (portrait): keep the XML layout (tools at top, nav pinned to the
+                // bottom), just sized to fit. Fresh XML is restored on rotation recreation.
+                resizeToolbarButtons(buttonViews, buttonPx)
+                toolbar.root.layoutParams?.let { lp ->
+                    lp.width = buttonPx
+                    toolbar.root.layoutParams = lp
+                }
+                applyToolbarTwoColumnLayout(false)
+            } else {
+                // Multiple columns (landscape / short screens): tile every visible button into an
+                // even column-major grid so the columns are uniform and none overflows the height.
+                applyToolbarGridLayout(visibleList, columns, buttonPx)
+                toolbar.root.layoutParams?.let { lp ->
+                    lp.width = columns * buttonPx
+                    toolbar.root.layoutParams = lp
+                }
+            }
+            excludeToolbarFromBackGesture()
+        }
+    }
+
+    /**
+     * Claim the docked toolbar's left-edge band from the system back gesture, so swipes/taps that
+     * land on the toolbar (especially the thin collapsed handle) open it instead of navigating Back.
+     * No-op below Android 10, which has no edge back gesture. Posted so the view is measured first.
+     */
+    private fun excludeToolbarFromBackGesture() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val root = provideToolbarDrawing().root
+        root.post {
+            val w = root.width
+            val h = root.height
+            if (w > 0 && h > 0) {
+                root.systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, w, h))
+            }
+        }
+    }
+
+    /**
+     * Resize every toolbar tool button to a square of [sizePx]. Some buttons declare a 0dp
+     * (constraint-driven) height in XML; forcing both dimensions makes the column uniform so
+     * the stack height is predictable when we scale to fit a single column.
+     */
+    private fun resizeToolbarButtons(buttons: List<View>, sizePx: Int) {
+        for (v in buttons) {
+            val lp = v.layoutParams ?: continue
+            lp.width = sizePx
+            lp.height = sizePx
+            v.layoutParams = lp
+        }
+    }
+
+    /**
+     * Lay the given (visible) buttons out as an even, column-major grid: fill the first column
+     * top-to-bottom, then the next, and so on. Every button becomes a uniform [sizePx] square and
+     * columns tile left-to-right from the start edge. This overrides the XML constraint chains
+     * while the toolbar is expanded in a multi-column (short / landscape) configuration, so the
+     * columns stay uniform and no column overflows the screen height. Fresh XML is restored on the
+     * activity recreation that follows a rotation back to a single-column (portrait) layout.
+     */
+    private fun applyToolbarGridLayout(buttons: List<View>, columns: Int, sizePx: Int) {
+        val parentId = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+        val unset = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
+        val rows = Math.ceil(buttons.size.toDouble() / columns).toInt().coerceAtLeast(1)
+        for ((i, view) in buttons.withIndex()) {
+            val lp = view.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams ?: continue
+            val col = i / rows
+            val row = i % rows
+            lp.width = sizePx
+            lp.height = sizePx
+            // Horizontal: place each column by its index from the start edge.
+            lp.startToStart = parentId
+            lp.startToEnd = unset
+            lp.endToEnd = unset
+            lp.endToStart = unset
+            lp.marginStart = col * sizePx
+            // Vertical: top of a column anchors to the parent top; the rest chain under the
+            // previous button in the same column (the immediately-preceding visible button).
+            lp.bottomToBottom = unset
+            lp.bottomToTop = unset
+            if (row == 0) {
+                lp.topToTop = parentId
+                lp.topToBottom = unset
+            } else {
+                lp.topToTop = unset
+                lp.topToBottom = buttons[i - 1].id
+            }
+            lp.topMargin = 0
+            view.layoutParams = lp
         }
     }
 
@@ -1176,9 +1335,9 @@ abstract class SurfaceFragment : ScreenFragment() {
      * @param y the y coordinate on the surface
      */
     private fun showPenSettingsDialog() {
-        val colorNames = arrayOf("Black", "Red", "Blue", "Green")
-        val colorValues = intArrayOf(Color.BLACK, Color.RED, Color.BLUE, Color.rgb(0, 128, 0))
-        val widthNames = arrayOf("Fine", "Med", "Thick", "Bold")
+        // Last entry is the "highlighter" / transparent marker: a translucent yellow,
+        // drawn with normal alpha blending like any other stroke.
+        val colorValues = intArrayOf(Color.BLACK, Color.RED, Color.BLUE, Color.rgb(0, 128, 0), Color.argb(90, 255, 213, 0))
         val widthValues = floatArrayOf(1.0f, 3.0f, 5.0f, 8.0f)
 
         var selColor = colorValues.indexOfFirst { it == paint.color }.coerceAtLeast(0)
@@ -1186,30 +1345,94 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         val dp = resources.displayMetrics.density
         val ctx = requireContext()
-        val root = android.widget.LinearLayout(ctx).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (4 * dp).toInt())
         }
 
-        val colorGroup = android.widget.RadioGroup(ctx).apply { orientation = android.widget.RadioGroup.HORIZONTAL }
-        val colorBtns = colorNames.mapIndexed { i, name ->
-            android.widget.RadioButton(ctx).apply {
-                text = name; id = i; isChecked = i == selColor
-                textSize = 14f
-            }.also { colorGroup.addView(it) }
+        fun ringDrawable(selected: Boolean, shape: Int) = GradientDrawable().apply {
+            this.shape = shape
+            setColor(Color.TRANSPARENT)
+            if (shape == GradientDrawable.RECTANGLE) cornerRadius = 8f * dp
+            if (selected) setStroke((2 * dp).toInt(), Color.DKGRAY)
         }
-        colorGroup.setOnCheckedChangeListener { _, id -> selColor = id }
-        root.addView(colorGroup)
 
-        val widthGroup = android.widget.RadioGroup(ctx).apply { orientation = android.widget.RadioGroup.HORIZONTAL }
-        widthNames.forEachIndexed { i, name ->
-            android.widget.RadioButton(ctx).apply {
-                text = name; id = i + 10; isChecked = i == selWidth
-                textSize = 14f
-            }.also { widthGroup.addView(it) }
+        val itemSize = (44 * dp).toInt()
+        val itemMargin = (4 * dp).toInt()
+
+        // Two-letter labels so the swatches stay distinguishable on grayscale e-ink.
+        val colorLabels = arrayOf("Bk", "Rd", "Bl", "Gn", "Hl")
+        // Picks white or black text based on the swatch's perceived luminance.
+        fun labelColorFor(color: Int): Int {
+            val lum = 0.299 * Color.red(color) + 0.587 * Color.green(color) + 0.114 * Color.blue(color)
+            return if (lum < 140) Color.WHITE else Color.BLACK
         }
-        widthGroup.setOnCheckedChangeListener { _, id -> selWidth = id - 10 }
-        root.addView(widthGroup)
+
+        // Color row: circular swatches showing the actual pen color.
+        val colorRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        val colorItems = colorValues.indices.map { i ->
+            val swatch = View(ctx).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(colorValues[i])
+                    if (Color.alpha(colorValues[i]) < 255) setStroke((1 * dp).toInt(), Color.LTGRAY)
+                }
+            }
+            val label = TextView(ctx).apply {
+                text = colorLabels.getOrElse(i) { "" }
+                setTextColor(labelColorFor(colorValues[i]))
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+            }
+            FrameLayout(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(itemSize, itemSize).apply {
+                    setMargins(itemMargin, itemMargin, itemMargin, itemMargin)
+                }
+                background = ringDrawable(i == selColor, GradientDrawable.OVAL)
+                val swatchSize = (itemSize * 0.65f).toInt()
+                addView(swatch, FrameLayout.LayoutParams(swatchSize, swatchSize).apply { gravity = Gravity.CENTER })
+                addView(label, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER })
+                isClickable = true
+            }.also { colorRow.addView(it) }
+        }
+        colorItems.forEachIndexed { i, item ->
+            item.setOnClickListener {
+                selColor = i
+                colorItems.forEachIndexed { j, c -> c.background = ringDrawable(j == selColor, GradientDrawable.OVAL) }
+            }
+        }
+        root.addView(colorRow)
+
+        // Width row: horizontal bars whose thickness represents the stroke width.
+        val widthItemWidth = (60 * dp).toInt()
+        val widthRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        val widthItems = widthValues.indices.map { i ->
+            val barHeight = (widthValues[i] * 2.5f * dp).toInt().coerceAtLeast((2 * dp).toInt())
+            val bar = View(ctx).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    setColor(Color.DKGRAY)
+                    cornerRadius = barHeight / 2f
+                }
+            }
+            FrameLayout(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(widthItemWidth, itemSize).apply {
+                    setMargins(itemMargin, itemMargin, itemMargin, itemMargin)
+                }
+                background = ringDrawable(i == selWidth, GradientDrawable.RECTANGLE)
+                val barWidth = (widthItemWidth * 0.7f).toInt()
+                addView(bar, FrameLayout.LayoutParams(barWidth, barHeight).apply { gravity = Gravity.CENTER })
+                isClickable = true
+            }.also { widthRow.addView(it) }
+        }
+        widthItems.forEachIndexed { i, item ->
+            item.setOnClickListener {
+                selWidth = i
+                widthItems.forEachIndexed { j, c -> c.background = ringDrawable(j == selWidth, GradientDrawable.RECTANGLE) }
+            }
+        }
+        root.addView(widthRow)
 
         AlertDialog.Builder(ctx).setView(root)
             .setPositiveButton("OK") { _, _ ->
@@ -1217,8 +1440,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                 paint.strokeWidth = widthValues[selWidth]
                 touchHelper?.setStrokeWidth(paint.strokeWidth * baseScale * zoomScale)
                 touchHelper?.setStrokeColor(paint.color)
+                val opaqueColor = Color.rgb(Color.red(paint.color), Color.green(paint.color), Color.blue(paint.color))
                 provideToolbarDrawing().toolbarPen.background.setTint(
-                    if (paint.color == Color.BLACK) Color.GRAY else paint.color
+                    if (opaqueColor == Color.BLACK) Color.GRAY else opaqueColor
                 )
             }
             .setNegativeButton("Cancel", null)
@@ -1360,6 +1584,10 @@ abstract class SurfaceFragment : ScreenFragment() {
                     touchHelper?.setLimitRect(limit, ArrayList())?.setStrokeWidth(paint.strokeWidth)?.openRawDrawing()
                     touchHelper?.setStrokeStyle(TouchHelper.STROKE_STYLE_PENCIL)
                     touchHelper?.setStrokeColor(paint.color)
+                    // Record the size we just opened the reader with, so the first
+                    // surfaceChanged at the same size won't needlessly cold-start it again.
+                    appliedLimitWidth = view.width
+                    appliedLimitHeight = view.height
                 }
 
                 override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -1388,11 +1616,14 @@ abstract class SurfaceFragment : ScreenFragment() {
                             Timber.w(t, "Viwoods enable() failed")
                         }
                     }
-                    // Re-apply the limit rect with the new dimensions (e.g. after rotation).
-                    touchHelper?.let { th ->
-                        th.setRawDrawingEnabled(false)
-                        th.setLimitRect(Rect(0, 0, width, height), ArrayList())
-                        th.setRawDrawingEnabled(true)
+                    // Re-apply the limit rect with the new dimensions (e.g. after rotation),
+                    // but coalesce rapid/duplicate surfaceChanged callbacks so the pen reader
+                    // cold-starts at most once on open. See [applyPendingLimitRect].
+                    touchHelper?.let {
+                        pendingLimitWidth = width
+                        pendingLimitHeight = height
+                        provideSurfaceView().removeCallbacks(applyLimitRectRunnable)
+                        provideSurfaceView().postDelayed(applyLimitRectRunnable, LIMIT_RECT_DEBOUNCE_MS)
                     }
                     // On Android 10+, claim the whole SurfaceView area back from the
                     // system gesture-navigation handler. Without this, the bottom ~10%
@@ -1406,6 +1637,9 @@ abstract class SurfaceFragment : ScreenFragment() {
 
                 override fun surfaceDestroyed(holder: SurfaceHolder) {
                     Timber.i("surfaceDestroyed")
+                    provideSurfaceView().removeCallbacks(applyLimitRectRunnable)
+                    appliedLimitWidth = -1
+                    appliedLimitHeight = -1
                     holder.removeCallback(surfaceCallback)
                     surfaceCallback = null
                 }
@@ -1413,6 +1647,28 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
 
         provideSurfaceView().holder.addCallback(surfaceCallback)
+    }
+
+    /**
+     * Re-apply the Onyx raw-drawing limit rect for the latest surface size, but only when it
+     * actually changed. Each setRawDrawingEnabled false->true cold-starts the native pen
+     * reader (seconds to spin up on the Go 6 Gen 2), so this is coalesced via
+     * [applyLimitRectRunnable] and skipped entirely when the size already matches — the first
+     * stroke after opening a page no longer waits through repeated reader cold-starts.
+     */
+    private fun applyPendingLimitRect() {
+        val th = touchHelper ?: return
+        val w = pendingLimitWidth
+        val h = pendingLimitHeight
+        if (w <= 0 || h <= 0) return
+        if (w == appliedLimitWidth && h == appliedLimitHeight) return
+        th.setRawDrawingEnabled(false)
+        th.setLimitRect(Rect(0, 0, w, h), ArrayList())
+        th.setRawDrawingEnabled(true)
+        th.isRawDrawingRenderEnabled = true
+        appliedLimitWidth = w
+        appliedLimitHeight = h
+        Timber.i("raw limit rect applied: ${w}x${h}")
     }
 
     /**
@@ -1496,10 +1752,13 @@ abstract class SurfaceFragment : ScreenFragment() {
             renderTextElements(canvas)
         }
 
-        touchHelper?.setRawDrawingEnabled(false)
+        // Commit the canvas to the surface WITHOUT closing the native pen reader. Previously
+        // this toggled setRawDrawingEnabled(false)->(true) around the post, which closes and
+        // reopens the reader on every pen-up — a multi-second cold start on the Go 6 Gen 2,
+        // so each stroke lift stalled. Pausing only the render flag (isRawDrawingRenderEnabled)
+        // lets us post the committed strokes while the reader stays open and warm.
         touchHelper?.isRawDrawingRenderEnabled = false
         provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
-        touchHelper?.setRawDrawingEnabled(true)
         touchHelper?.isRawDrawingRenderEnabled = true
     }
 
@@ -1856,6 +2115,9 @@ abstract class SurfaceFragment : ScreenFragment() {
         // Start the coalescer from a clean slate (drop any post left scheduled from a prior stroke).
         provideSurfaceView().removeCallbacks(viwoodsLivePostRunnable)
         viwoodsLivePostScheduled = false
+        // Cancel a pending deferred re-bake so it can't fire mid-stroke (the bake toggles
+        // render + posts the canvas, which would interrupt the live stroke).
+        provideSurfaceView().removeCallbacks(commitVisualRunnable)
         lastPoint = touchPoint
         firstPointTimestamp = Instant.now().toEpochMilli()
         touchPoint.t = 0L
@@ -2045,12 +2307,22 @@ abstract class SurfaceFragment : ScreenFragment() {
     private fun convertStrokes() {
         if (strokesToAdd.isEmpty()) return
 
-        applyStrokes(strokes, false)
+        // Persist + notify immediately (the save is already off the main thread), but defer
+        // the heavy full-canvas re-bake so it doesn't block delivery of the next pen-down.
+        // The live hardware overlay keeps the stroke visible until the bake runs. On the
+        // Viwoods software path there's no persistent overlay, so bake right away.
         onStrokeChanged(strokes)
         onStrokesAdded(strokesToAdd.toList())
 
         processStrokes(strokesToAdd)
         strokesToAdd.clear()
+
+        if (touchHelper != null) {
+            provideSurfaceView().removeCallbacks(commitVisualRunnable)
+            provideSurfaceView().postDelayed(commitVisualRunnable, COMMIT_VISUAL_DEBOUNCE_MS)
+        } else {
+            applyStrokes(strokes, false)
+        }
     }
 
     /**

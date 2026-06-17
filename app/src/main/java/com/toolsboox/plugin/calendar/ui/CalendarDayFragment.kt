@@ -133,13 +133,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             calendarDay.calendarStrokes[calendarStyle] = strokesCopy
         }
 
-        if (calendarStyle == CalendarDay.HEALTH_V1_STYLE) {
-            HealthDayPage.drawPage(this.requireContext(), templateCanvas, calendarDay)
-        }
-
         calendarPattern.updateDay(calendarDay)
 
-        presenter.save(this, binding, calendarDay, calendarPattern, currentDate)
+        // Per-stroke save: suppress the loading indicator so its VISIBLE/INVISIBLE flash
+        // doesn't trigger an e-ink refresh on every pen-up (reads as lag/freeze on lift).
+        presenter.save(this, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
     }
 
     /**
@@ -150,7 +148,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     override fun onTextElementsChanged(textElements: MutableList<TextElement>) {
         calendarDay.textElements = textElements
         calendarPattern.updateDay(calendarDay)
-        presenter.save(this, binding, calendarDay, calendarPattern, currentDate)
+        presenter.save(this, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
     }
 
     /**
@@ -235,27 +233,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     view, motionEvent, gestureResult, this@CalendarDayFragment, calendarDay, notePage!!
                 )
             else {
-                when (calendarStyle) {
-                    CalendarDay.DEFAULT_STYLE -> {
-                        CalendarDayPage.onTouchEvent(
-                            view, motionEvent, gestureResult, this@CalendarDayFragment, calendarDay
-                        )
-                    }
-
-                    CalendarDay.HEALTH_V1_STYLE -> {
-                        HealthDayPage.onTouchEvent(
-                            view, motionEvent, gestureResult, this@CalendarDayFragment, calendarDay
-                        )
-                    }
-
-                    CalendarDay.TIME_BOX_V1_STYLE -> {
-                        TimeBoxDayPage.onTouchEvent(
-                            view, motionEvent, gestureResult, this@CalendarDayFragment, calendarDay
-                        )
-                    }
-
-                    else -> return@setOnTouchListener true
-                }
+                CalendarDayPage.onTouchEvent(
+                    view, motionEvent, gestureResult, this@CalendarDayFragment, calendarDay
+                )
             }
         }
 
@@ -293,14 +273,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             // Always jump to today's day page (Default style), regardless of what
             // date you're currently viewing or whether you're on a note page.
             CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE)
-        }
-        binding.toolbarDrawing.toolbarHealthView.setOnClickListener {
-            calendarStyle = CalendarDay.HEALTH_V1_STYLE
-            presenter.load(this@CalendarDayFragment, binding, currentDate, defaultStartHour, locale)
-        }
-        binding.toolbarDrawing.toolbarTimeboxView.setOnClickListener {
-            calendarStyle = CalendarDay.TIME_BOX_V1_STYLE
-            presenter.load(this@CalendarDayFragment, binding, currentDate, defaultStartHour, locale)
         }
 
         utils.updateToolbar(binding)
@@ -368,15 +340,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         } else {
             binding.toolbarDrawing.toolbarProcrastinator.visibility = View.VISIBLE
             val calendarStrokes = calendarDay.calendarStrokes[calendarStyle] ?: listOf()
-            if (calendarStyle == CalendarDay.DEFAULT_STYLE) {
-                CalendarDayPage.drawPage(this.requireContext(), templateCanvas, calendarDay, calendarEvents)
-            }
-            if (calendarStyle == CalendarDay.HEALTH_V1_STYLE) {
-                HealthDayPage.drawPage(this.requireContext(), templateCanvas, calendarDay)
-            }
-            if (calendarStyle == CalendarDay.TIME_BOX_V1_STYLE) {
-                TimeBoxDayPage.drawPage(this.requireContext(), templateCanvas, calendarDay)
-            }
+            CalendarDayPage.drawPage(this.requireContext(), templateCanvas, calendarDay, calendarEvents)
             applyStrokes(Stroke.listDeepCopy(calendarStrokes), true)
         }
     }
@@ -396,20 +360,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         CalendarDayNavigator.draw(this.requireContext(), navigatorCanvas, calendarDay, calendarPattern)
 
-        if (calendarStyle == CalendarDay.DEFAULT_STYLE) {
-            firebaseAnalytics.logEvent("calendarDay") {
-                param("currentDate", currentDate.format(DateTimeFormatter.ISO_DATE))
-            }
-        }
-        if (calendarStyle == CalendarDay.HEALTH_V1_STYLE) {
-            firebaseAnalytics.logEvent("healthDay_v1") {
-                param("currentDate", currentDate.format(DateTimeFormatter.ISO_DATE))
-            }
-        }
-        if (calendarStyle == CalendarDay.TIME_BOX_V1_STYLE) {
-            firebaseAnalytics.logEvent("timeBoxDay_v1") {
-                param("currentDate", currentDate.format(DateTimeFormatter.ISO_DATE))
-            }
+        firebaseAnalytics.logEvent("calendarDay") {
+            param("currentDate", currentDate.format(DateTimeFormatter.ISO_DATE))
         }
     }
 

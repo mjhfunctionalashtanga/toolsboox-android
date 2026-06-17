@@ -28,7 +28,7 @@
             android:id="@+id/toolbarButtonGroup"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            app:constraint_referenced_ids="toolbarHandTouch,toolbarPen,toolbarEraser,toolbarProcrastinator,toolbarLasso,toolbarCopy,toolbarPaste,toolbarText,toolbarUndo,toolbarRedo,toolbarTrash,toolbarCalendarView,toolbarHealthView,toolbarTimeboxView,toolbarSwipeUp,toolbarSwipeDown,toolbarSwitchSide,toolbarRotate,toolbarCloudSync,toolbarSettings"/>
+            app:constraint_referenced_ids="toolbarHandTouch,toolbarPen,toolbarEraser,toolbarProcrastinator,toolbarLasso,toolbarCopy,toolbarPaste,toolbarText,toolbarUndo,toolbarRedo,toolbarTrash,toolbarCalendarView,toolbarSwipeUp,toolbarSwipeDown,toolbarSwitchSide,toolbarRotate,toolbarCloudSync,toolbarSettings"/>
 
     <ImageButton
             android:id="@+id/toolbarHandTouch"
@@ -176,30 +176,6 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             android:contentDescription="@string/calendar_drawing_toolbar_calendar"/>
-
-    <ImageButton
-            android:id="@+id/toolbarHealthView"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:visibility="gone"
-            android:scaleType="fitXY"
-            app:srcCompat="@drawable/ic_toolbar_health"
-
-            app:layout_constraintTop_toBottomOf="@id/toolbarCalendarView"
-            app:layout_constraintStart_toStartOf="parent"
-            android:contentDescription="@string/calendar_drawing_toolbar_health"/>
-
-    <ImageButton
-            android:id="@+id/toolbarTimeboxView"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:visibility="gone"
-            android:scaleType="fitCenter"
-            app:srcCompat="@drawable/ic_toolbar_time_box"
-
-            app:layout_constraintTop_toBottomOf="@id/toolbarHealthView"
-            app:layout_constraintStart_toStartOf="parent"
-            android:contentDescription="@string/calendar_drawing_toolbar_health"/>
 
     <ImageButton
             android:id="@+id/toolbarSwipeUp"
