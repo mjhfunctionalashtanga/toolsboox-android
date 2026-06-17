@@ -14,6 +14,7 @@ import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
 import com.toolsboox.plugin.calendar.fi.CalendarEventsService
 import com.toolsboox.plugin.calendar.fi.CalendarPatternService
+import com.toolsboox.plugin.calendar.ot.CalendarTaskCarryOver
 import com.toolsboox.ui.plugin.FragmentPresenter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -83,6 +84,24 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                     val calendarPattern = calendarPatternService.load(rootPath, currentDate, locale)
                     var calendarEvents = calendarEventsService.loadEvents(fragment, currentDate)
                     calendarDay.startHour = calendarDay.startHour ?: defaultStartHour
+
+                    if (currentDate.isEqual(LocalDate.now())) {
+                        val yesterday = currentDate.minusDays(1)
+                        val yesterdayCalendarDay = calendarDayService.load(rootPath, yesterday, defaultStartHour, locale)
+
+                        if (CalendarTaskCarryOver.carryOver(yesterdayCalendarDay, calendarDay)) {
+                            CalendarPatternService.mutex.withLock {
+                                val yesterdayPattern = calendarPatternService.load(rootPath, yesterday, locale)
+                                yesterdayPattern.updateDay(yesterdayCalendarDay)
+                                calendarDayService.save(rootPath, yesterday, yesterdayCalendarDay)
+                                calendarPatternService.save(rootPath, yesterday, yesterdayPattern)
+
+                                calendarPattern.updateDay(calendarDay)
+                                calendarDayService.save(rootPath, currentDate, calendarDay)
+                                calendarPatternService.save(rootPath, currentDate, calendarPattern)
+                            }
+                        }
+                    }
 
                     if (currentDate >= LocalDate.now()) {
                         calendarDay.readingProgress.clear()
