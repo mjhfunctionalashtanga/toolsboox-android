@@ -233,6 +233,10 @@ class CalendarQuarterFragment @Inject constructor() : SurfaceFragment() {
                 CalendarNavigator.toQuarterNote(this, currentDate, "0")
             }
         }
+        binding.toolbarDrawing.toolbarCalendarView.setOnClickListener {
+            // Jump back to today's day page from the quarter view.
+            CalendarNavigator.toDayPage(this, LocalDate.now())
+        }
 
         utils.updateToolbar(binding)
         initializeSurface(true)
