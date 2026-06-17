@@ -3,12 +3,14 @@ package com.toolsboox.ui.plugin
 import android.Manifest
 import android.content.SharedPreferences
 import android.graphics.*
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.SurfaceHolder
@@ -16,6 +18,8 @@ import android.view.SurfaceView
 import android.view.View
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.GestureDetectorCompat
@@ -1331,9 +1335,9 @@ abstract class SurfaceFragment : ScreenFragment() {
      * @param y the y coordinate on the surface
      */
     private fun showPenSettingsDialog() {
-        val colorNames = arrayOf("Black", "Red", "Blue", "Green")
-        val colorValues = intArrayOf(Color.BLACK, Color.RED, Color.BLUE, Color.rgb(0, 128, 0))
-        val widthNames = arrayOf("Fine", "Med", "Thick", "Bold")
+        // Last entry is the "highlighter" / transparent marker: a translucent yellow,
+        // drawn with normal alpha blending like any other stroke.
+        val colorValues = intArrayOf(Color.BLACK, Color.RED, Color.BLUE, Color.rgb(0, 128, 0), Color.argb(90, 255, 213, 0))
         val widthValues = floatArrayOf(1.0f, 3.0f, 5.0f, 8.0f)
 
         var selColor = colorValues.indexOfFirst { it == paint.color }.coerceAtLeast(0)
@@ -1341,30 +1345,94 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         val dp = resources.displayMetrics.density
         val ctx = requireContext()
-        val root = android.widget.LinearLayout(ctx).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (4 * dp).toInt())
         }
 
-        val colorGroup = android.widget.RadioGroup(ctx).apply { orientation = android.widget.RadioGroup.HORIZONTAL }
-        val colorBtns = colorNames.mapIndexed { i, name ->
-            android.widget.RadioButton(ctx).apply {
-                text = name; id = i; isChecked = i == selColor
-                textSize = 14f
-            }.also { colorGroup.addView(it) }
+        fun ringDrawable(selected: Boolean, shape: Int) = GradientDrawable().apply {
+            this.shape = shape
+            setColor(Color.TRANSPARENT)
+            if (shape == GradientDrawable.RECTANGLE) cornerRadius = 8f * dp
+            if (selected) setStroke((2 * dp).toInt(), Color.DKGRAY)
         }
-        colorGroup.setOnCheckedChangeListener { _, id -> selColor = id }
-        root.addView(colorGroup)
 
-        val widthGroup = android.widget.RadioGroup(ctx).apply { orientation = android.widget.RadioGroup.HORIZONTAL }
-        widthNames.forEachIndexed { i, name ->
-            android.widget.RadioButton(ctx).apply {
-                text = name; id = i + 10; isChecked = i == selWidth
-                textSize = 14f
-            }.also { widthGroup.addView(it) }
+        val itemSize = (44 * dp).toInt()
+        val itemMargin = (4 * dp).toInt()
+
+        // Two-letter labels so the swatches stay distinguishable on grayscale e-ink.
+        val colorLabels = arrayOf("Bk", "Rd", "Bl", "Gn", "Hl")
+        // Picks white or black text based on the swatch's perceived luminance.
+        fun labelColorFor(color: Int): Int {
+            val lum = 0.299 * Color.red(color) + 0.587 * Color.green(color) + 0.114 * Color.blue(color)
+            return if (lum < 140) Color.WHITE else Color.BLACK
         }
-        widthGroup.setOnCheckedChangeListener { _, id -> selWidth = id - 10 }
-        root.addView(widthGroup)
+
+        // Color row: circular swatches showing the actual pen color.
+        val colorRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        val colorItems = colorValues.indices.map { i ->
+            val swatch = View(ctx).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(colorValues[i])
+                    if (Color.alpha(colorValues[i]) < 255) setStroke((1 * dp).toInt(), Color.LTGRAY)
+                }
+            }
+            val label = TextView(ctx).apply {
+                text = colorLabels.getOrElse(i) { "" }
+                setTextColor(labelColorFor(colorValues[i]))
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+            }
+            FrameLayout(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(itemSize, itemSize).apply {
+                    setMargins(itemMargin, itemMargin, itemMargin, itemMargin)
+                }
+                background = ringDrawable(i == selColor, GradientDrawable.OVAL)
+                val swatchSize = (itemSize * 0.65f).toInt()
+                addView(swatch, FrameLayout.LayoutParams(swatchSize, swatchSize).apply { gravity = Gravity.CENTER })
+                addView(label, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER })
+                isClickable = true
+            }.also { colorRow.addView(it) }
+        }
+        colorItems.forEachIndexed { i, item ->
+            item.setOnClickListener {
+                selColor = i
+                colorItems.forEachIndexed { j, c -> c.background = ringDrawable(j == selColor, GradientDrawable.OVAL) }
+            }
+        }
+        root.addView(colorRow)
+
+        // Width row: horizontal bars whose thickness represents the stroke width.
+        val widthItemWidth = (60 * dp).toInt()
+        val widthRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        val widthItems = widthValues.indices.map { i ->
+            val barHeight = (widthValues[i] * 2.5f * dp).toInt().coerceAtLeast((2 * dp).toInt())
+            val bar = View(ctx).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    setColor(Color.DKGRAY)
+                    cornerRadius = barHeight / 2f
+                }
+            }
+            FrameLayout(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(widthItemWidth, itemSize).apply {
+                    setMargins(itemMargin, itemMargin, itemMargin, itemMargin)
+                }
+                background = ringDrawable(i == selWidth, GradientDrawable.RECTANGLE)
+                val barWidth = (widthItemWidth * 0.7f).toInt()
+                addView(bar, FrameLayout.LayoutParams(barWidth, barHeight).apply { gravity = Gravity.CENTER })
+                isClickable = true
+            }.also { widthRow.addView(it) }
+        }
+        widthItems.forEachIndexed { i, item ->
+            item.setOnClickListener {
+                selWidth = i
+                widthItems.forEachIndexed { j, c -> c.background = ringDrawable(j == selWidth, GradientDrawable.RECTANGLE) }
+            }
+        }
+        root.addView(widthRow)
 
         AlertDialog.Builder(ctx).setView(root)
             .setPositiveButton("OK") { _, _ ->
@@ -1372,8 +1440,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                 paint.strokeWidth = widthValues[selWidth]
                 touchHelper?.setStrokeWidth(paint.strokeWidth * baseScale * zoomScale)
                 touchHelper?.setStrokeColor(paint.color)
+                val opaqueColor = Color.rgb(Color.red(paint.color), Color.green(paint.color), Color.blue(paint.color))
                 provideToolbarDrawing().toolbarPen.background.setTint(
-                    if (paint.color == Color.BLACK) Color.GRAY else paint.color
+                    if (opaqueColor == Color.BLACK) Color.GRAY else opaqueColor
                 )
             }
             .setNegativeButton("Cancel", null)
