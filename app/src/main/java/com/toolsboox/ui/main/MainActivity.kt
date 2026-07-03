@@ -117,6 +117,25 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     override fun onResume() {
         super.onResume()
 
+        // MichaelFilter Intake share target: a URL shared from the browser or a
+        // podcast/YouTube app opens the intake screen pre-filled.
+        if (intent?.action == android.content.Intent.ACTION_SEND && intent?.type == "text/plain") {
+            val sharedText = intent?.getStringExtra(android.content.Intent.EXTRA_TEXT)
+            val sharedSubject = intent?.getStringExtra(android.content.Intent.EXTRA_SUBJECT)
+            // Consume the intent so re-resume doesn't re-navigate.
+            intent?.action = null
+
+            val parsed = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.parse(sharedText, sharedSubject)
+            val bundle = bundleOf(
+                "url" to parsed.url,
+                "title" to parsed.title,
+                "kind" to parsed.kind,
+                "text" to parsed.leftoverText
+            )
+            Timber.i("Share intake: url=${parsed.url} kind=${parsed.kind}")
+            binding.fragmentContent.findNavController().navigate(R.id.action_to_michaelfilter_intake, bundle)
+        }
+
         val host = intent?.data?.host
         val path = intent?.data?.path
         if (host == "app") {

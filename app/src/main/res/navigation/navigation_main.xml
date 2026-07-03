@@ -32,11 +32,45 @@
             android:id="@+id/action_to_cloud"
             app:destination="@id/CloudFragment"/>
 
+    <action
+            android:id="@+id/action_to_michaelfilter_intake"
+            app:destination="@id/MichaelFilterIntakeFragment"/>
+
     <fragment
             android:id="@+id/DashboardFragment"
             android:name="com.toolsboox.plugin.dashboard.ui.DashboardFragment"
             android:label="DashboardFragment"
             tools:layout="@layout/fragment_dashboard">
+    </fragment>
+
+    <fragment
+            android:id="@+id/MichaelFilterIntakeFragment"
+            android:name="com.toolsboox.plugin.michaelfilter.ui.MichaelFilterIntakeFragment"
+            android:label="MichaelFilterIntakeFragment"
+            tools:layout="@layout/fragment_michaelfilter_intake">
+
+        <argument
+                android:name="url"
+                app:argType="string"
+                app:nullable="true"/>
+        <argument
+                android:name="title"
+                app:argType="string"
+                app:nullable="true"/>
+        <argument
+                android:name="kind"
+                app:argType="string"
+                app:nullable="true"/>
+        <argument
+                android:name="text"
+                app:argType="string"
+                app:nullable="true"/>
+
+        <action
+                android:id="@+id/action_to_dashboard"
+                app:destination="@id/DashboardFragment"
+                app:popUpTo="@id/DashboardFragment"
+                app:popUpToInclusive="true"/>
     </fragment>
 
     <fragment
