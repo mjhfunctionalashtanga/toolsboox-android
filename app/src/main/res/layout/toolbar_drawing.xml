@@ -94,14 +94,14 @@
 
     <ImageButton
             android:id="@+id/toolbarCopy"
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:visibility="gone"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_copy"
 
             app:layout_constraintTop_toBottomOf="@id/toolbarLasso"
             app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
             android:contentDescription="@string/calendar_drawing_toolbar_copy"/>
 
     <ImageButton
@@ -129,13 +129,25 @@
             android:contentDescription="@string/calendar_drawing_toolbar_text"/>
 
     <ImageButton
+            android:id="@+id/toolbarImage"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:scaleType="fitXY"
+            app:srcCompat="@drawable/ic_toolbar_image"
+
+            app:layout_constraintTop_toBottomOf="@id/toolbarPaste"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            android:contentDescription="Insert image"/>
+
+    <ImageButton
             android:id="@+id/toolbarUndo"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_undo"
 
-            app:layout_constraintTop_toBottomOf="@id/toolbarPaste"
+            app:layout_constraintTop_toBottomOf="@id/toolbarImage"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             android:contentDescription="Undo"/>

@@ -79,7 +79,7 @@ class CalendarDayPage {
                 }
 
                 OnGestureListener.DTU -> {
-                    CalendarNavigator.toDayNote(fragment, localDate, "gratitude")
+                    CalendarNavigator.toDayNote(fragment, localDate, "pickings")
                     return true
                 }
             }

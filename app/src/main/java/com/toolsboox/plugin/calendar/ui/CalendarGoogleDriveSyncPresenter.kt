@@ -291,8 +291,13 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
                                     }
                                 }
                             } catch (e: IOException) {
+                                Timber.w(e, "Background Drive sync network failure")
                                 withContext(Dispatchers.Main) {
-                                    fragment.somethingHappened(e)
+                                    android.widget.Toast.makeText(
+                                        fragment.requireContext(),
+                                        "⚠ Drive sync failed — check your connection. Changes will sync when you're back online.",
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
                                 }
                             }
                         }
@@ -300,6 +305,11 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
             }
             .addOnFailureListener { e ->
                 Timber.i("Silent-sign-in failed: ${e.message}")
+                android.widget.Toast.makeText(
+                    fragment.requireContext(),
+                    "⚠ Couldn't reach Google Drive to sync — check your connection.",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
             }
     }
 

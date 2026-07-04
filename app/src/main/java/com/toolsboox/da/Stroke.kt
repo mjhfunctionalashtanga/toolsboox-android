@@ -17,9 +17,18 @@ data class Stroke(
     var timestamp: Long = 0L,
     var strokePoints: List<StrokePoint>,
     var color: Int = -16777216,
-    var strokeWidth: Float = 3.0f
+    var strokeWidth: Float = 3.0f,
+    // NB: named `inkStyle`, NOT `style` — legacy/upstream data stores a STRING `style`
+    // (e.g. "ballpoint"), which would crash Moshi if this int reused that key.
+    var inkStyle: Int = STYLE_NORMAL
 ) {
     companion object {
+        /** Uniform-width ink (the default; legacy strokes deserialize to this). */
+        const val STYLE_NORMAL = 0
+
+        /** Calligraphy: per-point pressure-variable width, baked to match the Onyx fountain nib. */
+        const val STYLE_CALLIGRAPHY = 1
+
         /**
          * Deep copy of strokes.
          *

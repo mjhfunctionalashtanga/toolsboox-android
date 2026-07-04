@@ -63,25 +63,29 @@ class CalendarDayPageNotes : Creator {
 
             when (gestureResult) {
                 OnGestureListener.UTD -> {
-                    if (notePage == "gratitude") {
-                        CalendarNavigator.toDayPage(fragment, localDate)
-                    } else {
-                        val page = notePage.toIntOrNull() ?: 0
-                        if (page == 0) {
-                            CalendarNavigator.toDayNote(fragment, localDate, "gratitude")
-                        } else {
-                            CalendarNavigator.toDayNote(fragment, localDate, "${page - 1}")
+                    when (notePage) {
+                        "pickings" -> CalendarNavigator.toDayPage(fragment, localDate)
+                        "gratitude" -> CalendarNavigator.toDayNote(fragment, localDate, "pickings")
+                        else -> {
+                            val page = notePage.toIntOrNull() ?: 0
+                            if (page == 0) {
+                                CalendarNavigator.toDayNote(fragment, localDate, "gratitude")
+                            } else {
+                                CalendarNavigator.toDayNote(fragment, localDate, "${page - 1}")
+                            }
                         }
                     }
                     return true
                 }
 
                 OnGestureListener.DTU -> {
-                    if (notePage == "gratitude") {
-                        CalendarNavigator.toDayNote(fragment, localDate, "0")
-                    } else {
-                        val page = notePage.toIntOrNull() ?: 0
-                        CalendarNavigator.toDayNote(fragment, localDate, "${page + 1}")
+                    when (notePage) {
+                        "pickings" -> CalendarNavigator.toDayNote(fragment, localDate, "gratitude")
+                        "gratitude" -> CalendarNavigator.toDayNote(fragment, localDate, "0")
+                        else -> {
+                            val page = notePage.toIntOrNull() ?: 0
+                            CalendarNavigator.toDayNote(fragment, localDate, "${page + 1}")
+                        }
                     }
                     return true
                 }
@@ -102,6 +106,10 @@ class CalendarDayPageNotes : Creator {
         fun drawPage(context: Context, canvas: Canvas, calendarDay: CalendarDay, template: Int, notePage: String) {
             if (notePage == "gratitude") {
                 drawGratitudePage(canvas)
+                return
+            }
+            if (notePage == "pickings") {
+                drawPickingsPage(canvas)
                 return
             }
 
@@ -217,6 +225,65 @@ class CalendarDayPageNotes : Creator {
             val doodleTop = doodleHeaderY + 25f
             val doodleBottom = 1820f
             canvas.drawRect(colLeft, doodleTop, colRight, doodleBottom, dashedBorder)
+        }
+
+        /**
+         * Draw the Pickings page: a NOTES writing zone, a QUOTES writing zone, and two
+         * dashed image boxes below. Strokes save under the "pickings" notePage key, so the
+         * sync can route this page to michaeljoelhall.com (journal CPT) + mjh.yoga /notes/.
+         */
+        private fun drawPickingsPage(canvas: Canvas) {
+            canvas.drawRect(0f, 0f, 1404f, 1872f, Creator.fillWhite)
+
+            val robotBold = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            val headerPaint = TextPaint().apply {
+                color = Color.BLACK; textAlign = Paint.Align.LEFT; textSize = 40f; typeface = robotBold; isAntiAlias = true
+            }
+            val linePaint = Paint().apply {
+                color = Color.argb(140, 0, 0, 0); strokeWidth = 1.5f; style = Paint.Style.STROKE; isAntiAlias = true
+            }
+            val dashedBorder = Paint().apply {
+                color = Color.argb(100, 0, 0, 0); strokeWidth = 1.5f; style = Paint.Style.STROKE
+                pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f); isAntiAlias = true
+            }
+
+            val panelBorder = Paint().apply {
+                color = Color.argb(170, 0, 0, 0); strokeWidth = 2f; style = Paint.Style.STROKE; isAntiAlias = true
+            }
+
+            val left = 40f
+            val right = 1364f
+            val gap = 36f
+            val pageCenter = (left + right) / 2f
+            val colMidR = pageCenter - gap / 2f   // right edge of the left column
+            val colMidL = pageCenter + gap / 2f   // left edge of the right column
+            val lineSpacing = 60f
+
+            // Two tall writing panels side by side, NOTES (left) + QUOTES (right). No title — bigger boxes.
+            val panelTop = 60f
+            val panelBottom = 1150f
+            canvas.drawText("NOTES", left, panelTop - 14f, headerPaint)
+            canvas.drawRect(left, panelTop, colMidR, panelBottom, panelBorder)
+            run {
+                var y = panelTop + lineSpacing
+                while (y < panelBottom - 12f) { canvas.drawLine(left + 14f, y, colMidR - 14f, y, linePaint); y += lineSpacing }
+            }
+            canvas.drawText("QUOTES", colMidL, panelTop - 14f, headerPaint)
+            canvas.drawRect(colMidL, panelTop, right, panelBottom, panelBorder)
+            run {
+                var y = panelTop + lineSpacing
+                while (y < panelBottom - 12f) { canvas.drawLine(colMidL + 14f, y, right - 14f, y, linePaint); y += lineSpacing }
+            }
+
+            // Two square image tiles below, sized to the column width.
+            val imgHeaderY = panelBottom + 50f
+            val boxTop = imgHeaderY + 18f
+            val boxSize = colMidR - left
+            val boxBottom = boxTop + boxSize
+            canvas.drawText("IMAGE 1", left, imgHeaderY, headerPaint)
+            canvas.drawText("IMAGE 2", colMidL, imgHeaderY, headerPaint)
+            canvas.drawRect(left, boxTop, colMidR, boxBottom, dashedBorder)
+            canvas.drawRect(colMidL, boxTop, right, boxBottom, dashedBorder)
         }
     }
 }

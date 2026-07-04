@@ -1,9 +1,18 @@
 package com.toolsboox.ui.plugin
 
 import android.Manifest
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import android.util.Base64
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import java.io.ByteArrayOutputStream
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -44,6 +53,7 @@ import com.onyx.android.sdk.utils.DeviceFeatureUtil
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import com.toolsboox.R
+import com.toolsboox.da.ImageElement
 import com.toolsboox.da.Stroke
 import com.toolsboox.da.StrokePoint
 import com.toolsboox.da.TextElement
@@ -58,8 +68,12 @@ import timber.log.Timber
 import java.time.Instant
 import java.util.*
 import javax.inject.Inject
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.hypot
 import kotlin.math.roundToInt
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
@@ -94,6 +108,35 @@ abstract class SurfaceFragment : ScreenFragment() {
          * actually pauses. Storage save still happens immediately on pen-up.
          */
         private const val COMMIT_VISUAL_DEBOUNCE_MS = 700L
+
+        /**
+         * Always-on ink-gesture thresholds (canvas space, 1404×1872). Tunable — these
+         * govern how aggressively a stroke is read as a circle (→ lasso) or a scribble
+         * (→ erase) rather than committed as ink. Raise to reduce false positives.
+         */
+        private const val GESTURE_MIN_CIRCLE_DIAG = 180f       // a ring must be bigger than this (filters letter loops)
+        private const val GESTURE_CLOSURE_FRACTION = 0.25f     // end must land within this × path length of the start
+        private const val GESTURE_CIRCLE_MIN_TURN = 4.5f       // ≈ one full loop of consistent rotation (radians)
+        private const val GESTURE_SCRIBBLE_LENGTH_RATIO = 4.5f // path length ≥ this × bbox diagonal — a tight, in-place
+                                                               // back-and-forth. Cursive flows sideways (low ratio), so
+                                                               // this is the main thing that stops cursive erasing.
+        private const val GESTURE_SCRIBBLE_MIN_ABS_TURN = 11.0f // total accumulated wiggle (radians)
+        private const val GESTURE_SCRIBBLE_MIN_REVERSALS = 6   // minimum direction reversals
+
+        /**
+         * Calligraphy nib width as a multiple of the base stroke width, scaled by pen
+         * pressure. Lightest touch ≈ MIN, firmest ≈ MAX — the spread is what gives the
+         * baked stroke its fountain-pen taper. Tunable.
+         */
+        private const val CALLIGRAPHY_MIN_FACTOR = 0.18f    // thinnest — stroke running ALONG the nib
+        private const val CALLIGRAPHY_MAX_FACTOR = 2.8f      // thickest — stroke running ACROSS the nib
+        private const val CALLIGRAPHY_NIB_ANGLE_DEG = 45f    // broad-nib orientation (classic italic)
+
+        /** Pasted images: downscale the longest side to this on import, and place at this fraction of page width. */
+        private const val IMAGE_MAX_DIM = 1400
+        private const val IMAGE_PLACE_FRACTION = 0.6f
+        private const val IMAGE_HANDLE_SIZE = 64f   // pen-friendly resize handle
+        private const val IMAGE_CHIP_SIZE = 64f     // pen-friendly delete chip
 
         /**
          * Touch drawing state.
@@ -154,6 +197,36 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** Bounding box (canvas-space) of the current selection, set when the lasso closes. */
     private var selBox: RectF? = null
 
+    /** Always-on gestures: a circle around ink auto-lassos it; a scribble over ink auto-erases it. */
+    private var autoGesturesEnabled = true
+
+    /** When true the pen lays down pressure-variable calligraphy ink (live via the Onyx fountain nib). */
+    private var calligraphyMode = false
+
+    /** Image insert/manipulate mode (toolbar image button): select, move, resize, delete pasted images. */
+    private var imageMode = false
+    private var imageElements: MutableList<ImageElement> = mutableListOf()
+    private var selectedImage: ImageElement? = null
+    private enum class ImageDrag { NONE, MOVE, RESIZE }
+    private var imageDrag = ImageDrag.NONE
+    private var imageDragStartX = 0f
+    private var imageDragStartY = 0f
+    private var imageOrigRect = RectF()
+    private var cropMode = false
+    private var cropDragging = false
+    private var cropRect: RectF? = null
+    private var cropStartX = 0f
+    private var cropStartY = 0f
+    private val imageBitmapCache = HashMap<UUID, Bitmap>()
+    private val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { isFilterBitmap = true }
+
+    /** Photo/file picker fallback when the clipboard has no image. Registered at construction. */
+    private val imagePickLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            result.data?.data?.let { insertImageFromUri(it) }
+        }
+    }
+
     /** Which transform is currently being driven by the stylus (NONE = idle). */
     private enum class SelectionDrag { NONE, HANDLE_TL, HANDLE_TR, HANDLE_BL, HANDLE_BR, MOVE }
     private var selectionDrag = SelectionDrag.NONE
@@ -178,8 +251,10 @@ abstract class SurfaceFragment : ScreenFragment() {
     private var pasteMode = false
 
     // --- Undo/redo history ---
-    private val undoStack = mutableListOf<List<Stroke>>()
-    private val redoStack = mutableListOf<List<Stroke>>()
+    /** Combined undo/redo snapshot so strokes and images undo together, in chronological order. */
+    private class CanvasSnapshot(val strokes: List<Stroke>, val images: List<ImageElement>)
+    private val undoStack = mutableListOf<CanvasSnapshot>()
+    private val redoStack = mutableListOf<CanvasSnapshot>()
 
     // --- Zoom and pan state ---
     protected var twoFingerGesture = false
@@ -467,6 +542,8 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         // Restore the single-finger-gestures preference, then sync the toolbar icon.
         singleFingerGesturesEnabled = sharedPreferences.getBoolean("singleFingerGesturesEnabled", false)
+        autoGesturesEnabled = sharedPreferences.getBoolean("autoGesturesEnabled", true)
+        calligraphyMode = sharedPreferences.getBoolean("calligraphyMode", false)
         if (singleFingerGesturesEnabled)
             provideToolbarDrawing().toolbarHandTouch.setImageResource(R.drawable.ic_toolbar_hand_draw)
         else
@@ -539,11 +616,17 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         // --- Copy button ---
         provideToolbarDrawing().toolbarCopy.setOnClickListener {
-            if (selectedStrokes.isNotEmpty()) {
-                strokeClipboard.copy(selectedStrokes.toList())
-                showMessage(R.string.calendar_drawing_toolbar_copied, provideSurfaceView())
-            } else {
-                showMessage(R.string.calendar_drawing_toolbar_nothing_selected, provideSurfaceView())
+            val img = selectedImage
+            when {
+                img != null -> {
+                    strokeClipboard.copyImage(img)
+                    showMessage(R.string.calendar_drawing_toolbar_copied, provideSurfaceView())
+                }
+                selectedStrokes.isNotEmpty() -> {
+                    strokeClipboard.copy(selectedStrokes.toList())
+                    showMessage(R.string.calendar_drawing_toolbar_copied, provideSurfaceView())
+                }
+                else -> showMessage(R.string.calendar_drawing_toolbar_nothing_selected, provideSurfaceView())
             }
         }
 
@@ -551,6 +634,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideToolbarDrawing().toolbarPaste.setOnClickListener {
             if (!strokeClipboard.hasContent) {
                 showMessage(R.string.calendar_drawing_toolbar_clipboard_empty, provideSurfaceView())
+                return@setOnClickListener
+            }
+            if (strokeClipboard.hasImage) {
+                pasteClipboardImage()
                 return@setOnClickListener
             }
             pasteMode = true
@@ -567,7 +654,39 @@ abstract class SurfaceFragment : ScreenFragment() {
             provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarPaste.background.setTint(Color.GRAY)
+            provideToolbarDrawing().toolbarImage.background.setTint(Color.WHITE)
+            exitImageMode()
             showMessage(R.string.calendar_drawing_toolbar_paste, provideSurfaceView())
+        }
+
+        // --- Image insert / manipulate button ---
+        provideToolbarDrawing().toolbarImage.setOnClickListener {
+            if (imageMode) {
+                // Toggle off: leave image mode, back to pen.
+                exitImageMode()
+                penState = true
+                provideToolbarDrawing().toolbarImage.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
+                applyStrokes(strokes, true)
+            } else {
+                // Enter image mode and insert (clipboard image if present, otherwise picker).
+                textMode = false
+                pasteMode = false
+                selectionMode = false
+                hasSelection = false
+                procrastinator = false
+                penState = false
+                selectedStrokes.clear()
+                selectionPoints.clear()
+                provideToolbarDrawing().toolbarPen.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarEraser.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarImage.background.setTint(Color.GRAY)
+                imageMode = true
+                Toast.makeText(requireContext(), "Image mode: tap blank to add, tap an image to move/delete", Toast.LENGTH_SHORT).show()
+            }
         }
 
         // --- Text tool button ---
@@ -593,7 +712,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                 provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
                 provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
                 provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
+                provideToolbarDrawing().toolbarImage.background.setTint(Color.WHITE)
                 provideToolbarDrawing().toolbarText.background.setTint(Color.GRAY)
+                exitImageMode()
             }
         }
 
@@ -610,19 +731,29 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         provideToolbarDrawing().toolbarUndo.setOnClickListener {
             if (undoStack.isNotEmpty()) {
-                redoStack.add(Stroke.listDeepCopy(strokes))
-                strokes = undoStack.removeAt(undoStack.size - 1).toMutableList()
+                redoStack.add(snapshotCanvas())
+                val snap = undoStack.removeAt(undoStack.size - 1)
+                strokes = snap.strokes.toMutableList()
+                imageElements = snap.images.map { it.copy() }.toMutableList()
+                imageBitmapCache.clear()
+                selectedImage = null
                 applyStrokes(strokes, true)
                 onStrokeChanged(strokes)
+                onImageElementsChanged(imageElements)
             }
         }
 
         provideToolbarDrawing().toolbarRedo.setOnClickListener {
             if (redoStack.isNotEmpty()) {
-                undoStack.add(Stroke.listDeepCopy(strokes))
-                strokes = redoStack.removeAt(redoStack.size - 1).toMutableList()
+                undoStack.add(snapshotCanvas())
+                val snap = redoStack.removeAt(redoStack.size - 1)
+                strokes = snap.strokes.toMutableList()
+                imageElements = snap.images.map { it.copy() }.toMutableList()
+                imageBitmapCache.clear()
+                selectedImage = null
                 applyStrokes(strokes, true)
                 onStrokeChanged(strokes)
+                onImageElementsChanged(imageElements)
             }
         }
 
@@ -969,6 +1100,8 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
         provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
         provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
+        provideToolbarDrawing().toolbarImage.background.setTint(Color.WHITE)
+        exitImageMode()
     }
 
     // --- Zoom / pan infrastructure ---
@@ -1217,20 +1350,20 @@ abstract class SurfaceFragment : ScreenFragment() {
         lockCanvas.save()
         lockCanvas.concat(viewMatrix)
 
+        renderImageElements(lockCanvas)
         for (stroke in strokes) {
             val usePaint = if (stroke.strokeId in selectedIds) selectionHighlightPaint else paint
             drawStrokePath(lockCanvas, usePaint, stroke)
         }
 
-        // Draw lasso polygon (points are in canvas space)
-        if (selectionPoints.size > 1) {
+        // Draw the freehand lasso outline only while the lasso is still being drawn.
+        // Once a selection is committed the bounding box represents it; the raw polygon
+        // would otherwise linger at its original spot when the strokes are moved away.
+        if (!hasSelection && selectionPoints.size > 1) {
             val lassoPath = Path()
             lassoPath.moveTo(selectionPoints[0].x, selectionPoints[0].y)
             for (i in 1 until selectionPoints.size) {
                 lassoPath.lineTo(selectionPoints[i].x, selectionPoints[i].y)
-            }
-            if (hasSelection) {
-                lassoPath.close()
             }
             lockCanvas.drawPath(lassoPath, lassoPaint)
         }
@@ -1326,6 +1459,288 @@ abstract class SurfaceFragment : ScreenFragment() {
                 )
             }
         }
+    }
+
+    // ─── Image elements: paste/insert, render, move/resize/delete ───────────────
+    // Images live on the v2 CalendarDay alongside text/strokes; bytes are inline base64
+    // (downscaled) so they ride the existing JSON save + Drive sync untouched.
+
+    fun setImageElements(elements: MutableList<ImageElement>) {
+        this.imageElements = elements
+        imageBitmapCache.clear()
+        // Keep an active selection pointing at the reloaded element so it survives page reloads.
+        val selId = selectedImage?.elementId
+        selectedImage = if (selId != null) elements.firstOrNull { it.elementId == selId } else null
+    }
+
+    /** Redraw the selected-image overlay if one is active (call after a page reload repaints). */
+    fun redrawImageSelectionIfActive() {
+        if (imageMode && selectedImage != null) drawImageSelection()
+    }
+
+    /** Override to persist image changes (the day fragment writes them back to CalendarDay). */
+    open fun onImageElementsChanged(imageElements: MutableList<ImageElement>) {}
+
+    private fun bitmapForElement(element: ImageElement): Bitmap? {
+        imageBitmapCache[element.elementId]?.let { return it }
+        return try {
+            val bytes = Base64.decode(element.data, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.also { imageBitmapCache[element.elementId] = it }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to decode image element")
+            null
+        }
+    }
+
+    /** Render all image elements (drawn under strokes/text so the user can write over them). */
+    private fun renderImageElements(targetCanvas: Canvas) {
+        if (imageElements.isEmpty()) return
+        for (element in imageElements) {
+            val bmp = bitmapForElement(element) ?: continue
+            targetCanvas.drawBitmap(bmp, null, RectF(element.x, element.y, element.x + element.width, element.y + element.height), imagePaint)
+        }
+    }
+
+    private fun exitImageMode() {
+        imageMode = false
+        selectedImage = null
+        imageDrag = ImageDrag.NONE
+        cropMode = false
+        cropDragging = false
+        cropRect = null
+    }
+
+    private fun snapshotCanvas() = CanvasSnapshot(Stroke.listDeepCopy(strokes), imageElements.map { it.copy() })
+
+    /** Push the current strokes+images onto the undo stack (cap 50) and clear redo. */
+    private fun pushUndo() {
+        undoStack.add(snapshotCanvas())
+        if (undoStack.size > 50) undoStack.removeAt(0)
+        redoStack.clear()
+    }
+
+    /** Paste the unified clipboard's image as a new element, offset + selected, in image mode. */
+    private fun pasteClipboardImage() {
+        val img = strokeClipboard.image ?: return
+        val stamped = strokeClipboard.stampImageAt(img.x + 40f, img.y + 40f) ?: return
+        pushUndo()
+        textMode = false
+        pasteMode = false
+        selectionMode = false
+        hasSelection = false
+        procrastinator = false
+        penState = false
+        imageMode = true
+        imageElements.add(stamped)
+        onImageElementsChanged(imageElements)
+        selectedImage = stamped
+        provideToolbarDrawing().toolbarImage.background.setTint(Color.GRAY)
+        applyStrokes(strokes, true)
+        drawImageSelection()
+    }
+
+    /** Insert from the system clipboard if it holds an image, otherwise open the picker. */
+    private fun insertImageFromClipboardOrPicker() {
+        try {
+            val cm = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            val clip = cm?.primaryClip
+            if (clip != null && clip.itemCount > 0) {
+                val uri = clip.getItemAt(0).uri
+                if (uri != null) {
+                    insertImageFromUri(uri)
+                    return
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "Clipboard image check failed")
+        }
+        launchImagePicker()
+    }
+
+    /**
+     * Open an image picker robustly: try the gallery (ACTION_PICK) first — most stable on
+     * Boox/AOSP — then fall back to the document picker (ACTION_GET_CONTENT). Both launches
+     * are guarded so a missing/incompatible picker can never crash the app.
+     */
+    private fun launchImagePicker() {
+        val pick = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply { type = "image/*" }
+        try {
+            imagePickLauncher.launch(pick)
+            return
+        } catch (e: Exception) {
+            Timber.w(e, "ACTION_PICK gallery unavailable, falling back to ACTION_GET_CONTENT")
+        }
+        val get = Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "image/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+        }
+        try {
+            imagePickLauncher.launch(get)
+        } catch (e: Exception) {
+            Timber.e(e, "No image picker available")
+            Toast.makeText(requireContext(), "No image picker on this device — copy an image, then tap the image button", Toast.LENGTH_LONG).show()
+            exitImageMode()
+        }
+    }
+
+    /** Decode an image already downsampled near [IMAGE_MAX_DIM] so a large photo can't OOM. */
+    private fun decodeDownsampledImage(uri: Uri): Bitmap? {
+        val cr = requireContext().contentResolver
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        val longest = maxOf(bounds.outWidth, bounds.outHeight)
+        while (longest / sample > IMAGE_MAX_DIM * 2) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        return cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+    }
+
+    private fun insertImageFromUri(uri: Uri) {
+        try {
+            val original = decodeDownsampledImage(uri)
+            if (original == null) {
+                Toast.makeText(requireContext(), "Couldn't read that image", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            // Downscale the longest side so the inline base64 stays sync-friendly.
+            val longest = maxOf(original.width, original.height)
+            val scaled = if (longest > IMAGE_MAX_DIM) {
+                val ratio = IMAGE_MAX_DIM.toFloat() / longest
+                Bitmap.createScaledBitmap(
+                    original,
+                    (original.width * ratio).toInt().coerceAtLeast(1),
+                    (original.height * ratio).toInt().coerceAtLeast(1),
+                    true
+                )
+            } else original
+
+            val baos = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.PNG, 100, baos)
+            val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+
+            // Place centered, sized to a fraction of the page width, preserving aspect.
+            val w = (CANVAS_WIDTH * IMAGE_PLACE_FRACTION).coerceAtMost(scaled.width.toFloat())
+            val h = w * scaled.height / scaled.width
+            val element = ImageElement(
+                x = (CANVAS_WIDTH - w) / 2f,
+                y = (CANVAS_HEIGHT - h) / 2f,
+                width = w,
+                height = h,
+                data = base64
+            )
+            pushUndo()
+            imageElements.add(element)
+            onImageElementsChanged(imageElements)
+
+            // Land in image mode with the new image selected for immediate move/resize.
+            imageMode = true
+            penState = false
+            selectedImage = element
+            applyStrokes(strokes, true)
+            drawImageSelection()
+        } catch (e: Exception) {
+            Timber.e(e, "Insert image failed")
+            Toast.makeText(requireContext(), "Couldn't insert that image", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun imageResizeHandle(box: RectF): RectF {
+        val h = IMAGE_HANDLE_SIZE
+        return RectF(box.right - h / 2f, box.bottom - h / 2f, box.right + h / 2f, box.bottom + h / 2f)
+    }
+
+    /** The ✂ Cut / ⛶ Crop / ✕ Del chips along the top edge of a selected image (right-anchored, inside).
+     *  Copy / Duplicate / Paste are handled by the toolbar; these are the image-specific actions. */
+    private fun imageChipRects(box: RectF): List<Pair<String, RectF>> {
+        val s = IMAGE_CHIP_SIZE
+        val pad = 6f
+        val top = box.top + pad
+        val rects = mutableListOf<Pair<String, RectF>>()
+        var right = box.right - pad
+        for (label in listOf("Del", "Crop", "Cut")) {
+            rects.add(label to RectF(right - s, top, right, top + s))
+            right -= (s + pad)
+        }
+        return rects
+    }
+
+    /** Crop the selected image's bitmap to the given canvas-space rect, re-encode, and reposition. */
+    private fun applyCropToImage(element: ImageElement, cropCanvas: RectF) {
+        val bmp = bitmapForElement(element) ?: return
+        val c = RectF(cropCanvas)
+        if (!c.intersect(RectF(element.x, element.y, element.x + element.width, element.y + element.height))) return
+        val sx = bmp.width / element.width
+        val sy = bmp.height / element.height
+        val bx = ((c.left - element.x) * sx).toInt().coerceIn(0, bmp.width - 1)
+        val by = ((c.top - element.y) * sy).toInt().coerceIn(0, bmp.height - 1)
+        val bw = (c.width() * sx).toInt().coerceIn(1, bmp.width - bx)
+        val bh = (c.height() * sy).toInt().coerceIn(1, bmp.height - by)
+        val cropped = Bitmap.createBitmap(bmp, bx, by, bw, bh)
+        val baos = ByteArrayOutputStream()
+        cropped.compress(Bitmap.CompressFormat.PNG, 100, baos)
+        element.data = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        element.x = c.left
+        element.y = c.top
+        element.width = c.width()
+        element.height = c.height()
+        imageBitmapCache[element.elementId] = cropped
+    }
+
+    /** Repaint the page plus the selected image's bounding box, resize handle and delete chip. */
+    private fun drawImageSelection() {
+        val lockCanvas = provideSurfaceView().holder.lockCanvas() ?: return
+        lockCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        lockCanvas.save()
+        lockCanvas.concat(viewMatrix)
+        renderImageElements(lockCanvas)
+        val strokePaint = Paint(paint)
+        for (stroke in strokes) drawStrokePath(lockCanvas, strokePaint, stroke)
+        renderTextElements(lockCanvas)
+        val sel = selectedImage
+        if (sel != null) {
+            val box = RectF(sel.x, sel.y, sel.x + sel.width, sel.y + sel.height)
+            lockCanvas.drawRect(box, lassoPaint)
+            val fill = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL; isAntiAlias = true }
+            val border = Paint().apply { color = Color.BLACK; style = Paint.Style.STROKE; strokeWidth = 3f; isAntiAlias = true }
+            val rh = imageResizeHandle(box)
+            lockCanvas.drawRect(rh, fill)
+            lockCanvas.drawRect(rh, border)
+            for ((label, r) in imageChipRects(box)) {
+                lockCanvas.drawRoundRect(r, 8f, 8f, fill)
+                lockCanvas.drawRoundRect(r, 8f, 8f, border)
+                val pad = 14f
+                val il = (r.left + pad).toInt(); val it = (r.top + pad).toInt()
+                val ir = (r.right - pad).toInt(); val ib = (r.bottom - pad).toInt()
+                when (label) {
+                    "Cut" -> ResourcesCompat.getDrawable(resources, R.drawable.ic_toolbar_cut, null)?.apply { setBounds(il, it, ir, ib); draw(lockCanvas) }
+                    "Crop" -> ResourcesCompat.getDrawable(resources, R.drawable.ic_toolbar_crop, null)?.apply { setBounds(il, it, ir, ib); draw(lockCanvas) }
+                    "Del" -> {
+                        lockCanvas.drawLine(il.toFloat(), it.toFloat(), ir.toFloat(), ib.toFloat(), border)
+                        lockCanvas.drawLine(ir.toFloat(), it.toFloat(), il.toFloat(), ib.toFloat(), border)
+                    }
+                }
+            }
+            // Crop rectangle overlay while cropping.
+            val cr = cropRect
+            if (cropMode && cr != null) {
+                val cropPaint = Paint().apply {
+                    color = Color.BLACK; style = Paint.Style.STROKE; strokeWidth = 2f
+                    pathEffect = DashPathEffect(floatArrayOf(12f, 8f), 0f); isAntiAlias = true
+                }
+                lockCanvas.drawRect(cr, cropPaint)
+            }
+        }
+        lockCanvas.restore()
+
+        // Pause the Onyx raw-drawing renderer around the post, exactly like drawWithSelection —
+        // posting to the surface while the pen renderer owns it crashes the native layer.
+        touchHelper?.setRawDrawingEnabled(false)
+        touchHelper?.isRawDrawingRenderEnabled = false
+        provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
+        touchHelper?.setRawDrawingEnabled(true)
+        touchHelper?.isRawDrawingRenderEnabled = true
     }
 
     /**
@@ -1434,12 +1849,45 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
         root.addView(widthRow)
 
+        // Style row: normal pen vs. calligraphy (pressure-variable fountain nib).
+        var selCalligraphy = calligraphyMode
+        val styleLabels = arrayOf("Pen", "✒ Calligraphy")
+        val styleRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        val styleItems = styleLabels.indices.map { i ->
+            val label = TextView(ctx).apply {
+                text = styleLabels[i]
+                setTextColor(Color.BLACK)
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+            }
+            FrameLayout(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, itemSize).apply {
+                    setMargins(itemMargin, itemMargin, itemMargin, itemMargin)
+                }
+                background = ringDrawable((i == 1) == selCalligraphy, GradientDrawable.RECTANGLE)
+                setPadding((12 * dp).toInt(), 0, (12 * dp).toInt(), 0)
+                addView(label, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.MATCH_PARENT).apply { gravity = Gravity.CENTER })
+                isClickable = true
+            }.also { styleRow.addView(it) }
+        }
+        styleItems.forEachIndexed { i, item ->
+            item.setOnClickListener {
+                selCalligraphy = (i == 1)
+                styleItems.forEachIndexed { j, c -> c.background = ringDrawable((j == 1) == selCalligraphy, GradientDrawable.RECTANGLE) }
+            }
+        }
+        root.addView(styleRow)
+
         AlertDialog.Builder(ctx).setView(root)
             .setPositiveButton("OK") { _, _ ->
                 paint.color = colorValues[selColor]
                 paint.strokeWidth = widthValues[selWidth]
                 touchHelper?.setStrokeWidth(paint.strokeWidth * baseScale * zoomScale)
                 touchHelper?.setStrokeColor(paint.color)
+                calligraphyMode = selCalligraphy
+                sharedPreferences.edit().putBoolean("calligraphyMode", calligraphyMode).apply()
+                applyStrokeStyle()
                 val opaqueColor = Color.rgb(Color.red(paint.color), Color.green(paint.color), Color.blue(paint.color))
                 provideToolbarDrawing().toolbarPen.background.setTint(
                     if (opaqueColor == Color.BLACK) Color.GRAY else opaqueColor
@@ -1582,7 +2030,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                     clearSurface()
 
                     touchHelper?.setLimitRect(limit, ArrayList())?.setStrokeWidth(paint.strokeWidth)?.openRawDrawing()
-                    touchHelper?.setStrokeStyle(TouchHelper.STROKE_STYLE_PENCIL)
+                    applyStrokeStyle()
                     touchHelper?.setStrokeColor(paint.color)
                     // Record the size we just opened the reader with, so the first
                     // surfaceChanged at the same size won't needlessly cold-start it again.
@@ -1692,9 +2140,61 @@ abstract class SurfaceFragment : ScreenFragment() {
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
     }
 
+    /** Put the Onyx hardware overlay into the live stroke style that matches the current pen. */
+    private fun applyStrokeStyle() {
+        touchHelper?.setStrokeStyle(
+            if (calligraphyMode) TouchHelper.STROKE_STYLE_FOUNTAIN else TouchHelper.STROKE_STYLE_PENCIL
+        )
+    }
+
+    /**
+     * Broad-nib calligraphy width as a multiple of the base width, from the stroke's DIRECTION:
+     * thick when the stroke runs across the nib edge, thin when it runs along it. This directional
+     * thick/thin (not pressure) is what gives real calligraphic contrast — the Boox pen barely
+     * varies pressure, so a pressure-only nib looked nearly uniform.
+     */
+    private fun calligraphyWidthFactor(motionAngleRad: Float): Float {
+        val nibRad = CALLIGRAPHY_NIB_ANGLE_DEG * (PI.toFloat() / 180f)
+        val across = abs(sin(motionAngleRad - nibRad))   // 0 (along the nib) .. 1 (across the nib)
+        return CALLIGRAPHY_MIN_FACTOR + (CALLIGRAPHY_MAX_FACTOR - CALLIGRAPHY_MIN_FACTOR) * across
+    }
+
+    /**
+     * Bake a calligraphy stroke: each segment's width comes from its direction (broad nib), with a
+     * gentle pressure nudge on top. Round cap/join keep the segments visually continuous.
+     */
+    private fun drawCalligraphyPath(targetCanvas: Canvas, strokePaint: Paint, stroke: Stroke) {
+        val points = stroke.strokePoints
+        strokePaint.color = stroke.color
+        val savedCap = strokePaint.strokeCap
+        val savedJoin = strokePaint.strokeJoin
+        strokePaint.strokeCap = Paint.Cap.ROUND
+        strokePaint.strokeJoin = Paint.Join.ROUND
+        val base = stroke.strokeWidth
+        if (points.size == 1) {
+            strokePaint.strokeWidth = base
+            targetCanvas.drawPoint(points[0].x, points[0].y, strokePaint)
+        } else {
+            for (i in 0 until points.size - 1) {
+                val a = points[i]
+                val b = points[i + 1]
+                val angle = atan2(b.y - a.y, b.x - a.x)
+                val pAvg = ((a.p + b.p) / 2f).coerceIn(0f, 1f)
+                strokePaint.strokeWidth = (base * calligraphyWidthFactor(angle) * (0.8f + 0.4f * pAvg)).coerceAtLeast(1f)
+                targetCanvas.drawLine(a.x, a.y, b.x, b.y, strokePaint)
+            }
+        }
+        strokePaint.strokeCap = savedCap
+        strokePaint.strokeJoin = savedJoin
+    }
+
     private fun drawStrokePath(targetCanvas: Canvas, strokePaint: Paint, stroke: Stroke) {
         val points = stroke.strokePoints
         if (points.isEmpty()) return
+        if (stroke.inkStyle == Stroke.STYLE_CALLIGRAPHY) {
+            drawCalligraphyPath(targetCanvas, strokePaint, stroke)
+            return
+        }
         strokePaint.color = stroke.color
         strokePaint.strokeWidth = stroke.strokeWidth
         val path = Path()
@@ -1736,6 +2236,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         // Draw to screen with zoom matrix
         lockCanvas.save()
         lockCanvas.concat(viewMatrix)
+        renderImageElements(lockCanvas)
         for (stroke in strokes) {
             drawStrokePath(lockCanvas, strokePaint, stroke)
         }
@@ -1746,6 +2247,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         // undo/redo, paste — anything that may have removed or relocated strokes).
         if (clearPage) {
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+            renderImageElements(canvas)
             for (stroke in strokes) {
                 drawStrokePath(canvas, strokePaint, stroke)
             }
@@ -1897,6 +2399,130 @@ abstract class SurfaceFragment : ScreenFragment() {
             // that vanished on the next applyStrokes refresh, looking like the pen was
             // "blocked" near the edge of the screen.
 
+            // --- Image mode: select / move / resize / crop / delete inserted images ---
+            if (imageMode) {
+                val sel = selectedImage
+                // Crop: drag a rectangle over the image, apply on release.
+                if (cropMode && sel != null) {
+                    when {
+                        // A fresh press starts the crop rectangle. The chip-tap that armed crop
+                        // mode has cropDragging=false, so its trailing move/up are ignored.
+                        actionDown -> { cropStartX = x; cropStartY = y; cropRect = RectF(x, y, x, y); cropDragging = true }
+                        actionMove -> if (cropDragging) {
+                            cropRect = RectF(minOf(cropStartX, x), minOf(cropStartY, y), maxOf(cropStartX, x), maxOf(cropStartY, y))
+                            drawImageSelection()
+                        }
+                        actionUp -> if (cropDragging) {
+                            cropDragging = false
+                            val cr = cropRect
+                            if (cr != null && cr.width() > 12f && cr.height() > 12f) {
+                                pushUndo()
+                                applyCropToImage(sel, cr)
+                                onImageElementsChanged(imageElements)
+                            }
+                            cropMode = false
+                            cropRect = null
+                            applyStrokes(strokes, true)
+                            drawImageSelection()
+                        }
+                    }
+                    return true
+                }
+                if (actionDown) {
+                    if (sel != null) {
+                        val box = RectF(sel.x, sel.y, sel.x + sel.width, sel.y + sel.height)
+                        // Chips: Cut / Copy / Dup / Del (unified clipboard via strokeClipboard)
+                        for ((label, r) in imageChipRects(box)) {
+                            if (r.contains(x, y)) {
+                                when (label) {
+                                    "Cut" -> {
+                                        strokeClipboard.copyImage(sel)
+                                        pushUndo()
+                                        imageElements.remove(sel)
+                                        imageBitmapCache.remove(sel.elementId)
+                                        selectedImage = null
+                                        onImageElementsChanged(imageElements)
+                                        applyStrokes(strokes, true)
+                                    }
+                                    "Crop" -> {
+                                        cropMode = true
+                                        cropRect = null
+                                        Toast.makeText(requireContext(), "Drag a rectangle over the image to crop", Toast.LENGTH_SHORT).show()
+                                    }
+                                    "Del" -> {
+                                        pushUndo()
+                                        imageElements.remove(sel)
+                                        imageBitmapCache.remove(sel.elementId)
+                                        selectedImage = null
+                                        onImageElementsChanged(imageElements)
+                                        applyStrokes(strokes, true)
+                                    }
+                                }
+                                return true
+                            }
+                        }
+                        // Resize handle (bottom-right) → uniform scale
+                        if (imageResizeHandle(box).contains(x, y)) {
+                            pushUndo()
+                            imageDrag = ImageDrag.RESIZE
+                            imageOrigRect = RectF(box)
+                            return true
+                        }
+                        // Inside the box → move
+                        if (box.contains(x, y)) {
+                            pushUndo()
+                            imageDrag = ImageDrag.MOVE
+                            imageDragStartX = x
+                            imageDragStartY = y
+                            imageOrigRect = RectF(box)
+                            return true
+                        }
+                    }
+                    // Tap an image → select it; tap blank with a selection → deselect;
+                    // tap blank with nothing selected → add a new image (clipboard or picker).
+                    val hit = imageElements.lastOrNull {
+                        x >= it.x && x <= it.x + it.width && y >= it.y && y <= it.y + it.height
+                    }
+                    when {
+                        hit != null -> {
+                            // Select AND arm a move so the very first tap can drag the image.
+                            selectedImage = hit
+                            pushUndo()
+                            imageDrag = ImageDrag.MOVE
+                            imageDragStartX = x
+                            imageDragStartY = y
+                            imageOrigRect = RectF(hit.x, hit.y, hit.x + hit.width, hit.y + hit.height)
+                            applyStrokes(strokes, true)
+                            drawImageSelection()
+                        }
+                        selectedImage != null -> {
+                            selectedImage = null
+                            applyStrokes(strokes, true)
+                        }
+                        else -> insertImageFromClipboardOrPicker()
+                    }
+                    return true
+                } else if (actionMove && sel != null && imageDrag == ImageDrag.MOVE) {
+                    sel.x = imageOrigRect.left + (x - imageDragStartX)
+                    sel.y = imageOrigRect.top + (y - imageDragStartY)
+                    drawImageSelection()
+                    return true
+                } else if (actionMove && sel != null && imageDrag == ImageDrag.RESIZE) {
+                    val newW = (x - sel.x).coerceAtLeast(40f)
+                    sel.width = newW
+                    sel.height = newW * (imageOrigRect.height() / imageOrigRect.width().coerceAtLeast(1f))
+                    drawImageSelection()
+                    return true
+                } else if (actionUp && imageDrag != ImageDrag.NONE) {
+                    imageDrag = ImageDrag.NONE
+                    onImageElementsChanged(imageElements)
+                    applyStrokes(strokes, true)
+                    drawImageSelection()
+                    return true
+                }
+                return true
+            }
+
             // --- Text mode: tap to place a text element ---
             if (textMode) {
                 if (actionDown) {
@@ -1937,9 +2563,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                     if (actionDown) {
                         // Cut chip?
                         if (cutChipRect(box).contains(x, y)) {
-                            undoStack.add(Stroke.listDeepCopy(strokes))
-                            if (undoStack.size > 50) undoStack.removeAt(0)
-                            redoStack.clear()
+                            pushUndo()
                             strokeClipboard.copy(selectedStrokes.toList())
                             val removedIds = selectedStrokes.map { it.strokeId }
                             strokes.removeAll { it.strokeId in removedIds.toSet() }
@@ -1958,9 +2582,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                         // Corner handle?
                         val hit = hitTestHandle(x, y, box)
                         if (hit != SelectionDrag.NONE) {
-                            undoStack.add(Stroke.listDeepCopy(strokes))
-                            if (undoStack.size > 50) undoStack.removeAt(0)
-                            redoStack.clear()
+                            pushUndo()
                             selectionDrag = hit
                             scaleOrigBox = RectF(box)
                             val (ax, ay) = anchorForHandle(hit, box)
@@ -1973,9 +2595,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                         }
                         // Inside the bbox (but not on a handle/chip)? Start a MOVE drag.
                         if (box.contains(x, y)) {
-                            undoStack.add(Stroke.listDeepCopy(strokes))
-                            if (undoStack.size > 50) undoStack.removeAt(0)
-                            redoStack.clear()
+                            pushUndo()
                             selectionDrag = SelectionDrag.MOVE
                             moveStartX = x
                             moveStartY = y
@@ -2110,6 +2730,136 @@ abstract class SurfaceFragment : ScreenFragment() {
         return d <= epsilon
     }
 
+    // ─── Always-on ink gestures: circle-to-lasso and scribble-to-erase ──────────
+    // Evaluated at pen-up in plain pen mode (see onEndDrawing). A completed stroke is
+    // analysed geometrically: a deliberate ring drawn around existing ink becomes a
+    // lasso selection, and a dense back-and-forth scribble over existing ink erases the
+    // strokes underneath. Anything ambiguous — a handwritten "O", or a loop/scribble
+    // over blank space — is left alone and commits as normal ink.
+
+    /** Geometry summary of a candidate gesture stroke. */
+    private class GestureMetrics(
+        val pathLength: Float,
+        val bboxDiag: Float,
+        val closureDist: Float,
+        val netTurning: Float,
+        val absTurning: Float,
+    )
+
+    private fun gestureMetrics(points: List<StrokePoint>): GestureMetrics {
+        var minX = Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+        var pathLength = 0f
+        for (i in points.indices) {
+            val p = points[i]
+            if (p.x < minX) minX = p.x
+            if (p.x > maxX) maxX = p.x
+            if (p.y < minY) minY = p.y
+            if (p.y > maxY) maxY = p.y
+            if (i > 0) pathLength += hypot(p.x - points[i - 1].x, p.y - points[i - 1].y)
+        }
+        var netTurning = 0f
+        var absTurning = 0f
+        for (i in 1 until points.size - 1) {
+            val ax = points[i].x - points[i - 1].x
+            val ay = points[i].y - points[i - 1].y
+            val bx = points[i + 1].x - points[i].x
+            val by = points[i + 1].y - points[i].y
+            val cross = ax * by - ay * bx
+            val dot = ax * bx + ay * by
+            val ang = atan2(cross, dot)            // signed turn angle at this vertex
+            if (!ang.isNaN()) {
+                netTurning += ang
+                absTurning += abs(ang)
+            }
+        }
+        val closure = hypot(points.last().x - points.first().x, points.last().y - points.first().y)
+        return GestureMetrics(pathLength, hypot(maxX - minX, maxY - minY), closure, netTurning, absTurning)
+    }
+
+    /** Count direction reversals (sign flips of the per-vertex turn) — high for a scribble. */
+    private fun gestureReversals(points: List<StrokePoint>): Int {
+        var reversals = 0
+        var lastSign = 0
+        for (i in 1 until points.size - 1) {
+            val ax = points[i].x - points[i - 1].x
+            val ay = points[i].y - points[i - 1].y
+            val bx = points[i + 1].x - points[i].x
+            val by = points[i + 1].y - points[i].y
+            val cross = ax * by - ay * bx
+            val sign = if (cross > 1f) 1 else if (cross < -1f) -1 else 0
+            if (sign != 0) {
+                if (lastSign != 0 && sign != lastSign) reversals++
+                lastSign = sign
+            }
+        }
+        return reversals
+    }
+
+    private fun isCircleGesture(points: List<StrokePoint>): Boolean {
+        if (points.size < 8) return false
+        val m = gestureMetrics(points)
+        if (m.bboxDiag < GESTURE_MIN_CIRCLE_DIAG) return false                  // smaller than a deliberate ring → likely a letter
+        if (m.pathLength < 1f || m.absTurning <= 0f) return false
+        if (m.closureDist > GESTURE_CLOSURE_FRACTION * m.pathLength) return false // ends must return near the start
+        if (m.closureDist > 0.5f * m.bboxDiag) return false
+        if (abs(m.netTurning) < GESTURE_CIRCLE_MIN_TURN) return false            // roughly one full loop
+        if (abs(m.netTurning) / m.absTurning < 0.75f) return false              // consistent rotation, not back-and-forth
+        if (m.pathLength > 2.2f * (PI.toFloat() * m.bboxDiag)) return false      // not too jagged for a ring of this size
+        return true
+    }
+
+    private fun isScribbleGesture(points: List<StrokePoint>): Boolean {
+        if (points.size < 8) return false
+        val m = gestureMetrics(points)
+        if (m.bboxDiag < 1f) return false
+        if (m.pathLength < GESTURE_SCRIBBLE_LENGTH_RATIO * m.bboxDiag) return false      // lots of length in a small area
+        if (m.absTurning < GESTURE_SCRIBBLE_MIN_ABS_TURN) return false                   // lots of wiggle…
+        if (m.absTurning > 0f && abs(m.netTurning) / m.absTurning > 0.4f) return false   // …that cancels out (not a loop)
+        if (gestureReversals(points) < GESTURE_SCRIBBLE_MIN_REVERSALS) return false
+        return true
+    }
+
+    /** Erase every committed stroke the scribble passed over. Returns false (→ commit as ink) if it hit nothing. */
+    private fun performScribbleErase(points: List<StrokePoint>): Boolean {
+        val toRemove: MutableSet<UUID> = mutableSetOf()
+        for (ep in points) {
+            for (stroke in strokes) {
+                if (stroke.strokeId in toRemove) continue
+                for (tp in stroke.strokePoints) {
+                    if (epsilon(ep.x, ep.y, tp.x, tp.y, 25.0f)) {
+                        toRemove.add(stroke.strokeId)
+                        break
+                    }
+                }
+            }
+        }
+        if (toRemove.isEmpty()) return false
+        strokes.removeIf { it.strokeId in toRemove }
+        onStrokesDeleted(toRemove.toList())
+        applyStrokes(strokes, true)
+        onStrokeChanged(strokes)
+        return true
+    }
+
+    /** Turn the circle into a lasso selection of the enclosed ink. Returns false (→ commit as ink) if it enclosed nothing. */
+    private fun performCircleSelect(points: List<StrokePoint>): Boolean {
+        val polygon = points.map { PointF(it.x, it.y) }.toMutableList()
+        val enclosed = strokes.filter { StrokeClipboard.isStrokeInsidePolygon(it, polygon) }
+        if (enclosed.isEmpty()) return false
+        selectionPoints.clear()
+        selectionPoints.addAll(polygon)
+        selectedStrokes = enclosed.toMutableList()
+        hasSelection = true
+        selectionMode = false
+        selBox = computeSelBox(selectedStrokes)
+        applyStrokes(strokes, true)
+        drawWithSelection()
+        return true
+    }
+
     private fun onBeginDrawing(touchPoint: StrokePoint) {
         Timber.i("onBeginDrawing (${touchPoint.x}/${touchPoint.y})")
         // Start the coalescer from a clean slate (drop any post left scheduled from a prior stroke).
@@ -2226,9 +2976,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         touchPoint.t = Instant.now().toEpochMilli() - firstPointTimestamp
         stylusPointList.add(touchPoint)
 
-        undoStack.add(Stroke.listDeepCopy(strokes))
-        if (undoStack.size > 50) undoStack.removeAt(0)
-        redoStack.clear()
+        pushUndo()
 
         if (!penState || erasing) {
             val strokesToRemove: MutableSet<UUID> = mutableSetOf()
@@ -2250,7 +2998,26 @@ abstract class SurfaceFragment : ScreenFragment() {
             applyStrokes(strokes, true)
             onStrokeChanged(strokes)
         } else {
-            val stroke = Stroke(UUID.randomUUID(), firstPointTimestamp, stylusPointList.toList(), paint.color, paint.strokeWidth)
+            // Always-on gestures: a deliberate circle around ink becomes a selection,
+            // a scribble over ink erases it. Ambiguous marks fall through to commit as ink.
+            if (autoGesturesEnabled && !hasSelection && !selectionMode && !pasteMode && !textMode) {
+                val gesturePoints = stylusPointList.toList()
+                if (isScribbleGesture(gesturePoints) && performScribbleErase(gesturePoints)) {
+                    lastPoint = null
+                    stylusPointList.clear()
+                    return
+                }
+                if (isCircleGesture(gesturePoints) && performCircleSelect(gesturePoints)) {
+                    lastPoint = null
+                    stylusPointList.clear()
+                    return
+                }
+            }
+
+            val stroke = Stroke(
+                UUID.randomUUID(), firstPointTimestamp, stylusPointList.toList(), paint.color, paint.strokeWidth,
+                if (calligraphyMode) Stroke.STYLE_CALLIGRAPHY else Stroke.STYLE_NORMAL
+            )
             strokes.add(stroke)
             strokesToAdd.add(stroke)
 

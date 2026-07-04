@@ -8,6 +8,7 @@ import android.widget.ImageView
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.analytics.logEvent
 import com.toolsboox.R
+import com.toolsboox.da.ImageElement
 import com.toolsboox.da.Stroke
 import com.toolsboox.da.TextElement
 import com.toolsboox.databinding.FragmentCalendarBinding
@@ -152,6 +153,21 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /**
+     * Image elements changed callback — persist inserted/moved/resized/deleted images.
+     *
+     * @param imageElements the current image elements
+     */
+    override fun onImageElementsChanged(imageElements: MutableList<ImageElement>) {
+        // Per-page images: tag the current page's images, keep every other page's untouched.
+        val pageKey = notePage ?: "default"
+        imageElements.forEach { it.page = pageKey }
+        val others = calendarDay.imageElements.filter { it.page != pageKey }
+        calendarDay.imageElements = (others + imageElements).toMutableList()
+        calendarPattern.updateDay(calendarDay)
+        presenter.save(this, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+    }
+
+    /**
      * On strokes procrastinated event.
      *
      * @param strokes the strokes to procrastinate
@@ -243,14 +259,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         binding.toolbarDrawing.toolbarSwipeUp.setOnClickListener {
             if (notePage != null) {
-                if (notePage == "gratitude") {
-                    CalendarNavigator.toDayPage(this, currentDate, CalendarDay.DEFAULT_STYLE)
-                } else {
-                    val page = notePage!!.toIntOrNull() ?: 0
-                    if (page == 0) {
-                        CalendarNavigator.toDayNote(this, currentDate, "gratitude")
-                    } else {
-                        CalendarNavigator.toDayNote(this, currentDate, "${page - 1}")
+                when (notePage) {
+                    "pickings" -> CalendarNavigator.toDayPage(this, currentDate, CalendarDay.DEFAULT_STYLE)
+                    "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "pickings")
+                    else -> {
+                        val page = notePage!!.toIntOrNull() ?: 0
+                        if (page == 0) {
+                            CalendarNavigator.toDayNote(this, currentDate, "gratitude")
+                        } else {
+                            CalendarNavigator.toDayNote(this, currentDate, "${page - 1}")
+                        }
                     }
                 }
             } else {
@@ -259,14 +277,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
         binding.toolbarDrawing.toolbarSwipeDown.setOnClickListener {
             if (notePage != null) {
-                if (notePage == "gratitude") {
-                    CalendarNavigator.toDayNote(this, currentDate, "0")
-                } else {
-                    val page = notePage!!.toIntOrNull() ?: 0
-                    CalendarNavigator.toDayNote(this, currentDate, "${page + 1}")
+                when (notePage) {
+                    "pickings" -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
+                    "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "0")
+                    else -> {
+                        val page = notePage!!.toIntOrNull() ?: 0
+                        CalendarNavigator.toDayNote(this, currentDate, "${page + 1}")
+                    }
                 }
             } else {
-                CalendarNavigator.toDayNote(this, currentDate, "gratitude")
+                CalendarNavigator.toDayNote(this, currentDate, "pickings")
             }
         }
         binding.toolbarDrawing.toolbarCalendarView.setOnClickListener {
@@ -330,6 +350,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         // Load text elements from the calendar data
         setTextElements(calendarDay.textElements)
+        val imgPageKey = notePage ?: "default"
+        setImageElements(calendarDay.imageElements.filter { it.page == imgPageKey }.toMutableList())
 
         if (notePage != null) {
             binding.toolbarDrawing.toolbarProcrastinator.visibility = View.GONE
@@ -343,6 +365,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             CalendarDayPage.drawPage(this.requireContext(), templateCanvas, calendarDay, calendarEvents)
             applyStrokes(Stroke.listDeepCopy(calendarStrokes), true)
         }
+        // The template was just drawn into templateBitmap; force the ImageView to repaint so
+        // named pages (pickings/gratitude) reliably show on first navigation, not only after a re-swipe.
+        binding.templateImageView.invalidate()
+        redrawImageSelectionIfActive()
     }
 
     /**
