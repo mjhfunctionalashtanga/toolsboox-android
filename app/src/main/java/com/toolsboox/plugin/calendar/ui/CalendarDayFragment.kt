@@ -134,7 +134,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         longPressPending = false
         longPressFired = true
         val canvasPts = screenToCanvas(longPressDownX, longPressDownY)
-        handleCanvasLongPress(canvasPts[0], canvasPts[1])
+        handleCanvasLongPress(canvasPts[0], canvasPts[1], longPressDownX, longPressDownY)
     }
 
     /**

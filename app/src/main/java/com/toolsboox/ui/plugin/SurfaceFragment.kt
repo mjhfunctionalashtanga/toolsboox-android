@@ -58,6 +58,7 @@ import com.toolsboox.da.Stroke
 import com.toolsboox.da.StrokePoint
 import com.toolsboox.da.TextElement
 import com.toolsboox.databinding.ToolbarDrawingBinding
+import com.toolsboox.ot.LedgerContextMenu
 import com.toolsboox.ot.OnGestureListener
 import com.toolsboox.ot.StrokeClipboard
 import com.toolsboox.plugin.calendar.CalendarNavigator
@@ -1708,8 +1709,13 @@ abstract class SurfaceFragment : ScreenFragment() {
     /**
      * Entry point for a finger long-press at canvas coordinates: select the
      * element under the finger, or open the creation menu on empty canvas.
+     *
+     * @param cx canvas x
+     * @param cy canvas y
+     * @param pressX press x in the surface view's coordinates (menu anchor)
+     * @param pressY press y in the surface view's coordinates (menu anchor)
      */
-    fun handleCanvasLongPress(cx: Float, cy: Float) {
+    fun handleCanvasLongPress(cx: Float, cy: Float, pressX: Float, pressY: Float) {
         // A pending "move here" tap takes priority over starting a new action.
         if (completeTextBoxMove(cx, cy)) return
 
@@ -1720,10 +1726,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
         val textBox = textElementAt(cx, cy)
         if (textBox != null) {
-            showTextBoxMenu(textBox)
+            showTextBoxMenu(textBox, pressX, pressY)
             return
         }
-        showCanvasCreationMenu(cx, cy)
+        showCanvasCreationMenu(cx, cy, pressX, pressY)
     }
 
     /** Select an image element and enter the manipulation mode (move/resize/chips). */
@@ -1741,41 +1747,44 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     /** The creation menu shown on a long-press over empty canvas. */
-    private fun showCanvasCreationMenu(cx: Float, cy: Float) {
-        val ctx = context ?: return
-        val options = arrayOf("Text box", "Image — camera", "Image — upload", "Paste")
-        AlertDialog.Builder(ctx)
-            .setItems(options) { dialog, which ->
-                when (which) {
-                    0 -> showTextInputDialog(cx, cy)
-                    1 -> {
+    private fun showCanvasCreationMenu(cx: Float, cy: Float, pressX: Float, pressY: Float) {
+        if (context == null) return
+        LedgerContextMenu.show(
+            provideSurfaceView(), pressX, pressY, "ADD HERE",
+            listOf(
+                listOf(
+                    LedgerContextMenu.Item("Text box") { showTextInputDialog(cx, cy) },
+                    LedgerContextMenu.Item("Image — camera") {
                         pendingPlacePoint = PointF(cx, cy)
                         launchCameraCapture()
-                    }
-                    2 -> {
+                    },
+                    LedgerContextMenu.Item("Image — upload") {
                         pendingPlacePoint = PointF(cx, cy)
                         launchImagePicker()
                     }
-                    3 -> pasteUnifiedAt(cx, cy)
-                }
-                dialog.dismiss()
-            }
-            .create().show()
+                ),
+                listOf(
+                    LedgerContextMenu.Item("Paste") { pasteUnifiedAt(cx, cy) }
+                )
+            )
+        )
     }
 
     /** Long-press on a text box: management menu (edit / move / clipboard ops / delete). */
-    private fun showTextBoxMenu(element: TextElement) {
+    private fun showTextBoxMenu(element: TextElement, pressX: Float, pressY: Float) {
         val ctx = context ?: return
-        val options = arrayOf("Edit text", "Move (tap the new spot)", "Duplicate", "Cut", "Copy", "Delete")
-        AlertDialog.Builder(ctx)
-            .setItems(options) { dialog, which ->
-                when (which) {
-                    0 -> showTextEditDialog(element)
-                    1 -> {
+        LedgerContextMenu.show(
+            provideSurfaceView(), pressX, pressY, "TEXT BOX",
+            listOf(
+                listOf(
+                    LedgerContextMenu.Item("Edit text") { showTextEditDialog(element) },
+                    LedgerContextMenu.Item("Move — tap the new spot") {
                         pendingTextBoxMove = element
                         Toast.makeText(ctx, "Tap where the text box should go", Toast.LENGTH_SHORT).show()
                     }
-                    2 -> {
+                ),
+                listOf(
+                    LedgerContextMenu.Item("Duplicate") {
                         val copy = element.copy(
                             elementId = UUID.randomUUID(),
                             timestamp = System.currentTimeMillis(),
@@ -1784,23 +1793,24 @@ abstract class SurfaceFragment : ScreenFragment() {
                         textElements.add(copy)
                         onTextElementsChanged(textElements)
                         applyStrokes(strokes, true)
-                    }
-                    3 -> {
+                    },
+                    LedgerContextMenu.Item("Cut") {
                         strokeClipboard.copyTextBox(element)
                         textElements.remove(element)
                         onTextElementsChanged(textElements)
                         applyStrokes(strokes, true)
-                    }
-                    4 -> strokeClipboard.copyTextBox(element)
-                    5 -> {
+                    },
+                    LedgerContextMenu.Item("Copy") { strokeClipboard.copyTextBox(element) }
+                ),
+                listOf(
+                    LedgerContextMenu.Item("Delete") {
                         textElements.remove(element)
                         onTextElementsChanged(textElements)
                         applyStrokes(strokes, true)
                     }
-                }
-                dialog.dismiss()
-            }
-            .create().show()
+                )
+            )
+        )
     }
 
     /** Complete a pending text-box "move here": place it at the tapped point. */
