@@ -124,12 +124,31 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private var intakeTapDownY: Float = 0f
     private var intakeTapDownAt: Long = 0L
 
+    // Finger long-press tracking ("pen writes, finger manages" element menu).
+    private val longPressHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var longPressDownX: Float = 0f
+    private var longPressDownY: Float = 0f
+    private var longPressPending: Boolean = false
+    private var longPressFired: Boolean = false
+    private val longPressRunnable = Runnable {
+        longPressPending = false
+        longPressFired = true
+        val canvasPts = screenToCanvas(longPressDownX, longPressDownY)
+        handleCanvasLongPress(canvasPts[0], canvasPts[1])
+    }
+
     /**
      * SurfaceView provide method.
      *
      * @return the actual surfaceView
      */
     override fun provideSurfaceView(): SurfaceView = binding.surfaceView
+
+    /**
+     * Element changes need calendarDay/calendarPattern; both load asynchronously.
+     */
+    override fun isPageDataReady(): Boolean =
+        ::calendarDay.isInitialized && ::calendarPattern.isInitialized
 
     /**
      * The current note page key ("pickings", "gratitude", "intake", "0"...),
@@ -178,7 +197,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * @param textElements the current text elements
      */
     override fun onTextElementsChanged(textElements: MutableList<TextElement>) {
-        calendarDay.textElements = textElements
+        // Per-page text boxes: tag the current page's, keep every other page's.
+        val pageKey = notePage ?: "default"
+        textElements.forEach { it.pageKey = pageKey }
+        val others = calendarDay.textElements.filter { it.pageKey != pageKey }
+        calendarDay.textElements = (others + textElements).toMutableList()
         calendarPattern.updateDay(calendarDay)
         presenter.save(this, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
     }
@@ -269,6 +292,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             return@setOnHoverListener callback(motionEvent, true)
         }
         binding.surfaceView.setOnTouchListener { view, motionEvent ->
+            if (handleFingerLongPress(motionEvent)) return@setOnTouchListener true
             if (callback(motionEvent, false)) return@setOnTouchListener true
             if (handleZoomPanTouch(motionEvent)) return@setOnTouchListener true
 
@@ -392,9 +416,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         this.calendarPattern = calendarPattern
         updateNavigator()
 
-        // Load text elements from the calendar data
-        setTextElements(calendarDay.textElements)
+        // Load this page's text elements and images from the calendar data
         val imgPageKey = notePage ?: "default"
+        setTextElements(calendarDay.textElements.filter { it.pageKey == imgPageKey }.toMutableList())
         setImageElements(calendarDay.imageElements.filter { it.page == imgPageKey }.toMutableList())
 
         if (notePage != null) {
@@ -419,6 +443,86 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // named pages (pickings/gratitude) reliably show on first navigation, not only after a re-swipe.
         binding.templateImageView.invalidate()
         redrawImageSelectionIfActive()
+
+        // A picker/camera result may have arrived before this load finished.
+        consumeDeferredImageInsert()
+    }
+
+    /**
+     * Finger long-press detection ("pen writes, finger manages"): a held finger
+     * on the canvas opens the element menu (create on empty canvas, select on an
+     * existing image/text box); a quick tap completes a pending text-box move.
+     * Runs BEFORE callback()/gestures; pre-fire events pass through untouched.
+     *
+     * @param motionEvent the motion event
+     * @return true when the event was consumed by long-press handling
+     */
+    private fun handleFingerLongPress(motionEvent: MotionEvent): Boolean {
+        val tool = motionEvent.getToolType(0)
+        val isFinger = tool == MotionEvent.TOOL_TYPE_FINGER || tool == MotionEvent.TOOL_TYPE_UNKNOWN
+
+        // The pen cancels any pending long-press and is never affected itself.
+        if (!isFinger) {
+            if (longPressPending) {
+                longPressHandler.removeCallbacks(longPressRunnable)
+                longPressPending = false
+            }
+            return false
+        }
+
+        // After the long-press fired, swallow the remainder of that gesture so it
+        // can't also register as a tap/swipe under the menu.
+        if (longPressFired && motionEvent.actionMasked != MotionEvent.ACTION_DOWN) {
+            if (motionEvent.actionMasked == MotionEvent.ACTION_UP ||
+                motionEvent.actionMasked == MotionEvent.ACTION_CANCEL
+            ) {
+                longPressFired = false
+            }
+            return true
+        }
+
+        when (motionEvent.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                longPressFired = false
+                // Not while manipulating an element (finger drags move/resize there)
+                // and only for a single finger.
+                if (motionEvent.pointerCount == 1 && !isImageModeActive()) {
+                    longPressDownX = motionEvent.x
+                    longPressDownY = motionEvent.y
+                    longPressPending = true
+                    longPressHandler.postDelayed(longPressRunnable, 550L)
+                }
+            }
+
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                longPressHandler.removeCallbacks(longPressRunnable)
+                longPressPending = false
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (longPressPending &&
+                    (abs(motionEvent.x - longPressDownX) > 30f || abs(motionEvent.y - longPressDownY) > 30f)
+                ) {
+                    longPressHandler.removeCallbacks(longPressRunnable)
+                    longPressPending = false
+                }
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                val wasPending = longPressPending
+                longPressHandler.removeCallbacks(longPressRunnable)
+                longPressPending = false
+                // A quick tap places a text box waiting for its "move here" spot.
+                if (wasPending && pendingTextBoxMove != null &&
+                    motionEvent.actionMasked == MotionEvent.ACTION_UP
+                ) {
+                    val canvasPts = screenToCanvas(motionEvent.x, motionEvent.y)
+                    if (completeTextBoxMove(canvasPts[0], canvasPts[1])) return true
+                }
+            }
+        }
+
+        return false
     }
 
     /**

@@ -65,6 +65,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import timber.log.Timber
+import java.io.File
 import java.time.Instant
 import java.util.*
 import javax.inject.Inject
@@ -230,9 +231,56 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** Photo/file picker fallback when the clipboard has no image. Registered at construction. */
     private val imagePickLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            result.data?.data?.let { insertImageFromUri(it) }
+            result.data?.data?.let { handlePickedImage(it) }
         }
     }
+
+    /** Image URI waiting for the page data to finish loading before insertion. */
+    private var deferredInsertUri: Uri? = null
+
+    /**
+     * True when the fragment's page data is loaded enough to accept element
+     * changes. Activity results (picker/camera) can arrive BEFORE the async
+     * page load completes — inserting then crashes on lateinit page state and
+     * the insert would be wiped by the load's renderPage anyway.
+     */
+    open fun isPageDataReady(): Boolean = true
+
+    /** Insert a picked/captured image now, or defer it until the page data is ready. */
+    private fun handlePickedImage(uri: Uri) {
+        if (isPageDataReady()) {
+            insertImageFromUri(uri)
+        } else {
+            Timber.i("Page data not ready; deferring image insert")
+            deferredInsertUri = uri
+        }
+    }
+
+    /** Called by fragments once page data is loaded — completes a deferred insert. */
+    fun consumeDeferredImageInsert() {
+        val uri = deferredInsertUri ?: return
+        deferredInsertUri = null
+        Timber.i("Completing deferred image insert: %s", uri)
+        insertImageFromUri(uri)
+    }
+
+    /** Where the next inserted element should land (canvas coords) — set by long-press. */
+    private var pendingPlacePoint: PointF? = null
+
+    /** Camera capture target for the long-press "Image — camera" flow. */
+    private var pendingCameraUri: Uri? = null
+
+    /** Camera capture launcher (long-press menu). Registered at construction. */
+    private val cameraCaptureLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val uri = pendingCameraUri
+        pendingCameraUri = null
+        if (result.resultCode == Activity.RESULT_OK && uri != null) {
+            handlePickedImage(uri)
+        }
+    }
+
+    /** Text box waiting for a "move here" tap (long-press menu's Move action). */
+    protected var pendingTextBoxMove: TextElement? = null
 
     /** Which transform is currently being driven by the stylus (NONE = idle). */
     private enum class SelectionDrag { NONE, HANDLE_TL, HANDLE_TR, HANDLE_BL, HANDLE_BR, MOVE }
@@ -661,39 +709,8 @@ abstract class SurfaceFragment : ScreenFragment() {
             provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarPaste.background.setTint(Color.GRAY)
-            provideToolbarDrawing().toolbarImage.background.setTint(Color.WHITE)
             exitImageMode()
             showMessage(R.string.calendar_drawing_toolbar_paste, provideSurfaceView())
-        }
-
-        // --- Image insert / manipulate button ---
-        provideToolbarDrawing().toolbarImage.setOnClickListener {
-            if (imageMode) {
-                // Toggle off: leave image mode, back to pen.
-                exitImageMode()
-                penState = true
-                provideToolbarDrawing().toolbarImage.background.setTint(Color.WHITE)
-                provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
-                applyStrokes(strokes, true)
-            } else {
-                // Enter image mode and insert (clipboard image if present, otherwise picker).
-                textMode = false
-                pasteMode = false
-                selectionMode = false
-                hasSelection = false
-                procrastinator = false
-                penState = false
-                selectedStrokes.clear()
-                selectionPoints.clear()
-                provideToolbarDrawing().toolbarPen.background.setTint(Color.WHITE)
-                provideToolbarDrawing().toolbarEraser.background.setTint(Color.WHITE)
-                provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
-                provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
-                provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
-                provideToolbarDrawing().toolbarImage.background.setTint(Color.GRAY)
-                imageMode = true
-                Toast.makeText(requireContext(), "Image mode: tap blank to add, tap an image to move/delete", Toast.LENGTH_SHORT).show()
-            }
         }
 
         // --- Text tool button ---
@@ -719,7 +736,6 @@ abstract class SurfaceFragment : ScreenFragment() {
                 provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
                 provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
                 provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
-                provideToolbarDrawing().toolbarImage.background.setTint(Color.WHITE)
                 provideToolbarDrawing().toolbarText.background.setTint(Color.GRAY)
                 exitImageMode()
             }
@@ -1107,7 +1123,6 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
         provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
         provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
-        provideToolbarDrawing().toolbarImage.background.setTint(Color.WHITE)
         exitImageMode()
     }
 
@@ -1541,7 +1556,6 @@ abstract class SurfaceFragment : ScreenFragment() {
         imageElements.add(stamped)
         onImageElementsChanged(imageElements)
         selectedImage = stamped
-        provideToolbarDrawing().toolbarImage.background.setTint(Color.GRAY)
         applyStrokes(strokes, true)
         drawImageSelection()
     }
@@ -1607,6 +1621,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         try {
             val original = decodeDownsampledImage(uri)
             if (original == null) {
+                Timber.w("Image decode failed for %s", uri)
                 Toast.makeText(requireContext(), "Couldn't read that image", Toast.LENGTH_SHORT).show()
                 return
             }
@@ -1627,12 +1642,17 @@ abstract class SurfaceFragment : ScreenFragment() {
             scaled.compress(Bitmap.CompressFormat.PNG, 100, baos)
             val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
 
-            // Place centered, sized to a fraction of the page width, preserving aspect.
+            // Place centered on the long-press point when one is pending, otherwise
+            // centered on the page; sized to a fraction of the page width.
             val w = (CANVAS_WIDTH * IMAGE_PLACE_FRACTION).coerceAtMost(scaled.width.toFloat())
             val h = w * scaled.height / scaled.width
+            val place = pendingPlacePoint
+            pendingPlacePoint = null
+            val px = ((place?.x ?: (CANVAS_WIDTH / 2f)) - w / 2f).coerceIn(0f, (CANVAS_WIDTH - w).coerceAtLeast(0f))
+            val py = ((place?.y ?: (CANVAS_HEIGHT / 2f)) - h / 2f).coerceIn(0f, (CANVAS_HEIGHT - h).coerceAtLeast(0f))
             val element = ImageElement(
-                x = (CANVAS_WIDTH - w) / 2f,
-                y = (CANVAS_HEIGHT - h) / 2f,
+                x = px,
+                y = py,
                 width = w,
                 height = h,
                 data = base64
@@ -1650,6 +1670,253 @@ abstract class SurfaceFragment : ScreenFragment() {
         } catch (e: Exception) {
             Timber.e(e, "Insert image failed")
             Toast.makeText(requireContext(), "Couldn't insert that image", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // ─── Finger long-press: element creation menu + select-to-manage ────────────
+    // "Pen writes, finger manages." A finger long-press on empty canvas opens a
+    // small creation menu (text box / camera / upload / paste); on an existing
+    // image or text box it selects it for management. Fragments detect the
+    // long-press in their touch listener and call handleCanvasLongPress.
+
+    /** True while the element-manipulation mode is active. */
+    fun isImageModeActive(): Boolean = imageMode
+
+    /** Topmost image element under a canvas point, or null. */
+    private fun imageElementAt(cx: Float, cy: Float): ImageElement? =
+        imageElements.lastOrNull { cx >= it.x && cx <= it.x + it.width && cy >= it.y && cy <= it.y + it.height }
+
+    /** Canvas-space bounds of a text box (measured from its rendered lines). */
+    protected fun textElementBounds(element: TextElement): RectF {
+        textPaint.textSize = element.fontSize
+        val lines = element.text.split("\n")
+        val lineHeight = textPaint.fontSpacing
+        val maxWidth = lines.maxOfOrNull { textPaint.measureText(it) } ?: 0f
+        val pad = 14f
+        return RectF(
+            element.x - pad,
+            element.y + lineHeight * 0.15f - pad,
+            element.x + maxWidth.coerceAtLeast(40f) + pad,
+            element.y + lineHeight * (lines.size + 0.35f) + pad
+        )
+    }
+
+    /** Topmost text box under a canvas point, or null. */
+    private fun textElementAt(cx: Float, cy: Float): TextElement? =
+        textElements.lastOrNull { textElementBounds(it).contains(cx, cy) }
+
+    /**
+     * Entry point for a finger long-press at canvas coordinates: select the
+     * element under the finger, or open the creation menu on empty canvas.
+     */
+    fun handleCanvasLongPress(cx: Float, cy: Float) {
+        // A pending "move here" tap takes priority over starting a new action.
+        if (completeTextBoxMove(cx, cy)) return
+
+        val image = imageElementAt(cx, cy)
+        if (image != null) {
+            enterImageManipulation(image)
+            return
+        }
+        val textBox = textElementAt(cx, cy)
+        if (textBox != null) {
+            showTextBoxMenu(textBox)
+            return
+        }
+        showCanvasCreationMenu(cx, cy)
+    }
+
+    /** Select an image element and enter the manipulation mode (move/resize/chips). */
+    private fun enterImageManipulation(element: ImageElement) {
+        textMode = false
+        pasteMode = false
+        selectionMode = false
+        hasSelection = false
+        procrastinator = false
+        penState = false
+        imageMode = true
+        selectedImage = element
+        applyStrokes(strokes, true)
+        drawImageSelection()
+    }
+
+    /** The creation menu shown on a long-press over empty canvas. */
+    private fun showCanvasCreationMenu(cx: Float, cy: Float) {
+        val ctx = context ?: return
+        val options = arrayOf("Text box", "Image — camera", "Image — upload", "Paste")
+        AlertDialog.Builder(ctx)
+            .setItems(options) { dialog, which ->
+                when (which) {
+                    0 -> showTextInputDialog(cx, cy)
+                    1 -> {
+                        pendingPlacePoint = PointF(cx, cy)
+                        launchCameraCapture()
+                    }
+                    2 -> {
+                        pendingPlacePoint = PointF(cx, cy)
+                        launchImagePicker()
+                    }
+                    3 -> pasteUnifiedAt(cx, cy)
+                }
+                dialog.dismiss()
+            }
+            .create().show()
+    }
+
+    /** Long-press on a text box: management menu (edit / move / clipboard ops / delete). */
+    private fun showTextBoxMenu(element: TextElement) {
+        val ctx = context ?: return
+        val options = arrayOf("Edit text", "Move (tap the new spot)", "Duplicate", "Cut", "Copy", "Delete")
+        AlertDialog.Builder(ctx)
+            .setItems(options) { dialog, which ->
+                when (which) {
+                    0 -> showTextEditDialog(element)
+                    1 -> {
+                        pendingTextBoxMove = element
+                        Toast.makeText(ctx, "Tap where the text box should go", Toast.LENGTH_SHORT).show()
+                    }
+                    2 -> {
+                        val copy = element.copy(
+                            elementId = UUID.randomUUID(),
+                            timestamp = System.currentTimeMillis(),
+                            x = element.x + 40f, y = element.y + 40f
+                        )
+                        textElements.add(copy)
+                        onTextElementsChanged(textElements)
+                        applyStrokes(strokes, true)
+                    }
+                    3 -> {
+                        strokeClipboard.copyTextBox(element)
+                        textElements.remove(element)
+                        onTextElementsChanged(textElements)
+                        applyStrokes(strokes, true)
+                    }
+                    4 -> strokeClipboard.copyTextBox(element)
+                    5 -> {
+                        textElements.remove(element)
+                        onTextElementsChanged(textElements)
+                        applyStrokes(strokes, true)
+                    }
+                }
+                dialog.dismiss()
+            }
+            .create().show()
+    }
+
+    /** Complete a pending text-box "move here": place it at the tapped point. */
+    fun completeTextBoxMove(cx: Float, cy: Float): Boolean {
+        val moving = pendingTextBoxMove ?: return false
+        pendingTextBoxMove = null
+        moving.x = cx
+        moving.y = cy
+        onTextElementsChanged(textElements)
+        applyStrokes(strokes, true)
+        return true
+    }
+
+    /**
+     * Paste the unified clipboard at a canvas point: internal image or text box
+     * first, then the system clipboard (image URI → image element, text → text box).
+     */
+    private fun pasteUnifiedAt(cx: Float, cy: Float) {
+        // Internal clipboard: image element.
+        strokeClipboard.stampImageAt(cx, cy)?.let { stamped ->
+            pushUndo()
+            imageElements.add(stamped)
+            onImageElementsChanged(imageElements)
+            enterImageManipulation(stamped)
+            return
+        }
+        // Internal clipboard: text box.
+        strokeClipboard.stampTextBoxAt(cx, cy)?.let { stamped ->
+            textElements.add(stamped)
+            onTextElementsChanged(textElements)
+            applyStrokes(strokes, true)
+            return
+        }
+        // System clipboard: image URI or plain text.
+        try {
+            val cm = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            val clip = cm?.primaryClip
+            if (clip != null && clip.itemCount > 0) {
+                val item = clip.getItemAt(0)
+                val uri = item.uri
+                if (uri != null) {
+                    pendingPlacePoint = PointF(cx, cy)
+                    insertImageFromUri(uri)
+                    return
+                }
+                val text = item.coerceToText(requireContext())?.toString()?.trim()
+                if (!text.isNullOrEmpty()) {
+                    val element = TextElement(x = cx, y = cy, text = text)
+                    textElements.add(element)
+                    onTextElementsChanged(textElements)
+                    applyStrokes(strokes, true)
+                    return
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "Paste from system clipboard failed")
+        }
+        Toast.makeText(requireContext(), "Nothing to paste", Toast.LENGTH_SHORT).show()
+    }
+
+    /** Edit an existing text box's content; emptying the text deletes the box. */
+    private fun showTextEditDialog(element: TextElement) {
+        val ctx = context ?: return
+        val editText = EditText(ctx)
+        editText.setSingleLine(false)
+        editText.setLines(3)
+        editText.setText(element.text)
+        editText.setSelection(element.text.length)
+
+        val container = FrameLayout(ctx)
+        val params = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        )
+        val margin = (16 * resources.displayMetrics.density).toInt()
+        params.setMargins(margin, 0, margin, 0)
+        editText.layoutParams = params
+        container.addView(editText)
+
+        AlertDialog.Builder(ctx)
+            .setTitle(R.string.calendar_text_dialog_title)
+            .setView(container)
+            .setPositiveButton(R.string.ok) { dialog, _ ->
+                val newText = editText.text.toString().trim()
+                if (newText.isEmpty()) {
+                    textElements.remove(element)
+                } else {
+                    element.text = newText
+                }
+                onTextElementsChanged(textElements)
+                applyStrokes(strokes, true)
+                dialog.dismiss()
+            }
+            .setNegativeButton(R.string.cancel) { dialog, _ -> dialog.cancel() }
+            .create().show()
+        editText.requestFocus()
+    }
+
+    /** Launch a standard camera capture into a FileProvider cache file. */
+    private fun launchCameraCapture() {
+        try {
+            val dir = File(requireContext().cacheDir, "camera").apply { mkdirs() }
+            val photo = File(dir, "capture-${Instant.now().epochSecond}.jpg")
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                requireContext(), "${requireContext().packageName}.fileprovider", photo
+            )
+            pendingCameraUri = uri
+            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            cameraCaptureLauncher.launch(intent)
+        } catch (e: Exception) {
+            pendingCameraUri = null
+            Timber.w(e, "Camera capture unavailable")
+            Toast.makeText(requireContext(), "No camera available on this device", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -2091,6 +2358,11 @@ abstract class SurfaceFragment : ScreenFragment() {
                     clearSurface()
 
                     touchHelper?.setLimitRect(limit, ArrayList())?.setStrokeWidth(effectivePenWidth())?.openRawDrawing()
+                    // Let FINGER touch pass through to normal Android dispatch while the
+                    // raw session is open. Without this the Onyx raw input reader grabs
+                    // finger input over the whole limit rect at the system level, so the
+                    // app never sees finger taps/swipes/long-presses on ink pages.
+                    touchHelper?.enableFingerTouch(true)
                     applyStrokeStyle()
                     touchHelper?.setStrokeColor(paint.color)
                     // Record the size we just opened the reader with, so the first
@@ -2448,7 +2720,14 @@ abstract class SurfaceFragment : ScreenFragment() {
         val actionMove = listOf(MotionEvent.ACTION_MOVE, 213).contains(motionEvent.action)
         val actionUp = listOf(MotionEvent.ACTION_UP, 212).contains(motionEvent.action)
 
-        val drawing = ((toolTypeStylus || toolTypeEraser) && !touchDrawingState) || (toolTypeFinger && touchDrawingState)
+        // "Pen writes, finger manages": while element-manipulation mode is active,
+        // FINGER (and injected UNKNOWN) events route through the same handling path
+        // as the pen so move/resize/chips work by finger. The imageMode branch
+        // consumes them before any ink capture, so a finger can never lay strokes.
+        val toolTypeUnknown = motionEvent.getToolType(0) == MotionEvent.TOOL_TYPE_UNKNOWN
+        val fingerManipulating = imageMode && (toolTypeFinger || toolTypeUnknown)
+        val drawing = ((toolTypeStylus || toolTypeEraser) && !touchDrawingState) ||
+            (toolTypeFinger && touchDrawingState) || fingerManipulating
         val erasing = motionEvent.buttonState != 0 || toolTypeEraser
 
         if (drawing) {
@@ -2567,7 +2846,13 @@ abstract class SurfaceFragment : ScreenFragment() {
                             selectedImage = null
                             applyStrokes(strokes, true)
                         }
-                        else -> insertImageFromClipboardOrPicker()
+                        // Blank tap with nothing selected → leave manipulation mode
+                        // (insertion now lives in the finger long-press menu).
+                        else -> {
+                            exitImageMode()
+                            penState = true
+                            applyStrokes(strokes, true)
+                        }
                     }
                     return true
                 } else if (actionMove && sel != null && imageDrag == ImageDrag.MOVE) {

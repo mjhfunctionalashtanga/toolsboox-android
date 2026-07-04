@@ -128,10 +128,14 @@
             app:layout_constraintStart_toStartOf="parent"
             android:contentDescription="@string/calendar_drawing_toolbar_text"/>
 
+    <!-- Image insertion moved to the finger long-press menu (pen writes, finger
+         manages); the button stays in the layout GONE so view binding and the
+         constraint chain remain stable. -->
     <ImageButton
             android:id="@+id/toolbarImage"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_image"
 

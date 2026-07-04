@@ -19,5 +19,8 @@ data class TextElement(
     var text: String,
     var fontFamily: String = "atkinson_hyperlegible",
     var fontSize: Float = 24f,
-    var color: Int = -16777216  // Color.BLACK as ARGB int
+    var color: Int = -16777216,  // Color.BLACK as ARGB int
+    // Note page this text box belongs to ("default" = the plain day page).
+    // Fresh field name (not "page") to avoid any legacy Moshi collisions.
+    var pageKey: String = "default"
 )
