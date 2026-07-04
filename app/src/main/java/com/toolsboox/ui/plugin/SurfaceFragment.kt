@@ -132,6 +132,13 @@ abstract class SurfaceFragment : ScreenFragment() {
         private const val CALLIGRAPHY_MAX_FACTOR = 2.8f      // thickest — stroke running ACROSS the nib
         private const val CALLIGRAPHY_NIB_ANGLE_DEG = 45f    // broad-nib orientation (classic italic)
 
+        // Calligraphy uses its own narrower base-width mapping: the shared width
+        // presets read too thick through the broad-nib factors (MJH: "standard
+        // calligraphy medium is a bit too thick"). 0.72 thins every preset ~28%
+        // proportionally, so the thin/medium/thick ladder still feels even and
+        // ballpoint widths are untouched.
+        private const val CALLIGRAPHY_WIDTH_SCALE = 0.72f
+
         /** Pasted images: downscale the longest side to this on import, and place at this fraction of page width. */
         private const val IMAGE_MAX_DIM = 1400
         private const val IMAGE_PLACE_FRACTION = 0.6f
@@ -1147,7 +1154,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         viewMatrix.postTranslate(baseOffX + panX, baseOffY + panY)
         viewMatrix.invert(inverseViewMatrix)
 
-        touchHelper?.setStrokeWidth(paint.strokeWidth * totalScale)
+        touchHelper?.setStrokeWidth(effectivePenWidth() * totalScale)
 
         onTransformChanged(viewMatrix)
     }
@@ -1811,10 +1818,21 @@ abstract class SurfaceFragment : ScreenFragment() {
                 isClickable = true
             }.also { colorRow.addView(it) }
         }
+        // Selections apply LIVE (no OK step) and activate on ACTION_DOWN: on e-ink
+        // the click round-trip (press-state redraw + UP) reads as lag, and MJH asked
+        // for no confirmation step. applyLiveSelection is assigned after the rows
+        // are built; the reference lets the row handlers call it.
+        var applyLiveSelection: () -> Unit = {}
+
         colorItems.forEachIndexed { i, item ->
-            item.setOnClickListener {
-                selColor = i
-                colorItems.forEachIndexed { j, c -> c.background = ringDrawable(j == selColor, GradientDrawable.OVAL) }
+            item.setOnTouchListener { v, e ->
+                if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                    selColor = i
+                    colorItems.forEachIndexed { j, c -> c.background = ringDrawable(j == selColor, GradientDrawable.OVAL) }
+                    applyLiveSelection()
+                    v.performClick()
+                }
+                true
             }
         }
         root.addView(colorRow)
@@ -1842,9 +1860,14 @@ abstract class SurfaceFragment : ScreenFragment() {
             }.also { widthRow.addView(it) }
         }
         widthItems.forEachIndexed { i, item ->
-            item.setOnClickListener {
-                selWidth = i
-                widthItems.forEachIndexed { j, c -> c.background = ringDrawable(j == selWidth, GradientDrawable.RECTANGLE) }
+            item.setOnTouchListener { v, e ->
+                if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                    selWidth = i
+                    widthItems.forEachIndexed { j, c -> c.background = ringDrawable(j == selWidth, GradientDrawable.RECTANGLE) }
+                    applyLiveSelection()
+                    v.performClick()
+                }
+                true
             }
         }
         root.addView(widthRow)
@@ -1872,29 +1895,51 @@ abstract class SurfaceFragment : ScreenFragment() {
             }.also { styleRow.addView(it) }
         }
         styleItems.forEachIndexed { i, item ->
-            item.setOnClickListener {
-                selCalligraphy = (i == 1)
-                styleItems.forEachIndexed { j, c -> c.background = ringDrawable((j == 1) == selCalligraphy, GradientDrawable.RECTANGLE) }
+            item.setOnTouchListener { v, e ->
+                if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                    selCalligraphy = (i == 1)
+                    styleItems.forEachIndexed { j, c -> c.background = ringDrawable((j == 1) == selCalligraphy, GradientDrawable.RECTANGLE) }
+                    applyLiveSelection()
+                    v.performClick()
+                }
+                true
             }
         }
         root.addView(styleRow)
 
-        AlertDialog.Builder(ctx).setView(root)
-            .setPositiveButton("OK") { _, _ ->
-                paint.color = colorValues[selColor]
-                paint.strokeWidth = widthValues[selWidth]
-                touchHelper?.setStrokeWidth(paint.strokeWidth * baseScale * zoomScale)
-                touchHelper?.setStrokeColor(paint.color)
-                calligraphyMode = selCalligraphy
-                sharedPreferences.edit().putBoolean("calligraphyMode", calligraphyMode).apply()
-                applyStrokeStyle()
-                val opaqueColor = Color.rgb(Color.red(paint.color), Color.green(paint.color), Color.blue(paint.color))
-                provideToolbarDrawing().toolbarPen.background.setTint(
-                    if (opaqueColor == Color.BLACK) Color.GRAY else opaqueColor
-                )
-            }
-            .setNegativeButton("Cancel", null)
-            .create().show()
+        // Live-apply: every tapped option takes effect immediately (pen, hardware
+        // preview, prefs, toolbar tint). Exactly what the old OK button did.
+        applyLiveSelection = {
+            paint.color = colorValues[selColor]
+            paint.strokeWidth = widthValues[selWidth]
+            calligraphyMode = selCalligraphy
+            sharedPreferences.edit().putBoolean("calligraphyMode", calligraphyMode).apply()
+            touchHelper?.setStrokeWidth(effectivePenWidth() * baseScale * zoomScale)
+            touchHelper?.setStrokeColor(paint.color)
+            applyStrokeStyle()
+            val opaqueColor = Color.rgb(Color.red(paint.color), Color.green(paint.color), Color.blue(paint.color))
+            provideToolbarDrawing().toolbarPen.background.setTint(
+                if (opaqueColor == Color.BLACK) Color.GRAY else opaqueColor
+            )
+        }
+
+        // Pause the raw-ink session while the modal is up. With the session live,
+        // the Onyx EPD layer keeps priority on the EMR stylus for the surface
+        // below, which made stylus taps on the dialog feel sluggish. Paused, the
+        // stylus dispatches to the dialog window like any other pointer. The
+        // dismiss listener re-applies the final selection (persisting it exactly
+        // as OK used to) and restores the hardware pen with the NEW settings.
+        touchHelper?.setRawDrawingEnabled(false)
+        touchHelper?.isRawDrawingRenderEnabled = false
+
+        val dialog = AlertDialog.Builder(ctx).setView(root).create()
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.setOnDismissListener {
+            applyLiveSelection()
+            touchHelper?.setRawDrawingEnabled(true)
+            touchHelper?.isRawDrawingRenderEnabled = true
+        }
+        dialog.show()
     }
 
     private fun showTextInputDialog(x: Float, y: Float) {
@@ -2045,7 +2090,7 @@ abstract class SurfaceFragment : ScreenFragment() {
 
                     clearSurface()
 
-                    touchHelper?.setLimitRect(limit, ArrayList())?.setStrokeWidth(paint.strokeWidth)?.openRawDrawing()
+                    touchHelper?.setLimitRect(limit, ArrayList())?.setStrokeWidth(effectivePenWidth())?.openRawDrawing()
                     applyStrokeStyle()
                     touchHelper?.setStrokeColor(paint.color)
                     // Record the size we just opened the reader with, so the first
@@ -2155,6 +2200,13 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
     }
+
+    /**
+     * The pen's effective base stroke width: the shared preset, narrowed for
+     * calligraphy (see CALLIGRAPHY_WIDTH_SCALE).
+     */
+    protected fun effectivePenWidth(): Float =
+        paint.strokeWidth * (if (calligraphyMode) CALLIGRAPHY_WIDTH_SCALE else 1f)
 
     /** Put the Onyx hardware overlay into the live stroke style that matches the current pen. */
     private fun applyStrokeStyle() {
@@ -3031,7 +3083,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             }
 
             val stroke = Stroke(
-                UUID.randomUUID(), firstPointTimestamp, stylusPointList.toList(), paint.color, paint.strokeWidth,
+                UUID.randomUUID(), firstPointTimestamp, stylusPointList.toList(), paint.color, effectivePenWidth(),
                 if (calligraphyMode) Stroke.STYLE_CALLIGRAPHY else Stroke.STYLE_NORMAL
             )
             strokes.add(stroke)
