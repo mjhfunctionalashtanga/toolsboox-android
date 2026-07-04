@@ -1271,7 +1271,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         return false
     }
 
-    private fun screenToCanvas(screenX: Float, screenY: Float): FloatArray {
+    protected fun screenToCanvas(screenX: Float, screenY: Float): FloatArray {
         val pts = floatArrayOf(screenX, screenY)
         inverseViewMatrix.mapPoints(pts)
         return pts

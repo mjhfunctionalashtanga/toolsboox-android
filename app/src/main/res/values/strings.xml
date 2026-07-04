@@ -323,9 +323,9 @@
     <string name="dashboard_item_kanban_planner_title">Kanban\nplanner</string>
     <string name="dashboard_item_about_title">About</string>
     <string name="dashboard_item_cloud_title">Cloud</string>
-    <string name="dashboard_item_michaelfilter_title">MichaelFilter\nIntake</string>
-
     <string name="michaelfilter_intake_title">MichaelFilter Intake</string>
+    <string name="michaelfilter_intake_typed_dialog_hint">Paste a link or type text</string>
+    <string name="michaelfilter_intake_queued_count">%1$d intake item(s) queued for tomorrow\'s edition</string>
     <string name="michaelfilter_intake_url_label">Link URL</string>
     <string name="michaelfilter_intake_url_hint">https://…</string>
     <string name="michaelfilter_intake_paste">Paste</string>

@@ -66,10 +66,11 @@ class CalendarDayPageNotes : Creator {
                     when (notePage) {
                         "pickings" -> CalendarNavigator.toDayPage(fragment, localDate)
                         "gratitude" -> CalendarNavigator.toDayNote(fragment, localDate, "pickings")
+                        "intake" -> CalendarNavigator.toDayNote(fragment, localDate, "gratitude")
                         else -> {
                             val page = notePage.toIntOrNull() ?: 0
                             if (page == 0) {
-                                CalendarNavigator.toDayNote(fragment, localDate, "gratitude")
+                                CalendarNavigator.toDayNote(fragment, localDate, "intake")
                             } else {
                                 CalendarNavigator.toDayNote(fragment, localDate, "${page - 1}")
                             }
@@ -81,7 +82,8 @@ class CalendarDayPageNotes : Creator {
                 OnGestureListener.DTU -> {
                     when (notePage) {
                         "pickings" -> CalendarNavigator.toDayNote(fragment, localDate, "gratitude")
-                        "gratitude" -> CalendarNavigator.toDayNote(fragment, localDate, "0")
+                        "gratitude" -> CalendarNavigator.toDayNote(fragment, localDate, "intake")
+                        "intake" -> CalendarNavigator.toDayNote(fragment, localDate, "0")
                         else -> {
                             val page = notePage.toIntOrNull() ?: 0
                             CalendarNavigator.toDayNote(fragment, localDate, "${page + 1}")
@@ -110,6 +112,12 @@ class CalendarDayPageNotes : Creator {
             }
             if (notePage == "pickings") {
                 drawPickingsPage(canvas)
+                return
+            }
+            if (notePage == "intake") {
+                // Fallback template only — CalendarDayFragment.renderPage draws the
+                // intake page directly with the day's typed panel data.
+                CalendarDayPageIntake.drawPage(canvas, com.toolsboox.plugin.michaelfilter.da.IntakePageData())
                 return
             }
 

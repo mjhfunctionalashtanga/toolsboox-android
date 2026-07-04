@@ -2,9 +2,13 @@ package com.toolsboox.plugin.calendar.ui
 
 import android.graphics.Matrix
 import android.os.Bundle
+import android.view.MotionEvent
 import android.view.SurfaceView
 import android.view.View
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
+import androidx.appcompat.app.AlertDialog
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.analytics.logEvent
 import com.toolsboox.R
@@ -19,6 +23,8 @@ import com.toolsboox.plugin.calendar.da.v1.CalendarEvent
 import com.toolsboox.plugin.calendar.da.v1.CalendarPattern
 import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import com.toolsboox.plugin.calendar.ot.*
+import com.toolsboox.plugin.michaelfilter.da.IntakePageData
+import com.toolsboox.plugin.michaelfilter.nw.IntakePageStore
 import com.toolsboox.ui.plugin.SurfaceFragment
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +37,7 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.*
 import javax.inject.Inject
+import kotlin.math.abs
 
 /**
  * Calendar day view fragment.
@@ -106,6 +113,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * The pattern data class.
      */
     private lateinit var calendarPattern: CalendarPattern
+
+    /**
+     * Typed content of the MichaelFilter intake page (loaded lazily per day).
+     */
+    private var intakePageData: IntakePageData? = null
+
+    // Finger-tap tracking on the intake page (tap-to-type strips).
+    private var intakeTapDownX: Float = 0f
+    private var intakeTapDownY: Float = 0f
+    private var intakeTapDownAt: Long = 0L
 
     /**
      * SurfaceView provide method.
@@ -244,6 +261,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             val rawGesture = gestureListener.onTouchEvent(gestureDetector, view, motionEvent)
             val gestureResult = if (twoFingerGesture) rawGesture else OnGestureListener.NONE
 
+            if (notePage == "intake" && handleIntakeTap(motionEvent, gestureResult))
+                return@setOnTouchListener true
+
             if (notePage != null)
                 CalendarDayPageNotes.onTouchEvent(
                     view, motionEvent, gestureResult, this@CalendarDayFragment, calendarDay, notePage!!
@@ -262,10 +282,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 when (notePage) {
                     "pickings" -> CalendarNavigator.toDayPage(this, currentDate, CalendarDay.DEFAULT_STYLE)
                     "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "pickings")
+                    "intake" -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
                     else -> {
                         val page = notePage!!.toIntOrNull() ?: 0
                         if (page == 0) {
-                            CalendarNavigator.toDayNote(this, currentDate, "gratitude")
+                            CalendarNavigator.toDayNote(this, currentDate, "intake")
                         } else {
                             CalendarNavigator.toDayNote(this, currentDate, "${page - 1}")
                         }
@@ -279,7 +300,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             if (notePage != null) {
                 when (notePage) {
                     "pickings" -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
-                    "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "0")
+                    "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "intake")
+                    "intake" -> CalendarNavigator.toDayNote(this, currentDate, "0")
                     else -> {
                         val page = notePage!!.toIntOrNull() ?: 0
                         CalendarNavigator.toDayNote(this, currentDate, "${page + 1}")
@@ -322,6 +344,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     override fun onPause() {
         super.onPause()
 
+        // Leaving the intake page counts as "page exit" — hand any typed content
+        // that has not been delivered yet to the intake queue.
+        if (notePage == "intake") {
+            intakePageData?.let { data ->
+                context?.let { ctx -> IntakePageStore.dispatch(ctx, currentDate, data) }
+            }
+        }
+
         toolbar.toolbarPager.visibility = View.GONE
         timer.cancel()
         syncPresenter.backgroundSync(this@CalendarDayFragment, UUID.randomUUID())
@@ -357,7 +387,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             binding.toolbarDrawing.toolbarProcrastinator.visibility = View.GONE
             val noteTemplate = sharedPreferences.getInt("calendarNoteTemplate", 0)
             val noteStrokes = calendarDay.noteStrokes[notePage] ?: listOf()
-            CalendarDayPageNotes.drawPage(this.requireContext(), templateCanvas, calendarDay, noteTemplate, notePage!!)
+            if (notePage == "intake") {
+                // Intake page: draw the template with the day's typed panel texts in place.
+                val intakeData = IntakePageStore.load(requireContext(), currentDate).also { intakePageData = it }
+                CalendarDayPageIntake.drawPage(templateCanvas, intakeData)
+            } else {
+                CalendarDayPageNotes.drawPage(this.requireContext(), templateCanvas, calendarDay, noteTemplate, notePage!!)
+            }
             applyStrokes(Stroke.listDeepCopy(noteStrokes), true)
         } else {
             binding.toolbarDrawing.toolbarProcrastinator.visibility = View.VISIBLE
@@ -369,6 +405,94 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // named pages (pickings/gratitude) reliably show on first navigation, not only after a re-swipe.
         binding.templateImageView.invalidate()
         redrawImageSelectionIfActive()
+    }
+
+    /**
+     * Detect a finger tap on one of the intake page's tap-to-type strips and
+     * open the typed-text dialog for that panel.
+     *
+     * @param motionEvent the motion event
+     * @param gestureResult the gesture result (taps must not be swipes)
+     * @return true when the tap was consumed
+     */
+    private fun handleIntakeTap(motionEvent: MotionEvent, gestureResult: Int): Boolean {
+        if (motionEvent.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER) return false
+
+        when (motionEvent.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                intakeTapDownX = motionEvent.x
+                intakeTapDownY = motionEvent.y
+                intakeTapDownAt = System.currentTimeMillis()
+            }
+
+            MotionEvent.ACTION_UP -> {
+                val dx = abs(motionEvent.x - intakeTapDownX)
+                val dy = abs(motionEvent.y - intakeTapDownY)
+                val dt = System.currentTimeMillis() - intakeTapDownAt
+                if (!twoFingerGesture && gestureResult == OnGestureListener.NONE &&
+                    dx < 30f && dy < 30f && dt in 1..600
+                ) {
+                    val canvasPts = screenToCanvas(motionEvent.x, motionEvent.y)
+                    CalendarDayPageIntake.typedZoneAt(canvasPts[0], canvasPts[1])?.let { kindKey ->
+                        showIntakeTypedDialog(kindKey)
+                        return true
+                    }
+                }
+            }
+        }
+
+        return false
+    }
+
+    /**
+     * Show the typed-text dialog of an intake panel; on OK, store the text,
+     * render it in place and dispatch new URLs / educate notes to the queue.
+     *
+     * @param kindKey the panel kind (read|watch|listen|educate)
+     */
+    private fun showIntakeTypedDialog(kindKey: String) {
+        val ctx = context ?: return
+        val data = intakePageData ?: IntakePageStore.load(ctx, currentDate).also { intakePageData = it }
+        val panelTitle = CalendarDayPageIntake.panels.firstOrNull { it.kindKey == kindKey }?.title ?: kindKey
+
+        val editText = EditText(ctx)
+        editText.hint = getString(R.string.michaelfilter_intake_typed_dialog_hint)
+        editText.setSingleLine(false)
+        editText.setLines(5)
+        editText.setText(data.typedFor(kindKey))
+        editText.setSelection(editText.text?.length ?: 0)
+
+        val container = FrameLayout(ctx)
+        val params = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        )
+        val margin = (16 * resources.displayMetrics.density).toInt()
+        params.setMargins(margin, 0, margin, 0)
+        editText.layoutParams = params
+        container.addView(editText)
+
+        AlertDialog.Builder(ctx)
+            .setTitle(panelTitle)
+            .setView(container)
+            .setPositiveButton(R.string.ok) { dialog, _ ->
+                data.setTypedFor(kindKey, editText.text.toString())
+                IntakePageStore.save(ctx, currentDate, data)
+                val queued = IntakePageStore.dispatch(ctx, currentDate, data)
+
+                CalendarDayPageIntake.drawPage(templateCanvas, data)
+                binding.templateImageView.invalidate()
+
+                if (queued > 0) {
+                    showMessage(getString(R.string.michaelfilter_intake_queued_count, queued), binding.root)
+                }
+                dialog.dismiss()
+            }
+            .setNegativeButton(R.string.cancel) { dialog, _ ->
+                dialog.cancel()
+            }
+            .create().show()
+        editText.requestFocus()
     }
 
     /**

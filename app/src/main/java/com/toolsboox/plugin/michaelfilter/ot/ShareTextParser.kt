@@ -55,6 +55,19 @@ object ShareTextParser {
     }
 
     /**
+     * Extract every URL in a block of text (trailing punctuation trimmed).
+     *
+     * @param text the text
+     * @return the distinct URLs in order of appearance
+     */
+    fun extractUrls(text: String): List<String> {
+        return URL_REGEX.findAll(text)
+            .map { it.value.trimEnd('.', ',', ')', ']', '>', ';') }
+            .distinct()
+            .toList()
+    }
+
+    /**
      * Infer the intake kind (read|listen|watch) from the URL host.
      *
      * @param url the URL

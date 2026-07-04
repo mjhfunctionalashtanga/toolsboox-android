@@ -55,8 +55,10 @@ object MichaelFilterIntakeClient {
     fun submit(submission: IntakeSubmission): SubmitResult {
         val formBuilder = FormBody.Builder()
             .add("key", INTAKE_KEY)
-            .add("url", submission.linkUrl)
             .add("kind", submission.linkKind)
+
+        // Text-only submissions (Educate Me panel) carry no URL at all.
+        if (submission.linkUrl.isNotBlank()) formBuilder.add("url", submission.linkUrl)
 
         submission.linkTitle?.takeIf { it.isNotBlank() }?.let { formBuilder.add("title", it) }
         submission.pastedBody?.takeIf { it.isNotBlank() }?.let { formBuilder.add("text", it) }
