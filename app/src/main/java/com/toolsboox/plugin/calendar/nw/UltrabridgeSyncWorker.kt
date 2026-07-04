@@ -110,6 +110,12 @@ class UltrabridgeSyncWorker(
                 return Result.success()
             }
 
+            // Host only (no path/creds) so connection failures are diagnosable from logcat.
+            val targetHost = runCatching {
+                java.net.URI(webdavUrl).let { "${it.scheme}://${it.host}:${it.port}" }
+            }.getOrDefault("unparseable")
+            Timber.i("$TAG: Sync target: $targetHost")
+
             val lastSyncMs = mainPrefs.getLong(PREF_LAST_SYNC_MS, 0L)
 
             val rootDir = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
