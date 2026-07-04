@@ -132,6 +132,20 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     override fun provideSurfaceView(): SurfaceView = binding.surfaceView
 
     /**
+     * The current note page key ("pickings", "gratitude", "intake", "0"...),
+     * or null on the plain day page. Used by the day navigator to keep the
+     * prev/next day arrows within the current page group.
+     */
+    fun currentNotePage(): String? = notePage
+
+    /**
+     * The intake page needs normal Android touch over the surface for its
+     * tap-to-type strips; the Onyx raw session would swallow it system-wide,
+     * so that page runs on the MotionEvent capture + software render path.
+     */
+    override fun provideDisableRawInkCapture(): Boolean = notePage == "intake"
+
+    /**
      * Provide toolbar of drawing's bindings.
      *
      * @return the actual bindings of toolbar of drawings
@@ -416,7 +430,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * @return true when the tap was consumed
      */
     private fun handleIntakeTap(motionEvent: MotionEvent, gestureResult: Int): Boolean {
-        if (motionEvent.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER) return false
+        // Finger taps only. TOOL_TYPE_UNKNOWN is accepted because injected events
+        // (adb input tap, accessibility) carry it; real pen taps are STYLUS and stay ink.
+        val toolType = motionEvent.getToolType(0)
+        if (toolType != MotionEvent.TOOL_TYPE_FINGER && toolType != MotionEvent.TOOL_TYPE_UNKNOWN) return false
 
         when (motionEvent.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -429,7 +446,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 val dx = abs(motionEvent.x - intakeTapDownX)
                 val dy = abs(motionEvent.y - intakeTapDownY)
                 val dt = System.currentTimeMillis() - intakeTapDownAt
-                if (!twoFingerGesture && gestureResult == OnGestureListener.NONE &&
+                // NOTE: deliberately no twoFingerGesture check — with the one-finger
+                // gestures toolbar toggle enabled, SurfaceFragment sets
+                // twoFingerGesture=true for EVERY single-finger touch (the flag really
+                // means "gesture recognition armed"), which would veto all taps.
+                // gestureResult==NONE + movement slop + tap duration are sufficient.
+                if (gestureResult == OnGestureListener.NONE &&
                     dx < 30f && dy < 30f && dt in 1..600
                 ) {
                     val canvasPts = screenToCanvas(motionEvent.x, motionEvent.y)

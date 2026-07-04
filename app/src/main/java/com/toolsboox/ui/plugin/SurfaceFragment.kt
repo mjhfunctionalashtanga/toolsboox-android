@@ -1962,6 +1962,16 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     /**
+     * When true, the Onyx raw-ink session is not created for this screen and
+     * the fragment uses the plain MotionEvent capture + software rendering
+     * path instead (the same fallback the Viwoods flavor uses). Needed for
+     * pages with tap-to-interact zones: the Onyx raw input reader grabs ALL
+     * touch (pen and finger) over the surface at the system level, so finger
+     * taps never reach the app while a raw session is open.
+     */
+    open fun provideDisableRawInkCapture(): Boolean = false
+
+    /**
      * Initialize the surface view of drawing.
      *
      * @param first first initialization flag
@@ -1987,7 +1997,13 @@ abstract class SurfaceFragment : ScreenFragment() {
                 // even when raw stylus drawing is supported, which forces the slow
                 // MotionEvent fallback rendering path. Catch and fall back only on real
                 // failure (non-Onyx device or SDK incompatibility).
-                try {
+                if (provideDisableRawInkCapture()) {
+                    // This screen needs normal Android touch over the surface (finger
+                    // taps). The Onyx raw session would grab all of it at the system
+                    // level, so skip it and use MotionEvent capture + software render.
+                    Timber.i("Raw ink capture disabled for this screen; MotionEvent rendering path")
+                    touchHelper = null
+                } else try {
                     touchHelper = TouchHelper.create(provideSurfaceView(), callback)
                     Timber.i("TouchHelper created successfully on ${Build.MODEL}")
                 } catch (e: Throwable) {

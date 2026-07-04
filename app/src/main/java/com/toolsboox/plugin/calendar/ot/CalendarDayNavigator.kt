@@ -65,7 +65,7 @@ class CalendarDayNavigator {
                     val py = motionEvent.y * 140.4f / view.height
 
                     if (px >= lo + 0 * cew && px <= lo + 1 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toDayPage(fragment, localDate.minusDays(1L))
+                        toSameDayPage(fragment, localDate.minusDays(1L))
                         return true
                     }
                     if (px >= lo + 1 * cew && px <= lo + 3 * cew && py >= to && py <= to + ceh) {
@@ -89,13 +89,32 @@ class CalendarDayNavigator {
                         return true
                     }
                     if (px >= lo + 19 * cew && px <= lo + 20 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toDayPage(fragment, localDate.plusDays(1L))
+                        toSameDayPage(fragment, localDate.plusDays(1L))
                         return true
                     }
                 }
             }
 
             return true
+        }
+
+        /**
+         * Navigate to another day while staying in the current page group:
+         * on a named/numbered note page (pickings, gratitude, intake, 0...),
+         * open the SAME page of the target day; on the plain day page, open
+         * the target day's day page. A day with no ink yet for that page just
+         * shows its empty template (normal named-page behavior).
+         *
+         * @param fragment the fragment
+         * @param targetDate the target date
+         */
+        private fun toSameDayPage(fragment: CalendarDayFragment, targetDate: LocalDate) {
+            val notePage = fragment.currentNotePage()
+            if (notePage != null) {
+                CalendarNavigator.toDayNote(fragment, targetDate, notePage)
+            } else {
+                CalendarNavigator.toDayPage(fragment, targetDate)
+            }
         }
 
         /**
