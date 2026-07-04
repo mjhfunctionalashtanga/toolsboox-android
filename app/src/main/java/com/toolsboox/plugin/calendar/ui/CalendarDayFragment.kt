@@ -278,6 +278,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         calendarStyle = arguments?.getString("calendarStyle") ?: CalendarDay.DEFAULT_STYLE
         notePage = arguments?.getString("notePage")
 
+        // Share-to-Ledger: an image shared from another app arrives as a uri argument.
+        // Consume it (so back-stack re-creation doesn't re-insert) and queue the insert;
+        // it completes in renderPage once the page data has loaded.
+        arguments?.getString("sharedImageUri")?.let { shared ->
+            arguments?.remove("sharedImageUri")
+            Timber.i("Shared image queued for insert: $shared")
+            queueSharedImageInsert(android.net.Uri.parse(shared))
+        }
+
         val defaultStartHour = sharedPreferences.getInt("calendarStartHour", 5)
         calendarDay = CalendarDay(
             currentDate.year, currentDate.monthValue, currentDate.dayOfMonth, locale,

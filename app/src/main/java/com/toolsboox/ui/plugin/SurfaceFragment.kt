@@ -257,6 +257,9 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
     }
 
+    /** Queue an externally shared image (share-to-Ledger) — inserts now or defers to page load. */
+    fun queueSharedImageInsert(uri: Uri) = handlePickedImage(uri)
+
     /** Called by fragments once page data is loaded — completes a deferred insert. */
     fun consumeDeferredImageInsert() {
         val uri = deferredInsertUri ?: return

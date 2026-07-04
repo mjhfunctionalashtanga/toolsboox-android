@@ -136,6 +136,28 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             binding.fragmentContent.findNavController().navigate(R.id.action_to_michaelfilter_intake, bundle)
         }
 
+        // Share-to-Ledger target: an image shared from Gallery or any app lands on
+        // today's day page as a movable image element.
+        if (intent?.action == android.content.Intent.ACTION_SEND && intent?.type?.startsWith("image/") == true) {
+            @Suppress("DEPRECATION")
+            val streamUri = intent?.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
+            // Consume the intent so re-resume doesn't re-insert.
+            intent?.action = null
+
+            if (streamUri != null) {
+                Timber.i("Share to ledger: $streamUri")
+                val bundle = bundleOf("sharedImageUri" to streamUri.toString())
+                // Pop any existing day fragment first: on a share cold-start the nav graph has
+                // already created the start-destination day page, and two stacked day fragments
+                // means two SurfaceViews fighting over the window — the stale one can win and
+                // hide the freshly inserted image until the next reload.
+                val navOptions = androidx.navigation.navOptions {
+                    popUpTo(R.id.CalendarDayFragment) { inclusive = true }
+                }
+                binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle, navOptions)
+            }
+        }
+
         val host = intent?.data?.host
         val path = intent?.data?.path
         if (host == "app") {
