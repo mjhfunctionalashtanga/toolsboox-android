@@ -260,8 +260,40 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** Queue an externally shared image (share-to-Ledger) — inserts now or defers to page load. */
     fun queueSharedImageInsert(uri: Uri) = handlePickedImage(uri)
 
+    /** Shared text waiting for page data before it becomes an on-canvas text box. */
+    private var deferredInsertText: String? = null
+
+    /** Queue externally shared text (share-to-Ledger) — inserts now or defers to page load. */
+    fun queueSharedTextInsert(text: String) {
+        if (isPageDataReady()) {
+            insertSharedTextBox(text)
+        } else {
+            Timber.i("Page data not ready; deferring text insert")
+            deferredInsertText = text
+        }
+    }
+
+    /** Insert shared text as a movable text box, centered on the page. */
+    private fun insertSharedTextBox(text: String) {
+        val lines = text.split("\n")
+        val fontSize = 24f
+        val approxWidth = (lines.maxOf { it.length } * fontSize * 0.55f).coerceIn(200f, CANVAS_WIDTH - 100f)
+        val approxHeight = lines.size * fontSize * 1.25f
+        val x = ((CANVAS_WIDTH - approxWidth) / 2f).coerceAtLeast(50f)
+        val y = ((CANVAS_HEIGHT - approxHeight) / 2f).coerceIn(100f, CANVAS_HEIGHT - 100f)
+        val element = TextElement(x = x, y = y, text = text, fontSize = fontSize)
+        textElements.add(element)
+        onTextElementsChanged(textElements)
+        applyStrokes(strokes, true)
+    }
+
     /** Called by fragments once page data is loaded — completes a deferred insert. */
     fun consumeDeferredImageInsert() {
+        deferredInsertText?.let { text ->
+            deferredInsertText = null
+            Timber.i("Completing deferred text insert (%d chars)", text.length)
+            insertSharedTextBox(text)
+        }
         val uri = deferredInsertUri ?: return
         deferredInsertUri = null
         Timber.i("Completing deferred image insert: %s", uri)

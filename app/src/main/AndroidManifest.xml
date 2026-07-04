@@ -67,8 +67,9 @@
                 <data android:scheme="toolsboox"/>
                 <data android:host="app"/>
             </intent-filter>
-            <!-- MichaelFilter Intake share target: share a URL from any app. -->
-            <intent-filter android:label="@string/michaelfilter_intake_title">
+            <!-- Share-to-Ledger (text): URLs feed the MichaelFilter intake pipeline AND
+                 land as a text box on today's day page. One share identity: "Ledger". -->
+            <intent-filter android:label="@string/ledger_share_target_title">
                 <action android:name="android.intent.action.SEND"/>
 
                 <category android:name="android.intent.category.DEFAULT"/>

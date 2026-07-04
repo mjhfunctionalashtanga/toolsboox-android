@@ -286,6 +286,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             Timber.i("Shared image queued for insert: $shared")
             queueSharedImageInsert(android.net.Uri.parse(shared))
         }
+        arguments?.getString("sharedText")?.let { shared ->
+            arguments?.remove("sharedText")
+            Timber.i("Shared text queued for insert (${shared.length} chars)")
+            queueSharedTextInsert(shared)
+        }
 
         val defaultStartHour = sharedPreferences.getInt("calendarStartHour", 5)
         calendarDay = CalendarDay(

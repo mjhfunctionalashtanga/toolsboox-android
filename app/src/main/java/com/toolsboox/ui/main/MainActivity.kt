@@ -112,13 +112,42 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     }
 
     /**
+     * Soft-wrap shared text for an on-canvas text box: text boxes only break on
+     * newlines, so long lines (especially URLs) are folded to stay on the page.
+     */
+    private fun wrapForTextBox(raw: String, maxLine: Int = 48): String =
+        raw.lines().joinToString("\n") { line ->
+            if (line.length <= maxLine) return@joinToString line
+            val out = StringBuilder()
+            var current = StringBuilder()
+            for (word in line.split(" ")) {
+                var token = word
+                // Hard-chunk unbreakable tokens (URLs) to the line width.
+                while (token.length > maxLine) {
+                    if (current.isNotEmpty()) {
+                        out.append(current).append('\n'); current = StringBuilder()
+                    }
+                    out.append(token.take(maxLine)).append('\n')
+                    token = token.drop(maxLine)
+                }
+                if (current.isEmpty()) current.append(token)
+                else if (current.length + 1 + token.length <= maxLine) current.append(' ').append(token)
+                else {
+                    out.append(current).append('\n'); current = StringBuilder(token)
+                }
+            }
+            out.append(current).toString()
+        }
+
+    /**
      * Activity onResume.
      */
     override fun onResume() {
         super.onResume()
 
-        // MichaelFilter Intake share target: a URL shared from the browser or a
-        // podcast/YouTube app opens the intake screen pre-filled.
+        // Share-to-Ledger (text/link): any URL is queued straight into the MichaelFilter
+        // intake pipeline (THE READ / THE WATCH / THE LISTEN become notes server-side),
+        // and the shared text lands on today's day page as a movable text box.
         if (intent?.action == android.content.Intent.ACTION_SEND && intent?.type == "text/plain") {
             val sharedText = intent?.getStringExtra(android.content.Intent.EXTRA_TEXT)
             val sharedSubject = intent?.getStringExtra(android.content.Intent.EXTRA_SUBJECT)
@@ -126,14 +155,32 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             intent?.action = null
 
             val parsed = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.parse(sharedText, sharedSubject)
-            val bundle = bundleOf(
-                "url" to parsed.url,
-                "title" to parsed.title,
-                "kind" to parsed.kind,
-                "text" to parsed.leftoverText
+            Timber.i("Share to ledger (text): url=${parsed.url} kind=${parsed.kind}")
+            if (parsed.url != null) {
+                val submission = com.toolsboox.plugin.michaelfilter.da.IntakeSubmission(
+                    linkUrl = parsed.url,
+                    linkKind = parsed.kind,
+                    linkTitle = parsed.title,
+                    pastedBody = parsed.leftoverText
+                )
+                com.toolsboox.plugin.michaelfilter.nw.IntakeQueue.enqueue(this, submission)
+                com.toolsboox.plugin.michaelfilter.nw.IntakeQueue.scheduleDrain(this)
+                android.widget.Toast.makeText(
+                    this, "Queued for THE ${parsed.kind.uppercase(Locale.US)}", android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+
+            val boxText = wrapForTextBox(
+                listOfNotNull(parsed.title, parsed.url, parsed.leftoverText).joinToString("\n")
+                    .ifBlank { sharedText?.trim().orEmpty() }
             )
-            Timber.i("Share intake: url=${parsed.url} kind=${parsed.kind}")
-            binding.fragmentContent.findNavController().navigate(R.id.action_to_michaelfilter_intake, bundle)
+            if (boxText.isNotBlank()) {
+                val bundle = bundleOf("sharedText" to boxText)
+                val navOptions = androidx.navigation.navOptions {
+                    popUpTo(R.id.CalendarDayFragment) { inclusive = true }
+                }
+                binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle, navOptions)
+            }
         }
 
         // Share-to-Ledger target: an image shared from Gallery or any app lands on
