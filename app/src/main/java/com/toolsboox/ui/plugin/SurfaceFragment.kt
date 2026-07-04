@@ -220,6 +220,12 @@ abstract class SurfaceFragment : ScreenFragment() {
     private var imageDrag = ImageDrag.NONE
     private var imageDragStartX = 0f
     private var imageDragStartY = 0f
+
+    /** Text box selected in element-manipulation mode (dragged like an image). */
+    private var selectedTextBox: TextElement? = null
+    private var textBoxDrag = false
+    private var textBoxOrigX = 0f
+    private var textBoxOrigY = 0f
     private var imageOrigRect = RectF()
     private var cropMode = false
     private var cropDragging = false
@@ -284,7 +290,8 @@ abstract class SurfaceFragment : ScreenFragment() {
         val element = TextElement(x = x, y = y, text = text, fontSize = fontSize)
         textElements.add(element)
         onTextElementsChanged(textElements)
-        applyStrokes(strokes, true)
+        // Land selected and draggable, same as a freshly inserted image.
+        enterTextBoxManipulation(element)
     }
 
     /** Called by fragments once page data is loaded — completes a deferred insert. */
@@ -314,9 +321,6 @@ abstract class SurfaceFragment : ScreenFragment() {
             handlePickedImage(uri)
         }
     }
-
-    /** Text box waiting for a "move here" tap (long-press menu's Move action). */
-    protected var pendingTextBoxMove: TextElement? = null
 
     /** Which transform is currently being driven by the stylus (NONE = idle). */
     private enum class SelectionDrag { NONE, HANDLE_TL, HANDLE_TR, HANDLE_BL, HANDLE_BR, MOVE }
@@ -1486,6 +1490,10 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     fun setTextElements(elements: MutableList<TextElement>) {
         this.textElements = elements
+        // Keep an active selection pointing at the reloaded element so a drag
+        // in progress isn't mutating an object the list no longer contains.
+        val selId = selectedTextBox?.elementId
+        selectedTextBox = if (selId != null) elements.firstOrNull { it.elementId == selId } else null
     }
 
     /**
@@ -1562,6 +1570,8 @@ abstract class SurfaceFragment : ScreenFragment() {
     private fun exitImageMode() {
         imageMode = false
         selectedImage = null
+        selectedTextBox = null
+        textBoxDrag = false
         imageDrag = ImageDrag.NONE
         cropMode = false
         cropDragging = false
@@ -1751,9 +1761,6 @@ abstract class SurfaceFragment : ScreenFragment() {
      * @param pressY press y in the surface view's coordinates (menu anchor)
      */
     fun handleCanvasLongPress(cx: Float, cy: Float, pressX: Float, pressY: Float) {
-        // A pending "move here" tap takes priority over starting a new action.
-        if (completeTextBoxMove(cx, cy)) return
-
         val image = imageElementAt(cx, cy)
         if (image != null) {
             enterImageManipulation(image)
@@ -1777,6 +1784,22 @@ abstract class SurfaceFragment : ScreenFragment() {
         penState = false
         imageMode = true
         selectedImage = element
+        selectedTextBox = null
+        applyStrokes(strokes, true)
+        drawImageSelection()
+    }
+
+    /** Select a text box and enter the manipulation mode (finger drag moves it, like an image). */
+    private fun enterTextBoxManipulation(element: TextElement) {
+        textMode = false
+        pasteMode = false
+        selectionMode = false
+        hasSelection = false
+        procrastinator = false
+        penState = false
+        imageMode = true
+        selectedImage = null
+        selectedTextBox = element
         applyStrokes(strokes, true)
         drawImageSelection()
     }
@@ -1813,10 +1836,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             listOf(
                 listOf(
                     LedgerContextMenu.Item("Edit text") { showTextEditDialog(element) },
-                    LedgerContextMenu.Item("Move — tap the new spot") {
-                        pendingTextBoxMove = element
-                        Toast.makeText(ctx, "Tap where the text box should go", Toast.LENGTH_SHORT).show()
-                    }
+                    LedgerContextMenu.Item("Move — drag it") { enterTextBoxManipulation(element) }
                 ),
                 listOf(
                     LedgerContextMenu.Item("Duplicate") {
@@ -1846,17 +1866,6 @@ abstract class SurfaceFragment : ScreenFragment() {
                 )
             )
         )
-    }
-
-    /** Complete a pending text-box "move here": place it at the tapped point. */
-    fun completeTextBoxMove(cx: Float, cy: Float): Boolean {
-        val moving = pendingTextBoxMove ?: return false
-        pendingTextBoxMove = null
-        moving.x = cx
-        moving.y = cy
-        onTextElementsChanged(textElements)
-        applyStrokes(strokes, true)
-        return true
     }
 
     /**
@@ -2051,6 +2060,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                 lockCanvas.drawRect(cr, cropPaint)
             }
         }
+        // Selected text box: dashed outline, dragged like an image (no handles/chips —
+        // edit/duplicate/delete stay on the long-press menu).
+        selectedTextBox?.let { lockCanvas.drawRect(textElementBounds(it), lassoPaint) }
         lockCanvas.restore()
 
         // Pause the Onyx raw-drawing renderer around the post, exactly like drawWithSelection —
@@ -2793,6 +2805,52 @@ abstract class SurfaceFragment : ScreenFragment() {
 
             // --- Image mode: select / move / resize / crop / delete inserted images ---
             if (imageMode) {
+                // Text-box drag: a selected text box follows the finger like an image.
+                val selT = selectedTextBox
+                if (selT != null) {
+                    if (actionDown) {
+                        if (textElementBounds(selT).contains(x, y)) {
+                            textBoxDrag = true
+                            imageDragStartX = x
+                            imageDragStartY = y
+                            textBoxOrigX = selT.x
+                            textBoxOrigY = selT.y
+                            return true
+                        }
+                        // Tap another element → grab it instead.
+                        val hitT = textElementAt(x, y)
+                        if (hitT != null) {
+                            selectedTextBox = hitT
+                            applyStrokes(strokes, true)
+                            drawImageSelection()
+                            return true
+                        }
+                        val hitI = imageElementAt(x, y)
+                        if (hitI != null) {
+                            enterImageManipulation(hitI)
+                            return true
+                        }
+                        // Blank tap → done, back to the pen.
+                        exitImageMode()
+                        penState = true
+                        applyStrokes(strokes, true)
+                        return true
+                    }
+                    if (actionMove && textBoxDrag) {
+                        selT.x = textBoxOrigX + (x - imageDragStartX)
+                        selT.y = textBoxOrigY + (y - imageDragStartY)
+                        drawImageSelection()
+                        return true
+                    }
+                    if (actionUp && textBoxDrag) {
+                        textBoxDrag = false
+                        onTextElementsChanged(textElements)
+                        applyStrokes(strokes, true)
+                        drawImageSelection()
+                        return true
+                    }
+                    return true
+                }
                 val sel = selectedImage
                 // Crop: drag a rectangle over the image, apply on release.
                 if (cropMode && sel != null) {
@@ -2875,7 +2933,11 @@ abstract class SurfaceFragment : ScreenFragment() {
                     val hit = imageElements.lastOrNull {
                         x >= it.x && x <= it.x + it.width && y >= it.y && y <= it.y + it.height
                     }
+                    val hitText = textElementAt(x, y)
                     when {
+                        hit == null && hitText != null -> {
+                            enterTextBoxManipulation(hitText)
+                        }
                         hit != null -> {
                             // Select AND arm a move so the very first tap can drag the image.
                             selectedImage = hit

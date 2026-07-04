@@ -523,16 +523,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                val wasPending = longPressPending
                 longPressHandler.removeCallbacks(longPressRunnable)
                 longPressPending = false
-                // A quick tap places a text box waiting for its "move here" spot.
-                if (wasPending && pendingTextBoxMove != null &&
-                    motionEvent.actionMasked == MotionEvent.ACTION_UP
-                ) {
-                    val canvasPts = screenToCanvas(motionEvent.x, motionEvent.y)
-                    if (completeTextBoxMove(canvasPts[0], canvasPts[1])) return true
-                }
             }
         }
 
