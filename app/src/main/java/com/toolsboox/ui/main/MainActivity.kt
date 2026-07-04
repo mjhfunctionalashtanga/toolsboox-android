@@ -145,9 +145,9 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     override fun onResume() {
         super.onResume()
 
-        // Share-to-Ledger (text/link): any URL is queued straight into the MichaelFilter
-        // intake pipeline (THE READ / THE WATCH / THE LISTEN become notes server-side),
-        // and the shared text lands on today's day page as a movable text box.
+        // Share-to-Ledger (text/link): the shared text lands as a movable text box.
+        // A link lands on today's INTAKE page — nothing is queued on share; dropping
+        // the box onto a panel (THE READ / WATCH / LISTEN / EDUCATE) is what files it.
         if (intent?.action == android.content.Intent.ACTION_SEND && intent?.type == "text/plain") {
             val sharedText = intent?.getStringExtra(android.content.Intent.EXTRA_TEXT)
             val sharedSubject = intent?.getStringExtra(android.content.Intent.EXTRA_SUBJECT)
@@ -155,27 +155,17 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             intent?.action = null
 
             val parsed = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.parse(sharedText, sharedSubject)
-            Timber.i("Share to ledger (text): url=${parsed.url} kind=${parsed.kind}")
-            if (parsed.url != null) {
-                val submission = com.toolsboox.plugin.michaelfilter.da.IntakeSubmission(
-                    linkUrl = parsed.url,
-                    linkKind = parsed.kind,
-                    linkTitle = parsed.title,
-                    pastedBody = parsed.leftoverText
-                )
-                com.toolsboox.plugin.michaelfilter.nw.IntakeQueue.enqueue(this, submission)
-                com.toolsboox.plugin.michaelfilter.nw.IntakeQueue.scheduleDrain(this)
-                android.widget.Toast.makeText(
-                    this, "Queued for THE ${parsed.kind.uppercase(Locale.US)}", android.widget.Toast.LENGTH_SHORT
-                ).show()
-            }
-
+            Timber.i("Share to ledger (text): url=${parsed.url}")
             val boxText = wrapForTextBox(
                 listOfNotNull(parsed.title, parsed.url, parsed.leftoverText).joinToString("\n")
                     .ifBlank { sharedText?.trim().orEmpty() }
             )
             if (boxText.isNotBlank()) {
                 val bundle = bundleOf("sharedText" to boxText)
+                if (parsed.url != null) {
+                    bundle.putString("sharedUrl", parsed.url)
+                    bundle.putString("notePage", "intake")
+                }
                 val navOptions = androidx.navigation.navOptions {
                     popUpTo(R.id.CalendarDayFragment) { inclusive = true }
                 }

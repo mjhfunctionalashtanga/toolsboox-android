@@ -222,6 +222,31 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /**
+     * A text box finished a drag. On the intake page, a box carrying a link
+     * dropped onto a panel files that link into the panel's lane — placement
+     * is the gesture that runs the pipeline; sharing alone queues nothing.
+     */
+    override fun onTextBoxDropped(element: TextElement) {
+        if (notePage != "intake") return
+        val bounds = textElementBounds(element)
+        val panel = CalendarDayPageIntake.panels.firstOrNull {
+            it.rect.contains(bounds.centerX(), bounds.centerY())
+        } ?: return
+        val url = element.sourceUrl
+            ?: com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.extractUrls(element.text).firstOrNull()
+            ?: return
+        val title = element.text.lines().map { it.trim() }
+            .firstOrNull { it.isNotEmpty() && !it.startsWith("http") }
+        val submission = com.toolsboox.plugin.michaelfilter.da.IntakeSubmission(
+            linkUrl = url, linkKind = panel.kindKey, linkTitle = title
+        )
+        com.toolsboox.plugin.michaelfilter.nw.IntakeQueue.enqueue(requireContext(), submission)
+        com.toolsboox.plugin.michaelfilter.nw.IntakeQueue.scheduleDrain(requireContext())
+        Timber.i("Text box dropped on ${panel.kindKey}: $url")
+        android.widget.Toast.makeText(requireContext(), "Filed to ${panel.title}", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    /**
      * On strokes procrastinated event.
      *
      * @param strokes the strokes to procrastinate
@@ -287,9 +312,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             queueSharedImageInsert(android.net.Uri.parse(shared))
         }
         arguments?.getString("sharedText")?.let { shared ->
+            val sharedUrl = arguments?.getString("sharedUrl")
             arguments?.remove("sharedText")
-            Timber.i("Shared text queued for insert (${shared.length} chars)")
-            queueSharedTextInsert(shared)
+            arguments?.remove("sharedUrl")
+            Timber.i("Shared text queued for insert (${shared.length} chars, url=$sharedUrl)")
+            queueSharedTextInsert(shared, sharedUrl)
         }
 
         val defaultStartHour = sharedPreferences.getInt("calendarStartHour", 5)

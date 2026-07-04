@@ -22,5 +22,9 @@ data class TextElement(
     var color: Int = -16777216,  // Color.BLACK as ARGB int
     // Note page this text box belongs to ("default" = the plain day page).
     // Fresh field name (not "page") to avoid any legacy Moshi collisions.
-    var pageKey: String = "default"
+    var pageKey: String = "default",
+    // Original shared URL (share-to-Ledger): the on-canvas text soft-wraps long
+    // URLs across lines, so the intact link rides here for drop-to-file on the
+    // intake panels. New field with a default → backward-compatible JSON.
+    var sourceUrl: String? = null
 )

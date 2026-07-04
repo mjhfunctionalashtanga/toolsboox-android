@@ -266,40 +266,46 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** Queue an externally shared image (share-to-Ledger) — inserts now or defers to page load. */
     fun queueSharedImageInsert(uri: Uri) = handlePickedImage(uri)
 
-    /** Shared text waiting for page data before it becomes an on-canvas text box. */
-    private var deferredInsertText: String? = null
+    /** Shared text (and its intact source URL) waiting for page data before insert. */
+    private var deferredInsertText: Pair<String, String?>? = null
 
     /** Queue externally shared text (share-to-Ledger) — inserts now or defers to page load. */
-    fun queueSharedTextInsert(text: String) {
+    fun queueSharedTextInsert(text: String, sourceUrl: String? = null) {
         if (isPageDataReady()) {
-            insertSharedTextBox(text)
+            insertSharedTextBox(text, sourceUrl)
         } else {
             Timber.i("Page data not ready; deferring text insert")
-            deferredInsertText = text
+            deferredInsertText = text to sourceUrl
         }
     }
 
     /** Insert shared text as a movable text box, centered on the page. */
-    private fun insertSharedTextBox(text: String) {
+    private fun insertSharedTextBox(text: String, sourceUrl: String? = null) {
         val lines = text.split("\n")
         val fontSize = 24f
         val approxWidth = (lines.maxOf { it.length } * fontSize * 0.55f).coerceIn(200f, CANVAS_WIDTH - 100f)
         val approxHeight = lines.size * fontSize * 1.25f
         val x = ((CANVAS_WIDTH - approxWidth) / 2f).coerceAtLeast(50f)
         val y = ((CANVAS_HEIGHT - approxHeight) / 2f).coerceIn(100f, CANVAS_HEIGHT - 100f)
-        val element = TextElement(x = x, y = y, text = text, fontSize = fontSize)
+        val element = TextElement(x = x, y = y, text = text, fontSize = fontSize, sourceUrl = sourceUrl)
         textElements.add(element)
         onTextElementsChanged(textElements)
         // Land selected and draggable, same as a freshly inserted image.
         enterTextBoxManipulation(element)
     }
 
+    /**
+     * A text-box drag just ended. Fragments override to react to where the box
+     * landed (e.g. the intake page files a link dropped onto a panel).
+     */
+    open fun onTextBoxDropped(element: TextElement) {}
+
     /** Called by fragments once page data is loaded — completes a deferred insert. */
     fun consumeDeferredImageInsert() {
-        deferredInsertText?.let { text ->
+        deferredInsertText?.let { (text, sourceUrl) ->
             deferredInsertText = null
             Timber.i("Completing deferred text insert (%d chars)", text.length)
-            insertSharedTextBox(text)
+            insertSharedTextBox(text, sourceUrl)
         }
         val uri = deferredInsertUri ?: return
         deferredInsertUri = null
@@ -2845,6 +2851,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                     if (actionUp && textBoxDrag) {
                         textBoxDrag = false
                         onTextElementsChanged(textElements)
+                        onTextBoxDropped(selT)
                         applyStrokes(strokes, true)
                         drawImageSelection()
                         return true
