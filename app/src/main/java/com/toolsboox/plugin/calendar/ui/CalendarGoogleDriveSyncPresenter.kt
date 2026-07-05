@@ -6,11 +6,15 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.api.client.http.ByteArrayContent
 import com.google.api.services.drive.Drive
+import com.toolsboox.da.ImageElement
+import com.toolsboox.da.Stroke
+import com.toolsboox.da.TextElement
 import com.toolsboox.databinding.FragmentCalendarGoogleDriveSyncBinding
 import com.toolsboox.di.GoogleDriveModule
 import com.toolsboox.fi.GoogleDriveService
 import com.toolsboox.plugin.calendar.da.v1.CalendarSyncItem
 import com.toolsboox.plugin.calendar.da.v1.CalendarSyncViewItem
+import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import com.toolsboox.plugin.calendar.fi.*
 import com.toolsboox.ui.plugin.FragmentPresenter
 import com.toolsboox.ui.plugin.ScreenFragment
@@ -279,15 +283,41 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
 
                                 Timber.i("Background sync items: ${syncList}")
                                 syncList.forEach { item ->
-                                    val fileLastModified = item.file?.updated?.time ?: 0L
-                                    val cloudLastModified = item.cloud?.updated?.time ?: 0L
-
-                                    if (fileLastModified < cloudLastModified) {
-                                        Timber.i("File update: ${item.cloud}")
-                                        fileUpdate(rootPath, cloudLoad(driveService, item.cloud!!))
-                                    } else {
-                                        Timber.i("Cloud update: ${item.file}")
-                                        cloudUpdate(driveService, fileLoad(rootPath, item.file!!))
+                                    val fileItem = item.file
+                                    val cloudItem = item.cloud
+                                    when {
+                                        // New on cloud only → pull it down as-is.
+                                        fileItem == null && cloudItem != null -> {
+                                            Timber.i("File create (cloud-only): ${cloudItem}")
+                                            fileUpdate(rootPath, cloudLoad(driveService, cloudItem))
+                                        }
+                                        // New on local only → push it up as-is.
+                                        cloudItem == null && fileItem != null -> {
+                                            Timber.i("Cloud create (local-only): ${fileItem}")
+                                            cloudUpdate(driveService, fileLoad(rootPath, fileItem))
+                                        }
+                                        // Exists on both and diverged → stroke-level MERGE (union
+                                        // by id) instead of last-write-wins clobber, then write the
+                                        // merged result to BOTH sides so the two devices converge.
+                                        fileItem != null && cloudItem != null -> {
+                                            val localLoaded = fileLoad(rootPath, fileItem)
+                                            val cloudLoaded = cloudLoad(driveService, cloudItem)
+                                            val merged = mergeDaySyncItem(localLoaded, cloudLoaded)
+                                            if (merged != null) {
+                                                Timber.i("Merge (both sides): ${fileItem.baseName}")
+                                                fileUpdate(rootPath, merged)
+                                                cloudUpdate(driveService, merged)
+                                            } else {
+                                                // Non-day / legacy file → last-write-wins fallback.
+                                                if ((fileItem.updated?.time ?: 0L) < (cloudItem.updated?.time ?: 0L)) {
+                                                    Timber.i("File update (LWW): ${cloudItem}")
+                                                    fileUpdate(rootPath, cloudLoaded)
+                                                } else {
+                                                    Timber.i("Cloud update (LWW): ${fileItem}")
+                                                    cloudUpdate(driveService, localLoaded)
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             } catch (e: IOException) {
@@ -556,5 +586,91 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
         }
 
         return syncList
+    }
+
+    /**
+     * Stroke-level merge of a day page that diverged on two devices.
+     *
+     * Both sides are parsed to [CalendarDay] and their strokes, text, and images are
+     * UNIONED by their stable IDs, so two devices that wrote on the same day COMBINE
+     * instead of last-write-wins clobbering one. Only v2 day files merge; anything else
+     * (legacy v1, week/month/year) returns null so the caller falls back to LWW.
+     *
+     * @param local the local side sync item (json loaded)
+     * @param cloud the cloud side sync item (json loaded)
+     * @return a sync item carrying the merged json, or null if not mergeable
+     */
+    private fun mergeDaySyncItem(local: CalendarSyncItem, cloud: CalendarSyncItem): CalendarSyncItem? {
+        if (local.version != "v2" || cloud.version != "v2") return null
+        val localDay = calendarDayService.fromSyncItem(local) ?: return null
+        val cloudDay = calendarDayService.fromSyncItem(cloud) ?: return null
+        val merged = mergeCalendarDay(localDay, cloudDay)
+        return local.copy(json = calendarDayService.json(merged), created = merged.created, updated = merged.updated)
+    }
+
+    /**
+     * Merge two versions of the same calendar day by unioning ink/text/images.
+     *
+     * Scalar and derived fields (events, reading progress) come from the newer side;
+     * tracker values union with the newer side winning per-key. The merge time is
+     * stamped fresh so both sides re-store the identical result and stop diverging.
+     *
+     * Known limitation: a union can't distinguish "never had this stroke" from "erased
+     * it", so a stroke erased on one device is resurrected while the other still has it.
+     * For an append-mostly ledger this is the right trade against losing a whole page.
+     */
+    private fun mergeCalendarDay(a: CalendarDay, b: CalendarDay): CalendarDay {
+        val newer = if ((a.updated?.time ?: 0L) >= (b.updated?.time ?: 0L)) a else b
+        val older = if (newer === a) b else a
+
+        val merged = newer.deepCopy()
+        merged.calendarStrokes = unionStrokeMap(a.calendarStrokes, b.calendarStrokes)
+        merged.noteStrokes = unionStrokeMap(a.noteStrokes, b.noteStrokes)
+        merged.textElements = unionTextElements(a.textElements, b.textElements)
+        merged.imageElements = unionImageElements(a.imageElements, b.imageElements)
+
+        val values = LinkedHashMap<String, Map<String, Float?>>()
+        values.putAll(older.calendarValues)
+        values.putAll(newer.calendarValues)
+        merged.calendarValues = values
+
+        merged.created = a.created ?: b.created
+        merged.updated = Date()
+        return merged
+    }
+
+    /** Union two style/page → stroke-list maps, deduping strokes by [Stroke.strokeId]. */
+    private fun unionStrokeMap(
+        m1: Map<String, List<Stroke>>,
+        m2: Map<String, List<Stroke>>
+    ): MutableMap<String, List<Stroke>> {
+        val out = mutableMapOf<String, List<Stroke>>()
+        for (key in (m1.keys + m2.keys)) {
+            val byId = LinkedHashMap<UUID, Stroke>()
+            (m1[key] ?: emptyList()).forEach { byId[it.strokeId] = it }
+            (m2[key] ?: emptyList()).forEach { if (!byId.containsKey(it.strokeId)) byId[it.strokeId] = it }
+            out[key] = byId.values.toList()
+        }
+        return out
+    }
+
+    /** Union text boxes by [TextElement.elementId]; the later [TextElement.timestamp] wins a conflict. */
+    private fun unionTextElements(l1: List<TextElement>, l2: List<TextElement>): MutableList<TextElement> {
+        val byId = LinkedHashMap<UUID, TextElement>()
+        (l1 + l2).forEach { e ->
+            val prev = byId[e.elementId]
+            if (prev == null || e.timestamp > prev.timestamp) byId[e.elementId] = e
+        }
+        return byId.values.toMutableList()
+    }
+
+    /** Union images by [ImageElement.elementId]; the later [ImageElement.timestamp] wins a conflict. */
+    private fun unionImageElements(l1: List<ImageElement>, l2: List<ImageElement>): MutableList<ImageElement> {
+        val byId = LinkedHashMap<UUID, ImageElement>()
+        (l1 + l2).forEach { e ->
+            val prev = byId[e.elementId]
+            if (prev == null || e.timestamp > prev.timestamp) byId[e.elementId] = e
+        }
+        return byId.values.toMutableList()
     }
 }
