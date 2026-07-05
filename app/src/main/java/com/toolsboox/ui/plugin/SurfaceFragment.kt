@@ -6,6 +6,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
@@ -146,6 +149,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         private const val IMAGE_PLACE_FRACTION = 0.6f
         private const val IMAGE_HANDLE_SIZE = 64f   // pen-friendly resize handle
         private const val IMAGE_CHIP_SIZE = 64f     // pen-friendly delete chip
+        private const val MIN_TEXTBOX_WIDTH = 80f   // narrowest a text box may be dragged before words stop reflowing
 
         /**
          * Touch drawing state.
@@ -224,6 +228,7 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** Text box selected in element-manipulation mode (dragged like an image). */
     private var selectedTextBox: TextElement? = null
     private var textBoxDrag = false
+    private var textBoxResize = false
     private var textBoxOrigX = 0f
     private var textBoxOrigY = 0f
     private var imageOrigRect = RectF()
@@ -382,7 +387,8 @@ abstract class SurfaceFragment : ScreenFragment() {
     private var textElements: MutableList<TextElement> = mutableListOf()
 
     /** Paint used for rendering text elements on canvas. */
-    private var textPaint = Paint().apply {
+    // TextPaint (not plain Paint) so it can back a StaticLayout for word-wrapping.
+    private var textPaint = TextPaint().apply {
         isAntiAlias = true
         style = Paint.Style.FILL
         color = Color.BLACK
@@ -1502,34 +1508,46 @@ abstract class SurfaceFragment : ScreenFragment() {
         selectedTextBox = if (selId != null) elements.firstOrNull { it.elementId == selId } else null
     }
 
+    /** Resolve the Atkinson Hyperlegible face once (falls back to the system default). */
+    private fun textTypeface(): Typeface = try {
+        ResourcesCompat.getFont(requireContext(), R.font.atkinson_hyperlegible) ?: Typeface.DEFAULT
+    } catch (e: Exception) {
+        Typeface.DEFAULT
+    }
+
     /**
-     * Render all text elements onto the given canvas.
+     * Build a word-wrapping layout for a text element at its current box width.
+     * The text reflows to [TextElement.width] — resizing the box reorganises the
+     * words rather than rescaling the font. Long pasted paragraphs (no explicit
+     * newlines) now wrap instead of running off the right edge.
+     */
+    private fun buildTextLayout(element: TextElement): StaticLayout {
+        textPaint.textSize = element.fontSize
+        textPaint.color = element.color
+        textPaint.typeface = textTypeface()
+        val width = element.width.coerceAtLeast(MIN_TEXTBOX_WIDTH).toInt()
+        return StaticLayout.Builder
+            .obtain(element.text, 0, element.text.length, textPaint, width)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setIncludePad(false)
+            .build()
+    }
+
+    /**
+     * Render all text elements onto the given canvas, word-wrapped to each box's width.
      *
      * @param targetCanvas the canvas to draw on
      */
     private fun renderTextElements(targetCanvas: Canvas) {
-        val typeface = try {
-            ResourcesCompat.getFont(requireContext(), R.font.atkinson_hyperlegible)
-        } catch (e: Exception) {
-            Typeface.DEFAULT
-        }
-
         for (element in textElements) {
-            textPaint.textSize = element.fontSize
-            textPaint.color = element.color
-            textPaint.typeface = typeface ?: Typeface.DEFAULT
-
-            // Draw each line of the text (split on newline)
-            val lines = element.text.split("\n")
-            val lineHeight = textPaint.fontSpacing
-            for ((index, line) in lines.withIndex()) {
-                targetCanvas.drawText(
-                    line,
-                    element.x,
-                    element.y + lineHeight * (index + 1),
-                    textPaint
-                )
-            }
+            val layout = buildTextLayout(element)
+            // Keep the stored height in sync with the wrapped layout so hit-testing,
+            // the selection outline and persisted JSON all match what's drawn.
+            element.height = layout.height.toFloat()
+            targetCanvas.save()
+            targetCanvas.translate(element.x, element.y)
+            layout.draw(targetCanvas)
+            targetCanvas.restore()
         }
     }
 
@@ -1578,6 +1596,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         selectedImage = null
         selectedTextBox = null
         textBoxDrag = false
+        textBoxResize = false
         imageDrag = ImageDrag.NONE
         cropMode = false
         cropDragging = false
@@ -1740,17 +1759,23 @@ abstract class SurfaceFragment : ScreenFragment() {
 
     /** Canvas-space bounds of a text box (measured from its rendered lines). */
     protected fun textElementBounds(element: TextElement): RectF {
-        textPaint.textSize = element.fontSize
-        val lines = element.text.split("\n")
-        val lineHeight = textPaint.fontSpacing
-        val maxWidth = lines.maxOfOrNull { textPaint.measureText(it) } ?: 0f
+        // The box is as wide as element.width; height follows the wrapped layout.
+        val layout = buildTextLayout(element)
+        val boxWidth = element.width.coerceAtLeast(MIN_TEXTBOX_WIDTH)
+        val boxHeight = layout.height.toFloat()
         val pad = 14f
         return RectF(
             element.x - pad,
-            element.y + lineHeight * 0.15f - pad,
-            element.x + maxWidth.coerceAtLeast(40f) + pad,
-            element.y + lineHeight * (lines.size + 0.35f) + pad
+            element.y - pad,
+            element.x + boxWidth + pad,
+            element.y + boxHeight + pad
         )
+    }
+
+    /** Bottom-right resize handle for a selected text box (mirrors the image handle). */
+    private fun textResizeHandle(box: RectF): RectF {
+        val h = IMAGE_HANDLE_SIZE
+        return RectF(box.right - h / 2f, box.bottom - h / 2f, box.right + h / 2f, box.bottom + h / 2f)
     }
 
     /** Topmost text box under a canvas point, or null. */
@@ -2066,9 +2091,18 @@ abstract class SurfaceFragment : ScreenFragment() {
                 lockCanvas.drawRect(cr, cropPaint)
             }
         }
-        // Selected text box: dashed outline, dragged like an image (no handles/chips —
-        // edit/duplicate/delete stay on the long-press menu).
-        selectedTextBox?.let { lockCanvas.drawRect(textElementBounds(it), lassoPaint) }
+        // Selected text box: dashed outline + a bottom-right resize handle. Dragging the
+        // body moves it; dragging the handle reflows the words to a new width. Edit /
+        // duplicate / delete stay on the long-press menu.
+        selectedTextBox?.let {
+            val box = textElementBounds(it)
+            lockCanvas.drawRect(box, lassoPaint)
+            val fill = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL; isAntiAlias = true }
+            val border = Paint().apply { color = Color.BLACK; style = Paint.Style.STROKE; strokeWidth = 3f; isAntiAlias = true }
+            val rh = textResizeHandle(box)
+            lockCanvas.drawRect(rh, fill)
+            lockCanvas.drawRect(rh, border)
+        }
         lockCanvas.restore()
 
         // Pause the Onyx raw-drawing renderer around the post, exactly like drawWithSelection —
@@ -2815,6 +2849,12 @@ abstract class SurfaceFragment : ScreenFragment() {
                 val selT = selectedTextBox
                 if (selT != null) {
                     if (actionDown) {
+                        // Resize handle (bottom-right) → drag the box wider/narrower; the
+                        // words reflow to the new width, the font size is left untouched.
+                        if (textResizeHandle(textElementBounds(selT)).contains(x, y)) {
+                            textBoxResize = true
+                            return true
+                        }
                         if (textElementBounds(selT).contains(x, y)) {
                             textBoxDrag = true
                             imageDragStartX = x
@@ -2842,14 +2882,21 @@ abstract class SurfaceFragment : ScreenFragment() {
                         applyStrokes(strokes, true)
                         return true
                     }
+                    if (actionMove && textBoxResize) {
+                        // Only the width changes; height is recomputed from the wrap on render.
+                        selT.width = (x - selT.x).coerceAtLeast(MIN_TEXTBOX_WIDTH)
+                        drawImageSelection()
+                        return true
+                    }
                     if (actionMove && textBoxDrag) {
                         selT.x = textBoxOrigX + (x - imageDragStartX)
                         selT.y = textBoxOrigY + (y - imageDragStartY)
                         drawImageSelection()
                         return true
                     }
-                    if (actionUp && textBoxDrag) {
+                    if (actionUp && (textBoxDrag || textBoxResize)) {
                         textBoxDrag = false
+                        textBoxResize = false
                         onTextElementsChanged(textElements)
                         onTextBoxDropped(selT)
                         applyStrokes(strokes, true)
