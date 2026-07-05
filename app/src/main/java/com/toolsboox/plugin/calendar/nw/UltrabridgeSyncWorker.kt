@@ -59,6 +59,14 @@ class UltrabridgeSyncWorker(
                         .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
                         .build()
                 )
+                // On wake/reconnect the CONNECTED constraint is met before WiFi is actually
+                // validated, so the first attempt often beats the network. Retry on a short
+                // linear backoff (15s, 30s, 45s…) so it recovers in seconds once WiFi settles,
+                // instead of the default 30s→60s→120s exponential.
+                .setBackoffCriteria(
+                    androidx.work.BackoffPolicy.LINEAR,
+                    15, java.util.concurrent.TimeUnit.SECONDS
+                )
                 .build()
             androidx.work.WorkManager.getInstance(context)
                 .enqueueUniqueWork(ONE_SHOT_WORK_NAME, androidx.work.ExistingWorkPolicy.REPLACE, request)
@@ -115,6 +123,31 @@ class UltrabridgeSyncWorker(
                 java.net.URI(webdavUrl).let { "${it.scheme}://${it.host}:${it.port}" }
             }.getOrDefault("unparseable")
             Timber.i("$TAG: Sync target: $targetHost")
+
+            // Pre-flight reachability. WorkManager's CONNECTED constraint fires the instant a
+            // network attaches — before it's validated — so on wake/reconnect the sync often
+            // beats WiFi actually being usable (DNS resolves to nothing / connect hangs). Probe
+            // the host cheaply and Result.retry() FAST, rather than rendering every PDF only to
+            // fail on upload. The short linear backoff (see syncNow) then re-fires in ~15s, by
+            // which point WiFi has usually settled.
+            val reachable = withContext(Dispatchers.IO) {
+                try {
+                    val uri = java.net.URI(webdavUrl)
+                    val port = when {
+                        uri.port > 0 -> uri.port
+                        uri.scheme == "https" -> 443
+                        else -> 80
+                    }
+                    java.net.Socket().use { sock ->
+                        sock.connect(java.net.InetSocketAddress(uri.host, port), 4000)
+                    }
+                    true
+                } catch (e: Exception) {
+                    Timber.i("$TAG: Host not reachable yet (${e.javaClass.simpleName}); retry when network settles")
+                    false
+                }
+            }
+            if (!reachable) return Result.retry()
 
             val lastSyncMs = mainPrefs.getLong(PREF_LAST_SYNC_MS, 0L)
 
