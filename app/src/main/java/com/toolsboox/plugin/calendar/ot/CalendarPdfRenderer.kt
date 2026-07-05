@@ -2,7 +2,13 @@ package com.toolsboox.plugin.calendar.ot
 
 import android.graphics.*
 import android.graphics.pdf.PdfDocument
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
+import android.util.Base64
+import com.toolsboox.da.ImageElement
 import com.toolsboox.da.Stroke
+import com.toolsboox.da.TextElement
 import java.io.File
 import java.io.FileOutputStream
 
@@ -13,6 +19,18 @@ import java.io.FileOutputStream
  * All rendering is CPU-bound and must run on Dispatchers.Default, not Main.
  */
 object CalendarPdfRenderer {
+
+    /**
+     * Everything on one exported page: handwriting plus the typed/pasted text boxes and
+     * inserted images. The export path historically shipped strokes only, so pasted text
+     * (and images) never reached the OCR/notes pipeline — this carries them through.
+     */
+    data class PageContent(
+        val calendarStrokes: Map<String, List<Stroke>>,
+        val noteStrokes: Map<String, List<Stroke>>,
+        val textElements: List<TextElement> = emptyList(),
+        val imageElements: List<ImageElement> = emptyList()
+    )
 
     /**
      * Render a single calendar page (calendar strokes + note strokes) to a one-page PDF.
@@ -55,13 +73,13 @@ object CalendarPdfRenderer {
      * Render multiple calendar pages into a single multi-page PDF.
      * Each entry in [pages] produces one PDF page, in order.
      *
-     * @param pages list of (label, (calendarStrokes, noteStrokes)) pairs
+     * @param pages list of (label, PageContent) pairs
      * @param outputFile the destination PDF file
      * @param pageWidth the page width in pixels (default 1404)
      * @param pageHeight the page height in pixels (default 1872)
      */
     fun renderMonthToPdf(
-        pages: List<Pair<String, Pair<Map<String, List<Stroke>>, Map<String, List<Stroke>>>>>,
+        pages: List<Pair<String, PageContent>>,
         outputFile: File,
         pageWidth: Int = 1404,
         pageHeight: Int = 1872
@@ -72,15 +90,17 @@ object CalendarPdfRenderer {
         try {
             val paint = createStrokePaint()
 
-            pages.forEachIndexed { index, (_, strokePair) ->
-                val (calendarStrokes, noteStrokes) = strokePair
+            pages.forEachIndexed { index, (_, content) ->
                 val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, index + 1).create()
                 val page = pdf.startPage(pageInfo)
                 val canvas = page.canvas
 
                 canvas.drawColor(Color.WHITE)
-                drawAllStrokes(canvas, paint, calendarStrokes)
-                drawAllStrokes(canvas, paint, noteStrokes)
+                // Same z-order as the live canvas: images under, strokes over, text on top.
+                drawImageElements(canvas, content.imageElements)
+                drawAllStrokes(canvas, paint, content.calendarStrokes)
+                drawAllStrokes(canvas, paint, content.noteStrokes)
+                drawTextElements(canvas, content.textElements)
 
                 pdf.finishPage(page)
             }
@@ -142,5 +162,51 @@ object CalendarPdfRenderer {
         }
 
         canvas.drawPath(path, paint)
+    }
+
+    /**
+     * Draw typed/pasted text boxes, word-wrapped to each box's width — matching the live
+     * canvas so what OCR sees equals what the user saw. Uses the default sans typeface
+     * (no Context here to load the app font; OCR doesn't care about the exact face).
+     */
+    private fun drawTextElements(canvas: Canvas, textElements: List<TextElement>) {
+        for (element in textElements) {
+            if (element.text.isEmpty()) continue
+            val tp = TextPaint().apply {
+                isAntiAlias = true
+                color = element.color
+                textSize = element.fontSize
+                typeface = Typeface.SANS_SERIF
+            }
+            val width = element.width.coerceAtLeast(80f).toInt()
+            val layout = StaticLayout.Builder
+                .obtain(element.text, 0, element.text.length, tp, width)
+                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                .setIncludePad(false)
+                .build()
+            canvas.save()
+            canvas.translate(element.x, element.y)
+            layout.draw(canvas)
+            canvas.restore()
+        }
+    }
+
+    /** Draw inserted images (inline base64 PNG) into their canvas-space rects. */
+    private fun drawImageElements(canvas: Canvas, imageElements: List<ImageElement>) {
+        if (imageElements.isEmpty()) return
+        val imgPaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }
+        for (element in imageElements) {
+            try {
+                val bytes = Base64.decode(element.data, Base64.DEFAULT)
+                val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: continue
+                canvas.drawBitmap(
+                    bmp, null,
+                    RectF(element.x, element.y, element.x + element.width, element.y + element.height),
+                    imgPaint
+                )
+            } catch (e: Exception) {
+                // Skip an undecodable image rather than fail the whole page.
+            }
+        }
     }
 }

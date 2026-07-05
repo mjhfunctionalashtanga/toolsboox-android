@@ -343,7 +343,7 @@ class UltrabridgeSyncWorker(
         // so the PDF always contains the complete set.
         val allFilesInGroup = findAllFilesForGroup(groupKey, calendarDir)
 
-        val pages = mutableListOf<Pair<String, Pair<Map<String, List<com.toolsboox.da.Stroke>>, Map<String, List<com.toolsboox.da.Stroke>>>>>()
+        val pages = mutableListOf<Pair<String, com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.PageContent>>()
 
         // Sort files for consistent page ordering
         val sortedFiles = allFilesInGroup.sortedBy { it.name }
@@ -396,10 +396,22 @@ class UltrabridgeSyncWorker(
      * Load a calendar JSON file and extract its stroke maps.
      * Handles all calendar types (day, week, month, quarter, year) in both v1 and v2 formats.
      */
+    /**
+     * Build a PageContent from any calendar type: strokes always, plus text boxes (all
+     * types) and images (day pages only). Keeps typed/pasted text + images in the exported
+     * PDF so they reach the OCR/notes pipeline instead of being silently dropped.
+     */
+    private fun pageContentOf(cal: com.toolsboox.plugin.calendar.da.v2.Calendar): com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.PageContent {
+        val images = (cal as? CalendarDay)?.imageElements ?: emptyList()
+        return com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.PageContent(
+            cal.calendarStrokes, cal.noteStrokes, cal.textElements, images
+        )
+    }
+
     private fun loadCalendarData(
         file: File,
         moshi: Moshi
-    ): Pair<Map<String, List<com.toolsboox.da.Stroke>>, Map<String, List<com.toolsboox.da.Stroke>>>? {
+    ): com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.PageContent? {
         try {
             val json = file.readText(Charsets.UTF_8)
             val name = file.name
@@ -409,12 +421,12 @@ class UltrabridgeSyncWorker(
                 name.startsWith("day-") -> {
                     if (isV2) {
                         moshi.adapter(CalendarDay::class.java).fromJson(json)?.let {
-                            it.calendarStrokes to it.noteStrokes
+                            pageContentOf(it)
                         }
                     } else {
                         moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarDay::class.java)
                             .fromJson(json)?.let { CalendarDay.convert(it) }?.let {
-                                it.calendarStrokes to it.noteStrokes
+                                pageContentOf(it)
                             }
                     }
                 }
@@ -422,12 +434,12 @@ class UltrabridgeSyncWorker(
                 name.startsWith("week-") -> {
                     if (isV2) {
                         moshi.adapter(CalendarWeek::class.java).fromJson(json)?.let {
-                            it.calendarStrokes to it.noteStrokes
+                            pageContentOf(it)
                         }
                     } else {
                         moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarWeek::class.java)
                             .fromJson(json)?.let { CalendarWeek.convert(it) }?.let {
-                                it.calendarStrokes to it.noteStrokes
+                                pageContentOf(it)
                             }
                     }
                 }
@@ -435,12 +447,12 @@ class UltrabridgeSyncWorker(
                 name.startsWith("month-") -> {
                     if (isV2) {
                         moshi.adapter(CalendarMonth::class.java).fromJson(json)?.let {
-                            it.calendarStrokes to it.noteStrokes
+                            pageContentOf(it)
                         }
                     } else {
                         moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarMonth::class.java)
                             .fromJson(json)?.let { CalendarMonth.convert(it) }?.let {
-                                it.calendarStrokes to it.noteStrokes
+                                pageContentOf(it)
                             }
                     }
                 }
@@ -448,12 +460,12 @@ class UltrabridgeSyncWorker(
                 name.startsWith("quarter-") -> {
                     if (isV2) {
                         moshi.adapter(CalendarQuarter::class.java).fromJson(json)?.let {
-                            it.calendarStrokes to it.noteStrokes
+                            pageContentOf(it)
                         }
                     } else {
                         moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarQuarter::class.java)
                             .fromJson(json)?.let { CalendarQuarter.convert(it) }?.let {
-                                it.calendarStrokes to it.noteStrokes
+                                pageContentOf(it)
                             }
                     }
                 }
@@ -461,12 +473,12 @@ class UltrabridgeSyncWorker(
                 name.startsWith("year-") -> {
                     if (isV2) {
                         moshi.adapter(CalendarYear::class.java).fromJson(json)?.let {
-                            it.calendarStrokes to it.noteStrokes
+                            pageContentOf(it)
                         }
                     } else {
                         moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarYear::class.java)
                             .fromJson(json)?.let { CalendarYear.convert(it) }?.let {
-                                it.calendarStrokes to it.noteStrokes
+                                pageContentOf(it)
                             }
                     }
                 }
