@@ -68,6 +68,11 @@ class ViwoodsFastInk {
         private const val TXN_STOP_HANDWRITE_INTERCEPT = 29
         private const val TXN_SET_PICTURE_MODE = 13
 
+        // callT1000CmdIIsI(int type, int[] values) lives at transaction 7.
+        private const val TXN_T1000_CALL = 7
+        private const val T1000_SEND_HANDWRITING_RANGE = 14
+        private const val T1000_SET_HANDWRITING_ENABLE = 17
+
         private var bypassDone = false
 
         /** Lift hidden-API enforcement process-wide (needed at high targetSdk). Idempotent. */
@@ -136,33 +141,47 @@ class ViwoodsFastInk {
      */
     fun enable(w: Int, h: Int, useInitWriting: Boolean, penMin: Int = 1, penMax: Int = 3) {
         if (enote == null) return
+        Timber.i("ViwoodsFastInk.enable ${w}x${h} useInitWriting=$useInitWriting focusmonitor=[${getProp("persist.sys.focusmonitor.config")}]")
         if (useInitWriting && !initWritingDone) {
             initWritingDone = true
-            // The native fast-ink layer only works if the system FocusMonitor service is
-            // enabled (persist.sys.focusmonitor.config=1). It's factory-set on stock units
-            // but wiped by a bootloader-unlock/factory-reset. Without it, initWriting()
-            // returns OK but WritingSurface::init fails (lock error:-22) and nothing paints —
-            // so only activate the hardware path when the prerequisite is actually present.
-            // Otherwise fall through to the FAST-waveform + software-render path.
-            if (getProp("persist.sys.focusmonitor.config") == "1") {
-                val ok = reflect("initWriting", arrayOf()) != null
-                reflect("setWritingEnabled", arrayOf(Boolean::class.javaPrimitiveType!!), true)
-                hardwareInk = ok
-                Timber.i("ViwoodsFastInk initWriting ${if (ok) "OK — hardware ink active" else "failed"}")
-            } else {
-                Timber.w("ViwoodsFastInk: focusmonitor.config not set — using software fallback")
-            }
+            // Full Viwoods fast-ink recipe, ported from jdkruzr's working PoC
+            // (ViwoodsAppDev/MainActivity.enableFastInk). initWriting() alone does NOT paint:
+            // the binder AutoDraw path can't set native draw rects (framework bug in
+            // updateAutoDrawRegion never calls setAutoDrawRects), so the T1000 draws nowhere.
+            // The three pieces that actually produce hardware ink:
+            //   1. initWriting() — loads libpaintworker.so into our process so the native
+            //      ENoteWriting singleton is reachable (WritingSurface::init may still warn;
+            //      that's fine — we drive AutoDraw, not the WritingSurface producer).
+            //   2. ENoteWriting.setAutoDrawRects(...) — pushes the draw region straight into
+            //      the native lib, which the binder path fails to do.
+            //   3. T1000 chip arming (SET_HANDWRITING_ENABLE + SEND_HANDWRITING_RANGE).
+            // Prereq (out-of-band): persist.sys.focusmonitor.config=1 present AT BOOT.
+            reflect("initWriting", arrayOf())
+            reflect("setWritingEnabled", arrayOf(Boolean::class.javaPrimitiveType!!), true)
+            setNativeAutoDrawRects(w, h)
+            hardwareInk = true
+            Timber.i("ViwoodsFastInk hardware fast-ink recipe applied ${w}x${h}")
         }
+        // setPictureMode is transient/self-correcting (each app sets its own waveform), so the
+        // software path may set FAST. But the AutoDraw/T1000/handwrite-intercept machinery is
+        // DEVICE-GLOBAL and owned by the native note apps (WiNote/Wschedule) — toggling it from
+        // here corrupts their hardware fast-ink. Since the software path renders strokes itself
+        // and can't use AutoDraw anyway, it must touch ONLY the waveform. Arm AutoDraw solely on
+        // the (currently unreachable) hardware path.
         transact(TXN_SET_PICTURE_MODE, MODE_FAST)
             ?: reflect("setPictureMode", arrayOf(Int::class.javaPrimitiveType!!), MODE_FAST)
-        if (!hardwareInk) {
-            // Binder-only AutoDraw attempt (no-op on most firmware); software render is the
-            // real fallback. Skipped when hardware ink is active to avoid double-drawing.
+        if (hardwareInk) {
+            // The critical call is SET_ALL_REGION_UNAUTODRAW=false (0): the system ships with all
+            // regions excluded, so without it AutoDraw is "on" but draws nothing.
             transact(TXN_SET_AUTODRAW_ENABLE, 1)
             transact(TXN_SET_ALL_REGION_UNAUTODRAW, 0)
             transact(TXN_SET_AUTODRAW_TOOLTYPE, 2)
             transact(TXN_SET_AUTODRAW_PENWIDTH, penMin, penMax)
             transactRect(TXN_ADD_AUTODRAW_RECT, Rect(0, 0, w, h))
+            // alternate (physical/landscape) coordinate space, then arm the T1000 chip directly.
+            transactRect(TXN_ADD_AUTODRAW_RECT, Rect(0, 0, h, w))
+            callT1000Cmd(T1000_SET_HANDWRITING_ENABLE, intArrayOf(1))
+            callT1000Cmd(T1000_SEND_HANDWRITING_RANGE, intArrayOf(0, 0, w, h))
         }
     }
 
@@ -192,14 +211,16 @@ class ViwoodsFastInk {
     fun disable() {
         if (enote == null) return
         if (hardwareInk) {
+            // Only the hardware path armed AutoDraw/handwrite-intercept, so only it tears them
+            // down. The software path never touched that device-global state (see enable) — it
+            // must not disable it here either, or it clobbers the native note apps' fast ink.
             reflect("setWritingEnabled", arrayOf(Boolean::class.javaPrimitiveType!!), false)
             reflect("exitWriting", arrayOf())
-            hardwareInk = false
-            initWritingDone = false
-        } else {
             transact(TXN_SET_AUTODRAW_ENABLE, 0)
             transact(TXN_SET_ALL_REGION_UNAUTODRAW, 1)
             transact(TXN_STOP_HANDWRITE_INTERCEPT)
+            hardwareInk = false
+            initWritingDone = false
         }
         transact(TXN_SET_PICTURE_MODE, MODE_GL16)
             ?: reflect("setPictureMode", arrayOf(Int::class.javaPrimitiveType!!), MODE_GL16)
@@ -240,6 +261,44 @@ class ViwoodsFastInk {
             "ok"
         } catch (t: Throwable) {
             Timber.w(t, "ViwoodsFastInk.transact($code)")
+            null
+        } finally {
+            data.recycle(); reply.recycle()
+        }
+    }
+
+    /**
+     * Push the AutoDraw region straight into libpaintworker.so via the native ENoteWriting
+     * singleton (now loaded in-process by initWriting). The binder AutoDraw path can't do this
+     * — updateAutoDrawRegion() clears the native rects but never re-sets them — so this is the
+     * call that actually makes the T1000 draw. Both portrait and physical/landscape rects.
+     */
+    private fun setNativeAutoDrawRects(w: Int, h: Int) {
+        try {
+            val writingClass = Class.forName("android.os.enote.ENoteWriting")
+            val writing = writingClass.getMethod("getInstance").invoke(null)
+            val rects = arrayListOf(Rect(0, 0, w, h), Rect(0, 0, h, w))
+            writingClass.getMethod("setAutoDrawRects", java.util.List::class.java)
+                .invoke(writing, rects)
+            Timber.i("ViwoodsFastInk setNativeAutoDrawRects OK (${w}x${h})")
+        } catch (t: Throwable) {
+            Timber.w(t, "ViwoodsFastInk.setNativeAutoDrawRects")
+        }
+    }
+
+    /** callT1000CmdIIsI(type, int[]) via transaction 7 — arms the T1000 timing chip directly. */
+    private fun callT1000Cmd(type: Int, values: IntArray): String? {
+        val binder = serviceBinder() ?: return null
+        val data = Parcel.obtain(); val reply = Parcel.obtain()
+        return try {
+            data.writeInterfaceToken(IFACE_TOKEN)
+            data.writeInt(type)
+            data.writeIntArray(values)
+            binder.transact(TXN_T1000_CALL, data, reply, 0)
+            reply.readException()
+            "ok"
+        } catch (t: Throwable) {
+            Timber.w(t, "ViwoodsFastInk.callT1000Cmd($type)")
             null
         } finally {
             data.recycle(); reply.recycle()
