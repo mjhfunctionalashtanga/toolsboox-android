@@ -25,9 +25,12 @@ import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 import java.time.Instant
 import java.time.LocalDate
 import java.util.*
@@ -356,10 +359,34 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
         val path = File(rootPath, "calendar/")
         if (!path.exists()) return calendarSyncItems
 
-        Files.walk(Paths.get(path.toURI())).use { stream ->
-            stream.map(Path::toFile).filter(File::isFile).filter { it.name.endsWith(".json") }.forEach { item ->
-                if (item.name.startsWith("pattern-")) return@forEach
+        // Collect the .json files with a fault-tolerant walk. Day pages are saved
+        // atomically (write day-*.json.tmp, then rename over day-*.json), so a *.tmp
+        // file can vanish mid-traversal. Files.walk reads attributes eagerly while
+        // walking and would throw NoSuchFileException (→ UncheckedIOException) on that
+        // race, killing the background sync coroutine. walkFileTree + visitFileFailed
+        // lets us skip a transient/vanished entry and keep going.
+        val jsonFiles = mutableListOf<File>()
+        try {
+            Files.walkFileTree(Paths.get(path.toURI()), object : SimpleFileVisitor<Path>() {
+                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                    val f = file.toFile()
+                    if (f.isFile && f.name.endsWith(".json") && !f.name.startsWith("pattern-")) {
+                        jsonFiles.add(f)
+                    }
+                    return FileVisitResult.CONTINUE
+                }
 
+                override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult {
+                    Timber.w(exc, "fileList: skipping unreadable/vanished path $file")
+                    return FileVisitResult.CONTINUE
+                }
+            })
+        } catch (e: IOException) {
+            Timber.w(e, "fileList: walk failed for $path")
+        }
+
+        jsonFiles.forEach { item ->
+            try {
                 calendarYearService.load(item)?.let { calendarYear ->
                     calendarSyncItems.add(calendarYearService.getItem(userId, calendarYear))
                 }
@@ -375,6 +402,10 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
                 calendarDayService.load(item)?.let { calendarDay ->
                     calendarSyncItems.add(calendarDayService.getItem(userId, calendarDay))
                 }
+            } catch (e: Exception) {
+                // A file can still disappear between the walk and load() (same save race);
+                // don't let one transient item abort the whole sync scan.
+                Timber.w(e, "fileList: skipping item ${item.name}")
             }
         }
 
