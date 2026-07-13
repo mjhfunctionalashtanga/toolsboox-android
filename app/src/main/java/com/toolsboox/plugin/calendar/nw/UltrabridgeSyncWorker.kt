@@ -241,6 +241,24 @@ class UltrabridgeSyncWorker(
                 }
                 Timber.i("$TAG: Uploaded $jsonUploadCount of ${dayJsonFiles.size} day JSON files")
 
+                // Two-way mirror of the versioned day JSON files against the SAME WebDAV tree the
+                // iPad app uses (calendar/YYYY/MM/day-...-vN.json), so the two clients converge.
+                // This is additive to the flat json/ push above (which feeds the OCR pipeline):
+                // here we both push local edits AND pull remote/iPad edits down, last-write-wins by
+                // the day's `updated` field. Failures here don't fail the whole worker — the pass
+                // is self-healing and re-runs next window.
+                try {
+                    val daySync = CalendarWebDavSyncService(
+                        UltrabridgeWebDavService(webdavUrl, webdavUser, webdavPass),
+                        rootDir,
+                        moshi
+                    )
+                    val stats = daySync.sync()
+                    Timber.i("$TAG: Day-JSON WebDAV mirror: $stats")
+                } catch (e: Exception) {
+                    Timber.w(e, "$TAG: Day-JSON WebDAV mirror failed (non-fatal)")
+                }
+
                 // If anything failed, ask WorkManager to retry with backoff rather than
                 // reporting a clean success. The worker re-uploads everything each run
                 // (self-healing), so a retry simply re-attempts the failed files.
