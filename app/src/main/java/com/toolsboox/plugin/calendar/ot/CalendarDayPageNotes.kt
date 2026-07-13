@@ -66,8 +66,7 @@ class CalendarDayPageNotes : Creator {
                     when (notePage) {
                         "pickings" -> CalendarNavigator.toDayPage(fragment, localDate)
                         "gratitude" -> CalendarNavigator.toDayNote(fragment, localDate, "pickings")
-                        "media" -> CalendarNavigator.toDayNote(fragment, localDate, "gratitude")
-                        "intake" -> CalendarNavigator.toDayNote(fragment, localDate, "media")
+                        "intake" -> CalendarNavigator.toDayNote(fragment, localDate, "gratitude")
                         else -> {
                             val page = notePage.toIntOrNull() ?: 0
                             if (page == 0) {
@@ -83,8 +82,7 @@ class CalendarDayPageNotes : Creator {
                 OnGestureListener.DTU -> {
                     when (notePage) {
                         "pickings" -> CalendarNavigator.toDayNote(fragment, localDate, "gratitude")
-                        "gratitude" -> CalendarNavigator.toDayNote(fragment, localDate, "media")
-                        "media" -> CalendarNavigator.toDayNote(fragment, localDate, "intake")
+                        "gratitude" -> CalendarNavigator.toDayNote(fragment, localDate, "intake")
                         "intake" -> CalendarNavigator.toDayNote(fragment, localDate, "0")
                         else -> {
                             val page = notePage.toIntOrNull() ?: 0
@@ -114,10 +112,6 @@ class CalendarDayPageNotes : Creator {
             }
             if (notePage == "pickings") {
                 drawPickingsPage(canvas)
-                return
-            }
-            if (notePage == "media") {
-                drawMediaPage(canvas)
                 return
             }
             if (notePage == "intake") {
@@ -239,51 +233,6 @@ class CalendarDayPageNotes : Creator {
             val doodleTop = doodleHeaderY + 25f
             val doodleBottom = 1820f
             canvas.drawRect(colLeft, doodleTop, colRight, doodleBottom, dashedBorder)
-        }
-
-        /**
-         * Draw the Media List page: four writing panels — The Read, The Watch,
-         * The Listen, Educated Me (books / shows / podcasts / what taught you
-         * something). Ink saves under noteStrokes["media"], so it rides the same
-         * day JSON + WebDAV sync as pickings/gratitude with no sync changes.
-         */
-        private fun drawMediaPage(canvas: Canvas) {
-            canvas.drawRect(0f, 0f, 1404f, 1872f, Creator.fillWhite)
-
-            val robotBold = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            val headerPaint = TextPaint().apply {
-                color = Color.BLACK; textAlign = Paint.Align.LEFT; textSize = 40f; typeface = robotBold; isAntiAlias = true
-            }
-            val linePaint = Paint().apply {
-                color = Color.argb(140, 0, 0, 0); strokeWidth = 1.5f; style = Paint.Style.STROKE; isAntiAlias = true
-            }
-            val panelBorder = Paint().apply {
-                color = Color.argb(170, 0, 0, 0); strokeWidth = 2f; style = Paint.Style.STROKE; isAntiAlias = true
-            }
-
-            val left = 40f
-            val right = 1364f
-            val gap = 40f
-            val mid = (left + right) / 2f
-            val colMidR = mid - gap / 2f
-            val colMidL = mid + gap / 2f
-            val lineSpacing = 64f
-
-            val titles = arrayOf("THE READ", "THE WATCH", "THE LISTEN", "EDUCATED ME")
-            val x1s = arrayOf(left, colMidL, left, colMidL)
-            val x2s = arrayOf(colMidR, right, colMidR, right)
-            val tops = arrayOf(150f, 150f, 990f, 990f)
-            val bottoms = arrayOf(880f, 880f, 1790f, 1790f)
-
-            for (i in 0 until 4) {
-                canvas.drawText(titles[i], x1s[i], tops[i] - 16f, headerPaint)
-                canvas.drawRect(x1s[i], tops[i], x2s[i], bottoms[i], panelBorder)
-                var y = tops[i] + lineSpacing
-                while (y < bottoms[i] - 12f) {
-                    canvas.drawLine(x1s[i] + 14f, y, x2s[i] - 14f, y, linePaint)
-                    y += lineSpacing
-                }
-            }
         }
 
         /**
