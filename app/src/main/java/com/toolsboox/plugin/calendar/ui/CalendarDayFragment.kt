@@ -192,6 +192,24 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /**
+     * Strokes-deleted callback — record erased strokes as tombstones so the deletion
+     * survives a cross-device sync merge (otherwise the union resurrects them from the
+     * other device's surviving copy — "crossed-off strokes come back / move forward").
+     * The following [onStrokeChanged] persists the pruned stroke list; recording the
+     * tombstone here makes the two saves carry the same intent.
+     *
+     * @param strokeIds ids of the just-erased strokes
+     */
+    override fun onStrokesDeleted(strokeIds: List<UUID>) {
+        if (strokeIds.isEmpty()) return
+        val known = calendarDay.deletedStrokeIds.toHashSet()
+        strokeIds.forEach { id ->
+            val key = id.toString()
+            if (known.add(key)) calendarDay.deletedStrokeIds.add(key)
+        }
+    }
+
+    /**
      * Text elements changed callback.
      *
      * @param textElements the current text elements
@@ -199,7 +217,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     override fun onTextElementsChanged(textElements: MutableList<TextElement>) {
         // Per-page text boxes: tag the current page's, keep every other page's.
         val pageKey = notePage ?: "default"
+        val prevIds = calendarDay.textElements.filter { it.pageKey == pageKey }.map { it.elementId.toString() }
         textElements.forEach { it.pageKey = pageKey }
+        recordDeletedElements(prevIds, textElements.map { it.elementId.toString() })
         val others = calendarDay.textElements.filter { it.pageKey != pageKey }
         calendarDay.textElements = (others + textElements).toMutableList()
         calendarPattern.updateDay(calendarDay)
@@ -214,11 +234,27 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     override fun onImageElementsChanged(imageElements: MutableList<ImageElement>) {
         // Per-page images: tag the current page's images, keep every other page's untouched.
         val pageKey = notePage ?: "default"
+        val prevIds = calendarDay.imageElements.filter { it.page == pageKey }.map { it.elementId.toString() }
         imageElements.forEach { it.page = pageKey }
+        recordDeletedElements(prevIds, imageElements.map { it.elementId.toString() })
         val others = calendarDay.imageElements.filter { it.page != pageKey }
         calendarDay.imageElements = (others + imageElements).toMutableList()
         calendarPattern.updateDay(calendarDay)
         presenter.save(this, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+    }
+
+    /**
+     * Tombstone any element id that was present on this page but is gone from the new list
+     * (a cut/delete), so the deletion survives the Drive-sync element union merge instead
+     * of the other device's surviving copy resurrecting it. Ids only added, never removed —
+     * a paste always mints a fresh id, so a cut id staying dead is correct.
+     */
+    private fun recordDeletedElements(prevIds: List<String>, newIds: List<String>) {
+        val alive = newIds.toHashSet()
+        val known = calendarDay.deletedElementIds.toHashSet()
+        prevIds.forEach { id ->
+            if (id !in alive && known.add(id)) calendarDay.deletedElementIds.add(id)
+        }
     }
 
     /**
@@ -361,7 +397,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 when (notePage) {
                     "pickings" -> CalendarNavigator.toDayPage(this, currentDate, CalendarDay.DEFAULT_STYLE)
                     "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "pickings")
-                    "intake" -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
+                    "media" -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
+                    "intake" -> CalendarNavigator.toDayNote(this, currentDate, "media")
                     else -> {
                         val page = notePage!!.toIntOrNull() ?: 0
                         if (page == 0) {
@@ -379,7 +416,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             if (notePage != null) {
                 when (notePage) {
                     "pickings" -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
-                    "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "intake")
+                    "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "media")
+                    "media" -> CalendarNavigator.toDayNote(this, currentDate, "intake")
                     "intake" -> CalendarNavigator.toDayNote(this, currentDate, "0")
                     else -> {
                         val page = notePage!!.toIntOrNull() ?: 0
