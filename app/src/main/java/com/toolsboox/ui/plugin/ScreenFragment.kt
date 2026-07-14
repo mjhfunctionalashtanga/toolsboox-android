@@ -2,11 +2,17 @@ package com.toolsboox.ui.plugin
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AlertDialog
@@ -141,6 +147,44 @@ abstract class ScreenFragment : Fragment() {
      * Hides the loading indicator of the view.
      */
     abstract fun hideLoading()
+
+    /**
+     * A directory popover (top-left, iPad-style) grouping labelled rows under headers —
+     * used for the hamburger menus on Bookshelf/Feed to list the actual books/feeds plus
+     * the surfaces to jump to. Each row is (label, action).
+     */
+    protected fun showDirectory(groups: List<Pair<String, List<Pair<String, () -> Unit>>>>) {
+        val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
+        val list = root.findViewById<LinearLayout>(R.id.go_to_list)
+        root.findViewById<TextView>(R.id.go_to_title).visibility = View.GONE
+        val dialog = AlertDialog.Builder(requireContext()).setView(root).create()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+        for ((header, items) in groups) {
+            if (header.isNotEmpty()) {
+                val tv = TextView(requireContext())
+                tv.text = header.uppercase()
+                tv.setTextColor(0xFF8A8A8A.toInt()); tv.textSize = 11f; tv.letterSpacing = 0.08f
+                tv.setPadding(dp(14), dp(12), dp(14), dp(2))
+                list.addView(tv)
+            }
+            for ((label, action) in items) {
+                val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
+                r.findViewById<ImageView>(R.id.go_icon).visibility = View.GONE
+                r.findViewById<TextView>(R.id.go_label).text = label
+                r.setOnClickListener { dialog.dismiss(); action() }
+                list.addView(r)
+            }
+        }
+        dialog.show()
+        dialog.window?.let { w ->
+            val lp = w.attributes
+            lp.gravity = Gravity.START or Gravity.TOP
+            lp.x = dp(8); lp.y = dp(54); lp.width = dp(250)
+            lp.height = (resources.displayMetrics.heightPixels * 0.7f).toInt()
+            w.attributes = lp
+        }
+    }
 
     /**
      * Persistent "Go to" surfaces menu, available on every screen (day, Bookshelf, Feed,

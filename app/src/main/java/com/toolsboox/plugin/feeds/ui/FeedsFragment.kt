@@ -49,6 +49,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
     private lateinit var binding: FragmentFeedsBinding
     private lateinit var adapter: FeedEntryAdapter
     private var loading = false
+    private var allEntries: List<FeedEntry> = emptyList()
     private var showingStarred = false
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -80,7 +81,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
             refresh()
         }
         binding.refreshButton.setOnClickListener { refresh() }
-        binding.gotoButton.setOnClickListener { showSurfacesMenu() }
+        binding.gotoButton.setOnClickListener { showFeedDirectory() }
         binding.viewToggleButton.setOnClickListener {
             showingStarred = !showingStarred
             binding.viewToggleButton.setText(if (showingStarred) R.string.feeds_view_unread else R.string.feeds_view_starred)
@@ -111,6 +112,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
             binding.progress.visibility = View.INVISIBLE
             when (result) {
                 is MinifluxClient.Result.Ok -> {
+                    allEntries = result.value
                     adapter.submit(result.value)
                     if (result.value.isEmpty()) showEmpty(getString(R.string.feeds_empty))
                     else binding.emptyText.visibility = View.GONE
@@ -128,6 +130,25 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
     private fun openEntry(entry: FeedEntry) {
         FeedSelection.entry = entry
         findNavController().navigate(R.id.action_to_feed_article)
+    }
+
+    /** Hamburger directory: the actual feeds (tap to filter) + jumps to the other surfaces. */
+    private fun showFeedDirectory() {
+        val nav = androidx.navigation.fragment.NavHostFragment.findNavController(this)
+        val feeds = allEntries.map { it.feedTitle }.filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }
+        val feedRows: List<Pair<String, () -> Unit>> =
+            listOf(("📚  All unread" to { adapter.submit(allEntries) })) +
+            feeds.map { name -> ("📰  $name" to { adapter.submit(allEntries.filter { it.feedTitle == name }) }) }
+        showDirectory(
+            listOf(
+                "Feeds" to feedRows,
+                "Go to" to listOf(
+                    "📅  Day" to { nav.navigate(R.id.action_to_calendar_day) },
+                    "📖  Bookshelf" to { nav.navigate(R.id.action_to_reader) },
+                    "💬  Ask my Ledger" to { nav.navigate(R.id.action_to_ledger_chat) }
+                )
+            )
+        )
     }
 
     private fun toggleStar(entry: FeedEntry) {

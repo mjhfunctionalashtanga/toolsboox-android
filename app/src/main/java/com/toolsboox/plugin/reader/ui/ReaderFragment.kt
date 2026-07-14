@@ -103,7 +103,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
         }
         binding.openButton.setOnClickListener { openShelf() }
         binding.settingsButton.setOnClickListener { openSettings() }
-        binding.gotoButton.setOnClickListener { showSurfacesMenu() }
+        binding.gotoButton.setOnClickListener { showReaderDirectory() }
 
         // Resume the last book, else land on the reader's "waiting for a book" screen.
         restoreLastBook()
@@ -112,6 +112,27 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
 
     /** Books live here so a shelf of several can be kept (not just one "current"). */
     private fun booksDir() = File(requireContext().filesDir, "reader/books").apply { mkdirs() }
+
+    /** Hamburger directory: the actual books on the shelf + jumps to the other surfaces. */
+    private fun showReaderDirectory() {
+        val nav = androidx.navigation.fragment.NavHostFragment.findNavController(this)
+        val books = booksDir().listFiles()?.filter { it.isFile }?.sortedBy { it.name.lowercase() } ?: emptyList()
+        val bookRows: List<Pair<String, () -> Unit>> =
+            books.map { f -> ("📖  " + f.nameWithoutExtension) to { loadBookFile(f) } } +
+            ("＋  Import a book…" to {
+                openBook.launch(arrayOf("application/epub+zip", "application/pdf", "application/x-mobipocket-ebook", "*/*"))
+            })
+        showDirectory(
+            listOf(
+                "Books" to bookRows,
+                "Go to" to listOf(
+                    "📅  Day" to { nav.navigate(R.id.action_to_calendar_day) },
+                    "📰  Feed Ledger" to { nav.navigate(R.id.action_to_feeds) },
+                    "💬  Ask my Ledger" to { nav.navigate(R.id.action_to_ledger_chat) }
+                )
+            )
+        )
+    }
 
     /** Pick from the imported books, or import a new one. */
     private fun openShelf() {
