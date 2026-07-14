@@ -396,12 +396,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 CalendarNavigator.toDayNote(this, currentDate, "pickings")
             }
         }
-        // Calendar button opens the "Go to" panel (day sections + Ledger surfaces),
-        // floating opposite the pen strip. Almanac views live on the top date bar.
-        binding.toolbarDrawing.toolbarCalendarView.setOnClickListener { showDirectoriesModal() }
-        // Top-left hamburger on the date bar → full directories (Ledger surfaces).
+        // Calendar button + top-left hamburger both open the consolidated Ledger hub.
+        binding.toolbarDrawing.toolbarCalendarView.setOnClickListener { showLedgerHub() }
         binding.goAppsButton.visibility = View.VISIBLE
-        binding.goAppsButton.setOnClickListener { showDirectoriesModal() }
+        binding.goAppsButton.setOnClickListener { showLedgerHub() }
         binding.goSectionsButton.visibility = View.GONE
 
         // Retire the fixed pen strip on the day page — the floating pills + gear now cover
@@ -438,10 +436,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.toolUndo.setOnClickListener { binding.toolbarDrawing.toolbarUndo.performClick() }
         binding.toolRedo.setOnClickListener { binding.toolbarDrawing.toolbarRedo.performClick() }
 
-        // Bottom pill button shows the CURRENT section's emoji; tapping reopens the
-        // sections selector. Gear = flip/rotate/settings/finger/add.
+        // Center pill button shows the CURRENT section's emoji (like the iPad's page
+        // icon); tapping it opens the Ledger hub — the up/down/home center. ↑/↓ step the
+        // same sections. Wrench = quick tools shortcut.
         binding.navGoto.text = sectionEmoji()
-        binding.navGoto.setOnClickListener { showSectionsModal() }
+        binding.navGoto.setOnClickListener { showLedgerHub() }
         binding.navGear.setOnClickListener { showWidgetGearMenu() }
         applyWidgetOrientation()
 
@@ -538,6 +537,21 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.toolExpand.rotation = if (toolCollapsed) 180f else 0f
     }
 
+    /** Flip the floating pills between horizontal and vertical, persisted. */
+    private fun flipPillLayout() {
+        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
+        prefs.edit().putBoolean("vertical", !prefs.getBoolean("vertical", false)).apply()
+        applyWidgetOrientation()
+    }
+
+    /** Return both pills to their anchored home positions. */
+    private fun resetPillPositions() {
+        requireContext().getSharedPreferences("ledger_widgets", 0).edit()
+            .remove("nav_px").remove("nav_py").remove("tool_px").remove("tool_py").apply()
+        for (v in listOf(binding.navWidget, binding.toolWidget)) { v.translationX = 0f; v.translationY = 0f }
+    }
+
+    /** Wrench on the nav pill → the quick tools/layout shortcut (a subset of the hub). */
     private fun showWidgetGearMenu() = showGoModal(
         listOf(
             "Tools" to listOf(
@@ -547,16 +561,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 GoItem("🔄", "Rotate screen") { binding.toolbarDrawing.toolbarRotate.performClick() }
             ),
             "Layout" to listOf(
-                GoItem("🔀", "Flip layout") {
-                    val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
-                    prefs.edit().putBoolean("vertical", !prefs.getBoolean("vertical", false)).apply()
-                    applyWidgetOrientation()
-                },
-                GoItem("🎯", "Reset pill positions") {
-                    requireContext().getSharedPreferences("ledger_widgets", 0).edit()
-                        .remove("nav_px").remove("nav_py").remove("tool_px").remove("tool_py").apply()
-                    for (v in listOf(binding.navWidget, binding.toolWidget)) { v.translationX = 0f; v.translationY = 0f }
-                },
+                GoItem("🔀", "Flip layout") { flipPillLayout() },
+                GoItem("🎯", "Reset pill positions") { resetPillPositions() },
                 GoItem("⚙️", "Settings") { binding.toolbarDrawing.toolbarSettings.performClick() }
             )
         ),
@@ -565,15 +571,25 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     private data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
 
-    /** Top-left hamburger → full directories: the Ledger surfaces. */
-    private fun showDirectoriesModal() {
+    /**
+     * The Ledger hub — one collapsible popover mirroring the iPad's up/down/home
+     * modal: the center of the nav pill (and the top-left hamburger) open it, and the
+     * pill's ↑/↓ arrows step the same sections. Everything that used to be a separate
+     * popup lives here: this day's sections, every directory, and the tools.
+     */
+    private fun showLedgerHub() {
         val books: List<Pair<String, () -> Unit>> =
             recentBooks().map { f -> ("📖  " + f.nameWithoutExtension) to { openBookInReader(f) } } +
             ("📚  Open Bookshelf" to { findNavController().navigate(R.id.action_to_reader) })
-        // Open every folder by default so the whole directory is there to browse at a
-        // glance — no drilling into a separate screen to see what's available.
         showAccordion(
             listOf(
+                Folder("☀️", "This Day", listOf(
+                    "☀️  Today" to { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
+                    "❝  Pickings" to { CalendarNavigator.toDayNote(this, currentDate, "pickings") },
+                    "🙏  Gratitude" to { CalendarNavigator.toDayNote(this, currentDate, "gratitude") },
+                    "🔖  Later List" to { CalendarNavigator.toDayNote(this, currentDate, "intake") },
+                    "✒️  Notes" to { CalendarNavigator.toDayNote(this, currentDate, "0") }
+                ), expanded = true),
                 Folder("📆", "Almanac", listOf(
                     "Week" to { CalendarNavigator.toWeekPage(this, currentDate, locale) },
                     "Month" to { CalendarNavigator.toMonthPage(this, currentDate) },
@@ -587,10 +603,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 Folder("💬", "Ask", listOf(
                     "Open Ask my Ledger" to { findNavController().navigate(R.id.action_to_ledger_chat) }
                 ), expanded = true),
+                Folder("🛠", "Tools", listOf(
+                    "🖊️  Add text" to { binding.toolbarDrawing.toolbarText.performClick() },
+                    "🖼️  Add image" to { binding.toolbarDrawing.toolbarImage.performClick() },
+                    "👆  Finger / hand" to { binding.toolbarDrawing.toolbarHandTouch.performClick() },
+                    "🔄  Rotate screen" to { binding.toolbarDrawing.toolbarRotate.performClick() },
+                    "🔀  Flip pill layout" to { flipPillLayout() },
+                    "🎯  Reset pill positions" to { resetPillPositions() }
+                )),
                 Folder("⚙️", "Settings", listOf(
                     "Open Settings" to { binding.toolbarDrawing.toolbarSettings.performClick() },
                     "Cloud sync" to { CalendarNavigator.toCloudSync(this) }
-                ), expanded = true)
+                ))
             )
         )
     }
@@ -616,20 +640,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         "intake" -> "🔖"
         else -> "✒️"
     }
-
-    /** Bottom pill → this day's sections. */
-    private fun showSectionsModal() = showGoModal(
-        listOf(
-            getString(R.string.go_group_day) to listOf(
-                GoItem("📅", "Today") { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
-                GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this, currentDate, "pickings") },
-                GoItem("🙏", "Gratitude") { CalendarNavigator.toDayNote(this, currentDate, "gratitude") },
-                GoItem("🔖", "Later List") { CalendarNavigator.toDayNote(this, currentDate, "intake") },
-                GoItem("✒️", "Notes") { CalendarNavigator.toDayNote(this, currentDate, "0") }
-            )
-        ),
-        anchorTop = false
-    )
 
     /**
      * Shared builder for the floating panels — a compact emoji list. Directories anchor
