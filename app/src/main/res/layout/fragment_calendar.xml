@@ -59,7 +59,7 @@
                 app:layout_constraintTop_toTopOf="@id/navigatorImageView"
                 app:layout_constraintBottom_toBottomOf="@id/navigatorImageView"
                 app:layout_constraintStart_toStartOf="@id/navigatorImageView"
-                android:layout_marginStart="56dp"/>
+                android:layout_marginStart="2dp"/>
 
         <ImageButton
                 android:id="@+id/goSectionsButton"
@@ -74,7 +74,7 @@
                 app:layout_constraintTop_toTopOf="@id/navigatorImageView"
                 app:layout_constraintBottom_toBottomOf="@id/navigatorImageView"
                 app:layout_constraintEnd_toEndOf="@id/navigatorImageView"
-                android:layout_marginEnd="56dp"/>
+                android:layout_marginEnd="2dp"/>
 
         <include
                 layout="@layout/toolbar_drawing"
