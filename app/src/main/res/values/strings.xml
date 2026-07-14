@@ -364,6 +364,7 @@
     <string name="reader_highlight_saved">Saved to your Ledger.</string>
     <string name="reader_highlight_delete_confirm">Remove this highlight?</string>
     <string name="reader_highlight_delete">Remove</string>
+    <string name="eraser_clear_page">Clear page</string>
     <string name="reader_aa">Aa</string>
     <string name="reader_settings_title">Reading</string>
     <string name="reader_font_smaller">A −</string>

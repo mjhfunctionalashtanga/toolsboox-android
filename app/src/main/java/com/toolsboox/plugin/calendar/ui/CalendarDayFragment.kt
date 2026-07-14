@@ -418,24 +418,23 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.navRight.setOnClickListener { CalendarNavigator.toDayPage(this, currentDate.plusDays(1), CalendarDay.DEFAULT_STYLE) }
 
         // Floating tool selector: each button drives the real (hidden) toolbar action,
-        // so the Onyx ink wiring is unchanged. Long-press the eraser to clear the page.
+        // so the Onyx ink wiring is unchanged. The active tool is marked on the pill so
+        // you can always tell what the stylus is doing. Long-press the eraser to clear.
         binding.toolWidget.visibility = View.VISIBLE
-        binding.toolPen.setOnClickListener { binding.toolbarDrawing.toolbarPen.performClick() }
+        binding.toolPen.setOnClickListener { binding.toolbarDrawing.toolbarPen.performClick(); markActiveTool(binding.toolPen) }
         // Long-press the pen → pick ballpoint vs calligraphy (shows the active one).
-        binding.toolPen.setOnLongClickListener {
-            val opts = arrayOf("Ballpoint", "Calligraphy")
+        binding.toolPen.setOnLongClickListener { showPenStylePicker(); true }
+        binding.toolEraser.setOnClickListener { binding.toolbarDrawing.toolbarEraser.performClick(); markActiveTool(binding.toolEraser) }
+        binding.toolEraser.setOnLongClickListener {
             AlertDialog.Builder(requireContext())
-                .setTitle(R.string.calendar_drawing_toolbar_pen)
-                .setSingleChoiceItems(opts, if (penIsCalligraphy()) 1 else 0) { d, w ->
-                    setPenCalligraphy(w == 1)
-                    d.dismiss()
+                .setTitle(R.string.calendar_drawing_toolbar_eraser)
+                .setItems(arrayOf(getString(R.string.eraser_clear_page))) { d, _ ->
+                    binding.toolbarDrawing.toolbarTrash.performClick(); d.dismiss()
                 }
                 .show()
             true
         }
-        binding.toolEraser.setOnClickListener { binding.toolbarDrawing.toolbarEraser.performClick() }
-        binding.toolEraser.setOnLongClickListener { binding.toolbarDrawing.toolbarTrash.performClick(); true }
-        binding.toolLasso.setOnClickListener { binding.toolbarDrawing.toolbarLasso.performClick() }
+        binding.toolLasso.setOnClickListener { binding.toolbarDrawing.toolbarLasso.performClick(); markActiveTool(binding.toolLasso) }
         binding.toolUndo.setOnClickListener { binding.toolbarDrawing.toolbarUndo.performClick() }
         binding.toolRedo.setOnClickListener { binding.toolbarDrawing.toolbarRedo.performClick() }
 
@@ -463,6 +462,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.toolExpand.setOnClickListener { togglePill("tool") }
         binding.navGoto.setOnLongClickListener { togglePill("nav"); true }
         applyPillCollapse()
+        // Pen is the default tool — reflect that on the pill from the start.
+        markActiveTool(binding.toolPen)
 
         utils.updateToolbar(binding)
         // Inset the date bar so the top-left hamburger sits in its own gutter (no caret overlap).
@@ -489,6 +490,25 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val o = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
         binding.navWidget.orientation = o
         binding.toolWidget.orientation = o
+    }
+
+    /** Mark which tool is active on the floating pill (mirrors the hidden toolbar's tint). */
+    private fun markActiveTool(active: View) {
+        for (v in listOf(binding.toolPen, binding.toolEraser, binding.toolLasso)) {
+            v.setBackgroundResource(if (v === active) R.drawable.tool_active_bg else 0)
+        }
+    }
+
+    /** Pen style picker (ballpoint vs calligraphy), showing the active choice. */
+    private fun showPenStylePicker() {
+        val opts = arrayOf("Ballpoint", "Calligraphy")
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.calendar_drawing_toolbar_pen)
+            .setSingleChoiceItems(opts, if (penIsCalligraphy()) 1 else 0) { d, w ->
+                setPenCalligraphy(w == 1)
+                d.dismiss()
+            }
+            .show()
     }
 
     /** Minimize a floating pill to grip + one button + expander; toggle back on tap. */
