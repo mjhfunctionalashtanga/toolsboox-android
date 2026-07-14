@@ -9,36 +9,39 @@
 
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_margin="4dp"
+            android:layout_margin="8dp"
 
             cardView:cardBackgroundColor="@android:color/white"
-            cardView:cardCornerRadius="4dp"
-            cardView:cardElevation="4dp">
+            cardView:cardCornerRadius="20dp"
+            cardView:cardElevation="2dp">
 
         <com.toolsboox.ot.SquareLinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:gravity="center"
-                android:orientation="vertical">
+                android:orientation="vertical"
+                android:padding="16dp">
+
+            <ImageView
+                    android:id="@+id/titleImage"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:layout_gravity="center"
+                    android:scaleType="fitCenter"
+                    android:contentDescription="@string/square_item_image"/>
 
             <TextView
                     android:id="@+id/title"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center"
+                    android:layout_marginTop="12dp"
 
                     android:gravity="center_horizontal"
                     android:textColor="@android:color/black"
-                    android:textSize="20sp"/>
-
-            <ImageView
-                    android:id="@+id/titleImage"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:layout_marginTop="4dp"
-                    android:scaleType="fitXY"
-                    android:contentDescription="@string/square_item_image"/>
+                    android:textSize="17sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.01"/>
 
         </com.toolsboox.ot.SquareLinearLayout>
 
