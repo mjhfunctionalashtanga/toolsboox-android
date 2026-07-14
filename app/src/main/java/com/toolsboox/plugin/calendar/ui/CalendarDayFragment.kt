@@ -855,24 +855,19 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             ("📚  Open Bookshelf" to { findNavController().navigate(R.id.action_to_reader) })
         showAccordion(
             listOf(
-                Folder("☀️", "This Day", listOf(
-                    "☀️  Today" to { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
-                    "❝  Pickings" to { CalendarNavigator.toDayNote(this, currentDate, "pickings") },
-                    "🙏  Gratitude" to { CalendarNavigator.toDayNote(this, currentDate, "gratitude") },
-                    "✒️  Notes" to { CalendarNavigator.toDayNote(this, currentDate, "0") }
-                ), expanded = true),
-                // Feed Ledger — its own category (the RSS reader), sliced by Read/Watch/Listen.
+                // (This Day lives on the sunshine sections switcher, not here.)
+                // Feed Ledger — its own category (the RSS reader): All · Later · Read/Watch/Listen.
                 Folder("📰", "Feed Ledger", listOf(
                     "📰  All" to { openFeed("feed", null) },
+                    "🔖  Later" to { openFeed("later", null) },
                     "📖  Read" to { openFeed("feed", "read") },
                     "📺  Watch" to { openFeed("feed", "watch") },
                     "🎧  Listen" to { openFeed("feed", "listen") }
                 ), expanded = true),
-                // Later — the review/consume-later bucket.
-                Folder("🔖", "Later", listOf(
-                    "🔖  Later List Intake" to { CalendarNavigator.toDayNote(this, currentDate, "intake") },
-                    "🖍️  Notes & Annotations" to { findNavController().navigate(R.id.action_to_reading_log) },
+                // Saved for Later — starred articles, annotations, and AV grams.
+                Folder("📌", "Saved for Later", listOf(
                     "⭐  Stars" to { openFeed("stars", null) },
+                    "🖍️  Notes" to { findNavController().navigate(R.id.action_to_reading_log) },
                     "🎬  AV grams" to { findNavController().navigate(R.id.action_to_reading_log) }
                 ), expanded = true),
                 Folder("📆", "Almanac", listOf(
