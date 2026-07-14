@@ -72,6 +72,20 @@ object IntakePageStore {
     }
 
     /**
+     * File a shared link into a panel (read|watch|listen|educate): append it to that
+     * day's typed content, persist, and dispatch (which enqueues it to the pipeline and
+     * makes it show up in the Notes & Annotations log). Used by the share-to-file flow.
+     */
+    fun fileLink(context: Context, date: LocalDate, kind: String, url: String, title: String?) {
+        val data = load(context, date)
+        val entry = listOfNotNull(title?.trim()?.takeIf { it.isNotEmpty() }, url.trim()).joinToString(" — ")
+        val existing = data.typedFor(kind).trim()
+        data.setTypedFor(kind, if (existing.isEmpty()) entry else "$existing\n$entry")
+        save(context, date, data)
+        dispatch(context, date, data)
+    }
+
+    /**
      * Enqueue all not-yet-delivered typed content through the intake queue.
      * Saves the updated delivered markers and schedules the drain worker when
      * anything new was enqueued.

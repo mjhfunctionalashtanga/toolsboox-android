@@ -408,12 +408,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.toolbarDrawing.root.visibility = View.GONE
 
         // Floating nav widget: reuse the existing nav actions so nothing about drawing
-        // changes. ‹ › step the date; ↑ ↓ cycle the day's sections.
+        // changes. ↑ ↓ step the day's sections (dates live on the top bar's ‹ ›).
         binding.navWidget.visibility = View.VISIBLE
         binding.navUp.setOnClickListener { binding.toolbarDrawing.toolbarSwipeUp.performClick() }
         binding.navDown.setOnClickListener { binding.toolbarDrawing.toolbarSwipeDown.performClick() }
-        binding.navLeft.setOnClickListener { CalendarNavigator.toDayPage(this, currentDate.minusDays(1), CalendarDay.DEFAULT_STYLE) }
-        binding.navRight.setOnClickListener { CalendarNavigator.toDayPage(this, currentDate.plusDays(1), CalendarDay.DEFAULT_STYLE) }
 
         // Floating tool selector: each button drives the real (hidden) toolbar action,
         // so the Onyx ink wiring is unchanged. The active tool is marked on the pill so
@@ -435,13 +433,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.toolLasso.setOnClickListener { binding.toolbarDrawing.toolbarLasso.performClick(); markActiveTool(binding.toolLasso) }
         binding.toolUndo.setOnClickListener { binding.toolbarDrawing.toolbarUndo.performClick() }
         binding.toolRedo.setOnClickListener { binding.toolbarDrawing.toolbarRedo.performClick() }
+        // Wrench now lives on the tool pill (quick tools/layout menu).
+        binding.toolGear.setOnClickListener { showWidgetGearMenu() }
 
-        // Center pill button shows the CURRENT section's emoji (like the iPad's page
-        // icon); tapping it opens the Ledger hub — the up/down/home center. ↑/↓ step the
-        // same sections. Wrench = quick tools shortcut.
+        // Center pill button (between ↑ ↓) shows the CURRENT section's emoji. Tapping it
+        // jumps to TODAY's version of the section you're on; once you're already on today,
+        // a further tap opens the Ledger hub (the iPad feed-carrot behavior).
         binding.navGoto.text = sectionEmoji()
-        binding.navGoto.setOnClickListener { showLedgerHub() }
-        binding.navGear.setOnClickListener { showWidgetGearMenu() }
+        binding.navGoto.setOnClickListener { onCenterTapped() }
         applyWidgetOrientation()
 
         // Lift the floating overlays above the drawing surface without elevation (which
@@ -491,6 +490,22 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.toolWidget.orientation = o
     }
 
+    /**
+     * Center-pill tap: when you're not on today, jump to TODAY's version of the section
+     * you're currently on; once you're already on today, a tap opens the Ledger hub. This
+     * is the iPad feed-carrot pattern — first tap goes home, the next reveals the menu.
+     */
+    private fun onCenterTapped() {
+        val today = LocalDate.now()
+        if (currentDate != today) {
+            val np = currentNotePage()
+            if (np != null) CalendarNavigator.toDayNote(this, today, np)
+            else CalendarNavigator.toDayPage(this, today, CalendarDay.DEFAULT_STYLE)
+        } else {
+            showLedgerHub()
+        }
+    }
+
     /** Mark which tool is active on the floating pill (mirrors the hidden toolbar's tint). */
     private fun markActiveTool(active: View) {
         for (v in listOf(binding.toolPen, binding.toolEraser, binding.toolLasso)) {
@@ -524,14 +539,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val navCollapsed = prefs.getBoolean("nav_collapsed", false)
         val toolCollapsed = prefs.getBoolean("tool_collapsed", false)
 
-        val navHidden = listOf(
-            binding.navLeft, binding.navUp, binding.navDown, binding.navRight, binding.navGear
-        )
+        // Collapse the nav pill to grip + center emoji + expander (↑ ↓ hide).
+        val navHidden = listOf(binding.navUp, binding.navDown)
         for (v in navHidden) v.visibility = if (navCollapsed) View.GONE else View.VISIBLE
         binding.navExpand.rotation = if (navCollapsed) 180f else 0f
 
         val toolHidden = listOf(
-            binding.toolEraser, binding.toolLasso, binding.toolUndo, binding.toolRedo
+            binding.toolEraser, binding.toolLasso, binding.toolUndo, binding.toolRedo, binding.toolGear
         )
         for (v in toolHidden) v.visibility = if (toolCollapsed) View.GONE else View.VISIBLE
         binding.toolExpand.rotation = if (toolCollapsed) 180f else 0f
@@ -593,7 +607,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 // feed reader, reading Notes & Annotations, and AV grams.
                 Folder("🔖", "Later", listOf(
                     "🔖  Intake" to { CalendarNavigator.toDayNote(this, currentDate, "intake") },
-                    "📰  RSS" to {
+                    "📰  Feed (RSS)" to {
                         com.toolsboox.plugin.feeds.ui.FeedSelection.filterFeedTitle = null
                         findNavController().navigate(R.id.action_to_feeds)
                     },

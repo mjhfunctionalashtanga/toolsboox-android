@@ -331,6 +331,9 @@
     <string name="dashboard_item_reader_title">Reader</string>
     <string name="dashboard_item_feeds_title">Feed\nLedger</string>
     <string name="ledger_share_target_title">Ledger</string>
+    <string name="ledger_share_file_title">File this link</string>
+    <string name="ledger_share_drop_on_page">✍️  Drop on page</string>
+    <string name="ledger_share_filed">Filed to %s</string>
 
     <!-- Feed Ledger -->
     <string name="feeds_title">Feed Ledger</string>

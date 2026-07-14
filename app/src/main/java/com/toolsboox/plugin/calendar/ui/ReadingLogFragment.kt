@@ -16,6 +16,8 @@ import com.toolsboox.da.Attachment
 import com.toolsboox.databinding.FragmentReadingLogBinding
 import com.toolsboox.plugin.calendar.da.v2.ReadingEvent
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
+import com.toolsboox.plugin.michaelfilter.nw.IntakePageStore
+import com.toolsboox.plugin.michaelfilter.ot.ShareTextParser
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -118,10 +120,16 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         val calendarRoot = File(documentsRoot(), "calendar")
         if (!calendarRoot.exists()) return emptyList()
         val cutoff = range.days?.let { LocalDate.now().minusDays(it) }
-        val df = DateFormat.getDateFormat(requireContext())
-        val tf = DateFormat.getTimeFormat(requireContext())
+        val ctx = requireContext().applicationContext
+        val df = DateFormat.getDateFormat(ctx)
+        val tf = DateFormat.getTimeFormat(ctx)
         fun stamp(d: Date) = "${df.format(d)} · ${tf.format(d)}"
         val out = mutableListOf<LogItem>()
+        // read/watch/listen/educate → the log's origins (educate folds into Read).
+        val intakeKinds = listOf(
+            "read" to LogOrigin.READ, "watch" to LogOrigin.WATCH,
+            "listen" to LogOrigin.LISTEN, "educate" to LogOrigin.READ
+        )
 
         calendarRoot.walkTopDown()
             .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
@@ -155,6 +163,18 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 for (t in day.textElements.filter { it.pageKey == "pickings" && it.text.isNotBlank() }) {
                     out.add(LogItem(LogOrigin.PICKING, t.text.trim(), stamp(Date(fallback)), "", null, fallback))
                 }
+
+                // Intake — links filed to Read / Watch / Listen / Educate (MichaelFilter),
+                // from the day's intake sidecar. One item per typed line.
+                dayDate?.let { d ->
+                    val intake = IntakePageStore.load(ctx, d)
+                    for ((kind, o) in intakeKinds) {
+                        intake.typedFor(kind).lines().map { it.trim() }.filter { it.isNotBlank() }.forEach { line ->
+                            val url = ShareTextParser.extractUrls(line).firstOrNull()
+                            out.add(LogItem(o, line, stamp(Date(fallback)), "", url, fallback))
+                        }
+                    }
+                }
             }
         return out.sortedByDescending { it.millis }
     }
@@ -170,10 +190,10 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         LocalDate.of(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt())
     }.getOrNull()
 
-    /** Article → open its URL; book highlight / gram → a hint (no in-place jump yet). */
+    /** Anything with a link opens it; book highlights / grams / pickings show a hint. */
     private fun openItem(item: LogItem) {
         val url = item.url
-        if (item.origin == LogOrigin.READ && !url.isNullOrBlank()) {
+        if (!url.isNullOrBlank()) {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         } else {
             showMessage(getString(R.string.reading_log_open_hint, item.title))

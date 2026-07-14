@@ -140,6 +140,58 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         }
 
     /**
+     * A shared link arrived — offer to file it into the reading pipeline (read later /
+     * watch / listen / educate), or drop it as a box on the day page. Filing appends it to
+     * today's intake sidecar (so it shows in Notes & Annotations) and enqueues it.
+     */
+    private fun offerToFileLink(url: String, title: String?, sharedText: String?) {
+        val kinds = listOf(
+            "📖  Read later" to "read",
+            "📺  Watch" to "watch",
+            "🎧  Listen" to "listen",
+            "🎓  Educate" to "educate"
+        )
+        val labels = kinds.map { it.first } + getString(R.string.ledger_share_drop_on_page)
+        // Defer to after the first layout — showing a dialog straight from onResume on a
+        // share cold-start can be swallowed before the window is ready.
+        binding.fragmentContent.post {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.ledger_share_file_title)
+            .setItems(labels.toTypedArray()) { d, which ->
+                if (which < kinds.size) {
+                    val kind = kinds[which].second
+                    com.toolsboox.plugin.michaelfilter.nw.IntakePageStore
+                        .fileLink(applicationContext, java.time.LocalDate.now(), kind, url, title)
+                    android.widget.Toast.makeText(
+                        this, getString(R.string.ledger_share_filed, kinds[which].first.substringAfter("  ")),
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                } else {
+                    val boxText = wrapForTextBox(
+                        listOfNotNull(title, url).joinToString("\n").ifBlank { sharedText?.trim().orEmpty() }
+                    )
+                    if (boxText.isNotBlank()) dropTextOnDay(boxText, url)
+                }
+                d.dismiss()
+            }
+            .show()
+        }
+    }
+
+    /** Drop shared text as a movable box on today's day page (the pre-existing behavior). */
+    private fun dropTextOnDay(boxText: String, url: String?) {
+        val bundle = bundleOf("sharedText" to boxText)
+        if (url != null) {
+            bundle.putString("sharedUrl", url)
+            bundle.putString("notePage", "intake")
+        }
+        val navOptions = androidx.navigation.navOptions {
+            popUpTo(R.id.CalendarDayFragment) { inclusive = true }
+        }
+        binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle, navOptions)
+    }
+
+    /**
      * Activity onResume.
      */
     override fun onResume() {
@@ -156,20 +208,16 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
             val parsed = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.parse(sharedText, sharedSubject)
             Timber.i("Share to ledger (text): url=${parsed.url}")
-            val boxText = wrapForTextBox(
-                listOfNotNull(parsed.title, parsed.url, parsed.leftoverText).joinToString("\n")
-                    .ifBlank { sharedText?.trim().orEmpty() }
-            )
-            if (boxText.isNotBlank()) {
-                val bundle = bundleOf("sharedText" to boxText)
-                if (parsed.url != null) {
-                    bundle.putString("sharedUrl", parsed.url)
-                    bundle.putString("notePage", "intake")
-                }
-                val navOptions = androidx.navigation.navOptions {
-                    popUpTo(R.id.CalendarDayFragment) { inclusive = true }
-                }
-                binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle, navOptions)
+            // A shared LINK → offer to file it (read later / watch / listen); plain text
+            // with no link falls back to dropping a movable box on the day page.
+            if (parsed.url != null) {
+                offerToFileLink(parsed.url!!, parsed.title, sharedText)
+            } else {
+                val boxText = wrapForTextBox(
+                    listOfNotNull(parsed.title, parsed.leftoverText).joinToString("\n")
+                        .ifBlank { sharedText?.trim().orEmpty() }
+                )
+                if (boxText.isNotBlank()) dropTextOnDay(boxText, null)
             }
         }
 
