@@ -35,13 +35,13 @@
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_left"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
         <ImageButton android:id="@+id/art_prev" android:layout_width="42dp" android:layout_height="44dp"
-            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
+            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up2"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_article_first"/>
         <Button android:id="@+id/art_annotate" style="?android:attr/borderlessButtonStyle"
             android:text="✎" android:textSize="21sp" android:minWidth="0dp" android:paddingHorizontal="12dp"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
         <ImageButton android:id="@+id/art_next" android:layout_width="42dp" android:layout_height="44dp"
-            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
+            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down2"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_article_last"/>
         <ImageButton android:id="@+id/art_page_down" android:layout_width="42dp" android:layout_height="44dp"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_right"

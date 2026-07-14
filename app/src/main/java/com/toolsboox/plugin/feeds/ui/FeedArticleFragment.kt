@@ -81,12 +81,25 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         showEntry(e)
     }
 
+    /** ★ filled when starred, ☆ outline when not. */
+    private fun updateStar() {
+        binding.artStar.text = if (entry?.starred == true) "★" else "☆"
+    }
+
+    /** Make the current view obvious: the parse button is highlighted while in reader (parsed)
+     *  view; its glyph flips ⛶ (feed content) ↔ ▤ (parsed / full article). */
+    private fun updateParse() {
+        binding.artParse.text = if (parsed) "▤" else "⛶"
+        binding.artParse.setBackgroundResource(if (parsed) R.drawable.tool_active_bg else 0)
+    }
+
     /** Render an entry (feed content), refresh the star glyph, mark it read on the server. */
     private fun showEntry(e: FeedEntry) {
         entry = e
         parsed = false
         binding.articleWeb.loadDataWithBaseURL(null, buildHtml(e, e.content), "text/html", "UTF-8", null)
-        binding.artStar.text = if (e.starred) "★" else "☆"
+        updateStar()
+        updateParse()
         val p = prefs()
         val url = p.getString(FeedsFragment.KEY_URL, "").orEmpty()
         val token = p.getString(FeedsFragment.KEY_TOKEN, "").orEmpty()
@@ -111,6 +124,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         if (parsed) {
             parsed = false
             binding.articleWeb.loadDataWithBaseURL(null, buildHtml(e, e.content), "text/html", "UTF-8", null)
+            updateParse()
             return
         }
         val p = prefs()
@@ -123,6 +137,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                 is MinifluxClient.Result.Ok -> {
                     parsed = true
                     binding.articleWeb.loadDataWithBaseURL(null, buildHtml(e, res.value.ifBlank { e.content }), "text/html", "UTF-8", null)
+                    updateParse()
                 }
                 is MinifluxClient.Result.Err -> showMessage("⚠️ " + res.message)
             }
@@ -162,7 +177,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                 if (!wasStarred) logEvent(e, note = e.blurb.ifBlank { null })
             }
             entry = e.copy(starred = !wasStarred)
-            binding.artStar.text = if (!wasStarred) "★" else "☆"
+            updateStar()
             showMessage(if (wasStarred) R.string.feeds_unstarred else R.string.feeds_starred)
         }
     }
