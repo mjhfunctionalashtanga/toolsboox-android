@@ -94,6 +94,7 @@
 
     <ImageButton
             android:id="@+id/toolbarCopy"
+            android:visibility="gone"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:scaleType="fitXY"
@@ -106,6 +107,7 @@
 
     <ImageButton
             android:id="@+id/toolbarPaste"
+            android:visibility="gone"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:scaleType="fitXY"
@@ -170,6 +172,7 @@
 
     <ImageButton
             android:id="@+id/toolbarTrash"
+            android:visibility="gone"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:scaleType="fitXY"
@@ -231,6 +234,7 @@
 
     <ImageButton
             android:id="@+id/toolbarCloudSync"
+            android:visibility="gone"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:scaleType="fitXY"
