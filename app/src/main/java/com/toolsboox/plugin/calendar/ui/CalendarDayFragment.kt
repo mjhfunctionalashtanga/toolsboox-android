@@ -512,17 +512,41 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
 
     /** Top-left hamburger → full directories: the Ledger surfaces. */
-    private fun showDirectoriesModal() = showGoModal(
-        listOf(
-            getString(R.string.go_group_ledger) to listOf(
-                GoItem("📚", "Bookshelf") { findNavController().navigate(R.id.action_to_reader) },
-                GoItem("📰", "Feed Ledger") { findNavController().navigate(R.id.action_to_feeds) },
-                GoItem("💬", "Ask my Ledger") { findNavController().navigate(R.id.action_to_ledger_chat) },
-                GoItem("☁️", "Cloud") { CalendarNavigator.toCloudSync(this) }
-            )
-        ),
-        anchorTop = true
-    )
+    private fun showDirectoriesModal() {
+        val bookRows: List<GoItem> =
+            recentBooks().map { f -> GoItem("📖", f.nameWithoutExtension) { openBookInReader(f) } } +
+            GoItem("📚", "Open Bookshelf") { findNavController().navigate(R.id.action_to_reader) }
+        showGoModal(
+            listOf(
+                "Bookshelf" to bookRows,
+                "Ledgers" to listOf(
+                    GoItem("📰", "Feed Ledger") { findNavController().navigate(R.id.action_to_feeds) },
+                    GoItem("💬", "Ask my Ledger") { findNavController().navigate(R.id.action_to_ledger_chat) },
+                    GoItem("☁️", "Cloud") { CalendarNavigator.toCloudSync(this) }
+                ),
+                "Almanac" to listOf(
+                    GoItem("📆", "Week") { CalendarNavigator.toWeekPage(this, currentDate, locale) },
+                    GoItem("🗓️", "Month") { CalendarNavigator.toMonthPage(this, currentDate) },
+                    GoItem("📊", "Quarter") { CalendarNavigator.toQuarterPage(this, currentDate) },
+                    GoItem("📅", "Year") { CalendarNavigator.toYearPage(this, currentDate) }
+                )
+            ),
+            anchorTop = true
+        )
+    }
+
+    /** The five most-recently-opened books (recency = file mtime, touched on open). */
+    private fun recentBooks(): List<java.io.File> =
+        java.io.File(requireContext().filesDir, "reader/books").listFiles()
+            ?.filter { it.isFile }?.sortedByDescending { it.lastModified() }?.take(5) ?: emptyList()
+
+    /** Open a specific book straight into the reader. */
+    private fun openBookInReader(f: java.io.File) {
+        requireContext().getSharedPreferences("ledger_reader_prefs", 0).edit()
+            .putString("current_book_path", f.absolutePath).apply()
+        f.setLastModified(System.currentTimeMillis())
+        findNavController().navigate(R.id.action_to_reader)
+    }
 
     /** The emoji for the section currently on screen (drives the bottom pill button). */
     private fun sectionEmoji(): String = when (currentNotePage()) {
