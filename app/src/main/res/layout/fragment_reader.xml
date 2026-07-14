@@ -1,53 +1,66 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="vertical"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#FFFFFF">
 
-    <WebView
-        android:id="@+id/reader_web"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"/>
-
     <LinearLayout
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_margin="12dp"
-        android:background="@drawable/ledger_bar_bg"
-        android:padding="6dp">
+        android:layout_height="match_parent">
 
-        <Button
-            android:id="@+id/goto_button"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="@string/go_to_title"
-            android:layout_width="0dp" android:layout_weight="1.2" android:layout_height="wrap_content"/>
-        <Button
-            android:id="@+id/prev_button"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="@string/reader_prev"
-            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
-        <Button
-            android:id="@+id/open_button"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="@string/reader_open"
-            android:layout_width="0dp" android:layout_weight="1.4" android:layout_height="wrap_content"/>
-        <Button
-            android:id="@+id/highlight_button"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="@string/reader_highlight"
-            android:layout_width="0dp" android:layout_weight="1.4" android:layout_height="wrap_content"/>
-        <Button
-            android:id="@+id/settings_button"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="@string/reader_aa"
-            android:layout_width="0dp" android:layout_weight="0.8" android:layout_height="wrap_content"/>
-        <Button
-            android:id="@+id/next_button"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="@string/reader_next"
-            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+        <WebView
+            android:id="@+id/reader_web"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"/>
+
+        <LinearLayout
+            android:orientation="horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="12dp"
+            android:background="@drawable/ledger_bar_bg"
+            android:padding="6dp">
+
+            <Button
+                android:id="@+id/prev_button"
+                style="?android:attr/borderlessButtonStyle"
+                android:text="@string/reader_prev"
+                android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+            <Button
+                android:id="@+id/open_button"
+                style="?android:attr/borderlessButtonStyle"
+                android:text="@string/reader_open"
+                android:layout_width="0dp" android:layout_weight="1.4" android:layout_height="wrap_content"/>
+            <Button
+                android:id="@+id/highlight_button"
+                style="?android:attr/borderlessButtonStyle"
+                android:text="@string/reader_highlight"
+                android:layout_width="0dp" android:layout_weight="1.4" android:layout_height="wrap_content"/>
+            <Button
+                android:id="@+id/settings_button"
+                style="?android:attr/borderlessButtonStyle"
+                android:text="@string/reader_aa"
+                android:layout_width="0dp" android:layout_weight="0.8" android:layout_height="wrap_content"/>
+            <Button
+                android:id="@+id/next_button"
+                style="?android:attr/borderlessButtonStyle"
+                android:text="@string/reader_next"
+                android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+        </LinearLayout>
     </LinearLayout>
-</LinearLayout>
+
+    <!-- Top-left hamburger → directory of the actual books + surface jumps. -->
+    <ImageButton
+        android:id="@+id/goto_button"
+        android:layout_width="46dp"
+        android:layout_height="46dp"
+        android:layout_gravity="top|start"
+        android:layout_margin="10dp"
+        android:padding="10dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_bar_sections"
+        android:background="@drawable/ledger_bar_bg"
+        android:contentDescription="@string/go_to_title"/>
+</FrameLayout>

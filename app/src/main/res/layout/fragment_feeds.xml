@@ -19,7 +19,8 @@
             android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
         <Button
             android:id="@+id/goto_button"
-            android:text="@string/go_to_title"
+            android:text="☰"
+            android:textSize="20sp"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
         <Button
             android:id="@+id/view_toggle_button"
