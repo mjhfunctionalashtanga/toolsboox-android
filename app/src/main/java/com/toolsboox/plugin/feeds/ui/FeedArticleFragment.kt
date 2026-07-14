@@ -86,9 +86,10 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         return """
             <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
-              body { margin: 20px; color: #000; background: #fff;
-                     font-family: serif; font-size: 19px; line-height: 1.6;
-                     max-width: 40em; margin-left: auto; margin-right: auto; }
+              html { padding: 0 44px; }
+              body { margin: 40px auto; color: #000; background: #fff;
+                     font-family: serif; font-size: 19px; line-height: 1.65;
+                     max-width: 34em; }
               h1 { font-size: 26px; line-height: 1.25; }
               .meta { color: #666; font-size: 14px; margin-bottom: 18px; }
               img { max-width: 100%; height: auto; }
