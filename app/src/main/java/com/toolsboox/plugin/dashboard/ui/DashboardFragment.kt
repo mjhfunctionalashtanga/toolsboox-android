@@ -114,6 +114,7 @@ class DashboardFragment @Inject constructor() : ScreenFragment() {
         sharedPreferences.edit().putString("androidId", androidId).apply()
         Timber.i("Stored androidId: $androidId")
 
+        // Order the home around the daily Ledger: plan, read, ask — then sync + about.
         val squareItems = mutableListOf<SquareItem>()
         squareItems.add(
             SquareItem(
@@ -123,29 +124,26 @@ class DashboardFragment @Inject constructor() : ScreenFragment() {
         )
         squareItems.add(
             SquareItem(
-                getString(R.string.dashboard_item_about_title), R.drawable.ic_dashboard_item_about,
-                R.id.action_to_about, bundleOf()
+                getString(R.string.dashboard_item_reader_title), R.drawable.ic_dashboard_item_reader,
+                R.id.action_to_reader, bundleOf()
             )
         )
-
-        squareItems.add(
-            SquareItem(
-                getString(R.string.dashboard_item_cloud_title), R.drawable.ic_dashboard_item_cloud,
-                R.id.action_to_cloud, bundleOf()
-            )
-        )
-
         squareItems.add(
             SquareItem(
                 getString(R.string.dashboard_item_chat_title), R.drawable.ic_dashboard_item_chat,
                 R.id.action_to_ledger_chat, bundleOf()
             )
         )
-
         squareItems.add(
             SquareItem(
-                getString(R.string.dashboard_item_reader_title), R.drawable.ic_dashboard_item_reader,
-                R.id.action_to_reader, bundleOf()
+                getString(R.string.dashboard_item_cloud_title), R.drawable.ic_dashboard_item_cloud,
+                R.id.action_to_cloud, bundleOf()
+            )
+        )
+        squareItems.add(
+            SquareItem(
+                getString(R.string.dashboard_item_about_title), R.drawable.ic_dashboard_item_about,
+                R.id.action_to_about, bundleOf()
             )
         )
 
