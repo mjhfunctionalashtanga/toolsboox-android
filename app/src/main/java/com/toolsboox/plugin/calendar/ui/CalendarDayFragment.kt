@@ -398,10 +398,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
         // Calendar button opens the "Go to" panel (day sections + Ledger surfaces),
         // floating opposite the pen strip. Almanac views live on the top date bar.
-        binding.toolbarDrawing.toolbarCalendarView.setOnClickListener { showGoToModal() }
-        // Top-left hamburger on the date bar → the full menu popover (sections + Ledger).
+        binding.toolbarDrawing.toolbarCalendarView.setOnClickListener { showDirectoriesModal() }
+        // Top-left hamburger on the date bar → full directories (Ledger surfaces).
         binding.goAppsButton.visibility = View.VISIBLE
-        binding.goAppsButton.setOnClickListener { showGoToModal() }
+        binding.goAppsButton.setOnClickListener { showDirectoriesModal() }
         binding.goSectionsButton.visibility = View.GONE
 
         // Retire the fixed pen strip on the day page — the floating pills + gear now cover
@@ -439,13 +439,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.toolUndo.setOnClickListener { binding.toolbarDrawing.toolbarUndo.performClick() }
         binding.toolRedo.setOnClickListener { binding.toolbarDrawing.toolbarRedo.performClick() }
 
-        // Bottom pill: ☀️ jump straight to today's schedule (the full menu is the top-left
-        // hamburger). Gear = flip/rotate/settings/finger/add.
-        binding.navGoto.setOnClickListener { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) }
+        // Bottom pill button → this day's sections (Today/Pickings/Gratitude/Later/Notes).
+        // Gear = flip/rotate/settings/finger/add.
+        binding.navGoto.setOnClickListener { showSectionsModal() }
         binding.navGear.setOnClickListener { showWidgetGearMenu() }
         applyWidgetOrientation()
 
         utils.updateToolbar(binding)
+        // Inset the date bar so the top-left hamburger sits in its own gutter (no caret overlap).
+        (binding.navigatorImageView.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let {
+            it.marginStart = (52 * resources.displayMetrics.density).toInt()
+            binding.navigatorImageView.layoutParams = it
+        }
         initializeSurface(true)
     }
 
@@ -455,9 +460,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * Ledger, Ask my Ledger, Cloud) without leaving for a dashboard. Reached from
      * the toolbar's calendar-view button.
      */
-    /** Flip the floating pills between a horizontal and vertical layout (persisted). */
+    /** Flip the floating pills between a horizontal and vertical layout. Defaults to
+     *  vertical on narrow (phone-size) screens so the two pills don't collide; the gear's
+     *  "Flip layout" overrides and persists the choice. */
     private fun applyWidgetOrientation() {
-        val vertical = requireContext().getSharedPreferences("ledger_widgets", 0).getBoolean("vertical", false)
+        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
+        val narrow = resources.configuration.screenWidthDp < 520
+        val vertical = prefs.getBoolean("vertical", narrow)
         val o = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
         binding.navWidget.orientation = o
         binding.toolWidget.orientation = o
@@ -486,12 +495,21 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     private data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
 
-    /**
-     * The "Go to" panel — the day's sections and the Ledger surfaces. Almanac views
-     * (Week/Month/Quarter/Year) are NOT here: the top date bar already handles those.
-     * Compact + emoji, opening near the nav pill it's launched from.
-     */
-    private fun showGoToModal() = showGoModal(
+    /** Top-left hamburger → full directories: the Ledger surfaces. */
+    private fun showDirectoriesModal() = showGoModal(
+        listOf(
+            getString(R.string.go_group_ledger) to listOf(
+                GoItem("📚", "Bookshelf") { findNavController().navigate(R.id.action_to_reader) },
+                GoItem("📰", "Feed Ledger") { findNavController().navigate(R.id.action_to_feeds) },
+                GoItem("💬", "Ask my Ledger") { findNavController().navigate(R.id.action_to_ledger_chat) },
+                GoItem("☁️", "Cloud") { CalendarNavigator.toCloudSync(this) }
+            )
+        ),
+        anchorTop = true
+    )
+
+    /** Bottom pill → this day's sections. */
+    private fun showSectionsModal() = showGoModal(
         listOf(
             getString(R.string.go_group_day) to listOf(
                 GoItem("📅", "Today") { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
@@ -499,21 +517,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 GoItem("🙏", "Gratitude") { CalendarNavigator.toDayNote(this, currentDate, "gratitude") },
                 GoItem("🔖", "Later List") { CalendarNavigator.toDayNote(this, currentDate, "intake") },
                 GoItem("✒️", "Notes") { CalendarNavigator.toDayNote(this, currentDate, "0") }
-            ),
-            getString(R.string.go_group_ledger) to listOf(
-                GoItem("📚", "Bookshelf") { findNavController().navigate(R.id.action_to_reader) },
-                GoItem("📰", "Feed Ledger") { findNavController().navigate(R.id.action_to_feeds) },
-                GoItem("💬", "Ask my Ledger") { findNavController().navigate(R.id.action_to_ledger_chat) },
-                GoItem("☁️", "Cloud") { CalendarNavigator.toCloudSync(this) }
             )
-        )
+        ),
+        anchorTop = false
     )
 
     /**
-     * Shared builder for the floating "Go to" panel — a compact emoji list anchored at the
-     * bottom near the nav pill (its launcher), not a big centered sheet.
+     * Shared builder for the floating panels — a compact emoji list. Directories anchor
+     * top-left (by the hamburger); sections anchor bottom (by the pill).
      */
-    private fun showGoModal(groups: List<Pair<String, List<GoItem>>>) {
+    private fun showGoModal(groups: List<Pair<String, List<GoItem>>>, anchorTop: Boolean) {
         val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
         val list = root.findViewById<LinearLayout>(R.id.go_to_list)
         root.findViewById<TextView>(R.id.go_to_title).visibility = View.GONE
@@ -537,13 +550,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
 
         dialog.show()
-        // Open at the top-left, tucked under the hamburger that launches it.
         dialog.window?.let { w ->
             val lp = w.attributes
-            lp.gravity = Gravity.START or Gravity.TOP
-            lp.x = dp(8)
-            lp.y = dp(54)
             lp.width = dp(220)
+            if (anchorTop) {          // directories, under the top-left hamburger
+                lp.gravity = Gravity.START or Gravity.TOP
+                lp.x = dp(8); lp.y = dp(54)
+            } else {                  // sections, up from the bottom pill
+                lp.gravity = Gravity.END or Gravity.BOTTOM
+                lp.x = dp(10); lp.y = dp(80)
+            }
             w.attributes = lp
         }
     }
