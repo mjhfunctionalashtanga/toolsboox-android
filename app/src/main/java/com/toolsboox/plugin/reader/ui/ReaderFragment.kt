@@ -12,6 +12,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.appcompat.app.AlertDialog
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import androidx.webkit.WebViewCompat
@@ -100,13 +101,82 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
         binding.highlightButton.setOnClickListener {
             web.evaluateJavascript("window.highlightSelection && window.highlightSelection()", null)
         }
-        binding.openButton.setOnClickListener {
-            openBook.launch(arrayOf("application/epub+zip", "application/pdf", "application/x-mobipocket-ebook", "*/*"))
-        }
+        binding.openButton.setOnClickListener { openShelf() }
+        binding.settingsButton.setOnClickListener { openSettings() }
 
         // Resume the last book, else land on the reader's "waiting for a book" screen.
         restoreLastBook()
         web.loadUrl("$ORIGIN/reader-embed.html")
+    }
+
+    /** Books live here so a shelf of several can be kept (not just one "current"). */
+    private fun booksDir() = File(requireContext().filesDir, "reader/books").apply { mkdirs() }
+
+    /** Pick from the imported books, or import a new one. */
+    private fun openShelf() {
+        val books = booksDir().listFiles()?.filter { it.isFile }?.sortedBy { it.name.lowercase() } ?: emptyList()
+        val labels = books.map { it.nameWithoutExtension } + listOf(getString(R.string.reader_import_new))
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.reader_shelf_title)
+            .setItems(labels.toTypedArray()) { _, which ->
+                if (which == books.size) {
+                    openBook.launch(arrayOf("application/epub+zip", "application/pdf", "application/x-mobipocket-ebook", "*/*"))
+                } else {
+                    loadBookFile(books[which])
+                }
+            }
+            .show()
+    }
+
+    private fun loadBookFile(file: File) {
+        currentBookFile = file
+        requireContext().getSharedPreferences(PREFS, 0).edit().putString(KEY_BOOK, file.absolutePath).apply()
+        bookReady = false
+        openWhenReady()
+    }
+
+    /** Font size + theme for the reader, applied via foliate's applyReaderSettings. */
+    private fun openSettings() {
+        val prefs = requireContext().getSharedPreferences(PREFS, 0)
+        val builder = AlertDialog.Builder(requireContext()).setTitle(R.string.reader_settings_title)
+        val current = prefs.getString(KEY_THEME, "default") ?: "default"
+        val items = arrayOf(
+            getString(R.string.reader_font_smaller),
+            getString(R.string.reader_font_larger),
+            getString(R.string.reader_theme, current)
+        )
+        builder.setItems(items) { _, which ->
+            when (which) {
+                0 -> changeFont(-10)
+                1 -> changeFont(10)
+                2 -> cycleTheme()
+            }
+        }
+        builder.show()
+    }
+
+    private fun changeFont(delta: Int) {
+        val prefs = requireContext().getSharedPreferences(PREFS, 0)
+        val pct = (prefs.getInt(KEY_FONT, 100) + delta).coerceIn(60, 240)
+        prefs.edit().putInt(KEY_FONT, pct).apply()
+        applyReaderSettings()
+    }
+
+    private fun cycleTheme() {
+        val prefs = requireContext().getSharedPreferences(PREFS, 0)
+        val idx = THEMES.indexOf(prefs.getString(KEY_THEME, "default") ?: "default").coerceAtLeast(0)
+        val next = THEMES[(idx + 1) % THEMES.size]
+        prefs.edit().putString(KEY_THEME, next).apply()
+        applyReaderSettings()
+    }
+
+    private fun applyReaderSettings() {
+        val prefs = requireContext().getSharedPreferences(PREFS, 0)
+        val pct = prefs.getInt(KEY_FONT, 100)
+        val theme = prefs.getString(KEY_THEME, "default") ?: "default"
+        binding.readerWeb.evaluateJavascript(
+            "window.applyReaderSettings && window.applyReaderSettings({fontSize:$pct,theme:'$theme'})", null
+        )
     }
 
     /** Serve foliate assets and the current book over the same-origin host. */
@@ -130,24 +200,32 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
 
     private fun notFound() = WebResourceResponse("text/plain", "UTF-8", java.io.ByteArrayInputStream(ByteArray(0)))
 
-    /** Copy the picked document into app storage and open it. */
+    /** Copy the picked document into the shelf (keyed by its real name) and open it. */
     private fun importAndOpen(uri: Uri) {
         lifecycleScope.launch {
             val file = withContext(Dispatchers.IO) {
                 val ext = extensionFor(uri)
-                val dir = File(requireContext().filesDir, "reader").apply { mkdirs() }
-                val dest = File(dir, "current.$ext")
+                val base = displayName(uri).substringBeforeLast('.', "book")
+                    .replace(Regex("[^\\w .-]"), "_").take(80).ifBlank { "book" }
+                val dest = File(booksDir(), "$base.$ext")
                 requireContext().contentResolver.openInputStream(uri)?.use { input ->
                     dest.outputStream().use { input.copyTo(it) }
                 }
-                requireContext().getSharedPreferences(PREFS, 0).edit()
-                    .putString(KEY_BOOK, dest.absolutePath).apply()
                 dest
             }
-            currentBookFile = file
-            bookReady = false
-            openWhenReady()
+            loadBookFile(file)
         }
+    }
+
+    private fun displayName(uri: Uri): String {
+        var name = uri.lastPathSegment ?: "book"
+        runCatching {
+            requireContext().contentResolver.query(uri, null, null, null, null)?.use { c ->
+                val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0 && c.moveToFirst()) c.getString(idx)?.let { name = it }
+            }
+        }
+        return name
     }
 
     private fun restoreLastBook() {
@@ -179,6 +257,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
                 bookReady = true
                 bookTitle = msg.optString("title").ifBlank { "Untitled" }
                 bookAuthor = msg.optString("author")
+                applyReaderSettings()
             }
             "highlight" -> {
                 val text = msg.optString("text").trim()
@@ -274,6 +353,9 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
         private const val ORIGIN = "https://ledger.reader"
         private const val PREFS = "ledger_reader_prefs"
         private const val KEY_BOOK = "current_book_path"
+        private const val KEY_FONT = "reader_font_pct"
+        private const val KEY_THEME = "reader_theme"
+        private val THEMES = listOf("default", "sepia", "gray", "black")
         private val SHIM_JS = """
             window.webkit = window.webkit || {};
             window.webkit.messageHandlers = window.webkit.messageHandlers || {};

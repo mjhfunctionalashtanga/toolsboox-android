@@ -30,9 +30,16 @@ class MinifluxClient @Inject constructor() {
     private val json = "application/json".toMediaType()
 
     /** GET /v1/entries?status=unread — newest first. Blocking; call off the main thread. */
-    fun fetchUnread(baseUrl: String, token: String, limit: Int = 50): Result<List<FeedEntry>> {
+    fun fetchUnread(baseUrl: String, token: String, limit: Int = 50): Result<List<FeedEntry>> =
+        fetch(baseUrl, token, "status=unread", limit)
+
+    /** GET /v1/entries?starred=true — the read-later shelf. */
+    fun fetchStarred(baseUrl: String, token: String, limit: Int = 50): Result<List<FeedEntry>> =
+        fetch(baseUrl, token, "starred=true", limit)
+
+    private fun fetch(baseUrl: String, token: String, filter: String, limit: Int): Result<List<FeedEntry>> {
         if (baseUrl.isBlank() || token.isBlank()) return Result.Err("Add your Miniflux URL and token in Settings.")
-        val url = "${normalize(baseUrl)}/v1/entries?status=unread&order=published_at&direction=desc&limit=$limit"
+        val url = "${normalize(baseUrl)}/v1/entries?$filter&order=published_at&direction=desc&limit=$limit"
         return try {
             val req = Request.Builder().url(url).addHeader("X-Auth-Token", token).get().build()
             client.newCall(req).execute().use { resp ->

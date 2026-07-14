@@ -31,6 +31,10 @@
             android:text="@string/reader_highlight"
             android:layout_width="0dp" android:layout_weight="1.4" android:layout_height="wrap_content"/>
         <Button
+            android:id="@+id/settings_button"
+            android:text="@string/reader_aa"
+            android:layout_width="0dp" android:layout_weight="0.8" android:layout_height="wrap_content"/>
+        <Button
             android:id="@+id/next_button"
             android:text="@string/reader_next"
             android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>

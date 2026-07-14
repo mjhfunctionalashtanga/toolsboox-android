@@ -49,6 +49,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
     private lateinit var binding: FragmentFeedsBinding
     private lateinit var adapter: FeedEntryAdapter
     private var loading = false
+    private var showingStarred = false
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -79,6 +80,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
             refresh()
         }
         binding.refreshButton.setOnClickListener { refresh() }
+        binding.viewToggleButton.setOnClickListener {
+            showingStarred = !showingStarred
+            binding.viewToggleButton.setText(if (showingStarred) R.string.feeds_view_unread else R.string.feeds_view_starred)
+            refresh()
+        }
 
         refresh()
     }
@@ -97,7 +103,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
         binding.progress.visibility = View.VISIBLE
         binding.emptyText.visibility = View.GONE
         lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) { miniflux.fetchUnread(url, token) }
+            val result = withContext(Dispatchers.IO) {
+                if (showingStarred) miniflux.fetchStarred(url, token) else miniflux.fetchUnread(url, token)
+            }
             loading = false
             binding.progress.visibility = View.INVISIBLE
             when (result) {

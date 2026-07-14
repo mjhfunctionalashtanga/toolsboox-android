@@ -340,6 +340,9 @@
     <string name="feeds_need_creds">Add your Miniflux URL and API token to load your feeds.</string>
     <string name="feeds_starred">Starred and saved to your Ledger.</string>
     <string name="feeds_unstarred">Unstarred.</string>
+    <string name="feeds_view_starred">★ Saved</string>
+    <string name="feeds_view_unread">Unread</string>
+    <string name="feeds_title_starred">Saved for later</string>
     <string name="feeds_article_star">★ Star</string>
     <string name="feeds_article_unstar">★ Unstar</string>
     <string name="feeds_article_note">Note</string>
@@ -355,6 +358,14 @@
     <string name="reader_highlight">Highlight</string>
     <string name="reader_select_first">Select text first, then tap Highlight.</string>
     <string name="reader_highlight_saved">Saved to your Ledger.</string>
+    <string name="reader_aa">Aa</string>
+    <string name="reader_settings_title">Reading</string>
+    <string name="reader_font_smaller">A −</string>
+    <string name="reader_font_larger">A +</string>
+    <string name="reader_theme">Theme: %1$s</string>
+    <string name="reader_shelf_title">Your books</string>
+    <string name="reader_import_new">Import a book…</string>
+    <string name="reader_no_books">No books yet — import one.</string>
 
     <!-- Ask my Ledger (chat over the corpus) -->
     <string name="ledger_chat_title">Ask my Ledger</string>

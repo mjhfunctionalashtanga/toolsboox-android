@@ -71,6 +71,14 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         binding.browserButton.setOnClickListener {
             if (e.url.isNotBlank()) startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(e.url)))
         }
+
+        // Opening an entry marks it read on the server (shrinks the unread list).
+        val p = prefs()
+        val url = p.getString(FeedsFragment.KEY_URL, "").orEmpty()
+        val token = p.getString(FeedsFragment.KEY_TOKEN, "").orEmpty()
+        if (url.isNotBlank() && token.isNotBlank()) {
+            lifecycleScope.launch(Dispatchers.IO) { miniflux.markRead(url, token, e.id) }
+        }
     }
 
     private fun buildHtml(e: FeedEntry): String {
