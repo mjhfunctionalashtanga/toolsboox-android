@@ -880,14 +880,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 Folder("💬", "Ask", listOf(
                     "Open Ask my Ledger" to { findNavController().navigate(R.id.action_to_ledger_chat) }
                 ), expanded = true),
-                Folder("🛠", "Tools", listOf(
-                    "🖊️  Add text" to { binding.toolbarDrawing.toolbarText.performClick() },
-                    "🖼️  Add image" to { binding.toolbarDrawing.toolbarImage.performClick() },
-                    "👆  Finger / hand" to { binding.toolbarDrawing.toolbarHandTouch.performClick() },
-                    "🔄  Rotate screen" to { binding.toolbarDrawing.toolbarRotate.performClick() },
-                    "🔀  Flip pill layout" to { flipPillLayout() },
-                    "🎯  Reset pill positions" to { resetPillPositions() }
-                )),
+                // (Tools live on the wrench pill, not here.)
                 Folder("⚙️", "Settings", listOf(
                     "Open Settings" to { binding.toolbarDrawing.toolbarSettings.performClick() },
                     "Cloud sync" to { CalendarNavigator.toCloudSync(this) }
