@@ -325,7 +325,7 @@
     <string name="dashboard_item_cloud_title">Cloud</string>
     <string name="dashboard_item_chat_title">Ask my\nLedger</string>
     <string name="go_to_title">Go to</string>
-    <string name="go_group_views">Views</string>
+    <string name="go_group_views">Almanac</string>
     <string name="go_group_day">On this day</string>
     <string name="go_group_ledger">Ledger</string>
     <string name="dashboard_item_reader_title">Reader</string>

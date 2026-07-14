@@ -454,7 +454,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         header(getString(R.string.go_group_ledger))
         listOf(
-            GoItem("Reader", R.drawable.ic_dashboard_item_reader) { findNavController().navigate(R.id.action_to_reader) },
+            GoItem("Bookshelf", R.drawable.ic_dashboard_item_reader) { findNavController().navigate(R.id.action_to_reader) },
             GoItem("Feed Ledger", R.drawable.ic_dashboard_item_feeds) { findNavController().navigate(R.id.action_to_feeds) },
             GoItem("Ask my Ledger", R.drawable.ic_dashboard_item_chat) { findNavController().navigate(R.id.action_to_ledger_chat) },
             GoItem("Cloud", R.drawable.ic_dashboard_item_cloud) { CalendarNavigator.toCloudSync(this) }
