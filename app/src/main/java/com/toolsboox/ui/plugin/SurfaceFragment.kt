@@ -20,6 +20,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.provider.MediaStore
 import android.view.GestureDetector
 import android.view.Gravity
@@ -119,14 +121,37 @@ abstract class SurfaceFragment : ScreenFragment() {
          * govern how aggressively a stroke is read as a circle (→ lasso) or a scribble
          * (→ erase) rather than committed as ink. Raise to reduce false positives.
          */
-        private const val GESTURE_MIN_CIRCLE_DIAG = 180f       // a ring must be bigger than this (filters letter loops)
-        private const val GESTURE_CLOSURE_FRACTION = 0.25f     // end must land within this × path length of the start
-        private const val GESTURE_CIRCLE_MIN_TURN = 4.5f       // ≈ one full loop of consistent rotation (radians)
-        private const val GESTURE_SCRIBBLE_LENGTH_RATIO = 4.5f // path length ≥ this × bbox diagonal — a tight, in-place
+        // Size FLOOR only — a degenerate-loop guard, NOT the safeguard against false lassos.
+        // The real discriminator is "does the ring enclose a DIFFERENT existing stroke"
+        // (see enclosesOtherInk): a small tight ring around a letter should lasso, but a
+        // handwritten "e"/"o" encloses only itself → rejected. So the floor can be tiny.
+        // User clue: circling TIGHTLY around one letter made a <140px ring the old gate ate.
+        private const val GESTURE_MIN_CIRCLE_DIAG = 60f        // reject only near-degenerate loops; enclosure does the real work
+        private const val GESTURE_MIN_POINTS = 6               // a fast Boox capture can be sparse; 8→6 so quick loops pass.
+        private const val GESTURE_ENCLOSE_MAJORITY = 0.5f      // an existing stroke counts as encircled if ≥ this fraction of
+                                                               // its points fall inside the ring (tolerates grazing/overlap)
+
+        // Circle-FIT detector (replaces the wobble-sensitive net/abs-turning heuristic that
+        // failed on shaky hand-drawn rings). Fit a circle to the points: centroid, mean
+        // radius r̄, radial band, and angular coverage around the centroid. Tolerant of
+        // ovals, wobble, and an unclosed loop.
+        // Device toast from two real failed lassos: in-band 65–68%, coverage 360°,
+        // enclosesOtherInk=yes — i.e. ONLY the radial-band gate rejected clearly-intentional
+        // rings. Widened band 0.35→0.45 (raises in-band %) and dropped the threshold 0.72→0.55
+        // so wobbly hand-drawn rings pass with margin; coverage(≥270°)+enclosesOtherInk still guard.
+        private const val GESTURE_CIRCLE_BAND = 0.45f          // a point is "on the ring" if |r_i − r̄| ≤ this × r̄
+        private const val GESTURE_CIRCLE_BAND_FRAC = 0.55f     // ≥ this fraction of points must sit in that radial band
+        private const val GESTURE_CIRCLE_COVERAGE_DEG = 270f   // points must wrap ≥ this many degrees around the centroid…
+        private const val GESTURE_CIRCLE_CLOSURE_R = 0.5f      // …OR the endpoint returns within this × r̄ of the start
+        private const val GESTURE_DEBUG_TOAST = false          // temp: toast the deciding metrics on a REJECTED ring attempt
+        private const val GESTURE_SCRIBBLE_LENGTH_RATIO = 3.8f // path length ≥ this × bbox diagonal — a tight, in-place
                                                                // back-and-forth. Cursive flows sideways (low ratio), so
-                                                               // this is the main thing that stops cursive erasing.
-        private const val GESTURE_SCRIBBLE_MIN_ABS_TURN = 11.0f // total accumulated wiggle (radians)
-        private const val GESTURE_SCRIBBLE_MIN_REVERSALS = 6   // minimum direction reversals
+                                                               // this is the main thing that stops cursive erasing; eased
+                                                               // 4.5→3.8 (kept high enough to spare cursive).
+        private const val GESTURE_SCRIBBLE_MIN_ABS_TURN = 8.5f // total accumulated wiggle (radians); eased 11→8.5
+        private const val GESTURE_SCRIBBLE_MIN_REVERSALS = 4   // minimum direction reversals; eased 6→4 — these two are the
+                                                               // zig-zag signal, loosened for reliable firing; the length
+                                                               // ratio above still guards against normal writing.
 
         /**
          * Calligraphy nib width as a multiple of the base stroke width, scaled by pen
@@ -442,6 +467,13 @@ abstract class SurfaceFragment : ScreenFragment() {
      * keeps the live stroke tight to the nib. Viwoods software path only.
      */
     private var viwoodsLivePostScheduled = false
+    /** Index into stylusPointList of the last point already posted to the panel; the live EPD
+     *  refresh covers only points since this index, so update cost is O(new segment), not O(stroke). */
+    private var viwoodsLastLiveIndex = 0
+    /** Cached page snapshot for the hardware-ink path, re-pushed each move to beat the async
+     *  engine-readiness race (see onBeginDrawing). Generated once per stroke (O(strokes) render),
+     *  re-pushed cheaply (native call only). */
+    private var viwoodsCachedSnapshot: android.graphics.Bitmap? = null
     private val viwoodsLivePostRunnable = Runnable {
         viwoodsLivePostScheduled = false
         if (penState && stylusPointList.isNotEmpty()) renderLivePreviewSoftware()
@@ -718,6 +750,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
                 provideToolbarDrawing().toolbarLasso.background.setTint(Color.GRAY)
                 provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
+                syncRawInkToSelectionMenu()   // lasso-draw up → stylus paints no stray hardware ink
             }
         }
 
@@ -762,6 +795,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarPaste.background.setTint(Color.GRAY)
             exitImageMode()
+            syncRawInkToSelectionMenu()   // paste-place mode up → tap places ink, doesn't dot
             showMessage(R.string.calendar_drawing_toolbar_paste, provideSurfaceView())
         }
 
@@ -791,6 +825,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                 provideToolbarDrawing().toolbarText.background.setTint(Color.GRAY)
                 exitImageMode()
             }
+            // Switching into/out of text clears the selection states → restore the hardware
+            // pen if a prior lasso/paste had paused it (else the pen would stay dead).
+            syncRawInkToSelectionMenu()
         }
 
         provideToolbarDrawing().toolbarHandTouch.setOnClickListener {
@@ -858,6 +895,13 @@ abstract class SurfaceFragment : ScreenFragment() {
             builder.create().show()
         }
 
+        // Fold "trash" into the eraser: hide the standalone trash button and clear the
+        // page via a long-press on the eraser instead.
+        provideToolbarDrawing().toolbarTrash.visibility = View.GONE
+        provideToolbarDrawing().toolbarEraser.setOnLongClickListener {
+            provideToolbarDrawing().toolbarTrash.performClick(); true
+        }
+
         provideToolbarDrawing().toolbarSwitchSide.setOnClickListener {
             onSideSwitched()
         }
@@ -899,7 +943,8 @@ abstract class SurfaceFragment : ScreenFragment() {
         val earlyAdopter = earlyAdopterDeviceIds?.contains(androidId) ?: false
         Timber.i("Early adopter: $earlyAdopter")
 
-        provideToolbarDrawing().toolbarCloudSync.visibility = View.VISIBLE
+        // Cloud sync moves off the strip (reachable from the Go-to panel / Settings).
+        provideToolbarDrawing().toolbarCloudSync.visibility = View.GONE
 
         provideToolbarDrawing().toolbarSettings.setOnClickListener {
             CalendarNavigator.toSettings(this)
@@ -1162,7 +1207,51 @@ abstract class SurfaceFragment : ScreenFragment() {
     /**
      * Exit lasso selection / paste mode and reset all selection state.
      */
-    private fun exitSelectionMode() {
+    /**
+     * The post-lasso selection / copy-paste menu (hasSelection / pasteMode) and the lasso-draw
+     * state keep the Onyx raw-ink session live, so a stylus tap on a chip/menu paints a stray
+     * hardware dot even though the app consumes the tap. Pause the raw session while any of those
+     * menu states is active (exactly as the pen modal does) and restore it on exit — tracked so
+     * we never redundantly cold-start the native pen (each false→true costs ~1s). MotionEvents
+     * still reach the app with raw drawing off (the intake-page path), so chips/move/paste-place
+     * all keep working; legit ink resumes cleanly once the selection is dismissed.
+     */
+    private var rawInkPausedForMenu = false
+    private val resumeRawInkRunnable = Runnable { resumeRawInkNow() }
+    private fun syncRawInkToSelectionMenu() {
+        val menuActive = hasSelection || pasteMode || selectionMode
+        if (menuActive && !rawInkPausedForMenu) {
+            provideSurfaceView().removeCallbacks(resumeRawInkRunnable)   // cancel any pending resume
+            touchHelper?.setRawDrawingEnabled(false)
+            touchHelper?.isRawDrawingRenderEnabled = false
+            rawInkPausedForMenu = true
+        } else if (!menuActive && rawInkPausedForMenu) {
+            resumeRawInkNow()
+        }
+    }
+
+    /** Re-enable the hardware pen if it's paused and no menu is active. Idempotent. */
+    private fun resumeRawInkNow() {
+        if (!rawInkPausedForMenu) return
+        if (hasSelection || pasteMode || selectionMode) return
+        touchHelper?.setRawDrawingEnabled(true)
+        touchHelper?.isRawDrawingRenderEnabled = true
+        rawInkPausedForMenu = false
+    }
+
+    /**
+     * Resume the hardware pen AFTER the current tap has fully lifted. Used by CUT: cut deletes
+     * the selection and exits it within a single stylus tap, so resuming synchronously re-enables
+     * raw ink while that tap is still down — its ACTION_UP then paints a stray hardware dot on the
+     * Cut chip (copy/paste/trash don't resume mid-tap, so they never had this). Deferring past the
+     * release avoids the dot; the delayed runnable always fires, so the pen never stays dead.
+     */
+    private fun scheduleRawInkResume() {
+        provideSurfaceView().removeCallbacks(resumeRawInkRunnable)
+        provideSurfaceView().postDelayed(resumeRawInkRunnable, 250L)
+    }
+
+    private fun exitSelectionMode(deferRawResume: Boolean = false) {
         selectionMode = false
         hasSelection = false
         pasteMode = false
@@ -1176,6 +1265,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
         provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
         exitImageMode()
+        // Restore the hardware pen. CUT defers it past the tap release so the Cut chip's own
+        // ACTION_UP can't land on a re-enabled raw session and paint a dot; all other callers
+        // (toolbar buttons, off-surface) resume immediately.
+        if (deferRawResume) scheduleRawInkResume() else syncRawInkToSelectionMenu()
     }
 
     // --- Zoom / pan infrastructure ---
@@ -1621,6 +1714,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         pasteMode = false
         selectionMode = false
         hasSelection = false
+        syncRawInkToSelectionMenu()   // selection cleared → restore hardware pen if it was paused
         procrastinator = false
         penState = false
         imageMode = true
@@ -1811,6 +1905,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         pasteMode = false
         selectionMode = false
         hasSelection = false
+        syncRawInkToSelectionMenu()   // selection cleared → restore hardware pen if it was paused
         procrastinator = false
         penState = false
         imageMode = true
@@ -1826,6 +1921,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         pasteMode = false
         selectionMode = false
         hasSelection = false
+        syncRawInkToSelectionMenu()   // selection cleared → restore hardware pen if it was paused
         procrastinator = false
         penState = false
         imageMode = true
@@ -2187,13 +2283,15 @@ abstract class SurfaceFragment : ScreenFragment() {
         // for no confirmation step. applyLiveSelection is assigned after the rows
         // are built; the reference lets the row handlers call it.
         var applyLiveSelection: () -> Unit = {}
+        // Cheap per-tap subset (app-side pen state + toolbar tint) — no Onyx hardware calls.
+        var applyLivePrefs: () -> Unit = {}
 
         colorItems.forEachIndexed { i, item ->
             item.setOnTouchListener { v, e ->
                 if (e.actionMasked == MotionEvent.ACTION_DOWN) {
                     selColor = i
                     colorItems.forEachIndexed { j, c -> c.background = ringDrawable(j == selColor, GradientDrawable.OVAL) }
-                    applyLiveSelection()
+                    applyLivePrefs()
                     v.performClick()
                 }
                 true
@@ -2228,7 +2326,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 if (e.actionMasked == MotionEvent.ACTION_DOWN) {
                     selWidth = i
                     widthItems.forEachIndexed { j, c -> c.background = ringDrawable(j == selWidth, GradientDrawable.RECTANGLE) }
-                    applyLiveSelection()
+                    applyLivePrefs()
                     v.performClick()
                 }
                 true
@@ -2263,7 +2361,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 if (e.actionMasked == MotionEvent.ACTION_DOWN) {
                     selCalligraphy = (i == 1)
                     styleItems.forEachIndexed { j, c -> c.background = ringDrawable((j == 1) == selCalligraphy, GradientDrawable.RECTANGLE) }
-                    applyLiveSelection()
+                    applyLivePrefs()
                     v.performClick()
                 }
                 true
@@ -2273,18 +2371,27 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         // Live-apply: every tapped option takes effect immediately (pen, hardware
         // preview, prefs, toolbar tint). Exactly what the old OK button did.
-        applyLiveSelection = {
+        // Per-tap (cheap): app-side pen state, pref, and the toolbar tint for instant visual
+        // feedback. Deliberately NO touchHelper.setStroke* here — the raw session is paused
+        // while the modal is up, so those hardware reconfigures (setStrokeStyle cold-starts the
+        // native pen, ~1s on-device) have no visible effect yet froze the UI on every tap.
+        applyLivePrefs = {
             paint.color = colorValues[selColor]
             paint.strokeWidth = widthValues[selWidth]
             calligraphyMode = selCalligraphy
             sharedPreferences.edit().putBoolean("calligraphyMode", calligraphyMode).apply()
-            touchHelper?.setStrokeWidth(effectivePenWidth() * baseScale * zoomScale)
-            touchHelper?.setStrokeColor(paint.color)
-            applyStrokeStyle()
             val opaqueColor = Color.rgb(Color.red(paint.color), Color.green(paint.color), Color.blue(paint.color))
             provideToolbarDrawing().toolbarPen.background.setTint(
                 if (opaqueColor == Color.BLACK) Color.GRAY else opaqueColor
             )
+        }
+        // Full apply (incl. the heavy Onyx hardware calls) — run ONCE on dismiss, right before
+        // the raw session is restored, so the hardware pen picks up the final selection.
+        applyLiveSelection = {
+            applyLivePrefs()
+            touchHelper?.setStrokeWidth(effectivePenWidth() * baseScale * zoomScale)
+            touchHelper?.setStrokeColor(paint.color)
+            applyStrokeStyle()
         }
 
         // Pause the raw-ink session while the modal is up. With the session live,
@@ -2485,11 +2592,57 @@ abstract class SurfaceFragment : ScreenFragment() {
                             // the whole panel (slightly less instant than the native overlay, but
                             // consistent everywhere). Flip this back to BuildConfig.VIWOODS_FAST_INK
                             // to re-enable the native hardware path for testing.
+                            //
+                            // Native T1000 fast ink (initWriting → libpaintworker → WritingSurface)
+                            // is the ONLY fast path on this panel; the AutoDraw binder path can't set
+                            // native rects (framework bug in updateAutoDrawRegion) so it never produces
+                            // fast ink. See jdkruzr's VIWOODS_APP_DEV.md ("How Fast Ink Actually Works").
+                            //
+                            // Prerequisite: persist.sys.focusmonitor.config=1 present AT BOOT + targetSdk
+                            // 30. Both satisfied — yet hardware ink still does not render on the AiPaper
+                            // Mini from a sideloaded app. PROVEN 2026-07 by building jdkruzr's own PoC
+                            // (com.example.einkpoc) and running the identical full recipe (initWriting +
+                            // ENoteWriting.setAutoDrawRects + T1000 arm): the PoC is slow too. The
+                            // libpaintworker WritingSurface can't lock the system buffer from the
+                            // untrusted_app_30 sandbox (lock error:-22); only a privileged /product app
+                            // (like WiNote) can. Keep the live software FAST-waveform path until Ledger
+                            // can be installed as a system/privileged app (needs root). The full hardware
+                            // recipe stays in ViwoodsFastInk.enable(), gated off here.
+                            // Permanently OFF. The hardware path suppresses live software drawing
+                            // (native is supposed to paint), but native never paints on this sideloaded
+                            // app — so it's strictly WORSE (ink only appears on pen-up). Exhaustively
+                            // disproven 2026-07: prop set + reboot + targetSdk30 + full recipe + adb root
+                            // + SELinux permissive + WiNote-primed native state — all still slow. Leave
+                            // software FAST-waveform; hardware recipe stays in ViwoodsFastInk, gated here.
+                            // 2026-07-11: hardware ink RE-ENABLED on the viwoods flavor. Diffing
+                            // WiNote's working logcat against a failing sideloaded app on the same
+                            // freshly-rebooted (clean) WritingProducer queue showed the sideloaded
+                            // failure was self-inflicted: the AutoDraw binder path + T1000 arm made
+                            // system_server spin up a WritingSurface that can't lock the producer
+                            // (lock error:-22). WiNote calls NONE of that — it uses only the
+                            // in-process JNI recipe (initWriting → setWritingEnabled → onWritingStart).
+                            // ViwoodsFastInk.enable() now mirrors WiNote exactly. Gate on the flavor
+                            // flag so the Boox (standard, targetSdk 36) build never takes this path.
+                            // Hardware ink gated OFF: the app-level API surface now matches WiNote
+                            // exactly (initWriting → setWritingEnabled → onWritingStart → setWriting-
+                            // JavaBackgroundBitmap, all fire "ok", no lock error:-22) yet the native
+                            // RjHandWriting fast-show engine still won't paint — the remaining gate is
+                            // native/first-party and the /product-install test is blocked by a LOCKED
+                            // bootloader (unlock = wipe). Software FAST-waveform is the daily path.
+                            // Flip to BuildConfig.VIWOODS_FAST_INK to resume the hardware experiment.
+                            // Daily = software ink (usable, optimized: segment-only live refresh +
+                            // no frame delay). Hardware path preserved behind the flag; flip to
+                            // BuildConfig.VIWOODS_FAST_INK to resume the experiment.
                             val useHardwareInk = false
                             viwoodsInk?.enable(
                                 dm.widthPixels, dm.heightPixels,
                                 useHardwareInk
                             )
+                            // Hand the native overlay the page bitmap at setup (WiNote sets it once,
+                            // full device res, before overlay-enable). Refreshed again per stroke.
+                            if (viwoodsInk?.hardwareInk == true) {
+                                viwoodsPageSnapshot()?.let { viwoodsInk?.setPageBitmap(it) }
+                            }
                         } catch (t: Throwable) {
                             Timber.w(t, "Viwoods enable() failed")
                         }
@@ -2634,19 +2787,33 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
         strokePaint.color = stroke.color
         strokePaint.strokeWidth = stroke.strokeWidth
+        // Round cap/join so segment ends and direction changes read smooth, not angular.
+        val savedCap = strokePaint.strokeCap
+        val savedJoin = strokePaint.strokeJoin
+        strokePaint.strokeCap = Paint.Cap.ROUND
+        strokePaint.strokeJoin = Paint.Join.ROUND
         val path = Path()
-        val prePoint = PointF(points[0].x, points[0].y)
         if (points.size == 1) {
-            path.moveTo(prePoint.x - 1f, prePoint.y - 1f)
+            path.moveTo(points[0].x - 1f, points[0].y - 1f)
+            path.lineTo(points[0].x, points[0].y)
         } else {
-            path.moveTo(prePoint.x, prePoint.y)
-        }
-        for (point in points) {
-            path.quadTo(prePoint.x, prePoint.y, point.x, point.y)
-            prePoint.x = point.x
-            prePoint.y = point.y
+            // Quadratic Bézier through the segment midpoints: each raw point is the
+            // control handle, so the curve passes smoothly between samples instead of
+            // kinking at every point. (The old quadTo(prePoint, point) put the control
+            // ON the segment start, which degenerates to a straight polyline — the
+            // source of the jagged look on sparsely-sampled Boox strokes.)
+            path.moveTo(points[0].x, points[0].y)
+            for (i in 1 until points.size - 1) {
+                val midX = (points[i].x + points[i + 1].x) / 2f
+                val midY = (points[i].y + points[i + 1].y) / 2f
+                path.quadTo(points[i].x, points[i].y, midX, midY)
+            }
+            val last = points[points.size - 1]
+            path.lineTo(last.x, last.y)
         }
         targetCanvas.drawPath(path, strokePaint)
+        strokePaint.strokeCap = savedCap
+        strokePaint.strokeJoin = savedJoin
     }
 
     /**
@@ -3082,7 +3249,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                             val removedIds = selectedStrokes.map { it.strokeId }
                             strokes.removeAll { it.strokeId in removedIds.toSet() }
                             onStrokesDeleted(removedIds)
-                            exitSelectionMode()
+                            exitSelectionMode(deferRawResume = true)   // resume after this tap lifts (no stray dot)
                             applyStrokes(strokes, true)
                             onStrokeChanged(strokes)
                             return true
@@ -3195,6 +3362,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                         hasSelection = true
                         selectionMode = false
                         selBox = computeSelBox(selectedStrokes)
+                        syncRawInkToSelectionMenu()   // selection→menu still active; keep hardware ink paused
                         drawWithSelection()
                         if (selectedStrokes.isEmpty()) {
                             showMessage(R.string.calendar_drawing_toolbar_nothing_selected, provideSurfaceView())
@@ -3312,17 +3480,98 @@ abstract class SurfaceFragment : ScreenFragment() {
         return reversals
     }
 
-    private fun isCircleGesture(points: List<StrokePoint>): Boolean {
-        if (points.size < 8) return false
-        val m = gestureMetrics(points)
-        if (m.bboxDiag < GESTURE_MIN_CIRCLE_DIAG) return false                  // smaller than a deliberate ring → likely a letter
-        if (m.pathLength < 1f || m.absTurning <= 0f) return false
-        if (m.closureDist > GESTURE_CLOSURE_FRACTION * m.pathLength) return false // ends must return near the start
-        if (m.closureDist > 0.5f * m.bboxDiag) return false
-        if (abs(m.netTurning) < GESTURE_CIRCLE_MIN_TURN) return false            // roughly one full loop
-        if (abs(m.netTurning) / m.absTurning < 0.75f) return false              // consistent rotation, not back-and-forth
-        if (m.pathLength > 2.2f * (PI.toFloat() * m.bboxDiag)) return false      // not too jagged for a ring of this size
-        return true
+    /** Result of fitting a circle to a candidate stroke — shape flags + the metrics behind them. */
+    private class CircleFit(
+        val shapeOk: Boolean,     // shape ALONE reads as a ring (size-floor + band + coverage + closed-ish)
+        val sizeOk: Boolean,      // above the degenerate size floor
+        val closedish: Boolean,   // roughly closed OR wraps most of the way round → a real ring attempt
+        val bandFrac: Float,      // fraction of points within the radial band of r̄
+        val coverageDeg: Float,   // angular span the points cover around the centroid
+        val closureOverR: Float,  // endpoint→start distance as a multiple of r̄
+        val diameterPx: Float,    // bbox diagonal — the ring's rough diameter
+    )
+
+    /**
+     * Fit a circle to the stroke and decide if it's a ring. Robust to wobble/ovals: a
+     * hand-drawn circle has most points at a similar radius from the centroid (radial
+     * band) and its points sweep most of the way around (angular coverage) — neither of
+     * which a shaky hand breaks, unlike the old turning-consistency ratio.
+     */
+    private fun classifyCircle(points: List<StrokePoint>): CircleFit {
+        if (points.size < GESTURE_MIN_POINTS) return CircleFit(false, false, false, 0f, 0f, 0f, 0f)
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        var sumX = 0f; var sumY = 0f
+        for (p in points) {
+            if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x
+            if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y
+            sumX += p.x; sumY += p.y
+        }
+        val bboxDiag = hypot(maxX - minX, maxY - minY)
+        val sizeOk = bboxDiag >= GESTURE_MIN_CIRCLE_DIAG
+        val cx = sumX / points.size; val cy = sumY / points.size
+
+        var sumR = 0f
+        val radii = FloatArray(points.size)
+        for (i in points.indices) {
+            val r = hypot(points[i].x - cx, points[i].y - cy)
+            radii[i] = r; sumR += r
+        }
+        val rBar = sumR / points.size
+        if (rBar < 1f) return CircleFit(false, sizeOk, false, 0f, 0f, 0f, bboxDiag)
+
+        // (a) radial band: how many points sit at ~r̄.
+        val band = GESTURE_CIRCLE_BAND * rBar
+        val inBand = radii.count { abs(it - rBar) <= band }
+        val bandFrac = inBand.toFloat() / points.size
+
+        // (b) angular coverage: bin the points' bearings into 24×15° buckets.
+        val bins = BooleanArray(24)
+        for (p in points) {
+            var ang = atan2(p.y - cy, p.x - cx)                 // (−π, π]
+            if (ang < 0f) ang += (2f * PI.toFloat())
+            var b = (ang / (2f * PI.toFloat()) * 24f).toInt()
+            if (b < 0) b = 0; if (b > 23) b = 23
+            bins[b] = true
+        }
+        val coverageDeg = bins.count { it } * 15f
+
+        // (c) closure.
+        val closureDist = hypot(points.last().x - points.first().x, points.last().y - points.first().y)
+        val closureOverR = closureDist / rBar
+
+        val closedish = closureOverR <= GESTURE_CIRCLE_CLOSURE_R || coverageDeg >= GESTURE_CIRCLE_COVERAGE_DEG
+        // Shape alone — NOT size-gated as a safeguard (floor only). Enclosure of OTHER ink
+        // is applied at the call site and is what actually distinguishes a lasso from a letter.
+        val shapeOk = sizeOk &&
+            bandFrac >= GESTURE_CIRCLE_BAND_FRAC &&
+            coverageDeg >= GESTURE_CIRCLE_COVERAGE_DEG &&
+            closedish
+        return CircleFit(shapeOk, sizeOk, closedish, bandFrac, coverageDeg, closureOverR, bboxDiag)
+    }
+
+    /** True if the ring described by [points] encircles any existing ink at all (≥1 point inside). */
+    private fun encirclesInk(points: List<StrokePoint>): Boolean {
+        val polygon = points.map { PointF(it.x, it.y) }
+        if (polygon.size < 3) return false
+        return strokes.any { StrokeClipboard.isStrokeInsidePolygon(it, polygon) }
+    }
+
+    /**
+     * The real lasso safeguard: does the ring enclose a DIFFERENT existing stroke, counting a
+     * stroke as enclosed when a MAJORITY (≥ [GESTURE_ENCLOSE_MAJORITY]) of its points fall inside
+     * the ring polygon — tolerant of the ring grazing/overlapping the letter. The ring itself is
+     * not yet in [strokes] at eval time, so it's naturally excluded.
+     */
+    private fun enclosesOtherInk(points: List<StrokePoint>): Boolean {
+        val polygon = points.map { PointF(it.x, it.y) }
+        if (polygon.size < 3) return false
+        return strokes.any { stroke ->
+            val pts = stroke.strokePoints
+            if (pts.isEmpty()) return@any false
+            val inside = pts.count { StrokeClipboard.isPointInPolygon(PointF(it.x, it.y), polygon) }
+            inside.toFloat() / pts.size >= GESTURE_ENCLOSE_MAJORITY
+        }
     }
 
     private fun isScribbleGesture(points: List<StrokePoint>): Boolean {
@@ -3358,6 +3607,23 @@ abstract class SurfaceFragment : ScreenFragment() {
         return true
     }
 
+    /**
+     * Short confirmation buzz when an ink gesture (circle-to-lasso / scribble-to-erase)
+     * fires — the user can't watch logcat on the tablet, so this is the "it caught" signal
+     * alongside the on-screen selection/erase. No-ops silently on a device without a motor.
+     */
+    private fun gestureHaptic() {
+        try {
+            val vib = context?.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator ?: return
+            if (!vib.hasVibrator()) return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vib.vibrate(VibrationEffect.createOneShot(35, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION") vib.vibrate(35)
+            }
+        } catch (_: Exception) { /* haptics are best-effort */ }
+    }
+
     /** Turn the circle into a lasso selection of the enclosed ink. Returns false (→ commit as ink) if it enclosed nothing. */
     private fun performCircleSelect(points: List<StrokePoint>): Boolean {
         val polygon = points.map { PointF(it.x, it.y) }.toMutableList()
@@ -3369,6 +3635,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         hasSelection = true
         selectionMode = false
         selBox = computeSelBox(selectedStrokes)
+        syncRawInkToSelectionMenu()   // selection up → pause hardware ink so menu taps don't dot
         applyStrokes(strokes, true)
         drawWithSelection()
         return true
@@ -3386,10 +3653,44 @@ abstract class SurfaceFragment : ScreenFragment() {
         firstPointTimestamp = Instant.now().toEpochMilli()
         touchPoint.t = 0L
         stylusPointList.add(touchPoint)
+        viwoodsLastLiveIndex = 0
         if (penState) {
+            // Hardware ink: enable the native overlay FIRST, then hand it the page bitmap. The
+            // native RjHandWriting engine is readied asynchronously (~0.3s after initWriting by an
+            // eink-worker thread), so a single early setBackgroundBitmap hits a null engine
+            // ("bufWorker is null"). WiNote succeeds because it re-pushes the bitmap repeatedly; we
+            // do the same — here on stroke start and again on every move (see onMoveDrawing).
             viwoodsInk?.onStrokeStart()
             viwoodsInk?.reassertFastMode()
+            if (viwoodsInk?.hardwareInk == true) {
+                viwoodsCachedSnapshot = viwoodsPageSnapshot()
+                viwoodsCachedSnapshot?.let { viwoodsInk?.setPageBitmap(it) }
+            }
         }
+    }
+
+    /**
+     * Render the current page (template + committed strokes) to a full device-resolution bitmap,
+     * for the Viwoods native writing overlay's background. Uses [viewMatrix] so logical canvas
+     * coordinates map to the panel exactly as on screen. Viwoods hardware-ink path only.
+     */
+    private fun viwoodsPageSnapshot(): android.graphics.Bitmap? {
+        // Full device-panel resolution (WiNote hands the native layer a 1440×1920 bitmap).
+        val dm = resources.displayMetrics
+        val w = dm.widthPixels; val h = dm.heightPixels
+        if (w <= 0 || h <= 0) { Timber.w("viwoodsPageSnapshot null: dm ${w}x${h}"); return null }
+        val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.drawColor(Color.WHITE)
+        // Map logical canvas (CANVAS_WIDTH×CANVAS_HEIGHT) to fill the full panel.
+        c.save()
+        c.scale(w.toFloat() / CANVAS_WIDTH, h.toFloat() / CANVAS_HEIGHT)
+        if (::templateBitmap.isInitialized) c.drawBitmap(templateBitmap, 0f, 0f, null)
+        renderImageElements(c)
+        for (stroke in strokes) drawStrokePath(c, paint, stroke)
+        c.restore()
+        Timber.i("viwoodsPageSnapshot ${w}x${h} strokes=${strokes.size}")
+        return bmp
     }
 
     private fun onMoveDrawing(touchPoints: List<StrokePoint>) {
@@ -3408,20 +3709,26 @@ abstract class SurfaceFragment : ScreenFragment() {
             }
         }
 
+        // Hardware ink: re-push the cached page bitmap on every move. The native RjHandWriting
+        // engine is readied asynchronously after initWriting, so repeated pushes ensure one lands
+        // once it's ready (WiNote re-pushes similarly). Cheap: reuses the stroke-start snapshot.
+        if (penState && viwoodsInk?.hardwareInk == true) {
+            viwoodsCachedSnapshot?.let { viwoodsInk?.setPageBitmap(it) }
+            return
+        }
+
         // Software live rendering for the no-Onyx path. Skipped when Viwoods hardware ink is
         // active (the T1000 renders the live stroke natively — drawing it ourselves too would
         // double-image). On the FAST-waveform fallback the panel is in FAST mode so these
         // partial posts refresh quickly.
         if (touchHelper == null && penState && viwoodsInk?.hardwareInk != true) {
             if (viwoodsInk != null) {
-                // Viwoods: coalesce the heavy full-stroke post to one per display frame so a
-                // burst of MotionEvents can't build a backlog of full-area FAST refreshes that
-                // makes the ink lag behind the nib. Points were already captured above; this
-                // only throttles the panel post. See [viwoodsLivePostRunnable].
-                if (!viwoodsLivePostScheduled) {
-                    viwoodsLivePostScheduled = true
-                    provideSurfaceView().postOnAnimation(viwoodsLivePostRunnable)
-                }
+                // Viwoods: render THIS batch of points immediately. The old code coalesced to one
+                // post per animation frame because each post refreshed the whole-stroke bbox and a
+                // burst would back up. Now the live refresh is segment-only (constant, tiny cost —
+                // see renderLivePreviewSoftware), so per-batch synchronous rendering no longer backs
+                // up and removes the ~1-frame postOnAnimation delay that made the ink trail the nib.
+                renderLivePreviewSoftware()
             } else {
                 // Non-Onyx Boox fallback (e.g. Palma 2 Pro): render immediately, unchanged.
                 renderLivePreviewSoftware()
@@ -3447,11 +3754,18 @@ abstract class SurfaceFragment : ScreenFragment() {
         val totalScale = baseScale * zoomScale
         val sigma = paint.strokeWidth * totalScale * 4.0f
 
-        // Transform canvas-space bounds to screen space for the dirty rect.
-        val allX = stylusPointList.map { it.x }
-        val allY = stylusPointList.map { it.y }
-        val minPt = floatArrayOf(allX.min() - sigma / totalScale, allY.min() - sigma / totalScale)
-        val maxPt = floatArrayOf(allX.max() + sigma / totalScale, allY.max() + sigma / totalScale)
+        // Dirty rect covers ONLY the points added since the last post (bridged to the previous
+        // point so the new segment joins seamlessly), NOT the whole stroke. This keeps each e-ink
+        // partial refresh tiny and constant-cost even as the stroke grows long — the whole-stroke
+        // bbox was making every frame refresh a bigger region, so the ink trailed the nib. We still
+        // redraw the full path (vector, cheap) but clipped to this small rect, so nothing outside it
+        // is touched and prior posted segments are preserved.
+        val from = (viwoodsLastLiveIndex - 1).coerceAtLeast(0)
+        val recent = stylusPointList.subList(from, stylusPointList.size)
+        val rx = recent.map { it.x }
+        val ry = recent.map { it.y }
+        val minPt = floatArrayOf(rx.min() - sigma / totalScale, ry.min() - sigma / totalScale)
+        val maxPt = floatArrayOf(rx.max() + sigma / totalScale, ry.max() + sigma / totalScale)
         viewMatrix.mapPoints(minPt)
         viewMatrix.mapPoints(maxPt)
         val rect = Rect(
@@ -3470,6 +3784,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         lockCanvas.drawPath(path, viwoodsPredrawPaint())
         lockCanvas.restore()
         provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
+        viwoodsLastLiveIndex = stylusPointList.size
     }
 
     /** Lazily-built non-AA paint for the Viwoods software live preview (matches [paint] width/color). */
@@ -3517,14 +3832,30 @@ abstract class SurfaceFragment : ScreenFragment() {
             if (autoGesturesEnabled && !hasSelection && !selectionMode && !pasteMode && !textMode) {
                 val gesturePoints = stylusPointList.toList()
                 if (isScribbleGesture(gesturePoints) && performScribbleErase(gesturePoints)) {
+                    gestureHaptic()
                     lastPoint = null
                     stylusPointList.clear()
                     return
                 }
-                if (isCircleGesture(gesturePoints) && performCircleSelect(gesturePoints)) {
+                val fit = classifyCircle(gesturePoints)
+                val enclosesOther = enclosesOtherInk(gesturePoints)   // the real lasso safeguard
+                val accepted = fit.shapeOk && enclosesOther
+                if (accepted && performCircleSelect(gesturePoints)) {
+                    gestureHaptic()
                     lastPoint = null
                     stylusPointList.clear()
                     return
+                }
+                // Diagnostic: a real ring attempt (closed-ish, above the floor, at least grazing
+                // other ink) that was NOT accepted — surface the deciding numbers, incl. whether
+                // SIZE or ENCLOSURE was the blocker. Gated on closed-ish + encircles ink so
+                // normal writing (open letters, self-enclosing "o"s) never toasts.
+                if (GESTURE_DEBUG_TOAST && !accepted && fit.closedish && fit.sizeOk && encirclesInk(gesturePoints)) {
+                    val msg = "circle? in-band=${(fit.bandFrac * 100).roundToInt()}% " +
+                        "coverage=${fit.coverageDeg.roundToInt()}° " +
+                        "closure=${((fit.closureOverR * 10).roundToInt() / 10f)}r " +
+                        "diam=${fit.diameterPx.roundToInt()}px enclosesOtherInk=${if (enclosesOther) "yes" else "no"}"
+                    Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
                 }
             }
 

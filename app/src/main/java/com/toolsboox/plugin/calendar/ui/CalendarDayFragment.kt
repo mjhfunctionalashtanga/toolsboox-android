@@ -396,11 +396,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 CalendarNavigator.toDayNote(this, currentDate, "pickings")
             }
         }
-        // Calendar button: tap = apps/almanac panel, long-press = day sections. Both
-        // float opposite the pen strip. (Kept off the dense date bar to avoid overlap;
-        // a dedicated home comes with the tool-bar redesign.)
-        binding.toolbarDrawing.toolbarCalendarView.setOnClickListener { showAppsModal() }
-        binding.toolbarDrawing.toolbarCalendarView.setOnLongClickListener { showSectionsModal(); true }
+        // Calendar button opens the "Go to" panel (day sections + Ledger surfaces),
+        // floating opposite the pen strip. Almanac views live on the top date bar.
+        binding.toolbarDrawing.toolbarCalendarView.setOnClickListener { showGoToModal() }
         binding.goAppsButton.visibility = View.GONE
         binding.goSectionsButton.visibility = View.GONE
 
@@ -416,39 +414,34 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     private data class GoItem(val label: String, val icon: Int, val action: () -> Unit)
 
-    /** The "sections" jump (right caret button): moves within this day's pages. */
-    private fun showSectionsModal() = showGoModal(
-        getString(R.string.go_group_day),
+    /**
+     * The "Go to" panel — the day's sections and the Ledger surfaces. Almanac views
+     * (Week/Month/Quarter/Year) are NOT here: the top date bar already handles those.
+     */
+    private fun showGoToModal() = showGoModal(
+        getString(R.string.go_to_title),
         listOf(
-            GoItem("Schedule", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
-            GoItem("Pickings", R.drawable.ic_go_pickings) { CalendarNavigator.toDayNote(this, currentDate, "pickings") },
-            GoItem("Gratitude", R.drawable.ic_go_gratitude) { CalendarNavigator.toDayNote(this, currentDate, "gratitude") },
-            GoItem("Later List", R.drawable.ic_go_later) { CalendarNavigator.toDayNote(this, currentDate, "intake") },
-            GoItem("Notes", R.drawable.ic_go_notes) { CalendarNavigator.toDayNote(this, currentDate, "0") }
+            getString(R.string.go_group_day) to listOf(
+                GoItem("Today", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
+                GoItem("Pickings", R.drawable.ic_go_pickings) { CalendarNavigator.toDayNote(this, currentDate, "pickings") },
+                GoItem("Gratitude", R.drawable.ic_go_gratitude) { CalendarNavigator.toDayNote(this, currentDate, "gratitude") },
+                GoItem("Later List", R.drawable.ic_go_later) { CalendarNavigator.toDayNote(this, currentDate, "intake") },
+                GoItem("Notes", R.drawable.ic_go_notes) { CalendarNavigator.toDayNote(this, currentDate, "0") }
+            ),
+            getString(R.string.go_group_ledger) to listOf(
+                GoItem("Bookshelf", R.drawable.ic_dashboard_item_reader) { findNavController().navigate(R.id.action_to_reader) },
+                GoItem("Feed Ledger", R.drawable.ic_dashboard_item_feeds) { findNavController().navigate(R.id.action_to_feeds) },
+                GoItem("Ask my Ledger", R.drawable.ic_dashboard_item_chat) { findNavController().navigate(R.id.action_to_ledger_chat) },
+                GoItem("Cloud", R.drawable.ic_dashboard_item_cloud) { CalendarNavigator.toCloudSync(this) }
+            )
         )
     )
 
-    /** The "apps" jump (left caret button): move between the Almanac views and the
-     *  Ledger surfaces — Bookshelf, Feed Ledger, Ask my Ledger. */
-    private fun showAppsModal() = showGoModal(
-        getString(R.string.go_to_title),
-        listOf(
-            GoItem("Bookshelf", R.drawable.ic_dashboard_item_reader) { findNavController().navigate(R.id.action_to_reader) },
-            GoItem("Feed Ledger", R.drawable.ic_dashboard_item_feeds) { findNavController().navigate(R.id.action_to_feeds) },
-            GoItem("Ask my Ledger", R.drawable.ic_dashboard_item_chat) { findNavController().navigate(R.id.action_to_ledger_chat) },
-            GoItem("Week", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toWeekPage(this, currentDate, locale) },
-            GoItem("Month", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toMonthPage(this, currentDate) },
-            GoItem("Quarter", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toQuarterPage(this, currentDate) },
-            GoItem("Year", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toYearPage(this, currentDate) }
-        ),
-        groupLabel = getString(R.string.go_group_ledger)
-    )
-
     /**
-     * Shared builder for the floating "Go to" panels. Anchors to the side OPPOSITE the
+     * Shared builder for the floating "Go to" panel. Anchors to the side OPPOSITE the
      * pen strip (so they never collide) and stays compact — iPad page-selector style.
      */
-    private fun showGoModal(title: String, items: List<GoItem>, groupLabel: String? = null) {
+    private fun showGoModal(title: String, groups: List<Pair<String, List<GoItem>>>) {
         val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
         val list = root.findViewById<LinearLayout>(R.id.go_to_list)
         root.findViewById<TextView>(R.id.go_to_title).text = title
@@ -456,19 +449,19 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-        if (groupLabel != null) {
+        for ((header, items) in groups) {
             val tv = TextView(requireContext())
-            tv.text = groupLabel.uppercase()
+            tv.text = header.uppercase()
             tv.setTextColor(0xFF8A8A8A.toInt()); tv.textSize = 12f; tv.letterSpacing = 0.08f
-            tv.setPadding(dp(14), dp(10), dp(14), dp(4))
+            tv.setPadding(dp(14), dp(12), dp(14), dp(4))
             list.addView(tv)
-        }
-        for (item in items) {
-            val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
-            r.findViewById<ImageView>(R.id.go_icon).setImageResource(item.icon)
-            r.findViewById<TextView>(R.id.go_label).text = item.label
-            r.setOnClickListener { dialog.dismiss(); item.action() }
-            list.addView(r)
+            for (item in items) {
+                val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
+                r.findViewById<ImageView>(R.id.go_icon).setImageResource(item.icon)
+                r.findViewById<TextView>(R.id.go_label).text = item.label
+                r.setOnClickListener { dialog.dismiss(); item.action() }
+                list.addView(r)
+            }
         }
 
         dialog.show()
