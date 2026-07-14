@@ -399,7 +399,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // Calendar button opens the "Go to" panel (day sections + Ledger surfaces),
         // floating opposite the pen strip. Almanac views live on the top date bar.
         binding.toolbarDrawing.toolbarCalendarView.setOnClickListener { showGoToModal() }
-        binding.goAppsButton.visibility = View.GONE
+        // Top-left hamburger on the date bar → the full menu popover (sections + Ledger).
+        binding.goAppsButton.visibility = View.VISIBLE
+        binding.goAppsButton.setOnClickListener { showGoToModal() }
         binding.goSectionsButton.visibility = View.GONE
 
         // Retire the fixed pen strip on the day page — the floating pills + gear now cover
@@ -425,8 +427,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.toolUndo.setOnClickListener { binding.toolbarDrawing.toolbarUndo.performClick() }
         binding.toolRedo.setOnClickListener { binding.toolbarDrawing.toolbarRedo.performClick() }
 
-        // Go to (day sections + Ledger surfaces) + gear (flip/rotate/settings/finger/add).
-        binding.navGoto.setOnClickListener { showGoToModal() }
+        // Bottom pill: ☀️ jump straight to today's schedule (the full menu is the top-left
+        // hamburger). Gear = flip/rotate/settings/finger/add.
+        binding.navGoto.setOnClickListener { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) }
         binding.navGear.setOnClickListener { showWidgetGearMenu() }
         applyWidgetOrientation()
 
@@ -522,13 +525,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
 
         dialog.show()
-        // Open near the nav pill (bottom, opposite the — now hidden — pen strip side).
+        // Open at the top-left, tucked under the hamburger that launches it.
         dialog.window?.let { w ->
-            val penOnLeft = sharedPreferences.getString("calendarToolbarSide", "LEFT") == "LEFT"
             val lp = w.attributes
-            lp.gravity = (if (penOnLeft) Gravity.START else Gravity.END) or Gravity.BOTTOM
-            lp.x = dp(10)
-            lp.y = dp(80)
+            lp.gravity = Gravity.START or Gravity.TOP
+            lp.x = dp(8)
+            lp.y = dp(54)
             lp.width = dp(220)
             w.attributes = lp
         }
