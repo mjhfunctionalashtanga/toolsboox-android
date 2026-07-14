@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:padding="12dp">
+
+        <TextView
+            android:text="@string/feeds_title"
+            android:textSize="28sp"
+            android:textColor="#000000"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/refresh_button"
+            android:text="@string/feeds_refresh"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/settings_button"
+            android:text="@string/feeds_settings"
+            android:layout_marginStart="6dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <ProgressBar
+        android:id="@+id/progress"
+        style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+        android:indeterminate="true"
+        android:visibility="invisible"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+    <LinearLayout
+        android:id="@+id/settings_panel"
+        android:orientation="vertical"
+        android:visibility="gone"
+        android:padding="12dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <EditText
+            android:id="@+id/url_edit"
+            android:hint="@string/feeds_url_hint"
+            android:textColor="#000000" android:textColorHint="#888888"
+            android:inputType="textUri"
+            android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        <EditText
+            android:id="@+id/token_edit"
+            android:hint="@string/feeds_token_hint"
+            android:textColor="#000000" android:textColorHint="#888888"
+            android:inputType="textPassword"
+            android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/save_settings_button"
+            android:text="@string/feeds_save"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/empty_text"
+        android:text="@string/feeds_empty"
+        android:textColor="#666666"
+        android:textSize="16sp"
+        android:padding="20dp"
+        android:visibility="gone"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/feeds_recycler"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"/>
+</LinearLayout>

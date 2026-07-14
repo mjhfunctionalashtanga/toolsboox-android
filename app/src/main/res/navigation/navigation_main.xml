@@ -44,6 +44,10 @@
             android:id="@+id/action_to_reader"
             app:destination="@id/ReaderFragment"/>
 
+    <action
+            android:id="@+id/action_to_feeds"
+            app:destination="@id/FeedsFragment"/>
+
     <fragment
             android:id="@+id/DashboardFragment"
             android:name="com.toolsboox.plugin.dashboard.ui.DashboardFragment"
@@ -69,6 +73,35 @@
             android:name="com.toolsboox.plugin.reader.ui.ReaderFragment"
             android:label="ReaderFragment"
             tools:layout="@layout/fragment_reader">
+
+        <action
+                android:id="@+id/action_to_dashboard"
+                app:destination="@id/DashboardFragment"
+                app:popUpTo="@id/DashboardFragment"
+                app:popUpToInclusive="true"/>
+    </fragment>
+
+    <fragment
+            android:id="@+id/FeedsFragment"
+            android:name="com.toolsboox.plugin.feeds.ui.FeedsFragment"
+            android:label="FeedsFragment"
+            tools:layout="@layout/fragment_feeds">
+
+        <action
+                android:id="@+id/action_to_feed_article"
+                app:destination="@id/FeedArticleFragment"/>
+        <action
+                android:id="@+id/action_to_dashboard"
+                app:destination="@id/DashboardFragment"
+                app:popUpTo="@id/DashboardFragment"
+                app:popUpToInclusive="true"/>
+    </fragment>
+
+    <fragment
+            android:id="@+id/FeedArticleFragment"
+            android:name="com.toolsboox.plugin.feeds.ui.FeedArticleFragment"
+            android:label="FeedArticleFragment"
+            tools:layout="@layout/fragment_feed_article">
 
         <action
                 android:id="@+id/action_to_dashboard"

@@ -130,6 +130,12 @@ class DashboardFragment @Inject constructor() : ScreenFragment() {
         )
         squareItems.add(
             SquareItem(
+                getString(R.string.dashboard_item_feeds_title), R.drawable.ic_dashboard_item_feeds,
+                R.id.action_to_feeds, bundleOf()
+            )
+        )
+        squareItems.add(
+            SquareItem(
                 getString(R.string.dashboard_item_chat_title), R.drawable.ic_dashboard_item_chat,
                 R.id.action_to_ledger_chat, bundleOf()
             )

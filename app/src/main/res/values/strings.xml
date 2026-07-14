@@ -325,7 +325,28 @@
     <string name="dashboard_item_cloud_title">Cloud</string>
     <string name="dashboard_item_chat_title">Ask my\nLedger</string>
     <string name="dashboard_item_reader_title">Reader</string>
+    <string name="dashboard_item_feeds_title">Feed\nLedger</string>
     <string name="ledger_share_target_title">Ledger</string>
+
+    <!-- Feed Ledger -->
+    <string name="feeds_title">Feed Ledger</string>
+    <string name="feeds_refresh">Refresh</string>
+    <string name="feeds_settings">Setup</string>
+    <string name="feeds_url_hint">Miniflux URL (https://rss.example.com)</string>
+    <string name="feeds_token_hint">API token</string>
+    <string name="feeds_save">Save</string>
+    <string name="feeds_saved">Saved on this device.</string>
+    <string name="feeds_empty">No unread entries.</string>
+    <string name="feeds_need_creds">Add your Miniflux URL and API token to load your feeds.</string>
+    <string name="feeds_starred">Starred and saved to your Ledger.</string>
+    <string name="feeds_unstarred">Unstarred.</string>
+    <string name="feeds_article_star">★ Star</string>
+    <string name="feeds_article_unstar">★ Unstar</string>
+    <string name="feeds_article_note">Note</string>
+    <string name="feeds_article_browser">Browser</string>
+    <string name="feeds_article_missing">Could not open this entry.</string>
+    <string name="feeds_article_note_hint">Your note about this article…</string>
+    <string name="feeds_note_saved">Note saved to your Ledger.</string>
 
     <!-- Reader -->
     <string name="reader_prev">‹</string>
