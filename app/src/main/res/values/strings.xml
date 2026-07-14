@@ -323,7 +323,27 @@
     <string name="dashboard_item_kanban_planner_title">Kanban\nplanner</string>
     <string name="dashboard_item_about_title">About</string>
     <string name="dashboard_item_cloud_title">Cloud</string>
+    <string name="dashboard_item_chat_title">Ask my\nLedger</string>
     <string name="ledger_share_target_title">Ledger</string>
+
+    <!-- Ask my Ledger (chat over the corpus) -->
+    <string name="ledger_chat_title">Ask my Ledger</string>
+    <string name="ledger_chat_subtitle">Ask across your highlights, notes, feed annotations and A/V grams.</string>
+    <string name="ledger_chat_scope_books">Book highlights</string>
+    <string name="ledger_chat_scope_articles">Feed annotations</string>
+    <string name="ledger_chat_scope_planner">Planner text</string>
+    <string name="ledger_chat_scope_media">A/V grams</string>
+    <string name="ledger_chat_hint">Ask a question about your ledger…</string>
+    <string name="ledger_chat_ask">Ask</string>
+    <string name="ledger_chat_thinking">Reading your ledger…</string>
+    <string name="ledger_chat_footer">— grounded in %1$d of %2$d entries in scope</string>
+    <string name="ledger_chat_need_question">Type a question first.</string>
+    <string name="ledger_chat_need_scope">Pick at least one section to search.</string>
+    <string name="ledger_chat_settings_toggle">Claude API key &amp; model</string>
+    <string name="ledger_chat_api_key_hint">Claude API key (sk-ant-…)</string>
+    <string name="ledger_chat_model_hint">Model (default claude-sonnet-5)</string>
+    <string name="ledger_chat_save_key">Save</string>
+    <string name="ledger_chat_key_saved">Saved on this device.</string>
     <string name="michaelfilter_intake_title">MichaelFilter Intake</string>
     <string name="michaelfilter_intake_typed_dialog_hint">Paste a link or type text</string>
     <string name="michaelfilter_intake_queued_count">%1$d intake item(s) queued for tomorrow\'s edition</string>

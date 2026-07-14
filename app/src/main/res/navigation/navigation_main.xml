@@ -36,11 +36,28 @@
             android:id="@+id/action_to_michaelfilter_intake"
             app:destination="@id/MichaelFilterIntakeFragment"/>
 
+    <action
+            android:id="@+id/action_to_ledger_chat"
+            app:destination="@id/LedgerChatFragment"/>
+
     <fragment
             android:id="@+id/DashboardFragment"
             android:name="com.toolsboox.plugin.dashboard.ui.DashboardFragment"
             android:label="DashboardFragment"
             tools:layout="@layout/fragment_dashboard">
+    </fragment>
+
+    <fragment
+            android:id="@+id/LedgerChatFragment"
+            android:name="com.toolsboox.plugin.chat.ui.LedgerChatFragment"
+            android:label="LedgerChatFragment"
+            tools:layout="@layout/fragment_ledger_chat">
+
+        <action
+                android:id="@+id/action_to_dashboard"
+                app:destination="@id/DashboardFragment"
+                app:popUpTo="@id/DashboardFragment"
+                app:popUpToInclusive="true"/>
     </fragment>
 
     <fragment
