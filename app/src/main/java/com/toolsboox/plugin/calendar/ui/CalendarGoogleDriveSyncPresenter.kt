@@ -6,6 +6,7 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.api.client.http.ByteArrayContent
 import com.google.api.services.drive.Drive
+import com.toolsboox.da.Attachment
 import com.toolsboox.da.ImageElement
 import com.toolsboox.da.Stroke
 import com.toolsboox.da.TextElement
@@ -15,6 +16,7 @@ import com.toolsboox.fi.GoogleDriveService
 import com.toolsboox.plugin.calendar.da.v1.CalendarSyncItem
 import com.toolsboox.plugin.calendar.da.v1.CalendarSyncViewItem
 import com.toolsboox.plugin.calendar.da.v2.CalendarDay
+import com.toolsboox.plugin.calendar.da.v2.ReadingEvent
 import com.toolsboox.plugin.calendar.fi.*
 import com.toolsboox.ui.plugin.FragmentPresenter
 import com.toolsboox.ui.plugin.ScreenFragment
@@ -654,11 +656,35 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
         val newer = if ((a.updated?.time ?: 0L) >= (b.updated?.time ?: 0L)) a else b
         val older = if (newer === a) b else a
 
+        // Union both sides' erase tombstones first, then subtract them from the unioned
+        // strokes: a stroke erased on either device stays erased instead of being
+        // resurrected from the other device's surviving copy.
+        val tombstones = LinkedHashSet<String>().apply {
+            addAll(a.deletedStrokeIds); addAll(b.deletedStrokeIds)
+        }
+        val elementTombstones = LinkedHashSet<String>().apply {
+            addAll(a.deletedElementIds); addAll(b.deletedElementIds)
+        }
+
         val merged = newer.deepCopy()
-        merged.calendarStrokes = unionStrokeMap(a.calendarStrokes, b.calendarStrokes)
-        merged.noteStrokes = unionStrokeMap(a.noteStrokes, b.noteStrokes)
-        merged.textElements = unionTextElements(a.textElements, b.textElements)
-        merged.imageElements = unionImageElements(a.imageElements, b.imageElements)
+        merged.deletedStrokeIds = tombstones.toMutableList()
+        merged.deletedElementIds = elementTombstones.toMutableList()
+        merged.calendarStrokes = unionStrokeMap(a.calendarStrokes, b.calendarStrokes, tombstones)
+        merged.noteStrokes = unionStrokeMap(a.noteStrokes, b.noteStrokes, tombstones)
+        merged.textElements = unionTextElements(a.textElements, b.textElements, elementTombstones)
+        merged.imageElements = unionImageElements(a.imageElements, b.imageElements, elementTombstones)
+
+        // Reading timeline + A/V grams are authored by the iOS Ledger; union by id so a
+        // highlight/star/recording made on either device survives the merge (append-mostly,
+        // so no tombstones — last-seen copy of a given id wins).
+        merged.readingEvents = LinkedHashMap<String, ReadingEvent>().apply {
+            a.readingEvents.forEach { put(it.id, it) }
+            b.readingEvents.forEach { put(it.id, it) }
+        }.values.toMutableList()
+        merged.avGrams = LinkedHashMap<String, Attachment>().apply {
+            a.avGrams.forEach { put(it.id, it) }
+            b.avGrams.forEach { put(it.id, it) }
+        }.values.toMutableList()
 
         val values = LinkedHashMap<String, Map<String, Float?>>()
         values.putAll(older.calendarValues)
@@ -670,35 +696,47 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
         return merged
     }
 
-    /** Union two style/page → stroke-list maps, deduping strokes by [Stroke.strokeId]. */
+    /**
+     * Union two style/page → stroke-list maps, deduping strokes by [Stroke.strokeId] and
+     * dropping any stroke whose id is tombstoned in [deleted] (erased on either device).
+     */
     private fun unionStrokeMap(
         m1: Map<String, List<Stroke>>,
-        m2: Map<String, List<Stroke>>
+        m2: Map<String, List<Stroke>>,
+        deleted: Set<String> = emptySet()
     ): MutableMap<String, List<Stroke>> {
         val out = mutableMapOf<String, List<Stroke>>()
         for (key in (m1.keys + m2.keys)) {
             val byId = LinkedHashMap<UUID, Stroke>()
-            (m1[key] ?: emptyList()).forEach { byId[it.strokeId] = it }
-            (m2[key] ?: emptyList()).forEach { if (!byId.containsKey(it.strokeId)) byId[it.strokeId] = it }
+            (m1[key] ?: emptyList()).forEach { if (it.strokeId.toString() !in deleted) byId[it.strokeId] = it }
+            (m2[key] ?: emptyList()).forEach { if (it.strokeId.toString() !in deleted && !byId.containsKey(it.strokeId)) byId[it.strokeId] = it }
             out[key] = byId.values.toList()
         }
         return out
     }
 
-    /** Union text boxes by [TextElement.elementId]; the later [TextElement.timestamp] wins a conflict. */
-    private fun unionTextElements(l1: List<TextElement>, l2: List<TextElement>): MutableList<TextElement> {
+    /**
+     * Union text boxes by [TextElement.elementId] (later [TextElement.timestamp] wins a
+     * conflict), dropping any id tombstoned in [deleted] (cut/deleted on either device).
+     */
+    private fun unionTextElements(l1: List<TextElement>, l2: List<TextElement>, deleted: Set<String> = emptySet()): MutableList<TextElement> {
         val byId = LinkedHashMap<UUID, TextElement>()
         (l1 + l2).forEach { e ->
+            if (e.elementId.toString() in deleted) return@forEach
             val prev = byId[e.elementId]
             if (prev == null || e.timestamp > prev.timestamp) byId[e.elementId] = e
         }
         return byId.values.toMutableList()
     }
 
-    /** Union images by [ImageElement.elementId]; the later [ImageElement.timestamp] wins a conflict. */
-    private fun unionImageElements(l1: List<ImageElement>, l2: List<ImageElement>): MutableList<ImageElement> {
+    /**
+     * Union images by [ImageElement.elementId] (later [ImageElement.timestamp] wins a
+     * conflict), dropping any id tombstoned in [deleted] (cut/deleted on either device).
+     */
+    private fun unionImageElements(l1: List<ImageElement>, l2: List<ImageElement>, deleted: Set<String> = emptySet()): MutableList<ImageElement> {
         val byId = LinkedHashMap<UUID, ImageElement>()
         (l1 + l2).forEach { e ->
+            if (e.elementId.toString() in deleted) return@forEach
             val prev = byId[e.elementId]
             if (prev == null || e.timestamp > prev.timestamp) byId[e.elementId] = e
         }
