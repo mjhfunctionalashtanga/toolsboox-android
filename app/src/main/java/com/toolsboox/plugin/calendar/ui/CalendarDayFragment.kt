@@ -35,6 +35,7 @@ import com.toolsboox.plugin.michaelfilter.nw.IntakePageStore
 import com.toolsboox.ui.plugin.SurfaceFragment
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -591,6 +592,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 GoItem("🖼️", "Add image") { binding.toolbarDrawing.toolbarImage.performClick() },
                 GoItem("📌", "Panel → Notes") { pickPanel { p -> savePanelAsNote(p) } },
                 GoItem("🃏", "Share as card") { pickPanel { p -> sharePanelAsCard(p) } },
+                GoItem("🛰️", "Panel → Webhook") { pickPanel { p -> sendPanelToWebhook(p) } },
+                GoItem("🔗", "Webhooks…") { manageWebhooks() },
                 GoItem("👆", "Finger / hand") { binding.toolbarDrawing.toolbarHandTouch.performClick() },
                 GoItem("🔄", "Rotate screen") { binding.toolbarDrawing.toolbarRotate.performClick() }
             ),
@@ -671,6 +674,101 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
             showMessage(getString(R.string.card_saved_to_notes, panel.title), binding.root)
         }
+    }
+
+    /** A short page label for webhook payloads (the note-page key, or "day"). */
+    private fun pageLabel(): String = notePage ?: "day"
+
+    /** Panel → configured webhook. Renders + OCRs the panel, queues the card for delivery. */
+    private fun sendPanelToWebhook(panel: com.toolsboox.plugin.calendar.ot.LedgerPanel) {
+        val hooks = com.toolsboox.plugin.calendar.nw.PanelWebhookStore.list(requireContext())
+        when {
+            hooks.isEmpty() -> showMessage(getString(R.string.webhook_none), binding.root)
+            hooks.size == 1 -> deliverPanel(panel, hooks[0])
+            else -> AlertDialog.Builder(requireContext())
+                .setTitle(R.string.webhook_pick)
+                .setItems(hooks.map { it.name }.toTypedArray()) { d, w -> deliverPanel(panel, hooks[w]); d.dismiss() }
+                .show()
+        }
+    }
+
+    private fun deliverPanel(panel: com.toolsboox.plugin.calendar.ot.LedgerPanel, hook: com.toolsboox.plugin.calendar.nw.PanelWebhook) {
+        if (!::calendarDay.isInitialized) return
+        val pageStrokes = currentPageStrokes()
+        val panelStrokes = pageStrokes.filter { strokeInPanel(it, panel.rect) }
+        val pageKey = notePage ?: "default"
+        val typed = calendarDay.textElements
+            .filter { it.pageKey == pageKey && android.graphics.RectF.intersects(textElementBounds(it), panel.rect) }
+            .joinToString("\n") { it.text }.trim()
+        lifecycleScope.launch {
+            val ocr = com.toolsboox.plugin.calendar.ot.PanelOcr.recognize(panelStrokes)
+            val text = listOf(typed, ocr).filter { it.isNotBlank() }.joinToString("\n").trim()
+            val png = withContext(Dispatchers.Default) {
+                val card = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer
+                    .renderCard(templateBitmap, listOf(pageStrokes), panel.rect)
+                java.io.ByteArrayOutputStream().use { card.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it); it.toByteArray() }
+            }
+            val job = com.toolsboox.plugin.calendar.nw.PanelWebhookJob(
+                webhookName = hook.name, url = hook.url, key = hook.key,
+                panelId = panel.id, title = panel.title, text = text,
+                page = pageLabel(), dateMs = System.currentTimeMillis(), imageFile = ""
+            )
+            com.toolsboox.plugin.calendar.nw.PanelWebhookQueue.enqueue(requireContext(), job, png)
+            com.toolsboox.plugin.calendar.nw.PanelWebhookQueue.scheduleDrain(requireContext())
+            showMessage(getString(R.string.webhook_sent, panel.title, hook.name), binding.root)
+        }
+    }
+
+    /** Add / remove webhook destinations (niche-industry templates). */
+    private fun manageWebhooks() {
+        val ctx = requireContext()
+        val hooks = com.toolsboox.plugin.calendar.nw.PanelWebhookStore.list(ctx)
+        val labels = hooks.map { "${it.name} — ${it.url}" } + getString(R.string.webhook_add)
+        AlertDialog.Builder(ctx)
+            .setTitle(R.string.webhook_manage)
+            .setItems(labels.toTypedArray()) { d, which ->
+                if (which == hooks.size) addWebhookDialog()
+                else {
+                    val h = hooks[which]
+                    AlertDialog.Builder(ctx).setTitle(h.name)
+                        .setMessage(h.url)
+                        .setPositiveButton(R.string.webhook_remove) { _, _ ->
+                            com.toolsboox.plugin.calendar.nw.PanelWebhookStore.remove(ctx, h.name)
+                        }
+                        .setNegativeButton(R.string.cancel, null)
+                        .show()
+                }
+                d.dismiss()
+            }
+            .show()
+    }
+
+    private fun addWebhookDialog() {
+        val ctx = requireContext()
+        fun field(hint: String, pwd: Boolean = false) = EditText(ctx).apply {
+            this.hint = hint; setSingleLine(); if (pwd) inputType =
+                android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val name = field(getString(R.string.webhook_name_hint))
+        val url = field(getString(R.string.webhook_url_hint)).apply { inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI }
+        val key = field(getString(R.string.webhook_key_hint), pwd = true)
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            val p = (16 * resources.displayMetrics.density).toInt(); setPadding(p, p / 2, p, 0)
+            addView(name); addView(url); addView(key)
+        }
+        AlertDialog.Builder(ctx).setTitle(R.string.webhook_add).setView(box)
+            .setPositiveButton(R.string.ok) { _, _ ->
+                val n = name.text.toString().trim(); val u = url.text.toString().trim()
+                if (n.isNotEmpty() && (u.startsWith("http://") || u.startsWith("https://"))) {
+                    com.toolsboox.plugin.calendar.nw.PanelWebhookStore.add(
+                        ctx, com.toolsboox.plugin.calendar.nw.PanelWebhook(n, u, key.text.toString().trim().ifBlank { null })
+                    )
+                    showMessage(getString(R.string.webhook_saved, n), binding.root)
+                } else showMessage(getString(R.string.webhook_invalid), binding.root)
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     /**

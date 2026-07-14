@@ -379,6 +379,17 @@
     <string name="card_pick_panel">Share which panel as a card?</string>
     <string name="card_render_failed">Couldn\'t render that panel. :(</string>
     <string name="card_saved_to_notes">Saved “%s” to Notes &amp; Annotations.</string>
+    <string name="webhook_none">Add a webhook first — Tools → Webhooks…</string>
+    <string name="webhook_pick">Send to which webhook?</string>
+    <string name="webhook_sent">Sent “%1$s” to %2$s.</string>
+    <string name="webhook_manage">Webhooks</string>
+    <string name="webhook_add">＋ Add webhook…</string>
+    <string name="webhook_remove">Remove</string>
+    <string name="webhook_name_hint">Name (e.g. Clinic intake)</string>
+    <string name="webhook_url_hint">https://…/webhook</string>
+    <string name="webhook_key_hint">API key (optional)</string>
+    <string name="webhook_saved">Saved webhook “%s”.</string>
+    <string name="webhook_invalid">Need a name and an http(s) URL.</string>
     <string name="reader_aa">Aa</string>
     <string name="reader_settings_title">Reading</string>
     <string name="reader_font_smaller">A −</string>
