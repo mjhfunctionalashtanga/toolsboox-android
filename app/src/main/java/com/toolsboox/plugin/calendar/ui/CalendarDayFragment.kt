@@ -454,11 +454,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         makeDraggable(binding.toolGrip, binding.toolWidget, "tool") { togglePill("tool") }
         makeDraggable(binding.navGrip, binding.navWidget, "nav") { togglePill("nav") }
 
-        // Minimize/expand pills: the expander collapses to one button + expander; a
-        // long-press on the representative button also toggles it.
-        binding.navExpand.setOnClickListener { togglePill("nav") }
-        binding.toolExpand.setOnClickListener { togglePill("tool") }
-        binding.navGoto.setOnLongClickListener { togglePill("nav"); true }
+        // Collapse/expand is entirely on the grip (tap the handle) — no separate carets.
         applyPillCollapse()
         // Pen is the default tool — reflect that on the pill from the start.
         markActiveTool(binding.toolPen)
@@ -539,16 +535,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val navCollapsed = prefs.getBoolean("nav_collapsed", false)
         val toolCollapsed = prefs.getBoolean("tool_collapsed", false)
 
-        // Collapse the nav pill to grip + center emoji + expander (↑ ↓ hide).
+        // Collapse the nav pill to grip + center emoji (↑ ↓ hide); expand by tapping the grip.
         val navHidden = listOf(binding.navUp, binding.navDown)
         for (v in navHidden) v.visibility = if (navCollapsed) View.GONE else View.VISIBLE
-        binding.navExpand.rotation = if (navCollapsed) 180f else 0f
 
         val toolHidden = listOf(
             binding.toolEraser, binding.toolLasso, binding.toolUndo, binding.toolRedo, binding.toolGear
         )
         for (v in toolHidden) v.visibility = if (toolCollapsed) View.GONE else View.VISIBLE
-        binding.toolExpand.rotation = if (toolCollapsed) 180f else 0f
     }
 
     /** Flip the floating pills between horizontal and vertical, persisted. */

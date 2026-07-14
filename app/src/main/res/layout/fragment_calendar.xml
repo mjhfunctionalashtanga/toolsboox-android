@@ -105,9 +105,9 @@
             <ImageButton android:id="@+id/navDown" android:layout_width="46dp" android:layout_height="46dp"
                 android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_group_day"/>
-            <ImageButton android:id="@+id/navExpand" android:layout_width="38dp" android:layout_height="46dp"
-                android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_left"
-                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@null"/>
+            <ImageButton android:id="@+id/navExpand" android:visibility="gone"
+                android:layout_width="0dp" android:layout_height="0dp" android:src="@drawable/ic_nav_left"
+                android:contentDescription="@null"/>
             <!-- Retired from the nav pill (kept hidden so code refs/tests survive): date
                  arrows live on the top bar now; the wrench moved to the tool pill. -->
             <ImageButton android:id="@+id/navLeft" android:visibility="gone"
@@ -158,9 +158,9 @@
             <ImageButton android:id="@+id/toolGear" android:layout_width="46dp" android:layout_height="46dp"
                 android:padding="11dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_wrench"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_settings"/>
-            <ImageButton android:id="@+id/toolExpand" android:layout_width="38dp" android:layout_height="46dp"
-                android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_left"
-                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@null"/>
+            <ImageButton android:id="@+id/toolExpand" android:visibility="gone"
+                android:layout_width="0dp" android:layout_height="0dp" android:src="@drawable/ic_nav_left"
+                android:contentDescription="@null"/>
         </LinearLayout>
 
         <include
