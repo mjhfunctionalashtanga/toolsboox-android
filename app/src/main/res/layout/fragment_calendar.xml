@@ -44,6 +44,38 @@
                 app:layout_constraintStart_toEndOf="@id/toolbarDrawing"
                 app:layout_constraintEnd_toEndOf="parent"/>
 
+        <!-- iPad-style jump buttons by the carets: left = apps/almanac, right = sections.
+             Hidden by default; only the day page turns them on. -->
+        <ImageButton
+                android:id="@+id/goAppsButton"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:padding="10dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_bar_apps"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/go_to_title"
+                android:visibility="gone"
+                app:layout_constraintTop_toTopOf="@id/navigatorImageView"
+                app:layout_constraintBottom_toBottomOf="@id/navigatorImageView"
+                app:layout_constraintStart_toStartOf="@id/navigatorImageView"
+                android:layout_marginStart="56dp"/>
+
+        <ImageButton
+                android:id="@+id/goSectionsButton"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:padding="10dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_bar_sections"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/go_group_day"
+                android:visibility="gone"
+                app:layout_constraintTop_toTopOf="@id/navigatorImageView"
+                app:layout_constraintBottom_toBottomOf="@id/navigatorImageView"
+                app:layout_constraintEnd_toEndOf="@id/navigatorImageView"
+                android:layout_marginEnd="56dp"/>
+
         <include
                 layout="@layout/toolbar_drawing"
                 android:id="@+id/toolbarDrawing"

@@ -397,8 +397,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             }
         }
         binding.toolbarDrawing.toolbarCalendarView.setOnClickListener {
-            showGoToModal()
+            // Always jump to today's day page (Default style).
+            CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE)
         }
+
+        // iPad-style top jump buttons by the carets: left = apps/almanac, right = sections.
+        binding.goAppsButton.visibility = View.VISIBLE
+        binding.goSectionsButton.visibility = View.VISIBLE
+        binding.goAppsButton.setOnClickListener { showAppsModal() }
+        binding.goSectionsButton.setOnClickListener { showSectionsModal() }
 
         utils.updateToolbar(binding)
         initializeSurface(true)
@@ -412,23 +419,54 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     private data class GoItem(val label: String, val icon: Int, val action: () -> Unit)
 
-    private fun showGoToModal() {
+    /** The "sections" jump (right caret button): moves within this day's pages. */
+    private fun showSectionsModal() = showGoModal(
+        getString(R.string.go_group_day),
+        listOf(
+            GoItem("Schedule", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
+            GoItem("Pickings", R.drawable.ic_go_pickings) { CalendarNavigator.toDayNote(this, currentDate, "pickings") },
+            GoItem("Gratitude", R.drawable.ic_go_gratitude) { CalendarNavigator.toDayNote(this, currentDate, "gratitude") },
+            GoItem("Later List", R.drawable.ic_go_later) { CalendarNavigator.toDayNote(this, currentDate, "intake") },
+            GoItem("Notes", R.drawable.ic_go_notes) { CalendarNavigator.toDayNote(this, currentDate, "0") }
+        )
+    )
+
+    /** The "apps" jump (left caret button): move between the Almanac views and the
+     *  Ledger surfaces — Bookshelf, Feed Ledger, Ask my Ledger. */
+    private fun showAppsModal() = showGoModal(
+        getString(R.string.go_to_title),
+        listOf(
+            GoItem("Bookshelf", R.drawable.ic_dashboard_item_reader) { findNavController().navigate(R.id.action_to_reader) },
+            GoItem("Feed Ledger", R.drawable.ic_dashboard_item_feeds) { findNavController().navigate(R.id.action_to_feeds) },
+            GoItem("Ask my Ledger", R.drawable.ic_dashboard_item_chat) { findNavController().navigate(R.id.action_to_ledger_chat) },
+            GoItem("Week", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toWeekPage(this, currentDate, locale) },
+            GoItem("Month", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toMonthPage(this, currentDate) },
+            GoItem("Quarter", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toQuarterPage(this, currentDate) },
+            GoItem("Year", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toYearPage(this, currentDate) }
+        ),
+        groupLabel = getString(R.string.go_group_ledger)
+    )
+
+    /**
+     * Shared builder for the floating "Go to" panels. Anchors to the side OPPOSITE the
+     * pen strip (so they never collide) and stays compact — iPad page-selector style.
+     */
+    private fun showGoModal(title: String, items: List<GoItem>, groupLabel: String? = null) {
         val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
         val list = root.findViewById<LinearLayout>(R.id.go_to_list)
+        root.findViewById<TextView>(R.id.go_to_title).text = title
         val dialog = AlertDialog.Builder(requireContext()).setView(root).create()
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-        fun header(text: String) {
+        if (groupLabel != null) {
             val tv = TextView(requireContext())
-            tv.text = text.uppercase()
-            tv.setTextColor(0xFF8A8A8A.toInt())
-            tv.textSize = 12f
-            tv.letterSpacing = 0.08f
-            tv.setPadding(dp(14), dp(16), dp(14), dp(4))
+            tv.text = groupLabel.uppercase()
+            tv.setTextColor(0xFF8A8A8A.toInt()); tv.textSize = 12f; tv.letterSpacing = 0.08f
+            tv.setPadding(dp(14), dp(10), dp(14), dp(4))
             list.addView(tv)
         }
-        fun row(item: GoItem) {
+        for (item in items) {
             val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
             r.findViewById<ImageView>(R.id.go_icon).setImageResource(item.icon)
             r.findViewById<TextView>(R.id.go_label).text = item.label
@@ -436,41 +474,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             list.addView(r)
         }
 
-        header(getString(R.string.go_group_day))
-        listOf(
-            GoItem("Schedule", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
-            GoItem("Pickings", R.drawable.ic_go_pickings) { CalendarNavigator.toDayNote(this, currentDate, "pickings") },
-            GoItem("Gratitude", R.drawable.ic_go_gratitude) { CalendarNavigator.toDayNote(this, currentDate, "gratitude") },
-            GoItem("Later List", R.drawable.ic_go_later) { CalendarNavigator.toDayNote(this, currentDate, "intake") },
-            GoItem("Notes", R.drawable.ic_go_notes) { CalendarNavigator.toDayNote(this, currentDate, "0") }
-        ).forEach(::row)
-
-        header(getString(R.string.go_group_views))
-        listOf(
-            GoItem("Week", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toWeekPage(this, currentDate, locale) },
-            GoItem("Month", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toMonthPage(this, currentDate) },
-            GoItem("Quarter", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toQuarterPage(this, currentDate) },
-            GoItem("Year", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toYearPage(this, currentDate) }
-        ).forEach(::row)
-
-        header(getString(R.string.go_group_ledger))
-        listOf(
-            GoItem("Bookshelf", R.drawable.ic_dashboard_item_reader) { findNavController().navigate(R.id.action_to_reader) },
-            GoItem("Feed Ledger", R.drawable.ic_dashboard_item_feeds) { findNavController().navigate(R.id.action_to_feeds) },
-            GoItem("Ask my Ledger", R.drawable.ic_dashboard_item_chat) { findNavController().navigate(R.id.action_to_ledger_chat) },
-            GoItem("Cloud", R.drawable.ic_dashboard_item_cloud) { CalendarNavigator.toCloudSync(this) }
-        ).forEach(::row)
-
         dialog.show()
-        // Float it top-left like the iPad's page selector — a compact panel over the
-        // pen strip area, not a centered sheet. Its bottom rides up toward the tools.
         dialog.window?.let { w ->
+            val penOnLeft = sharedPreferences.getString("calendarToolbarSide", "LEFT") == "LEFT"
             val lp = w.attributes
-            lp.gravity = Gravity.START or Gravity.TOP
+            lp.gravity = (if (penOnLeft) Gravity.END else Gravity.START) or Gravity.TOP
             lp.x = dp(6)
             lp.y = dp(52)
-            lp.width = dp(470)
-            lp.height = (resources.displayMetrics.heightPixels * 0.60f).toInt()
+            lp.width = dp(270)
+            lp.height = (resources.displayMetrics.heightPixels * 0.58f).toInt()
             w.attributes = lp
         }
     }
