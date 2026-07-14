@@ -19,6 +19,7 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.toolsboox.R
 import com.toolsboox.databinding.FragmentReaderBinding
+import com.toolsboox.plugin.calendar.CalendarNavigator
 import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import com.toolsboox.plugin.calendar.da.v2.ReadingEvent
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
@@ -117,7 +118,8 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
     /** Hamburger directory: the actual books on the shelf + jumps to the other surfaces. */
     private fun showReaderDirectory() {
         val nav = androidx.navigation.fragment.NavHostFragment.findNavController(this)
-        val books = booksDir().listFiles()?.filter { it.isFile }?.sortedBy { it.name.lowercase() } ?: emptyList()
+        // Most-recent first (recency tracked by touching the file on open).
+        val books = booksDir().listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() } ?: emptyList()
         val bookRows: List<Pair<String, () -> Unit>> =
             books.map { f -> ("📖  " + f.nameWithoutExtension) to { loadBookFile(f) } } +
             ("＋  Import a book…" to {
@@ -125,9 +127,10 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
             })
         showDirectory(
             listOf(
-                "Books" to bookRows,
+                "Recent books" to bookRows,
                 "Go to" to listOf(
-                    "📅  Day" to { nav.navigate(R.id.action_to_calendar_day) },
+                    "📅  Day" to { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
+                    "🖍️  Notes & Annotations" to { CalendarNavigator.toDayNote(this, LocalDate.now(), "0") },
                     "📰  Feed Ledger" to { nav.navigate(R.id.action_to_feeds) },
                     "💬  Ask my Ledger" to { nav.navigate(R.id.action_to_ledger_chat) }
                 )
@@ -153,6 +156,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
 
     private fun loadBookFile(file: File) {
         currentBookFile = file
+        file.setLastModified(System.currentTimeMillis())   // track recency (last opened)
         requireContext().getSharedPreferences(PREFS, 0).edit().putString(KEY_BOOK, file.absolutePath).apply()
         bookReady = false
         openWhenReady()

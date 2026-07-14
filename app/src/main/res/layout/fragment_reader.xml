@@ -23,6 +23,9 @@
 
         <ImageView android:id="@+id/reader_grip" android:layout_width="22dp" android:layout_height="46dp"
             android:scaleType="fitCenter" android:src="@drawable/ic_grip" android:contentDescription="@null"/>
+        <Button android:id="@+id/goto_button" style="?android:attr/borderlessButtonStyle"
+            android:text="☰" android:textSize="20sp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
         <Button android:id="@+id/prev_button" style="?android:attr/borderlessButtonStyle"
             android:text="@string/reader_prev"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
@@ -40,16 +43,4 @@
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
     </LinearLayout>
 
-    <!-- Top-left hamburger → directory of the actual books + surface jumps. -->
-    <ImageButton
-        android:id="@+id/goto_button"
-        android:layout_width="46dp"
-        android:layout_height="46dp"
-        android:layout_gravity="top|start"
-        android:layout_margin="10dp"
-        android:padding="10dp"
-        android:scaleType="fitCenter"
-        android:src="@drawable/ic_bar_sections"
-        android:background="#FFFFFF"
-        android:contentDescription="@string/go_to_title"/>
 </FrameLayout>
