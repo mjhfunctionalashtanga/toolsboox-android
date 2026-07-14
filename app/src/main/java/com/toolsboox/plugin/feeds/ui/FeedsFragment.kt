@@ -113,7 +113,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
             when (result) {
                 is MinifluxClient.Result.Ok -> {
                     allEntries = result.value
-                    adapter.submit(result.value)
+                    // Honour a feed filter chosen elsewhere (e.g. a future hub link), once.
+                    val filter = FeedSelection.filterFeedTitle
+                    FeedSelection.filterFeedTitle = null
+                    if (filter != null) adapter.submit(result.value.filter { it.feedTitle == filter })
+                    else adapter.submit(result.value)
                     if (result.value.isEmpty()) showEmpty(getString(R.string.feeds_empty))
                     else binding.emptyText.visibility = View.GONE
                 }
@@ -219,4 +223,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
 /** Hand the tapped entry to the article fragment without stuffing it through nav args. */
 object FeedSelection {
     var entry: FeedEntry? = null
+
+    /** A feed title the Feed Ledger should filter to on next open (set from the day-page hub). */
+    var filterFeedTitle: String? = null
 }

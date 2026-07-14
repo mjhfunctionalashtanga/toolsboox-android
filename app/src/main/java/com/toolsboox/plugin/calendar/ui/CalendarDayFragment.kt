@@ -587,17 +587,28 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     "☀️  Today" to { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
                     "❝  Pickings" to { CalendarNavigator.toDayNote(this, currentDate, "pickings") },
                     "🙏  Gratitude" to { CalendarNavigator.toDayNote(this, currentDate, "gratitude") },
-                    "🔖  Later List" to { CalendarNavigator.toDayNote(this, currentDate, "intake") },
                     "✒️  Notes" to { CalendarNavigator.toDayNote(this, currentDate, "0") }
+                ), expanded = true),
+                // Later — the "review / consume later" bucket: the Intake page, the RSS
+                // feed reader, reading Notes & Annotations, and AV grams.
+                Folder("🔖", "Later", listOf(
+                    "🔖  Intake" to { CalendarNavigator.toDayNote(this, currentDate, "intake") },
+                    "📰  RSS" to {
+                        com.toolsboox.plugin.feeds.ui.FeedSelection.filterFeedTitle = null
+                        findNavController().navigate(R.id.action_to_feeds)
+                    },
+                    "🖍️  Notes & Annotations" to { CalendarNavigator.toDayNote(this, currentDate, "0") },
+                    "🎬  AV grams" to {
+                        android.widget.Toast.makeText(requireContext(),
+                            "AV grams — viewable on the iPad; Android viewer coming.",
+                            android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 ), expanded = true),
                 Folder("📆", "Almanac", listOf(
                     "Week" to { CalendarNavigator.toWeekPage(this, currentDate, locale) },
                     "Month" to { CalendarNavigator.toMonthPage(this, currentDate) },
                     "Quarter" to { CalendarNavigator.toQuarterPage(this, currentDate) },
                     "Year" to { CalendarNavigator.toYearPage(this, currentDate) }
-                ), expanded = true),
-                Folder("📰", "Feed", listOf(
-                    "Open Feed Ledger" to { findNavController().navigate(R.id.action_to_feeds) }
                 ), expanded = true),
                 Folder("📚", "Bookshelf", books, expanded = true),
                 Folder("💬", "Ask", listOf(
@@ -619,10 +630,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         )
     }
 
-    /** The five most-recently-opened books (recency = file mtime, touched on open). */
+    /** The three most-recently-opened books (recency = file mtime, touched on open). */
     private fun recentBooks(): List<java.io.File> =
         java.io.File(requireContext().filesDir, "reader/books").listFiles()
-            ?.filter { it.isFile }?.sortedByDescending { it.lastModified() }?.take(5) ?: emptyList()
+            ?.filter { it.isFile }?.sortedByDescending { it.lastModified() }?.take(3) ?: emptyList()
 
     /** Open a specific book straight into the reader. */
     private fun openBookInReader(f: java.io.File) {
