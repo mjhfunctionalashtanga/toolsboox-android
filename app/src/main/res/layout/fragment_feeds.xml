@@ -10,32 +10,43 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
-        android:padding="12dp">
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="10dp">
 
         <TextView
             android:text="@string/feeds_title"
-            android:textSize="26sp"
+            android:textSize="22sp"
+            android:textStyle="bold"
             android:textColor="#000000"
+            android:maxLines="1"
+            android:ellipsize="end"
             android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+        <!-- Compact icon buttons so the header stays one row on narrow screens. -->
         <Button
             android:id="@+id/goto_button"
+            style="?android:attr/borderlessButtonStyle"
             android:text="☰"
-            android:textSize="20sp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        <Button
-            android:id="@+id/view_toggle_button"
-            android:text="@string/feeds_view_starred"
-            android:layout_marginStart="6dp"
+            android:textSize="22sp"
+            android:minWidth="0dp" android:minHeight="0dp" android:paddingHorizontal="12dp"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
         <Button
             android:id="@+id/refresh_button"
-            android:text="@string/feeds_refresh"
-            android:layout_marginStart="6dp"
+            style="?android:attr/borderlessButtonStyle"
+            android:text="↻"
+            android:textSize="22sp"
+            android:minWidth="0dp" android:minHeight="0dp" android:paddingHorizontal="12dp"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
         <Button
             android:id="@+id/settings_button"
-            android:text="@string/feeds_settings"
-            android:layout_marginStart="6dp"
+            style="?android:attr/borderlessButtonStyle"
+            android:text="⚙"
+            android:textSize="22sp"
+            android:minWidth="0dp" android:minHeight="0dp" android:paddingHorizontal="12dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <!-- Retained (hidden) so code refs survive; the Stars view lives in the ☰ dropdown. -->
+        <Button
+            android:id="@+id/view_toggle_button"
+            android:visibility="gone"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
     </LinearLayout>
 

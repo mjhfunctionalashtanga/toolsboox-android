@@ -18,16 +18,28 @@ data class FeedEntry(
     /** Miniflux category/folder title (the feed's folder), null if uncategorised. */
     val category: String? = null
 ) {
-    /** Read / Watch / Listen lens, inferred from the folder or the media in the URL. */
+    /** Read / Watch / Listen lens. Primary signal is the Miniflux category's leading emoji
+     *  (📖 / 📺 / 🎧, per the shared grammar with the iPad); falls back to a media heuristic. */
     val kind: String
         get() {
-            val c = category?.lowercase().orEmpty()
+            val c = category?.trim().orEmpty()
+            val cl = c.lowercase()
             val u = url.lowercase()
             return when {
-                "watch" in c || "video" in c || "youtube" in u || "youtu.be" in u || "vimeo" in u -> "watch"
-                "listen" in c || "podcast" in c || "audio" in c || u.endsWith(".mp3") -> "listen"
+                c.startsWith("📺") -> "watch"
+                c.startsWith("🎧") -> "listen"
+                c.startsWith("📖") -> "read"
+                "watch" in cl || "video" in cl || "youtube" in u || "youtu.be" in u || "vimeo" in u -> "watch"
+                "listen" in cl || "podcast" in cl || "audio" in cl || u.endsWith(".mp3") -> "listen"
                 else -> "read"
             }
+        }
+
+    /** Category title with the leading media emoji stripped (for folder labels). */
+    val categoryLabel: String?
+        get() = category?.trim()?.let { c ->
+            for (e in listOf("📖", "📺", "🎧")) if (c.startsWith(e)) return c.removePrefix(e).trim()
+            c
         }
 
     /** Plain-text blurb for the list row. */

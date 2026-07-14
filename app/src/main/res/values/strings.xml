@@ -354,6 +354,8 @@
     <string name="feeds_article_star">★ Star</string>
     <string name="feeds_article_unstar">★ Unstar</string>
     <string name="feeds_article_note">Note</string>
+    <string name="feeds_article_annotate">Annotate</string>
+    <string name="feeds_article_highlight">Highlight</string>
     <string name="feeds_article_browser">Browser</string>
     <string name="feeds_article_missing">Could not open this entry.</string>
     <string name="feeds_article_note_hint">Your note about this article…</string>

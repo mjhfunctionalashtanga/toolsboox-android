@@ -199,39 +199,41 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
         mode = newMode; kindFilter = kind; refresh()
     }
 
-    /** Filter the shown list to one folder (Miniflux category) within the current view. */
-    private fun showFolder(name: String) {
-        adapter.submit(applyKind(allEntries).filter { (it.category ?: it.feedTitle) == name })
+    /** Filter the shown list to one category (Miniflux folder) within the current view. */
+    private fun showCategory(label: String) {
+        adapter.submit(allEntries.filter { it.categoryLabel == label })
     }
 
     /**
-     * The Feed Ledger dropdown: two homes — Feed (RSS) and Later List — each sliced by
-     * Read / Watch / Listen. Feed also lists its folders (Miniflux categories); Stars is
-     * the starred-articles view.
+     * The Feed Ledger dropdown, iPad-style: Read / Watch / Listen are folders that list
+     * their own feeds (the 📖/📺/🎧-prefixed Miniflux categories). Later List mirrors the
+     * three lenses over the read-later intake; Stars is the starred view.
      */
     private fun showFeedDirectory() {
         val nav = androidx.navigation.fragment.NavHostFragment.findNavController(this)
-        val folders = allEntries.mapNotNull { it.category }.distinct().sortedBy { it.lowercase() }
-        val feedRows = listOf<Pair<String, () -> Unit>>(
-            "📰  All" to { switchTo("feed", null) },
-            "📖  Read" to { switchTo("feed", "read") },
-            "📺  Watch" to { switchTo("feed", "watch") },
-            "🎧  Listen" to { switchTo("feed", "listen") }
-        ) + folders.map { f -> ("🗂  $f" to { showFolder(f) }) }
-        val laterRows = listOf<Pair<String, () -> Unit>>(
-            "🔖  All" to { switchTo("later", null) },
-            "📖  Read" to { switchTo("later", "read") },
-            "📺  Watch" to { switchTo("later", "watch") },
-            "🎧  Listen" to { switchTo("later", "listen") }
-        )
+        fun categoriesOf(k: String) =
+            allEntries.filter { it.kind == k }.mapNotNull { it.categoryLabel }.distinct().sortedBy { it.lowercase() }
+        fun lens(emoji: String, label: String, k: String): Pair<String, List<Pair<String, () -> Unit>>> =
+            "$emoji $label" to (
+                listOf<Pair<String, () -> Unit>>("$emoji  All $label" to { switchTo("feed", k) }) +
+                categoriesOf(k).map { c -> ("🗂  $c" to { showCategory(c) }) }
+            )
         showDirectory(
             listOf(
-                "Feed (RSS)" to feedRows,
-                "Later List" to laterRows,
+                "Feed" to listOf("📰  All" to { switchTo("feed", null) }),
+                lens("📖", "Read", "read"),
+                lens("📺", "Watch", "watch"),
+                lens("🎧", "Listen", "listen"),
+                "Later List" to listOf(
+                    "🔖  All" to { switchTo("later", null) },
+                    "📖  Read" to { switchTo("later", "read") },
+                    "📺  Watch" to { switchTo("later", "watch") },
+                    "🎧  Listen" to { switchTo("later", "listen") }
+                ),
                 "" to listOf(
                     "⭐  Stars" to { switchTo("stars", null) },
                     "📅  Day" to { nav.navigate(R.id.action_to_calendar_day) },
-                    "📖  Bookshelf" to { nav.navigate(R.id.action_to_reader) },
+                    "📚  Bookshelf" to { nav.navigate(R.id.action_to_reader) },
                     "💬  Ask my Ledger" to { nav.navigate(R.id.action_to_ledger_chat) }
                 )
             )

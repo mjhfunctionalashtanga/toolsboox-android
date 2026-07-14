@@ -62,12 +62,13 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
             return
         }
 
-        binding.articleWeb.settings.javaScriptEnabled = false
+        // JS on so we can read the text selection for highlight-to-annotation.
+        binding.articleWeb.settings.javaScriptEnabled = true
         binding.articleWeb.loadDataWithBaseURL(null, buildHtml(e), "text/html", "UTF-8", null)
 
         binding.starButton.text = getString(if (e.starred) R.string.feeds_article_unstar else R.string.feeds_article_star)
         binding.starButton.setOnClickListener { star(e) }
-        binding.noteButton.setOnClickListener { note(e) }
+        binding.noteButton.setOnClickListener { annotate(e) }
         binding.browserButton.setOnClickListener {
             if (e.url.isNotBlank()) startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(e.url)))
         }
@@ -120,25 +121,46 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    private fun note(e: FeedEntry) {
-        val input = EditText(requireContext()).apply { hint = getString(R.string.feeds_article_note_hint) }
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.feeds_article_note)
+    /** Highlight → annotate: read the current selection, then save it (+ an optional note)
+     *  as an article annotation, mirroring the book reader. Works with no selection too
+     *  (a plain note on the article). */
+    private fun annotate(e: FeedEntry) {
+        binding.articleWeb.evaluateJavascript(
+            "(function(){var s=window.getSelection&&window.getSelection();return s?s.toString():'';})()"
+        ) { raw -> showAnnotateDialog(e, unquoteJs(raw).trim()) }
+    }
+
+    private fun showAnnotateDialog(e: FeedEntry, selection: String) {
+        val input = EditText(requireContext()).apply {
+            hint = getString(R.string.feeds_article_note_hint); setLines(3); gravity = android.view.Gravity.TOP
+        }
+        val builder = AlertDialog.Builder(requireContext())
+            .setTitle(if (selection.isNotBlank()) R.string.feeds_article_highlight else R.string.feeds_article_note)
             .setView(input)
             .setPositiveButton(R.string.feeds_save) { _, _ ->
                 val text = input.text.toString().trim()
-                if (text.isEmpty()) return@setPositiveButton
+                if (selection.isBlank() && text.isEmpty()) return@setPositiveButton
                 lifecycleScope.launch {
-                    withContext(Dispatchers.IO) { logEvent(e, note = text) }
-                    showMessage(R.string.feeds_note_saved)
+                    withContext(Dispatchers.IO) {
+                        logEvent(e, excerpt = selection.ifBlank { null }, note = text.ifBlank { null })
+                    }
+                    showMessage(if (selection.isNotBlank()) R.string.reader_highlight_saved else R.string.feeds_note_saved)
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+        if (selection.isNotBlank()) builder.setMessage("“${selection.take(400)}”")
+        builder.show()
     }
 
-    /** Append an article ReadingEvent (star marker, or a note) to today's CalendarDay. */
-    private fun logEvent(e: FeedEntry, note: String?) {
+    /** Decode the JSON string evaluateJavascript hands back (quoted + escaped). */
+    private fun unquoteJs(raw: String): String {
+        if (raw == "null") return ""
+        return runCatching { org.json.JSONTokener(raw).nextValue() as? String }.getOrNull()
+            ?: raw.removeSurrounding("\"")
+    }
+
+    /** Append an article ReadingEvent (star marker, highlight passage, and/or a note). */
+    private fun logEvent(e: FeedEntry, excerpt: String? = null, note: String? = null) {
         try {
             val root = documentsRoot()
             val today = LocalDate.now()
@@ -151,6 +173,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                     title = e.title,
                     source = e.feedTitle.ifBlank { null },
                     url = e.url.ifBlank { null },
+                    excerpt = excerpt,
                     note = note
                 )
             )

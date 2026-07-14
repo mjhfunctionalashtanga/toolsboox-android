@@ -27,7 +27,7 @@
         <Button
             android:id="@+id/note_button"
             style="?android:attr/borderlessButtonStyle"
-            android:text="@string/feeds_article_note"
+            android:text="@string/feeds_article_annotate"
             android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
         <Button
             android:id="@+id/browser_button"
