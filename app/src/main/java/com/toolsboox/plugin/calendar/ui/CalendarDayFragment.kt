@@ -853,38 +853,44 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val books: List<Pair<String, () -> Unit>> =
             recentBooks().map { f -> ("📖  " + f.nameWithoutExtension) to { openBookInReader(f) } } +
             ("📚  Open Bookshelf" to { findNavController().navigate(R.id.action_to_reader) })
+        // Order: History · Almanac · Personal · Feed · Bookshelf · Ask · Settings.
+        // (This Day lives on the sunshine sections switcher.) All folders open collapsed.
         showAccordion(
             listOf(
-                // (This Day lives on the sunshine sections switcher, not here.)
-                // Feed Ledger — its own category (the RSS reader): All · Later · Read/Watch/Listen.
-                Folder("📰", "Feed Ledger", listOf(
-                    "📰  All" to { openFeed("feed", null) },
-                    "🔖  Later" to { openFeed("later", null) },
-                    "📖  Read" to { openFeed("feed", "read") },
-                    "📺  Watch" to { openFeed("feed", "watch") },
-                    "🎧  Listen" to { openFeed("feed", "listen") }
-                ), expanded = true),
-                // History — everything consumed / created: stars, annotations, A/V, read feeds, books.
+                // History — everything consumed: stars, annotations, read feeds, books.
                 Folder("🕘", "History", listOf(
                     "🗂  All" to { openReadingLog(null) },
                     "⭐  Stars" to { openFeed("stars", null) },
                     "🖍️  Annotations" to { openReadingLog(null) },
-                    "🎬  A/V Gram" to { openReadingLog(LogOrigin.AV) },
                     "🎧  Listened" to { openFeed("read", "listen") },
                     "📺  Watched" to { openFeed("read", "watch") },
                     "📰  Feed Read" to { openFeed("read", null) },
                     "📚  Books Read" to { openReadingLog(LogOrigin.BOOK) }
-                ), expanded = true),
+                )),
                 Folder("📆", "Almanac", listOf(
                     "Week" to { CalendarNavigator.toWeekPage(this, currentDate, locale) },
                     "Month" to { CalendarNavigator.toMonthPage(this, currentDate) },
                     "Quarter" to { CalendarNavigator.toQuarterPage(this, currentDate) },
                     "Year" to { CalendarNavigator.toYearPage(this, currentDate) }
-                ), expanded = true),
-                Folder("📚", "Bookshelf", books, expanded = true),
+                )),
+                // Personal — the pages you make: pickings, gratitude, A/V grams.
+                Folder("🪞", "Personal", listOf(
+                    "❝  Pickings" to { CalendarNavigator.toDayNote(this, currentDate, "pickings") },
+                    "🙏  Gratitude" to { CalendarNavigator.toDayNote(this, currentDate, "gratitude") },
+                    "🎬  A/V Grams" to { openReadingLog(LogOrigin.AV) }
+                )),
+                // Feed Ledger — the RSS reader: All · Later · Read/Watch/Listen.
+                Folder("📰", "Feed", listOf(
+                    "📰  All" to { openFeed("feed", null) },
+                    "🔖  Later" to { openFeed("later", null) },
+                    "📖  Read" to { openFeed("feed", "read") },
+                    "📺  Watch" to { openFeed("feed", "watch") },
+                    "🎧  Listen" to { openFeed("feed", "listen") }
+                )),
+                Folder("📚", "Bookshelf", books),
                 Folder("💬", "Ask", listOf(
                     "Open Ask my Ledger" to { findNavController().navigate(R.id.action_to_ledger_chat) }
-                ), expanded = true),
+                )),
                 // (Tools live on the wrench pill, not here.)
                 Folder("⚙️", "Settings", listOf(
                     "Open Settings" to { binding.toolbarDrawing.toolbarSettings.performClick() },
