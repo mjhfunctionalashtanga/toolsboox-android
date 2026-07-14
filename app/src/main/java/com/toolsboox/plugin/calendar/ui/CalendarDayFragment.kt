@@ -470,33 +470,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * Ledger, Ask my Ledger, Cloud) without leaving for a dashboard. Reached from
      * the toolbar's calendar-view button.
      */
-    /** Drag [handle] to move [pill] freely (via translation), persisted under [key]. */
-    @android.annotation.SuppressLint("ClickableViewAccessibility")
-    private fun makeDraggable(handle: View, pill: View, key: String) {
-        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
-        pill.translationX = prefs.getFloat("${key}_tx", 0f)
-        pill.translationY = prefs.getFloat("${key}_ty", 0f)
-        var downX = 0f; var downY = 0f; var startTx = 0f; var startTy = 0f
-        handle.setOnTouchListener { _, e ->
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    downX = e.rawX; downY = e.rawY; startTx = pill.translationX; startTy = pill.translationY; true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    pill.translationX = startTx + (e.rawX - downX)
-                    pill.translationY = startTy + (e.rawY - downY)
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    prefs.edit().putFloat("${key}_tx", pill.translationX)
-                        .putFloat("${key}_ty", pill.translationY).apply()
-                    true
-                }
-                else -> false
-            }
-        }
-    }
-
     /** Flip the floating pills between a horizontal and vertical layout. Defaults to
      *  vertical on narrow (phone-size) screens so the two pills don't collide; the gear's
      *  "Flip layout" overrides and persists the choice. */
@@ -510,7 +483,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     private fun showWidgetGearMenu() {
-        val labels = arrayOf("Flip layout", "Rotate screen", "Add text", "Add image", "Finger / hand", "Settings")
+        val labels = arrayOf("Flip layout", "Reset pill positions", "Rotate screen", "Add text", "Add image", "Finger / hand", "Settings")
         AlertDialog.Builder(requireContext())
             .setTitle(R.string.calendar_drawing_toolbar_settings)
             .setItems(labels) { _, which ->
@@ -520,11 +493,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                         prefs.edit().putBoolean("vertical", !prefs.getBoolean("vertical", false)).apply()
                         applyWidgetOrientation()
                     }
-                    1 -> binding.toolbarDrawing.toolbarRotate.performClick()
-                    2 -> binding.toolbarDrawing.toolbarText.performClick()
-                    3 -> binding.toolbarDrawing.toolbarImage.performClick()
-                    4 -> binding.toolbarDrawing.toolbarHandTouch.performClick()
-                    5 -> binding.toolbarDrawing.toolbarSettings.performClick()
+                    1 -> {
+                        requireContext().getSharedPreferences("ledger_widgets", 0).edit()
+                            .remove("nav_tx").remove("nav_ty").remove("tool_tx").remove("tool_ty").apply()
+                        for (v in listOf(binding.navWidget, binding.toolWidget)) { v.translationX = 0f; v.translationY = 0f }
+                    }
+                    2 -> binding.toolbarDrawing.toolbarRotate.performClick()
+                    3 -> binding.toolbarDrawing.toolbarText.performClick()
+                    4 -> binding.toolbarDrawing.toolbarImage.performClick()
+                    5 -> binding.toolbarDrawing.toolbarHandTouch.performClick()
+                    6 -> binding.toolbarDrawing.toolbarSettings.performClick()
                 }
             }
             .show()

@@ -7,6 +7,7 @@ import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -147,6 +148,33 @@ abstract class ScreenFragment : Fragment() {
      * Hides the loading indicator of the view.
      */
     abstract fun hideLoading()
+
+    /** Drag [handle] to move [pill] freely (via translation), persisted under [key]. */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    protected fun makeDraggable(handle: View, pill: View, key: String) {
+        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
+        pill.translationX = prefs.getFloat("${key}_tx", 0f)
+        pill.translationY = prefs.getFloat("${key}_ty", 0f)
+        var downX = 0f; var downY = 0f; var startTx = 0f; var startTy = 0f
+        handle.setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX; downY = e.rawY; startTx = pill.translationX; startTy = pill.translationY; true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    pill.translationX = startTx + (e.rawX - downX)
+                    pill.translationY = startTy + (e.rawY - downY)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    prefs.edit().putFloat("${key}_tx", pill.translationX)
+                        .putFloat("${key}_ty", pill.translationY).apply()
+                    true
+                }
+                else -> false
+            }
+        }
+    }
 
     /**
      * A directory popover (top-left, iPad-style) grouping labelled rows under headers —
