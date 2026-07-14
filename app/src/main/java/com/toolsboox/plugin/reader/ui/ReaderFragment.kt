@@ -285,12 +285,19 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
                 bookTitle = msg.optString("title").ifBlank { "Untitled" }
                 bookAuthor = msg.optString("author")
                 applyReaderSettings()
+                restoreHighlights()
             }
             "highlight" -> {
                 val text = msg.optString("text").trim()
                 if (text.isEmpty()) { showMessage(R.string.reader_select_first); return }
-                logHighlight(text, msg.optString("cfi"))
+                val cfi = msg.optString("cfi")
+                logHighlight(text, cfi)
+                rememberHighlight(cfi)
                 showMessage(R.string.reader_highlight_saved)
+            }
+            "tapAnnotation" -> {
+                val cfi = msg.optString("cfi")
+                if (cfi.isNotBlank()) confirmDeleteHighlight(cfi)
             }
             "openExternal" -> {
                 val href = msg.optString("href")
@@ -327,6 +334,53 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
                 Timber.w(e, "failed to log book highlight")
             }
         }
+    }
+
+    /** Highlights are stored per-book (keyed by file name) so they survive a reopen —
+     *  foliate only draws annotations that are (re-)added to the current view. */
+    private fun highlightPrefs() = requireContext().getSharedPreferences(HL_PREFS, 0)
+
+    private fun bookKey(): String? = currentBookFile?.name
+
+    /** Persist a highlight's CFI for the current book. */
+    private fun rememberHighlight(cfi: String) {
+        if (cfi.isBlank()) return
+        val key = bookKey() ?: return
+        val set = highlightPrefs().getStringSet(key, emptySet())!!.toMutableSet()
+        set.add(cfi)
+        highlightPrefs().edit().putStringSet(key, set).apply()
+    }
+
+    /** Drop a highlight's CFI from the current book's store. */
+    private fun forgetHighlight(cfi: String) {
+        val key = bookKey() ?: return
+        val set = highlightPrefs().getStringSet(key, emptySet())!!.toMutableSet()
+        if (set.remove(cfi)) highlightPrefs().edit().putStringSet(key, set).apply()
+    }
+
+    /** On book load, re-apply every stored highlight so saved marks reappear. */
+    private fun restoreHighlights() {
+        val key = bookKey() ?: return
+        val cfis = highlightPrefs().getStringSet(key, emptySet()) ?: return
+        for (cfi in cfis) {
+            val escaped = cfi.replace("\\", "\\\\").replace("'", "\\'")
+            binding.readerWeb.evaluateJavascript("window.addStoredHighlight && window.addStoredHighlight('$escaped')", null)
+        }
+    }
+
+    /** Tapping an existing highlight offers to remove it (mark + stored CFI). */
+    private fun confirmDeleteHighlight(cfi: String) {
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.reader_highlight)
+            .setMessage(R.string.reader_highlight_delete_confirm)
+            .setPositiveButton(R.string.reader_highlight_delete) { d, _ ->
+                val escaped = cfi.replace("\\", "\\\\").replace("'", "\\'")
+                binding.readerWeb.evaluateJavascript("window.deleteHighlight && window.deleteHighlight('$escaped')", null)
+                forgetHighlight(cfi)
+                d.dismiss()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     private fun documentsRoot(): File =
@@ -379,6 +433,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
         private const val HOST = "ledger.reader"
         private const val ORIGIN = "https://ledger.reader"
         private const val PREFS = "ledger_reader_prefs"
+        private const val HL_PREFS = "ledger_reader_highlights"
         private const val KEY_BOOK = "current_book_path"
         private const val KEY_FONT = "reader_font_pct"
         private const val KEY_THEME = "reader_theme"

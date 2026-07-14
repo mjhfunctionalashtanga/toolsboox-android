@@ -534,7 +534,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 },
                 GoItem("🎯", "Reset pill positions") {
                     requireContext().getSharedPreferences("ledger_widgets", 0).edit()
-                        .remove("nav_tx").remove("nav_ty").remove("tool_tx").remove("tool_ty").apply()
+                        .remove("nav_px").remove("nav_py").remove("tool_px").remove("tool_py").apply()
                     for (v in listOf(binding.navWidget, binding.toolWidget)) { v.translationX = 0f; v.translationY = 0f }
                 },
                 GoItem("⚙️", "Settings") { binding.toolbarDrawing.toolbarSettings.performClick() }

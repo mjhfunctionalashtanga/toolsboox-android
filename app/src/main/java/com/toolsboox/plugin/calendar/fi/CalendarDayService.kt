@@ -117,18 +117,34 @@ class CalendarDayService @Inject constructor() {
         if (!item.exists()) return null
         if (!item.name.startsWith("day-")) return null
 
-        FileReader(item).use { fileReader ->
-            Timber.i("Try to load from ${item.name}")
-            if (item.absolutePath.endsWith("-v2.json")) {
-                moshi.adapter(CalendarDay::class.java)
-                    .fromJson(fileReader.readText())?.let { return it }
-            } else {
-                moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarDay::class.java)
-                    .fromJson(fileReader.readText())?.let { return CalendarDay.convert(it) }
-            }
+        // An empty or corrupt file (interrupted write, half-synced) must not blow up the
+        // whole day load — Moshi throws EOFException on empty input, which used to surface
+        // as the "check your network status" error and leave the page blank. Treat any
+        // unreadable/blank/corrupt day file as "unwritten" so the caller falls back to a
+        // fresh empty day and the page still renders.
+        val json = try {
+            item.readText(Charsets.UTF_8)
+        } catch (e: Exception) {
+            Timber.w(e, "Could not read ${item.name}; treating as unwritten")
+            return null
+        }
+        if (json.isBlank()) {
+            Timber.w("Empty day file ${item.name}; treating as unwritten")
+            return null
         }
 
-        return null
+        return try {
+            Timber.i("Try to load from ${item.name}")
+            if (item.absolutePath.endsWith("-v2.json")) {
+                moshi.adapter(CalendarDay::class.java).fromJson(json)
+            } else {
+                moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarDay::class.java)
+                    .fromJson(json)?.let { CalendarDay.convert(it) }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "Corrupt day file ${item.name}; treating as unwritten")
+            null
+        }
     }
 
     /**

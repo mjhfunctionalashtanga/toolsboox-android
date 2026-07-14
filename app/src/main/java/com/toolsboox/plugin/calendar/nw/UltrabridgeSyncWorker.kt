@@ -465,6 +465,10 @@ class UltrabridgeSyncWorker(
     ): com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.PageContent? {
         try {
             val json = file.readText(Charsets.UTF_8)
+            // Empty/half-synced day files are expected (unwritten days, interrupted
+            // downloads). Skip them quietly instead of throwing EOFException and logging
+            // a stack trace per file — they simply contribute no page to the PDF.
+            if (json.isBlank()) return null
             val name = file.name
             val isV2 = name.endsWith("-v2.json")
 

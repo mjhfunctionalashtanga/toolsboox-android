@@ -299,6 +299,9 @@ window.setFontFaces = (css) => { fontFaces = css || ''; applyLayout() }
 window.applyReaderSettings = (obj) => { Object.assign(settings, obj || {}); applyLayout() }
 // Swift → JS: remove a highlight by its CFI.
 window.deleteHighlight = (cfi) => { if (cfi) view?.deleteAnnotation({ value: cfi }) }
+// Swift → JS: re-apply a stored highlight by CFI (called on load to restore saved marks).
+// foliate paints it when its section renders (via the draw-annotation handler above).
+window.addStoredHighlight = (cfi) => { if (cfi) { try { view?.addAnnotation({ value: cfi, color: '#ffd60a' }) } catch (e) {} } }
 window.goToFraction = (f) => view?.goToFraction(f)
 
 post('ready')

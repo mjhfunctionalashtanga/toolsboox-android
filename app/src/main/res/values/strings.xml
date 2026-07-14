@@ -362,6 +362,8 @@
     <string name="reader_highlight">Highlight</string>
     <string name="reader_select_first">Select text first, then tap Highlight.</string>
     <string name="reader_highlight_saved">Saved to your Ledger.</string>
+    <string name="reader_highlight_delete_confirm">Remove this highlight?</string>
+    <string name="reader_highlight_delete">Remove</string>
     <string name="reader_aa">Aa</string>
     <string name="reader_settings_title">Reading</string>
     <string name="reader_font_smaller">A −</string>
