@@ -14,8 +14,22 @@ data class FeedEntry(
     val author: String?,
     val content: String,
     val publishedAt: String,
-    val starred: Boolean
+    val starred: Boolean,
+    /** Miniflux category/folder title (the feed's folder), null if uncategorised. */
+    val category: String? = null
 ) {
+    /** Read / Watch / Listen lens, inferred from the folder or the media in the URL. */
+    val kind: String
+        get() {
+            val c = category?.lowercase().orEmpty()
+            val u = url.lowercase()
+            return when {
+                "watch" in c || "video" in c || "youtube" in u || "youtu.be" in u || "vimeo" in u -> "watch"
+                "listen" in c || "podcast" in c || "audio" in c || u.endsWith(".mp3") -> "listen"
+                else -> "read"
+            }
+        }
+
     /** Plain-text blurb for the list row. */
     val blurb: String
         get() = content

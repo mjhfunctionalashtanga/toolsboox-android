@@ -81,15 +81,17 @@ class MinifluxClient @Inject constructor() {
         val out = ArrayList<FeedEntry>(arr.length())
         for (i in 0 until arr.length()) {
             val e = arr.optJSONObject(i) ?: continue
+            val feed = e.optJSONObject("feed")
             out += FeedEntry(
                 id = e.optLong("id"),
                 title = e.optString("title"),
-                feedTitle = e.optJSONObject("feed")?.optString("title").orEmpty(),
+                feedTitle = feed?.optString("title").orEmpty(),
                 url = e.optString("url"),
                 author = if (e.isNull("author")) null else e.optString("author").ifBlank { null },
                 content = e.optString("content"),
                 publishedAt = e.optString("published_at"),
-                starred = e.optBoolean("starred", false)
+                starred = e.optBoolean("starred", false),
+                category = feed?.optJSONObject("category")?.optString("title")?.ifBlank { null }
             )
         }
         return out

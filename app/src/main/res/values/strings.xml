@@ -344,6 +344,7 @@
     <string name="feeds_save">Save</string>
     <string name="feeds_saved">Saved on this device.</string>
     <string name="feeds_empty">No unread entries.</string>
+    <string name="feeds_later_empty">Nothing on your Later List yet — intake a link to read/watch/listen later.</string>
     <string name="feeds_need_creds">Add your Miniflux URL and API token to load your feeds.</string>
     <string name="feeds_starred">Starred and saved to your Ledger.</string>
     <string name="feeds_unstarred">Unstarred.</string>

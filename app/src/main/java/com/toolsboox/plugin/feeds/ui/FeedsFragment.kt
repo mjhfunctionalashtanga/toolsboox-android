@@ -50,7 +50,6 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
     private lateinit var adapter: FeedEntryAdapter
     private var loading = false
     private var allEntries: List<FeedEntry> = emptyList()
-    private var showingStarred = false
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -83,16 +82,31 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
         binding.refreshButton.setOnClickListener { refresh() }
         binding.gotoButton.setOnClickListener { showFeedDirectory() }
         binding.viewToggleButton.setOnClickListener {
-            showingStarred = !showingStarred
-            binding.viewToggleButton.setText(if (showingStarred) R.string.feeds_view_unread else R.string.feeds_view_starred)
+            mode = if (mode == "stars") "feed" else "stars"
             refresh()
         }
 
+        // Honour the view/kind chosen from the hub (feed / stars / later, + read/watch/listen).
+        val (m, k) = FeedSelection.consume()
+        mode = m; kindFilter = k
         refresh()
+    }
+
+    /** Current view: "feed" (unread RSS) · "stars" · "later" (read-later intake). */
+    private var mode: String = "feed"
+    /** Optional read/watch/listen lens. */
+    private var kindFilter: String? = null
+
+    private fun applyKind(entries: List<FeedEntry>): List<FeedEntry> {
+        val k = kindFilter ?: return entries
+        return entries.filter { it.kind == k }
     }
 
     private fun refresh() {
         if (loading) return
+        binding.viewToggleButton.setText(if (mode == "stars") R.string.feeds_view_unread else R.string.feeds_view_starred)
+        if (mode == "later") { loadLaterList(); return }
+
         val p = prefs()
         val url = p.getString(KEY_URL, "").orEmpty()
         val token = p.getString(KEY_TOKEN, "").orEmpty()
@@ -106,24 +120,64 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
         binding.emptyText.visibility = View.GONE
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                if (showingStarred) miniflux.fetchStarred(url, token) else miniflux.fetchUnread(url, token)
+                if (mode == "stars") miniflux.fetchStarred(url, token) else miniflux.fetchUnread(url, token)
             }
             loading = false
             binding.progress.visibility = View.INVISIBLE
             when (result) {
                 is MinifluxClient.Result.Ok -> {
                     allEntries = result.value
-                    // Honour a feed filter chosen elsewhere (e.g. a future hub link), once.
                     val filter = FeedSelection.filterFeedTitle
                     FeedSelection.filterFeedTitle = null
-                    if (filter != null) adapter.submit(result.value.filter { it.feedTitle == filter })
-                    else adapter.submit(result.value)
-                    if (result.value.isEmpty()) showEmpty(getString(R.string.feeds_empty))
+                    var shown = applyKind(result.value)
+                    if (filter != null) shown = shown.filter { it.feedTitle == filter }
+                    adapter.submit(shown)
+                    if (shown.isEmpty()) showEmpty(getString(R.string.feeds_empty))
                     else binding.emptyText.visibility = View.GONE
                 }
                 is MinifluxClient.Result.Err -> showEmpty("⚠️ " + result.message)
             }
         }
+    }
+
+    /** Later List: the read-later links intaked across recent days (MichaelFilter intake
+     *  sidecar), as feed rows — read/watch/listen by the intake kind. */
+    private fun loadLaterList() {
+        binding.progress.visibility = View.VISIBLE
+        binding.emptyText.visibility = View.GONE
+        lifecycleScope.launch {
+            val entries = withContext(Dispatchers.IO) { gatherLaterList() }
+            binding.progress.visibility = View.INVISIBLE
+            allEntries = entries
+            val shown = applyKind(entries)
+            adapter.submit(shown)
+            if (shown.isEmpty()) showEmpty(getString(R.string.feeds_later_empty))
+            else binding.emptyText.visibility = View.GONE
+        }
+    }
+
+    private fun gatherLaterList(): List<FeedEntry> {
+        val ctx = requireContext().applicationContext
+        val out = mutableListOf<FeedEntry>()
+        val kinds = listOf("read", "watch", "listen", "educate")
+        var idSeed = 0L
+        for (d in 0L..120L) {
+            val date = java.time.LocalDate.now().minusDays(d)
+            val data = com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.load(ctx, date)
+            for (kind in kinds) {
+                data.typedFor(kind).lines().map { it.trim() }.filter { it.isNotBlank() }.forEach { line ->
+                    val url = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.extractUrls(line).firstOrNull() ?: line
+                    val title = line.replace(url, "").trim().ifBlank { url }
+                    // Reuse the RSS kind field via category so applyKind() sees read/watch/listen.
+                    out += FeedEntry(
+                        id = idSeed++, title = title, feedTitle = "Later · $kind",
+                        url = url, author = null, content = "", publishedAt = date.toString(),
+                        starred = false, category = if (kind == "educate") "read" else kind
+                    )
+                }
+            }
+        }
+        return out
     }
 
     private fun showEmpty(text: String) {
@@ -136,17 +190,42 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
         findNavController().navigate(R.id.action_to_feed_article)
     }
 
-    /** Hamburger directory: the actual feeds (tap to filter) + jumps to the other surfaces. */
+    /** Set the current view/kind and reload (used by the dropdown rows). */
+    private fun switchTo(newMode: String, kind: String?) {
+        mode = newMode; kindFilter = kind; refresh()
+    }
+
+    /** Filter the shown list to one folder (Miniflux category) within the current view. */
+    private fun showFolder(name: String) {
+        adapter.submit(applyKind(allEntries).filter { (it.category ?: it.feedTitle) == name })
+    }
+
+    /**
+     * The Feed Ledger dropdown: two homes — Feed (RSS) and Later List — each sliced by
+     * Read / Watch / Listen. Feed also lists its folders (Miniflux categories); Stars is
+     * the starred-articles view.
+     */
     private fun showFeedDirectory() {
         val nav = androidx.navigation.fragment.NavHostFragment.findNavController(this)
-        val feeds = allEntries.map { it.feedTitle }.filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }
-        val feedRows: List<Pair<String, () -> Unit>> =
-            listOf(("📚  All unread" to { adapter.submit(allEntries) })) +
-            feeds.map { name -> ("📰  $name" to { adapter.submit(allEntries.filter { it.feedTitle == name }) }) }
+        val folders = allEntries.mapNotNull { it.category }.distinct().sortedBy { it.lowercase() }
+        val feedRows = listOf<Pair<String, () -> Unit>>(
+            "📰  All" to { switchTo("feed", null) },
+            "📖  Read" to { switchTo("feed", "read") },
+            "📺  Watch" to { switchTo("feed", "watch") },
+            "🎧  Listen" to { switchTo("feed", "listen") }
+        ) + folders.map { f -> ("🗂  $f" to { showFolder(f) }) }
+        val laterRows = listOf<Pair<String, () -> Unit>>(
+            "🔖  All" to { switchTo("later", null) },
+            "📖  Read" to { switchTo("later", "read") },
+            "📺  Watch" to { switchTo("later", "watch") },
+            "🎧  Listen" to { switchTo("later", "listen") }
+        )
         showDirectory(
             listOf(
-                "Feeds" to feedRows,
-                "Go to" to listOf(
+                "Feed (RSS)" to feedRows,
+                "Later List" to laterRows,
+                "" to listOf(
+                    "⭐  Stars" to { switchTo("stars", null) },
                     "📅  Day" to { nav.navigate(R.id.action_to_calendar_day) },
                     "📖  Bookshelf" to { nav.navigate(R.id.action_to_reader) },
                     "💬  Ask my Ledger" to { nav.navigate(R.id.action_to_ledger_chat) }
@@ -226,4 +305,16 @@ object FeedSelection {
 
     /** A feed title the Feed Ledger should filter to on next open (set from the day-page hub). */
     var filterFeedTitle: String? = null
+
+    /** Which view to open: "feed" (RSS unread), "stars", or "later" (read-later intake). */
+    var mode: String? = null
+    /** Optional read/watch/listen lens to filter to. */
+    var kind: String? = null
+
+    /** Consume the pending mode/kind (one-shot) after the fragment applies it. */
+    fun consume(): Pair<String, String?> {
+        val m = mode ?: "feed"; val k = kind
+        mode = null; kind = null
+        return m to k
+    }
 }

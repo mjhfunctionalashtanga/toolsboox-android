@@ -861,20 +861,19 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     "🙏  Gratitude" to { CalendarNavigator.toDayNote(this, currentDate, "gratitude") },
                     "✒️  Notes" to { CalendarNavigator.toDayNote(this, currentDate, "0") }
                 ), expanded = true),
-                // Later — the "review / consume later" bucket: the Intake page, the RSS
-                // feed reader, reading Notes & Annotations, and AV grams.
+                // Feed Ledger — its own category (the RSS reader), sliced by Read/Watch/Listen.
+                Folder("📰", "Feed Ledger", listOf(
+                    "📰  All" to { openFeed("feed", null) },
+                    "📖  Read" to { openFeed("feed", "read") },
+                    "📺  Watch" to { openFeed("feed", "watch") },
+                    "🎧  Listen" to { openFeed("feed", "listen") }
+                ), expanded = true),
+                // Later — the review/consume-later bucket.
                 Folder("🔖", "Later", listOf(
-                    "🔖  Intake" to { CalendarNavigator.toDayNote(this, currentDate, "intake") },
-                    "📰  Feed (RSS)" to {
-                        com.toolsboox.plugin.feeds.ui.FeedSelection.filterFeedTitle = null
-                        findNavController().navigate(R.id.action_to_feeds)
-                    },
+                    "🔖  Later List Intake" to { CalendarNavigator.toDayNote(this, currentDate, "intake") },
                     "🖍️  Notes & Annotations" to { findNavController().navigate(R.id.action_to_reading_log) },
-                    "🎬  AV grams" to {
-                        android.widget.Toast.makeText(requireContext(),
-                            "AV grams — viewable on the iPad; Android viewer coming.",
-                            android.widget.Toast.LENGTH_SHORT).show()
-                    }
+                    "⭐  Stars" to { openFeed("stars", null) },
+                    "🎬  AV grams" to { findNavController().navigate(R.id.action_to_reading_log) }
                 ), expanded = true),
                 Folder("📆", "Almanac", listOf(
                     "Week" to { CalendarNavigator.toWeekPage(this, currentDate, locale) },
@@ -913,6 +912,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .putString("current_book_path", f.absolutePath).apply()
         f.setLastModified(System.currentTimeMillis())
         findNavController().navigate(R.id.action_to_reader)
+    }
+
+    /** Open the Feed Ledger in a given view/lens (feed / stars / later + read/watch/listen). */
+    private fun openFeed(mode: String, kind: String?) {
+        com.toolsboox.plugin.feeds.ui.FeedSelection.filterFeedTitle = null
+        com.toolsboox.plugin.feeds.ui.FeedSelection.mode = mode
+        com.toolsboox.plugin.feeds.ui.FeedSelection.kind = kind
+        findNavController().navigate(R.id.action_to_feeds)
     }
 
     /** The emoji for the section currently on screen (drives the bottom pill button). */
