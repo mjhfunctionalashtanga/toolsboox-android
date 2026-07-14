@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="horizontal"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:background="?android:attr/selectableItemBackground"
+    android:paddingHorizontal="14dp"
+    android:paddingVertical="14dp">
+
+    <ImageView
+        android:id="@+id/go_icon"
+        android:layout_width="26dp"
+        android:layout_height="26dp"
+        android:scaleType="fitCenter"
+        android:contentDescription="@null"/>
+
+    <TextView
+        android:id="@+id/go_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="18dp"
+        android:textColor="#000000"
+        android:textSize="18sp"/>
+</LinearLayout>

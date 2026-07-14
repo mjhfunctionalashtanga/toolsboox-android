@@ -8,6 +8,10 @@ import android.view.View
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.navigation.fragment.findNavController
 import com.google.firebase.analytics.FirebaseAnalytics
@@ -405,27 +409,58 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * Ledger, Ask my Ledger, Cloud) without leaving for a dashboard. Reached from
      * the toolbar's calendar-view button.
      */
+    private data class GoItem(val label: String, val icon: Int, val action: () -> Unit)
+
     private fun showGoToModal() {
-        val labels = arrayOf(
-            "Today's Schedule", "Pickings", "Gratitude", "Later List", "Notes",
-            "Reader", "Feed Ledger", "Ask my Ledger", "Cloud"
-        )
-        AlertDialog.Builder(requireContext())
-            .setTitle("Go to")
-            .setItems(labels) { _, which ->
-                when (which) {
-                    0 -> CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE)
-                    1 -> CalendarNavigator.toDayNote(this, currentDate, "pickings")
-                    2 -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
-                    3 -> CalendarNavigator.toDayNote(this, currentDate, "intake")
-                    4 -> CalendarNavigator.toDayNote(this, currentDate, "0")
-                    5 -> findNavController().navigate(R.id.action_to_reader)
-                    6 -> findNavController().navigate(R.id.action_to_feeds)
-                    7 -> findNavController().navigate(R.id.action_to_ledger_chat)
-                    8 -> CalendarNavigator.toCloudSync(this)
-                }
-            }
-            .show()
+        val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
+        val list = root.findViewById<LinearLayout>(R.id.go_to_list)
+        val dialog = AlertDialog.Builder(requireContext()).setView(root).create()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+        fun header(text: String) {
+            val tv = TextView(requireContext())
+            tv.text = text.uppercase()
+            tv.setTextColor(0xFF8A8A8A.toInt())
+            tv.textSize = 12f
+            tv.letterSpacing = 0.08f
+            tv.setPadding(dp(14), dp(16), dp(14), dp(4))
+            list.addView(tv)
+        }
+        fun row(item: GoItem) {
+            val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
+            r.findViewById<ImageView>(R.id.go_icon).setImageResource(item.icon)
+            r.findViewById<TextView>(R.id.go_label).text = item.label
+            r.setOnClickListener { dialog.dismiss(); item.action() }
+            list.addView(r)
+        }
+
+        header(getString(R.string.go_group_day))
+        listOf(
+            GoItem("Schedule", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
+            GoItem("Pickings", R.drawable.ic_go_pickings) { CalendarNavigator.toDayNote(this, currentDate, "pickings") },
+            GoItem("Gratitude", R.drawable.ic_go_gratitude) { CalendarNavigator.toDayNote(this, currentDate, "gratitude") },
+            GoItem("Later List", R.drawable.ic_go_later) { CalendarNavigator.toDayNote(this, currentDate, "intake") },
+            GoItem("Notes", R.drawable.ic_go_notes) { CalendarNavigator.toDayNote(this, currentDate, "0") }
+        ).forEach(::row)
+
+        header(getString(R.string.go_group_views))
+        listOf(
+            GoItem("Week", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toWeekPage(this, currentDate, locale) },
+            GoItem("Month", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toMonthPage(this, currentDate) },
+            GoItem("Quarter", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toQuarterPage(this, currentDate) },
+            GoItem("Year", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toYearPage(this, currentDate) }
+        ).forEach(::row)
+
+        header(getString(R.string.go_group_ledger))
+        listOf(
+            GoItem("Reader", R.drawable.ic_dashboard_item_reader) { findNavController().navigate(R.id.action_to_reader) },
+            GoItem("Feed Ledger", R.drawable.ic_dashboard_item_feeds) { findNavController().navigate(R.id.action_to_feeds) },
+            GoItem("Ask my Ledger", R.drawable.ic_dashboard_item_chat) { findNavController().navigate(R.id.action_to_ledger_chat) },
+            GoItem("Cloud", R.drawable.ic_dashboard_item_cloud) { CalendarNavigator.toCloudSync(this) }
+        ).forEach(::row)
+
+        dialog.show()
     }
 
     /**
