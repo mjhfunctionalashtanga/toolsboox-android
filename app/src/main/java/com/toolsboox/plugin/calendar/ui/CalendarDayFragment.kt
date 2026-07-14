@@ -9,6 +9,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import androidx.appcompat.app.AlertDialog
+import androidx.navigation.fragment.findNavController
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.analytics.logEvent
 import com.toolsboox.R
@@ -391,13 +392,40 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             }
         }
         binding.toolbarDrawing.toolbarCalendarView.setOnClickListener {
-            // Always jump to today's day page (Default style), regardless of what
-            // date you're currently viewing or whether you're on a note page.
-            CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE)
+            showGoToModal()
         }
 
         utils.updateToolbar(binding)
         initializeSurface(true)
+    }
+
+    /**
+     * iPad-style "Go to" modal — jump straight to a day-page section (Schedule,
+     * Pickings, Gratitude, Later List, Notes) or a Ledger surface (Reader, Feed
+     * Ledger, Ask my Ledger, Cloud) without leaving for a dashboard. Reached from
+     * the toolbar's calendar-view button.
+     */
+    private fun showGoToModal() {
+        val labels = arrayOf(
+            "Today's Schedule", "Pickings", "Gratitude", "Later List", "Notes",
+            "Reader", "Feed Ledger", "Ask my Ledger", "Cloud"
+        )
+        AlertDialog.Builder(requireContext())
+            .setTitle("Go to")
+            .setItems(labels) { _, which ->
+                when (which) {
+                    0 -> CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE)
+                    1 -> CalendarNavigator.toDayNote(this, currentDate, "pickings")
+                    2 -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
+                    3 -> CalendarNavigator.toDayNote(this, currentDate, "intake")
+                    4 -> CalendarNavigator.toDayNote(this, currentDate, "0")
+                    5 -> findNavController().navigate(R.id.action_to_reader)
+                    6 -> findNavController().navigate(R.id.action_to_feeds)
+                    7 -> findNavController().navigate(R.id.action_to_ledger_chat)
+                    8 -> CalendarNavigator.toCloudSync(this)
+                }
+            }
+            .show()
     }
 
     /**
