@@ -445,6 +445,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.navGear.setOnClickListener { showWidgetGearMenu() }
         applyWidgetOrientation()
 
+        // Lift the floating overlays above the drawing surface without elevation (which
+        // renders as an ugly black shadow-box on e-ink).
+        binding.goAppsButton.bringToFront()
+        binding.toolWidget.bringToFront()
+        binding.navWidget.bringToFront()
+
         utils.updateToolbar(binding)
         // Inset the date bar so the top-left hamburger sits in its own gutter (no caret overlap).
         (binding.navigatorImageView.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let {
