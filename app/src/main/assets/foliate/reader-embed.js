@@ -78,7 +78,7 @@ const settings = {
     gap: 6,               // % gap between columns
     columns: 1,           // max-column-count (1 or 2)
     flow: 'paginated',    // or 'scrolled'
-    animated: true,       // page-flip animation
+    animated: false,      // page-flip animation off — it ghosts on e-ink
     invertImages: false,  // invert images in dark mode
     theme: 'default',     // default | sepia | gray | black
 }

@@ -9,7 +9,8 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"/>
 
-    <!-- Draggable floating control bar. -->
+    <!-- Draggable floating nav pill (grip taps to collapse) — matches the article/day pill:
+         ☰ goto · ‹ prev-page · ✎ highlight (center) · › next-page · Aa settings · 📖 shelf. -->
     <LinearLayout
         android:id="@+id/reader_bar"
         android:orientation="horizontal"
@@ -24,22 +25,22 @@
         <ImageView android:id="@+id/reader_grip" android:layout_width="22dp" android:layout_height="46dp"
             android:scaleType="fitCenter" android:src="@drawable/ic_grip" android:contentDescription="@null"/>
         <Button android:id="@+id/goto_button" style="?android:attr/borderlessButtonStyle"
-            android:text="☰" android:textSize="20sp"
+            android:text="☰" android:textSize="21sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
         <Button android:id="@+id/prev_button" style="?android:attr/borderlessButtonStyle"
-            android:text="@string/reader_prev"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        <Button android:id="@+id/open_button" style="?android:attr/borderlessButtonStyle"
-            android:text="@string/reader_open"
+            android:text="‹" android:textSize="26sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
         <Button android:id="@+id/highlight_button" style="?android:attr/borderlessButtonStyle"
-            android:text="@string/reader_highlight"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        <Button android:id="@+id/settings_button" style="?android:attr/borderlessButtonStyle"
-            android:text="@string/reader_aa"
+            android:text="✎" android:textSize="21sp" android:minWidth="0dp" android:paddingHorizontal="12dp"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
         <Button android:id="@+id/next_button" style="?android:attr/borderlessButtonStyle"
-            android:text="@string/reader_next"
+            android:text="›" android:textSize="26sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <Button android:id="@+id/settings_button" style="?android:attr/borderlessButtonStyle"
+            android:text="@string/reader_aa" android:minWidth="0dp" android:paddingHorizontal="10dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <Button android:id="@+id/open_button" style="?android:attr/borderlessButtonStyle"
+            android:text="📖" android:textSize="18sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
     </LinearLayout>
 

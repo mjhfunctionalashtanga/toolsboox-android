@@ -105,7 +105,9 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
         binding.openButton.setOnClickListener { openShelf() }
         binding.settingsButton.setOnClickListener { openSettings() }
         binding.gotoButton.setOnClickListener { showReaderDirectory() }
-        makeDraggable(binding.readerGrip, binding.readerBar, "reader")
+        // Drag to move; tap the grip to hide/show the bar (books want a clean page).
+        makeDraggable(binding.readerGrip, binding.readerBar, "reader") { toggleReaderBar() }
+        applyReaderBarCollapse()
 
         // Resume the last book, else land on the reader's "waiting for a book" screen.
         restoreLastBook()
@@ -388,6 +390,20 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
             requireContext().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)!!
         else
             File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
+
+    /** Hide/show the reader bar — collapsed leaves just the grip + ✎ highlight. */
+    private fun toggleReaderBar() {
+        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
+        prefs.edit().putBoolean("reader_bar_collapsed", !prefs.getBoolean("reader_bar_collapsed", false)).apply()
+        applyReaderBarCollapse()
+    }
+
+    private fun applyReaderBarCollapse() {
+        val collapsed = requireContext().getSharedPreferences("ledger_widgets", 0)
+            .getBoolean("reader_bar_collapsed", false)
+        for (v in listOf(binding.gotoButton, binding.prevButton, binding.nextButton, binding.settingsButton, binding.openButton))
+            v.visibility = if (collapsed) View.GONE else View.VISIBLE
+    }
 
     override fun showLoading() {}
     override fun hideLoading() {}
