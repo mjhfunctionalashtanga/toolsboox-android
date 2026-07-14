@@ -420,8 +420,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.toolUndo.setOnClickListener { binding.toolbarDrawing.toolbarUndo.performClick() }
         binding.toolRedo.setOnClickListener { binding.toolbarDrawing.toolbarRedo.performClick() }
 
-        // Gear on the nav pill: flip the pills' orientation (the old switch-side), rotate
-        // the screen, open Settings, or toggle finger/hand mode.
+        // Go to (day sections + Ledger surfaces) + gear (flip/rotate/settings/finger/add).
+        binding.navGoto.setOnClickListener { showGoToModal() }
         binding.navGear.setOnClickListener { showWidgetGearMenu() }
         applyWidgetOrientation()
 
@@ -444,7 +444,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     private fun showWidgetGearMenu() {
-        val labels = arrayOf("Flip layout", "Rotate screen", "Settings", "Finger / hand")
+        val labels = arrayOf("Flip layout", "Rotate screen", "Add text", "Add image", "Finger / hand", "Settings")
         AlertDialog.Builder(requireContext())
             .setTitle(R.string.calendar_drawing_toolbar_settings)
             .setItems(labels) { _, which ->
@@ -455,8 +455,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                         applyWidgetOrientation()
                     }
                     1 -> binding.toolbarDrawing.toolbarRotate.performClick()
-                    2 -> binding.toolbarDrawing.toolbarSettings.performClick()
-                    3 -> binding.toolbarDrawing.toolbarHandTouch.performClick()
+                    2 -> binding.toolbarDrawing.toolbarText.performClick()
+                    3 -> binding.toolbarDrawing.toolbarImage.performClick()
+                    4 -> binding.toolbarDrawing.toolbarHandTouch.performClick()
+                    5 -> binding.toolbarDrawing.toolbarSettings.performClick()
                 }
             }
             .show()
