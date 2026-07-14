@@ -396,16 +396,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 CalendarNavigator.toDayNote(this, currentDate, "pickings")
             }
         }
-        binding.toolbarDrawing.toolbarCalendarView.setOnClickListener {
-            // Always jump to today's day page (Default style).
-            CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE)
-        }
-
-        // iPad-style top jump buttons by the carets: left = apps/almanac, right = sections.
-        binding.goAppsButton.visibility = View.VISIBLE
-        binding.goSectionsButton.visibility = View.VISIBLE
-        binding.goAppsButton.setOnClickListener { showAppsModal() }
-        binding.goSectionsButton.setOnClickListener { showSectionsModal() }
+        // Calendar button: tap = apps/almanac panel, long-press = day sections. Both
+        // float opposite the pen strip. (Kept off the dense date bar to avoid overlap;
+        // a dedicated home comes with the tool-bar redesign.)
+        binding.toolbarDrawing.toolbarCalendarView.setOnClickListener { showAppsModal() }
+        binding.toolbarDrawing.toolbarCalendarView.setOnLongClickListener { showSectionsModal(); true }
+        binding.goAppsButton.visibility = View.GONE
+        binding.goSectionsButton.visibility = View.GONE
 
         utils.updateToolbar(binding)
         initializeSurface(true)
