@@ -4,7 +4,7 @@
             xmlns:tools="http://schemas.android.com/tools"
 
             android:id="@+id/navigation_main"
-            app:startDestination="@id/CalendarDayFragment">
+            app:startDestination="@id/DashboardFragment">
 
     <action
             android:id="@+id/action_to_dashboard"
