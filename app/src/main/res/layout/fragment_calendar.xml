@@ -112,7 +112,7 @@
                 android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_right"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
             <ImageButton android:id="@+id/navGear" android:layout_width="46dp" android:layout_height="46dp"
-                android:padding="10dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_settings"
+                android:padding="11dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_wrench"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_settings"/>
         </LinearLayout>
 

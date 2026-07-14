@@ -483,31 +483,30 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.toolWidget.orientation = o
     }
 
-    private fun showWidgetGearMenu() {
-        val labels = arrayOf("Flip layout", "Reset pill positions", "Rotate screen", "Add text", "Add image", "Finger / hand", "Settings")
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.calendar_drawing_toolbar_settings)
-            .setItems(labels) { _, which ->
-                when (which) {
-                    0 -> {
-                        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
-                        prefs.edit().putBoolean("vertical", !prefs.getBoolean("vertical", false)).apply()
-                        applyWidgetOrientation()
-                    }
-                    1 -> {
-                        requireContext().getSharedPreferences("ledger_widgets", 0).edit()
-                            .remove("nav_tx").remove("nav_ty").remove("tool_tx").remove("tool_ty").apply()
-                        for (v in listOf(binding.navWidget, binding.toolWidget)) { v.translationX = 0f; v.translationY = 0f }
-                    }
-                    2 -> binding.toolbarDrawing.toolbarRotate.performClick()
-                    3 -> binding.toolbarDrawing.toolbarText.performClick()
-                    4 -> binding.toolbarDrawing.toolbarImage.performClick()
-                    5 -> binding.toolbarDrawing.toolbarHandTouch.performClick()
-                    6 -> binding.toolbarDrawing.toolbarSettings.performClick()
-                }
-            }
-            .show()
-    }
+    private fun showWidgetGearMenu() = showGoModal(
+        listOf(
+            "Tools" to listOf(
+                GoItem("🖊️", "Add text") { binding.toolbarDrawing.toolbarText.performClick() },
+                GoItem("🖼️", "Add image") { binding.toolbarDrawing.toolbarImage.performClick() },
+                GoItem("👆", "Finger / hand") { binding.toolbarDrawing.toolbarHandTouch.performClick() },
+                GoItem("🔄", "Rotate screen") { binding.toolbarDrawing.toolbarRotate.performClick() }
+            ),
+            "Layout" to listOf(
+                GoItem("🔀", "Flip layout") {
+                    val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
+                    prefs.edit().putBoolean("vertical", !prefs.getBoolean("vertical", false)).apply()
+                    applyWidgetOrientation()
+                },
+                GoItem("🎯", "Reset pill positions") {
+                    requireContext().getSharedPreferences("ledger_widgets", 0).edit()
+                        .remove("nav_tx").remove("nav_ty").remove("tool_tx").remove("tool_ty").apply()
+                    for (v in listOf(binding.navWidget, binding.toolWidget)) { v.translationX = 0f; v.translationY = 0f }
+                },
+                GoItem("⚙️", "Settings") { binding.toolbarDrawing.toolbarSettings.performClick() }
+            )
+        ),
+        anchorTop = false
+    )
 
     private data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
 
@@ -522,7 +521,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 "Ledgers" to listOf(
                     GoItem("📰", "Feed Ledger") { findNavController().navigate(R.id.action_to_feeds) },
                     GoItem("💬", "Ask my Ledger") { findNavController().navigate(R.id.action_to_ledger_chat) },
-                    GoItem("☁️", "Cloud") { CalendarNavigator.toCloudSync(this) }
+                    GoItem("☁️", "Cloud") { CalendarNavigator.toCloudSync(this) },
+                    GoItem("⚙️", "Settings") { binding.toolbarDrawing.toolbarSettings.performClick() }
                 ),
                 "Almanac" to listOf(
                     GoItem("📆", "Week") { CalendarNavigator.toWeekPage(this, currentDate, locale) },
