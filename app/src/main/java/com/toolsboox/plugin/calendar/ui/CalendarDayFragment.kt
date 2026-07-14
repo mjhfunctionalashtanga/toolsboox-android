@@ -494,13 +494,36 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private fun onCenterTapped() {
         val today = LocalDate.now()
         if (currentDate != today) {
+            // First tap from a past day → jump to today's version of the current section.
             val np = currentNotePage()
             if (np != null) CalendarNavigator.toDayNote(this, today, np)
             else CalendarNavigator.toDayPage(this, today, CalendarDay.DEFAULT_STYLE)
         } else {
-            showLedgerHub()
+            // Already on today → open the sections switcher.
+            showSectionSwitcher()
         }
     }
+
+    /**
+     * The sunshine's sections switcher: pick a section and land on its TODAY page; the
+     * center emoji then adopts that section (Day/Intake/Gratitude/Pickings/Notes all show
+     * their glyph on the pill). Feed / AV / Almanac open their own surfaces.
+     */
+    private fun showSectionSwitcher() = showGoModal(
+        listOf(
+            getString(R.string.go_group_day) to listOf(
+                GoItem("☀️", "Day") { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
+                GoItem("🔖", "Intake") { CalendarNavigator.toDayNote(this, LocalDate.now(), "intake") },
+                GoItem("🙏", "Gratitude") { CalendarNavigator.toDayNote(this, LocalDate.now(), "gratitude") },
+                GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this, LocalDate.now(), "pickings") },
+                GoItem("✒️", "Notes") { CalendarNavigator.toDayNote(this, LocalDate.now(), "0") },
+                GoItem("📰", "Feed") { findNavController().navigate(R.id.action_to_feeds) },
+                GoItem("🎬", "AV") { findNavController().navigate(R.id.action_to_reading_log) },
+                GoItem("📆", "Almanac") { CalendarNavigator.toWeekPage(this, LocalDate.now(), locale) }
+            )
+        ),
+        anchorTop = false
+    )
 
     /** Mark which tool is active on the floating pill (mirrors the hidden toolbar's tint). */
     private fun markActiveTool(active: View) {
