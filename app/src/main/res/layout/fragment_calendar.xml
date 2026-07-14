@@ -76,6 +76,36 @@
                 app:layout_constraintEnd_toEndOf="@id/navigatorImageView"
                 android:layout_marginEnd="2dp"/>
 
+        <!-- Floating nav widget (day page only): ‹ prev-date · ↑↓ sections · next-date ›.
+             Overlays the page (does not shift it). Hidden by default. -->
+        <LinearLayout
+                android:id="@+id/navWidget"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/ledger_bar_bg"
+                android:padding="4dp"
+                android:elevation="8dp"
+                android:visibility="gone"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintStart_toStartOf="@id/navigatorImageView"
+                app:layout_constraintEnd_toEndOf="@id/navigatorImageView"
+                android:layout_marginBottom="18dp">
+
+            <ImageButton android:id="@+id/navLeft" android:layout_width="46dp" android:layout_height="46dp"
+                android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_left"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
+            <ImageButton android:id="@+id/navUp" android:layout_width="46dp" android:layout_height="46dp"
+                android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_group_day"/>
+            <ImageButton android:id="@+id/navDown" android:layout_width="46dp" android:layout_height="46dp"
+                android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_group_day"/>
+            <ImageButton android:id="@+id/navRight" android:layout_width="46dp" android:layout_height="46dp"
+                android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_right"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
+        </LinearLayout>
+
         <include
                 layout="@layout/toolbar_drawing"
                 android:id="@+id/toolbarDrawing"

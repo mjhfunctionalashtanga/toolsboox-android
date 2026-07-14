@@ -402,6 +402,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.goAppsButton.visibility = View.GONE
         binding.goSectionsButton.visibility = View.GONE
 
+        // Floating nav widget: reuse the existing nav actions so nothing about drawing
+        // changes. ‹ › step the date; ↑ ↓ cycle the day's sections.
+        binding.navWidget.visibility = View.VISIBLE
+        binding.navUp.setOnClickListener { binding.toolbarDrawing.toolbarSwipeUp.performClick() }
+        binding.navDown.setOnClickListener { binding.toolbarDrawing.toolbarSwipeDown.performClick() }
+        binding.navLeft.setOnClickListener { CalendarNavigator.toDayPage(this, currentDate.minusDays(1), CalendarDay.DEFAULT_STYLE) }
+        binding.navRight.setOnClickListener { CalendarNavigator.toDayPage(this, currentDate.plusDays(1), CalendarDay.DEFAULT_STYLE) }
+
         utils.updateToolbar(binding)
         initializeSurface(true)
     }
