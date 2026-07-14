@@ -453,8 +453,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.navWidget.bringToFront()
 
         // Repositionable pills: drag the grip to move a pill anywhere (persisted).
-        makeDraggable(binding.toolGrip, binding.toolWidget, "tool")
-        makeDraggable(binding.navGrip, binding.navWidget, "nav")
+        // A plain tap on the grip collapses/expands the pill (grip = the obvious handle).
+        makeDraggable(binding.toolGrip, binding.toolWidget, "tool") { togglePill("tool") }
+        makeDraggable(binding.navGrip, binding.navWidget, "nav") { togglePill("nav") }
 
         // Minimize/expand pills: the expander collapses to one button + expander; a
         // long-press on the representative button also toggles it.
@@ -549,6 +550,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val books: List<Pair<String, () -> Unit>> =
             recentBooks().map { f -> ("📖  " + f.nameWithoutExtension) to { openBookInReader(f) } } +
             ("📚  Open Bookshelf" to { findNavController().navigate(R.id.action_to_reader) })
+        // Open every folder by default so the whole directory is there to browse at a
+        // glance — no drilling into a separate screen to see what's available.
         showAccordion(
             listOf(
                 Folder("📆", "Almanac", listOf(
@@ -556,18 +559,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     "Month" to { CalendarNavigator.toMonthPage(this, currentDate) },
                     "Quarter" to { CalendarNavigator.toQuarterPage(this, currentDate) },
                     "Year" to { CalendarNavigator.toYearPage(this, currentDate) }
-                )),
+                ), expanded = true),
                 Folder("📰", "Feed", listOf(
                     "Open Feed Ledger" to { findNavController().navigate(R.id.action_to_feeds) }
-                )),
+                ), expanded = true),
                 Folder("📚", "Bookshelf", books, expanded = true),
                 Folder("💬", "Ask", listOf(
                     "Open Ask my Ledger" to { findNavController().navigate(R.id.action_to_ledger_chat) }
-                )),
+                ), expanded = true),
                 Folder("⚙️", "Settings", listOf(
                     "Open Settings" to { binding.toolbarDrawing.toolbarSettings.performClick() },
                     "Cloud sync" to { CalendarNavigator.toCloudSync(this) }
-                ))
+                ), expanded = true)
             )
         )
     }

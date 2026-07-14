@@ -149,26 +149,42 @@ abstract class ScreenFragment : Fragment() {
      */
     abstract fun hideLoading()
 
-    /** Drag [handle] to move [pill] freely (via translation), persisted under [key]. */
+    /**
+     * Drag [handle] to move [pill] freely (via translation), persisted under [key].
+     * A plain tap on the handle (no drag) fires [onTap] — used to collapse/expand the
+     * pill, so the grip itself is the obvious affordance, not just the small caret.
+     */
     @android.annotation.SuppressLint("ClickableViewAccessibility")
-    protected fun makeDraggable(handle: View, pill: View, key: String) {
+    protected fun makeDraggable(handle: View, pill: View, key: String, onTap: (() -> Unit)? = null) {
         val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
         pill.translationX = prefs.getFloat("${key}_tx", 0f)
         pill.translationY = prefs.getFloat("${key}_ty", 0f)
+        val slop = 12f * resources.displayMetrics.density
         var downX = 0f; var downY = 0f; var startTx = 0f; var startTy = 0f
+        var downAt = 0L; var moved = false
         handle.setOnTouchListener { _, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    downX = e.rawX; downY = e.rawY; startTx = pill.translationX; startTy = pill.translationY; true
+                    downX = e.rawX; downY = e.rawY; startTx = pill.translationX; startTy = pill.translationY
+                    downAt = System.currentTimeMillis(); moved = false; true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     pill.translationX = startTx + (e.rawX - downX)
                     pill.translationY = startTy + (e.rawY - downY)
+                    if (kotlin.math.abs(e.rawX - downX) > slop || kotlin.math.abs(e.rawY - downY) > slop) moved = true
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    prefs.edit().putFloat("${key}_tx", pill.translationX)
-                        .putFloat("${key}_ty", pill.translationY).apply()
+                    if (onTap != null && !moved && e.actionMasked == MotionEvent.ACTION_UP &&
+                        System.currentTimeMillis() - downAt < 350
+                    ) {
+                        // Tap (not a drag) → toggle collapse; snap the pill back to where it was.
+                        pill.translationX = startTx; pill.translationY = startTy
+                        onTap()
+                    } else {
+                        prefs.edit().putFloat("${key}_tx", pill.translationX)
+                            .putFloat("${key}_ty", pill.translationY).apply()
+                    }
                     true
                 }
                 else -> false

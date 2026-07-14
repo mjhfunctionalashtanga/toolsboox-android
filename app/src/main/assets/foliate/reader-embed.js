@@ -11,6 +11,16 @@ const msg = document.getElementById('msg')
 // Signal the early (non-module) watchdog in the HTML that the module is alive.
 window.__readerStarted = true
 
+// e-ink-friendly highlight: the standard translucent fill washes out to white on a
+// grayscale Boox, so combine the fill with a solid black underline in a single SVG
+// group (Overlayer.add appends exactly one element per annotation).
+const einkHighlight = (rects, options = {}) => {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+    g.append(Overlayer.highlight(rects, { color: options.color || '#ffd60a' }))
+    g.append(Overlayer.underline(rects, { color: '#000000', width: 3 }))
+    return g
+}
+
 function post(type, payload = {}) {
     window.webkit?.messageHandlers?.reader?.postMessage({ type, ...payload })
 }
@@ -140,7 +150,10 @@ async function openBook(file) {
         })
         view.addEventListener('draw-annotation', e => {
             const { draw, annotation } = e.detail
-            draw(Overlayer.highlight, { color: annotation.color || '#ffd60a' })
+            // e-ink: a 0.3-opacity yellow fill is invisible on a grayscale Boox screen.
+            // Paint the fill AND a solid black underline in one group so the highlight
+            // always reads on e-ink (the underline carries it; the band adds context).
+            draw(einkHighlight, { color: annotation.color || '#ffd60a' })
         })
         // Tapping an existing highlight → offer to delete it.
         view.addEventListener('show-annotation', e => {
