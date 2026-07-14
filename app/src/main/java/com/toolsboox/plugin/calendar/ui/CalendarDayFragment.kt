@@ -421,6 +421,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // so the Onyx ink wiring is unchanged. Long-press the eraser to clear the page.
         binding.toolWidget.visibility = View.VISIBLE
         binding.toolPen.setOnClickListener { binding.toolbarDrawing.toolbarPen.performClick() }
+        // Long-press the pen → pick ballpoint vs calligraphy (shows the active one).
+        binding.toolPen.setOnLongClickListener {
+            val opts = arrayOf("Ballpoint", "Calligraphy")
+            AlertDialog.Builder(requireContext())
+                .setTitle(R.string.calendar_drawing_toolbar_pen)
+                .setSingleChoiceItems(opts, if (penIsCalligraphy()) 1 else 0) { d, w ->
+                    setPenCalligraphy(w == 1)
+                    d.dismiss()
+                }
+                .show()
+            true
+        }
         binding.toolEraser.setOnClickListener { binding.toolbarDrawing.toolbarEraser.performClick() }
         binding.toolEraser.setOnLongClickListener { binding.toolbarDrawing.toolbarTrash.performClick(); true }
         binding.toolLasso.setOnClickListener { binding.toolbarDrawing.toolbarLasso.performClick() }

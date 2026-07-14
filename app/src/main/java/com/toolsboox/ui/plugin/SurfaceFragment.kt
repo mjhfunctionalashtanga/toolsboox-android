@@ -241,6 +241,13 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** When true the pen lays down pressure-variable calligraphy ink (live via the Onyx fountain nib). */
     private var calligraphyMode = false
 
+    /** Read/write the pen style (ballpoint vs calligraphy) for the floating pen picker. */
+    protected fun penIsCalligraphy(): Boolean = calligraphyMode
+    protected fun setPenCalligraphy(on: Boolean) {
+        calligraphyMode = on
+        sharedPreferences.edit().putBoolean("calligraphyMode", on).apply()
+    }
+
     /** Image insert/manipulate mode (toolbar image button): select, move, resize, delete pasted images. */
     private var imageMode = false
     private var imageElements: MutableList<ImageElement> = mutableListOf()
