@@ -597,7 +597,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                         com.toolsboox.plugin.feeds.ui.FeedSelection.filterFeedTitle = null
                         findNavController().navigate(R.id.action_to_feeds)
                     },
-                    "🖍️  Notes & Annotations" to { CalendarNavigator.toDayNote(this, currentDate, "0") },
+                    "🖍️  Notes & Annotations" to { findNavController().navigate(R.id.action_to_reading_log) },
                     "🎬  AV grams" to {
                         android.widget.Toast.makeText(requireContext(),
                             "AV grams — viewable on the iPad; Android viewer coming.",

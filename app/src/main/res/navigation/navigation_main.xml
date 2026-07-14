@@ -48,6 +48,10 @@
             android:id="@+id/action_to_feeds"
             app:destination="@id/FeedsFragment"/>
 
+    <action
+            android:id="@+id/action_to_reading_log"
+            app:destination="@id/ReadingLogFragment"/>
+
     <fragment
             android:id="@+id/DashboardFragment"
             android:name="com.toolsboox.plugin.dashboard.ui.DashboardFragment"
@@ -107,6 +111,19 @@
                 android:id="@+id/action_to_dashboard"
                 app:destination="@id/DashboardFragment"
                 app:popUpTo="@id/DashboardFragment"
+                app:popUpToInclusive="true"/>
+    </fragment>
+
+    <fragment
+            android:id="@+id/ReadingLogFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.ReadingLogFragment"
+            android:label="ReadingLogFragment"
+            tools:layout="@layout/fragment_reading_log">
+
+        <action
+                android:id="@+id/action_to_calendar_day"
+                app:destination="@id/CalendarDayFragment"
+                app:popUpTo="@id/CalendarDayFragment"
                 app:popUpToInclusive="true"/>
     </fragment>
 

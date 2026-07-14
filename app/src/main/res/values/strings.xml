@@ -365,6 +365,14 @@
     <string name="reader_highlight_delete_confirm">Remove this highlight?</string>
     <string name="reader_highlight_delete">Remove</string>
     <string name="eraser_clear_page">Clear page</string>
+    <string name="reading_log_title">Notes &amp; Annotations</string>
+    <string name="reading_log_empty">No notes or annotations in this range yet. Highlight in a book, star an article, or capture an AV gram — they land here.</string>
+    <string name="reading_log_untitled">Untitled</string>
+    <string name="reading_log_origin_all">All</string>
+    <string name="reading_log_open_hint">%s — open it from its source.</string>
+    <string name="reading_log_av_video">Video note to self</string>
+    <string name="reading_log_av_audio">Audio note to self</string>
+    <string name="reading_log_av_photo">Photo</string>
     <string name="reader_aa">Aa</string>
     <string name="reader_settings_title">Reading</string>
     <string name="reader_font_smaller">A −</string>
