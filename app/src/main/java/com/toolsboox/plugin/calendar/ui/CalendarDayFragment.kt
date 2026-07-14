@@ -451,6 +451,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.toolWidget.bringToFront()
         binding.navWidget.bringToFront()
 
+        // Repositionable pills: drag the grip to move a pill anywhere (persisted).
+        makeDraggable(binding.toolGrip, binding.toolWidget, "tool")
+        makeDraggable(binding.navGrip, binding.navWidget, "nav")
+
         utils.updateToolbar(binding)
         // Inset the date bar so the top-left hamburger sits in its own gutter (no caret overlap).
         (binding.navigatorImageView.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let {
@@ -466,6 +470,33 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * Ledger, Ask my Ledger, Cloud) without leaving for a dashboard. Reached from
      * the toolbar's calendar-view button.
      */
+    /** Drag [handle] to move [pill] freely (via translation), persisted under [key]. */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun makeDraggable(handle: View, pill: View, key: String) {
+        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
+        pill.translationX = prefs.getFloat("${key}_tx", 0f)
+        pill.translationY = prefs.getFloat("${key}_ty", 0f)
+        var downX = 0f; var downY = 0f; var startTx = 0f; var startTy = 0f
+        handle.setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX; downY = e.rawY; startTx = pill.translationX; startTy = pill.translationY; true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    pill.translationX = startTx + (e.rawX - downX)
+                    pill.translationY = startTy + (e.rawY - downY)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    prefs.edit().putFloat("${key}_tx", pill.translationX)
+                        .putFloat("${key}_ty", pill.translationY).apply()
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
     /** Flip the floating pills between a horizontal and vertical layout. Defaults to
      *  vertical on narrow (phone-size) screens so the two pills don't collide; the gear's
      *  "Flip layout" overrides and persists the choice. */

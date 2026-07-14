@@ -92,6 +92,9 @@
                 android:layout_marginEnd="14dp"
                 android:layout_marginBottom="18dp">
 
+            <ImageView android:id="@+id/navGrip" android:layout_width="22dp" android:layout_height="46dp"
+                android:scaleType="fitCenter" android:src="@drawable/ic_grip"
+                android:contentDescription="@null"/>
             <ImageButton android:id="@+id/navGoto" android:layout_width="46dp" android:layout_height="46dp"
                 android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_today"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
@@ -128,6 +131,9 @@
                 android:layout_marginStart="14dp"
                 android:layout_marginBottom="18dp">
 
+            <ImageView android:id="@+id/toolGrip" android:layout_width="22dp" android:layout_height="46dp"
+                android:scaleType="fitCenter" android:src="@drawable/ic_grip"
+                android:contentDescription="@null"/>
             <ImageButton android:id="@+id/toolPen" android:layout_width="46dp" android:layout_height="46dp"
                 android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_pen"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_pen"/>
