@@ -439,8 +439,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.toolUndo.setOnClickListener { binding.toolbarDrawing.toolbarUndo.performClick() }
         binding.toolRedo.setOnClickListener { binding.toolbarDrawing.toolbarRedo.performClick() }
 
-        // Bottom pill button → this day's sections (Today/Pickings/Gratitude/Later/Notes).
-        // Gear = flip/rotate/settings/finger/add.
+        // Bottom pill button shows the CURRENT section's emoji; tapping reopens the
+        // sections selector. Gear = flip/rotate/settings/finger/add.
+        binding.navGoto.text = sectionEmoji()
         binding.navGoto.setOnClickListener { showSectionsModal() }
         binding.navGear.setOnClickListener { showWidgetGearMenu() }
         applyWidgetOrientation()
@@ -522,6 +523,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         ),
         anchorTop = true
     )
+
+    /** The emoji for the section currently on screen (drives the bottom pill button). */
+    private fun sectionEmoji(): String = when (currentNotePage()) {
+        null, "default", CalendarDay.DEFAULT_STYLE -> "☀️"
+        "pickings" -> "❝"
+        "gratitude" -> "🙏"
+        "intake" -> "🔖"
+        else -> "✒️"
+    }
 
     /** Bottom pill → this day's sections. */
     private fun showSectionsModal() = showGoModal(

@@ -95,5 +95,9 @@ class MinifluxClient @Inject constructor() {
         return out
     }
 
-    private fun normalize(baseUrl: String) = baseUrl.trim().trimEnd('/')
+    private fun normalize(baseUrl: String): String {
+        var u = baseUrl.trim().trimEnd('/')
+        if (!u.startsWith("http://", true) && !u.startsWith("https://", true)) u = "https://$u"
+        return u
+    }
 }

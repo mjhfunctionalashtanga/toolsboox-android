@@ -95,8 +95,9 @@
             <ImageView android:id="@+id/navGrip" android:layout_width="22dp" android:layout_height="46dp"
                 android:scaleType="fitCenter" android:src="@drawable/ic_grip"
                 android:contentDescription="@null"/>
-            <ImageButton android:id="@+id/navGoto" android:layout_width="46dp" android:layout_height="46dp"
-                android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_today"
+            <TextView android:id="@+id/navGoto" android:layout_width="46dp" android:layout_height="46dp"
+                android:gravity="center" android:textSize="22sp" android:text="☀️"
+                android:clickable="true" android:focusable="true"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
             <ImageButton android:id="@+id/navLeft" android:layout_width="46dp" android:layout_height="46dp"
                 android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_left"
