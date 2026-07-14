@@ -15,27 +15,33 @@
         android:orientation="horizontal"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#F2F2F2"
+        android:layout_margin="12dp"
+        android:background="@drawable/ledger_bar_bg"
         android:padding="6dp">
 
         <Button
             android:id="@+id/prev_button"
+            style="?android:attr/borderlessButtonStyle"
             android:text="@string/reader_prev"
             android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
         <Button
             android:id="@+id/open_button"
+            style="?android:attr/borderlessButtonStyle"
             android:text="@string/reader_open"
             android:layout_width="0dp" android:layout_weight="1.4" android:layout_height="wrap_content"/>
         <Button
             android:id="@+id/highlight_button"
+            style="?android:attr/borderlessButtonStyle"
             android:text="@string/reader_highlight"
             android:layout_width="0dp" android:layout_weight="1.4" android:layout_height="wrap_content"/>
         <Button
             android:id="@+id/settings_button"
+            style="?android:attr/borderlessButtonStyle"
             android:text="@string/reader_aa"
             android:layout_width="0dp" android:layout_weight="0.8" android:layout_height="wrap_content"/>
         <Button
             android:id="@+id/next_button"
+            style="?android:attr/borderlessButtonStyle"
             android:text="@string/reader_next"
             android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
     </LinearLayout>
