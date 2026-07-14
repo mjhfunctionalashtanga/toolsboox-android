@@ -10,6 +10,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.view.Gravity
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
@@ -461,6 +462,17 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         ).forEach(::row)
 
         dialog.show()
+        // Float it top-left like the iPad's page selector — a compact panel over the
+        // pen strip area, not a centered sheet. Its bottom rides up toward the tools.
+        dialog.window?.let { w ->
+            val lp = w.attributes
+            lp.gravity = Gravity.START or Gravity.TOP
+            lp.x = dp(6)
+            lp.y = dp(52)
+            lp.width = dp(470)
+            lp.height = (resources.displayMetrics.heightPixels * 0.60f).toInt()
+            w.attributes = lp
+        }
     }
 
     /**
