@@ -176,6 +176,58 @@ abstract class ScreenFragment : Fragment() {
         }
     }
 
+    /** One collapsible folder in the [showAccordion] directory. */
+    protected data class Folder(
+        val emoji: String, val title: String,
+        val items: List<Pair<String, () -> Unit>>, val expanded: Boolean = false
+    )
+
+    /**
+     * Collapsible-folder directory popover (top-left). Each folder header toggles its
+     * children — Almanac, Feed, Bookshelf, Ask, Settings, etc.
+     */
+    protected fun showAccordion(folders: List<Folder>) {
+        val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
+        val list = root.findViewById<LinearLayout>(R.id.go_to_list)
+        root.findViewById<TextView>(R.id.go_to_title).visibility = View.GONE
+        val dialog = AlertDialog.Builder(requireContext()).setView(root).create()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+        for (folder in folders) {
+            val header = layoutInflater.inflate(R.layout.item_go_to, list, false)
+            header.findViewById<ImageView>(R.id.go_icon).visibility = View.GONE
+            val headerLabel = header.findViewById<TextView>(R.id.go_label)
+            val children = LinearLayout(requireContext()).apply {
+                orientation = LinearLayout.VERTICAL
+                visibility = if (folder.expanded) View.VISIBLE else View.GONE
+            }
+            fun caret() = if (children.visibility == View.VISIBLE) "▾" else "▸"
+            headerLabel.text = "${caret()}  ${folder.emoji}  ${folder.title}"
+            header.setOnClickListener {
+                children.visibility = if (children.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                headerLabel.text = "${caret()}  ${folder.emoji}  ${folder.title}"
+            }
+            for ((label, action) in folder.items) {
+                val r = layoutInflater.inflate(R.layout.item_go_to, children, false)
+                r.findViewById<ImageView>(R.id.go_icon).visibility = View.GONE
+                r.findViewById<TextView>(R.id.go_label).apply { text = label; setPadding(dp(24), paddingTop, paddingRight, paddingBottom) }
+                r.setOnClickListener { dialog.dismiss(); action() }
+                children.addView(r)
+            }
+            list.addView(header); list.addView(children)
+        }
+
+        dialog.show()
+        dialog.window?.let { w ->
+            val lp = w.attributes
+            lp.gravity = Gravity.START or Gravity.TOP
+            lp.x = dp(8); lp.y = dp(54); lp.width = dp(260)
+            lp.height = (resources.displayMetrics.heightPixels * 0.72f).toInt()
+            w.attributes = lp
+        }
+    }
+
     /**
      * A directory popover (top-left, iPad-style) grouping labelled rows under headers —
      * used for the hamburger menus on Bookshelf/Feed to list the actual books/feeds plus

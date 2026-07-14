@@ -113,10 +113,28 @@ class ViwoodsFastInk {
         }
     }
 
+    /**
+     * Force-initialise the NoteJNI stub so its static {} block runs `System.loadLibrary("paintworker")`
+     * from the APP classloader. This MUST happen before any ENoteSetting call that could load the
+     * library from the framework (boot classloader) — otherwise libpaintworker's JNI_OnLoad FindClass
+     * for com.iflytek.ainote.handwrite.NoteJNI fails ("NoClassDefFound … NoteJNI" → "检测到异常") and the
+     * native pen callbacks never register (overlay enables but paints nothing). No-op off the viwoods
+     * flavor (the stub only exists in src/viwoods).
+     */
+    private fun ensureNoteJniLoaded() {
+        try {
+            Class.forName("com.iflytek.ainote.handwrite.NoteJNI", true, this.javaClass.classLoader)
+            Timber.i("ViwoodsFastInk NoteJNI initialised (libpaintworker loaded from app classloader)")
+        } catch (t: Throwable) {
+            Timber.w(t, "ViwoodsFastInk NoteJNI init failed")
+        }
+    }
+
     /** Obtain the ENoteSetting singleton and bind the app context. */
     fun attach(context: Context) {
         if (!isAvailable || attached) return
         appContext = context.applicationContext
+        ensureNoteJniLoaded()
         try {
             enote = Class.forName(ENOTE_CLASS).getMethod("getInstance").invoke(null)
         } catch (t: Throwable) {
@@ -144,45 +162,86 @@ class ViwoodsFastInk {
         Timber.i("ViwoodsFastInk.enable ${w}x${h} useInitWriting=$useInitWriting focusmonitor=[${getProp("persist.sys.focusmonitor.config")}]")
         if (useInitWriting && !initWritingDone) {
             initWritingDone = true
-            // Full Viwoods fast-ink recipe, ported from jdkruzr's working PoC
-            // (ViwoodsAppDev/MainActivity.enableFastInk). initWriting() alone does NOT paint:
-            // the binder AutoDraw path can't set native draw rects (framework bug in
-            // updateAutoDrawRegion never calls setAutoDrawRects), so the T1000 draws nowhere.
-            // The three pieces that actually produce hardware ink:
-            //   1. initWriting() — loads libpaintworker.so into our process so the native
-            //      ENoteWriting singleton is reachable (WritingSurface::init may still warn;
-            //      that's fine — we drive AutoDraw, not the WritingSurface producer).
-            //   2. ENoteWriting.setAutoDrawRects(...) — pushes the draw region straight into
-            //      the native lib, which the binder path fails to do.
-            //   3. T1000 chip arming (SET_HANDWRITING_ENABLE + SEND_HANDWRITING_RANGE).
-            // Prereq (out-of-band): persist.sys.focusmonitor.config=1 present AT BOOT.
+            // WiNote's EXACT in-process recipe — derived empirically 2026-07-11 by diffing WiNote's
+            // working writing session against a failing sideloaded app on the same freshly-rebooted
+            // (clean) WritingProducer BufferQueue:
+            //   WiNote (works):  native_is_handwriting_enable:1 → WritingSurface::init
+            //                    (mConnectedToCpu:0, NO error) → native_is_overlay_enable:1 — ALL in
+            //                    WiNote's own process; system_server never touches the surface.
+            //   sideloaded PoC:  additionally drove the AutoDraw binder path (setT1000AutoDrawEnable/
+            //                    addAutoDrawRect/setAllRegionUnAutoDraw) + T1000 arm, which made
+            //                    system_server's HandWritePolicy.updateAutoDrawRegion spin up its OWN
+            //                    WritingSurface that can't lock the producer → lock error:-22 (spammed),
+            //                    and produced no ink. mConnectedToCpu:0 was a red herring (WiNote has
+            //                    it too). The AutoDraw/T1000 calls were the whole bug.
+            // So: run ONLY the in-process JNI calls, exactly like WiNote. No binder AutoDraw, no T1000,
+            // no ENoteWriting.setAutoDrawRects. onWritingStart()/onWritingEnd() are driven per stroke
+            // (native_is_overlay_enable) from onStrokeStart/onStrokeEnd.
+            // Prereq (out-of-band): persist.sys.focusmonitor.config=1 present AT BOOT + targetSdk 30.
+            // libpaintworker.so is loaded (with the app classloader) by NoteJNI's static block via
+            // [ensureNoteJniLoaded], called from attach() before any ENoteSetting use — that is what
+            // lets JNI_OnLoad's FindClass resolve NoteJNI for RegisterNatives.
             reflect("initWriting", arrayOf())
             reflect("setWritingEnabled", arrayOf(Boolean::class.javaPrimitiveType!!), true)
-            setNativeAutoDrawRects(w, h)
+            registerWritingInputListener()
             hardwareInk = true
-            Timber.i("ViwoodsFastInk hardware fast-ink recipe applied ${w}x${h}")
+            Timber.i("ViwoodsFastInk hardware fast-ink (WiNote in-process recipe) applied ${w}x${h}")
         }
-        // setPictureMode is transient/self-correcting (each app sets its own waveform), so the
-        // software path may set FAST. But the AutoDraw/T1000/handwrite-intercept machinery is
-        // DEVICE-GLOBAL and owned by the native note apps (WiNote/Wschedule) — toggling it from
-        // here corrupts their hardware fast-ink. Since the software path renders strokes itself
-        // and can't use AutoDraw anyway, it must touch ONLY the waveform. Arm AutoDraw solely on
-        // the (currently unreachable) hardware path.
+        // FAST waveform for the panel. Harmless/self-correcting and shared with the software path.
+        // (WiNote manages its own waveform; setting FAST here does not go through the AutoDraw path.)
         transact(TXN_SET_PICTURE_MODE, MODE_FAST)
             ?: reflect("setPictureMode", arrayOf(Int::class.javaPrimitiveType!!), MODE_FAST)
-        if (hardwareInk) {
-            // The critical call is SET_ALL_REGION_UNAUTODRAW=false (0): the system ships with all
-            // regions excluded, so without it AutoDraw is "on" but draws nothing.
-            transact(TXN_SET_AUTODRAW_ENABLE, 1)
-            transact(TXN_SET_ALL_REGION_UNAUTODRAW, 0)
-            transact(TXN_SET_AUTODRAW_TOOLTYPE, 2)
-            transact(TXN_SET_AUTODRAW_PENWIDTH, penMin, penMax)
-            transactRect(TXN_ADD_AUTODRAW_RECT, Rect(0, 0, w, h))
-            // alternate (physical/landscape) coordinate space, then arm the T1000 chip directly.
-            transactRect(TXN_ADD_AUTODRAW_RECT, Rect(0, 0, h, w))
-            callT1000Cmd(T1000_SET_HANDWRITING_ENABLE, intArrayOf(1))
-            callT1000Cmd(T1000_SEND_HANDWRITING_RANGE, intArrayOf(0, 0, w, h))
+    }
+
+    /**
+     * Hand the native writing layer the current page as its background/content bitmap. WITHOUT
+     * this the overlay enables but `bufWorker` is null (native has no buffer to composite the fast
+     * ink into) → the stroke never paints. WiNote calls the native equivalents
+     * (`setmBackgroudBitmap` + `setFastShowContentBitmap`) — derived from its success trace.
+     * [bmp] must be the full device-resolution page (e.g. 1440×1920) so the 1-bit fast stroke
+     * appears over the real page content. Call on stroke start (and after [enable]).
+     */
+    fun setPageBitmap(bmp: android.graphics.Bitmap, rotation: Int = 0) {
+        if (!hardwareInk) { Timber.w("ViwoodsFastInk.setPageBitmap skipped: hardwareInk=false"); return }
+        val types = arrayOf(
+            android.graphics.Bitmap::class.java,
+            Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!, Int::class.javaPrimitiveType!!
+        )
+        val bg = reflect("setWritingJavaBackgroundBitmap", types, bmp, rotation, 0, 0)
+        val fg = reflect("setWritingJavaBitmap", types, bmp, rotation, 0, 0)
+        Timber.i("ViwoodsFastInk.setPageBitmap ${bmp.width}x${bmp.height} rot=$rotation config=${bmp.config} bg=$bg fg=$fg")
+    }
+
+    /**
+     * Register a writing input listener so libpaintworker starts its native INPUT worker — the
+     * thread that reads the pen digitizer (/dev/input/event6) and draws strokes onto the writing
+     * bitmap in hardware. Without it the native side has a canvas (background bitmap) but nothing
+     * driving strokes onto it ("inputWorker == NULL && bufWorker == NULL"), so nothing paints.
+     * Derived from libpaintworker RE: native_set_input_listener creates the input worker; WiNote
+     * calls setWritingInputlistener, the fork never did. The listener itself can be a no-op — the
+     * native worker draws directly; the callback is only an app-side notification.
+     */
+    private fun registerWritingInputListener() {
+        try {
+            val ln = Class.forName("android.os.enote.ENoteWritingInputListener")
+            val proxy = java.lang.reflect.Proxy.newProxyInstance(
+                ln.classLoader, arrayOf(ln)
+            ) { _, method, _ -> if (method.returnType == Void.TYPE) null else defaultReturn(method.returnType) }
+            reflect("setWritingInputlistener", arrayOf(ln), proxy)
+            Timber.i("ViwoodsFastInk registered writing input listener (native pen intercept)")
+        } catch (t: Throwable) {
+            Timber.w(t, "ViwoodsFastInk registerWritingInputListener failed")
         }
+    }
+
+    private fun defaultReturn(t: Class<*>): Any? = when (t) {
+        Boolean::class.javaPrimitiveType -> false
+        Int::class.javaPrimitiveType, Short::class.javaPrimitiveType, Byte::class.javaPrimitiveType -> 0
+        Long::class.javaPrimitiveType -> 0L
+        Float::class.javaPrimitiveType -> 0f
+        Double::class.javaPrimitiveType -> 0.0
+        Char::class.javaPrimitiveType -> ' '
+        else -> null
     }
 
     /** Signal stroke start to the native layer (quality-redraw bookkeeping). Hardware path only. */
@@ -211,14 +270,11 @@ class ViwoodsFastInk {
     fun disable() {
         if (enote == null) return
         if (hardwareInk) {
-            // Only the hardware path armed AutoDraw/handwrite-intercept, so only it tears them
-            // down. The software path never touched that device-global state (see enable) — it
-            // must not disable it here either, or it clobbers the native note apps' fast ink.
+            // Mirror WiNote's teardown: disable handwriting + exit the writing surface, in-process.
+            // No AutoDraw/handwrite-intercept binder calls (enable() no longer arms them, and they
+            // are device-global state owned by the native note apps — we must not touch it).
             reflect("setWritingEnabled", arrayOf(Boolean::class.javaPrimitiveType!!), false)
             reflect("exitWriting", arrayOf())
-            transact(TXN_SET_AUTODRAW_ENABLE, 0)
-            transact(TXN_SET_ALL_REGION_UNAUTODRAW, 1)
-            transact(TXN_STOP_HANDWRITE_INTERCEPT)
             hardwareInk = false
             initWritingDone = false
         }

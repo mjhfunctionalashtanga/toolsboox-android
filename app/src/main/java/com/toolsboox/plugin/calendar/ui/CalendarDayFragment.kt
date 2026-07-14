@@ -456,6 +456,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         makeDraggable(binding.toolGrip, binding.toolWidget, "tool")
         makeDraggable(binding.navGrip, binding.navWidget, "nav")
 
+        // Minimize/expand pills: the expander collapses to one button + expander; a
+        // long-press on the representative button also toggles it.
+        binding.navExpand.setOnClickListener { togglePill("nav") }
+        binding.toolExpand.setOnClickListener { togglePill("tool") }
+        binding.navGoto.setOnLongClickListener { togglePill("nav"); true }
+        applyPillCollapse()
+
         utils.updateToolbar(binding)
         // Inset the date bar so the top-left hamburger sits in its own gutter (no caret overlap).
         (binding.navigatorImageView.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let {
@@ -481,6 +488,33 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val o = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
         binding.navWidget.orientation = o
         binding.toolWidget.orientation = o
+    }
+
+    /** Minimize a floating pill to grip + one button + expander; toggle back on tap. */
+    private fun togglePill(which: String) {
+        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
+        val key = "${which}_collapsed"
+        prefs.edit().putBoolean(key, !prefs.getBoolean(key, false)).apply()
+        applyPillCollapse()
+    }
+
+    /** Apply the persisted collapsed/expanded state to both pills. */
+    private fun applyPillCollapse() {
+        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
+        val navCollapsed = prefs.getBoolean("nav_collapsed", false)
+        val toolCollapsed = prefs.getBoolean("tool_collapsed", false)
+
+        val navHidden = listOf(
+            binding.navLeft, binding.navUp, binding.navDown, binding.navRight, binding.navGear
+        )
+        for (v in navHidden) v.visibility = if (navCollapsed) View.GONE else View.VISIBLE
+        binding.navExpand.rotation = if (navCollapsed) 180f else 0f
+
+        val toolHidden = listOf(
+            binding.toolEraser, binding.toolLasso, binding.toolUndo, binding.toolRedo
+        )
+        for (v in toolHidden) v.visibility = if (toolCollapsed) View.GONE else View.VISIBLE
+        binding.toolExpand.rotation = if (toolCollapsed) 180f else 0f
     }
 
     private fun showWidgetGearMenu() = showGoModal(
@@ -512,26 +546,29 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     /** Top-left hamburger → full directories: the Ledger surfaces. */
     private fun showDirectoriesModal() {
-        val bookRows: List<GoItem> =
-            recentBooks().map { f -> GoItem("📖", f.nameWithoutExtension) { openBookInReader(f) } } +
-            GoItem("📚", "Open Bookshelf") { findNavController().navigate(R.id.action_to_reader) }
-        showGoModal(
+        val books: List<Pair<String, () -> Unit>> =
+            recentBooks().map { f -> ("📖  " + f.nameWithoutExtension) to { openBookInReader(f) } } +
+            ("📚  Open Bookshelf" to { findNavController().navigate(R.id.action_to_reader) })
+        showAccordion(
             listOf(
-                "Bookshelf" to bookRows,
-                "Ledgers" to listOf(
-                    GoItem("📰", "Feed Ledger") { findNavController().navigate(R.id.action_to_feeds) },
-                    GoItem("💬", "Ask my Ledger") { findNavController().navigate(R.id.action_to_ledger_chat) },
-                    GoItem("☁️", "Cloud") { CalendarNavigator.toCloudSync(this) },
-                    GoItem("⚙️", "Settings") { binding.toolbarDrawing.toolbarSettings.performClick() }
-                ),
-                "Almanac" to listOf(
-                    GoItem("📆", "Week") { CalendarNavigator.toWeekPage(this, currentDate, locale) },
-                    GoItem("🗓️", "Month") { CalendarNavigator.toMonthPage(this, currentDate) },
-                    GoItem("📊", "Quarter") { CalendarNavigator.toQuarterPage(this, currentDate) },
-                    GoItem("📅", "Year") { CalendarNavigator.toYearPage(this, currentDate) }
-                )
-            ),
-            anchorTop = true
+                Folder("📆", "Almanac", listOf(
+                    "Week" to { CalendarNavigator.toWeekPage(this, currentDate, locale) },
+                    "Month" to { CalendarNavigator.toMonthPage(this, currentDate) },
+                    "Quarter" to { CalendarNavigator.toQuarterPage(this, currentDate) },
+                    "Year" to { CalendarNavigator.toYearPage(this, currentDate) }
+                )),
+                Folder("📰", "Feed", listOf(
+                    "Open Feed Ledger" to { findNavController().navigate(R.id.action_to_feeds) }
+                )),
+                Folder("📚", "Bookshelf", books, expanded = true),
+                Folder("💬", "Ask", listOf(
+                    "Open Ask my Ledger" to { findNavController().navigate(R.id.action_to_ledger_chat) }
+                )),
+                Folder("⚙️", "Settings", listOf(
+                    "Open Settings" to { binding.toolbarDrawing.toolbarSettings.performClick() },
+                    "Cloud sync" to { CalendarNavigator.toCloudSync(this) }
+                ))
+            )
         )
     }
 
