@@ -864,11 +864,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     "📺  Watch" to { openFeed("feed", "watch") },
                     "🎧  Listen" to { openFeed("feed", "listen") }
                 ), expanded = true),
-                // Saved for Later — starred articles, annotations, and AV grams.
-                Folder("📌", "Saved for Later", listOf(
+                // History — everything consumed / created: stars, annotations, A/V, read feeds, books.
+                Folder("🕘", "History", listOf(
+                    "🗂  All" to { openReadingLog(null) },
                     "⭐  Stars" to { openFeed("stars", null) },
-                    "🖍️  Notes" to { findNavController().navigate(R.id.action_to_reading_log) },
-                    "🎬  AV grams" to { findNavController().navigate(R.id.action_to_reading_log) }
+                    "🖍️  Annotations" to { openReadingLog(null) },
+                    "🎬  A/V Gram" to { openReadingLog(LogOrigin.AV) },
+                    "🎧  Listened" to { openFeed("read", "listen") },
+                    "📺  Watched" to { openFeed("read", "watch") },
+                    "📰  Feed Read" to { openFeed("read", null) },
+                    "📚  Books Read" to { openReadingLog(LogOrigin.BOOK) }
                 ), expanded = true),
                 Folder("📆", "Almanac", listOf(
                     "Week" to { CalendarNavigator.toWeekPage(this, currentDate, locale) },
@@ -902,12 +907,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         findNavController().navigate(R.id.action_to_reader)
     }
 
-    /** Open the Feed Ledger in a given view/lens (feed / stars / later + read/watch/listen). */
+    /** Open the Feed Ledger in a given view/lens (feed / stars / read + read/watch/listen). */
     private fun openFeed(mode: String, kind: String?) {
         com.toolsboox.plugin.feeds.ui.FeedSelection.filterFeedTitle = null
         com.toolsboox.plugin.feeds.ui.FeedSelection.mode = mode
         com.toolsboox.plugin.feeds.ui.FeedSelection.kind = kind
         findNavController().navigate(R.id.action_to_feeds)
+    }
+
+    /** Open Notes & Annotations preset to a given origin (null = all). */
+    private fun openReadingLog(origin: LogOrigin?) {
+        ReadingLogSelection.origin = origin
+        findNavController().navigate(R.id.action_to_reading_log)
     }
 
     /** The emoji for the section currently on screen (drives the bottom pill button). */

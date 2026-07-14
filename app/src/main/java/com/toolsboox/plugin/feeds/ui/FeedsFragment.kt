@@ -120,7 +120,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
         binding.emptyText.visibility = View.GONE
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                if (mode == "stars") miniflux.fetchStarred(url, token) else miniflux.fetchUnread(url, token)
+                when (mode) {
+                    "stars" -> miniflux.fetchStarred(url, token)
+                    "read" -> miniflux.fetchRead(url, token)
+                    else -> miniflux.fetchUnread(url, token)
+                }
             }
             loading = false
             binding.progress.visibility = View.INVISIBLE

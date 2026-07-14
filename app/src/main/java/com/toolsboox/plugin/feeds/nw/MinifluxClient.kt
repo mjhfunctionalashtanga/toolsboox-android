@@ -37,6 +37,10 @@ class MinifluxClient @Inject constructor() {
     fun fetchStarred(baseUrl: String, token: String, limit: Int = 50): Result<List<FeedEntry>> =
         fetch(baseUrl, token, "starred=true", limit)
 
+    /** GET /v1/entries?status=read — the read-history (Feed Read / Watched / Listened). */
+    fun fetchRead(baseUrl: String, token: String, limit: Int = 100): Result<List<FeedEntry>> =
+        fetch(baseUrl, token, "status=read", limit)
+
     private fun fetch(baseUrl: String, token: String, filter: String, limit: Int): Result<List<FeedEntry>> {
         if (baseUrl.isBlank() || token.isBlank()) return Result.Err("Add your Miniflux URL and token in Settings.")
         val url = "${normalize(baseUrl)}/v1/entries?$filter&order=published_at&direction=desc&limit=$limit"

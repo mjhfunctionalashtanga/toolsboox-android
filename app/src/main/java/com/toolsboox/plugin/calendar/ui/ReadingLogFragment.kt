@@ -61,6 +61,9 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentReadingLogBinding.bind(view)
 
+        // Honour a preset origin chosen from the History menu (one-shot).
+        ReadingLogSelection.origin?.let { origin = it; ReadingLogSelection.origin = null }
+
         adapter = ReadingEventAdapter(emptyList(), onOpen = ::openItem)
         binding.readingRecycler.layoutManager = LinearLayoutManager(requireContext())
         binding.readingRecycler.adapter = adapter
@@ -208,4 +211,9 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
 
     override fun showLoading() {}
     override fun hideLoading() {}
+}
+
+/** Preset origin for the annotations log, set from the History menu before navigating. */
+object ReadingLogSelection {
+    var origin: LogOrigin? = null
 }
