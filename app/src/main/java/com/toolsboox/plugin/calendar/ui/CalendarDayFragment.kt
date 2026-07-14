@@ -410,6 +410,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.navLeft.setOnClickListener { CalendarNavigator.toDayPage(this, currentDate.minusDays(1), CalendarDay.DEFAULT_STYLE) }
         binding.navRight.setOnClickListener { CalendarNavigator.toDayPage(this, currentDate.plusDays(1), CalendarDay.DEFAULT_STYLE) }
 
+        // Floating tool selector: each button drives the real (hidden) toolbar action,
+        // so the Onyx ink wiring is unchanged. Long-press the eraser to clear the page.
+        binding.toolWidget.visibility = View.VISIBLE
+        binding.toolPen.setOnClickListener { binding.toolbarDrawing.toolbarPen.performClick() }
+        binding.toolEraser.setOnClickListener { binding.toolbarDrawing.toolbarEraser.performClick() }
+        binding.toolEraser.setOnLongClickListener { binding.toolbarDrawing.toolbarTrash.performClick(); true }
+        binding.toolLasso.setOnClickListener { binding.toolbarDrawing.toolbarLasso.performClick() }
+        binding.toolUndo.setOnClickListener { binding.toolbarDrawing.toolbarUndo.performClick() }
+        binding.toolRedo.setOnClickListener { binding.toolbarDrawing.toolbarRedo.performClick() }
+
         utils.updateToolbar(binding)
         initializeSurface(true)
     }

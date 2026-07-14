@@ -88,8 +88,8 @@
                 android:elevation="8dp"
                 android:visibility="gone"
                 app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toStartOf="@id/navigatorImageView"
                 app:layout_constraintEnd_toEndOf="@id/navigatorImageView"
+                android:layout_marginEnd="14dp"
                 android:layout_marginBottom="18dp">
 
             <ImageButton android:id="@+id/navLeft" android:layout_width="46dp" android:layout_height="46dp"
@@ -104,6 +104,40 @@
             <ImageButton android:id="@+id/navRight" android:layout_width="46dp" android:layout_height="46dp"
                 android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_right"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
+        </LinearLayout>
+
+        <!-- Floating tool selector (day page only): pen · eraser · lasso · undo · redo.
+             Overlays the page; each button drives the real (hidden) toolbar action so the
+             Onyx ink wiring is unchanged. Hidden by default. -->
+        <LinearLayout
+                android:id="@+id/toolWidget"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/ledger_bar_bg"
+                android:padding="4dp"
+                android:elevation="8dp"
+                android:visibility="gone"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintStart_toStartOf="@id/navigatorImageView"
+                android:layout_marginStart="14dp"
+                android:layout_marginBottom="18dp">
+
+            <ImageButton android:id="@+id/toolPen" android:layout_width="46dp" android:layout_height="46dp"
+                android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_pen"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_pen"/>
+            <ImageButton android:id="@+id/toolEraser" android:layout_width="46dp" android:layout_height="46dp"
+                android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_eraser"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_eraser"/>
+            <ImageButton android:id="@+id/toolLasso" android:layout_width="46dp" android:layout_height="46dp"
+                android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_lasso"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_lasso"/>
+            <ImageButton android:id="@+id/toolUndo" android:layout_width="46dp" android:layout_height="46dp"
+                android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_undo"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="Undo"/>
+            <ImageButton android:id="@+id/toolRedo" android:layout_width="46dp" android:layout_height="46dp"
+                android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_redo"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="Redo"/>
         </LinearLayout>
 
         <include
