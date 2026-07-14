@@ -590,15 +590,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             "Tools" to listOf(
                 GoItem("🖊️", "Add text") { binding.toolbarDrawing.toolbarText.performClick() },
                 GoItem("🖼️", "Add image") { binding.toolbarDrawing.toolbarImage.performClick() },
-                GoItem("📌", "Panel → Notes") { pickPanel { p -> savePanelAsNote(p) } },
-                GoItem("🃏", "Share as card") { pickPanel { p -> sharePanelAsCard(p) } },
-                GoItem("🛰️", "Panel → Webhook") { pickPanel { p -> sendPanelToWebhook(p) } },
-                GoItem("🔗", "Webhooks…") { manageWebhooks() },
+                GoItem("🃏", "Card…") { showCardMenu() },
                 GoItem("👆", "Finger / hand") { binding.toolbarDrawing.toolbarHandTouch.performClick() },
                 GoItem("🔄", "Rotate screen") { binding.toolbarDrawing.toolbarRotate.performClick() }
             ),
             "Layout" to listOf(
-                GoItem("🔀", "Flip layout") { flipPillLayout() },
+                GoItem("🔀", "Pill Layout") { flipPillLayout() },
                 GoItem("🎯", "Reset pill positions") { resetPillPositions() },
                 GoItem("⚙️", "Settings") { binding.toolbarDrawing.toolbarSettings.performClick() }
             )
@@ -608,13 +605,38 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     private data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
 
-    /** Pick which panel of the current page to act on, then run [action] on it. */
-    private fun pickPanel(action: (com.toolsboox.plugin.calendar.ot.LedgerPanel) -> Unit) {
-        val panels = com.toolsboox.plugin.calendar.ot.LedgerPanel.forPage(notePage)
+    /** The card sources for this page: the whole page + each panel. */
+    private fun cardChoices(): List<com.toolsboox.plugin.calendar.ot.LedgerPanel> =
+        listOf(
+            com.toolsboox.plugin.calendar.ot.LedgerPanel(
+                "page", getString(R.string.card_whole_page),
+                com.toolsboox.plugin.calendar.ot.LedgerPanel.Kind.DOODLE,
+                android.graphics.RectF(0f, 0f, 1404f, 1872f)
+            )
+        ) + com.toolsboox.plugin.calendar.ot.LedgerPanel.forPage(notePage)
+
+    /** Card flow: pick the source (whole page / a panel), then the action. */
+    private fun showCardMenu() {
+        val choices = cardChoices()
         AlertDialog.Builder(requireContext())
             .setTitle(R.string.card_pick_panel)
-            .setItems(panels.map { it.title }.toTypedArray()) { d, which ->
-                action(panels[which]); d.dismiss()
+            .setItems(choices.map { it.title }.toTypedArray()) { d, which ->
+                d.dismiss(); chooseCardAction(choices[which])
+            }
+            .show()
+    }
+
+    /** Having picked a source, choose Share / Save to Notes / Send to webhook. */
+    private fun chooseCardAction(panel: com.toolsboox.plugin.calendar.ot.LedgerPanel) {
+        val actions = listOf<Pair<String, () -> Unit>>(
+            "📤  Share" to { sharePanelAsCard(panel) },
+            "📌  Save to Notes" to { savePanelAsNote(panel) },
+            "🛰️  Send to webhook" to { sendPanelToWebhook(panel) }
+        )
+        AlertDialog.Builder(requireContext())
+            .setTitle(panel.title)
+            .setItems(actions.map { it.first }.toTypedArray()) { d, which ->
+                actions[which].second(); d.dismiss()
             }
             .show()
     }
@@ -634,6 +656,36 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /**
+     * All text a panel yields: typed boxes in the region + handwriting (digital-ink OCR) +
+     * printed text inside any inserted images (text-recognition OCR). Runs off the main thread.
+     */
+    private suspend fun panelText(panel: com.toolsboox.plugin.calendar.ot.LedgerPanel): String {
+        val pageKey = notePage ?: "default"
+        val typed = calendarDay.textElements
+            .filter { it.pageKey == pageKey && android.graphics.RectF.intersects(textElementBounds(it), panel.rect) }
+            .joinToString("\n") { it.text }.trim()
+        val ink = com.toolsboox.plugin.calendar.ot.PanelOcr
+            .recognize(currentPageStrokes().filter { strokeInPanel(it, panel.rect) })
+        // Printed OCR of each inserted image in the panel — a plain loop so the suspend
+        // recognizeImage() calls sit in the coroutine body, not a joinToString lambda.
+        val panelImages = calendarDay.imageElements.filter {
+            it.page == pageKey && android.graphics.RectF.intersects(
+                android.graphics.RectF(it.x, it.y, it.x + it.width, it.y + it.height), panel.rect)
+        }
+        val printed = StringBuilder()
+        for (img in panelImages) {
+            val bmp = withContext(Dispatchers.Default) {
+                val bytes = android.util.Base64.decode(img.data, android.util.Base64.DEFAULT)
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            } ?: continue
+            val t = com.toolsboox.plugin.calendar.ot.PanelOcr.recognizeImage(bmp)
+            if (t.isNotBlank()) printed.append(t).append('\n')
+        }
+        return listOf(typed, ink, printed.toString().trim())
+            .filter { it.isNotBlank() }.joinToString("\n").trim()
+    }
+
+    /**
      * Panel → Notes & Annotations: render the panel to a PNG (kept), OCR its handwriting
      * (+ any typed text in the region), and save a ReadingEvent carrying the text + image.
      * That lands it in the annotations log and the chat corpus (searchable / RAG-able).
@@ -641,15 +693,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private fun savePanelAsNote(panel: com.toolsboox.plugin.calendar.ot.LedgerPanel) {
         if (!::calendarDay.isInitialized) return
         val pageStrokes = currentPageStrokes()
-        val panelStrokes = pageStrokes.filter { strokeInPanel(it, panel.rect) }
-        val pageKey = notePage ?: "default"
-        val typedText = calendarDay.textElements
-            .filter { it.pageKey == pageKey && android.graphics.RectF.intersects(textElementBounds(it), panel.rect) }
-            .joinToString("\n") { it.text }.trim()
-
         lifecycleScope.launch {
-            val ocr = com.toolsboox.plugin.calendar.ot.PanelOcr.recognize(panelStrokes)
-            val text = listOf(typedText, ocr).filter { it.isNotBlank() }.joinToString("\n").trim()
+            val text = panelText(panel)
             val imagePath = try {
                 val card = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer
                     .renderCard(templateBitmap, listOf(pageStrokes), panel.rect)
@@ -679,30 +724,26 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     /** A short page label for webhook payloads (the note-page key, or "day"). */
     private fun pageLabel(): String = notePage ?: "day"
 
-    /** Panel → configured webhook. Renders + OCRs the panel, queues the card for delivery. */
+    /** Panel → configured webhook. Renders + OCRs the panel, queues the card for delivery.
+     *  With no webhooks yet, drops straight into add/manage; the picker carries a manage row. */
     private fun sendPanelToWebhook(panel: com.toolsboox.plugin.calendar.ot.LedgerPanel) {
         val hooks = com.toolsboox.plugin.calendar.nw.PanelWebhookStore.list(requireContext())
-        when {
-            hooks.isEmpty() -> showMessage(getString(R.string.webhook_none), binding.root)
-            hooks.size == 1 -> deliverPanel(panel, hooks[0])
-            else -> AlertDialog.Builder(requireContext())
-                .setTitle(R.string.webhook_pick)
-                .setItems(hooks.map { it.name }.toTypedArray()) { d, w -> deliverPanel(panel, hooks[w]); d.dismiss() }
-                .show()
-        }
+        if (hooks.isEmpty()) { manageWebhooks(); return }
+        val labels = hooks.map { it.name } + getString(R.string.webhook_add)
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.webhook_pick)
+            .setItems(labels.toTypedArray()) { d, w ->
+                if (w == hooks.size) manageWebhooks() else deliverPanel(panel, hooks[w])
+                d.dismiss()
+            }
+            .show()
     }
 
     private fun deliverPanel(panel: com.toolsboox.plugin.calendar.ot.LedgerPanel, hook: com.toolsboox.plugin.calendar.nw.PanelWebhook) {
         if (!::calendarDay.isInitialized) return
         val pageStrokes = currentPageStrokes()
-        val panelStrokes = pageStrokes.filter { strokeInPanel(it, panel.rect) }
-        val pageKey = notePage ?: "default"
-        val typed = calendarDay.textElements
-            .filter { it.pageKey == pageKey && android.graphics.RectF.intersects(textElementBounds(it), panel.rect) }
-            .joinToString("\n") { it.text }.trim()
         lifecycleScope.launch {
-            val ocr = com.toolsboox.plugin.calendar.ot.PanelOcr.recognize(panelStrokes)
-            val text = listOf(typed, ocr).filter { it.isNotBlank() }.joinToString("\n").trim()
+            val text = panelText(panel)
             val png = withContext(Dispatchers.Default) {
                 val card = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer
                     .renderCard(templateBitmap, listOf(pageStrokes), panel.rect)

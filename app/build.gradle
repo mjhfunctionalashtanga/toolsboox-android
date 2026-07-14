@@ -150,6 +150,8 @@ dependencies {
     implementation 'com.google.api-client:google-api-client-android:2.8.1'
     implementation 'com.google.apis:google-api-services-drive:v3-rev20250829-2.0.0'
     implementation 'com.google.mlkit:digital-ink-recognition:19.0.0'
+    // On-device printed/image OCR (bundled Latin model, works offline).
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
 
     // AndroidX dependencies
     implementation "androidx.activity:activity-ktx:1.11.0"

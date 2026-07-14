@@ -376,7 +376,8 @@
     <string name="reading_log_av_video">Video note to self</string>
     <string name="reading_log_av_audio">Audio note to self</string>
     <string name="reading_log_av_photo">Photo</string>
-    <string name="card_pick_panel">Share which panel as a card?</string>
+    <string name="card_pick_panel">Card from…</string>
+    <string name="card_whole_page">🗎  Whole page</string>
     <string name="card_render_failed">Couldn\'t render that panel. :(</string>
     <string name="card_saved_to_notes">Saved “%s” to Notes &amp; Annotations.</string>
     <string name="webhook_none">Add a webhook first — Tools → Webhooks…</string>

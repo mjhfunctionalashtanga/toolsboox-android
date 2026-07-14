@@ -1,12 +1,16 @@
 package com.toolsboox.plugin.calendar.ot
 
+import android.graphics.Bitmap
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.common.model.RemoteModelManager
+import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognition
 import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognitionModel
 import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognitionModelIdentifier
 import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognizerOptions
 import com.google.mlkit.vision.digitalink.recognition.Ink
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.toolsboox.da.Stroke
 import kotlinx.coroutines.tasks.await
 import timber.log.Timber
@@ -42,5 +46,14 @@ object PanelOcr {
             Timber.w(e, "PanelOcr: recognition failed")
             ""
         }
+    }
+
+    /** Printed/image OCR of a bitmap (ML Kit text-recognition, bundled Latin model). */
+    suspend fun recognizeImage(bitmap: Bitmap): String = try {
+        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        recognizer.process(InputImage.fromBitmap(bitmap, 0)).await().text.trim()
+    } catch (e: Exception) {
+        Timber.w(e, "PanelOcr: image recognition failed")
+        ""
     }
 }
