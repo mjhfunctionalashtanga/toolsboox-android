@@ -420,6 +420,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.toolUndo.setOnClickListener { binding.toolbarDrawing.toolbarUndo.performClick() }
         binding.toolRedo.setOnClickListener { binding.toolbarDrawing.toolbarRedo.performClick() }
 
+        // Gear on the nav pill: flip the pills' orientation (the old switch-side), rotate
+        // the screen, open Settings, or toggle finger/hand mode.
+        binding.navGear.setOnClickListener { showWidgetGearMenu() }
+        applyWidgetOrientation()
+
         utils.updateToolbar(binding)
         initializeSurface(true)
     }
@@ -430,6 +435,33 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * Ledger, Ask my Ledger, Cloud) without leaving for a dashboard. Reached from
      * the toolbar's calendar-view button.
      */
+    /** Flip the floating pills between a horizontal and vertical layout (persisted). */
+    private fun applyWidgetOrientation() {
+        val vertical = requireContext().getSharedPreferences("ledger_widgets", 0).getBoolean("vertical", false)
+        val o = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+        binding.navWidget.orientation = o
+        binding.toolWidget.orientation = o
+    }
+
+    private fun showWidgetGearMenu() {
+        val labels = arrayOf("Flip layout", "Rotate screen", "Settings", "Finger / hand")
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.calendar_drawing_toolbar_settings)
+            .setItems(labels) { _, which ->
+                when (which) {
+                    0 -> {
+                        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
+                        prefs.edit().putBoolean("vertical", !prefs.getBoolean("vertical", false)).apply()
+                        applyWidgetOrientation()
+                    }
+                    1 -> binding.toolbarDrawing.toolbarRotate.performClick()
+                    2 -> binding.toolbarDrawing.toolbarSettings.performClick()
+                    3 -> binding.toolbarDrawing.toolbarHandTouch.performClick()
+                }
+            }
+            .show()
+    }
+
     private data class GoItem(val label: String, val icon: Int, val action: () -> Unit)
 
     /**
