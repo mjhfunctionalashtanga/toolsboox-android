@@ -49,6 +49,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
 
     private lateinit var binding: FragmentFeedArticleBinding
     private var entry: FeedEntry? = null
+    private var parsed = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -56,7 +57,6 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         binding = FragmentFeedArticleBinding.bind(view)
 
         val e = FeedSelection.entry
-        entry = e
         if (e == null) {
             showMessage(R.string.feeds_article_missing)
             return
@@ -64,16 +64,29 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
 
         // JS on so we can read the text selection for highlight-to-annotation.
         binding.articleWeb.settings.javaScriptEnabled = true
-        binding.articleWeb.loadDataWithBaseURL(null, buildHtml(e), "text/html", "UTF-8", null)
 
-        binding.starButton.text = getString(if (e.starred) R.string.feeds_article_unstar else R.string.feeds_article_star)
-        binding.starButton.setOnClickListener { star(e) }
-        binding.noteButton.setOnClickListener { annotate(e) }
-        binding.browserButton.setOnClickListener {
-            if (e.url.isNotBlank()) startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(e.url)))
+        // Floating nav pill: grip drags/collapses; ‹ › page, ⌃ ⌄ step articles, ✎ annotate.
+        makeDraggable(binding.artGrip, binding.artPill, "article")
+        binding.artStar.setOnClickListener { entry?.let { star(it) } }
+        binding.artParse.setOnClickListener { toggleParse() }
+        binding.artPageUp.setOnClickListener { binding.articleWeb.pageUp(false) }
+        binding.artPageDown.setOnClickListener { binding.articleWeb.pageDown(false) }
+        binding.artPrev.setOnClickListener { goToNeighbor(-1) }
+        binding.artNext.setOnClickListener { goToNeighbor(1) }
+        binding.artAnnotate.setOnClickListener { entry?.let { annotate(it) } }
+        binding.artBrowser.setOnClickListener {
+            entry?.url?.takeIf { it.isNotBlank() }?.let { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) }
         }
 
-        // Opening an entry marks it read on the server (shrinks the unread list).
+        showEntry(e)
+    }
+
+    /** Render an entry (feed content), refresh the star glyph, mark it read on the server. */
+    private fun showEntry(e: FeedEntry) {
+        entry = e
+        parsed = false
+        binding.articleWeb.loadDataWithBaseURL(null, buildHtml(e, e.content), "text/html", "UTF-8", null)
+        binding.artStar.text = if (e.starred) "★" else "☆"
         val p = prefs()
         val url = p.getString(FeedsFragment.KEY_URL, "").orEmpty()
         val token = p.getString(FeedsFragment.KEY_TOKEN, "").orEmpty()
@@ -82,7 +95,41 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    private fun buildHtml(e: FeedEntry): String {
+    /** Step to the previous/next article in the list the reader was opened from. */
+    private fun goToNeighbor(delta: Int) {
+        val cur = entry ?: return
+        val list = FeedSelection.list
+        val i = list.indexOfFirst { it.id == cur.id }
+        val ni = i + delta
+        if (i >= 0 && ni in list.indices) showEntry(list[ni])
+        else showMessage(if (delta > 0) R.string.feeds_article_last else R.string.feeds_article_first)
+    }
+
+    /** Toggle Miniflux's readability parse (full original content) vs the feed's content. */
+    private fun toggleParse() {
+        val e = entry ?: return
+        if (parsed) {
+            parsed = false
+            binding.articleWeb.loadDataWithBaseURL(null, buildHtml(e, e.content), "text/html", "UTF-8", null)
+            return
+        }
+        val p = prefs()
+        val url = p.getString(FeedsFragment.KEY_URL, "").orEmpty()
+        val token = p.getString(FeedsFragment.KEY_TOKEN, "").orEmpty()
+        showMessage(R.string.feeds_article_parsing)
+        lifecycleScope.launch {
+            val res = withContext(Dispatchers.IO) { miniflux.fetchContent(url, token, e.id) }
+            when (res) {
+                is MinifluxClient.Result.Ok -> {
+                    parsed = true
+                    binding.articleWeb.loadDataWithBaseURL(null, buildHtml(e, res.value.ifBlank { e.content }), "text/html", "UTF-8", null)
+                }
+                is MinifluxClient.Result.Err -> showMessage("⚠️ " + res.message)
+            }
+        }
+    }
+
+    private fun buildHtml(e: FeedEntry, content: String): String {
         val meta = listOf(e.feedTitle, e.author ?: "").filter { it.isNotBlank() }.joinToString(" · ")
         return """
             <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -99,7 +146,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
             </style></head><body>
             <h1>${escape(e.title)}</h1>
             <div class="meta">${escape(meta)}</div>
-            ${e.content}
+            $content
             </body></html>
         """.trimIndent()
     }
@@ -115,8 +162,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                 if (!wasStarred) logEvent(e, note = e.blurb.ifBlank { null })
             }
             entry = e.copy(starred = !wasStarred)
-            binding.starButton.text =
-                getString(if (!wasStarred) R.string.feeds_article_unstar else R.string.feeds_article_star)
+            binding.artStar.text = if (!wasStarred) "★" else "☆"
             showMessage(if (wasStarred) R.string.feeds_unstarred else R.string.feeds_starred)
         }
     }

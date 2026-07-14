@@ -30,6 +30,9 @@ class FeedEntryAdapter(
         notifyDataSetChanged()
     }
 
+    /** The currently shown list (for paging in the article reader). */
+    fun current(): List<FeedEntry> = items
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
         val v = LayoutInflater.from(parent.context).inflate(R.layout.item_feed_entry, parent, false)
         return Holder(v)

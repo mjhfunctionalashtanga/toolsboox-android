@@ -191,6 +191,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
 
     private fun openEntry(entry: FeedEntry) {
         FeedSelection.entry = entry
+        FeedSelection.list = adapter.current()
         findNavController().navigate(R.id.action_to_feed_article)
     }
 
@@ -199,43 +200,50 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
         mode = newMode; kindFilter = kind; refresh()
     }
 
-    /** Filter the shown list to one category (Miniflux folder) within the current view. */
+    /** Tapping a category drills one level down: a sub-menu of the specific feeds inside it
+     *  (plus "All"). Tapping a feed filters to just that feed. */
     private fun showCategory(label: String) {
-        adapter.submit(allEntries.filter { it.categoryLabel == label })
+        val inCat = allEntries.filter { it.categoryLabel == label }
+        val feeds = inCat.map { it.feedTitle }.filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }
+        if (feeds.size <= 1) { adapter.submit(inCat); return }
+        val rows = listOf<Pair<String, () -> Unit>>("🗂  All — $label" to { adapter.submit(inCat) }) +
+            feeds.map { f -> ("📰  $f" to { adapter.submit(inCat.filter { it.feedTitle == f }) }) }
+        showDirectory(listOf(label to rows))
     }
 
     /**
-     * The Feed Ledger dropdown, iPad-style: Read / Watch / Listen are folders that list
-     * their own feeds (the 📖/📺/🎧-prefixed Miniflux categories). Later List mirrors the
-     * three lenses over the read-later intake; Stars is the starred view.
+     * The Feed Ledger dropdown, iPad-style + collapsible: Read / Watch / Listen are folders
+     * that list their own feeds (the 📖/📺/🎧-prefixed Miniflux categories). Later List
+     * mirrors the three lenses over the read-later intake; Feed/Stars/Go-to at the ends.
      */
     private fun showFeedDirectory() {
         val nav = androidx.navigation.fragment.NavHostFragment.findNavController(this)
         fun categoriesOf(k: String) =
             allEntries.filter { it.kind == k }.mapNotNull { it.categoryLabel }.distinct().sortedBy { it.lowercase() }
-        fun lens(emoji: String, label: String, k: String): Pair<String, List<Pair<String, () -> Unit>>> =
-            "$emoji $label" to (
-                listOf<Pair<String, () -> Unit>>("$emoji  All $label" to { switchTo("feed", k) }) +
-                categoriesOf(k).map { c -> ("🗂  $c" to { showCategory(c) }) }
-            )
-        showDirectory(
+        fun lens(emoji: String, label: String, k: String) = Folder(emoji, label,
+            listOf<Pair<String, () -> Unit>>("$emoji  All $label" to { switchTo("feed", k) }) +
+            categoriesOf(k).map { c -> ("🗂  $c" to { showCategory(c) }) }
+        )
+        showAccordion(
             listOf(
-                "Feed" to listOf("📰  All" to { switchTo("feed", null) }),
+                Folder("📰", "Feed", listOf(
+                    "📰  All" to { switchTo("feed", null) },
+                    "⭐  Stars" to { switchTo("stars", null) }
+                ), expanded = true),
                 lens("📖", "Read", "read"),
                 lens("📺", "Watch", "watch"),
                 lens("🎧", "Listen", "listen"),
-                "Later List" to listOf(
+                Folder("🔖", "Later List", listOf(
                     "🔖  All" to { switchTo("later", null) },
                     "📖  Read" to { switchTo("later", "read") },
                     "📺  Watch" to { switchTo("later", "watch") },
                     "🎧  Listen" to { switchTo("later", "listen") }
-                ),
-                "" to listOf(
-                    "⭐  Stars" to { switchTo("stars", null) },
+                )),
+                Folder("↪", "Go to", listOf(
                     "📅  Day" to { nav.navigate(R.id.action_to_calendar_day) },
                     "📚  Bookshelf" to { nav.navigate(R.id.action_to_reader) },
                     "💬  Ask my Ledger" to { nav.navigate(R.id.action_to_ledger_chat) }
-                )
+                ))
             )
         )
     }
@@ -308,6 +316,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
 /** Hand the tapped entry to the article fragment without stuffing it through nav args. */
 object FeedSelection {
     var entry: FeedEntry? = null
+
+    /** The list the article was opened from, so the reader can page prev/next. */
+    var list: List<FeedEntry> = emptyList()
 
     /** A feed title the Feed Ledger should filter to on next open (set from the day-page hub). */
     var filterFeedTitle: String? = null

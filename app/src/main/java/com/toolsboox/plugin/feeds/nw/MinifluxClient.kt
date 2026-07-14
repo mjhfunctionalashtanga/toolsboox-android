@@ -69,6 +69,19 @@ class MinifluxClient @Inject constructor() {
         return put("${normalize(baseUrl)}/v1/entries", token, payload)
     }
 
+    /** GET /v1/entries/{id}/fetch-content — Miniflux's readability parse of the original page. */
+    fun fetchContent(baseUrl: String, token: String, id: Long): Result<String> = try {
+        val req = Request.Builder().url("${normalize(baseUrl)}/v1/entries/$id/fetch-content")
+            .addHeader("X-Auth-Token", token).get().build()
+        client.newCall(req).execute().use { resp ->
+            val body = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) Result.Err("Miniflux error ${resp.code}")
+            else Result.Ok(JSONObject(body).optString("content"))
+        }
+    } catch (e: Exception) {
+        Result.Err("Network error: ${e.message}")
+    }
+
     private fun put(url: String, token: String, payload: String): Result<Unit> = try {
         val req = Request.Builder().url(url).addHeader("X-Auth-Token", token)
             .put(payload.toRequestBody(json)).build()

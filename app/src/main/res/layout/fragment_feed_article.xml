@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="vertical"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#FFFFFF">
@@ -8,31 +7,47 @@
     <WebView
         android:id="@+id/article_web"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"/>
+        android:layout_height="match_parent"/>
 
+    <!-- Floating, draggable nav pill (grip = tap to collapse). Mirrors the day-page pill:
+         ‹ page-up · ⌃ prev-article · ✎ annotate (center) · ⌄ next-article · › page-down,
+         plus star / parse / browser. -->
     <LinearLayout
+        android:id="@+id/art_pill"
         android:orientation="horizontal"
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_margin="12dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="16dp"
+        android:gravity="center_vertical"
         android:background="@drawable/ledger_bar_bg"
-        android:padding="6dp">
+        android:padding="4dp">
 
-        <Button
-            android:id="@+id/star_button"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="@string/feeds_article_star"
-            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
-        <Button
-            android:id="@+id/note_button"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="@string/feeds_article_annotate"
-            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
-        <Button
-            android:id="@+id/browser_button"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="@string/feeds_article_browser"
-            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+        <ImageView android:id="@+id/art_grip" android:layout_width="22dp" android:layout_height="44dp"
+            android:scaleType="fitCenter" android:src="@drawable/ic_grip" android:contentDescription="@null"/>
+        <Button android:id="@+id/art_star" style="?android:attr/borderlessButtonStyle"
+            android:text="☆" android:textSize="20sp" android:minWidth="0dp" android:paddingHorizontal="8dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <Button android:id="@+id/art_parse" style="?android:attr/borderlessButtonStyle"
+            android:text="⛶" android:textSize="19sp" android:minWidth="0dp" android:paddingHorizontal="8dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <Button android:id="@+id/art_page_up" style="?android:attr/borderlessButtonStyle"
+            android:text="‹" android:textSize="24sp" android:minWidth="0dp" android:paddingHorizontal="8dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <Button android:id="@+id/art_prev" style="?android:attr/borderlessButtonStyle"
+            android:text="⌃" android:textSize="22sp" android:minWidth="0dp" android:paddingHorizontal="8dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <Button android:id="@+id/art_annotate" style="?android:attr/borderlessButtonStyle"
+            android:text="✎" android:textSize="21sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <Button android:id="@+id/art_next" style="?android:attr/borderlessButtonStyle"
+            android:text="⌄" android:textSize="22sp" android:minWidth="0dp" android:paddingHorizontal="8dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <Button android:id="@+id/art_page_down" style="?android:attr/borderlessButtonStyle"
+            android:text="›" android:textSize="24sp" android:minWidth="0dp" android:paddingHorizontal="8dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <Button android:id="@+id/art_browser" style="?android:attr/borderlessButtonStyle"
+            android:text="🌐" android:textSize="18sp" android:minWidth="0dp" android:paddingHorizontal="8dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
     </LinearLayout>
-</LinearLayout>
+</FrameLayout>
