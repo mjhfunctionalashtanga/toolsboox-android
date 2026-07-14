@@ -80,6 +80,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
             refresh()
         }
         binding.refreshButton.setOnClickListener { refresh() }
+        binding.gotoButton.setOnClickListener { showSurfacesMenu() }
         binding.viewToggleButton.setOnClickListener {
             showingStarred = !showingStarred
             binding.viewToggleButton.setText(if (showingStarred) R.string.feeds_view_unread else R.string.feeds_view_starred)

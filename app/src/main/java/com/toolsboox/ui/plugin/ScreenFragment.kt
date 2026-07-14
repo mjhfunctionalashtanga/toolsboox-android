@@ -143,6 +143,26 @@ abstract class ScreenFragment : Fragment() {
     abstract fun hideLoading()
 
     /**
+     * Persistent "Go to" surfaces menu, available on every screen (day, Bookshelf, Feed,
+     * Ask). Lets you jump between the Ledger surfaces from anywhere.
+     */
+    protected fun showSurfacesMenu() {
+        val labels = arrayOf("Day", "Bookshelf", "Feed Ledger", "Ask my Ledger")
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.go_to_title)
+            .setItems(labels) { _, which ->
+                val nav = androidx.navigation.fragment.NavHostFragment.findNavController(this)
+                when (which) {
+                    0 -> nav.navigate(R.id.action_to_calendar_day)
+                    1 -> nav.navigate(R.id.action_to_reader)
+                    2 -> nav.navigate(R.id.action_to_feeds)
+                    3 -> nav.navigate(R.id.action_to_ledger_chat)
+                }
+            }
+            .show()
+    }
+
+    /**
      * Result of request permission.
      */
     @Deprecated("Deprecated in Java")

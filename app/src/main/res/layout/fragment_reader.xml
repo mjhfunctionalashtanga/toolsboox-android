@@ -20,6 +20,11 @@
         android:padding="6dp">
 
         <Button
+            android:id="@+id/goto_button"
+            style="?android:attr/borderlessButtonStyle"
+            android:text="@string/go_to_title"
+            android:layout_width="0dp" android:layout_weight="1.2" android:layout_height="wrap_content"/>
+        <Button
             android:id="@+id/prev_button"
             style="?android:attr/borderlessButtonStyle"
             android:text="@string/reader_prev"

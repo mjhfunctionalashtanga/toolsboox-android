@@ -103,6 +103,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
         }
         binding.openButton.setOnClickListener { openShelf() }
         binding.settingsButton.setOnClickListener { openSettings() }
+        binding.gotoButton.setOnClickListener { showSurfacesMenu() }
 
         // Resume the last book, else land on the reader's "waiting for a book" screen.
         restoreLastBook()
