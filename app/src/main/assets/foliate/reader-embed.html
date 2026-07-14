@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reader</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { font-family: system-ui, sans-serif; background: Canvas; color: CanvasText; }
+  foliate-view { display: block; height: 100vh; }
+  #msg { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+         color: CanvasText; font-size: 14px; line-height: 1.5; padding: 24px; text-align: center;
+         white-space: pre-wrap; overflow: auto; }
+</style>
+<div id="msg">Loading reader…</div>
+<!-- Early, NON-module catcher: runs before the module graph loads, so even a
+     module-parse/load failure (which the module's own handlers can't catch) is
+     surfaced on screen instead of a blank page. Also arms a watchdog that fires
+     if the module never signals it started. -->
+<script>
+  (function () {
+    var msg = document.getElementById('msg')
+    function show(t) { if (msg) { msg.style.display = 'flex'; msg.textContent = t } }
+    window.__readerShow = show
+    window.__readerStarted = false
+    window.addEventListener('error', function (e) {
+      // Resource load errors (e.target is the failing element) vs runtime errors.
+      if (e && e.target && e.target !== window && (e.target.src || e.target.href)) {
+        show('Failed to load: ' + (e.target.src || e.target.href))
+      } else {
+        show('JS error: ' + (e && (e.message || e.error)))
+      }
+    }, true)
+    window.addEventListener('unhandledrejection', function (e) {
+      show('Rejected: ' + (e && (e.reason && e.reason.message || e.reason)))
+    })
+    // If nothing has run after a few seconds, the module never started.
+    setTimeout(function () {
+      if (!window.__readerStarted) {
+        show('Reader script never started (module failed to load).\nCheck reader-embed.js / view.js are in the bundle and file access is allowed.')
+      }
+    }, 6000)
+  })()
+</script>
+<script type="module" src="./reader-embed.js"></script>

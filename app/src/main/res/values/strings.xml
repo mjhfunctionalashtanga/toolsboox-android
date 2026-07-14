@@ -324,7 +324,16 @@
     <string name="dashboard_item_about_title">About</string>
     <string name="dashboard_item_cloud_title">Cloud</string>
     <string name="dashboard_item_chat_title">Ask my\nLedger</string>
+    <string name="dashboard_item_reader_title">Reader</string>
     <string name="ledger_share_target_title">Ledger</string>
+
+    <!-- Reader -->
+    <string name="reader_prev">‹</string>
+    <string name="reader_next">›</string>
+    <string name="reader_open">Open</string>
+    <string name="reader_highlight">Highlight</string>
+    <string name="reader_select_first">Select text first, then tap Highlight.</string>
+    <string name="reader_highlight_saved">Saved to your Ledger.</string>
 
     <!-- Ask my Ledger (chat over the corpus) -->
     <string name="ledger_chat_title">Ask my Ledger</string>

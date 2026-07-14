@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <WebView
+        android:id="@+id/reader_web"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"/>
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#F2F2F2"
+        android:padding="6dp">
+
+        <Button
+            android:id="@+id/prev_button"
+            android:text="@string/reader_prev"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/open_button"
+            android:text="@string/reader_open"
+            android:layout_width="0dp" android:layout_weight="1.4" android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/highlight_button"
+            android:text="@string/reader_highlight"
+            android:layout_width="0dp" android:layout_weight="1.4" android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/next_button"
+            android:text="@string/reader_next"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+    </LinearLayout>
+</LinearLayout>
