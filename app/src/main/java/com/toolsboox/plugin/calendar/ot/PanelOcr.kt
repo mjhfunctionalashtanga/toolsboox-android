@@ -1,0 +1,46 @@
+package com.toolsboox.plugin.calendar.ot
+
+import com.google.mlkit.common.model.DownloadConditions
+import com.google.mlkit.common.model.RemoteModelManager
+import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognition
+import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognitionModel
+import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognitionModelIdentifier
+import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognizerOptions
+import com.google.mlkit.vision.digitalink.recognition.Ink
+import com.toolsboox.da.Stroke
+import kotlinx.coroutines.tasks.await
+import timber.log.Timber
+
+/**
+ * On-device handwriting → text for a panel's strokes, via ML Kit Digital Ink Recognition.
+ * The text feeds the panel-card → Notes & Annotations pipeline (which the chat corpus then
+ * RAG-gathers). Returns "" when there is nothing to recognise or the model isn't ready.
+ */
+object PanelOcr {
+
+    suspend fun recognize(strokes: List<Stroke>, languageTag: String = "en-US"): String {
+        if (strokes.isEmpty()) return ""
+        val inkBuilder = Ink.builder()
+        for (stroke in strokes) {
+            val sb = Ink.Stroke.builder()
+            for (p in stroke.strokePoints) sb.addPoint(Ink.Point.create(p.x, p.y, p.t))
+            inkBuilder.addStroke(sb.build())
+        }
+        val ink = inkBuilder.build()
+
+        val identifier = DigitalInkRecognitionModelIdentifier.fromLanguageTag(languageTag) ?: return ""
+        val model = DigitalInkRecognitionModel.builder(identifier).build()
+        val manager = RemoteModelManager.getInstance()
+        return try {
+            if (!manager.isModelDownloaded(model).await()) {
+                manager.download(model, DownloadConditions.Builder().build()).await()
+            }
+            val recognizer = DigitalInkRecognition.getClient(DigitalInkRecognizerOptions.builder(model).build())
+            val result = recognizer.recognize(ink).await()
+            result.candidates.firstOrNull()?.text.orEmpty()
+        } catch (e: Exception) {
+            Timber.w(e, "PanelOcr: recognition failed")
+            ""
+        }
+    }
+}

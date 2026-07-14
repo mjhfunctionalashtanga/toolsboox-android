@@ -143,7 +143,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                     val o = if (e.kind == ReadingEvent.Kind.BOOK) LogOrigin.BOOK else LogOrigin.READ
                     val meta = listOfNotNull(e.source?.takeIf { it.isNotBlank() }, stamp(e.date)).joinToString(" · ")
                     val body = (e.excerpt?.takeIf { it.isNotBlank() } ?: e.note).orEmpty().trim()
-                    out.add(LogItem(o, e.title.ifBlank { getString(R.string.reading_log_untitled) }, meta, body, e.url, e.date.time))
+                    out.add(LogItem(o, e.title.ifBlank { getString(R.string.reading_log_untitled) }, meta, body, e.url, e.date.time, e.image))
                 }
 
                 val fallback = dayDate?.atStartOfDay(ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L

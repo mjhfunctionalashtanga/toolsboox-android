@@ -24,7 +24,9 @@ data class LogItem(
     val meta: String,
     val body: String,
     val url: String?,
-    val millis: Long
+    val millis: Long,
+    /** Local PNG card path (panel cards); shown as a thumbnail when present. */
+    val imagePath: String? = null
 )
 
 /**
@@ -46,6 +48,7 @@ class ReadingEventAdapter(
         val title: TextView = view.findViewById(R.id.event_title)
         val meta: TextView = view.findViewById(R.id.event_meta)
         val excerpt: TextView = view.findViewById(R.id.event_excerpt)
+        val thumb: android.widget.ImageView = view.findViewById(R.id.event_thumb)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
@@ -62,6 +65,17 @@ class ReadingEventAdapter(
         holder.meta.text = e.meta
         holder.excerpt.visibility = if (e.body.isBlank()) View.GONE else View.VISIBLE
         holder.excerpt.text = e.body
+
+        val path = e.imagePath
+        if (path != null && java.io.File(path).exists()) {
+            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 4 }
+            holder.thumb.setImageBitmap(android.graphics.BitmapFactory.decodeFile(path, opts))
+            holder.thumb.visibility = View.VISIBLE
+        } else {
+            holder.thumb.setImageDrawable(null)
+            holder.thumb.visibility = View.GONE
+        }
+
         holder.itemView.setOnClickListener { onOpen(e) }
     }
 }

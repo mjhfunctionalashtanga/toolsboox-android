@@ -14,6 +14,7 @@ import android.view.Gravity
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.google.firebase.analytics.logEvent
@@ -588,7 +589,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             "Tools" to listOf(
                 GoItem("🖊️", "Add text") { binding.toolbarDrawing.toolbarText.performClick() },
                 GoItem("🖼️", "Add image") { binding.toolbarDrawing.toolbarImage.performClick() },
-                GoItem("🃏", "Share as card") { showPanelCardPicker() },
+                GoItem("📌", "Panel → Notes") { pickPanel { p -> savePanelAsNote(p) } },
+                GoItem("🃏", "Share as card") { pickPanel { p -> sharePanelAsCard(p) } },
                 GoItem("👆", "Finger / hand") { binding.toolbarDrawing.toolbarHandTouch.performClick() },
                 GoItem("🔄", "Rotate screen") { binding.toolbarDrawing.toolbarRotate.performClick() }
             ),
@@ -603,15 +605,72 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     private data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
 
-    /** Pick which panel of the current page to turn into a card, then render + share it. */
-    private fun showPanelCardPicker() {
+    /** Pick which panel of the current page to act on, then run [action] on it. */
+    private fun pickPanel(action: (com.toolsboox.plugin.calendar.ot.LedgerPanel) -> Unit) {
         val panels = com.toolsboox.plugin.calendar.ot.LedgerPanel.forPage(notePage)
         AlertDialog.Builder(requireContext())
             .setTitle(R.string.card_pick_panel)
             .setItems(panels.map { it.title }.toTypedArray()) { d, which ->
-                sharePanelAsCard(panels[which]); d.dismiss()
+                action(panels[which]); d.dismiss()
             }
             .show()
+    }
+
+    /** Strokes of the current page (note page or the default calendar layer). */
+    private fun currentPageStrokes(): List<Stroke> =
+        if (notePage != null) calendarDay.noteStrokes[notePage] ?: emptyList()
+        else calendarDay.calendarStrokes[calendarStyle] ?: emptyList()
+
+    /** A stroke belongs to a panel if its centroid falls inside the panel's rect. */
+    private fun strokeInPanel(stroke: Stroke, rect: android.graphics.RectF): Boolean {
+        val pts = stroke.strokePoints
+        if (pts.isEmpty()) return false
+        val cx = pts.sumOf { it.x.toDouble() }.toFloat() / pts.size
+        val cy = pts.sumOf { it.y.toDouble() }.toFloat() / pts.size
+        return rect.contains(cx, cy)
+    }
+
+    /**
+     * Panel → Notes & Annotations: render the panel to a PNG (kept), OCR its handwriting
+     * (+ any typed text in the region), and save a ReadingEvent carrying the text + image.
+     * That lands it in the annotations log and the chat corpus (searchable / RAG-able).
+     */
+    private fun savePanelAsNote(panel: com.toolsboox.plugin.calendar.ot.LedgerPanel) {
+        if (!::calendarDay.isInitialized) return
+        val pageStrokes = currentPageStrokes()
+        val panelStrokes = pageStrokes.filter { strokeInPanel(it, panel.rect) }
+        val pageKey = notePage ?: "default"
+        val typedText = calendarDay.textElements
+            .filter { it.pageKey == pageKey && android.graphics.RectF.intersects(textElementBounds(it), panel.rect) }
+            .joinToString("\n") { it.text }.trim()
+
+        lifecycleScope.launch {
+            val ocr = com.toolsboox.plugin.calendar.ot.PanelOcr.recognize(panelStrokes)
+            val text = listOf(typedText, ocr).filter { it.isNotBlank() }.joinToString("\n").trim()
+            val imagePath = try {
+                val card = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer
+                    .renderCard(templateBitmap, listOf(pageStrokes), panel.rect)
+                val dir = java.io.File(requireContext().filesDir, "cards").apply { mkdirs() }
+                val file = java.io.File(dir, "${panel.id}-$currentDate-${System.currentTimeMillis()}.png")
+                file.outputStream().use { card.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                file.absolutePath
+            } catch (e: Exception) { Timber.w(e, "panel card render failed"); null }
+
+            calendarDay.readingEvents.add(
+                com.toolsboox.plugin.calendar.da.v2.ReadingEvent(
+                    id = "panelcard-${panel.id}-${System.currentTimeMillis()}",
+                    kind = com.toolsboox.plugin.calendar.da.v2.ReadingEvent.Kind.BOOK,
+                    date = java.util.Date(),
+                    title = panel.title,
+                    source = "Ledger · ${sectionEmoji()}",
+                    excerpt = text.ifBlank { null },
+                    image = imagePath
+                )
+            )
+            calendarPattern.updateDay(calendarDay)
+            presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+            showMessage(getString(R.string.card_saved_to_notes, panel.title), binding.root)
+        }
     }
 
     /**

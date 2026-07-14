@@ -47,4 +47,16 @@
         android:paddingStart="26dp"
         android:paddingTop="6dp"
         android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+    <ImageView
+        android:id="@+id/event_thumb"
+        android:layout_width="wrap_content"
+        android:layout_height="140dp"
+        android:adjustViewBounds="true"
+        android:scaleType="fitStart"
+        android:visibility="gone"
+        android:paddingStart="26dp"
+        android:paddingTop="8dp"
+        android:contentDescription="@string/reading_log_title"
+        android:layout_gravity="start"/>
 </LinearLayout>

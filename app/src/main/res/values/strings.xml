@@ -378,6 +378,7 @@
     <string name="reading_log_av_photo">Photo</string>
     <string name="card_pick_panel">Share which panel as a card?</string>
     <string name="card_render_failed">Couldn\'t render that panel. :(</string>
+    <string name="card_saved_to_notes">Saved “%s” to Notes &amp; Annotations.</string>
     <string name="reader_aa">Aa</string>
     <string name="reader_settings_title">Reading</string>
     <string name="reader_font_smaller">A −</string>
