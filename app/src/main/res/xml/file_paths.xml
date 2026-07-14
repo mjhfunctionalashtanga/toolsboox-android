@@ -2,4 +2,6 @@
 <paths>
     <!-- Camera capture target for the long-press "Image — camera" flow. -->
     <cache-path name="camera" path="camera/"/>
+    <!-- Panel PNG cards rendered for share / annotation. -->
+    <cache-path name="cards" path="cards/"/>
 </paths>

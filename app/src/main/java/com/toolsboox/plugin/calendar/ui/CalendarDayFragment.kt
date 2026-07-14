@@ -588,6 +588,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             "Tools" to listOf(
                 GoItem("🖊️", "Add text") { binding.toolbarDrawing.toolbarText.performClick() },
                 GoItem("🖼️", "Add image") { binding.toolbarDrawing.toolbarImage.performClick() },
+                GoItem("🃏", "Share as card") { showPanelCardPicker() },
                 GoItem("👆", "Finger / hand") { binding.toolbarDrawing.toolbarHandTouch.performClick() },
                 GoItem("🔄", "Rotate screen") { binding.toolbarDrawing.toolbarRotate.performClick() }
             ),
@@ -601,6 +602,48 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     )
 
     private data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
+
+    /** Pick which panel of the current page to turn into a card, then render + share it. */
+    private fun showPanelCardPicker() {
+        val panels = com.toolsboox.plugin.calendar.ot.LedgerPanel.forPage(notePage)
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.card_pick_panel)
+            .setItems(panels.map { it.title }.toTypedArray()) { d, which ->
+                sharePanelAsCard(panels[which]); d.dismiss()
+            }
+            .show()
+    }
+
+    /**
+     * Render one panel of the current page to a PNG card and hand it to the share sheet.
+     * Composites the drawn template with this page's handwriting, crops to the panel.
+     */
+    private fun sharePanelAsCard(panel: com.toolsboox.plugin.calendar.ot.LedgerPanel) {
+        if (!::calendarDay.isInitialized) return
+        val strokeLists = if (notePage != null)
+            listOf(calendarDay.noteStrokes[notePage] ?: emptyList())
+        else
+            listOf(calendarDay.calendarStrokes[calendarStyle] ?: emptyList())
+        try {
+            val card = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer
+                .renderCard(templateBitmap, strokeLists, panel.rect)
+            val dir = java.io.File(requireContext().cacheDir, "cards").apply { mkdirs() }
+            val file = java.io.File(dir, "${panel.id}-$currentDate.png")
+            file.outputStream().use { card.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                requireContext(), "${requireContext().packageName}.fileprovider", file
+            )
+            val share = android.content.Intent(android.content.Intent.ACTION_SEND)
+                .setType("image/png")
+                .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                .putExtra(android.content.Intent.EXTRA_SUBJECT, "${panel.title} — $currentDate")
+                .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            startActivity(android.content.Intent.createChooser(share, panel.title))
+        } catch (e: Exception) {
+            Timber.w(e, "panel card render/share failed for ${panel.id}")
+            showMessage(getString(R.string.card_render_failed), binding.root)
+        }
+    }
 
     /**
      * The Ledger hub — one collapsible popover mirroring the iPad's up/down/home

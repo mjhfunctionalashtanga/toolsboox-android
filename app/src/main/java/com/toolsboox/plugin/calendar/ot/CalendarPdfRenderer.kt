@@ -33,6 +33,24 @@ object CalendarPdfRenderer {
     )
 
     /**
+     * Render one [LedgerPanel] to a PNG "card": start from the drawn template [template]
+     * (lines/headers/typed text/images already on it), composite the page's handwriting
+     * [strokeLists] on top, then crop to the panel's rect. The keystone of panel → card →
+     * (OCR) → annotation. Coordinates are in the template's own pixel space.
+     */
+    fun renderCard(template: Bitmap, strokeLists: List<List<Stroke>>, rect: RectF): Bitmap {
+        val full = template.copy(Bitmap.Config.ARGB_8888, true)
+        val canvas = Canvas(full)
+        val paint = createStrokePaint()
+        for (list in strokeLists) for (stroke in list) drawStroke(canvas, paint, stroke)
+        val l = rect.left.toInt().coerceIn(0, full.width - 1)
+        val t = rect.top.toInt().coerceIn(0, full.height - 1)
+        val w = rect.width().toInt().coerceIn(1, full.width - l)
+        val h = rect.height().toInt().coerceIn(1, full.height - t)
+        return Bitmap.createBitmap(full, l, t, w, h)
+    }
+
+    /**
      * Render a single calendar page (calendar strokes + note strokes) to a one-page PDF.
      *
      * @param strokes the calendar strokes map (style key -> stroke list)
