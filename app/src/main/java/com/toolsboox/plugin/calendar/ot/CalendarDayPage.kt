@@ -193,6 +193,18 @@ class CalendarDayPage {
                 }
             }
 
+            // Reading Ledger: today's book highlights + article stars (synced from the
+            // iPad / logged in the reader) shown here so they're visible on the Boox, not
+            // just preserved through sync. "★" marks the row; the excerpt is the title.
+            if (notesTitle.size < 8) {
+                calendarDay.readingEvents.takeLast(8 - notesTitle.size).forEach {
+                    val label = it.excerpt?.takeIf { e -> e.isNotBlank() } ?: it.title
+                    notesTitle.add(it.source?.let { s -> "$s — $label" } ?: label)
+                    notesLeft.add("★")   // ★
+                    notesRight.add(DateFormat.getTimeFormat(context).format(it.date))
+                }
+            }
+
             val notesCalsText = if (notesTitle.size > 8) {
                 context.getString(R.string.calendar_day_notes_events_ex).format(notesTitle.size)
             } else {
