@@ -402,6 +402,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.goAppsButton.visibility = View.GONE
         binding.goSectionsButton.visibility = View.GONE
 
+        // Retire the fixed pen strip on the day page — the floating pills + gear now cover
+        // everything. The real buttons stay in the (hidden) layout so performClick still
+        // drives the Onyx ink actions; nothing about drawing changes.
+        binding.toolbarDrawing.root.visibility = View.GONE
+
         // Floating nav widget: reuse the existing nav actions so nothing about drawing
         // changes. ‹ › step the date; ↑ ↓ cycle the day's sections.
         binding.navWidget.visibility = View.VISIBLE
@@ -464,39 +469,39 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .show()
     }
 
-    private data class GoItem(val label: String, val icon: Int, val action: () -> Unit)
+    private data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
 
     /**
      * The "Go to" panel — the day's sections and the Ledger surfaces. Almanac views
      * (Week/Month/Quarter/Year) are NOT here: the top date bar already handles those.
+     * Compact + emoji, opening near the nav pill it's launched from.
      */
     private fun showGoToModal() = showGoModal(
-        getString(R.string.go_to_title),
         listOf(
             getString(R.string.go_group_day) to listOf(
-                GoItem("Today", R.drawable.ic_dashboard_item_calendar) { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
-                GoItem("Pickings", R.drawable.ic_go_pickings) { CalendarNavigator.toDayNote(this, currentDate, "pickings") },
-                GoItem("Gratitude", R.drawable.ic_go_gratitude) { CalendarNavigator.toDayNote(this, currentDate, "gratitude") },
-                GoItem("Later List", R.drawable.ic_go_later) { CalendarNavigator.toDayNote(this, currentDate, "intake") },
-                GoItem("Notes", R.drawable.ic_go_notes) { CalendarNavigator.toDayNote(this, currentDate, "0") }
+                GoItem("📅", "Today") { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
+                GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this, currentDate, "pickings") },
+                GoItem("🙏", "Gratitude") { CalendarNavigator.toDayNote(this, currentDate, "gratitude") },
+                GoItem("🔖", "Later List") { CalendarNavigator.toDayNote(this, currentDate, "intake") },
+                GoItem("✒️", "Notes") { CalendarNavigator.toDayNote(this, currentDate, "0") }
             ),
             getString(R.string.go_group_ledger) to listOf(
-                GoItem("Bookshelf", R.drawable.ic_dashboard_item_reader) { findNavController().navigate(R.id.action_to_reader) },
-                GoItem("Feed Ledger", R.drawable.ic_dashboard_item_feeds) { findNavController().navigate(R.id.action_to_feeds) },
-                GoItem("Ask my Ledger", R.drawable.ic_dashboard_item_chat) { findNavController().navigate(R.id.action_to_ledger_chat) },
-                GoItem("Cloud", R.drawable.ic_dashboard_item_cloud) { CalendarNavigator.toCloudSync(this) }
+                GoItem("📚", "Bookshelf") { findNavController().navigate(R.id.action_to_reader) },
+                GoItem("📰", "Feed Ledger") { findNavController().navigate(R.id.action_to_feeds) },
+                GoItem("💬", "Ask my Ledger") { findNavController().navigate(R.id.action_to_ledger_chat) },
+                GoItem("☁️", "Cloud") { CalendarNavigator.toCloudSync(this) }
             )
         )
     )
 
     /**
-     * Shared builder for the floating "Go to" panel. Anchors to the side OPPOSITE the
-     * pen strip (so they never collide) and stays compact — iPad page-selector style.
+     * Shared builder for the floating "Go to" panel — a compact emoji list anchored at the
+     * bottom near the nav pill (its launcher), not a big centered sheet.
      */
-    private fun showGoModal(title: String, groups: List<Pair<String, List<GoItem>>>) {
+    private fun showGoModal(groups: List<Pair<String, List<GoItem>>>) {
         val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
         val list = root.findViewById<LinearLayout>(R.id.go_to_list)
-        root.findViewById<TextView>(R.id.go_to_title).text = title
+        root.findViewById<TextView>(R.id.go_to_title).visibility = View.GONE
         val dialog = AlertDialog.Builder(requireContext()).setView(root).create()
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
@@ -504,27 +509,27 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         for ((header, items) in groups) {
             val tv = TextView(requireContext())
             tv.text = header.uppercase()
-            tv.setTextColor(0xFF8A8A8A.toInt()); tv.textSize = 12f; tv.letterSpacing = 0.08f
-            tv.setPadding(dp(14), dp(12), dp(14), dp(4))
+            tv.setTextColor(0xFF8A8A8A.toInt()); tv.textSize = 11f; tv.letterSpacing = 0.08f
+            tv.setPadding(dp(14), dp(10), dp(14), dp(2))
             list.addView(tv)
             for (item in items) {
                 val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
-                r.findViewById<ImageView>(R.id.go_icon).setImageResource(item.icon)
-                r.findViewById<TextView>(R.id.go_label).text = item.label
+                r.findViewById<ImageView>(R.id.go_icon).visibility = View.GONE
+                r.findViewById<TextView>(R.id.go_label).text = "${item.emoji}  ${item.label}"
                 r.setOnClickListener { dialog.dismiss(); item.action() }
                 list.addView(r)
             }
         }
 
         dialog.show()
+        // Open near the nav pill (bottom, opposite the — now hidden — pen strip side).
         dialog.window?.let { w ->
             val penOnLeft = sharedPreferences.getString("calendarToolbarSide", "LEFT") == "LEFT"
             val lp = w.attributes
-            lp.gravity = (if (penOnLeft) Gravity.END else Gravity.START) or Gravity.TOP
-            lp.x = dp(6)
-            lp.y = dp(52)
-            lp.width = dp(270)
-            lp.height = (resources.displayMetrics.heightPixels * 0.58f).toInt()
+            lp.gravity = (if (penOnLeft) Gravity.START else Gravity.END) or Gravity.BOTTOM
+            lp.x = dp(10)
+            lp.y = dp(80)
+            lp.width = dp(220)
             w.attributes = lp
         }
     }
