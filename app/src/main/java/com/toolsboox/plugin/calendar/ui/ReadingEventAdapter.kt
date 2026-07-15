@@ -25,8 +25,10 @@ data class LogItem(
     val body: String,
     val url: String?,
     val millis: Long,
-    /** Local PNG card path (panel cards); shown as a thumbnail when present. */
-    val imagePath: String? = null
+    /** Local image path (panel card or photo attachment); shown as a thumbnail when present. */
+    val imagePath: String? = null,
+    /** Local voice-memo path; shows a ▶ chip and plays on tap. */
+    val audioPath: String? = null
 )
 
 /**
@@ -62,7 +64,10 @@ class ReadingEventAdapter(
         val e = items[position]
         holder.mark.text = e.origin.mark
         holder.title.text = e.title
-        holder.meta.text = e.meta
+        // A voice memo advertises itself with a ▶ chip in the meta line.
+        holder.meta.text = if (e.audioPath != null)
+            listOf("▶ Voice memo", e.meta).filter { it.isNotBlank() }.joinToString("  ·  ")
+        else e.meta
         holder.excerpt.visibility = if (e.body.isBlank()) View.GONE else View.VISIBLE
         holder.excerpt.text = e.body
 

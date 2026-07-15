@@ -231,7 +231,11 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                     val o = if (e.kind == ReadingEvent.Kind.BOOK) LogOrigin.BOOK else LogOrigin.READ
                     val meta = listOfNotNull(e.source?.takeIf { it.isNotBlank() }, stamp(e.date)).joinToString(" · ")
                     val body = (e.excerpt?.takeIf { it.isNotBlank() } ?: e.note).orEmpty().trim()
-                    out.add(LogItem(o, e.title.ifBlank { getString(R.string.reading_log_untitled) }, meta, body, e.url, e.date.time, e.image))
+                    // Captured media rides on the event's attachments — show a photo thumb / play a memo.
+                    val photo = e.attachments?.firstOrNull { it.kind == Attachment.Kind.PHOTO }
+                    val audio = e.attachments?.firstOrNull { it.kind == Attachment.Kind.AUDIO }
+                    out.add(LogItem(o, e.title.ifBlank { getString(R.string.reading_log_untitled) }, meta, body,
+                        e.url, e.date.time, imagePath = photo?.let { attachmentPath(it) }, audioPath = audio?.let { attachmentPath(it) }))
                 }
 
                 val fallback = dayDate?.atStartOfDay(ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L
@@ -244,7 +248,10 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                         Attachment.Kind.PHOTO -> getString(R.string.reading_log_av_photo)
                     }
                     val meta = listOfNotNull(a.duration?.let { mmss(it) }, a.date?.let { stamp(it) }).joinToString(" · ")
-                    out.add(LogItem(LogOrigin.AV, label, meta, "", null, a.date?.time ?: fallback))
+                    val path = attachmentPath(a)
+                    out.add(LogItem(LogOrigin.AV, label, meta, "", null, a.date?.time ?: fallback,
+                        imagePath = if (a.kind == Attachment.Kind.PHOTO) path else null,
+                        audioPath = if (a.kind == Attachment.Kind.AUDIO) path else null))
                 }
 
                 // Pickings — the typed quotes on the day's Pickings page.
@@ -278,14 +285,43 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         LocalDate.of(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt())
     }.getOrNull()
 
-    /** Anything with a link opens it; book highlights / grams / pickings show a hint. */
+    private fun attachmentPath(a: Attachment): String = File(attachmentsDir(), a.filename).absolutePath
+
+    /** Voice memos play/stop on tap; photo annotations open full-screen; links open the source. */
     private fun openItem(item: LogItem) {
+        item.audioPath?.let { toggleAudio(it); return }
+        val img = item.imagePath
+        if (img != null && File(img).exists() && item.url.isNullOrBlank()) { openImage(img); return }
         val url = item.url
-        if (!url.isNullOrBlank()) {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-        } else {
-            showMessage(getString(R.string.reading_log_open_hint, item.title))
-        }
+        if (!url.isNullOrBlank()) startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        else showMessage(getString(R.string.reading_log_open_hint, item.title))
+    }
+
+    private var player: android.media.MediaPlayer? = null
+
+    private fun toggleAudio(path: String) {
+        if (player != null) { runCatching { player?.stop() }; player?.release(); player = null; return }
+        if (!File(path).exists()) { showMessage(R.string.reader_capture_failed); return }
+        runCatching {
+            player = android.media.MediaPlayer().apply {
+                setDataSource(path)
+                setOnCompletionListener { it.release(); player = null }
+                prepare(); start()
+            }
+        }.onFailure { player?.release(); player = null; showMessage(R.string.reader_capture_failed) }
+    }
+
+    private fun openImage(path: String) {
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            requireContext(), "${requireContext().packageName}.fileprovider", File(path)
+        )
+        startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "image/*")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+    }
+
+    override fun onPause() {
+        super.onPause()
+        player?.release(); player = null
     }
 
     private fun documentsRoot(): File =
