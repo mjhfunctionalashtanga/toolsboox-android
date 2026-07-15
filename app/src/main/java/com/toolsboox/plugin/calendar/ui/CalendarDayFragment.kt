@@ -514,7 +514,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private fun showSectionSwitcher() = showGoModal(
         listOf(
             getString(R.string.go_group_day) to listOf(
-                GoItem("☀️", "Day") { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
+                GoItem("☀︎", "Day") { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
                 GoItem("🔖", "Intake") { CalendarNavigator.toDayNote(this, LocalDate.now(), "intake") },
                 GoItem("🙏", "Gratitude") { CalendarNavigator.toDayNote(this, LocalDate.now(), "gratitude") },
                 GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this, LocalDate.now(), "pickings") },
@@ -570,11 +570,20 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         for (v in toolHidden) v.visibility = if (toolCollapsed) View.GONE else View.VISIBLE
     }
 
-    /** Flip the floating pills between horizontal and vertical, persisted. */
+    /** Pick the floating-pill layout — an explicit Horizontal / Vertical choice, persisted. */
     private fun flipPillLayout() {
         val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
-        prefs.edit().putBoolean("vertical", !prefs.getBoolean("vertical", false)).apply()
-        applyWidgetOrientation()
+        val narrow = resources.configuration.screenWidthDp < 520
+        val current = if (prefs.getBoolean("vertical", narrow)) 1 else 0
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.pill_layout_title)
+            .setSingleChoiceItems(arrayOf(getString(R.string.pill_layout_horizontal), getString(R.string.pill_layout_vertical)), current) { d, which ->
+                prefs.edit().putBoolean("vertical", which == 1).apply()
+                applyWidgetOrientation()
+                d.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     /** Return both pills to their anchored home positions. */
@@ -929,7 +938,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     /** The emoji for the section currently on screen (drives the bottom pill button). */
     private fun sectionEmoji(): String = when (currentNotePage()) {
-        null, "default", CalendarDay.DEFAULT_STYLE -> "☀️"
+        // Text-presentation sun (VS15) renders as a solid black glyph — high contrast on e-ink,
+        // unlike the washed-out yellow colour emoji.
+        null, "default", CalendarDay.DEFAULT_STYLE -> "☀︎"
         "pickings" -> "❝"
         "gratitude" -> "🙏"
         "intake" -> "🔖"

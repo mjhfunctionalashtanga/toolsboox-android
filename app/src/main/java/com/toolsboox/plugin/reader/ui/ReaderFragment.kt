@@ -291,11 +291,14 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
             }
             "highlight" -> {
                 val text = msg.optString("text").trim()
-                if (text.isEmpty()) { showMessage(R.string.reader_select_first); return }
                 val cfi = msg.optString("cfi")
-                logHighlight(text, cfi)
-                rememberHighlight(cfi)
-                showMessage(R.string.reader_highlight_saved)
+                // The JS has already drawn the visual highlight; persist its CFI so it survives a
+                // reopen. Then open the shared capture menu so the reader can add a note, photo,
+                // upload, or voice memo — with or without a text selection.
+                if (text.isNotEmpty() && cfi.isNotBlank()) rememberHighlight(cfi)
+                captureAnnotation(text) { selection, note, attachment ->
+                    logHighlight(selection, note, cfi, attachment)
+                }
             }
             "tapAnnotation" -> {
                 val cfi = msg.optString("cfi")
@@ -309,9 +312,11 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    /** Append a book highlight to today's CalendarDay so it joins the corpus + syncs. */
-    private fun logHighlight(text: String, cfi: String) {
-        val ctx = requireContext()
+    /** Append a book annotation (highlight passage, note, and/or media) to today's CalendarDay. */
+    private fun logHighlight(
+        text: String?, note: String? = null, cfi: String = "",
+        attachment: com.toolsboox.da.Attachment? = null
+    ) {
         val title = bookTitle
         val author = bookAuthor
         lifecycleScope.launch(Dispatchers.IO) {
@@ -327,13 +332,15 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
                         date = Date(),
                         title = title,
                         source = author.ifBlank { null },
-                        excerpt = text,
-                        location = cfi.ifBlank { null }
+                        excerpt = text?.ifBlank { null },
+                        note = note?.ifBlank { null },
+                        location = cfi.ifBlank { null },
+                        attachments = attachment?.let { mutableListOf(it) }
                     )
                 )
                 calendarDayService.save(root, today, day)
             } catch (e: Exception) {
-                Timber.w(e, "failed to log book highlight")
+                Timber.w(e, "failed to log book annotation")
             }
         }
     }

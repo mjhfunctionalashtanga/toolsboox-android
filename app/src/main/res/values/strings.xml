@@ -379,6 +379,26 @@
     <string name="reading_log_untitled">Untitled</string>
     <string name="reading_log_origin_all">All</string>
     <string name="reading_log_range_all">All time</string>
+
+    <!-- Shared annotation capture (books + feeds). -->
+    <string name="reader_capture_title">Add annotation</string>
+    <string name="reader_capture_highlight_note">Highlight &amp; note</string>
+    <string name="reader_capture_note">Add a note</string>
+    <string name="reader_capture_photo">📷  Take a picture</string>
+    <string name="reader_capture_upload">🖼️  Upload a picture</string>
+    <string name="reader_capture_voice">🎤  Voice memo</string>
+    <string name="reader_capture_note_hint">Your note…</string>
+    <string name="reader_capture_save">Save</string>
+    <string name="reader_capture_saved">Annotation saved</string>
+    <string name="reader_capture_recording">Recording…  %s</string>
+    <string name="reader_capture_stop">Stop</string>
+    <string name="reader_capture_mic_denied">Microphone permission is needed for voice memos.</string>
+    <string name="reader_capture_no_camera">No camera available on this device.</string>
+    <string name="reader_capture_failed">Couldn\'t save that — try again.</string>
+
+    <string name="pill_layout_title">Pill layout</string>
+    <string name="pill_layout_horizontal">Horizontal</string>
+    <string name="pill_layout_vertical">Vertical</string>
     <string name="reading_log_open_hint">%s — open it from its source.</string>
     <string name="reading_log_av_video">Video note to self</string>
     <string name="reading_log_av_audio">Audio note to self</string>

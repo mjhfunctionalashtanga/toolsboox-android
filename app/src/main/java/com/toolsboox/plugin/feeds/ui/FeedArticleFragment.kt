@@ -282,35 +282,18 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    /** Highlight → annotate: read the current selection, then save it (+ an optional note)
-     *  as an article annotation, mirroring the book reader. Works with no selection too
-     *  (a plain note on the article). */
+    /** Highlight → annotate: read the current selection, then open the shared capture menu
+     *  (note / photo / upload / voice), mirroring the book reader. Works with no selection. */
     private fun annotate(e: FeedEntry) {
         binding.articleWeb.evaluateJavascript(
             "(function(){var s=window.getSelection&&window.getSelection();return s?s.toString():'';})()"
-        ) { raw -> showAnnotateDialog(e, unquoteJs(raw).trim()) }
-    }
-
-    private fun showAnnotateDialog(e: FeedEntry, selection: String) {
-        val input = EditText(requireContext()).apply {
-            hint = getString(R.string.feeds_article_note_hint); setLines(3); gravity = android.view.Gravity.TOP
-        }
-        val builder = AlertDialog.Builder(requireContext())
-            .setTitle(if (selection.isNotBlank()) R.string.feeds_article_highlight else R.string.feeds_article_note)
-            .setView(input)
-            .setPositiveButton(R.string.feeds_save) { _, _ ->
-                val text = input.text.toString().trim()
-                if (selection.isBlank() && text.isEmpty()) return@setPositiveButton
+        ) { raw ->
+            captureAnnotation(unquoteJs(raw).trim()) { selection, note, attachment ->
                 lifecycleScope.launch {
-                    withContext(Dispatchers.IO) {
-                        logEvent(e, excerpt = selection.ifBlank { null }, note = text.ifBlank { null })
-                    }
-                    showMessage(if (selection.isNotBlank()) R.string.reader_highlight_saved else R.string.feeds_note_saved)
+                    withContext(Dispatchers.IO) { logEvent(e, excerpt = selection, note = note, attachment = attachment) }
                 }
             }
-            .setNegativeButton(android.R.string.cancel, null)
-        if (selection.isNotBlank()) builder.setMessage("“${selection.take(400)}”")
-        builder.show()
+        }
     }
 
     /** Decode the JSON string evaluateJavascript hands back (quoted + escaped). */
@@ -320,8 +303,11 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
             ?: raw.removeSurrounding("\"")
     }
 
-    /** Append an article ReadingEvent (star marker, highlight passage, and/or a note). */
-    private fun logEvent(e: FeedEntry, excerpt: String? = null, note: String? = null) {
+    /** Append an article ReadingEvent (star marker, highlight passage, note, and/or media). */
+    private fun logEvent(
+        e: FeedEntry, excerpt: String? = null, note: String? = null,
+        attachment: com.toolsboox.da.Attachment? = null
+    ) {
         try {
             val root = documentsRoot()
             val today = LocalDate.now()
@@ -335,7 +321,8 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                     source = e.feedTitle.ifBlank { null },
                     url = e.url.ifBlank { null },
                     excerpt = excerpt,
-                    note = note
+                    note = note,
+                    attachments = attachment?.let { mutableListOf(it) }
                 )
             )
             calendarDayService.save(root, today, day)

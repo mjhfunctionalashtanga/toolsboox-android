@@ -1,30 +1,45 @@
 package com.toolsboox.ui.plugin
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.media.MediaRecorder
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.provider.MediaStore
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
 import androidx.appcompat.app.AlertDialog
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.fragment.app.Fragment
 import com.google.android.material.snackbar.Snackbar
 import com.toolsboox.R
+import com.toolsboox.da.Attachment
 import com.toolsboox.databinding.ToolbarBinding
 import com.toolsboox.ui.main.MainActivity
 import timber.log.Timber
+import java.io.File
+import java.util.Date
+import java.util.UUID
 
 /**
  * The fragment base class.
@@ -241,6 +256,192 @@ abstract class ScreenFragment : Fragment() {
         val vis = if (collapsed) View.GONE else View.VISIBLE
         navUp.visibility = vis
         navDown.visibility = vis
+    }
+
+    // --- Shared annotation capture (highlight / photo / voice), used by book + feed readers ---
+
+    /** Sink for a completed capture: (highlight excerpt, typed note, media attachment). */
+    private var captureSink: ((String?, String?, Attachment?) -> Unit)? = null
+    private var captureSelection: String = ""
+    private var pendingCameraFile: File? = null
+    private var pendingCameraUri: Uri? = null
+
+    /** Persistent per-app store for annotation media; referenced by filename in the day JSON. */
+    protected fun attachmentsDir(): File =
+        File(requireContext().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), "attachments").apply { mkdirs() }
+
+    private val annGalleryLauncher =
+        registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            if (uri != null) importGalleryPhoto(uri) else captureSink = null
+        }
+
+    private val annCameraLauncher =
+        registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+            val src = pendingCameraFile
+            if (ok && src != null && src.exists()) {
+                val dest = File(attachmentsDir(), "photo-${UUID.randomUUID()}.jpg")
+                runCatching { src.copyTo(dest, overwrite = true) }
+                src.delete()
+                emitAttachment(Attachment(UUID.randomUUID().toString(), Attachment.Kind.PHOTO, dest.name, null, Date()))
+            } else captureSink = null
+            pendingCameraFile = null; pendingCameraUri = null
+        }
+
+    private val annMicPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) startVoiceRecording()
+            else { showMessage(R.string.reader_capture_mic_denied); captureSink = null }
+        }
+
+    /**
+     * Open the capture menu for a reader annotation: keep the highlight [selection] (may be
+     * blank), then let the reader add a note, take/upload a photo, or record a voice memo.
+     * [onCapture] persists the result for the calling surface (book vs article ReadingEvent).
+     */
+    protected fun captureAnnotation(selection: String, onCapture: (String?, String?, Attachment?) -> Unit) {
+        captureSelection = selection
+        captureSink = onCapture
+        val items = arrayOf(
+            if (selection.isNotBlank()) getString(R.string.reader_capture_highlight_note)
+            else getString(R.string.reader_capture_note),
+            getString(R.string.reader_capture_photo),
+            getString(R.string.reader_capture_upload),
+            getString(R.string.reader_capture_voice)
+        )
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.reader_capture_title)
+            .setItems(items) { d, which ->
+                when (which) {
+                    0 -> showNoteDialog()
+                    1 -> launchAnnCamera()
+                    2 -> annGalleryLauncher.launch("image/*")
+                    3 -> requestVoiceRecording()
+                }
+                d.dismiss()
+            }
+            .setOnCancelListener { captureSink = null }
+            .show()
+    }
+
+    private fun showNoteDialog() {
+        val selection = captureSelection
+        val input = EditText(requireContext()).apply {
+            hint = getString(R.string.reader_capture_note_hint); setLines(3); gravity = Gravity.TOP
+        }
+        val b = AlertDialog.Builder(requireContext())
+            .setTitle(if (selection.isNotBlank()) R.string.reader_capture_highlight_note else R.string.reader_capture_note)
+            .setView(input)
+            .setPositiveButton(R.string.reader_capture_save) { _, _ ->
+                val text = input.text.toString().trim()
+                if (selection.isBlank() && text.isEmpty()) { captureSink = null; return@setPositiveButton }
+                captureSink?.invoke(selection.ifBlank { null }, text.ifBlank { null }, null)
+                captureSink = null
+                showMessage(R.string.reader_capture_saved)
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> captureSink = null }
+        if (selection.isNotBlank()) b.setMessage("“${selection.take(400)}”")
+        b.show()
+    }
+
+    private fun launchAnnCamera() {
+        try {
+            val dir = File(requireContext().cacheDir, "camera").apply { mkdirs() }
+            val photo = File(dir, "capture-${SystemClock.elapsedRealtimeNanos()}.jpg")
+            val uri = FileProvider.getUriForFile(
+                requireContext(), "${requireContext().packageName}.fileprovider", photo
+            )
+            pendingCameraFile = photo; pendingCameraUri = uri
+            annCameraLauncher.launch(uri)
+        } catch (e: Exception) {
+            Timber.w(e, "camera capture unavailable")
+            showMessage(R.string.reader_capture_no_camera); captureSink = null
+        }
+    }
+
+    private fun importGalleryPhoto(uri: Uri) {
+        val dest = File(attachmentsDir(), "photo-${UUID.randomUUID()}.jpg")
+        val ok = runCatching {
+            requireContext().contentResolver.openInputStream(uri)!!.use { input ->
+                dest.outputStream().use { input.copyTo(it) }
+            }
+        }.isSuccess
+        if (ok) emitAttachment(Attachment(UUID.randomUUID().toString(), Attachment.Kind.PHOTO, dest.name, null, Date()))
+        else { showMessage(R.string.reader_capture_failed); captureSink = null }
+    }
+
+    private fun emitAttachment(att: Attachment) {
+        captureSink?.invoke(captureSelection.ifBlank { null }, null, att)
+        captureSink = null
+        showMessage(R.string.reader_capture_saved)
+    }
+
+    // --- Voice memo ---
+
+    private var recorder: MediaRecorder? = null
+    private var recordFile: File? = null
+    private var recordStartAt: Long = 0L
+    private var recordDialog: AlertDialog? = null
+    private val recordHandler = Handler(Looper.getMainLooper())
+
+    private fun requestVoiceRecording() {
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
+            == PackageManager.PERMISSION_GRANTED
+        ) startVoiceRecording()
+        else annMicPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    private fun startVoiceRecording() {
+        val out = File(attachmentsDir(), "voice-${UUID.randomUUID()}.m4a")
+        val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(requireContext())
+        else @Suppress("DEPRECATION") MediaRecorder()
+        try {
+            rec.setAudioSource(MediaRecorder.AudioSource.MIC)
+            rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            rec.setOutputFile(out.absolutePath)
+            rec.prepare(); rec.start()
+        } catch (e: Exception) {
+            Timber.w(e, "voice recording failed to start")
+            runCatching { rec.release() }
+            showMessage(R.string.reader_capture_failed); captureSink = null; return
+        }
+        recorder = rec; recordFile = out; recordStartAt = SystemClock.elapsedRealtime()
+
+        val label = TextView(requireContext()).apply {
+            textSize = 18f; gravity = Gravity.CENTER; setPadding(40, 48, 40, 24)
+            text = getString(R.string.reader_capture_recording, "0:00")
+        }
+        recordDialog = AlertDialog.Builder(requireContext())
+            .setView(label)
+            .setPositiveButton(R.string.reader_capture_stop) { _, _ -> stopVoiceRecording(save = true) }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> stopVoiceRecording(save = false) }
+            .setCancelable(false)
+            .show()
+
+        val tick = object : Runnable {
+            override fun run() {
+                if (recorder == null) return
+                val s = ((SystemClock.elapsedRealtime() - recordStartAt) / 1000).toInt()
+                label.text = getString(R.string.reader_capture_recording, "%d:%02d".format(s / 60, s % 60))
+                recordHandler.postDelayed(this, 500)
+            }
+        }
+        recordHandler.postDelayed(tick, 500)
+    }
+
+    private fun stopVoiceRecording(save: Boolean) {
+        recordHandler.removeCallbacksAndMessages(null)
+        val secs = (SystemClock.elapsedRealtime() - recordStartAt) / 1000.0
+        val file = recordFile
+        runCatching { recorder?.stop() }
+        runCatching { recorder?.release() }
+        recorder = null; recordFile = null
+        recordDialog?.dismiss(); recordDialog = null
+        if (save && file != null && file.exists() && secs >= 0.5) {
+            emitAttachment(Attachment(UUID.randomUUID().toString(), Attachment.Kind.AUDIO, file.name, secs, Date()))
+        } else {
+            file?.delete(); captureSink = null
+        }
     }
 
     /** Keep [pill] fully inside its parent — translation can never strand it off-screen. */
