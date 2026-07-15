@@ -127,9 +127,14 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
             ("＋  Import a book…" to {
                 openBook.launch(arrayOf("application/epub+zip", "application/pdf", "application/x-mobipocket-ebook", "*/*"))
             })
+        val speaking = tts?.isSpeaking == true
         showDirectory(
             listOf(
                 "Recent books" to bookRows,
+                "Reading" to listOf(
+                    (if (speaking) "⏹  Stop reading" else "🔊  Read aloud") to
+                        { if (speaking) tts?.stop() else readAloud() }
+                ),
                 "Go to" to listOf(
                     "📅  Day" to { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
                     "🖍️  Notes & Annotations" to { CalendarNavigator.toDayNote(this, LocalDate.now(), "0") },
@@ -415,7 +420,20 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
     override fun showLoading() {}
     override fun hideLoading() {}
 
+    private var tts: com.toolsboox.ui.plugin.LedgerTts? = null
+
+    /** Read the current book section aloud via TTS (foliate exposes window.getReaderText). */
+    private fun readAloud() {
+        val engine = tts ?: com.toolsboox.ui.plugin.LedgerTts(requireContext()).also { tts = it }
+        binding.readerWeb.evaluateJavascript("window.getReaderText && window.getReaderText()") { raw ->
+            val text = runCatching { org.json.JSONTokener(raw).nextValue() as? String }.getOrNull()
+                ?: raw.removeSurrounding("\"")
+            if (text.isBlank()) showMessage(R.string.reader_capture_failed) else engine.speak(text)
+        }
+    }
+
     override fun onDestroyView() {
+        tts?.shutdown(); tts = null
         if (::binding.isInitialized) binding.readerWeb.destroy()
         super.onDestroyView()
     }

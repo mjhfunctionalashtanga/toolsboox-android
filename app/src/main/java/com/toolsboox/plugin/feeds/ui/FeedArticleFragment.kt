@@ -19,6 +19,7 @@ import com.toolsboox.plugin.calendar.da.v2.ReadingEvent
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
 import com.toolsboox.plugin.feeds.da.FeedEntry
 import com.toolsboox.plugin.feeds.nw.MinifluxClient
+import com.toolsboox.ui.plugin.LedgerTts
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -146,11 +147,13 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    /** The top ☰ hamburger: browser + reader settings (tap-zone / volume page-turn). */
+    /** Long-press ☰: browser, read-aloud, and reader settings (tap-zone / volume page-turn). */
     private fun showArticleMenu() {
         val tapOn = tapZonesOn(); val volOn = volumeTurnOn()
+        val speaking = tts?.isSpeaking == true
         val items = listOf(
             "🌐  Open in browser",
+            if (speaking) "⏹  Stop reading" else "🔊  Read aloud",
             (if (tapOn) "☑" else "☐") + "  Tap-zone paging",
             (if (volOn) "☑" else "☐") + "  Volume page-turn"
         )
@@ -158,12 +161,23 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
             .setItems(items.toTypedArray()) { d, which ->
                 when (which) {
                     0 -> entry?.url?.takeIf { it.isNotBlank() }?.let { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) }
-                    1 -> { navPrefs().edit().putBoolean("tap_zones", !tapOn).apply(); setupTapZones() }
-                    2 -> navPrefs().edit().putBoolean("volume_turn", !volOn).apply()
+                    1 -> if (speaking) tts?.stop() else readAloud()
+                    2 -> { navPrefs().edit().putBoolean("tap_zones", !tapOn).apply(); setupTapZones() }
+                    3 -> navPrefs().edit().putBoolean("volume_turn", !volOn).apply()
                 }
                 d.dismiss()
             }
             .show()
+    }
+
+    private var tts: LedgerTts? = null
+
+    /** Read the article text aloud via TTS (the readability/parsed body if shown). */
+    private fun readAloud() {
+        val engine = tts ?: LedgerTts(requireContext()).also { tts = it }
+        binding.articleWeb.evaluateJavascript(
+            "(document.body && document.body.innerText) || ''"
+        ) { raw -> engine.speak(unquoteJs(raw)) }
     }
 
     override fun onResume() {
@@ -351,6 +365,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
     override fun hideLoading() {}
 
     override fun onDestroyView() {
+        tts?.shutdown(); tts = null
         if (::binding.isInitialized) binding.articleWeb.destroy()
         super.onDestroyView()
     }
