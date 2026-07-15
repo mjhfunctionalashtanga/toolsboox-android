@@ -529,6 +529,53 @@ abstract class ScreenFragment : Fragment() {
     )
 
     /**
+     * Leading-emoji → monochrome outline icon, so every directory/menu row renders a crisp
+     * high-contrast glyph on e-ink instead of a colour emoji. Base code points (no variation
+     * selector) so "⚙️"/"⚙" and "🗓️"/"🗓" both match.
+     */
+    private val emojiIcons: Map<String, Int> by lazy {
+        mapOf(
+            "📰" to R.drawable.ic_feed, "⭐" to R.drawable.ic_starred, "📖" to R.drawable.ic_book,
+            "📺" to R.drawable.ic_tv, "🎧" to R.drawable.ic_headphones, "🔖" to R.drawable.ic_bookmark,
+            "🗂" to R.drawable.ic_folder, "🕓" to R.drawable.ic_clock, "🕘" to R.drawable.ic_clock,
+            "📆" to R.drawable.ic_calendar_today, "📅" to R.drawable.ic_calendar_today,
+            "📊" to R.drawable.ic_calendar_today, "🗓" to R.drawable.ic_calendar_today,
+            "👤" to R.drawable.ic_person, "🪞" to R.drawable.ic_person, "❝" to R.drawable.ic_quote,
+            "🙏" to R.drawable.ic_heart, "🎬" to R.drawable.ic_film, "📚" to R.drawable.ic_book,
+            "↪" to R.drawable.ic_nav_right, "⚙" to R.drawable.ic_settings, "☁" to R.drawable.ic_cloud,
+            "▶" to R.drawable.ic_play, "⏸" to R.drawable.ic_pause, "⏹" to R.drawable.ic_stop,
+            "🔊" to R.drawable.ic_speaker, "🌐" to R.drawable.ic_globe, "＋" to R.drawable.ic_add,
+            "💬" to R.drawable.ic_chat
+        )
+    }
+
+    /** The drawable for a label's leading emoji (base code point), or null. */
+    private fun emojiIconRes(text: String): Int? {
+        val t = text.trimStart()
+        for ((emoji, res) in emojiIcons) if (t.startsWith(emoji)) return res
+        return null
+    }
+
+    /** Put the row's leading-emoji icon into its icon slot; return the label minus that emoji. */
+    private fun applyRowIcon(row: View, label: String): String {
+        val icon = row.findViewById<ImageView>(R.id.go_icon)
+        val res = emojiIconRes(label)
+        if (res == null) { icon.visibility = View.GONE; return label }
+        icon.setImageResource(res); icon.visibility = View.VISIBLE
+        val t = label.trimStart()
+        val emoji = emojiIcons.keys.first { t.startsWith(it) }
+        return t.removePrefix(emoji).trim()
+    }
+
+    /** Set a row's icon slot directly from an emoji (folder headers), else hide it. */
+    private fun setRowEmojiIcon(row: View, emoji: String) {
+        val icon = row.findViewById<ImageView>(R.id.go_icon)
+        val res = emojiIconRes(emoji)
+        if (res == null) icon.visibility = View.GONE
+        else { icon.setImageResource(res); icon.visibility = View.VISIBLE }
+    }
+
+    /**
      * Collapsible-folder directory popover (top-left). Each folder header toggles its
      * children — Almanac, Feed, Bookshelf, Ask, Settings, etc.
      */
@@ -542,12 +589,12 @@ abstract class ScreenFragment : Fragment() {
 
         for (folder in folders) {
             val header = layoutInflater.inflate(R.layout.item_go_to, list, false)
-            header.findViewById<ImageView>(R.id.go_icon).visibility = View.GONE
+            setRowEmojiIcon(header, folder.emoji)
             val headerLabel = header.findViewById<TextView>(R.id.go_label)
 
             // A leaf entry (has [action]) is a plain tappable row — no caret, no children.
             if (folder.action != null) {
-                headerLabel.text = "${folder.emoji}  ${folder.title}"
+                headerLabel.text = folder.title
                 header.setOnClickListener { dialog.dismiss(); folder.action.invoke() }
                 list.addView(header)
                 continue
@@ -558,15 +605,15 @@ abstract class ScreenFragment : Fragment() {
                 visibility = if (folder.expanded) View.VISIBLE else View.GONE
             }
             fun caret() = if (children.visibility == View.VISIBLE) "▾" else "▸"
-            headerLabel.text = "${caret()}  ${folder.emoji}  ${folder.title}"
+            headerLabel.text = "${caret()}  ${folder.title}"
             header.setOnClickListener {
                 children.visibility = if (children.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-                headerLabel.text = "${caret()}  ${folder.emoji}  ${folder.title}"
+                headerLabel.text = "${caret()}  ${folder.title}"
             }
             for ((label, action) in folder.items) {
                 val r = layoutInflater.inflate(R.layout.item_go_to, children, false)
-                r.findViewById<ImageView>(R.id.go_icon).visibility = View.GONE
-                r.findViewById<TextView>(R.id.go_label).apply { text = label; setPadding(dp(24), paddingTop, paddingRight, paddingBottom) }
+                val text = applyRowIcon(r, label)
+                r.findViewById<TextView>(R.id.go_label).apply { this.text = text; setPadding(dp(24), paddingTop, paddingRight, paddingBottom) }
                 r.setOnClickListener { dialog.dismiss(); action() }
                 children.addView(r)
             }
@@ -605,8 +652,7 @@ abstract class ScreenFragment : Fragment() {
             }
             for ((label, action) in items) {
                 val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
-                r.findViewById<ImageView>(R.id.go_icon).visibility = View.GONE
-                r.findViewById<TextView>(R.id.go_label).text = label
+                r.findViewById<TextView>(R.id.go_label).text = applyRowIcon(r, label)
                 r.setOnClickListener { dialog.dismiss(); action() }
                 list.addView(r)
             }
