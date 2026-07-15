@@ -5,6 +5,7 @@ import android.os.Environment
 import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.api.client.http.ByteArrayContent
+import com.google.api.client.http.FileContent
 import com.google.api.services.drive.Drive
 import com.toolsboox.da.Attachment
 import com.toolsboox.da.ImageElement
@@ -284,6 +285,11 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
                                 val fileList = fileList(rootPath, userId)
                                 val cloudList = cloudList(driveService)
                                 val syncList = calculateSyncList(fileList, cloudList)
+
+                                // Carry annotation / A-V-gram media blobs too (immutable, UUID-named).
+                                runCatching { syncDriveAttachments(driveService, rootPath) }
+                                    .onFailure { Timber.w(it, "Drive attachment sync failed") }
+
                                 if (syncList.isEmpty()) return@launch
 
                                 Timber.i("Background sync items: ${syncList}")
@@ -346,6 +352,49 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
                     android.widget.Toast.LENGTH_SHORT
                 ).show()
             }
+    }
+
+    /**
+     * Sync the annotation / A-V-gram media blobs to Drive. Immutable, UUID-named files, so a
+     * simple push-new / pull-missing pass with no conflicts. Each is tagged with a
+     * {type: attachment} property so it can be enumerated regardless of folder. Mirrors the
+     * WebDAV attachment sync so both cloud back-ends carry the media the day JSON references.
+     */
+    private fun syncDriveAttachments(driveService: Drive, rootPath: File) {
+        val dir = File(rootPath, "attachments")
+        val local = dir.listFiles()?.filter { it.isFile } ?: emptyList()
+        val remote = GoogleDriveService.walkByProperty(driveService, Pair("type", "attachment"))
+        val remoteNames = remote.mapNotNull { it.name }.toSet()
+        val localNames = local.map { it.name }.toSet()
+
+        val toPush = local.filter { it.name !in remoteNames }
+        if (toPush.isNotEmpty()) {
+            val attachRoot = GoogleDriveService.getOrCreateRootFolder(driveService, "attachments") ?: return
+            toPush.forEach { f ->
+                runCatching {
+                    GoogleDriveService.uploadFile(
+                        driveService, attachRoot, f.name, FileContent(mimeFor(f.name), f), mapOf("type" to "attachment")
+                    )
+                }.onFailure { Timber.w(it, "Drive attachment push failed: ${f.name}") }
+            }
+        }
+
+        if (!dir.exists()) dir.mkdirs()
+        remote.forEach { rf ->
+            val name = rf.name ?: return@forEach
+            if (name in localNames) return@forEach
+            runCatching {
+                File(dir, name).outputStream().use { GoogleDriveService.downloadFile(driveService, rf, it) }
+            }.onFailure { Timber.w(it, "Drive attachment pull failed: $name") }
+        }
+    }
+
+    private fun mimeFor(name: String): String = when {
+        name.endsWith(".jpg", true) || name.endsWith(".jpeg", true) -> "image/jpeg"
+        name.endsWith(".png", true) -> "image/png"
+        name.endsWith(".m4a", true) -> "audio/mp4"
+        name.endsWith(".mp4", true) -> "video/mp4"
+        else -> "application/octet-stream"
     }
 
     /**
