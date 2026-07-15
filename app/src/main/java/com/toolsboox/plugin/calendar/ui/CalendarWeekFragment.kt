@@ -244,7 +244,7 @@ class CalendarWeekFragment @Inject constructor() : SurfaceFragment() {
 
         setupAlmanacNavPill(
             binding.navWidget, binding.navGrip, binding.navUp, binding.navDown, binding.navGoto,
-            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, "📆"
+            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, com.toolsboox.R.drawable.ic_calendar_today
         ) { CalendarNavigator.toWeekPage(this, LocalDate.now(), calendarWeek.locale, CalendarWeek.DEFAULT_STYLE) }
 
         utils.updateToolbar(binding)

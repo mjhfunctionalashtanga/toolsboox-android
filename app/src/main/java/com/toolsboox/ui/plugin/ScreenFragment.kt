@@ -222,13 +222,13 @@ abstract class ScreenFragment : Fragment() {
      */
     protected fun setupAlmanacNavPill(
         navWidget: View, navGrip: View, navUp: View, navDown: View,
-        navGoto: TextView, swipeUp: View, swipeDown: View,
-        emoji: String, onHome: () -> Unit
+        navGoto: ImageView, swipeUp: View, swipeDown: View,
+        @androidx.annotation.DrawableRes iconRes: Int, onHome: () -> Unit
     ) {
         navWidget.visibility = View.VISIBLE
         navUp.setOnClickListener { swipeUp.performClick() }
         navDown.setOnClickListener { swipeDown.performClick() }
-        navGoto.text = emoji
+        navGoto.setImageResource(iconRes)
         navGoto.setOnClickListener { onHome() }
         navWidget.bringToFront()
 
@@ -545,7 +545,8 @@ abstract class ScreenFragment : Fragment() {
             "↪" to R.drawable.ic_nav_right, "⚙" to R.drawable.ic_settings, "☁" to R.drawable.ic_cloud,
             "▶" to R.drawable.ic_play, "⏸" to R.drawable.ic_pause, "⏹" to R.drawable.ic_stop,
             "🔊" to R.drawable.ic_speaker, "🌐" to R.drawable.ic_globe, "＋" to R.drawable.ic_add,
-            "💬" to R.drawable.ic_chat
+            "💬" to R.drawable.ic_chat, "☀" to R.drawable.ic_nav_today, "✒" to R.drawable.ic_pencil,
+            "🖍" to R.drawable.ic_pencil
         )
     }
 
@@ -557,7 +558,7 @@ abstract class ScreenFragment : Fragment() {
     }
 
     /** Put the row's leading-emoji icon into its icon slot; return the label minus that emoji. */
-    private fun applyRowIcon(row: View, label: String): String {
+    protected fun applyRowIcon(row: View, label: String): String {
         val icon = row.findViewById<ImageView>(R.id.go_icon)
         val res = emojiIconRes(label)
         if (res == null) { icon.visibility = View.GONE; return label }

@@ -240,7 +240,7 @@ class CalendarQuarterFragment @Inject constructor() : SurfaceFragment() {
 
         setupAlmanacNavPill(
             binding.navWidget, binding.navGrip, binding.navUp, binding.navDown, binding.navGoto,
-            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, "📊"
+            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, com.toolsboox.R.drawable.ic_calendar_today
         ) { CalendarNavigator.toQuarterPage(this, LocalDate.now(), CalendarQuarter.DEFAULT_STYLE) }
 
         utils.updateToolbar(binding)

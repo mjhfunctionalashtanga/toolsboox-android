@@ -441,7 +441,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // Center pill button (between ↑ ↓) shows the CURRENT section's emoji. Tapping it
         // jumps to TODAY's version of the section you're on; once you're already on today,
         // a further tap opens the Ledger hub (the iPad feed-carrot behavior).
-        binding.navGoto.text = sectionEmoji()
+        binding.navGoto.setImageResource(sectionIcon())
         binding.navGoto.setOnClickListener { onCenterTapped() }
         applyWidgetOrientation()
 
@@ -937,6 +937,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /** The emoji for the section currently on screen (drives the bottom pill button). */
+    /** Monochrome section glyph for the pill centre (high-contrast on e-ink). */
+    @androidx.annotation.DrawableRes
+    private fun sectionIcon(): Int = when (currentNotePage()) {
+        null, "default", CalendarDay.DEFAULT_STYLE -> R.drawable.ic_nav_today
+        "pickings" -> R.drawable.ic_quote
+        "gratitude" -> R.drawable.ic_heart
+        "intake" -> R.drawable.ic_bookmark
+        else -> R.drawable.ic_pencil
+    }
+
     private fun sectionEmoji(): String = when (currentNotePage()) {
         // Text-presentation sun (VS15) renders as a solid black glyph — high contrast on e-ink,
         // unlike the washed-out yellow colour emoji.
@@ -967,8 +977,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             list.addView(tv)
             for (item in items) {
                 val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
-                r.findViewById<ImageView>(R.id.go_icon).visibility = View.GONE
-                r.findViewById<TextView>(R.id.go_label).text = "${item.emoji}  ${item.label}"
+                r.findViewById<TextView>(R.id.go_label).text = applyRowIcon(r, "${item.emoji}  ${item.label}")
                 r.setOnClickListener { dialog.dismiss(); item.action() }
                 list.addView(r)
             }

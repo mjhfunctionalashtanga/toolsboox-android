@@ -232,7 +232,7 @@ class CalendarYearFragment @Inject constructor() : SurfaceFragment() {
 
         setupAlmanacNavPill(
             binding.navWidget, binding.navGrip, binding.navUp, binding.navDown, binding.navGoto,
-            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, "🗓️"
+            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, com.toolsboox.R.drawable.ic_calendar_today
         ) { CalendarNavigator.toYearPage(this, LocalDate.now(), CalendarYear.DEFAULT_STYLE) }
 
         utils.updateToolbar(binding)
