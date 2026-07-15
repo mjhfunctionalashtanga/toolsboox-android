@@ -80,6 +80,10 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
             showMessage(R.string.ledger_chat_key_saved)
         }
         binding.askButton.setOnClickListener { ask() }
+        // Shared ▦ Ledger directory — consistent "get in/out" nav across every surface.
+        binding.ledgerButton.setOnClickListener {
+            showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
+        }
     }
 
     private fun apiKeyKey(provider: String) = "${KEY_API}_$provider"

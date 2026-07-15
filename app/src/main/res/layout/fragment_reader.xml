@@ -9,8 +9,23 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"/>
 
-    <!-- Draggable floating nav pill (grip taps to collapse) — matches the article/day pill:
-         ☰ goto · ‹ prev-page · ✎ highlight (center) · › next-page · Aa settings · 📖 shelf. -->
+    <!-- Capy-style page-turn zones over the lower band (upper text stays selectable for
+         highlights): tap left = previous page, tap right = next page. Toggled in ☰ → Reading. -->
+    <LinearLayout
+        android:id="@+id/tap_zones"
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="220dp"
+        android:layout_gravity="bottom"
+        android:visibility="gone">
+        <View android:id="@+id/reader_tap_left" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="match_parent"/>
+        <View android:id="@+id/reader_tap_right" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="match_parent"/>
+    </LinearLayout>
+
+    <!-- Draggable floating nav pill (grip taps to collapse) — matches the day/feed pill:
+         ☰ book directory · ▦ Ledger directory · ‹ prev · ✎ highlight · › next · Aa settings. -->
     <LinearLayout
         android:id="@+id/reader_bar"
         android:orientation="horizontal"
@@ -25,7 +40,10 @@
         <ImageView android:id="@+id/reader_grip" android:layout_width="22dp" android:layout_height="46dp"
             android:scaleType="fitCenter" android:src="@drawable/ic_grip" android:contentDescription="@null"/>
         <Button android:id="@+id/goto_button" style="?android:attr/borderlessButtonStyle"
-            android:text="☰" android:textSize="21sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
+            android:text="☰" android:textSize="21sp" android:minWidth="0dp" android:paddingHorizontal="9dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <Button android:id="@+id/open_button" style="?android:attr/borderlessButtonStyle"
+            android:text="▦" android:textSize="20sp" android:minWidth="0dp" android:paddingHorizontal="9dp"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
         <Button android:id="@+id/prev_button" style="?android:attr/borderlessButtonStyle"
             android:text="‹" android:textSize="26sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
@@ -38,9 +56,6 @@
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
         <Button android:id="@+id/settings_button" style="?android:attr/borderlessButtonStyle"
             android:text="@string/reader_aa" android:minWidth="0dp" android:paddingHorizontal="10dp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        <Button android:id="@+id/open_button" style="?android:attr/borderlessButtonStyle"
-            android:text="📖" android:textSize="18sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
     </LinearLayout>
 

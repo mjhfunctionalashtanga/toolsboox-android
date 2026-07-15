@@ -102,12 +102,13 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
         binding.highlightButton.setOnClickListener {
             web.evaluateJavascript("window.highlightSelection && window.highlightSelection()", null)
         }
-        binding.openButton.setOnClickListener { openShelf() }
+        binding.openButton.setOnClickListener { showLedgerDirectory() }
         binding.settingsButton.setOnClickListener { openSettings() }
-        binding.gotoButton.setOnClickListener { showReaderDirectory() }
+        binding.gotoButton.setOnClickListener { showBookDirectory() }
         // Drag to move; tap the grip to hide/show the bar (books want a clean page).
         makeDraggable(binding.readerGrip, binding.readerBar, "reader") { toggleReaderBar() }
         applyReaderBarCollapse()
+        setupTapZones()
 
         // Resume the last book, else land on the reader's "waiting for a book" screen.
         restoreLastBook()
@@ -117,9 +118,16 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
     /** Books live here so a shelf of several can be kept (not just one "current"). */
     private fun booksDir() = File(requireContext().filesDir, "reader/books").apply { mkdirs() }
 
-    /** Hamburger directory: the actual books on the shelf + jumps to the other surfaces. */
-    private fun showReaderDirectory() {
-        val nav = androidx.navigation.fragment.NavHostFragment.findNavController(this)
+    // --- In-book table of contents (posted by the reader JS on load) ---
+    private data class TocEntry(val label: String, val href: String, val depth: Int)
+    private var tocItems: List<TocEntry> = emptyList()
+
+    /**
+     * ☰ book directory — navigating *inside* and around the book: the shelf, import, the
+     * table of contents (jump to any chapter), read-aloud, and the page-turn controls.
+     * Cross-surface "get out" jumps live on the ▦ Ledger directory next to it.
+     */
+    private fun showBookDirectory() {
         // Most-recent first (recency tracked by touching the file on open).
         val books = booksDir().listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() } ?: emptyList()
         val bookRows: List<Pair<String, () -> Unit>> =
@@ -133,18 +141,65 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
             t?.isPaused == true -> listOf("▶  Resume reading" to { t.resume() }, "⏹  Stop reading" to { t.stop() })
             else -> listOf("🔊  Read aloud" to { readAloud() })
         }
-        showDirectory(
-            listOf(
-                "Recent books" to bookRows,
-                "Reading" to readingRows,
-                "Go to" to listOf(
-                    "📅  Day" to { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
-                    "🖍️  Notes & Annotations" to { CalendarNavigator.toDayNote(this, LocalDate.now(), "0") },
-                    "📰  Feed Ledger" to { nav.navigate(R.id.action_to_feeds) },
-                    "💬  Ask my Ledger" to { nav.navigate(R.id.action_to_ledger_chat) }
-                )
-            )
+        val chapterRows: List<Pair<String, () -> Unit>> = tocItems.map { e ->
+            ("${"  ".repeat(e.depth)}${if (e.depth == 0) "◦ " else "· "}${e.label}") to { goToHref(e.href) }
+        }
+        val tapOn = readerNavPrefs().getBoolean("tap_zones", true)
+        val volOn = readerNavPrefs().getBoolean("volume_turn", false)
+        val groups = mutableListOf(
+            "Recent books" to bookRows,
+            "Reading" to readingRows
         )
+        if (chapterRows.isNotEmpty()) groups += "Chapters" to chapterRows
+        groups += "Page turn" to listOf(
+            ((if (tapOn) "☑" else "☐") + "  Tap sides to turn") to { toggleReaderNav("tap_zones", !tapOn); setupTapZones() },
+            ((if (volOn) "☑" else "☐") + "  Volume keys turn") to { toggleReaderNav("volume_turn", !volOn) }
+        )
+        showDirectory(groups)
+    }
+
+    /** ▦ Ledger directory — the shared cross-surface "get in/out" menu (Almanac/History/…). */
+    private fun showLedgerDirectory() =
+        showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
+
+    private fun goToHref(href: String) {
+        if (href.isBlank()) return
+        val esc = href.replace("\\", "\\\\").replace("'", "\\'")
+        binding.readerWeb.evaluateJavascript("window.goToHref && window.goToHref('$esc')", null)
+    }
+
+    // --- Touch-screen page turn (no button): lower-band tap zones + volume keys ---
+
+    private fun readerNavPrefs() = requireContext().getSharedPreferences("ledger_book_nav", 0)
+    private fun toggleReaderNav(key: String, value: Boolean) =
+        readerNavPrefs().edit().putBoolean(key, value).apply()
+
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun setupTapZones() {
+        // On by default in the reader — Michael wants page turns without reaching for the pill.
+        binding.tapZones.visibility = if (readerNavPrefs().getBoolean("tap_zones", true)) View.VISIBLE else View.GONE
+        binding.readerTapLeft.setOnClickListener { pageTurn(next = false) }
+        binding.readerTapRight.setOnClickListener { pageTurn(next = true) }
+    }
+
+    private fun pageTurn(next: Boolean) {
+        binding.readerWeb.evaluateJavascript(
+            if (next) "window.pageRight && window.pageRight()" else "window.pageLeft && window.pageLeft()", null
+        )
+    }
+
+    override fun onResume() {
+        super.onResume()
+        (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = handler@{ up ->
+            if (!readerNavPrefs().getBoolean("volume_turn", false)) return@handler false
+            pageTurn(next = !up)   // volume-up = back a page, volume-down = forward
+            true
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = null
     }
 
     /** Pick from the imported books, or import a new one. */
@@ -295,6 +350,14 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
                 bookAuthor = msg.optString("author")
                 applyReaderSettings()
                 restoreHighlights()
+            }
+            "toc" -> {
+                val arr = msg.optJSONArray("items") ?: return
+                tocItems = (0 until arr.length()).mapNotNull { i ->
+                    val it = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val label = it.optString("label").trim()
+                    if (label.isEmpty()) null else TocEntry(label, it.optString("href"), it.optInt("depth", 0))
+                }
             }
             "highlight" -> {
                 val text = msg.optString("text").trim()
