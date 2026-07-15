@@ -1066,6 +1066,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             }
         }
 
+        dialog.setOnShowListener { onModalShown() }
+        dialog.setOnDismissListener { onModalDismissed() }
         dialog.show()
         dialog.window?.let { w ->
             val lp = w.attributes

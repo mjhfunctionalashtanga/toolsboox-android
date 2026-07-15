@@ -566,6 +566,21 @@ abstract class ScreenFragment : Fragment() {
             r.setOnClickListener { dialog.dismiss(); action() }
             list.addView(r)
         }
+        showModal(dialog)
+    }
+
+    /**
+     * A modal shown over a drawing surface must PAUSE the Onyx hardware pen, or the stylus taps
+     * fall through to the ink layer and the popup "freezes". Drawing fragments override
+     * [onModalShown]/[onModalDismissed]; elsewhere these are no-ops. Route every popover through
+     * [showModal] so this happens uniformly.
+     */
+    protected open fun onModalShown() {}
+    protected open fun onModalDismissed() {}
+
+    protected fun showModal(dialog: AlertDialog) {
+        dialog.setOnShowListener { onModalShown() }
+        dialog.setOnDismissListener { onModalDismissed() }
         dialog.show()
     }
 
@@ -622,6 +637,8 @@ abstract class ScreenFragment : Fragment() {
             list.addView(header); list.addView(children)
         }
 
+        dialog.setOnShowListener { onModalShown() }
+        dialog.setOnDismissListener { onModalDismissed() }
         dialog.show()
         dialog.window?.let { w ->
             val lp = w.attributes
@@ -659,6 +676,8 @@ abstract class ScreenFragment : Fragment() {
                 list.addView(r)
             }
         }
+        dialog.setOnShowListener { onModalShown() }
+        dialog.setOnDismissListener { onModalDismissed() }
         dialog.show()
         dialog.window?.let { w ->
             val lp = w.attributes

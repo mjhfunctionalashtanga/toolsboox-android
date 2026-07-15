@@ -1237,6 +1237,17 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
     }
 
+    /** A popover is showing over the canvas → pause the hardware pen so its taps register. */
+    override fun onModalShown() {
+        touchHelper?.setRawDrawingEnabled(false)
+        touchHelper?.isRawDrawingRenderEnabled = false
+        rawInkPausedForMenu = true
+    }
+
+    override fun onModalDismissed() {
+        resumeRawInkNow()
+    }
+
     /** Re-enable the hardware pen if it's paused and no menu is active. Idempotent. */
     private fun resumeRawInkNow() {
         if (!rawInkPausedForMenu) return
