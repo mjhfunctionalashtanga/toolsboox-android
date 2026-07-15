@@ -40,6 +40,23 @@ import javax.inject.Inject
 class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
     /**
+     * Optional volume-key page-turn handler set by the active reader fragment. Returns true
+     * if it consumed the key (up = back/page-up, down = forward/page-down).
+     */
+    var volumeKeyHandler: ((up: Boolean) -> Boolean)? = null
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        val h = volumeKeyHandler
+        if (h != null && event.action == android.view.KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                android.view.KeyEvent.KEYCODE_VOLUME_UP -> if (h(true)) return true
+                android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> if (h(false)) return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    /**
      * The view model.
      */
     private val viewModel by viewModels<MainViewModel>()

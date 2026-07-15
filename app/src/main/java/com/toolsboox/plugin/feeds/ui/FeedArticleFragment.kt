@@ -10,6 +10,7 @@ import android.view.View
 import android.widget.EditText
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
+import androidx.navigation.fragment.findNavController
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.toolsboox.R
@@ -74,11 +75,100 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         binding.artPrev.setOnClickListener { goToNeighbor(-1) }
         binding.artNext.setOnClickListener { goToNeighbor(1) }
         binding.artAnnotate.setOnClickListener { entry?.let { annotate(it) } }
-        binding.artBrowser.setOnClickListener {
-            entry?.url?.takeIf { it.isNotBlank() }?.let { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) }
-        }
+        binding.artMenu.setOnClickListener { showArticleMenu() }
+        setupTapZones()
 
         showEntry(e)
+    }
+
+    // --- Capy-style navigation: tap zones + volume keys, both toggle-able ---
+
+    private fun navPrefs() = requireContext().getSharedPreferences("ledger_reader_nav", 0)
+    private fun tapZonesOn() = navPrefs().getBoolean("tap_zones", false)
+    private fun volumeTurnOn() = navPrefs().getBoolean("volume_turn", false)
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupTapZones() {
+        binding.tapZones.visibility = if (tapZonesOn()) View.VISIBLE else View.GONE
+        binding.tapLeft.setOnTouchListener(MultiTap { onTapZone(right = false, count = it) })
+        binding.tapRight.setOnTouchListener(MultiTap { onTapZone(right = true, count = it) })
+    }
+
+    /** 1 tap = page, 2 = prev/next article, 3 = feed-list drawer (L) / next feed (R). */
+    private fun onTapZone(right: Boolean, count: Int) {
+        when (count) {
+            1 -> if (right) binding.articleWeb.pageDown(false) else binding.articleWeb.pageUp(false)
+            2 -> goToNeighbor(if (right) 1 else -1)
+            else -> if (right) nextFeed() else findNavController().popBackStack()
+        }
+    }
+
+    /** Jump to the first article of the next feed source in the list. */
+    private fun nextFeed() {
+        val cur = entry ?: return
+        val list = FeedSelection.list
+        val i = list.indexOfFirst { it.id == cur.id }
+        val next = if (i >= 0) list.drop(i + 1).firstOrNull { it.feedTitle != cur.feedTitle } else null
+        if (next != null) showEntry(next) else showMessage(R.string.feeds_article_last)
+    }
+
+    /** Counts quick taps (ignoring drags) and fires the total after a short window. */
+    @SuppressLint("ClickableViewAccessibility")
+    private inner class MultiTap(val onCount: (Int) -> Unit) : View.OnTouchListener {
+        private var count = 0
+        private var downX = 0f; private var downY = 0f
+        private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        private val fire = Runnable { if (count > 0) onCount(count); count = 0 }
+        override fun onTouch(v: View, e: android.view.MotionEvent): Boolean {
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; return true }
+                android.view.MotionEvent.ACTION_UP -> {
+                    if (kotlin.math.abs(e.x - downX) < 40 && kotlin.math.abs(e.y - downY) < 40) {
+                        count++; handler.removeCallbacks(fire); handler.postDelayed(fire, 320)
+                    }
+                    return true
+                }
+            }
+            return false
+        }
+    }
+
+    /** The ☰ overflow: browser, feed list, and the nav toggles. */
+    private fun showArticleMenu() {
+        val ctx = requireContext()
+        val tapOn = tapZonesOn(); val volOn = volumeTurnOn()
+        val items = listOf(
+            "🌐  Open in browser",
+            "📋  Feed list",
+            (if (tapOn) "☑" else "☐") + "  Tap-zone paging",
+            (if (volOn) "☑" else "☐") + "  Volume page-turn"
+        )
+        AlertDialog.Builder(ctx)
+            .setItems(items.toTypedArray()) { d, which ->
+                when (which) {
+                    0 -> entry?.url?.takeIf { it.isNotBlank() }?.let { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) }
+                    1 -> findNavController().popBackStack()
+                    2 -> { navPrefs().edit().putBoolean("tap_zones", !tapOn).apply(); setupTapZones() }
+                    3 -> navPrefs().edit().putBoolean("volume_turn", !volOn).apply()
+                }
+                d.dismiss()
+            }
+            .show()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Volume-key page turn (opt-in), routed through the host activity.
+        (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = handler@{ up ->
+            if (!volumeTurnOn()) return@handler false
+            if (up) binding.articleWeb.pageUp(false) else binding.articleWeb.pageDown(false)
+            true
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = null
     }
 
     /** ★ filled when starred, ☆ outline when not. */
