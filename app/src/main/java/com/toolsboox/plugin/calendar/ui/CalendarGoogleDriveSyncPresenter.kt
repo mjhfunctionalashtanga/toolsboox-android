@@ -734,6 +734,10 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
             a.avGrams.forEach { put(it.id, it) }
             b.avGrams.forEach { put(it.id, it) }
         }.values.toMutableList()
+        merged.ledgerItems = LinkedHashMap<String, com.toolsboox.plugin.calendar.da.v2.LedgerItem>().apply {
+            a.ledgerItems.forEach { put(it.id, it) }
+            b.ledgerItems.forEach { put(it.id, it) }
+        }.values.toMutableList()
 
         val values = LinkedHashMap<String, Map<String, Float?>>()
         values.putAll(older.calendarValues)

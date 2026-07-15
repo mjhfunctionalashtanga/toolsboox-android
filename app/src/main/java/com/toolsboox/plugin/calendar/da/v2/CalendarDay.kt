@@ -47,6 +47,13 @@ data class CalendarDay(
      */
     var avGrams: MutableList<Attachment> = mutableListOf(),
 
+    /**
+     * Structured tasks + calendar events extracted from this day's handwriting (per-section
+     * OCR). Each [LedgerItem] keeps both its OCR text and a link back to its ink. Same
+     * round-trip-preservation + sync-merge contract as [readingEvents] / [avGrams].
+     */
+    var ledgerItems: MutableList<LedgerItem> = mutableListOf(),
+
     override var created: Date? = null,
     override var updated: Date? = null,
 
@@ -106,6 +113,7 @@ data class CalendarDay(
             imageElements.map { it.copy() }.toMutableList(),
             readingEvents = this.readingEvents.map { it.copy() }.toMutableList(),
             avGrams = this.avGrams.map { it.copy() }.toMutableList(),
+            ledgerItems = this.ledgerItems.map { it.copy(strokeIds = it.strokeIds.toMutableList()) }.toMutableList(),
             deletedStrokeIds = this.deletedStrokeIds.toMutableList(),
             deletedElementIds = this.deletedElementIds.toMutableList()
         )
