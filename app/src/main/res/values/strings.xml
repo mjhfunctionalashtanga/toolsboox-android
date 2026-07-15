@@ -213,17 +213,19 @@
     <string name="calendar_navigator_week_button_text">W41</string>
     <string name="calendar_navigator_day_of_week_button_text">Thu</string>
 
+    <!-- Almanac periods label their scribble area "Write" — "Notes" is its own thing (the
+         dedicated Notes & Annotations / day Notes), not a per-period blank page. -->
     <string name="calendar_year_title">Yearly planner &#8211; %s</string>
-    <string name="calendar_year_notes">Notes</string>
+    <string name="calendar_year_notes">Write</string>
 
     <string name="calendar_quarter_title">Quarterly planner &#8211; %s</string>
-    <string name="calendar_quarter_notes">Notes</string>
+    <string name="calendar_quarter_notes">Write</string>
 
     <string name="calendar_month_title">Monthly planner &#8211; %s</string>
-    <string name="calendar_month_notes">Notes</string>
+    <string name="calendar_month_notes">Write</string>
 
     <string name="calendar_week_title">Weekly planner &#8211; %1$s week %2$s</string>
-    <string name="calendar_week_notes">Notes</string>
+    <string name="calendar_week_notes">Write</string>
 
     <string name="calendar_day_title">Daily planner &#8211; %s</string>
     <string name="calendar_day_schedules">Schedules</string>
