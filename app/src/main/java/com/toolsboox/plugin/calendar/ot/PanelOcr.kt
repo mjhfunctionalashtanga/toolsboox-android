@@ -25,9 +25,18 @@ object PanelOcr {
     suspend fun recognize(strokes: List<Stroke>, languageTag: String = "en-US"): String {
         if (strokes.isEmpty()) return ""
         val inkBuilder = Ink.builder()
+        // ML Kit ink recognition relies on per-point TIMESTAMPS (stroke order + speed). The Ledger
+        // stores strokes with t=0, so recognition on real handwriting degrades to nonsense. Synthesize
+        // a monotonic clock (≈12ms/point, ≈80ms between strokes) when the stored timestamps are absent.
+        var clock = 0L
         for (stroke in strokes) {
             val sb = Ink.Stroke.builder()
-            for (p in stroke.strokePoints) sb.addPoint(Ink.Point.create(p.x, p.y, p.t))
+            for (p in stroke.strokePoints) {
+                val ts = if (p.t > 0L) p.t else clock
+                sb.addPoint(Ink.Point.create(p.x, p.y, ts))
+                clock = ts + 12
+            }
+            clock += 80
             inkBuilder.addStroke(sb.build())
         }
         val ink = inkBuilder.build()
