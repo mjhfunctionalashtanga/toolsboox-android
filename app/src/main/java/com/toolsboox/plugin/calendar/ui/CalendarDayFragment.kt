@@ -600,6 +600,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 GoItem("🖊️", "Add text") { binding.toolbarDrawing.toolbarText.performClick() },
                 GoItem("🖼️", "Add image") { binding.toolbarDrawing.toolbarImage.performClick() },
                 GoItem("🃏", "Card…") { showCardMenu() },
+                GoItem("🗒", "Extract tasks & events") { extractStructured() },
                 GoItem("👆", "Finger / hand") { binding.toolbarDrawing.toolbarHandTouch.performClick() },
                 GoItem("🔄", "Rotate screen") { binding.toolbarDrawing.toolbarRotate.performClick() }
             ),
@@ -629,6 +630,31 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val choices = cardChoices()
         showIconMenu(getString(R.string.card_pick_panel),
             choices.map { panel -> panel.title to { chooseCardAction(panel) } })
+    }
+
+    /**
+     * Auto-extract structured tasks (Tasks section) + calendar events (Schedule section) from the
+     * day's handwriting via on-device ink OCR, grouped by row. Re-running refreshes the auto items
+     * (source="auto") and leaves any lasso/manual ones. Only meaningful on the default day page.
+     */
+    private fun extractStructured() {
+        if (!::calendarDay.isInitialized) return
+        if (notePage != null) { showMessage(R.string.ledger_extract_day_only); return }
+        val strokes = currentPageStrokes()
+        val panels = com.toolsboox.plugin.calendar.ot.LedgerPanel.forPage(null)
+        val tasksRect = panels.firstOrNull { it.id == "tasks" }?.rect ?: return
+        val schedRect = panels.firstOrNull { it.id == "schedule" }?.rect ?: return
+        lifecycleScope.launch {
+            val tasks = com.toolsboox.plugin.calendar.ot.LedgerExtractor
+                .extractPanel(strokes, tasksRect, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK, "auto")
+            val events = com.toolsboox.plugin.calendar.ot.LedgerExtractor
+                .extractPanel(strokes, schedRect, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT, "auto")
+            calendarDay.ledgerItems.removeAll { it.source == "auto" }
+            calendarDay.ledgerItems.addAll(tasks + events)
+            calendarPattern.updateDay(calendarDay)
+            presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+            showMessage(getString(R.string.ledger_extract_done, tasks.size, events.size), binding.root)
+        }
     }
 
     /** Having picked a source, choose Share / Save to Notes / Send to webhook. */

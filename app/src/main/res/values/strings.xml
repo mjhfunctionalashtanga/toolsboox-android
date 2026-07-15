@@ -382,6 +382,8 @@
     <string name="reading_log_origin_all">All</string>
     <string name="reading_log_range_all">All time</string>
     <string name="feeds_star">Star</string>
+    <string name="ledger_extract_day_only">Extraction runs on the day page (Schedule + Tasks).</string>
+    <string name="ledger_extract_done">Extracted %1$d tasks · %2$d events</string>
     <string name="ledger_share_read">Read later</string>
     <string name="ledger_share_watch">Watch</string>
     <string name="ledger_share_listen">Listen</string>
