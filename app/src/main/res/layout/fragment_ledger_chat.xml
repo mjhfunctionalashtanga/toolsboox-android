@@ -22,21 +22,19 @@
             android:layout_width="0dp"
             android:layout_weight="1"
             android:layout_height="wrap_content"/>
-        <Button
+        <ImageButton
             android:id="@+id/ledger_button"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="▦"
-            android:textSize="22sp"
-            android:textColor="#000000"
-            android:minWidth="0dp" android:paddingHorizontal="10dp"
+            android:src="@drawable/ic_calendar_today"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter" android:padding="4dp"
             android:contentDescription="@string/go_to_title"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            android:layout_width="34dp" android:layout_height="34dp"/>
     </LinearLayout>
 
     <TextView
         android:text="@string/ledger_chat_subtitle"
         android:textSize="14sp"
-        android:textColor="#555555"
+        android:textColor="#333333"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginBottom="14dp"/>
@@ -72,19 +70,26 @@
         android:id="@+id/question_edit"
         android:hint="@string/ledger_chat_hint"
         android:textColor="#000000"
-        android:textColorHint="#888888"
+        android:textColorHint="#777777"
+        android:textSize="17sp"
         android:inputType="textMultiLine|textCapSentences"
-        android:minLines="2"
+        android:minLines="3"
         android:gravity="top"
-        android:background="#F2F2F2"
-        android:padding="12dp"
+        android:background="@drawable/eink_edit_bg"
+        android:padding="14dp"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"/>
 
     <Button
         android:id="@+id/ask_button"
         android:text="@string/ledger_chat_ask"
-        android:layout_marginTop="10dp"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:textSize="17sp"
+        android:background="@drawable/eink_button_solid"
+        android:stateListAnimator="@null"
+        android:layout_marginTop="12dp"
+        android:paddingVertical="12dp"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"/>
 

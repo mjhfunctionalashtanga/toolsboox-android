@@ -39,24 +39,24 @@
 
         <ImageView android:id="@+id/reader_grip" android:layout_width="22dp" android:layout_height="46dp"
             android:scaleType="fitCenter" android:src="@drawable/ic_grip" android:contentDescription="@null"/>
-        <Button android:id="@+id/goto_button" style="?android:attr/borderlessButtonStyle"
-            android:text="☰" android:textSize="21sp" android:minWidth="0dp" android:paddingHorizontal="9dp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        <Button android:id="@+id/open_button" style="?android:attr/borderlessButtonStyle"
-            android:text="▦" android:textSize="20sp" android:minWidth="0dp" android:paddingHorizontal="9dp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        <Button android:id="@+id/prev_button" style="?android:attr/borderlessButtonStyle"
-            android:text="‹" android:textSize="26sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        <Button android:id="@+id/highlight_button" style="?android:attr/borderlessButtonStyle"
-            android:text="✎" android:textSize="21sp" android:minWidth="0dp" android:paddingHorizontal="12dp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        <Button android:id="@+id/next_button" style="?android:attr/borderlessButtonStyle"
-            android:text="›" android:textSize="26sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        <Button android:id="@+id/settings_button" style="?android:attr/borderlessButtonStyle"
-            android:text="@string/reader_aa" android:minWidth="0dp" android:paddingHorizontal="10dp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <ImageButton android:id="@+id/goto_button" android:layout_width="44dp" android:layout_height="46dp"
+            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_menu"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+        <ImageButton android:id="@+id/open_button" android:layout_width="44dp" android:layout_height="46dp"
+            android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_calendar_today"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+        <ImageButton android:id="@+id/prev_button" android:layout_width="44dp" android:layout_height="46dp"
+            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_left"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
+        <ImageButton android:id="@+id/highlight_button" android:layout_width="44dp" android:layout_height="46dp"
+            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_pencil"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_highlight"/>
+        <ImageButton android:id="@+id/next_button" android:layout_width="44dp" android:layout_height="46dp"
+            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_right"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
+        <ImageButton android:id="@+id/settings_button" android:layout_width="44dp" android:layout_height="46dp"
+            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_text_size"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_aa"/>
     </LinearLayout>
 
 </FrameLayout>

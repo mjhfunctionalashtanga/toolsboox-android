@@ -381,6 +381,8 @@
     <string name="reading_log_untitled">Untitled</string>
     <string name="reading_log_origin_all">All</string>
     <string name="reading_log_range_all">All time</string>
+    <string name="feeds_star">Star</string>
+    <string name="feeds_article_parse">Reader view</string>
 
     <!-- Shared annotation capture (books + feeds). -->
     <string name="reader_capture_title">Add annotation</string>

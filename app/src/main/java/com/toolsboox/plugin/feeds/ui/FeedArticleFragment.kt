@@ -223,16 +223,15 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = null
     }
 
-    /** ★ filled when starred, ☆ outline when not. */
+    /** Filled star when starred, outline when not. */
     private fun updateStar() {
-        binding.artStar.text = if (entry?.starred == true) "★" else "☆"
+        binding.artStar.setImageResource(if (entry?.starred == true) R.drawable.ic_starred else R.drawable.ic_star)
     }
 
-    /** Make the current view obvious: the parse button is highlighted while in reader (parsed)
-     *  view; its glyph flips ⛶ (feed content) ↔ ▤ (parsed / full article). */
+    /** Make the current view obvious: the reader-view icon shows the active-tool chip while in
+     *  the parsed / full-article view, and no chip on the feed content. */
     private fun updateParse() {
-        binding.artParse.text = if (parsed) "▤" else "⛶"
-        binding.artParse.setBackgroundResource(if (parsed) R.drawable.tool_active_bg else 0)
+        binding.artParse.setBackgroundResource(if (parsed) R.drawable.tool_active_bg else android.R.color.transparent)
     }
 
     /** Render an entry (feed content), refresh the star glyph, mark it read on the server. */

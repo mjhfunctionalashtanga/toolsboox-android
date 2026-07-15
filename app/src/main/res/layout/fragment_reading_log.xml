@@ -27,19 +27,22 @@
             style="?android:attr/borderlessButtonStyle"
             android:textSize="15sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        <Button
+        <ImageButton
             android:id="@+id/gram_button"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="＋"
-            android:textSize="22sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
+            android:src="@drawable/ic_add"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter" android:padding="3dp"
+            android:layout_marginStart="6dp"
             android:contentDescription="@string/gram_capture_title"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        <Button
+            android:layout_width="32dp" android:layout_height="32dp"/>
+        <ImageButton
             android:id="@+id/goto_button"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="☰"
-            android:textSize="20sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            android:src="@drawable/ic_menu"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter" android:padding="3dp"
+            android:layout_marginStart="6dp"
+            android:contentDescription="@string/go_to_title"
+            android:layout_width="32dp" android:layout_height="32dp"/>
     </LinearLayout>
 
     <!-- Almanac-style level ladder: Day · Week · Month · Quarter · Year · All (built in code). -->
@@ -64,12 +67,13 @@
         android:paddingHorizontal="8dp"
         android:paddingBottom="6dp">
 
-        <Button
+        <ImageButton
             android:id="@+id/prev_button"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="‹" android:textSize="26sp"
-            android:minWidth="0dp" android:paddingHorizontal="14dp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            android:src="@drawable/ic_nav_left"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter" android:padding="8dp"
+            android:contentDescription="@string/reader_prev"
+            android:layout_width="40dp" android:layout_height="40dp"/>
         <TextView
             android:id="@+id/period_title"
             android:gravity="center"
@@ -77,12 +81,13 @@
             android:textColor="#000000"
             android:maxLines="1" android:ellipsize="end"
             android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
-        <Button
+        <ImageButton
             android:id="@+id/next_button"
-            style="?android:attr/borderlessButtonStyle"
-            android:text="›" android:textSize="26sp"
-            android:minWidth="0dp" android:paddingHorizontal="14dp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            android:src="@drawable/ic_nav_right"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter" android:padding="8dp"
+            android:contentDescription="@string/reader_next"
+            android:layout_width="40dp" android:layout_height="40dp"/>
     </LinearLayout>
 
     <ProgressBar
