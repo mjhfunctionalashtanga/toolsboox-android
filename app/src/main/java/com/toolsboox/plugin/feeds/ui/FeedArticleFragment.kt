@@ -116,16 +116,24 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
      * returns to the list in that mode; the Ledger sections (almanac/history/…) navigate away.
      */
     private fun openRssDirectory() {
-        fun toFeeds(mode: String, kind: String?) {
-            FeedSelection.mode = mode; FeedSelection.kind = kind
+        fun toFeeds(mode: String, kind: String?, feedTitle: String? = null) {
+            FeedSelection.mode = mode; FeedSelection.kind = kind; FeedSelection.filterFeedTitle = feedTitle
             findNavController().popBackStack()
+        }
+        // Each lens drills into its individual feeds (from the list this article came from).
+        fun lens(emoji: String, label: String, k: String): ScreenFragment.Folder {
+            val feeds = FeedSelection.list.filter { it.kind == k }
+                .map { it.feedTitle }.filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }
+            return ScreenFragment.Folder(emoji, label,
+                listOf<Pair<String, () -> Unit>>("$emoji  All $label" to { toFeeds("feed", k) }) +
+                    feeds.map { f -> ("      · $f" to { toFeeds("feed", k, f) }) })
         }
         val folders = listOf(
             ScreenFragment.Folder("📰", "All", action = { toFeeds("feed", null) }),
             ScreenFragment.Folder("⭐", "Stars", action = { toFeeds("stars", null) }),
-            ScreenFragment.Folder("📖", "Read", action = { toFeeds("feed", "read") }),
-            ScreenFragment.Folder("📺", "Watch", action = { toFeeds("feed", "watch") }),
-            ScreenFragment.Folder("🎧", "Listen", action = { toFeeds("feed", "listen") }),
+            lens("📖", "Read", "read"),
+            lens("📺", "Watch", "watch"),
+            lens("🎧", "Listen", "listen"),
             ScreenFragment.Folder("🔖", "Later List", listOf(
                 "🔖  All" to { toFeeds("later", null) },
                 "📖  Read" to { toFeeds("later", "read") },

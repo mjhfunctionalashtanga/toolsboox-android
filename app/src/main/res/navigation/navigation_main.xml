@@ -52,6 +52,10 @@
             android:id="@+id/action_to_reading_log"
             app:destination="@id/ReadingLogFragment"/>
 
+    <action
+            android:id="@+id/action_to_settings"
+            app:destination="@id/CalendarSettingsFragment"/>
+
     <fragment
             android:id="@+id/DashboardFragment"
             android:name="com.toolsboox.plugin.dashboard.ui.DashboardFragment"

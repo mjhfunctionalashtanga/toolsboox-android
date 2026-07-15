@@ -145,7 +145,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
             ("${"  ".repeat(e.depth)}${if (e.depth == 0) "◦ " else "· "}${e.label}") to { goToHref(e.href) }
         }
         val tapOn = readerNavPrefs().getBoolean("tap_zones", true)
-        val volOn = readerNavPrefs().getBoolean("volume_turn", false)
+        val volOn = readerNavPrefs().getBoolean("volume_turn", true)
         val groups = mutableListOf(
             "Recent books" to bookRows,
             "Reading" to readingRows
@@ -191,7 +191,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
     override fun onResume() {
         super.onResume()
         (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = handler@{ up ->
-            if (!readerNavPrefs().getBoolean("volume_turn", false)) return@handler false
+            if (!readerNavPrefs().getBoolean("volume_turn", true)) return@handler false
             pageTurn(next = !up)   // volume-up = back a page, volume-down = forward
             true
         }

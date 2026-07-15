@@ -42,6 +42,10 @@ fun ledgerDirectoryFolders(fragment: ScreenFragment): List<ScreenFragment.Folder
             "📅  Day" to { nav.navigate(R.id.action_to_calendar_day) },
             "📰  Feed Ledger" to { nav.navigate(R.id.action_to_feeds) },
             "💬  Ask my Ledger" to { nav.navigate(R.id.action_to_ledger_chat) }
+        )),
+        ScreenFragment.Folder("⚙", "Settings", listOf(
+            "⚙  Settings" to { nav.navigate(R.id.action_to_settings) },
+            "☁  Cloud sync" to { nav.navigate(R.id.action_to_cloud) }
         ))
     )
 }

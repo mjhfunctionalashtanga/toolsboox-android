@@ -239,9 +239,16 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
     private fun showFeedDirectory() {
         fun categoriesOf(k: String) =
             allEntries.filter { it.kind == k }.mapNotNull { it.categoryLabel }.distinct().sortedBy { it.lowercase() }
+        // Each lens drills two levels deep inline: category → its individual feeds (indented).
         fun lens(emoji: String, label: String, k: String) = Folder(emoji, label,
             listOf<Pair<String, () -> Unit>>("$emoji  All $label" to { switchTo("feed", k) }) +
-            categoriesOf(k).map { c -> ("🗂  $c" to { showCategory(c) }) }
+            categoriesOf(k).flatMap { c ->
+                val inCat = allEntries.filter { it.categoryLabel == c }
+                val feeds = inCat.map { it.feedTitle }.filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }
+                listOf<Pair<String, () -> Unit>>("🗂  $c" to { adapter.submit(inCat) }) +
+                    if (feeds.size > 1) feeds.map { f -> ("      · $f" to { adapter.submit(inCat.filter { it.feedTitle == f }) }) }
+                    else emptyList()
+            }
         )
         showAccordion(
             listOf(
