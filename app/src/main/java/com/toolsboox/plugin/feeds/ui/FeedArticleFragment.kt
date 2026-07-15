@@ -193,9 +193,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
             ((if (volOn) "☑" else "☐") + "  Volume page-turn") to { navPrefs().edit().putBoolean("volume_turn", !volOn).apply(); Unit }
         )
         val all = fixed.take(1) + readItems + fixed.drop(1)
-        AlertDialog.Builder(requireContext())
-            .setItems(all.map { it.first }.toTypedArray()) { d, which -> all[which].second(); d.dismiss() }
-            .show()
+        showIconMenu(null, all)
     }
 
     private var tts: LedgerTts? = null

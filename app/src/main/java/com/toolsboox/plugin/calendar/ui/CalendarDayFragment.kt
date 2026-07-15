@@ -637,17 +637,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     /** Having picked a source, choose Share / Save to Notes / Send to webhook. */
     private fun chooseCardAction(panel: com.toolsboox.plugin.calendar.ot.LedgerPanel) {
-        val actions = listOf<Pair<String, () -> Unit>>(
+        showIconMenu(panel.title, listOf(
             "📤  Share" to { sharePanelAsCard(panel) },
             "📌  Save to Notes" to { savePanelAsNote(panel) },
             "🛰️  Send to webhook" to { sendPanelToWebhook(panel) }
-        )
-        AlertDialog.Builder(requireContext())
-            .setTitle(panel.title)
-            .setItems(actions.map { it.first }.toTypedArray()) { d, which ->
-                actions[which].second(); d.dismiss()
-            }
-            .show()
+        ))
     }
 
     /** Strokes of the current page (note page or the default calendar layer). */

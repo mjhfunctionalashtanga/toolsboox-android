@@ -316,25 +316,12 @@ abstract class ScreenFragment : Fragment() {
         gramSink = onGram
         captureSink = null
         captureSelection = ""
-        val items = arrayOf(
-            getString(R.string.reader_capture_photo),
-            getString(R.string.reader_capture_upload),
-            getString(R.string.reader_capture_voice),
-            getString(R.string.gram_capture_video)
-        )
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.gram_capture_title)
-            .setItems(items) { d, which ->
-                when (which) {
-                    0 -> launchAnnCamera()
-                    1 -> annGalleryLauncher.launch("image/*")
-                    2 -> requestVoiceRecording()
-                    3 -> launchAnnVideo()
-                }
-                d.dismiss()
-            }
-            .setOnCancelListener { gramSink = null }
-            .show()
+        showIconMenu(getString(R.string.gram_capture_title), listOf(
+            getString(R.string.reader_capture_photo) to { launchAnnCamera() },
+            getString(R.string.reader_capture_upload) to { annGalleryLauncher.launch("image/*") },
+            getString(R.string.reader_capture_voice) to { requestVoiceRecording() },
+            getString(R.string.gram_capture_video) to { launchAnnVideo() }
+        ))
     }
 
     private fun launchAnnVideo() {
@@ -359,26 +346,14 @@ abstract class ScreenFragment : Fragment() {
         captureSelection = selection
         captureSink = onCapture
         gramSink = null
-        val items = arrayOf(
-            if (selection.isNotBlank()) getString(R.string.reader_capture_highlight_note)
-            else getString(R.string.reader_capture_note),
-            getString(R.string.reader_capture_photo),
-            getString(R.string.reader_capture_upload),
-            getString(R.string.reader_capture_voice)
-        )
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.reader_capture_title)
-            .setItems(items) { d, which ->
-                when (which) {
-                    0 -> showNoteDialog()
-                    1 -> launchAnnCamera()
-                    2 -> annGalleryLauncher.launch("image/*")
-                    3 -> requestVoiceRecording()
-                }
-                d.dismiss()
-            }
-            .setOnCancelListener { captureSink = null }
-            .show()
+        val noteLabel = if (selection.isNotBlank()) getString(R.string.reader_capture_highlight_note)
+        else getString(R.string.reader_capture_note)
+        showIconMenu(getString(R.string.reader_capture_title), listOf(
+            "🖍  $noteLabel" to { showNoteDialog() },
+            getString(R.string.reader_capture_photo) to { launchAnnCamera() },
+            getString(R.string.reader_capture_upload) to { annGalleryLauncher.launch("image/*") },
+            getString(R.string.reader_capture_voice) to { requestVoiceRecording() }
+        ))
     }
 
     private fun showNoteDialog() {
@@ -546,7 +521,9 @@ abstract class ScreenFragment : Fragment() {
             "▶" to R.drawable.ic_play, "⏸" to R.drawable.ic_pause, "⏹" to R.drawable.ic_stop,
             "🔊" to R.drawable.ic_speaker, "🌐" to R.drawable.ic_globe, "＋" to R.drawable.ic_add,
             "💬" to R.drawable.ic_chat, "☀" to R.drawable.ic_nav_today, "✒" to R.drawable.ic_pencil,
-            "🖍" to R.drawable.ic_pencil
+            "🖍" to R.drawable.ic_pencil, "📷" to R.drawable.ic_camera, "🖼" to R.drawable.ic_image,
+            "🎤" to R.drawable.ic_mic, "🎥" to R.drawable.ic_video, "📤" to R.drawable.ic_share,
+            "📌" to R.drawable.ic_pin, "🛰" to R.drawable.ic_send
         )
     }
 
@@ -566,6 +543,26 @@ abstract class ScreenFragment : Fragment() {
         val t = label.trimStart()
         val emoji = emojiIcons.keys.first { t.startsWith(it) }
         return t.removePrefix(emoji).trim()
+    }
+
+    /**
+     * A tappable menu with the same leading-emoji → outline-icon rows as the directories, so
+     * pop-up menus read high-contrast on e-ink instead of colour emoji. Rows whose leading glyph
+     * isn't mapped (e.g. ☑/☐ toggles) keep their text.
+     */
+    protected fun showIconMenu(title: CharSequence?, items: List<Pair<String, () -> Unit>>) {
+        val ctx = requireContext()
+        val list = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        val builder = AlertDialog.Builder(ctx)
+        if (title != null) builder.setTitle(title)
+        val dialog = builder.setView(androidx.core.widget.NestedScrollView(ctx).apply { addView(list) }).create()
+        for ((label, action) in items) {
+            val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
+            r.findViewById<TextView>(R.id.go_label).text = applyRowIcon(r, label)
+            r.setOnClickListener { dialog.dismiss(); action() }
+            list.addView(r)
+        }
+        dialog.show()
     }
 
     /** Set a row's icon slot directly from an emoji (folder headers), else hide it. */
