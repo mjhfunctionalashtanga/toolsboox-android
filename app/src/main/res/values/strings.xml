@@ -398,6 +398,11 @@
     <string name="reader_capture_no_camera">No camera available on this device.</string>
     <string name="reader_capture_failed">Couldn\'t save that — try again.</string>
 
+    <!-- A/V gram capture. -->
+    <string name="gram_capture_title">Record an A/V gram</string>
+    <string name="gram_capture_video">🎥  Record a video</string>
+    <string name="gram_capture_saved">A/V gram saved</string>
+
     <string name="pill_layout_title">Pill layout</string>
     <string name="pill_layout_horizontal">Horizontal</string>
     <string name="pill_layout_vertical">Vertical</string>

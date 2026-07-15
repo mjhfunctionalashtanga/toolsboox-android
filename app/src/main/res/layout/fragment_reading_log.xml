@@ -28,6 +28,13 @@
             android:textSize="15sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
         <Button
+            android:id="@+id/gram_button"
+            style="?android:attr/borderlessButtonStyle"
+            android:text="＋"
+            android:textSize="22sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
+            android:contentDescription="@string/gram_capture_title"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <Button
             android:id="@+id/goto_button"
             style="?android:attr/borderlessButtonStyle"
             android:text="☰"

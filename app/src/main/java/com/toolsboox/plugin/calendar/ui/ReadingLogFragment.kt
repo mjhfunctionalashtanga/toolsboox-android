@@ -171,6 +171,8 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         binding.gotoButton.setOnClickListener {
             NavHostFragment.findNavController(this).navigate(R.id.action_to_calendar_day)
         }
+        // Capture an A/V gram (photo / voice / video note-to-self) into today's day.
+        binding.gramButton.setOnClickListener { captureAvGram { saveGram(it) } }
 
         updatePeriodBar()
         load()
@@ -286,6 +288,22 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     }.getOrNull()
 
     private fun attachmentPath(a: Attachment): String = File(attachmentsDir(), a.filename).absolutePath
+
+    /** Append a freshly-captured A/V gram to today's CalendarDay, then refresh the log. */
+    private fun saveGram(att: Attachment) {
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val root = documentsRoot()
+                    val today = LocalDate.now()
+                    val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
+                    day.avGrams.add(att)
+                    calendarDayService.save(root, today, day)
+                }.onFailure { Timber.w(it, "failed to save A/V gram") }
+            }
+            load()
+        }
+    }
 
     /** Voice memos play/stop on tap; photo annotations open full-screen; links open the source. */
     private fun openItem(item: LogItem) {

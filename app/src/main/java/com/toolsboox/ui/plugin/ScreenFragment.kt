@@ -262,9 +262,12 @@ abstract class ScreenFragment : Fragment() {
 
     /** Sink for a completed capture: (highlight excerpt, typed note, media attachment). */
     private var captureSink: ((String?, String?, Attachment?) -> Unit)? = null
+    /** Sink for a standalone A/V gram (no highlight/note) — takes precedence when set. */
+    private var gramSink: ((Attachment) -> Unit)? = null
     private var captureSelection: String = ""
     private var pendingCameraFile: File? = null
     private var pendingCameraUri: Uri? = null
+    private var pendingVideoFile: File? = null
 
     /** Persistent per-app store for annotation media; referenced by filename in the day JSON. */
     protected fun attachmentsDir(): File =
@@ -290,8 +293,62 @@ abstract class ScreenFragment : Fragment() {
     private val annMicPermLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) startVoiceRecording()
-            else { showMessage(R.string.reader_capture_mic_denied); captureSink = null }
+            else { showMessage(R.string.reader_capture_mic_denied); captureSink = null; gramSink = null }
         }
+
+    private val annVideoLauncher =
+        registerForActivityResult(ActivityResultContracts.CaptureVideo()) { ok ->
+            val src = pendingVideoFile
+            if (ok && src != null && src.exists()) {
+                val dest = File(attachmentsDir(), "video-${UUID.randomUUID()}.mp4")
+                runCatching { src.copyTo(dest, overwrite = true) }; src.delete()
+                emitAttachment(Attachment(UUID.randomUUID().toString(), Attachment.Kind.VIDEO, dest.name, null, Date()))
+            } else { gramSink = null; captureSink = null }
+            pendingVideoFile = null
+        }
+
+    /**
+     * Capture a standalone A/V gram (a photo / voice / video note-to-self) for the day. Reuses
+     * the shared photo & voice machinery; [onGram] persists the resulting attachment into the
+     * day's avGrams.
+     */
+    protected fun captureAvGram(onGram: (Attachment) -> Unit) {
+        gramSink = onGram
+        captureSink = null
+        captureSelection = ""
+        val items = arrayOf(
+            getString(R.string.reader_capture_photo),
+            getString(R.string.reader_capture_upload),
+            getString(R.string.reader_capture_voice),
+            getString(R.string.gram_capture_video)
+        )
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.gram_capture_title)
+            .setItems(items) { d, which ->
+                when (which) {
+                    0 -> launchAnnCamera()
+                    1 -> annGalleryLauncher.launch("image/*")
+                    2 -> requestVoiceRecording()
+                    3 -> launchAnnVideo()
+                }
+                d.dismiss()
+            }
+            .setOnCancelListener { gramSink = null }
+            .show()
+    }
+
+    private fun launchAnnVideo() {
+        try {
+            val dir = File(requireContext().cacheDir, "camera").apply { mkdirs() }
+            val vid = File(dir, "clip-${SystemClock.elapsedRealtimeNanos()}.mp4")
+            val uri = FileProvider.getUriForFile(requireContext(), "${requireContext().packageName}.fileprovider", vid)
+            pendingVideoFile = vid
+            annVideoLauncher.launch(uri)
+        } catch (e: Exception) {
+            Timber.w(e, "video capture unavailable")
+            showMessage(R.string.reader_capture_no_camera); gramSink = null
+        }
+    }
 
     /**
      * Open the capture menu for a reader annotation: keep the highlight [selection] (may be
@@ -301,6 +358,7 @@ abstract class ScreenFragment : Fragment() {
     protected fun captureAnnotation(selection: String, onCapture: (String?, String?, Attachment?) -> Unit) {
         captureSelection = selection
         captureSink = onCapture
+        gramSink = null
         val items = arrayOf(
             if (selection.isNotBlank()) getString(R.string.reader_capture_highlight_note)
             else getString(R.string.reader_capture_note),
@@ -370,6 +428,8 @@ abstract class ScreenFragment : Fragment() {
     }
 
     private fun emitAttachment(att: Attachment) {
+        // A standalone A/V gram takes precedence over the annotation sink when active.
+        gramSink?.let { it(att); gramSink = null; showMessage(R.string.gram_capture_saved); return }
         captureSink?.invoke(captureSelection.ifBlank { null }, null, att)
         captureSink = null
         showMessage(R.string.reader_capture_saved)

@@ -3,6 +3,8 @@ package com.toolsboox.plugin.feeds.ui
 import androidx.navigation.fragment.NavHostFragment
 import com.toolsboox.R
 import com.toolsboox.plugin.calendar.CalendarNavigator
+import com.toolsboox.plugin.calendar.ui.LogOrigin
+import com.toolsboox.plugin.calendar.ui.ReadingLogSelection
 import com.toolsboox.ui.plugin.ScreenFragment
 import java.time.LocalDate
 import java.util.Locale
@@ -32,7 +34,7 @@ fun ledgerDirectoryFolders(fragment: ScreenFragment): List<ScreenFragment.Folder
         ScreenFragment.Folder("👤", "Personal", listOf(
             "❝  Pickings" to { CalendarNavigator.toDayNote(fragment, today, "pickings") },
             "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") },
-            "🎬  A/V Grams" to { nav.navigate(R.id.action_to_reading_log) }
+            "🎬  A/V Grams" to { ReadingLogSelection.origin = LogOrigin.AV; nav.navigate(R.id.action_to_reading_log) }
         )),
         // Top-level so the Bookshelf is never buried under "Go to".
         ScreenFragment.Folder("📚", "Bookshelf", action = { nav.navigate(R.id.action_to_reader) }),
