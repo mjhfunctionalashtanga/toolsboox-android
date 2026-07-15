@@ -42,6 +42,12 @@ data class FeedEntry(
             c
         }
 
+    /** Featured image for the list row: the first <img> in the content, if any. */
+    val imageUrl: String?
+        get() = Regex("""<img[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            .find(content)?.groupValues?.get(1)
+            ?.takeIf { it.startsWith("http") }
+
     /** Plain-text blurb for the list row. */
     val blurb: String
         get() = content

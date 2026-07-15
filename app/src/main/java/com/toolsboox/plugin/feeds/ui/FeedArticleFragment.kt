@@ -68,14 +68,15 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
 
         // Floating nav pill: grip drags/collapses; ‹ › page, ⌃ ⌄ step articles, ✎ annotate.
         makeDraggable(binding.artGrip, binding.artPill, "article")
+        binding.artMenu.setOnClickListener { openRssDirectory() }
+        binding.artMenu.setOnLongClickListener { showArticleMenu(); true }
         binding.artStar.setOnClickListener { entry?.let { star(it) } }
         binding.artParse.setOnClickListener { toggleParse() }
-        binding.artPageUp.setOnClickListener { binding.articleWeb.pageUp(false) }
-        binding.artPageDown.setOnClickListener { binding.articleWeb.pageDown(false) }
+        binding.artPageUp.setOnClickListener { pageWeb(false) }
+        binding.artPageDown.setOnClickListener { pageWeb(true) }
         binding.artPrev.setOnClickListener { goToNeighbor(-1) }
         binding.artNext.setOnClickListener { goToNeighbor(1) }
         binding.artAnnotate.setOnClickListener { entry?.let { annotate(it) } }
-        binding.artTopMenu.setOnClickListener { showArticleMenu() }
         setupTapZones()
 
         showEntry(e)
@@ -97,10 +98,22 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
     /** 1 tap = page, 2 = prev/next article, 3 = feed-list drawer (L) / next feed (R). */
     private fun onTapZone(right: Boolean, count: Int) {
         when (count) {
-            1 -> if (right) binding.articleWeb.pageDown(false) else binding.articleWeb.pageUp(false)
+            1 -> pageWeb(right)
             2 -> goToNeighbor(if (right) 1 else -1)
             else -> if (right) nextFeed() else findNavController().popBackStack()
         }
+    }
+
+    /** Page the article a screenful — instantly (e-ink: the next part just appears, no scroll). */
+    private fun pageWeb(down: Boolean) {
+        val step = (binding.articleWeb.height * 9 / 10).coerceAtLeast(1)
+        binding.articleWeb.scrollBy(0, if (down) step else -step)
+    }
+
+    /** ☰ pulls up the RSS directory — pop back to the feed list and open it there. */
+    private fun openRssDirectory() {
+        FeedSelection.openDirectory = true
+        findNavController().popBackStack()
     }
 
     /** Jump to the first article of the next feed source in the list. */
@@ -158,7 +171,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         // Volume-key page turn (opt-in), routed through the host activity.
         (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = handler@{ up ->
             if (!volumeTurnOn()) return@handler false
-            if (up) binding.articleWeb.pageUp(false) else binding.articleWeb.pageDown(false)
+            pageWeb(!up)
             true
         }
     }

@@ -13,6 +13,7 @@ import com.toolsboox.R
 import android.os.Build
 import android.os.Environment
 import com.toolsboox.databinding.FragmentFeedsBinding
+import com.toolsboox.plugin.calendar.CalendarNavigator
 import com.toolsboox.plugin.calendar.da.v2.ReadingEvent
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
 import com.toolsboox.plugin.feeds.da.FeedEntry
@@ -87,11 +88,12 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
         }
 
         // Persistent floating nav pill: ↑↓ page the list, centre ☰ opens the directory.
+        // On e-ink the page must *appear* instantly — a plain scrollBy, never a smooth animation.
         binding.feedsPageUp.setOnClickListener {
-            binding.feedsRecycler.smoothScrollBy(0, -(binding.feedsRecycler.height * 4 / 5))
+            binding.feedsRecycler.scrollBy(0, -(binding.feedsRecycler.height * 9 / 10))
         }
         binding.feedsPageDown.setOnClickListener {
-            binding.feedsRecycler.smoothScrollBy(0, binding.feedsRecycler.height * 4 / 5)
+            binding.feedsRecycler.scrollBy(0, binding.feedsRecycler.height * 9 / 10)
         }
         binding.feedsGoto.setOnClickListener { showFeedDirectory() }
         binding.feedsPill.bringToFront()
@@ -101,6 +103,12 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
         val (m, k) = FeedSelection.consume()
         mode = m; kindFilter = k
         refresh()
+
+        // The article's ☰ asks the list to pop the RSS directory open on return.
+        if (FeedSelection.openDirectory) {
+            FeedSelection.openDirectory = false
+            binding.root.post { showFeedDirectory() }
+        }
     }
 
     /** Current view: "feed" (unread RSS) · "stars" · "later" (read-later intake). */
@@ -229,6 +237,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
      */
     private fun showFeedDirectory() {
         val nav = androidx.navigation.fragment.NavHostFragment.findNavController(this)
+        val today = LocalDate.now()
+        val locale = Locale.getDefault()
         fun categoriesOf(k: String) =
             allEntries.filter { it.kind == k }.mapNotNull { it.categoryLabel }.distinct().sortedBy { it.lowercase() }
         fun lens(emoji: String, label: String, k: String) = Folder(emoji, label,
@@ -249,6 +259,21 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
                     "📖  Read" to { switchTo("later", "read") },
                     "📺  Watch" to { switchTo("later", "watch") },
                     "🎧  Listen" to { switchTo("later", "listen") }
+                )),
+                // The whole Ledger hub, reachable from the article list — mirrors the day-page hub.
+                Folder("🕓", "History", listOf(
+                    "🕓  All" to { nav.navigate(R.id.action_to_reading_log) }
+                )),
+                Folder("📆", "Almanac", listOf(
+                    "📆  Week" to { CalendarNavigator.toWeekPage(this, today, locale) },
+                    "📅  Month" to { CalendarNavigator.toMonthPage(this, today) },
+                    "📊  Quarter" to { CalendarNavigator.toQuarterPage(this, today) },
+                    "🗓️  Year" to { CalendarNavigator.toYearPage(this, today) }
+                )),
+                Folder("👤", "Personal", listOf(
+                    "❝  Pickings" to { CalendarNavigator.toDayNote(this, today, "pickings") },
+                    "🙏  Gratitude" to { CalendarNavigator.toDayNote(this, today, "gratitude") },
+                    "🎬  A/V Grams" to { nav.navigate(R.id.action_to_reading_log) }
                 )),
                 Folder("↪", "Go to", listOf(
                     "📅  Day" to { nav.navigate(R.id.action_to_calendar_day) },
@@ -338,6 +363,9 @@ object FeedSelection {
     var mode: String? = null
     /** Optional read/watch/listen lens to filter to. */
     var kind: String? = null
+
+    /** Set by the article's ☰ so the feed list pops the RSS directory open on return. */
+    var openDirectory: Boolean = false
 
     /** Consume the pending mode/kind (one-shot) after the fragment applies it. */
     fun consume(): Pair<String, String?> {
