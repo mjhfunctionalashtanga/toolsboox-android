@@ -177,9 +177,37 @@ class CalendarWebDavSyncService(
             }
         }
 
+        runCatching { syncAttachments() }.onFailure { Timber.w(it, "$TAG: attachment sync failed") }
+
         val stats = SyncStats(pushed, pulled, skipped, failed)
         Timber.i("$TAG: Day-JSON sync done: $stats")
         stats
+    }
+
+    /**
+     * Sync the annotation / A/V-gram media blobs. These are immutable and UUID-named, so there
+     * are no conflicts: push any local file the server lacks, pull any remote file we lack. The
+     * lightweight Attachment references already ride in the day JSON; this carries the bytes so
+     * photos and voice memos round-trip across devices.
+     */
+    private fun syncAttachments() {
+        val dir = File(rootDir, "attachments/")
+        val local = dir.listFiles()?.filter { it.isFile } ?: emptyList()
+        val remote = runCatching { webdav.propfind("attachments/") }.getOrDefault(emptyList())
+        val remoteNames = remote.map { File(it.remotePath).name }.toSet()
+        val localNames = local.map { it.name }.toSet()
+
+        val toPush = local.filter { it.name !in remoteNames }
+        if (toPush.isNotEmpty()) webdav.ensureDirectory("attachments/")
+        for (f in toPush) runCatching { webdav.upload(f, "attachments/${f.name}") }
+
+        if (!dir.exists()) dir.mkdirs()
+        for (r in remote) {
+            val name = File(r.remotePath).name
+            if (name.isBlank() || name in localNames) continue
+            val bytes = runCatching { webdav.download(r.remotePath) }.getOrNull() ?: continue
+            runCatching { File(dir, name).writeBytes(bytes) }
+        }
     }
 
     /**
