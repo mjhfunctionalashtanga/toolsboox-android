@@ -27,6 +27,7 @@ import timber.log.Timber
 import java.io.File
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.temporal.WeekFields
 import java.util.Date
 import javax.inject.Inject
 
@@ -47,12 +48,16 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     private lateinit var binding: FragmentReadingLogBinding
     private lateinit var adapter: ReadingEventAdapter
 
-    /** The period level, switched by the range button; the almanac top-nav pages through it. */
-    private enum class Range(val label: String) { MONTH("Month"), QUARTER("Quarter"), YEAR("Year"), ALL("All") }
+    /** The period level, chosen from the almanac-style top bar; ‹ › page within it. */
+    private enum class Range(val label: String) {
+        DAY("Day"), WEEK("Week"), MONTH("Month"), QUARTER("Quarter"), YEAR("Year"), ALL("All")
+    }
     private var range = Range.MONTH
 
     /** Anchor date inside the currently-shown window; ‹ › shift it by one level unit. */
     private var anchor: LocalDate = LocalDate.now()
+
+    private val weekFields get() = WeekFields.of(java.util.Locale.getDefault())
 
     /** Origin filter (null = All). The AV chip is the union of Watch/Listen/AV captures. */
     private var origin: LogOrigin? = null
@@ -60,12 +65,16 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
 
     /** Inclusive-start / exclusive-end bounds of the current window (null = unbounded/All). */
     private fun windowStart(): LocalDate? = when (range) {
+        Range.DAY -> anchor
+        Range.WEEK -> anchor.with(weekFields.dayOfWeek(), 1)
         Range.MONTH -> anchor.withDayOfMonth(1)
         Range.QUARTER -> anchor.withDayOfMonth(1).withMonth((anchor.monthValue - 1) / 3 * 3 + 1)
         Range.YEAR -> anchor.withDayOfYear(1)
         Range.ALL -> null
     }
     private fun windowEnd(): LocalDate? = when (range) {
+        Range.DAY -> windowStart()!!.plusDays(1)
+        Range.WEEK -> windowStart()!!.plusWeeks(1)
         Range.MONTH -> windowStart()!!.plusMonths(1)
         Range.QUARTER -> windowStart()!!.plusMonths(3)
         Range.YEAR -> windowStart()!!.plusYears(1)
@@ -73,6 +82,8 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     }
     private fun shiftAnchor(dir: Int) {
         anchor = when (range) {
+            Range.DAY -> anchor.plusDays(dir.toLong())
+            Range.WEEK -> anchor.plusWeeks(dir.toLong())
             Range.MONTH -> anchor.plusMonths(dir.toLong())
             Range.QUARTER -> anchor.plusMonths(3L * dir)
             Range.YEAR -> anchor.plusYears(dir.toLong())
@@ -82,11 +93,14 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     /** Human title for the current window, shown between the carets like the almanac bar. */
     private fun periodTitle(): String {
         val s = windowStart() ?: return getString(R.string.reading_log_range_all)
+        fun fmt(skeleton: String) = DateFormat.format(
+            DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), skeleton),
+            Date.from(s.atStartOfDay(ZoneId.systemDefault()).toInstant())
+        ).toString()
         return when (range) {
-            Range.MONTH -> {
-                val d = Date.from(s.atStartOfDay(ZoneId.systemDefault()).toInstant())
-                DateFormat.format(DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), "MMMM yyyy"), d).toString()
-            }
+            Range.DAY -> fmt("EEE MMM d yyyy")
+            Range.WEEK -> "Week ${s.get(weekFields.weekOfWeekBasedYear())} · ${s.year}"
+            Range.MONTH -> fmt("MMMM yyyy")
             Range.QUARTER -> "Q${(s.monthValue - 1) / 3 + 1} ${s.year}"
             Range.YEAR -> "${s.year}"
             Range.ALL -> getString(R.string.reading_log_range_all)
@@ -97,7 +111,33 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         val bounded = range != Range.ALL
         binding.prevButton.visibility = if (bounded) View.VISIBLE else View.INVISIBLE
         binding.nextButton.visibility = if (bounded) View.VISIBLE else View.INVISIBLE
-        binding.rangeButton.text = range.label
+        // Highlight the active level chip in the almanac-style ladder.
+        for (i in 0 until binding.levelRow.childCount) {
+            val chip = binding.levelRow.getChildAt(i) as? android.widget.TextView ?: continue
+            val active = chip.tag == range
+            chip.setTypeface(null, if (active) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+            chip.paintFlags = if (active) chip.paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
+                else chip.paintFlags and android.graphics.Paint.UNDERLINE_TEXT_FLAG.inv()
+        }
+    }
+
+    /** Build the Day · Week · Month · Quarter · Year · All ladder into the level row. */
+    private fun buildLevelChips() {
+        val row = binding.levelRow
+        row.removeAllViews()
+        for (r in Range.values()) {
+            val chip = android.widget.TextView(requireContext()).apply {
+                text = r.label; tag = r; textSize = 15f
+                setTextColor(0xFF000000.toInt())
+                val p = (10 * resources.displayMetrics.density).toInt()
+                setPadding(p, p / 2, p, p / 2)
+                setOnClickListener {
+                    range = r; anchor = LocalDate.now()
+                    updatePeriodBar(); load()
+                }
+            }
+            row.addView(chip)
+        }
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -114,14 +154,8 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             DividerItemDecoration(requireContext(), DividerItemDecoration.VERTICAL)
         )
 
-        // Level button cycles Month → Quarter → Year → All; re-anchors to today.
-        binding.rangeButton.setOnClickListener {
-            range = Range.values()[(range.ordinal + 1) % Range.values().size]
-            anchor = LocalDate.now()
-            updatePeriodBar()
-            load()
-        }
-        // Almanac-style paging through the window.
+        // Almanac-style top bar: the Day/Week/Month/Quarter/Year/All ladder + period pager.
+        buildLevelChips()
         binding.prevButton.setOnClickListener { shiftAnchor(-1); updatePeriodBar(); load() }
         binding.nextButton.setOnClickListener { shiftAnchor(1); updatePeriodBar(); load() }
 

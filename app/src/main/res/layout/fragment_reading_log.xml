@@ -35,7 +35,20 @@
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
     </LinearLayout>
 
-    <!-- Almanac-style period nav bar: ‹ prev · period title · next › · level. -->
+    <!-- Almanac-style level ladder: Day · Week · Month · Quarter · Year · All (built in code). -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:paddingHorizontal="8dp">
+        <LinearLayout
+            android:id="@+id/level_row"
+            android:orientation="horizontal"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </HorizontalScrollView>
+
+    <!-- Period pager: ‹ prev · period title · next › -->
     <LinearLayout
         android:orientation="horizontal"
         android:layout_width="match_parent"
@@ -62,12 +75,6 @@
             style="?android:attr/borderlessButtonStyle"
             android:text="›" android:textSize="26sp"
             android:minWidth="0dp" android:paddingHorizontal="14dp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-        <Button
-            android:id="@+id/range_button"
-            style="?android:attr/borderlessButtonStyle"
-            android:textSize="15sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
-            android:layout_marginStart="4dp"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
     </LinearLayout>
 
