@@ -627,12 +627,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     /** Card flow: pick the source (whole page / a panel), then the action. */
     private fun showCardMenu() {
         val choices = cardChoices()
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.card_pick_panel)
-            .setItems(choices.map { it.title }.toTypedArray()) { d, which ->
-                d.dismiss(); chooseCardAction(choices[which])
-            }
-            .show()
+        showIconMenu(getString(R.string.card_pick_panel),
+            choices.map { panel -> panel.title to { chooseCardAction(panel) } })
     }
 
     /** Having picked a source, choose Share / Save to Notes / Send to webhook. */
