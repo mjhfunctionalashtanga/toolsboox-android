@@ -1512,6 +1512,40 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     protected open fun onSelectionExtract(strokes: List<Stroke>) {}
 
+    /**
+     * The three lasso-selection chip taps (→ item / cut / copy) in canvas coords. Extracted so it
+     * runs for BOTH the stylus (via the drawing path) and the finger (which never enters that
+     * path) — otherwise the chips only respond to the pen. Returns true if a chip was hit.
+     */
+    private fun handleSelectionChipTap(x: Float, y: Float): Boolean {
+        if (!hasSelection || selectionMode) return false
+        val box = selBox ?: return false
+        if (itemChipRect(box).contains(x, y)) {
+            val sel = selectedStrokes.toList()
+            exitSelectionMode(deferRawResume = true)
+            applyStrokes(strokes, true)
+            onSelectionExtract(sel)
+            return true
+        }
+        if (cutChipRect(box).contains(x, y)) {
+            pushUndo()
+            strokeClipboard.copy(selectedStrokes.toList())
+            val removedIds = selectedStrokes.map { it.strokeId }
+            strokes.removeAll { it.strokeId in removedIds.toSet() }
+            onStrokesDeleted(removedIds)
+            exitSelectionMode(deferRawResume = true)
+            applyStrokes(strokes, true)
+            onStrokeChanged(strokes)
+            return true
+        }
+        if (copyChipRect(box).contains(x, y)) {
+            strokeClipboard.copy(selectedStrokes.toList())
+            showMessage(R.string.calendar_drawing_toolbar_copied, provideSurfaceView())
+            return true
+        }
+        return false
+    }
+
     /** Returns which handle (if any) the canvas-space point hits. */
     private fun hitTestHandle(x: Float, y: Float, box: RectF): SelectionDrag {
         val pad = handleSize / 2f + handleHitPad
@@ -3031,6 +3065,13 @@ abstract class SurfaceFragment : ScreenFragment() {
             (toolTypeFinger && touchDrawingState) || fingerManipulating
         val erasing = motionEvent.buttonState != 0 || toolTypeEraser
 
+        // Lasso-selection chips must also respond to a FINGER tap — finger events don't enter the
+        // stylus-only `drawing` path below (finger doesn't draw), so the chips would be pen-only.
+        if (hasSelection && !selectionMode && actionDown && !drawing) {
+            val cp = screenToCanvas(motionEvent.x, motionEvent.y)
+            if (handleSelectionChipTap(cp[0], cp[1])) return true
+        }
+
         if (drawing) {
             val canvasPts = screenToCanvas(motionEvent.x, motionEvent.y)
             val x = (10.0f * canvasPts[0]).roundToInt() / 10.0f
@@ -3279,32 +3320,8 @@ abstract class SurfaceFragment : ScreenFragment() {
                 val box = selBox
                 if (box != null) {
                     if (actionDown) {
-                        // "→ item" chip? — turn the selection into a structured task/event.
-                        if (itemChipRect(box).contains(x, y)) {
-                            val sel = selectedStrokes.toList()
-                            exitSelectionMode(deferRawResume = true)
-                            applyStrokes(strokes, true)
-                            onSelectionExtract(sel)
-                            return true
-                        }
-                        // Cut chip?
-                        if (cutChipRect(box).contains(x, y)) {
-                            pushUndo()
-                            strokeClipboard.copy(selectedStrokes.toList())
-                            val removedIds = selectedStrokes.map { it.strokeId }
-                            strokes.removeAll { it.strokeId in removedIds.toSet() }
-                            onStrokesDeleted(removedIds)
-                            exitSelectionMode(deferRawResume = true)   // resume after this tap lifts (no stray dot)
-                            applyStrokes(strokes, true)
-                            onStrokeChanged(strokes)
-                            return true
-                        }
-                        // Copy chip?
-                        if (copyChipRect(box).contains(x, y)) {
-                            strokeClipboard.copy(selectedStrokes.toList())
-                            showMessage(R.string.calendar_drawing_toolbar_copied, provideSurfaceView())
-                            return true
-                        }
+                        // Chip taps (→ item / cut / copy) — shared with the finger path above.
+                        if (handleSelectionChipTap(x, y)) return true
                         // Corner handle?
                         val hit = hitTestHandle(x, y, box)
                         if (hit != SelectionDrag.NONE) {
