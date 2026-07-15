@@ -680,8 +680,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             val item = withContext(Dispatchers.IO) {
                 val creds = aiCreds()
                 if (creds != null) {
-                    val rect = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
-                    val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1200)
+                    val b = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
+                    val pad = 28f   // breathing room so edge letters aren't clipped
+                    val rect = android.graphics.RectF(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
+                    val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600)
                     val t = com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third)
                     if (!t.isNullOrBlank())
                         com.toolsboox.plugin.calendar.ot.LedgerExtractor.itemWithText(strokes, kind, t, "lasso-ai")
