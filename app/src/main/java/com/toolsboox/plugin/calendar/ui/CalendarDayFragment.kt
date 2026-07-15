@@ -34,6 +34,8 @@ import com.toolsboox.plugin.michaelfilter.da.IntakePageData
 import com.toolsboox.plugin.michaelfilter.nw.IntakePageStore
 import com.toolsboox.ui.plugin.SurfaceFragment
 import dagger.hilt.android.AndroidEntryPoint
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.GlobalScope
@@ -658,25 +660,35 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
     }
 
-    /**
-     * The "→ item" lasso chip: OCR exactly the strokes you circled into ONE task or event
-     * (grouping-free), inferring the kind by which section the selection sits in. Highlight/
-     * lasso strokes are filtered out by the extractor, so only your writing is read.
-     */
+    /** The lasso "card" chip: what should the circled strokes become? */
     override fun onSelectionExtract(strokes: List<com.toolsboox.da.Stroke>) {
         if (!::calendarDay.isInitialized || strokes.isEmpty()) return
-        val pts = strokes.flatMap { it.strokePoints }
-        if (pts.isEmpty()) return
-        val cx = pts.sumOf { it.x.toDouble() }.toFloat() / pts.size
-        val cy = pts.sumOf { it.y.toDouble() }.toFloat() / pts.size
-        val panels = com.toolsboox.plugin.calendar.ot.LedgerPanel.forPage(null)
-        val kind = when {
-            panels.firstOrNull { it.id == "schedule" }?.rect?.contains(cx, cy) == true ->
-                com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT
-            else -> com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK
-        }
+        showIconMenu(getString(R.string.ledger_selection_title), listOf(
+            "🗒  Create task" to { createLedgerItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK) },
+            "📆  Create event" to { createLedgerItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) },
+            "🃏  Create card" to { createCardFromSelection(strokes) }
+        ))
+    }
+
+    /**
+     * Turn the circled strokes into ONE task/event. High-quality first: render the ink to an image
+     * and read it with the vision model (Ask-my-Ledger key) — far better on real handwriting; falls
+     * back to the on-device ink OCR when no key is set or the call fails.
+     */
+    private fun createLedgerItem(strokes: List<com.toolsboox.da.Stroke>, kind: com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind) {
         lifecycleScope.launch {
-            val item = com.toolsboox.plugin.calendar.ot.LedgerExtractor.extractStrokes(strokes, kind, "lasso")
+            val item = withContext(Dispatchers.IO) {
+                val creds = aiCreds()
+                if (creds != null) {
+                    val rect = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
+                    val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1200)
+                    val t = com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third)
+                    if (!t.isNullOrBlank())
+                        com.toolsboox.plugin.calendar.ot.LedgerExtractor.itemWithText(strokes, kind, t, "lasso-ai")
+                    else null
+                } else null
+            } ?: com.toolsboox.plugin.calendar.ot.LedgerExtractor.extractStrokes(strokes, kind, "lasso")
+
             if (item == null) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
             calendarDay.ledgerItems.add(item)
             calendarPattern.updateDay(calendarDay)
@@ -684,6 +696,32 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             val label = if (kind == com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) "event" else "task"
             showMessage(getString(R.string.ledger_extract_added, label, item.text), binding.root)
         }
+    }
+
+    /** Turn the circled strokes into a card (share / save to Notes / webhook) via the card flow. */
+    private fun createCardFromSelection(strokes: List<com.toolsboox.da.Stroke>) {
+        val rect = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
+        chooseCardAction(
+            com.toolsboox.plugin.calendar.ot.LedgerPanel(
+                "selection", getString(R.string.ledger_selection_card),
+                com.toolsboox.plugin.calendar.ot.LedgerPanel.Kind.DOODLE, rect
+            )
+        )
+    }
+
+    /** Ask-my-Ledger AI creds (provider, key, model) for the vision OCR, or null if unset. */
+    private fun aiCreds(): Triple<String, String, String>? {
+        val prefs = EncryptedSharedPreferences.create(
+            requireContext(), "ledger_chat_encrypted_prefs",
+            MasterKey.Builder(requireContext()).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+        val provider = prefs.getString("ledger_chat_provider", "anthropic") ?: "anthropic"
+        val key = prefs.getString("ledger_chat_api_key_$provider", "")?.trim().orEmpty()
+        val default = if (provider == "openai") "gpt-4o" else "claude-sonnet-5"
+        val model = prefs.getString("ledger_chat_model_$provider", default) ?: default
+        return if (key.isBlank()) null else Triple(provider, key, model)
     }
 
     /** Having picked a source, choose Share / Save to Notes / Send to webhook. */

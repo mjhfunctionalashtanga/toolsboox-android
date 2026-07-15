@@ -389,6 +389,8 @@
     <string name="ledger_items_toggle">Ink / text</string>
     <string name="ledger_extract_unreadable">Couldn\'t read that selection.</string>
     <string name="ledger_extract_added">Added %1$s: %2$s</string>
+    <string name="ledger_selection_title">Create from selection</string>
+    <string name="ledger_selection_card">Selection</string>
     <string name="ledger_share_read">Read later</string>
     <string name="ledger_share_watch">Watch</string>
     <string name="ledger_share_listen">Listen</string>

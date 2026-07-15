@@ -95,6 +95,24 @@ object LedgerExtractor {
         strokes: List<Stroke>, kind: LedgerItem.Kind, source: String
     ): LedgerItem? = itemFrom(writingOnly(strokes), kind, source)
 
+    /** Bounding rect of [strokes] (for rendering a vision crop); empty rect if none. */
+    fun boundsOf(strokes: List<Stroke>): RectF =
+        if (strokes.isEmpty()) RectF() else groupBounds(strokes)
+
+    /** Build an item from a selection + already-recognized [text] (the Layer-2 vision path). */
+    fun itemWithText(strokes: List<Stroke>, kind: LedgerItem.Kind, text: String, source: String): LedgerItem? {
+        if (strokes.isEmpty() || text.isBlank()) return null
+        val b = groupBounds(strokes)
+        return LedgerItem(
+            id = "li-${UUID.randomUUID()}", kind = kind, text = text.trim(), date = Date(),
+            left = b.left, top = b.top, right = b.right, bottom = b.bottom,
+            strokeIds = strokes.map { it.strokeId.toString() }.toMutableList(),
+            display = LedgerItem.Display.TEXT,
+            time = if (kind == LedgerItem.Kind.EVENT) leadingTime(text) else null,
+            confidence = 0.99f, source = source
+        )
+    }
+
     private suspend fun itemFrom(group: List<Stroke>, kind: LedgerItem.Kind, source: String): LedgerItem? {
         if (group.isEmpty()) return null
         val text = PanelOcr.recognize(group).trim()
