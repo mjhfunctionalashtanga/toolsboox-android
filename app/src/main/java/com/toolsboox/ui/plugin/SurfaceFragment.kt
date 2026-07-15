@@ -1488,6 +1488,19 @@ abstract class SurfaceFragment : ScreenFragment() {
         return RectF(right - chipSize, top, right, top + chipSize)
     }
 
+    /** "→ item" chip (left of Copy): turn the lasso selection into a structured task/event. */
+    private fun itemChipRect(box: RectF): RectF {
+        val top = chipBaseY(box)
+        val right = box.right - 2 * (chipSize + chipGap)
+        return RectF(right - chipSize, top, right, top + chipSize)
+    }
+
+    /**
+     * A lasso selection asked to become a structured item (the "→ item" chip). The day page
+     * overrides this to OCR the enclosed strokes and add a task/event; default is a no-op.
+     */
+    protected open fun onSelectionExtract(strokes: List<Stroke>) {}
+
     /** Returns which handle (if any) the canvas-space point hits. */
     private fun hitTestHandle(x: Float, y: Float, box: RectF): SelectionDrag {
         val pad = handleSize / 2f + handleHitPad
@@ -1566,11 +1579,12 @@ abstract class SurfaceFragment : ScreenFragment() {
             // Chips
             val cutR = cutChipRect(box)
             val copyR = copyChipRect(box)
+            val itemR = itemChipRect(box)
             val chipBg = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL; isAntiAlias = true }
             val chipBorder = Paint().apply {
                 color = Color.BLACK; style = Paint.Style.STROKE; strokeWidth = 3f; isAntiAlias = true
             }
-            for (r in listOf(cutR, copyR)) {
+            for (r in listOf(cutR, copyR, itemR)) {
                 lockCanvas.drawRoundRect(r, 12f, 12f, chipBg)
                 lockCanvas.drawRoundRect(r, 12f, 12f, chipBorder)
             }
@@ -1584,6 +1598,11 @@ abstract class SurfaceFragment : ScreenFragment() {
             copyIcon?.setBounds((copyR.left + pad).toInt(), (copyR.top + pad).toInt(),
                 (copyR.right - pad).toInt(), (copyR.bottom - pad).toInt())
             copyIcon?.draw(lockCanvas)
+            // "→ item" chip (turn selection into a task/event).
+            val itemIcon = ResourcesCompat.getDrawable(resources, R.drawable.ic_card, null)
+            itemIcon?.setBounds((itemR.left + pad).toInt(), (itemR.top + pad).toInt(),
+                (itemR.right - pad).toInt(), (itemR.bottom - pad).toInt())
+            itemIcon?.draw(lockCanvas)
         }
 
         lockCanvas.restore()
@@ -3249,6 +3268,14 @@ abstract class SurfaceFragment : ScreenFragment() {
                 val box = selBox
                 if (box != null) {
                     if (actionDown) {
+                        // "→ item" chip? — turn the selection into a structured task/event.
+                        if (itemChipRect(box).contains(x, y)) {
+                            val sel = selectedStrokes.toList()
+                            exitSelectionMode(deferRawResume = true)
+                            applyStrokes(strokes, true)
+                            onSelectionExtract(sel)
+                            return true
+                        }
                         // Cut chip?
                         if (cutChipRect(box).contains(x, y)) {
                             pushUndo()

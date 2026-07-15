@@ -658,6 +658,34 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
     }
 
+    /**
+     * The "→ item" lasso chip: OCR exactly the strokes you circled into ONE task or event
+     * (grouping-free), inferring the kind by which section the selection sits in. Highlight/
+     * lasso strokes are filtered out by the extractor, so only your writing is read.
+     */
+    override fun onSelectionExtract(strokes: List<com.toolsboox.da.Stroke>) {
+        if (!::calendarDay.isInitialized || strokes.isEmpty()) return
+        val pts = strokes.flatMap { it.strokePoints }
+        if (pts.isEmpty()) return
+        val cx = pts.sumOf { it.x.toDouble() }.toFloat() / pts.size
+        val cy = pts.sumOf { it.y.toDouble() }.toFloat() / pts.size
+        val panels = com.toolsboox.plugin.calendar.ot.LedgerPanel.forPage(null)
+        val kind = when {
+            panels.firstOrNull { it.id == "schedule" }?.rect?.contains(cx, cy) == true ->
+                com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT
+            else -> com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK
+        }
+        lifecycleScope.launch {
+            val item = com.toolsboox.plugin.calendar.ot.LedgerExtractor.extractStrokes(strokes, kind, "lasso")
+            if (item == null) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
+            calendarDay.ledgerItems.add(item)
+            calendarPattern.updateDay(calendarDay)
+            presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+            val label = if (kind == com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) "event" else "task"
+            showMessage(getString(R.string.ledger_extract_added, label, item.text), binding.root)
+        }
+    }
+
     /** Having picked a source, choose Share / Save to Notes / Send to webhook. */
     private fun chooseCardAction(panel: com.toolsboox.plugin.calendar.ot.LedgerPanel) {
         showIconMenu(panel.title, listOf(

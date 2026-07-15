@@ -42,8 +42,30 @@ object LedgerExtractor {
             s.strokePoints.sumOf { it.y.toDouble() }.toFloat() / n
     }
 
+    /**
+     * Not writing → keep it out of the OCR (and out of the row-clustering so it can't bridge rows):
+     * a highlight/underline (long, flat, thin horizontal line — on e-ink a highlight is a black
+     * underline), or a lasso/big circle (large closed loop returning near its start).
+     */
+    private fun isNoise(s: Stroke): Boolean {
+        val b = bounds(s)
+        val w = b.width(); val h = b.height()
+        if (w > 80f && h < 22f && w > h * 6f) return true                 // highlight / underline
+        if (w > 280f && h > 220f) {                                       // large loop…
+            val pts = s.strokePoints
+            if (pts.size >= 2) {
+                val d = kotlin.math.hypot((pts.first().x - pts.last().x).toDouble(), (pts.first().y - pts.last().y).toDouble())
+                if (d < 80.0) return true                                 // …that closes ≈ a lasso circle
+            }
+        }
+        return false
+    }
+
+    private fun writingOnly(strokes: List<Stroke>): List<Stroke> =
+        strokes.filter { it.strokePoints.isNotEmpty() && !isNoise(it) }
+
     private fun strokesInRect(strokes: List<Stroke>, rect: RectF): List<Stroke> =
-        strokes.filter { it.strokePoints.isNotEmpty() && centroid(it).let { (x, y) -> rect.contains(x, y) } }
+        writingOnly(strokes).filter { centroid(it).let { (x, y) -> rect.contains(x, y) } }
 
     /** Cluster strokes top-to-bottom; a Y-gap > [ROW_GAP] between clusters splits into a new item. */
     private fun clusterByRow(strokes: List<Stroke>): List<List<Stroke>> {
@@ -71,7 +93,7 @@ object LedgerExtractor {
     /** Lasso: the given strokes are one item (the selection defines the boundary). */
     suspend fun extractStrokes(
         strokes: List<Stroke>, kind: LedgerItem.Kind, source: String
-    ): LedgerItem? = itemFrom(strokes, kind, source)
+    ): LedgerItem? = itemFrom(writingOnly(strokes), kind, source)
 
     private suspend fun itemFrom(group: List<Stroke>, kind: LedgerItem.Kind, source: String): LedgerItem? {
         if (group.isEmpty()) return null
