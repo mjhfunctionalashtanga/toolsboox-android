@@ -34,9 +34,10 @@ fun ledgerDirectoryFolders(fragment: ScreenFragment): List<ScreenFragment.Folder
             "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") },
             "🎬  A/V Grams" to { nav.navigate(R.id.action_to_reading_log) }
         )),
+        // Top-level so the Bookshelf is never buried under "Go to".
+        ScreenFragment.Folder("📚", "Bookshelf", action = { nav.navigate(R.id.action_to_reader) }),
         ScreenFragment.Folder("↪", "Go to", listOf(
             "📅  Day" to { nav.navigate(R.id.action_to_calendar_day) },
-            "📚  Bookshelf" to { nav.navigate(R.id.action_to_reader) },
             "📰  Feed Ledger" to { nav.navigate(R.id.action_to_feeds) },
             "💬  Ask my Ledger" to { nav.navigate(R.id.action_to_ledger_chat) }
         ))
