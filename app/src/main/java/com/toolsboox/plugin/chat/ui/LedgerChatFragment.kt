@@ -47,24 +47,60 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
         binding = FragmentLedgerChatBinding.bind(view)
 
         val prefs = encryptedPrefs()
-        binding.apiKeyEdit.setText(prefs.getString(KEY_API, "") ?: "")
-        binding.modelEdit.setText(prefs.getString(KEY_MODEL, LedgerChatService.DEFAULT_MODEL))
+        // One-time migration: an earlier build stored a single (Claude) key under the base keys.
+        if (prefs.getString(apiKeyKey(LedgerChatService.ANTHROPIC), null) == null) {
+            prefs.getString(KEY_API, null)?.takeIf { it.isNotBlank() }?.let { old ->
+                prefs.edit()
+                    .putString(apiKeyKey(LedgerChatService.ANTHROPIC), old)
+                    .putString(modelKey(LedgerChatService.ANTHROPIC),
+                        prefs.getString(KEY_MODEL, LedgerChatService.DEFAULT_MODEL))
+                    .apply()
+            }
+        }
+        var provider = prefs.getString(KEY_PROVIDER, LedgerChatService.ANTHROPIC) ?: LedgerChatService.ANTHROPIC
+        loadProviderFields(provider)
+        (if (provider == LedgerChatService.OPENAI) binding.providerOpenai else binding.providerClaude).isChecked = true
+
+        binding.providerGroup.setOnCheckedChangeListener { _, checkedId ->
+            // Stash the current fields under the old provider, then swap to the newly-picked one.
+            saveProviderFields(provider)
+            provider = if (checkedId == R.id.provider_openai) LedgerChatService.OPENAI else LedgerChatService.ANTHROPIC
+            loadProviderFields(provider)
+        }
 
         binding.settingsToggle.setOnClickListener {
             binding.settingsPanel.visibility =
                 if (binding.settingsPanel.visibility == View.GONE) View.VISIBLE else View.GONE
         }
         binding.saveKeyButton.setOnClickListener {
-            val model = binding.modelEdit.text.toString().ifBlank { LedgerChatService.DEFAULT_MODEL }
-            prefs.edit()
-                .putString(KEY_API, binding.apiKeyEdit.text.toString().trim())
-                .putString(KEY_MODEL, model)
-                .apply()
-            binding.modelEdit.setText(model)
+            saveProviderFields(provider)
+            prefs.edit().putString(KEY_PROVIDER, provider).apply()
+            binding.modelEdit.setText(prefs.getString(modelKey(provider), LedgerChatService.defaultModel(provider)))
             binding.settingsPanel.visibility = View.GONE
             showMessage(R.string.ledger_chat_key_saved)
         }
         binding.askButton.setOnClickListener { ask() }
+    }
+
+    private fun apiKeyKey(provider: String) = "${KEY_API}_$provider"
+    private fun modelKey(provider: String) = "${KEY_MODEL}_$provider"
+
+    private fun loadProviderFields(provider: String) {
+        val prefs = encryptedPrefs()
+        binding.apiKeyEdit.setText(prefs.getString(apiKeyKey(provider), "") ?: "")
+        binding.modelEdit.setText(prefs.getString(modelKey(provider), LedgerChatService.defaultModel(provider)))
+        binding.apiKeyEdit.hint = getString(
+            if (provider == LedgerChatService.OPENAI) R.string.ledger_chat_api_key_hint_openai
+            else R.string.ledger_chat_api_key_hint
+        )
+    }
+
+    private fun saveProviderFields(provider: String) {
+        val model = binding.modelEdit.text.toString().ifBlank { LedgerChatService.defaultModel(provider) }
+        encryptedPrefs().edit()
+            .putString(apiKeyKey(provider), binding.apiKeyEdit.text.toString().trim())
+            .putString(modelKey(provider), model)
+            .apply()
     }
 
     private fun selectedScope(): Set<Section> {
@@ -87,8 +123,10 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
             showMessage(R.string.ledger_chat_need_scope); return
         }
         val prefs = encryptedPrefs()
-        val apiKey = prefs.getString(KEY_API, "")?.trim().orEmpty()
-        val model = prefs.getString(KEY_MODEL, LedgerChatService.DEFAULT_MODEL) ?: LedgerChatService.DEFAULT_MODEL
+        val provider = prefs.getString(KEY_PROVIDER, LedgerChatService.ANTHROPIC) ?: LedgerChatService.ANTHROPIC
+        val apiKey = prefs.getString(apiKeyKey(provider), "")?.trim().orEmpty()
+        val model = prefs.getString(modelKey(provider), LedgerChatService.defaultModel(provider))
+            ?: LedgerChatService.defaultModel(provider)
 
         asking = true
         binding.progress.visibility = View.VISIBLE
@@ -101,7 +139,7 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
                 val all = corpusService.gather(root, scope)
                 val hits = corpusService.retrieve(all, question)
                 val context = corpusService.buildContext(hits)
-                val answer = chatService.ask(apiKey, model, question, context)
+                val answer = chatService.ask(provider, apiKey, model, question, context)
                 Triple(answer, hits.size, all.size)
             }
             val (answer, hitCount, corpusCount) = result
@@ -147,5 +185,6 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
         private const val PREFS_NAME = "ledger_chat_encrypted_prefs"
         private const val KEY_API = "ledger_chat_api_key"
         private const val KEY_MODEL = "ledger_chat_model"
+        private const val KEY_PROVIDER = "ledger_chat_provider"
     }
 }

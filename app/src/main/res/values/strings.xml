@@ -450,6 +450,9 @@
     <string name="ledger_chat_need_scope">Pick at least one section to search.</string>
     <string name="ledger_chat_settings_toggle">Claude API key &amp; model</string>
     <string name="ledger_chat_api_key_hint">Claude API key (sk-ant-…)</string>
+    <string name="ledger_chat_api_key_hint_openai">OpenAI API key (sk-…)</string>
+    <string name="ledger_chat_provider_claude">Claude</string>
+    <string name="ledger_chat_provider_openai">OpenAI</string>
     <string name="ledger_chat_model_hint">Model (default claude-sonnet-5)</string>
     <string name="ledger_chat_save_key">Save</string>
     <string name="ledger_chat_key_saved">Saved on this device.</string>
