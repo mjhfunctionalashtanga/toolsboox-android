@@ -162,36 +162,38 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
      * today's intake sidecar (so it shows in Notes & Annotations) and enqueues it.
      */
     private fun offerToFileLink(url: String, title: String?, sharedText: String?) {
-        val kinds = listOf(
-            "📖  Read later" to "read",
-            "📺  Watch" to "watch",
-            "🎧  Listen" to "listen",
-            "🎓  Educate" to "educate"
+        // (iconRes, label, action). Monochrome outline icons for e-ink contrast.
+        val fileAction: (String, String) -> Unit = { kind, label ->
+            com.toolsboox.plugin.michaelfilter.nw.IntakePageStore
+                .fileLink(applicationContext, java.time.LocalDate.now(), kind, url, title)
+            android.widget.Toast.makeText(this, getString(R.string.ledger_share_filed, label), android.widget.Toast.LENGTH_SHORT).show()
+        }
+        val items = listOf(
+            Triple(R.drawable.ic_book, getString(R.string.ledger_share_read), { fileAction("read", getString(R.string.ledger_share_read)) }),
+            Triple(R.drawable.ic_tv, getString(R.string.ledger_share_watch), { fileAction("watch", getString(R.string.ledger_share_watch)) }),
+            Triple(R.drawable.ic_headphones, getString(R.string.ledger_share_listen), { fileAction("listen", getString(R.string.ledger_share_listen)) }),
+            Triple(R.drawable.ic_book, getString(R.string.ledger_share_educate), { fileAction("educate", getString(R.string.ledger_share_educate)) }),
+            Triple(R.drawable.ic_add, getString(R.string.ledger_share_drop_on_page), {
+                val boxText = wrapForTextBox(listOfNotNull(title, url).joinToString("\n").ifBlank { sharedText?.trim().orEmpty() })
+                if (boxText.isNotBlank()) dropTextOnDay(boxText, url); Unit
+            })
         )
-        val labels = kinds.map { it.first } + getString(R.string.ledger_share_drop_on_page)
-        // Defer to after the first layout — showing a dialog straight from onResume on a
-        // share cold-start can be swallowed before the window is ready.
+        // Defer to after the first layout — a dialog straight from onResume on a share
+        // cold-start can be swallowed before the window is ready.
         binding.fragmentContent.post {
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle(R.string.ledger_share_file_title)
-            .setItems(labels.toTypedArray()) { d, which ->
-                if (which < kinds.size) {
-                    val kind = kinds[which].second
-                    com.toolsboox.plugin.michaelfilter.nw.IntakePageStore
-                        .fileLink(applicationContext, java.time.LocalDate.now(), kind, url, title)
-                    android.widget.Toast.makeText(
-                        this, getString(R.string.ledger_share_filed, kinds[which].first.substringAfter("  ")),
-                        android.widget.Toast.LENGTH_SHORT
-                    ).show()
-                } else {
-                    val boxText = wrapForTextBox(
-                        listOfNotNull(title, url).joinToString("\n").ifBlank { sharedText?.trim().orEmpty() }
-                    )
-                    if (boxText.isNotBlank()) dropTextOnDay(boxText, url)
-                }
-                d.dismiss()
+            val list = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL }
+            val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle(R.string.ledger_share_file_title)
+                .setView(androidx.core.widget.NestedScrollView(this).apply { addView(list) })
+                .create()
+            for ((iconRes, label, action) in items) {
+                val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
+                r.findViewById<android.widget.ImageView>(R.id.go_icon).apply { setImageResource(iconRes); visibility = android.view.View.VISIBLE }
+                r.findViewById<android.widget.TextView>(R.id.go_label).text = label
+                r.setOnClickListener { dialog.dismiss(); action() }
+                list.addView(r)
             }
-            .show()
+            dialog.show()
         }
     }
 

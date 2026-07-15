@@ -523,7 +523,10 @@ abstract class ScreenFragment : Fragment() {
             "💬" to R.drawable.ic_chat, "☀" to R.drawable.ic_nav_today, "✒" to R.drawable.ic_pencil,
             "🖍" to R.drawable.ic_pencil, "📷" to R.drawable.ic_camera, "🖼" to R.drawable.ic_image,
             "🎤" to R.drawable.ic_mic, "🎥" to R.drawable.ic_video, "📤" to R.drawable.ic_share,
-            "📌" to R.drawable.ic_pin, "🛰" to R.drawable.ic_send
+            "📌" to R.drawable.ic_pin, "🛰" to R.drawable.ic_send, "🖊" to R.drawable.ic_pencil,
+            "🃏" to R.drawable.ic_card, "👆" to R.drawable.ic_toolbar_hand_touch,
+            "🔄" to R.drawable.ic_toolbar_rotate, "🔀" to R.drawable.ic_swap, "🎯" to R.drawable.ic_refresh,
+            "🎓" to R.drawable.ic_book
         )
     }
 
