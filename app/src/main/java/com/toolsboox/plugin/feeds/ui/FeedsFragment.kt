@@ -240,6 +240,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
         fun categoriesOf(k: String) =
             allEntries.filter { it.kind == k }.mapNotNull { it.categoryLabel }.distinct().sortedBy { it.lowercase() }
         // Each lens drills two levels deep inline: category → its individual feeds (indented).
+        // Opens expanded so the feeds are visible at a glance.
         fun lens(emoji: String, label: String, k: String) = Folder(emoji, label,
             listOf<Pair<String, () -> Unit>>("$emoji  All $label" to { switchTo("feed", k) }) +
             categoriesOf(k).flatMap { c ->
@@ -248,7 +249,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
                 listOf<Pair<String, () -> Unit>>("🗂  $c" to { adapter.submit(inCat) }) +
                     if (feeds.size > 1) feeds.map { f -> ("      · $f" to { adapter.submit(inCat.filter { it.feedTitle == f }) }) }
                     else emptyList()
-            }
+            },
+            expanded = true
         )
         showAccordion(
             listOf(
@@ -262,7 +264,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
                     "📖  Read" to { switchTo("later", "read") },
                     "📺  Watch" to { switchTo("later", "watch") },
                     "🎧  Listen" to { switchTo("later", "listen") }
-                ))
+                ), expanded = true)
             )
         )
     }

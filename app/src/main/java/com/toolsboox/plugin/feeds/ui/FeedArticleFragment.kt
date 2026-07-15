@@ -126,7 +126,8 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                 .map { it.feedTitle }.filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }
             return ScreenFragment.Folder(emoji, label,
                 listOf<Pair<String, () -> Unit>>("$emoji  All $label" to { toFeeds("feed", k) }) +
-                    feeds.map { f -> ("      · $f" to { toFeeds("feed", k, f) }) })
+                    feeds.map { f -> ("      · $f" to { toFeeds("feed", k, f) }) },
+                expanded = true)
         }
         val folders = listOf(
             ScreenFragment.Folder("📰", "All", action = { toFeeds("feed", null) }),
@@ -139,7 +140,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                 "📖  Read" to { toFeeds("later", "read") },
                 "📺  Watch" to { toFeeds("later", "watch") },
                 "🎧  Listen" to { toFeeds("later", "listen") }
-            ))
+            ), expanded = true)
         ) + ledgerDirectoryFolders(this)
         showAccordion(folders)
     }
