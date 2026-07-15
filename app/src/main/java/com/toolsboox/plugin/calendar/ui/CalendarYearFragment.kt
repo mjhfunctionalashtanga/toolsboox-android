@@ -230,6 +230,11 @@ class CalendarYearFragment @Inject constructor() : SurfaceFragment() {
             CalendarNavigator.toDayPage(this, LocalDate.now())
         }
 
+        setupAlmanacNavPill(
+            binding.navWidget, binding.navGrip, binding.navUp, binding.navDown, binding.navGoto,
+            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, "🗓️"
+        ) { CalendarNavigator.toYearPage(this, LocalDate.now(), CalendarYear.DEFAULT_STYLE) }
+
         utils.updateToolbar(binding)
         initializeSurface(true)
     }

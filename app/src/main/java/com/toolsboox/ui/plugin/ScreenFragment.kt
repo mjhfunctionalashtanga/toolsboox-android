@@ -199,6 +199,50 @@ abstract class ScreenFragment : Fragment() {
         }
     }
 
+    /**
+     * Wire the shared floating nav pill on an almanac page (month/quarter/week/year) so it
+     * behaves like the day-page pill: the grip drags and taps-to-collapse, ↑ performs the
+     * page's swipe-up, ↓ its swipe-down, and the centre glyph jumps to the current period.
+     * All the almanac pages reuse this so navigation feels identical across the ledger.
+     */
+    protected fun setupAlmanacNavPill(
+        navWidget: View, navGrip: View, navUp: View, navDown: View,
+        navGoto: TextView, swipeUp: View, swipeDown: View,
+        emoji: String, onHome: () -> Unit
+    ) {
+        navWidget.visibility = View.VISIBLE
+        navUp.setOnClickListener { swipeUp.performClick() }
+        navDown.setOnClickListener { swipeDown.performClick() }
+        navGoto.text = emoji
+        navGoto.setOnClickListener { onHome() }
+        navWidget.bringToFront()
+
+        // Vertical on narrow (phone) screens so it can't collide with the tool pill.
+        val narrow = resources.configuration.screenWidthDp < 520
+        val vertical = requireContext().getSharedPreferences("ledger_widgets", 0)
+            .getBoolean("vertical", narrow)
+        (navWidget as? LinearLayout)?.orientation =
+            if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+
+        makeDraggable(navGrip, navWidget, "nav") { toggleNavPill(navUp, navDown) }
+        applyNavPillCollapse(navUp, navDown)
+    }
+
+    /** Collapse the almanac nav pill to grip + centre glyph (↑↓ hide); tap the grip to toggle. */
+    private fun toggleNavPill(navUp: View, navDown: View) {
+        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
+        prefs.edit().putBoolean("nav_collapsed", !prefs.getBoolean("nav_collapsed", false)).apply()
+        applyNavPillCollapse(navUp, navDown)
+    }
+
+    private fun applyNavPillCollapse(navUp: View, navDown: View) {
+        val collapsed = requireContext().getSharedPreferences("ledger_widgets", 0)
+            .getBoolean("nav_collapsed", false)
+        val vis = if (collapsed) View.GONE else View.VISIBLE
+        navUp.visibility = vis
+        navDown.visibility = vis
+    }
+
     /** Keep [pill] fully inside its parent — translation can never strand it off-screen. */
     private fun clampInParent(pill: View) {
         val parent = pill.parent as? View ?: return

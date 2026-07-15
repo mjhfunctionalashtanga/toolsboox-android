@@ -238,6 +238,11 @@ class CalendarQuarterFragment @Inject constructor() : SurfaceFragment() {
             CalendarNavigator.toDayPage(this, LocalDate.now())
         }
 
+        setupAlmanacNavPill(
+            binding.navWidget, binding.navGrip, binding.navUp, binding.navDown, binding.navGoto,
+            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, "📊"
+        ) { CalendarNavigator.toQuarterPage(this, LocalDate.now(), CalendarQuarter.DEFAULT_STYLE) }
+
         utils.updateToolbar(binding)
         initializeSurface(true)
     }

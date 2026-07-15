@@ -242,6 +242,11 @@ class CalendarWeekFragment @Inject constructor() : SurfaceFragment() {
             CalendarNavigator.toDayPage(this, LocalDate.now())
         }
 
+        setupAlmanacNavPill(
+            binding.navWidget, binding.navGrip, binding.navUp, binding.navDown, binding.navGoto,
+            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, "📆"
+        ) { CalendarNavigator.toWeekPage(this, LocalDate.now(), calendarWeek.locale, CalendarWeek.DEFAULT_STYLE) }
+
         utils.updateToolbar(binding)
         initializeSurface(true)
     }

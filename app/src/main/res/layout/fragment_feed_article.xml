@@ -9,6 +9,15 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"/>
 
+    <!-- Top hamburger: browser + reader settings (tap zones / volume). Lives at the top of
+         the page, not on the floating nav pill. -->
+    <Button android:id="@+id/art_top_menu" style="?android:attr/borderlessButtonStyle"
+        android:text="☰" android:textSize="22sp" android:minWidth="0dp"
+        android:paddingHorizontal="14dp" android:paddingVertical="6dp"
+        android:background="@drawable/ledger_bar_bg"
+        android:layout_gravity="top|start" android:layout_margin="10dp"
+        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+
     <!-- Capy-style tap zones over the lower quarter: L/R = page back/forward; double = prev/
          next article; triple L = feed list, triple R = next feed. Toggled in the ☰ menu. -->
     <LinearLayout
@@ -26,7 +35,7 @@
 
     <!-- Floating, draggable nav pill (grip = tap to collapse). Mirrors the day-page pill:
          ‹ page-up · ⌃ prev-article · ✎ annotate (center) · ⌄ next-article · › page-down,
-         plus star / parse / browser. -->
+         plus star / parse. Browser + settings live in the top ☰ hamburger. -->
     <LinearLayout
         android:id="@+id/art_pill"
         android:orientation="horizontal"
@@ -61,8 +70,5 @@
         <ImageButton android:id="@+id/art_page_down" android:layout_width="42dp" android:layout_height="44dp"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_right"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
-        <Button android:id="@+id/art_menu" style="?android:attr/borderlessButtonStyle"
-            android:text="☰" android:textSize="21sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
     </LinearLayout>
 </FrameLayout>

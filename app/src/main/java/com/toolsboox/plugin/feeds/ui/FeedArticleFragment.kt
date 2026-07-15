@@ -75,7 +75,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         binding.artPrev.setOnClickListener { goToNeighbor(-1) }
         binding.artNext.setOnClickListener { goToNeighbor(1) }
         binding.artAnnotate.setOnClickListener { entry?.let { annotate(it) } }
-        binding.artMenu.setOnClickListener { showArticleMenu() }
+        binding.artTopMenu.setOnClickListener { showArticleMenu() }
         setupTapZones()
 
         showEntry(e)
@@ -133,23 +133,20 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    /** The ☰ overflow: browser, feed list, and the nav toggles. */
+    /** The top ☰ hamburger: browser + reader settings (tap-zone / volume page-turn). */
     private fun showArticleMenu() {
-        val ctx = requireContext()
         val tapOn = tapZonesOn(); val volOn = volumeTurnOn()
         val items = listOf(
             "🌐  Open in browser",
-            "📋  Feed list",
             (if (tapOn) "☑" else "☐") + "  Tap-zone paging",
             (if (volOn) "☑" else "☐") + "  Volume page-turn"
         )
-        AlertDialog.Builder(ctx)
+        AlertDialog.Builder(requireContext())
             .setItems(items.toTypedArray()) { d, which ->
                 when (which) {
                     0 -> entry?.url?.takeIf { it.isNotBlank() }?.let { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) }
-                    1 -> findNavController().popBackStack()
-                    2 -> { navPrefs().edit().putBoolean("tap_zones", !tapOn).apply(); setupTapZones() }
-                    3 -> navPrefs().edit().putBoolean("volume_turn", !volOn).apply()
+                    1 -> { navPrefs().edit().putBoolean("tap_zones", !tapOn).apply(); setupTapZones() }
+                    2 -> navPrefs().edit().putBoolean("volume_turn", !volOn).apply()
                 }
                 d.dismiss()
             }
