@@ -86,6 +86,17 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
             refresh()
         }
 
+        // Persistent floating nav pill: ↑↓ page the list, centre ☰ opens the directory.
+        binding.feedsPageUp.setOnClickListener {
+            binding.feedsRecycler.smoothScrollBy(0, -(binding.feedsRecycler.height * 4 / 5))
+        }
+        binding.feedsPageDown.setOnClickListener {
+            binding.feedsRecycler.smoothScrollBy(0, binding.feedsRecycler.height * 4 / 5)
+        }
+        binding.feedsGoto.setOnClickListener { showFeedDirectory() }
+        binding.feedsPill.bringToFront()
+        makeDraggable(binding.feedsGrip, binding.feedsPill, "feeds_pill")
+
         // Honour the view/kind chosen from the hub (feed / stars / later, + read/watch/listen).
         val (m, k) = FeedSelection.consume()
         mode = m; kindFilter = k

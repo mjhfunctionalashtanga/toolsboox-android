@@ -378,6 +378,7 @@
     <string name="reading_log_empty">No notes or annotations in this range yet. Highlight in a book, star an article, or capture an AV gram — they land here.</string>
     <string name="reading_log_untitled">Untitled</string>
     <string name="reading_log_origin_all">All</string>
+    <string name="reading_log_range_all">All time</string>
     <string name="reading_log_open_hint">%s — open it from its source.</string>
     <string name="reading_log_av_video">Video note to self</string>
     <string name="reading_log_av_audio">Audio note to self</string>

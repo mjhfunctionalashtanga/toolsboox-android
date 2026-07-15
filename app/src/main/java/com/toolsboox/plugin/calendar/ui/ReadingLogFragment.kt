@@ -47,15 +47,58 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     private lateinit var binding: FragmentReadingLogBinding
     private lateinit var adapter: ReadingEventAdapter
 
-    /** Widening windows, cycled by the range button. */
-    private enum class Range(val label: String, val days: Long?) {
-        MONTH("Month", 31), QUARTER("Quarter", 92), YEAR("Year", 366), ALL("All", null)
-    }
+    /** The period level, switched by the range button; the almanac top-nav pages through it. */
+    private enum class Range(val label: String) { MONTH("Month"), QUARTER("Quarter"), YEAR("Year"), ALL("All") }
     private var range = Range.MONTH
+
+    /** Anchor date inside the currently-shown window; ‹ › shift it by one level unit. */
+    private var anchor: LocalDate = LocalDate.now()
 
     /** Origin filter (null = All). The AV chip is the union of Watch/Listen/AV captures. */
     private var origin: LogOrigin? = null
     private var allItems: List<LogItem> = emptyList()
+
+    /** Inclusive-start / exclusive-end bounds of the current window (null = unbounded/All). */
+    private fun windowStart(): LocalDate? = when (range) {
+        Range.MONTH -> anchor.withDayOfMonth(1)
+        Range.QUARTER -> anchor.withDayOfMonth(1).withMonth((anchor.monthValue - 1) / 3 * 3 + 1)
+        Range.YEAR -> anchor.withDayOfYear(1)
+        Range.ALL -> null
+    }
+    private fun windowEnd(): LocalDate? = when (range) {
+        Range.MONTH -> windowStart()!!.plusMonths(1)
+        Range.QUARTER -> windowStart()!!.plusMonths(3)
+        Range.YEAR -> windowStart()!!.plusYears(1)
+        Range.ALL -> null
+    }
+    private fun shiftAnchor(dir: Int) {
+        anchor = when (range) {
+            Range.MONTH -> anchor.plusMonths(dir.toLong())
+            Range.QUARTER -> anchor.plusMonths(3L * dir)
+            Range.YEAR -> anchor.plusYears(dir.toLong())
+            Range.ALL -> anchor
+        }
+    }
+    /** Human title for the current window, shown between the carets like the almanac bar. */
+    private fun periodTitle(): String {
+        val s = windowStart() ?: return getString(R.string.reading_log_range_all)
+        return when (range) {
+            Range.MONTH -> {
+                val d = Date.from(s.atStartOfDay(ZoneId.systemDefault()).toInstant())
+                DateFormat.format(DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), "MMMM yyyy"), d).toString()
+            }
+            Range.QUARTER -> "Q${(s.monthValue - 1) / 3 + 1} ${s.year}"
+            Range.YEAR -> "${s.year}"
+            Range.ALL -> getString(R.string.reading_log_range_all)
+        }
+    }
+    private fun updatePeriodBar() {
+        binding.periodTitle.text = periodTitle()
+        val bounded = range != Range.ALL
+        binding.prevButton.visibility = if (bounded) View.VISIBLE else View.INVISIBLE
+        binding.nextButton.visibility = if (bounded) View.VISIBLE else View.INVISIBLE
+        binding.rangeButton.text = range.label
+    }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -71,12 +114,16 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             DividerItemDecoration(requireContext(), DividerItemDecoration.VERTICAL)
         )
 
-        binding.rangeButton.text = range.label
+        // Level button cycles Month → Quarter → Year → All; re-anchors to today.
         binding.rangeButton.setOnClickListener {
             range = Range.values()[(range.ordinal + 1) % Range.values().size]
-            binding.rangeButton.text = range.label
+            anchor = LocalDate.now()
+            updatePeriodBar()
             load()
         }
+        // Almanac-style paging through the window.
+        binding.prevButton.setOnClickListener { shiftAnchor(-1); updatePeriodBar(); load() }
+        binding.nextButton.setOnClickListener { shiftAnchor(1); updatePeriodBar(); load() }
 
         binding.originButton.text = originLabel()
         binding.originButton.setOnClickListener {
@@ -91,6 +138,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             NavHostFragment.findNavController(this).navigate(R.id.action_to_calendar_day)
         }
 
+        updatePeriodBar()
         load()
     }
 
@@ -104,8 +152,9 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     private fun load() {
         binding.progress.visibility = View.VISIBLE
         binding.emptyText.visibility = View.GONE
+        val start = windowStart(); val end = windowEnd()
         lifecycleScope.launch {
-            allItems = withContext(Dispatchers.IO) { gather(range) }
+            allItems = withContext(Dispatchers.IO) { gather(start, end) }
             binding.progress.visibility = View.INVISIBLE
             applyFilter()
         }
@@ -118,11 +167,10 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         binding.emptyText.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
     }
 
-    /** Walk the day files in range, flatten reading events + AV grams to log items. */
-    private fun gather(range: Range): List<LogItem> {
+    /** Walk the day files inside [start, end) (nulls = unbounded), flattening to log items. */
+    private fun gather(start: LocalDate?, end: LocalDate?): List<LogItem> {
         val calendarRoot = File(documentsRoot(), "calendar")
         if (!calendarRoot.exists()) return emptyList()
-        val cutoff = range.days?.let { LocalDate.now().minusDays(it) }
         val ctx = requireContext().applicationContext
         val df = DateFormat.getDateFormat(ctx)
         val tf = DateFormat.getTimeFormat(ctx)
@@ -138,7 +186,10 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
             .forEach { file ->
                 val dayDate = dateOf(file.name)
-                if (cutoff != null && dayDate?.isBefore(cutoff) == true) return@forEach
+                if (dayDate != null) {
+                    if (start != null && dayDate.isBefore(start)) return@forEach
+                    if (end != null && !dayDate.isBefore(end)) return@forEach
+                }
                 val day = runCatching { calendarDayService.load(file) }
                     .onFailure { Timber.w(it, "reading-log: skipping ${file.name}") }.getOrNull() ?: return@forEach
 
