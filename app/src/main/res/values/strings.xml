@@ -406,6 +406,7 @@
     <string name="pill_layout_title">Pill layout</string>
     <string name="pill_layout_horizontal">Horizontal</string>
     <string name="pill_layout_vertical">Vertical</string>
+    <string name="pill_layout_vertical_setting">Vertical floating pills</string>
     <string name="reading_log_open_hint">%s — open it from its source.</string>
     <string name="reading_log_av_video">Video note to self</string>
     <string name="reading_log_av_audio">Audio note to self</string>

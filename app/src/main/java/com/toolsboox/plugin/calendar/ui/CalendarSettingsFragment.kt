@@ -248,6 +248,14 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.rotationReversePortraitCheck.isChecked = (rotationMask and 0b0100) != 0
         binding.rotationLandscapeCcwCheck.isChecked = (rotationMask and 0b1000) != 0
 
+        // Floating-pill orientation (shared by every Ledger pill via the ledger_widgets pref).
+        val widgetPrefs = requireContext().getSharedPreferences("ledger_widgets", 0)
+        val narrow = resources.configuration.screenWidthDp < 520
+        binding.pillOrientationSwitch.isChecked = widgetPrefs.getBoolean("vertical", narrow)
+        binding.pillOrientationSwitch.setOnCheckedChangeListener { _, checked ->
+            widgetPrefs.edit().putBoolean("vertical", checked).apply()
+        }
+
         // Auto-sync settings
         autoSyncEnabled = sharedPreferences.getBoolean("autoSyncEnabled", false)
         selectedAutoSyncInterval = sharedPreferences.getInt("autoSyncIntervalIndex", 1)

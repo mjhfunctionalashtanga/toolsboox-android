@@ -16,7 +16,9 @@ data class FeedEntry(
     val publishedAt: String,
     val starred: Boolean,
     /** Miniflux category/folder title (the feed's folder), null if uncategorised. */
-    val category: String? = null
+    val category: String? = null,
+    /** First image enclosure URL (podcast/video art), used when the content has no inline image. */
+    val enclosureImage: String? = null
 ) {
     /** Read / Watch / Listen lens. Primary signal is the Miniflux category's leading emoji
      *  (📖 / 📺 / 🎧, per the shared grammar with the iPad); falls back to a media heuristic. */
@@ -42,11 +44,12 @@ data class FeedEntry(
             c
         }
 
-    /** Featured image for the list row: the first <img> in the content, if any. */
+    /** Featured image for the list row: the first inline <img>, else the image enclosure. */
     val imageUrl: String?
         get() = Regex("""<img[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
             .find(content)?.groupValues?.get(1)
             ?.takeIf { it.startsWith("http") }
+            ?: enclosureImage?.takeIf { it.startsWith("http") }
 
     /** Plain-text blurb for the list row. */
     val blurb: String

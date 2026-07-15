@@ -169,23 +169,23 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
     /** Long-press ☰: browser, read-aloud, and reader settings (tap-zone / volume page-turn). */
     private fun showArticleMenu() {
         val tapOn = tapZonesOn(); val volOn = volumeTurnOn()
-        val speaking = tts?.isSpeaking == true
-        val items = listOf(
-            "🌐  Open in browser",
-            if (speaking) "⏹  Stop reading" else "🔊  Read aloud",
-            (if (tapOn) "☑" else "☐") + "  Tap-zone paging",
-            (if (volOn) "☑" else "☐") + "  Volume page-turn"
+        val t = tts
+        // Read-aloud is a small state machine: idle → Read; speaking → Pause + Stop; paused → Resume + Stop.
+        val readItems: List<Pair<String, () -> Unit>> = when {
+            t?.isSpeaking == true -> listOf("⏸  Pause reading" to { t.pause() }, "⏹  Stop reading" to { t.stop() })
+            t?.isPaused == true -> listOf("▶  Resume reading" to { t.resume() }, "⏹  Stop reading" to { t.stop() })
+            else -> listOf("🔊  Read aloud" to { readAloud() })
+        }
+        val fixed: List<Pair<String, () -> Unit>> = listOf(
+            "🌐  Open in browser" to {
+                entry?.url?.takeIf { it.isNotBlank() }?.let { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) }; Unit
+            },
+            ((if (tapOn) "☑" else "☐") + "  Tap-zone paging") to { navPrefs().edit().putBoolean("tap_zones", !tapOn).apply(); setupTapZones() },
+            ((if (volOn) "☑" else "☐") + "  Volume page-turn") to { navPrefs().edit().putBoolean("volume_turn", !volOn).apply(); Unit }
         )
+        val all = fixed.take(1) + readItems + fixed.drop(1)
         AlertDialog.Builder(requireContext())
-            .setItems(items.toTypedArray()) { d, which ->
-                when (which) {
-                    0 -> entry?.url?.takeIf { it.isNotBlank() }?.let { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) }
-                    1 -> if (speaking) tts?.stop() else readAloud()
-                    2 -> { navPrefs().edit().putBoolean("tap_zones", !tapOn).apply(); setupTapZones() }
-                    3 -> navPrefs().edit().putBoolean("volume_turn", !volOn).apply()
-                }
-                d.dismiss()
-            }
+            .setItems(all.map { it.first }.toTypedArray()) { d, which -> all[which].second(); d.dismiss() }
             .show()
     }
 

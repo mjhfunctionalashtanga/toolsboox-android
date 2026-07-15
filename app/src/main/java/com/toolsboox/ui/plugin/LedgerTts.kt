@@ -20,6 +20,10 @@ class LedgerTts(context: Context) {
     private var ready = false
     private var pending: String? = null
 
+    private var chunks: List<String> = emptyList()
+    private var index = 0            // chunk currently speaking / to resume from
+    private var paused = false
+
     /** Called on the main thread when playback starts (true) or finishes/stops (false). */
     var onStateChange: ((Boolean) -> Unit)? = null
 
@@ -29,8 +33,13 @@ class LedgerTts(context: Context) {
             if (!ready) { Timber.w("TTS init failed: %d", status); return@TextToSpeech }
             tts?.language = Locale.getDefault()
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(id: String?) = main.post { onStateChange?.invoke(true) }.let {}
-                override fun onDone(id: String?) { if (id == LAST) main.post { onStateChange?.invoke(false) } }
+                override fun onStart(id: String?) {
+                    id?.toIntOrNull()?.let { index = it }
+                    main.post { onStateChange?.invoke(true) }
+                }
+                override fun onDone(id: String?) {
+                    if (id?.toIntOrNull() == chunks.lastIndex && !paused) main.post { onStateChange?.invoke(false) }
+                }
                 @Deprecated("legacy") override fun onError(id: String?) = main.post { onStateChange?.invoke(false) }.let {}
                 override fun onError(id: String?, code: Int) = main.post { onStateChange?.invoke(false) }.let {}
             })
@@ -38,22 +47,42 @@ class LedgerTts(context: Context) {
         }
     }
 
-    val isSpeaking: Boolean get() = tts?.isSpeaking == true
+    val isSpeaking: Boolean get() = tts?.isSpeaking == true && !paused
+    val isPaused: Boolean get() = paused
+    val isActive: Boolean get() = paused || isSpeaking
 
     /** Speak [text] from the top (flushes anything in progress). Buffers if TTS isn't ready yet. */
     fun speak(text: String) {
-        val engine = tts ?: return
         val clean = text.replace(Regex("\\s+"), " ").trim()
         if (clean.isEmpty()) return
         if (!ready) { pending = clean; return }
-        val chunks = chunk(clean)
-        chunks.forEachIndexed { i, c ->
-            val id = if (i == chunks.lastIndex) LAST else "c$i"
-            engine.speak(c, if (i == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, id)
+        chunks = chunk(clean); paused = false
+        speakFrom(0)
+    }
+
+    private fun speakFrom(from: Int) {
+        val engine = tts ?: return
+        index = from
+        for (j in from until chunks.size) {
+            engine.speak(chunks[j], if (j == from) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, j.toString())
         }
     }
 
-    fun stop() { tts?.stop(); onStateChange?.invoke(false) }
+    /** TTS has no native pause, so stop and remember which chunk to resume from. */
+    fun pause() {
+        if (!isSpeaking) return
+        paused = true
+        tts?.stop()
+        onStateChange?.invoke(false)
+    }
+
+    fun resume() {
+        if (!paused || chunks.isEmpty()) return
+        paused = false
+        speakFrom(index.coerceIn(0, chunks.lastIndex))
+    }
+
+    fun stop() { paused = false; chunks = emptyList(); tts?.stop(); onStateChange?.invoke(false) }
 
     fun shutdown() { runCatching { tts?.stop(); tts?.shutdown() }; tts = null }
 
@@ -75,5 +104,5 @@ class LedgerTts(context: Context) {
         return out
     }
 
-    private companion object { const val LIMIT = 3500; const val LAST = "last" }
+    private companion object { const val LIMIT = 3500 }
 }

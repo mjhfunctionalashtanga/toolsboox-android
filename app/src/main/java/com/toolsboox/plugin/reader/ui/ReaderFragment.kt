@@ -127,14 +127,16 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
             ("＋  Import a book…" to {
                 openBook.launch(arrayOf("application/epub+zip", "application/pdf", "application/x-mobipocket-ebook", "*/*"))
             })
-        val speaking = tts?.isSpeaking == true
+        val t = tts
+        val readingRows: List<Pair<String, () -> Unit>> = when {
+            t?.isSpeaking == true -> listOf("⏸  Pause reading" to { t.pause() }, "⏹  Stop reading" to { t.stop() })
+            t?.isPaused == true -> listOf("▶  Resume reading" to { t.resume() }, "⏹  Stop reading" to { t.stop() })
+            else -> listOf("🔊  Read aloud" to { readAloud() })
+        }
         showDirectory(
             listOf(
                 "Recent books" to bookRows,
-                "Reading" to listOf(
-                    (if (speaking) "⏹  Stop reading" else "🔊  Read aloud") to
-                        { if (speaking) tts?.stop() else readAloud() }
-                ),
+                "Reading" to readingRows,
                 "Go to" to listOf(
                     "📅  Day" to { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
                     "🖍️  Notes & Annotations" to { CalendarNavigator.toDayNote(this, LocalDate.now(), "0") },

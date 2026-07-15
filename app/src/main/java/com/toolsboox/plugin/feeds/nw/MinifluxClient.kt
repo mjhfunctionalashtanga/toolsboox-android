@@ -99,6 +99,12 @@ class MinifluxClient @Inject constructor() {
         for (i in 0 until arr.length()) {
             val e = arr.optJSONObject(i) ?: continue
             val feed = e.optJSONObject("feed")
+            // First image enclosure → featured-image fallback for feeds without an inline <img>.
+            val enclosureImage = e.optJSONArray("enclosures")?.let { encs ->
+                (0 until encs.length()).asSequence().mapNotNull { encs.optJSONObject(it) }
+                    .firstOrNull { it.optString("mime_type").startsWith("image", true) }
+                    ?.optString("url")?.ifBlank { null }
+            }
             out += FeedEntry(
                 id = e.optLong("id"),
                 title = e.optString("title"),
@@ -108,7 +114,8 @@ class MinifluxClient @Inject constructor() {
                 content = e.optString("content"),
                 publishedAt = e.optString("published_at"),
                 starred = e.optBoolean("starred", false),
-                category = feed?.optJSONObject("category")?.optString("title")?.ifBlank { null }
+                category = feed?.optJSONObject("category")?.optString("title")?.ifBlank { null },
+                enclosureImage = enclosureImage
             )
         }
         return out
