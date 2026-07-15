@@ -111,10 +111,29 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         binding.articleWeb.scrollBy(0, if (down) step else -step)
     }
 
-    /** ☰ pulls up the RSS directory — pop back to the feed list and open it there. */
+    /**
+     * ☰ pulls up the directory as an overlay — WITHOUT leaving the article. Picking a feed view
+     * returns to the list in that mode; the Ledger sections (almanac/history/…) navigate away.
+     */
     private fun openRssDirectory() {
-        FeedSelection.openDirectory = true
-        findNavController().popBackStack()
+        fun toFeeds(mode: String, kind: String?) {
+            FeedSelection.mode = mode; FeedSelection.kind = kind
+            findNavController().popBackStack()
+        }
+        val folders = listOf(
+            ScreenFragment.Folder("📰", "All", action = { toFeeds("feed", null) }),
+            ScreenFragment.Folder("⭐", "Stars", action = { toFeeds("stars", null) }),
+            ScreenFragment.Folder("📖", "Read", action = { toFeeds("feed", "read") }),
+            ScreenFragment.Folder("📺", "Watch", action = { toFeeds("feed", "watch") }),
+            ScreenFragment.Folder("🎧", "Listen", action = { toFeeds("feed", "listen") }),
+            ScreenFragment.Folder("🔖", "Later List", listOf(
+                "🔖  All" to { toFeeds("later", null) },
+                "📖  Read" to { toFeeds("later", "read") },
+                "📺  Watch" to { toFeeds("later", "watch") },
+                "🎧  Listen" to { toFeeds("later", "listen") }
+            ))
+        ) + ledgerDirectoryFolders(this)
+        showAccordion(folders)
     }
 
     /** Jump to the first article of the next feed source in the list. */

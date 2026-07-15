@@ -456,10 +456,16 @@ abstract class ScreenFragment : Fragment() {
         pill.translationY = pill.translationY.coerceIn(minTy, maxTy.coerceAtLeast(minTy))
     }
 
-    /** One collapsible folder in the [showAccordion] directory. */
-    protected data class Folder(
+    /**
+     * One entry in the [showAccordion] directory. With [action] set it renders as a standalone
+     * tappable row (no caret) — for top-level items like All / Stars that aren't folders;
+     * otherwise it's a collapsible folder over [items].
+     */
+    data class Folder(
         val emoji: String, val title: String,
-        val items: List<Pair<String, () -> Unit>>, val expanded: Boolean = false
+        val items: List<Pair<String, () -> Unit>> = emptyList(),
+        val expanded: Boolean = false,
+        val action: (() -> Unit)? = null
     )
 
     /**
@@ -478,6 +484,15 @@ abstract class ScreenFragment : Fragment() {
             val header = layoutInflater.inflate(R.layout.item_go_to, list, false)
             header.findViewById<ImageView>(R.id.go_icon).visibility = View.GONE
             val headerLabel = header.findViewById<TextView>(R.id.go_label)
+
+            // A leaf entry (has [action]) is a plain tappable row — no caret, no children.
+            if (folder.action != null) {
+                headerLabel.text = "${folder.emoji}  ${folder.title}"
+                header.setOnClickListener { dialog.dismiss(); folder.action.invoke() }
+                list.addView(header)
+                continue
+            }
+
             val children = LinearLayout(requireContext()).apply {
                 orientation = LinearLayout.VERTICAL
                 visibility = if (folder.expanded) View.VISIBLE else View.GONE

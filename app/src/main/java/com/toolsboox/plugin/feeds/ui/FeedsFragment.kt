@@ -82,6 +82,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
         }
         binding.refreshButton.setOnClickListener { refresh() }
         binding.gotoButton.setOnClickListener { showFeedDirectory() }
+        binding.ledgerButton.setOnClickListener { showLedgerDirectory() }
         binding.viewToggleButton.setOnClickListener {
             mode = if (mode == "stars") "feed" else "stars"
             refresh()
@@ -231,14 +232,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
     }
 
     /**
-     * The Feed Ledger dropdown, iPad-style + collapsible: Read / Watch / Listen are folders
-     * that list their own feeds (the 📖/📺/🎧-prefixed Miniflux categories). Later List
-     * mirrors the three lenses over the read-later intake; Feed/Stars/Go-to at the ends.
+     * The Feed Ledger (RSS) hamburger — feeds only: All and Stars as standalone rows at the
+     * top, then Read / Watch / Listen folders (listing their 📖/📺/🎧 categories) and the
+     * Later List. The broader Ledger (almanac/history/personal) lives on its own button.
      */
     private fun showFeedDirectory() {
-        val nav = androidx.navigation.fragment.NavHostFragment.findNavController(this)
-        val today = LocalDate.now()
-        val locale = Locale.getDefault()
         fun categoriesOf(k: String) =
             allEntries.filter { it.kind == k }.mapNotNull { it.categoryLabel }.distinct().sortedBy { it.lowercase() }
         fun lens(emoji: String, label: String, k: String) = Folder(emoji, label,
@@ -247,10 +245,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
         )
         showAccordion(
             listOf(
-                Folder("📰", "Feed", listOf(
-                    "📰  All" to { switchTo("feed", null) },
-                    "⭐  Stars" to { switchTo("stars", null) }
-                ), expanded = true),
+                Folder("📰", "All", action = { switchTo("feed", null) }),
+                Folder("⭐", "Stars", action = { switchTo("stars", null) }),
                 lens("📖", "Read", "read"),
                 lens("📺", "Watch", "watch"),
                 lens("🎧", "Listen", "listen"),
@@ -259,30 +255,17 @@ class FeedsFragment @Inject constructor() : ScreenFragment() {
                     "📖  Read" to { switchTo("later", "read") },
                     "📺  Watch" to { switchTo("later", "watch") },
                     "🎧  Listen" to { switchTo("later", "listen") }
-                )),
-                // The whole Ledger hub, reachable from the article list — mirrors the day-page hub.
-                Folder("🕓", "History", listOf(
-                    "🕓  All" to { nav.navigate(R.id.action_to_reading_log) }
-                )),
-                Folder("📆", "Almanac", listOf(
-                    "📆  Week" to { CalendarNavigator.toWeekPage(this, today, locale) },
-                    "📅  Month" to { CalendarNavigator.toMonthPage(this, today) },
-                    "📊  Quarter" to { CalendarNavigator.toQuarterPage(this, today) },
-                    "🗓️  Year" to { CalendarNavigator.toYearPage(this, today) }
-                )),
-                Folder("👤", "Personal", listOf(
-                    "❝  Pickings" to { CalendarNavigator.toDayNote(this, today, "pickings") },
-                    "🙏  Gratitude" to { CalendarNavigator.toDayNote(this, today, "gratitude") },
-                    "🎬  A/V Grams" to { nav.navigate(R.id.action_to_reading_log) }
-                )),
-                Folder("↪", "Go to", listOf(
-                    "📅  Day" to { nav.navigate(R.id.action_to_calendar_day) },
-                    "📚  Bookshelf" to { nav.navigate(R.id.action_to_reader) },
-                    "💬  Ask my Ledger" to { nav.navigate(R.id.action_to_ledger_chat) }
                 ))
             )
         )
     }
+
+    /**
+     * The broader Ledger directory (second header button): Almanac, History, Later, and
+     * Personal, plus the surfaces to jump to — so you can leave the feed for the rest of the
+     * Ledger without going through the day page.
+     */
+    private fun showLedgerDirectory() = showAccordion(ledgerDirectoryFolders(this))
 
     private fun toggleStar(entry: FeedEntry) {
         val p = prefs()
