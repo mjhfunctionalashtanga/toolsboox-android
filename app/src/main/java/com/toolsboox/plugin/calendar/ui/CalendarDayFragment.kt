@@ -601,6 +601,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 GoItem("🖼️", "Add image") { binding.toolbarDrawing.toolbarImage.performClick() },
                 GoItem("🃏", "Card…") { showCardMenu() },
                 GoItem("🗒", "Extract tasks & events") { extractStructured() },
+                GoItem("📋", "View tasks & events") { findNavController().navigate(R.id.action_to_ledger_items) },
                 GoItem("👆", "Finger / hand") { binding.toolbarDrawing.toolbarHandTouch.performClick() },
                 GoItem("🔄", "Rotate screen") { binding.toolbarDrawing.toolbarRotate.performClick() }
             ),

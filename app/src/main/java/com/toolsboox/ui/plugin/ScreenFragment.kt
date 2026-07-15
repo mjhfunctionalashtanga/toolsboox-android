@@ -526,7 +526,8 @@ abstract class ScreenFragment : Fragment() {
             "📌" to R.drawable.ic_pin, "🛰" to R.drawable.ic_send, "🖊" to R.drawable.ic_pencil,
             "🃏" to R.drawable.ic_card, "👆" to R.drawable.ic_toolbar_hand_touch,
             "🔄" to R.drawable.ic_toolbar_rotate, "🔀" to R.drawable.ic_swap, "🎯" to R.drawable.ic_refresh,
-            "🎓" to R.drawable.ic_book, "🗎" to R.drawable.ic_reader_view, "🗒" to R.drawable.ic_reader_view
+            "🎓" to R.drawable.ic_book, "🗎" to R.drawable.ic_reader_view, "🗒" to R.drawable.ic_reader_view,
+            "📋" to R.drawable.ic_card
         )
     }
 

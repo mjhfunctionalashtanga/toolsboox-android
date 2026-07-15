@@ -56,6 +56,10 @@
             android:id="@+id/action_to_settings"
             app:destination="@id/CalendarSettingsFragment"/>
 
+    <action
+            android:id="@+id/action_to_ledger_items"
+            app:destination="@id/LedgerItemsFragment"/>
+
     <fragment
             android:id="@+id/DashboardFragment"
             android:name="com.toolsboox.plugin.dashboard.ui.DashboardFragment"
@@ -117,6 +121,12 @@
                 app:popUpTo="@id/DashboardFragment"
                 app:popUpToInclusive="true"/>
     </fragment>
+
+    <fragment
+            android:id="@+id/LedgerItemsFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.LedgerItemsFragment"
+            android:label="LedgerItemsFragment"
+            tools:layout="@layout/fragment_ledger_items"/>
 
     <fragment
             android:id="@+id/ReadingLogFragment"

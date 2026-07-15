@@ -51,6 +51,27 @@ object CalendarPdfRenderer {
     }
 
     /**
+     * Render just [strokes] (no template) cropped to [rect], scaled to [targetWidth] — the ink
+     * thumbnail for a structured item's "Ink" face in a list.
+     */
+    fun renderInk(strokes: List<Stroke>, rect: RectF, targetWidth: Int = 520): Bitmap {
+        val rw = rect.width().coerceAtLeast(1f)
+        val scale = targetWidth / rw
+        val w = targetWidth.coerceIn(1, 2000)
+        val h = (rect.height() * scale).toInt().coerceIn(1, 3000)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        canvas.drawColor(Color.WHITE)
+        canvas.save()
+        canvas.scale(scale, scale)
+        canvas.translate(-rect.left, -rect.top)
+        val paint = createStrokePaint()
+        for (s in strokes) drawStroke(canvas, paint, s)
+        canvas.restore()
+        return bmp
+    }
+
+    /**
      * Render a single calendar page (calendar strokes + note strokes) to a one-page PDF.
      *
      * @param strokes the calendar strokes map (style key -> stroke list)

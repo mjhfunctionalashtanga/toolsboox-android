@@ -26,6 +26,7 @@ fun ledgerDirectoryFolders(fragment: ScreenFragment): List<ScreenFragment.Folder
             "📊  Quarter" to { CalendarNavigator.toQuarterPage(fragment, today) },
             "🗓️  Year" to { CalendarNavigator.toYearPage(fragment, today) }
         )),
+        ScreenFragment.Folder("🗒", "Tasks & Events", action = { nav.navigate(R.id.action_to_ledger_items) }),
         ScreenFragment.Folder("🕓", "History", action = { nav.navigate(R.id.action_to_reading_log) }),
         ScreenFragment.Folder("🔖", "Later", action = {
             FeedSelection.mode = "later"; FeedSelection.kind = null
