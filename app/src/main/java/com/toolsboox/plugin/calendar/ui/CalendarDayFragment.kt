@@ -174,6 +174,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     override fun provideDisableRawInkCapture(): Boolean = notePage == "intake"
 
+    // Exclude the floating nav + tool pills from the raw stylus reader so the stylus
+    // can drag/tap them (and never inks a stray dot over them).
+    override fun provideExcludeViews(): List<View> =
+        if (::binding.isInitialized) listOf(binding.navWidget, binding.toolWidget) else emptyList()
+
     /**
      * Provide toolbar of drawing's bindings.
      *
@@ -368,7 +373,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         binding.toolbarDrawing.toolbarSwipeUp.setOnClickListener {
             if (notePage != null) {
-                when (notePage) {
+                when (if (com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(notePage)) "pickings" else notePage) {
                     "pickings" -> CalendarNavigator.toDayPage(this, currentDate, CalendarDay.DEFAULT_STYLE)
                     "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "pickings")
                     "intake" -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
@@ -387,7 +392,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
         binding.toolbarDrawing.toolbarSwipeDown.setOnClickListener {
             if (notePage != null) {
-                when (notePage) {
+                when (if (com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(notePage)) "pickings" else notePage) {
                     "pickings" -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
                     "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "intake")
                     "intake" -> CalendarNavigator.toDayNote(this, currentDate, "0")
@@ -596,25 +601,41 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /** Wrench on the nav pill → the quick tools/layout shortcut (a subset of the hub). */
-    private fun showWidgetGearMenu() = showGoModal(
-        listOf(
-            "Tools" to listOf(
-                GoItem("🖊️", "Add text") { binding.toolbarDrawing.toolbarText.performClick() },
-                GoItem("🖼️", "Add image") { binding.toolbarDrawing.toolbarImage.performClick() },
-                GoItem("🃏", "Card…") { showCardMenu() },
-                GoItem("🗒", "Extract tasks & events") { extractStructured() },
-                GoItem("📋", "View tasks & events") { findNavController().navigate(R.id.action_to_ledger_items) },
-                GoItem("👆", "Finger / hand") { binding.toolbarDrawing.toolbarHandTouch.performClick() },
-                GoItem("🔄", "Rotate screen") { binding.toolbarDrawing.toolbarRotate.performClick() }
+    private fun showWidgetGearMenu() {
+        // The Synthesize→Write creative pipeline lives on the Synthesize page (Card / 3 questions /
+        // outline) with the writing prompt also reachable from Write — so it doesn't clutter every
+        // other page. "View tasks & events" left the wrench (it's in the ▦ hub).
+        val onSynth = notePage == "synthesize"
+        val onWrite = notePage == "write"
+        val tools = buildList {
+            add(GoItem("🖊️", "Add text") { binding.toolbarDrawing.toolbarText.performClick() })
+            add(GoItem("🖼️", "Add image") { binding.toolbarDrawing.toolbarImage.performClick() })
+            if (onSynth) add(GoItem("🃏", "Card…") { showCardMenu() })
+            add(GoItem("❝", "Pickings…") { managePickings() })
+            // Redundant with the VPS server OCR — off by default, re-enable in Settings.
+            if (sharedPreferences.getBoolean(com.toolsboox.plugin.calendar.ot.LedgerExtractor.AUTO_EXTRACT_ENABLED_KEY, false))
+                add(GoItem("🗒", "Extract tasks & events") { extractStructured() })
+            add(GoItem("📄", "Whole page → text") { wholePageToText() })
+            add(GoItem("🗂", "Capture sections") { captureSections() })
+            if (onSynth) add(GoItem("🔬", "Synthesize · 3 questions") { synthesizeQuestions() })
+            if (onSynth || onWrite) add(GoItem("✍️", "Writing prompt → Write") { writingPrompts() })
+            if (onSynth) add(GoItem("🗒", "Essay outline → Write") { essayOutline() })
+            if (onSynth) add(GoItem("🃏", "Ideas → grid") { showSynthesisIdeas() })
+            add(GoItem("👆", "Finger / hand") { binding.toolbarDrawing.toolbarHandTouch.performClick() })
+            add(GoItem("🔄", "Rotate screen") { binding.toolbarDrawing.toolbarRotate.performClick() })
+        }
+        showGoModal(
+            listOf(
+                "Tools" to tools,
+                "Layout" to listOf(
+                    GoItem("🔀", "Pill Layout") { flipPillLayout() },
+                    GoItem("🎯", "Reset pill positions") { resetPillPositions() },
+                    GoItem("⚙️", "Settings") { binding.toolbarDrawing.toolbarSettings.performClick() }
+                )
             ),
-            "Layout" to listOf(
-                GoItem("🔀", "Pill Layout") { flipPillLayout() },
-                GoItem("🎯", "Reset pill positions") { resetPillPositions() },
-                GoItem("⚙️", "Settings") { binding.toolbarDrawing.toolbarSettings.performClick() }
-            )
-        ),
-        anchorTop = false
-    )
+            anchorTop = false
+        )
+    }
 
     private data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
 
@@ -649,9 +670,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val schedRect = panels.firstOrNull { it.id == "schedule" }?.rect ?: return
         lifecycleScope.launch {
             val tasks = com.toolsboox.plugin.calendar.ot.LedgerExtractor
-                .extractPanel(strokes, tasksRect, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK, "auto")
+                .extractPanel(strokes, tasksRect, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK, "auto", dueDate())
             val events = com.toolsboox.plugin.calendar.ot.LedgerExtractor
-                .extractPanel(strokes, schedRect, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT, "auto")
+                .extractPanel(strokes, schedRect, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT, "auto", dueDate())
             calendarDay.ledgerItems.removeAll { it.source == "auto" }
             calendarDay.ledgerItems.addAll(tasks + events)
             calendarPattern.updateDay(calendarDay)
@@ -666,8 +687,55 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         showIconMenu(getString(R.string.ledger_selection_title), listOf(
             "🗒  Create task" to { createLedgerItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK) },
             "📆  Create event" to { createLedgerItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) },
-            "🃏  Create card" to { createCardFromSelection(strokes) }
+            "🃏  Create gram" to { gramStudioFromSelection(strokes) },
+            "🎬  A/V gram" to { recordAvGram() },
+            "📋  Copy text" to { copyTextFromSelection(strokes) },
+            "🎓  Educate me" to { educateFromSelection(strokes) },
+            "🔍  Find in Ledger" to { findInLedgerFromSelection(strokes) }
         ))
+    }
+
+    /** OCR the lassoed ink, then show it as selectable/editable text with a one-tap Copy — so a
+     *  selection can leave the Ledger as plain text (clipboard), not only as a task/event/gram. */
+    private fun copyTextFromSelection(strokes: List<com.toolsboox.da.Stroke>) {
+        val creds = aiCreds()
+        showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) {
+                val b = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
+                val pad = 28f
+                val rect = android.graphics.RectF(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
+                val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600)
+                if (creds != null)
+                    com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third) else null
+            }
+            if (text.isNullOrBlank()) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
+            showCopyText(text.trim())
+        }
+    }
+
+    /** Editable/selectable OCR result with a Copy action (and system text-selection for partial copy). */
+    private fun showCopyText(text: String) {
+        val ctx = requireContext()
+        val input = android.widget.EditText(ctx).apply {
+            setText(text); setTextIsSelectable(true); setSelection(text.length)
+        }
+        val padPx = (16 * resources.displayMetrics.density).toInt()
+        val box = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(padPx, padPx / 2, padPx, 0); addView(input)
+        }
+        fun copy() {
+            val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("Ledger", input.text.toString()))
+            showMessage("Copied to clipboard", binding.root)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Copy text")
+            .setView(android.widget.ScrollView(ctx).apply { addView(box) })
+            .setPositiveButton("Copy") { _, _ -> copy() }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     /**
@@ -686,18 +754,169 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600)
                     val t = com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third)
                     if (!t.isNullOrBlank())
-                        com.toolsboox.plugin.calendar.ot.LedgerExtractor.itemWithText(strokes, kind, t, "lasso-ai")
+                        com.toolsboox.plugin.calendar.ot.LedgerExtractor.itemWithText(strokes, kind, t, "lasso-ai", dueDate())
                     else null
                 } else null
-            } ?: com.toolsboox.plugin.calendar.ot.LedgerExtractor.extractStrokes(strokes, kind, "lasso")
+            } ?: com.toolsboox.plugin.calendar.ot.LedgerExtractor.extractStrokes(strokes, kind, "lasso", dueDate())
 
             if (item == null) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
-            calendarDay.ledgerItems.add(item)
-            calendarPattern.updateDay(calendarDay)
-            presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
-            val label = if (kind == com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) "event" else "task"
-            showMessage(getString(R.string.ledger_extract_added, label, item.text), binding.root)
+            confirmLedgerItem(item, kind) {
+                calendarDay.ledgerItems.add(item)
+                calendarPattern.updateDay(calendarDay)
+                presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+                // App-authoritative push: a confirmed task becomes a CalDAV VTODO, a confirmed event a
+                // Google Calendar entry (idempotent by id; each no-ops for the other kind).
+                lifecycleScope.launch(Dispatchers.IO) {
+                    com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), item)
+                    com.toolsboox.plugin.calendar.nw.LedgerEventSync.pushEvent(requireContext(), item)
+                }
+                val label = if (kind == com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) "event" else "task"
+                showMessage(getString(R.string.ledger_extract_added, label, item.text), binding.root)
+            }
         }
+    }
+
+    /**
+     * Lasso → "Educate me": OCR the circled term (usually a band or a book), look it up with the
+     * SAME LLM as Ask-my-Ledger ([LedgerChatService.educate], general-knowledge — not corpus-bound),
+     * and file the answer + a canonical link into today's Later List **Educate** section. That store
+     * (IntakePageStore) is what surfaces in the Feed, so the result lands "in a feed with a link".
+     */
+    private fun educateFromSelection(strokes: List<Stroke>) {
+        val creds = aiCreds()
+        if (creds == null) {
+            showMessage(getString(R.string.ledger_ai_key_needed), binding.root); return
+        }
+        showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
+        lifecycleScope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                val b = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
+                val pad = 28f
+                val rect = android.graphics.RectF(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
+                val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600)
+                val term = com.toolsboox.plugin.calendar.nw.VisionOcr
+                    .recognize(bmp, creds.first, creds.second, creds.third)?.trim()
+                if (term.isNullOrBlank()) null
+                else term to com.toolsboox.plugin.chat.nw.LedgerChatService()
+                    .educate(creds.first, creds.second, creds.third, term)
+            }
+            if (outcome == null) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
+            val (term, result) = outcome
+            when (result) {
+                is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok -> {
+                    val answer = result.answer.trim()
+                    // The LLM ends with a canonical URL line; peel it off for the link + clean description.
+                    val url = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.extractUrls(answer).lastOrNull()
+                        ?: "https://www.google.com/search?q=" + android.net.Uri.encode(term)
+                    val desc = answer.replace(url, "").trim()
+                    withContext(Dispatchers.IO) {
+                        com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.fileLink(
+                            requireContext(), currentDate, "educate", url, "$term — $desc"
+                        )
+                    }
+                    showEducateResult(term, desc, url)
+                }
+                is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Err ->
+                    showMessage(result.message, binding.root)
+            }
+        }
+    }
+
+    /**
+     * Lasso → "Find in Ledger": OCR the circled term and open Ask-my-Ledger seeded with it, so the
+     * grounded chat searches the reader's OWN corpus (highlights, annotations, planner) for it.
+     */
+    private fun findInLedgerFromSelection(strokes: List<Stroke>) {
+        val creds = aiCreds()
+        if (creds == null) { showMessage(getString(R.string.ledger_ai_key_needed), binding.root); return }
+        showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
+        lifecycleScope.launch {
+            val term = withContext(Dispatchers.IO) {
+                val b = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
+                val pad = 28f
+                val rect = android.graphics.RectF(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
+                val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600)
+                com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third)?.trim()
+            }
+            if (term.isNullOrBlank()) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
+            findNavController().navigate(
+                R.id.action_to_ledger_chat,
+                androidx.core.os.bundleOf("initial_query" to term)
+            )
+        }
+    }
+
+    /** Show the looked-up description with an option to open the link; it's already filed to the feed. */
+    private fun showEducateResult(term: String, desc: String, url: String) {
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle(term)
+            .setMessage(desc + "\n\n" + getString(R.string.ledger_educate_filed))
+            .setPositiveButton(R.string.ledger_educate_open) { _, _ ->
+                runCatching {
+                    startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
+                }
+            }
+            .setNegativeButton(android.R.string.ok, null)
+            .show()
+    }
+
+    /** The DUE date for a created item: the page's own day at noon UTC (matches the iPad convention). */
+    private fun dueDate(): java.util.Date =
+        java.util.Date(currentDate.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli())
+
+    /**
+     * Confirmation box after "Create task/event" — shows the read-back text, the kind, and the DUE
+     * date (the page's day, so a future page reads its own date). [onConfirm] commits the item.
+     */
+    private fun confirmLedgerItem(
+        item: com.toolsboox.plugin.calendar.da.v2.LedgerItem,
+        kind: com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind,
+        onConfirm: () -> Unit
+    ) {
+        val isEvent = kind == com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT
+        val chosen = itemLocalDate(item)
+        val due = chosen.format(java.time.format.DateTimeFormatter.ofPattern("EEE, MMM d"))
+        // Editable read-back so a shaky OCR is fixed here (parity with the iPad create sheet).
+        val input = android.widget.EditText(requireContext()).apply {
+            setText(item.text); setSelection(text.length); setSingleLine(false); maxLines = 3
+        }
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val container = android.widget.FrameLayout(requireContext()).apply {
+            setPadding(pad, pad / 2, pad, 0); addView(input)
+        }
+        val title = (if (isEvent) "Create event" else "Create task") + " · " + due + (item.time?.let { " · $it" } ?: "")
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle(title)
+            .setView(container)
+            .setPositiveButton("Create") { _, _ -> item.text = input.text.toString().trim(); onConfirm() }
+            // Due date defaults to the page's day; "Change date" sets it at finalization instead.
+            .setNeutralButton("Change date") { _, _ ->
+                item.text = input.text.toString().trim()   // keep edits when picking a date
+                pickDueDate(chosen) { picked ->
+                    item.date = java.util.Date(picked.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli())
+                    confirmLedgerItem(item, kind, onConfirm)   // re-show with the new date
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        showModal(dialog)
+    }
+
+    /** The LedgerItem's date as a LocalDate (its due date lives in UTC millis). */
+    private fun itemLocalDate(item: com.toolsboox.plugin.calendar.da.v2.LedgerItem): java.time.LocalDate =
+        item.date.toInstant().atZone(java.time.ZoneOffset.UTC).toLocalDate()
+
+    /** Native date picker for setting a due date at finalization; pauses raw ink like other modals. */
+    private fun pickDueDate(initial: java.time.LocalDate, onPicked: (java.time.LocalDate) -> Unit) {
+        val dp = android.app.DatePickerDialog(
+            requireContext(),
+            { _, y, m, d -> onPicked(java.time.LocalDate.of(y, m + 1, d)) },
+            initial.year, initial.monthValue - 1, initial.dayOfMonth
+        )
+        dp.setOnShowListener { onModalShown() }
+        dp.setOnDismissListener { onModalDismissed() }
+        dp.show()
     }
 
     /** Turn the circled strokes into a card (share / save to Notes / webhook) via the card flow. */
@@ -711,6 +930,235 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         )
     }
 
+    /** Record an audio/video gram (or photo) like any other gram: capture → persist to the day's
+     *  avGrams → transcribe (Whisper) → open the gram studio on the transcription so it can be shared,
+     *  dropped Here, or added to Pickings. */
+    private fun recordAvGram() {
+        captureAvGram { onAvGramRecorded(it) }
+    }
+
+    private fun onAvGramRecorded(att: com.toolsboox.da.Attachment) {
+        if (::calendarDay.isInitialized) {
+            calendarDay.avGrams.add(att)
+            calendarPattern.updateDay(calendarDay)
+            presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+        }
+        val kind = att.kind
+        if (kind == com.toolsboox.da.Attachment.Kind.AUDIO || kind == com.toolsboox.da.Attachment.Kind.VIDEO) {
+            showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
+            lifecycleScope.launch {
+                val text = withContext(Dispatchers.IO) {
+                    com.toolsboox.plugin.calendar.nw.Transcribe.audio(requireContext(), java.io.File(attachmentsDir(), att.filename))
+                }
+                val head = if (kind == com.toolsboox.da.Attachment.Kind.VIDEO) "🎥 Video gram" else "🎤 Audio gram"
+                showGramStudio(listOf(head, text ?: "").filter { it.isNotBlank() }.joinToString("\n\n").ifBlank { head })
+            }
+        } else {
+            showMessage(getString(R.string.gram_capture_saved), binding.root)
+        }
+    }
+
+    /** Gram studio (Android parity): OCR the lassoed ink, then open the multi-format studio. */
+    private fun gramStudioFromSelection(strokes: List<com.toolsboox.da.Stroke>) {
+        val creds = aiCreds()
+        showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) {
+                val b = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
+                val pad = 28f
+                val rect = android.graphics.RectF(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
+                val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600)
+                if (creds != null)
+                    com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third) else null
+            }
+            if (text.isNullOrBlank()) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
+            showGramStudio(text)
+        }
+    }
+
+    /** Multi-format gram studio: pick square/portrait/landscape/story, preview, then Share or drop Here. */
+    private fun showGramStudio(text: String) {
+        val t = text.trim(); if (t.isEmpty()) return
+        val ctx = requireContext()
+        val fmt = arrayOf(com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.Format.SQUARE)
+        fun make() = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(t, null, null, fmt[0].w, fmt[0].h)
+        val preview = android.widget.ImageView(ctx).apply { adjustViewBounds = true; setImageBitmap(make()) }
+        val row = android.widget.LinearLayout(ctx).apply { orientation = android.widget.LinearLayout.HORIZONTAL }
+        for (f in com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.Format.values()) {
+            row.addView(android.widget.Button(ctx).also {
+                it.text = f.label; it.isAllCaps = false; it.textSize = 12f
+                it.setOnClickListener { fmt[0] = f; preview.setImageBitmap(make()) }
+            }, android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        val padPx = (16 * resources.displayMetrics.density).toInt()
+        val pickBtn = android.widget.Button(ctx).also { it.text = "❝  Add to Pickings"; it.isAllCaps = false }
+        val container = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(padPx, padPx / 2, padPx, 0)
+            addView(row)
+            addView(preview, android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                (resources.displayMetrics.heightPixels * 0.42f).toInt()
+            ).apply { topMargin = padPx })
+            addView(pickBtn)
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Gram")
+            .setView(android.widget.ScrollView(ctx).apply { addView(container) })
+            .setPositiveButton("Share") { _, _ -> shareGramBitmap(make()) }
+            .setNeutralButton("Here") { _, _ -> placeGramBitmap(make()) }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        pickBtn.setOnClickListener { dialog.dismiss(); placeGramToPickings(make()) }
+        dialog.show()
+    }
+
+    /**
+     * Jump back to a gram's origin from its long-press menu. Routes the stored source link:
+     * ledger://<date>/<pageKey> → that ledger page; book://<path> → the reader; http(s) → the browser.
+     */
+    override fun onImageSource(element: com.toolsboox.da.ImageElement) {
+        val link = element.sourceLink
+        when {
+            link.startsWith("ledger://") -> {
+                val rest = link.removePrefix("ledger://")
+                val slash = rest.indexOf('/')
+                val dateStr = if (slash >= 0) rest.substring(0, slash) else rest
+                val pageKey = if (slash >= 0) rest.substring(slash + 1) else ""
+                val date = runCatching { java.time.LocalDate.parse(dateStr) }.getOrNull() ?: currentDate
+                if (pageKey.isBlank() || pageKey == "day") CalendarNavigator.toDayPage(this, date)
+                else CalendarNavigator.toDayNote(this, date, pageKey)
+            }
+            link.startsWith("book://") -> {
+                requireContext().getSharedPreferences("ledger_reader_prefs", 0).edit()
+                    .putString("current_book_path", link.removePrefix("book://")).apply()
+                findNavController().navigate(R.id.action_to_reader)
+            }
+            link.startsWith("http") ->
+                runCatching {
+                    startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(link)))
+                }
+        }
+    }
+
+    /** Choose a pickings board and drop this gram card onto it (current day). */
+    private fun placeGramToPickings(bmp: android.graphics.Bitmap) {
+        if (!::calendarDay.isInitialized) return
+        val ctx = requireContext()
+        val boards = com.toolsboox.plugin.calendar.ot.PickingsStore.list(ctx, currentDate)
+        val saved = boards.filter { it.key != com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY }
+        val labels = (listOf("❝  Today's Pickings", "＋  New pickings…") + saved.map { "❝  ${it.name}" }).toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Add gram to Pickings")
+            .setItems(labels) { _, which ->
+                when (which) {
+                    0 -> addGramToPickingPage(bmp, com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY)
+                    1 -> {
+                        val input = android.widget.EditText(ctx).apply { hint = "Pickings name"; setSingleLine() }
+                        androidx.appcompat.app.AlertDialog.Builder(ctx).setTitle("New pickings").setView(input)
+                            .setPositiveButton("Create") { _, _ ->
+                                val page = com.toolsboox.plugin.calendar.ot.PickingsStore.add(ctx, currentDate, input.text.toString().trim())
+                                addGramToPickingPage(bmp, page.key)
+                            }.setNegativeButton(android.R.string.cancel, null).show()
+                    }
+                    else -> addGramToPickingPage(bmp, saved[which - 2].key)
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * Switch to / create / rename a pickings board for the VIEWED day — reachable straight from the
+     * page so a new pickings starts against the date you're on, not always today (the ▦ hub's picker
+     * hardcodes today, which is why named boards "didn't show" on other days).
+     */
+    private fun managePickings() {
+        val ctx = requireContext()
+        val ps = com.toolsboox.plugin.calendar.ot.PickingsStore
+        ps.sync(ctx, currentDate)   // pull other devices' board names
+        val pages = ps.list(ctx, currentDate)
+        val labels = (pages.map { "❝  ${it.name}" } +
+            listOf("＋  New pickings…", "✎  Rename this pickings…")).toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Pickings · $currentDate")
+            .setItems(labels) { _, which ->
+                when {
+                    which < pages.size -> CalendarNavigator.toDayNote(this, currentDate, pages[which].key)
+                    which == pages.size -> {
+                        val input = android.widget.EditText(ctx).apply { hint = "Pickings name"; setSingleLine() }
+                        androidx.appcompat.app.AlertDialog.Builder(ctx).setTitle("New pickings").setView(input)
+                            .setPositiveButton("Create") { _, _ ->
+                                val page = ps.add(ctx, currentDate, input.text.toString().trim())
+                                CalendarNavigator.toDayNote(this, currentDate, page.key)
+                            }.setNegativeButton(android.R.string.cancel, null).show()
+                    }
+                    else -> {
+                        val key = if (ps.isPickings(notePage)) notePage!! else ps.DEFAULT_KEY
+                        val input = android.widget.EditText(ctx).apply {
+                            setText(pages.firstOrNull { it.key == key }?.name ?: ""); setSingleLine()
+                        }
+                        androidx.appcompat.app.AlertDialog.Builder(ctx).setTitle("Rename pickings").setView(input)
+                            .setPositiveButton("Save") { _, _ ->
+                                ps.rename(ctx, currentDate, key, input.text.toString().trim())
+                            }.setNegativeButton(android.R.string.cancel, null).show()
+                    }
+                }
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    /** Encode the gram card and add it as an image element on [pageKey] of the current day. */
+    private fun addGramToPickingPage(bmp: android.graphics.Bitmap, pageKey: String) {
+        if (!::calendarDay.isInitialized) return
+        val max = 1200
+        val longest = maxOf(bmp.width, bmp.height)
+        val scaled = if (longest > max)
+            android.graphics.Bitmap.createScaledBitmap(bmp, bmp.width * max / longest, bmp.height * max / longest, true) else bmp
+        val baos = java.io.ByteArrayOutputStream(); scaled.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
+        val base64 = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+        val w = (1404f * 0.42f).coerceAtMost(scaled.width.toFloat()); val h = w * scaled.height / scaled.width
+        val count = calendarDay.imageElements.count { it.page == pageKey }
+        val x = (60f + (count % 3) * (w + 30f)).coerceIn(0f, (1404f - w).coerceAtLeast(0f))
+        val y = (120f + (count / 3) * (h + 30f)).coerceIn(0f, (1872f - h).coerceAtLeast(0f))
+        // Remember the ledger page this card was grammed from so the placed gram can jump back to it.
+        val srcPage = notePage ?: "day"
+        val srcLabel =
+            if (com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(notePage))
+                com.toolsboox.plugin.calendar.ot.PickingsStore.nameOf(requireContext(), currentDate, srcPage)
+            else notePage?.replaceFirstChar { it.uppercase() } ?: "Day"
+        calendarDay.imageElements.add(com.toolsboox.da.ImageElement(
+            x = x, y = y, width = w, height = h, data = base64, page = pageKey,
+            sourceLink = "ledger://$currentDate/$srcPage", sourceLabel = srcLabel))
+        calendarPattern.updateDay(calendarDay)
+        presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+        showMessage("Added to pickings.", binding.root)
+    }
+
+    private fun gramFile(bmp: android.graphics.Bitmap): android.net.Uri {
+        val dir = java.io.File(requireContext().cacheDir, "cards").apply { mkdirs() }
+        val file = java.io.File(dir, "gram-${currentDate}-${bmp.width}x${bmp.height}.png")
+        file.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        return androidx.core.content.FileProvider.getUriForFile(
+            requireContext(), "${requireContext().packageName}.fileprovider", file)
+    }
+
+    private fun shareGramBitmap(bmp: android.graphics.Bitmap) {
+        runCatching {
+            val uri = gramFile(bmp)
+            startActivity(android.content.Intent.createChooser(
+                android.content.Intent(android.content.Intent.ACTION_SEND).setType("image/png")
+                    .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION), "Share gram"))
+        }.onFailure { showMessage("Share failed", binding.root) }
+    }
+
+    private fun placeGramBitmap(bmp: android.graphics.Bitmap) {
+        runCatching { queueSharedImageInsert(gramFile(bmp)) }
+            .onFailure { showMessage("Place failed", binding.root) }
+    }
+
     /** Ask-my-Ledger AI creds (provider, key, model) for the vision OCR, or null if unset. */
     private fun aiCreds(): Triple<String, String, String>? {
         val prefs = EncryptedSharedPreferences.create(
@@ -722,7 +1170,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val provider = prefs.getString("ledger_chat_provider", "anthropic") ?: "anthropic"
         val key = prefs.getString("ledger_chat_api_key_$provider", "")?.trim().orEmpty()
         val default = if (provider == "openai") "gpt-4o" else "claude-sonnet-5"
-        val model = prefs.getString("ledger_chat_model_$provider", default) ?: default
+        val chatModel = prefs.getString("ledger_chat_model_$provider", default) ?: default
+        // OCR can run on a different (e.g. faster/cheaper) model than chat. An override set in the
+        // OCR-model picker wins, but only for the matching provider family; blank = use the chat model.
+        val ocrOverride = com.toolsboox.ui.plugin.OcrModel.override(requireContext(), provider)
+        val model = ocrOverride ?: chatModel
         return if (key.isBlank()) null else Triple(provider, key, model)
     }
 
@@ -739,6 +1191,348 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private fun currentPageStrokes(): List<Stroke> =
         if (notePage != null) calendarDay.noteStrokes[notePage] ?: emptyList()
         else calendarDay.calendarStrokes[calendarStyle] ?: emptyList()
+
+    /** Draw the current page's zone boundaries + labels onto the template (design space 1404×1872). */
+    private fun drawZones(canvas: android.graphics.Canvas, notePageKey: String?) {
+        val zones = com.toolsboox.plugin.calendar.ot.PageZones.zones(notePageKey)
+        if (zones.isEmpty()) return
+        val solid = android.graphics.Paint().apply {
+            style = android.graphics.Paint.Style.STROKE; color = 0x55000000; strokeWidth = 2f; isAntiAlias = true
+        }
+        val dashed = android.graphics.Paint(solid).apply {
+            pathEffect = android.graphics.DashPathEffect(floatArrayOf(14f, 9f), 0f)
+        }
+        val label = android.graphics.Paint().apply { color = 0x99000000.toInt(); textSize = 28f; isAntiAlias = true }
+        for (z in zones) {
+            canvas.drawRoundRect(z.rect, 14f, 14f,
+                if (z.kind == com.toolsboox.plugin.calendar.ot.ZoneKind.IMAGE) dashed else solid)
+            canvas.drawText(z.label, z.rect.left + 14f, z.rect.top + 38f, label)
+        }
+    }
+
+    /**
+     * Zone engine (Android parity of iOS): OCR the ink inside each TEXT zone of the current
+     * page and store it under the zone's key; if the zone carries an AI prompt, run the OCR'd
+     * text through the LLM and store the result under "<id>.ai". Saved per note-page + day.
+     */
+    private fun captureSections() {
+        val notePageKey = currentNotePage()
+        val zones = com.toolsboox.plugin.calendar.ot.PageZones.zones(notePageKey)
+        if (zones.isEmpty()) { showMessage("This page has no capture zones.", binding.root); return }
+        val creds = aiCreds()
+        val strokes = currentPageStrokes()
+        val pageKey = notePageKey ?: "default"
+        showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
+        lifecycleScope.launch {
+            val n = withContext(Dispatchers.IO) {
+                val values = com.toolsboox.plugin.calendar.ot.SectionStore.load(requireContext(), pageKey, currentDate)
+                for (zone in zones) {
+                    if (zone.kind != com.toolsboox.plugin.calendar.ot.ZoneKind.TEXT) continue
+                    val inZone = strokes.filter {
+                        android.graphics.RectF.intersects(
+                            zone.rect, com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(listOf(it)))
+                    }
+                    if (inZone.isEmpty()) continue
+                    val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(inZone, zone.rect, 1600)
+                    val text = if (creds != null)
+                        com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third) else null
+                    if (text.isNullOrBlank()) continue
+                    values[zone.id] = text
+                    val prompt = zone.aiPrompt
+                    if (prompt != null && creds != null) {
+                        val r = com.toolsboox.plugin.chat.nw.LedgerChatService()
+                            .run(creds.first, creds.second, creds.third, prompt, text)
+                        if (r is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok) values[zone.id + ".ai"] = r.answer
+                    }
+                }
+                com.toolsboox.plugin.calendar.ot.SectionStore.save(requireContext(), pageKey, currentDate, values)
+                values.keys.count { !it.endsWith(".ai") && !it.startsWith("__") }
+            }
+            showMessage("Captured $n section(s)", binding.root)
+        }
+    }
+
+    /** One-tap: OCR the WHOLE current page to a single block of text (selectable + copyable). */
+    private fun wholePageToText() {
+        val creds = aiCreds()
+        if (creds == null) { showMessage(getString(R.string.ledger_ai_key_needed), binding.root); return }
+        val strokes = currentPageStrokes()
+        if (strokes.isEmpty()) { showMessage(R.string.ledger_extract_unreadable, binding.root); return }
+        showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) {
+                val rect = android.graphics.RectF(0f, 0f, 1404f, 1872f)
+                val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 2000)
+                com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third)
+            }
+            if (text.isNullOrBlank()) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
+            showCopyText(text.trim())
+        }
+    }
+
+    /** A cheap signature of a page's ink so we only re-OCR when it actually changed. */
+    private fun strokesSignature(strokes: List<Stroke>): String =
+        "${strokes.size}:${strokes.sumOf { it.strokePoints.size }}"
+
+    /** Auto-OCR every TEXT section of the current page in the background (no UI), so section text is
+     *  always available without a manual "Capture sections". Skips when the ink is unchanged since
+     *  the last capture (a persisted signature) to avoid needless vision calls. Fire-and-forget on
+     *  an app-scoped coroutine because it runs as the page is being left. */
+    @kotlin.OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    private fun autoCaptureSections() {
+        if (!::calendarDay.isInitialized) return
+        val notePageKey = currentNotePage()
+        val zones = com.toolsboox.plugin.calendar.ot.PageZones.zones(notePageKey)
+        if (zones.isEmpty()) return
+        val creds = aiCreds() ?: return
+        val strokes = currentPageStrokes()
+        if (strokes.isEmpty()) return
+        val appCtx = requireContext().applicationContext
+        val pageKey = notePageKey ?: "default"
+        val date = currentDate
+        val sig = strokesSignature(strokes)
+        kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+            val values = com.toolsboox.plugin.calendar.ot.SectionStore.load(appCtx, pageKey, date)
+            if (values["__sig"] == sig) return@launch   // unchanged since last OCR
+            for (zone in zones) {
+                if (zone.kind != com.toolsboox.plugin.calendar.ot.ZoneKind.TEXT) continue
+                val inZone = strokes.filter {
+                    android.graphics.RectF.intersects(
+                        zone.rect, com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(listOf(it)))
+                }
+                if (inZone.isEmpty()) continue
+                val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(inZone, zone.rect, 1600)
+                val text = com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third)
+                    ?: continue
+                if (text.isBlank()) continue
+                values[zone.id] = text
+                val prompt = zone.aiPrompt
+                if (prompt != null) {
+                    val r = com.toolsboox.plugin.chat.nw.LedgerChatService()
+                        .run(creds.first, creds.second, creds.third, prompt, text)
+                    if (r is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok) values[zone.id + ".ai"] = r.answer
+                }
+            }
+            // Persist the signature even if nothing OCR'd, so we don't retry unchanged ink each leave.
+            values["__sig"] = sig
+            com.toolsboox.plugin.calendar.ot.SectionStore.save(appCtx, pageKey, date, values)
+        }
+    }
+
+    // ---- Synthesize → Write AI pipeline (pickings / books) --------------------------------------
+
+    /** Text of the current page: its typed boxes + OCR of its ink. The raw material for synthesis. */
+    private fun pageOcrText(creds: Triple<String, String, String>): String? {
+        val pk = notePage ?: "default"
+        val typed = if (::calendarDay.isInitialized)
+            calendarDay.textElements.filter { it.pageKey == pk }.joinToString("\n") { it.text }.trim() else ""
+        val strokes = currentPageStrokes()
+        val inked = if (strokes.isNotEmpty()) {
+            val rect = android.graphics.RectF(0f, 0f, 1404f, 1872f)
+            val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 2000)
+            com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third) ?: ""
+        } else ""
+        return listOf(typed, inked).filter { it.isNotBlank() }.joinToString("\n\n").ifBlank { null }
+    }
+
+    /** Drop each line onto [pageKey] as a movable text box, save, and (optionally) show it now. */
+    private fun placeTextBoxes(lines: List<String>, pageKey: String, refresh: Boolean) {
+        if (!::calendarDay.isInitialized || lines.isEmpty()) return
+        var y = 140f
+        for (line in lines) {
+            calendarDay.textElements.add(TextElement(
+                x = 90f, y = y, width = 1220f, height = 100f, text = line.trim(), pageKey = pageKey))
+            y += 120f
+        }
+        calendarPattern.updateDay(calendarDay)
+        presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+        if (refresh) setTextElements(calendarDay.textElements.filter { it.pageKey == pageKey }.toMutableList())
+    }
+
+    /**
+     * Place synthesized questions as a GROUP: a compact source gram at the top (a real gram card, so
+     * it carries the back link to where they came from and taps back), then the question text boxes
+     * right under it. So a batch always shows what it came from and stays visually together.
+     */
+    private fun placeSourcedQuestions(
+        lines: List<String>, pageKey: String, sourceLink: String, sourceLabel: String, refresh: Boolean
+    ) {
+        if (!::calendarDay.isInitialized || lines.isEmpty()) return
+        var y = 140f
+        if (sourceLink.isNotBlank()) runCatching {
+            val bmp = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
+                "↩ Synthesized from\n$sourceLabel", null, null, 1100, 240)
+            val baos = java.io.ByteArrayOutputStream(); bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
+            val base64 = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+            val w = 620f; val h = w * bmp.height / bmp.width
+            calendarDay.imageElements.add(com.toolsboox.da.ImageElement(
+                x = 90f, y = y, width = w, height = h, data = base64, page = pageKey,
+                sourceLink = sourceLink, sourceLabel = sourceLabel))
+            y += h + 30f
+        }
+        for (line in lines) {
+            calendarDay.textElements.add(TextElement(
+                x = 90f, y = y, width = 1220f, height = 100f, text = line.trim(), pageKey = pageKey))
+            y += 120f
+        }
+        calendarPattern.updateDay(calendarDay)
+        presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+        if (refresh) {
+            setTextElements(calendarDay.textElements.filter { it.pageKey == pageKey }.toMutableList())
+            setImageElements(calendarDay.imageElements.filter { it.page == pageKey }.toMutableList())
+        }
+    }
+
+    private fun runLlm(creds: Triple<String, String, String>, system: String, text: String): List<String> {
+        val res = com.toolsboox.plugin.chat.nw.LedgerChatService().run(creds.first, creds.second, creds.third, system, text)
+        return if (res is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok)
+            res.answer.lines().map { it.trim().removePrefix("-").removePrefix("•").removePrefix("*").trim() }.filter { it.isNotEmpty() }
+        else emptyList()
+    }
+
+    /**
+     * The raw material for synthesis: this page's text, or — when triggered from the empty
+     * Synthesize grid — the typed text of every pickings page of the day, so Synthesize has
+     * something to work from even before you've hand-gathered grams onto the grid.
+     */
+    private fun synthesisSource(creds: Triple<String, String, String>): String? {
+        pageOcrText(creds)?.let { if (it.isNotBlank()) return it }
+        if (!::calendarDay.isInitialized) return null
+        val keys = com.toolsboox.plugin.calendar.ot.PickingsStore.list(requireContext(), currentDate)
+            .map { it.key }.toSet()
+        return calendarDay.textElements.filter { it.pageKey in keys }
+            .joinToString("\n") { it.text }.trim().ifBlank { null }
+    }
+
+    /** Synthesize: surface 3 generative questions from this page/pickings onto the Synthesize page. */
+    private fun synthesizeQuestions() {
+        val creds = aiCreds() ?: run { showMessage(getString(R.string.ledger_ai_key_needed), binding.root); return }
+        showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
+        lifecycleScope.launch {
+            val lines = withContext(Dispatchers.IO) {
+                val text = synthesisSource(creds) ?: return@withContext emptyList<String>()
+                runLlm(creds,
+                    "You are the reader's thinking partner. From their picking/notes below, propose EXACTLY three " +
+                        "focused, generative questions worth answering to develop these ideas. Output ONLY the three " +
+                        "questions, one per line, no numbering or preamble.", text).take(3)
+            }
+            if (lines.isEmpty()) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
+            // Where these came from → the group's source gram back-link. From the empty grid we used
+            // the pickings fallback, so point back at Pickings.
+            val ps = com.toolsboox.plugin.calendar.ot.PickingsStore
+            val srcPage = notePage?.takeIf { it != "synthesize" } ?: "pickings"
+            val srcLabel = if (ps.isPickings(srcPage)) ps.nameOf(requireContext(), currentDate, srcPage)
+                else srcPage.replaceFirstChar { it.uppercase() }
+            com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.add(requireContext(), currentDate, lines, "question", srcLabel)
+            placeSourcedQuestions(lines, "synthesize", "ledger://$currentDate/$srcPage", srcLabel,
+                refresh = notePage == "synthesize")
+            showMessage("Placed 3 questions on your Synthesize page — answer them, then head to Write.", binding.root)
+            if (notePage != "synthesize") CalendarNavigator.toDayNote(this@CalendarDayFragment, currentDate, "synthesize")
+        }
+    }
+
+    /** Write: offer 3 AI writing prompts from this page; the chosen one seeds the Write page. */
+    private fun writingPrompts() {
+        val creds = aiCreds() ?: run { showMessage(getString(R.string.ledger_ai_key_needed), binding.root); return }
+        showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
+        lifecycleScope.launch {
+            val prompts = withContext(Dispatchers.IO) {
+                val text = pageOcrText(creds) ?: return@withContext emptyList<String>()
+                runLlm(creds,
+                    "From the reader's picking/notes below, propose THREE distinct, compelling essay writing prompts " +
+                        "that could grow from these ideas. Output ONLY the three prompts, one per line, no numbering.", text).take(3)
+            }
+            if (prompts.isEmpty()) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
+            com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.add(
+                requireContext(), currentDate, prompts, "prompt", (notePage ?: "day").replaceFirstChar { it.uppercase() })
+            androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                .setTitle("Pick a writing prompt")
+                .setItems(prompts.toTypedArray()) { _, which ->
+                    placeTextBoxes(listOf("Prompt: " + prompts[which]), "write", refresh = false)
+                    CalendarNavigator.toDayNote(this@CalendarDayFragment, currentDate, "write")
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
+    }
+
+    /** Write: sketch a classic bulleted essay outline from this page → movable text boxes in Write. */
+    private fun essayOutline() {
+        val creds = aiCreds() ?: run { showMessage(getString(R.string.ledger_ai_key_needed), binding.root); return }
+        showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
+        lifecycleScope.launch {
+            val lines = withContext(Dispatchers.IO) {
+                val text = pageOcrText(creds) ?: return@withContext emptyList<String>()
+                runLlm(creds,
+                    "Sketch a CLASSIC bullet-pointed essay outline from the reader's notes below: a one-line thesis, " +
+                        "then Intro, three Body points each with 1–2 sub-bullets, and a Conclusion. Keep each line short. " +
+                        "Output ONLY the outline, one bullet per line.", text)
+            }
+            if (lines.isEmpty()) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
+            com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.add(
+                requireContext(), currentDate, lines, "outline", (notePage ?: "day").replaceFirstChar { it.uppercase() })
+            placeTextBoxes(lines, "write", refresh = false)
+            showMessage("Outline placed in Write.", binding.root)
+            CalendarNavigator.toDayNote(this@CalendarDayFragment, currentDate, "write")
+        }
+    }
+
+    /**
+     * The Synthesize idea bank: every generated question/prompt for the day, listed so you can drop
+     * any of them onto the grid as gram cards (the whiteboard you then write from).
+     */
+    private fun showSynthesisIdeas() {
+        val ctx = requireContext()
+        com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.sync(ctx, currentDate)   // pull other devices' ideas
+        val ideas = com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.list(ctx, currentDate)
+        if (ideas.isEmpty()) {
+            showMessage("No synthesized ideas yet — run Synthesize · 3 questions or a Writing prompt first.", binding.root)
+            return
+        }
+        val labels = ideas.map {
+            val tag = when (it.kind) { "question" -> "❓"; "prompt" -> "✍"; else -> "•" }
+            "$tag  ${it.text}"
+        }.toTypedArray()
+        val checked = BooleanArray(ideas.size)
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Ideas → grid")
+            .setMultiChoiceItems(labels, checked) { _, which, isChecked -> checked[which] = isChecked }
+            .setPositiveButton("Add to grid") { _, _ ->
+                val picked = ideas.filterIndexed { i, _ -> checked[i] }
+                if (picked.isNotEmpty()) addIdeaCards(picked)
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    /** Render each idea as a gram card and drop it, grid-staggered, onto the Synthesize page. */
+    private fun addIdeaCards(ideas: List<com.toolsboox.plugin.calendar.ot.SynthesisIdea>) {
+        if (!::calendarDay.isInitialized) return
+        val pageKey = "synthesize"
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                for (idea in ideas) {
+                    val bmp = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
+                        idea.text, "— ${idea.from}", null, 1080, 1080)
+                    val baos = java.io.ByteArrayOutputStream()
+                    bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
+                    val base64 = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+                    val w = 1404f * 0.42f; val h = w * bmp.height / bmp.width
+                    val count = calendarDay.imageElements.count { it.page == pageKey }
+                    val x = (60f + (count % 3) * (w + 30f)).coerceIn(0f, (1404f - w).coerceAtLeast(0f))
+                    val y = (120f + (count / 3) * (h + 30f)).coerceIn(0f, (1872f - h).coerceAtLeast(0f))
+                    calendarDay.imageElements.add(com.toolsboox.da.ImageElement(
+                        x = x, y = y, width = w, height = h, data = base64, page = pageKey))
+                }
+            }
+            calendarPattern.updateDay(calendarDay)
+            presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+            if (notePage == pageKey)
+                setImageElements(calendarDay.imageElements.filter { it.page == pageKey }.toMutableList())
+            else CalendarNavigator.toDayNote(this@CalendarDayFragment, currentDate, pageKey)
+            showMessage("Added ${ideas.size} idea card(s) to the grid.", binding.root)
+        }
+    }
 
     /** A stroke belongs to a panel if its centroid falls inside the panel's rect. */
     private fun strokeInPanel(stroke: Stroke, rect: android.graphics.RectF): Boolean {
@@ -944,54 +1738,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * popup lives here: this day's sections, every directory, and the tools.
      */
     private fun showLedgerHub() {
+        // Single source of truth: the same directory the feed/book/reader/chat screens use, with
+        // this day's recently-opened books folded into the Bookshelf folder.
         val books: List<Pair<String, () -> Unit>> =
-            recentBooks().map { f -> ("📖  " + f.nameWithoutExtension) to { openBookInReader(f) } } +
-            ("📚  Open Bookshelf" to { findNavController().navigate(R.id.action_to_reader) })
-        // Order: History · Almanac · Personal · Feed · Bookshelf · Ask · Settings.
-        // (This Day lives on the sunshine sections switcher.) All folders open collapsed.
-        showAccordion(
-            listOf(
-                // History — everything consumed: stars, annotations, read feeds, books.
-                Folder("🕘", "History", listOf(
-                    "🗂  All" to { openReadingLog(null) },
-                    "⭐  Stars" to { openFeed("stars", null) },
-                    "🖍️  Annotations" to { openReadingLog(null) },
-                    "🎧  Listened" to { openFeed("read", "listen") },
-                    "📺  Watched" to { openFeed("read", "watch") },
-                    "📰  Feed Read" to { openFeed("read", null) },
-                    "📚  Books Read" to { openReadingLog(LogOrigin.BOOK) }
-                )),
-                Folder("📆", "Almanac", listOf(
-                    "Week" to { CalendarNavigator.toWeekPage(this, currentDate, locale) },
-                    "Month" to { CalendarNavigator.toMonthPage(this, currentDate) },
-                    "Quarter" to { CalendarNavigator.toQuarterPage(this, currentDate) },
-                    "Year" to { CalendarNavigator.toYearPage(this, currentDate) }
-                )),
-                // Personal — the pages you make: pickings, gratitude, A/V grams.
-                Folder("🪞", "Personal", listOf(
-                    "❝  Pickings" to { CalendarNavigator.toDayNote(this, currentDate, "pickings") },
-                    "🙏  Gratitude" to { CalendarNavigator.toDayNote(this, currentDate, "gratitude") },
-                    "🎬  A/V Grams" to { openReadingLog(LogOrigin.AV) }
-                )),
-                // Feed Ledger — the RSS reader: All · Later · Read/Watch/Listen.
-                Folder("📰", "Feed", listOf(
-                    "📰  All" to { openFeed("feed", null) },
-                    "🔖  Later" to { openFeed("later", null) },
-                    "📖  Read" to { openFeed("feed", "read") },
-                    "📺  Watch" to { openFeed("feed", "watch") },
-                    "🎧  Listen" to { openFeed("feed", "listen") }
-                )),
-                Folder("📚", "Bookshelf", books),
-                Folder("💬", "Ask", listOf(
-                    "Open Ask my Ledger" to { findNavController().navigate(R.id.action_to_ledger_chat) }
-                )),
-                // (Tools live on the wrench pill, not here.)
-                Folder("⚙️", "Settings", listOf(
-                    "Open Settings" to { binding.toolbarDrawing.toolbarSettings.performClick() },
-                    "Cloud sync" to { CalendarNavigator.toCloudSync(this) }
-                ))
-            )
-        )
+            recentBooks().map { f -> ("📖  " + f.nameWithoutExtension) to { openBookInReader(f) } }
+        showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this, books))
     }
 
     /** The three most-recently-opened books (recency = file mtime, touched on open). */
@@ -1100,6 +1851,25 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             presenter.load(this@CalendarDayFragment, binding, currentDate, defaultStartHour, locale)
             syncPresenter.backgroundSync(this@CalendarDayFragment, UUID.randomUUID())
         }
+        maybeShowReturnChip()
+    }
+
+    /** If we arrived here from an open article/book (to jot a note), offer a one-tap jump back to
+     *  exactly where we were. Cleared once used. */
+    private fun maybeShowReturnChip() {
+        val anchor = com.toolsboox.ui.plugin.LedgerReturn
+        if (!anchor.isSet) return
+        val label = anchor.label
+        val text = if (label != null) "↩ Back to “$label”" else "↩ Back to where you were"
+        val bar = com.google.android.material.snackbar.Snackbar.make(
+            binding.root, text, com.google.android.material.snackbar.Snackbar.LENGTH_INDEFINITE
+        )
+        bar.setAction("Back") {
+            val action = anchor.navActionId
+            anchor.clear()
+            runCatching { androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(action) }
+        }
+        bar.show()
     }
 
     /**
@@ -1118,6 +1888,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         toolbar.toolbarPager.visibility = View.GONE
         timer.cancel()
+        // Auto-OCR this page's sections in the background as we leave, so section text is always
+        // fresh without a manual capture (skips when the ink is unchanged).
+        runCatching { autoCaptureSections() }
         syncPresenter.backgroundSync(this@CalendarDayFragment, UUID.randomUUID())
     }
 
@@ -1138,6 +1911,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     fun renderPage(
         calendarDay: CalendarDay, calendarPattern: CalendarPattern, calendarEvents: List<CalendarEvent>
     ) {
+        // The load runs on a lifecycle-detached scope; if this fragment is already paused/detached
+        // (a fast second page turn replaced it), don't post an intermediate page's strokes onto the
+        // surface — that's another way old ink lands over the destination page.
+        if (!isAdded || !isResumed) return
         this.calendarDay = calendarDay
         this.calendarPattern = calendarPattern
         updateNavigator()
@@ -1158,6 +1935,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             } else {
                 CalendarDayPageNotes.drawPage(this.requireContext(), templateCanvas, calendarDay, noteTemplate, notePage!!)
             }
+            // Zones still capture per-section (captureSections), but we no longer paint
+            // boxes/labels over the page — the original template provides the sectioning.
             applyStrokes(Stroke.listDeepCopy(noteStrokes), true)
         } else {
             binding.toolbarDrawing.toolbarProcrastinator.visibility = View.VISIBLE
@@ -1172,6 +1951,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         // A picker/camera result may have arrived before this load finished.
         consumeDeferredImageInsert()
+
+        // Wipe any stale Onyx hardware ink overlay from a fast previous page turn so it can't
+        // ghost over this freshly rendered page ("overlapping strokes when paging quickly").
+        // Posted so it runs after the template ImageView repaints, capturing the full clean frame.
+        provideSurfaceView().post { forceFullEpdRefresh() }
     }
 
     /**

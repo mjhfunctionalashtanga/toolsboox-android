@@ -113,6 +113,9 @@ class CalendarYearFragment @Inject constructor() : SurfaceFragment() {
      */
     override fun provideSurfaceView(): SurfaceView = binding.surfaceView
 
+    override fun provideExcludeViews(): List<android.view.View> =
+        if (::binding.isInitialized) listOf(binding.navWidget) else emptyList()
+
 
     /**
      * Provide toolbar of drawing's bindings.
@@ -232,7 +235,8 @@ class CalendarYearFragment @Inject constructor() : SurfaceFragment() {
 
         setupAlmanacNavPill(
             binding.navWidget, binding.navGrip, binding.navUp, binding.navDown, binding.navGoto,
-            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, com.toolsboox.R.drawable.ic_calendar_today
+            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, com.toolsboox.R.drawable.ic_calendar_today,
+            isAtPresent = { currentDate.year == LocalDate.now().year }
         ) { CalendarNavigator.toYearPage(this, LocalDate.now(), CalendarYear.DEFAULT_STYLE) }
 
         utils.updateToolbar(binding)

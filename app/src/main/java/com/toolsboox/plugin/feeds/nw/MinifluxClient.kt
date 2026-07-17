@@ -41,6 +41,10 @@ class MinifluxClient @Inject constructor() {
     fun fetchRead(baseUrl: String, token: String, limit: Int = 100): Result<List<FeedEntry>> =
         fetch(baseUrl, token, "status=read", limit)
 
+    /** Full-text search across every entry on the server (Miniflux `search=`). */
+    fun search(baseUrl: String, token: String, query: String, limit: Int = 100): Result<List<FeedEntry>> =
+        fetch(baseUrl, token, "search=${java.net.URLEncoder.encode(query, "UTF-8")}", limit)
+
     private fun fetch(baseUrl: String, token: String, filter: String, limit: Int): Result<List<FeedEntry>> {
         if (baseUrl.isBlank() || token.isBlank()) return Result.Err("Add your Miniflux URL and token in Settings.")
         val url = "${normalize(baseUrl)}/v1/entries?$filter&order=published_at&direction=desc&limit=$limit"
@@ -100,9 +104,16 @@ class MinifluxClient @Inject constructor() {
             val e = arr.optJSONObject(i) ?: continue
             val feed = e.optJSONObject("feed")
             // First image enclosure → featured-image fallback for feeds without an inline <img>.
-            val enclosureImage = e.optJSONArray("enclosures")?.let { encs ->
-                (0 until encs.length()).asSequence().mapNotNull { encs.optJSONObject(it) }
+            val encs = e.optJSONArray("enclosures")
+            val enclosureImage = encs?.let { arr ->
+                (0 until arr.length()).asSequence().mapNotNull { arr.optJSONObject(it) }
                     .firstOrNull { it.optString("mime_type").startsWith("image", true) }
+                    ?.optString("url")?.ifBlank { null }
+            }
+            // First audio enclosure → the real podcast episode file to play.
+            val enclosureAudio = encs?.let { arr ->
+                (0 until arr.length()).asSequence().mapNotNull { arr.optJSONObject(it) }
+                    .firstOrNull { it.optString("mime_type").startsWith("audio", true) }
                     ?.optString("url")?.ifBlank { null }
             }
             out += FeedEntry(
@@ -114,8 +125,10 @@ class MinifluxClient @Inject constructor() {
                 content = e.optString("content"),
                 publishedAt = e.optString("published_at"),
                 starred = e.optBoolean("starred", false),
+                read = e.optString("status") == "read",
                 category = feed?.optJSONObject("category")?.optString("title")?.ifBlank { null },
-                enclosureImage = enclosureImage
+                enclosureImage = enclosureImage,
+                enclosureAudio = enclosureAudio
             )
         }
         return out

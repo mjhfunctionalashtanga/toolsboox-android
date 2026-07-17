@@ -21,6 +21,13 @@ import java.util.UUID
  */
 object LedgerExtractor {
 
+    /** Settings flag (MAIN prefs) for the on-device auto-extract of the Tasks/Schedule sections.
+     *  Default OFF: the VPS Sonnet OCR already transcribes the page far better, so this weaker
+     *  on-device ink OCR is redundant. Gated behind a toggle rather than removed. The lasso
+     *  "Create task/event" path is unaffected — it's the curated, vision-OCR route that feeds
+     *  CalDAV / Google Calendar. */
+    const val AUTO_EXTRACT_ENABLED_KEY = "ledgerAutoExtractEnabled"
+
     /** Vertical gap (1872-tall template space) beyond which a new item starts. */
     private const val ROW_GAP = 46f
 
@@ -84,27 +91,30 @@ object LedgerExtractor {
         return groups
     }
 
-    /** Auto: extract one item per row-cluster inside [rect]. */
+    /**
+     * Auto: extract one item per row-cluster inside [rect]. [date] is the DUE date — the page's
+     * own day, so a task written on a future page is due that day, not today.
+     */
     suspend fun extractPanel(
-        strokes: List<Stroke>, rect: RectF, kind: LedgerItem.Kind, source: String
+        strokes: List<Stroke>, rect: RectF, kind: LedgerItem.Kind, source: String, date: Date
     ): List<LedgerItem> =
-        clusterByRow(strokesInRect(strokes, rect)).mapNotNull { group -> itemFrom(group, kind, source) }
+        clusterByRow(strokesInRect(strokes, rect)).mapNotNull { group -> itemFrom(group, kind, source, date) }
 
-    /** Lasso: the given strokes are one item (the selection defines the boundary). */
+    /** Lasso: the given strokes are one item (the selection defines the boundary). [date] = due date. */
     suspend fun extractStrokes(
-        strokes: List<Stroke>, kind: LedgerItem.Kind, source: String
-    ): LedgerItem? = itemFrom(writingOnly(strokes), kind, source)
+        strokes: List<Stroke>, kind: LedgerItem.Kind, source: String, date: Date
+    ): LedgerItem? = itemFrom(writingOnly(strokes), kind, source, date)
 
     /** Bounding rect of [strokes] (for rendering a vision crop); empty rect if none. */
     fun boundsOf(strokes: List<Stroke>): RectF =
         if (strokes.isEmpty()) RectF() else groupBounds(strokes)
 
-    /** Build an item from a selection + already-recognized [text] (the Layer-2 vision path). */
-    fun itemWithText(strokes: List<Stroke>, kind: LedgerItem.Kind, text: String, source: String): LedgerItem? {
+    /** Build an item from a selection + already-recognized [text] (the Layer-2 vision path). [date] = due date. */
+    fun itemWithText(strokes: List<Stroke>, kind: LedgerItem.Kind, text: String, source: String, date: Date): LedgerItem? {
         if (strokes.isEmpty() || text.isBlank()) return null
         val b = groupBounds(strokes)
         return LedgerItem(
-            id = "li-${UUID.randomUUID()}", kind = kind, text = text.trim(), date = Date(),
+            id = "li-${UUID.randomUUID()}", kind = kind, text = text.trim(), date = date,
             left = b.left, top = b.top, right = b.right, bottom = b.bottom,
             strokeIds = strokes.map { it.strokeId.toString() }.toMutableList(),
             display = LedgerItem.Display.TEXT,
@@ -113,7 +123,7 @@ object LedgerExtractor {
         )
     }
 
-    private suspend fun itemFrom(group: List<Stroke>, kind: LedgerItem.Kind, source: String): LedgerItem? {
+    private suspend fun itemFrom(group: List<Stroke>, kind: LedgerItem.Kind, source: String, date: Date): LedgerItem? {
         if (group.isEmpty()) return null
         val text = PanelOcr.recognize(group).trim()
         if (text.isEmpty()) return null
@@ -123,7 +133,7 @@ object LedgerExtractor {
             id = "li-${UUID.randomUUID()}",
             kind = kind,
             text = text,
-            date = Date(),
+            date = date,
             left = b.left, top = b.top, right = b.right, bottom = b.bottom,
             strokeIds = group.map { it.strokeId.toString() }.toMutableList(),
             display = LedgerItem.Display.TEXT,

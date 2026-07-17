@@ -15,8 +15,13 @@ import com.toolsboox.R
 import com.toolsboox.da.Attachment
 import com.toolsboox.databinding.FragmentReadingLogBinding
 import com.toolsboox.plugin.calendar.da.v2.ReadingEvent
+import com.toolsboox.plugin.calendar.CalendarNavigator
+import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
+import com.toolsboox.plugin.calendar.util.LedgerExport
 import com.toolsboox.plugin.michaelfilter.nw.IntakePageStore
+import androidx.appcompat.app.AlertDialog
+import androidx.core.widget.doAfterTextChanged
 import com.toolsboox.plugin.michaelfilter.ot.ShareTextParser
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
@@ -52,7 +57,9 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     private enum class Range(val label: String) {
         DAY("Day"), WEEK("Week"), MONTH("Month"), QUARTER("Quarter"), YEAR("Year"), ALL("All")
     }
-    private var range = Range.MONTH
+    // Day-based to match the unified Almanac navigator (the day nav steps ‹ ›).
+    private var range = Range.DAY
+    private var navBar: CalendarNavBarHost? = null
 
     /** Anchor date inside the currently-shown window; ‹ › shift it by one level unit. */
     private var anchor: LocalDate = LocalDate.now()
@@ -62,6 +69,8 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     /** Origin filter (null = All). The AV chip is the union of Watch/Listen/AV captures. */
     private var origin: LogOrigin? = null
     private var allItems: List<LogItem> = emptyList()
+    private var lastShown: List<LogItem> = emptyList()
+    private var searchQuery: String = ""
 
     /** Inclusive-start / exclusive-end bounds of the current window (null = unbounded/All). */
     private fun windowStart(): LocalDate? = when (range) {
@@ -90,55 +99,6 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             Range.ALL -> anchor
         }
     }
-    /** Human title for the current window, shown between the carets like the almanac bar. */
-    private fun periodTitle(): String {
-        val s = windowStart() ?: return getString(R.string.reading_log_range_all)
-        fun fmt(skeleton: String) = DateFormat.format(
-            DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), skeleton),
-            Date.from(s.atStartOfDay(ZoneId.systemDefault()).toInstant())
-        ).toString()
-        return when (range) {
-            Range.DAY -> fmt("EEE MMM d yyyy")
-            Range.WEEK -> "Week ${s.get(weekFields.weekOfWeekBasedYear())} · ${s.year}"
-            Range.MONTH -> fmt("MMMM yyyy")
-            Range.QUARTER -> "Q${(s.monthValue - 1) / 3 + 1} ${s.year}"
-            Range.YEAR -> "${s.year}"
-            Range.ALL -> getString(R.string.reading_log_range_all)
-        }
-    }
-    private fun updatePeriodBar() {
-        binding.periodTitle.text = periodTitle()
-        val bounded = range != Range.ALL
-        binding.prevButton.visibility = if (bounded) View.VISIBLE else View.INVISIBLE
-        binding.nextButton.visibility = if (bounded) View.VISIBLE else View.INVISIBLE
-        // Highlight the active level chip in the almanac-style ladder.
-        for (i in 0 until binding.levelRow.childCount) {
-            val chip = binding.levelRow.getChildAt(i) as? android.widget.TextView ?: continue
-            val active = chip.tag == range
-            chip.setTypeface(null, if (active) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
-            chip.paintFlags = if (active) chip.paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
-                else chip.paintFlags and android.graphics.Paint.UNDERLINE_TEXT_FLAG.inv()
-        }
-    }
-
-    /** Build the Day · Week · Month · Quarter · Year · All ladder into the level row. */
-    private fun buildLevelChips() {
-        val row = binding.levelRow
-        row.removeAllViews()
-        for (r in Range.values()) {
-            val chip = android.widget.TextView(requireContext()).apply {
-                text = r.label; tag = r; textSize = 15f
-                setTextColor(0xFF000000.toInt())
-                val p = (10 * resources.displayMetrics.density).toInt()
-                setPadding(p, p / 2, p, p / 2)
-                setOnClickListener {
-                    range = r; anchor = LocalDate.now()
-                    updatePeriodBar(); load()
-                }
-            }
-            row.addView(chip)
-        }
-    }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -154,10 +114,19 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             DividerItemDecoration(requireContext(), DividerItemDecoration.VERTICAL)
         )
 
-        // Almanac-style top bar: the Day/Week/Month/Quarter/Year/All ladder + period pager.
-        buildLevelChips()
-        binding.prevButton.setOnClickListener { shiftAnchor(-1); updatePeriodBar(); load() }
-        binding.nextButton.setOnClickListener { shiftAnchor(1); updatePeriodBar(); load() }
+        // The unified Almanac navigator (same as the feed / Tasks & Events): arrows step
+        // the day; the day/week/month slots jump into the calendar.
+        navBar = CalendarNavBarHost(
+            requireContext(), binding.navigatorImageView, this,
+            onStepDay = { d -> val dir = if (d.isBefore(anchor)) -1 else 1; shiftAnchor(dir); renderNav(); load() },
+            onSelectPeriod = { g, d ->
+                range = when (g) {
+                    "week" -> Range.WEEK; "month" -> Range.MONTH
+                    "quarter" -> Range.QUARTER; "year" -> Range.YEAR; else -> Range.DAY
+                }
+                anchor = d; renderNav(); load()
+            }
+        )
 
         binding.originButton.text = originLabel()
         binding.originButton.setOnClickListener {
@@ -168,14 +137,56 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             applyFilter()
         }
 
+        // Hamburger = the unified "jump to any section" menu.
         binding.gotoButton.setOnClickListener {
-            NavHostFragment.findNavController(this).navigate(R.id.action_to_calendar_day)
+            showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
         }
         // Capture an A/V gram (photo / voice / video note-to-self) into today's day.
         binding.gramButton.setOnClickListener { captureAvGram { saveGram(it) } }
 
-        updatePeriodBar()
+        binding.exportButton.setOnClickListener { promptExport() }
+        binding.searchField.doAfterTextChanged {
+            val q = it?.toString().orEmpty()
+            if (q != searchQuery) { searchQuery = q; load() }
+        }
+
+        // Floating nav pill: ‹ up · ☀ today-then-menu · down ›.
+        binding.readingPageUp.setOnClickListener {
+            binding.readingRecycler.scrollBy(0, -(binding.readingRecycler.height * 9 / 10))
+        }
+        binding.readingPageDown.setOnClickListener {
+            binding.readingRecycler.scrollBy(0, binding.readingRecycler.height * 9 / 10)
+        }
+        binding.readingGoto.setOnClickListener {
+            if (range == Range.DAY && anchor == LocalDate.now()) {
+                showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
+            } else {
+                range = Range.DAY; anchor = LocalDate.now(); renderNav(); load()
+            }
+        }
+        binding.readingPill.bringToFront()
+        makeDraggable(binding.readingGrip, binding.readingPill, "reading_pill")
+
+        renderNav()
         load()
+    }
+
+    @Inject
+    lateinit var calendarPatternService: com.toolsboox.plugin.calendar.fi.CalendarPatternService
+
+    /** Redraw the Almanac navigator strip for the current anchor day. */
+    private fun renderNav() {
+        lifecycleScope.launch {
+            val root = documentsRoot()
+            val loc = java.util.Locale.getDefault()
+            val (day, pat) = withContext(Dispatchers.IO) {
+                val cd = runCatching { calendarDayService.load(root, anchor, null, loc) }.getOrNull()
+                    ?: CalendarDay(anchor.year, anchor.monthValue, anchor.dayOfMonth, startHour = null)
+                val p = runCatching { calendarPatternService.load(root, anchor, loc) }.getOrNull()
+                cd to p
+            }
+            pat?.let { navBar?.render(day, it) }
+        }
     }
 
     override fun onResume() {
@@ -188,7 +199,10 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     private fun load() {
         binding.progress.visibility = View.VISIBLE
         binding.emptyText.visibility = View.GONE
-        val start = windowStart(); val end = windowEnd()
+        // A live search scans the whole corpus (all time); browsing honors the period window.
+        val searching = searchQuery.isNotBlank()
+        val start = if (searching) null else windowStart()
+        val end = if (searching) null else windowEnd()
         lifecycleScope.launch {
             allItems = withContext(Dispatchers.IO) { gather(start, end) }
             binding.progress.visibility = View.INVISIBLE
@@ -198,9 +212,32 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
 
     private fun applyFilter() {
         val o = origin
-        val shown = if (o == null) allItems else allItems.filter { it.origin == o }
+        val q = searchQuery.trim().lowercase()
+        val shown = allItems.filter { item ->
+            (o == null || item.origin == o) &&
+                (q.isEmpty() ||
+                    item.title.lowercase().contains(q) ||
+                    item.meta.lowercase().contains(q) ||
+                    item.body.lowercase().contains(q))
+        }
         adapter.submit(shown)
+        lastShown = shown
         binding.emptyText.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
+    }
+
+    /** Export the currently-shown highlights & annotations as Markdown or CSV. */
+    private fun promptExport() {
+        val items = lastShown
+        if (items.isEmpty()) { showMessage(getString(R.string.reading_log_empty)); return }
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.reading_log_export)
+            .setItems(arrayOf("Markdown (.md)", "CSV (.csv)")) { _, which ->
+                val ctx = requireContext().applicationContext
+                if (which == 0) LedgerExport.share(ctx, LedgerExport.markdown(items), "ledger-highlights.md", "text/markdown")
+                else LedgerExport.share(ctx, LedgerExport.csv(items), "ledger-highlights.csv", "text/csv")
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     /** Walk the day files inside [start, end) (nulls = unbounded), flattening to log items. */
@@ -305,28 +342,128 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    /** Voice memos play/stop on tap; photo annotations open full-screen; links open the source. */
+    /** Tapping a note/annotation slides up a detail popup with its full info + actions. */
     private fun openItem(item: LogItem) {
-        item.audioPath?.let { toggleAudio(it); return }
-        val img = item.imagePath
-        if (img != null && File(img).exists() && item.url.isNullOrBlank()) { openImage(img); return }
-        val url = item.url
-        if (!url.isNullOrBlank()) startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-        else showMessage(getString(R.string.reading_log_open_hint, item.title))
+        showItemDetail(item)
     }
 
-    private var player: android.media.MediaPlayer? = null
+    /** A read-only detail card for one log item — title, source/date, image, full
+     *  body/excerpt/note — with Open-link / Play / Photo actions where relevant. */
+    private fun showItemDetail(item: LogItem) {
+        val ctx = requireContext()
+        val d = resources.displayMetrics.density
+        fun px(v: Int) = (v * d).toInt()
 
-    private fun toggleAudio(path: String) {
-        if (player != null) { runCatching { player?.stop() }; player?.release(); player = null; return }
-        if (!File(path).exists()) { showMessage(R.string.reader_capture_failed); return }
-        runCatching {
-            player = android.media.MediaPlayer().apply {
-                setDataSource(path)
-                setOnCompletionListener { it.release(); player = null }
-                prepare(); start()
+        val col = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(px(22), px(20), px(22), px(8))
+        }
+        col.addView(android.widget.TextView(ctx).apply {
+            text = item.title.ifBlank { getString(R.string.reading_log_untitled) }
+            textSize = 20f; setTextColor(android.graphics.Color.BLACK)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        val meta = listOf(item.origin.label, item.meta).filter { it.isNotBlank() }.joinToString(" · ")
+        if (meta.isNotBlank()) col.addView(android.widget.TextView(ctx).apply {
+            text = meta; textSize = 13f; setTextColor(android.graphics.Color.DKGRAY)
+            setPadding(0, px(4), 0, 0)
+        })
+        item.imagePath?.let { p ->
+            if (File(p).exists()) col.addView(android.widget.ImageView(ctx).apply {
+                setImageURI(Uri.fromFile(File(p)))
+                adjustViewBounds = true
+                setPadding(0, px(12), 0, 0)
+            })
+        }
+        if (item.body.isNotBlank()) col.addView(android.widget.TextView(ctx).apply {
+            text = item.body; textSize = 16f; setTextColor(android.graphics.Color.BLACK)
+            setPadding(0, px(12), 0, 0); setLineSpacing(0f, 1.15f)
+        })
+
+        // Add this item (A/V gram with its transcription, highlight, note…) onto a pickings board.
+        val pickBtn = android.widget.Button(ctx).apply {
+            text = "❝  Add to Pickings"; isAllCaps = false; setPadding(0, px(8), 0, 0)
+        }
+        col.addView(pickBtn)
+
+        val scroll = android.widget.ScrollView(ctx).apply { addView(col) }
+        val builder = AlertDialog.Builder(ctx).setView(scroll)
+        // "Go to" takes you to the page/source the item came from.
+        builder.setPositiveButton("Go to") { _, _ -> goToSource(item) }
+        item.audioPath?.let { path ->
+            builder.setNeutralButton("Play") { _, _ -> toggleAudio(path) }
+        }
+        builder.setNegativeButton("Close", null)
+        val dialog = builder.show()
+        pickBtn.setOnClickListener { dialog.dismiss(); addLogItemToPickings(item) }
+    }
+
+    /** Render a card from a log item (A/V gram → its Whisper transcription; else its text) and place
+     *  it onto a pickings board via the shared chooser. */
+    private fun addLogItemToPickings(item: LogItem) {
+        showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
+        lifecycleScope.launch {
+            val bmp = withContext(Dispatchers.IO) {
+                val transcript = item.audioPath?.let {
+                    com.toolsboox.plugin.calendar.nw.Transcribe.audio(requireContext(), File(it))
+                }
+                val head = if (item.origin == LogOrigin.AV) "🎬 ${item.title.ifBlank { "A/V gram" }}" else item.title
+                val cardText = listOf(head, transcript ?: item.body).filter { it.isNotBlank() }.joinToString("\n\n")
+                    .ifBlank { "A/V gram" }
+                com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
+                    cardText, null, null,
+                    com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.Format.SQUARE.w,
+                    com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.Format.SQUARE.h)
             }
-        }.onFailure { player?.release(); player = null; showMessage(R.string.reader_capture_failed) }
+            val srcDate = java.time.Instant.ofEpochMilli(item.millis)
+                .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+            val src = when {
+                !item.url.isNullOrBlank() && item.url!!.startsWith("http") -> item.url!!
+                item.origin == LogOrigin.PICKING -> "ledger://$srcDate/pickings"
+                item.origin == LogOrigin.AV -> "ledger://$srcDate/day"
+                else -> ""
+            }
+            com.toolsboox.plugin.calendar.ot.PickingsPlacement.chooseAndPlace(
+                this@ReadingLogFragment, calendarDayService, documentsRoot(), bmp,
+                sourceLink = src, sourceLabel = item.title)
+        }
+    }
+
+    /** Navigate to wherever a log item came from: article link, book, or the day page. */
+    private fun goToSource(item: LogItem) {
+        val date = java.time.Instant.ofEpochMilli(item.millis)
+            .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        when (item.origin) {
+            LogOrigin.PICKING -> CalendarNavigator.toDayNote(this, date, "pickings")
+            LogOrigin.AV -> CalendarNavigator.toDayPage(this, date, CalendarDay.DEFAULT_STYLE)
+            LogOrigin.BOOK ->
+                androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.action_to_reader)
+            else -> {
+                val url = item.url
+                if (!url.isNullOrBlank()) {
+                    // Open the article inside the Feed Ledger's in-pane reader.
+                    com.toolsboox.plugin.feeds.ui.FeedSelection.pendingInPaneEntry =
+                        com.toolsboox.plugin.feeds.da.FeedEntry(
+                            id = item.millis, title = item.title, feedTitle = "",
+                            url = url, author = null,
+                            content = item.body.ifBlank { "<p><em>Opening from your Ledger…</em></p>" },
+                            publishedAt = java.time.Instant.ofEpochMilli(item.millis).toString(),
+                            starred = false
+                        )
+                    androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.action_to_feeds)
+                } else CalendarNavigator.toDayPage(this, date, CalendarDay.DEFAULT_STYLE)
+            }
+        }
+    }
+
+    /** Play a captured voice memo through the shared player — same transport + modal as everything
+     *  else, and it keeps playing if you leave the log. Tapping again while active opens the modal. */
+    private fun toggleAudio(path: String) {
+        val player = com.toolsboox.ui.plugin.LedgerPlayer
+        if (player.isActive) { player.showModal(requireContext()); return }
+        if (!File(path).exists()) { showMessage(R.string.reader_capture_failed); return }
+        player.startAudio(requireContext(), getString(R.string.reading_log_av_audio), null, null, path)
+        player.showModal(requireContext())
     }
 
     private fun openImage(path: String) {
@@ -339,7 +476,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
 
     override fun onPause() {
         super.onPause()
-        player?.release(); player = null
+        // The shared LedgerPlayer intentionally keeps playing after you leave the log.
     }
 
     private fun documentsRoot(): File =

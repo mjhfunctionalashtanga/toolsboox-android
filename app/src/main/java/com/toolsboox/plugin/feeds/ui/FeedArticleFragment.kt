@@ -19,7 +19,6 @@ import com.toolsboox.plugin.calendar.da.v2.ReadingEvent
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
 import com.toolsboox.plugin.feeds.da.FeedEntry
 import com.toolsboox.plugin.feeds.nw.MinifluxClient
-import com.toolsboox.ui.plugin.LedgerTts
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -67,9 +66,35 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         // JS on so we can read the text selection for highlight-to-annotation.
         binding.articleWeb.settings.javaScriptEnabled = true
 
+        // Long-press a link → Add to Later List (files + publishes to the RSS feed).
+        binding.articleWeb.setOnLongClickListener {
+            val result = binding.articleWeb.hitTestResult
+            val url = result.extra
+            if ((result.type == android.webkit.WebView.HitTestResult.SRC_ANCHOR_TYPE ||
+                        result.type == android.webkit.WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) &&
+                !url.isNullOrBlank()
+            ) {
+                androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                    .setTitle(url)
+                    .setItems(arrayOf("🔖  Add to Later List", "🌐  Open")) { _, which ->
+                        if (which == 0) {
+                            com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.fileLink(
+                                requireContext(), java.time.LocalDate.now(), "read", url, null)
+                            showMessage("Saved to Later List", binding.root)
+                        } else {
+                            startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
+                        }
+                    }.show()
+                true
+            } else false
+        }
+
         // Floating nav pill: grip drags/collapses; ‹ › page, ⌃ ⌄ step articles, ✎ annotate.
         makeDraggable(binding.artGrip, binding.artPill, "article")
         binding.artMenu.setOnClickListener { openRssDirectory() }
+        binding.artToday.setOnClickListener {
+            androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.action_to_calendar_day)
+        }
         binding.artMenu.setOnLongClickListener { showArticleMenu(); true }
         binding.artStar.setOnClickListener { entry?.let { star(it) } }
         binding.artParse.setOnClickListener { toggleParse() }
@@ -178,11 +203,16 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
     /** Long-press ☰: browser, read-aloud, and reader settings (tap-zone / volume page-turn). */
     private fun showArticleMenu() {
         val tapOn = tapZonesOn(); val volOn = volumeTurnOn()
-        val t = tts
-        // Read-aloud is a small state machine: idle → Read; speaking → Pause + Stop; paused → Resume + Stop.
+        val player = com.toolsboox.ui.plugin.LedgerPlayer
+        // Read-aloud is a small state machine: idle → Read; speaking → Pause + Player + Stop; paused → Resume + Stop.
         val readItems: List<Pair<String, () -> Unit>> = when {
-            t?.isSpeaking == true -> listOf("⏸  Pause reading" to { t.pause() }, "⏹  Stop reading" to { t.stop() })
-            t?.isPaused == true -> listOf("▶  Resume reading" to { t.resume() }, "⏹  Stop reading" to { t.stop() })
+            player.isSpeaking -> listOf(
+                "⏸  Pause reading" to { player.toggle() },
+                "🎛  Player…" to { player.showModal(requireContext()) },
+                "⏹  Stop reading" to { player.stop() })
+            player.isPaused -> listOf(
+                "▶  Resume reading" to { player.toggle() },
+                "⏹  Stop reading" to { player.stop() })
             else -> listOf("🔊  Read aloud" to { readAloud() })
         }
         val fixed: List<Pair<String, () -> Unit>> = listOf(
@@ -196,14 +226,16 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         showIconMenu(null, all)
     }
 
-    private var tts: LedgerTts? = null
-
-    /** Read the article text aloud via TTS (the readability/parsed body if shown). */
+    /** Read the article aloud via the process-wide player (keeps playing after you leave). */
     private fun readAloud() {
-        val engine = tts ?: LedgerTts(requireContext()).also { tts = it }
+        val e = entry
         binding.articleWeb.evaluateJavascript(
             "(document.body && document.body.innerText) || ''"
-        ) { raw -> engine.speak(unquoteJs(raw)) }
+        ) { raw ->
+            val player = com.toolsboox.ui.plugin.LedgerPlayer
+            player.start(requireContext(), e?.title, e?.feedTitle?.ifBlank { null }, e?.imageUrl, unquoteJs(raw))
+            player.showModal(requireContext())
+        }
     }
 
     override fun onResume() {
@@ -236,7 +268,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
     private fun showEntry(e: FeedEntry) {
         entry = e
         parsed = false
-        binding.articleWeb.loadDataWithBaseURL(null, buildHtml(e, e.content), "text/html", "UTF-8", null)
+        binding.articleWeb.loadDataWithBaseURL(articleBaseUrl(e), buildHtml(e, e.content), "text/html", "UTF-8", null)
         updateStar()
         updateParse()
         val p = prefs()
@@ -262,7 +294,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         val e = entry ?: return
         if (parsed) {
             parsed = false
-            binding.articleWeb.loadDataWithBaseURL(null, buildHtml(e, e.content), "text/html", "UTF-8", null)
+            binding.articleWeb.loadDataWithBaseURL(articleBaseUrl(e), buildHtml(e, e.content), "text/html", "UTF-8", null)
             updateParse()
             return
         }
@@ -275,13 +307,18 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
             when (res) {
                 is MinifluxClient.Result.Ok -> {
                     parsed = true
-                    binding.articleWeb.loadDataWithBaseURL(null, buildHtml(e, res.value.ifBlank { e.content }), "text/html", "UTF-8", null)
+                    binding.articleWeb.loadDataWithBaseURL(articleBaseUrl(e), buildHtml(e, res.value.ifBlank { e.content }), "text/html", "UTF-8", null)
                     updateParse()
                 }
                 is MinifluxClient.Result.Err -> showMessage("⚠️ " + res.message)
             }
         }
     }
+
+    /** A real https baseUrl gives the WebView document a valid origin/referer. A null baseUrl leaves
+     *  embeds on an opaque origin, which makes YouTube fail with "error 150" (embedding not allowed). */
+    private fun articleBaseUrl(e: FeedEntry): String =
+        e.url.takeIf { it.startsWith("http", ignoreCase = true) } ?: "https://www.youtube.com"
 
     private fun buildHtml(e: FeedEntry, content: String): String {
         val meta = listOf(e.feedTitle, e.author ?: "").filter { it.isNotBlank() }.joinToString(" · ")
@@ -295,6 +332,8 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
               h1 { font-size: 26px; line-height: 1.25; }
               .meta { color: #666; font-size: 14px; margin-bottom: 18px; }
               img { max-width: 100%; height: auto; }
+              iframe { max-width: 100%; border: 0; }
+              @supports (aspect-ratio: 16 / 9) { iframe { width: 100%; height: auto; aspect-ratio: 16 / 9; } }
               a { color: #000; }
               pre, code { white-space: pre-wrap; }
             </style></head><body>
@@ -327,7 +366,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         binding.articleWeb.evaluateJavascript(
             "(function(){var s=window.getSelection&&window.getSelection();return s?s.toString():'';})()"
         ) { raw ->
-            captureAnnotation(unquoteJs(raw).trim()) { selection, note, attachment ->
+            captureAnnotation(unquoteJs(raw).trim(), e.title) { selection, note, attachment ->
                 lifecycleScope.launch {
                     withContext(Dispatchers.IO) { logEvent(e, excerpt = selection, note = note, attachment = attachment) }
                 }
@@ -390,7 +429,6 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
     override fun hideLoading() {}
 
     override fun onDestroyView() {
-        tts?.shutdown(); tts = null
         if (::binding.isInitialized) binding.articleWeb.destroy()
         super.onDestroyView()
     }

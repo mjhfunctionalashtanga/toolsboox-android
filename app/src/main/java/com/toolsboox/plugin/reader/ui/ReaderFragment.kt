@@ -45,10 +45,21 @@ import javax.inject.Inject
  * today's `CalendarDay` so they join the shared corpus + sync.
  */
 @AndroidEntryPoint
-class ReaderFragment @Inject constructor() : ScreenFragment() {
+class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.plugin.ReturnAnchorProvider {
 
     @Inject
     lateinit var calendarDayService: CalendarDayService
+
+    /** If a book is open, stash a return anchor so the Day page can jump straight back to it. The
+     *  reader restores the last book on its own (KEY_BOOK), so only the nav action + label are needed. */
+    override fun prepareReturnAnchor() {
+        val f = currentBookFile
+        if (f != null) {
+            com.toolsboox.ui.plugin.LedgerReturn.set(R.id.action_to_reader, bookTitle.ifBlank { f.nameWithoutExtension })
+        } else {
+            com.toolsboox.ui.plugin.LedgerReturn.clear()
+        }
+    }
 
     override val view = R.layout.fragment_reader
 
@@ -60,8 +71,14 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
 
     private var bookReady = false
     private var pendingOpen = false
+    /** Ignore the next relocate (foliate's start-of-book report on open) so resume can't be clobbered. */
+    private var skipFirstRelocate = false
+    /** The foliate engine has posted "ready" — `window.openBookURL` exists. Opening a book before
+     *  this is what made the FIRST import fail (engine still loading) and work on the retry. */
+    private var engineReady = false
     private var bookTitle = ""
     private var bookAuthor = ""
+    private var bookCover: android.graphics.Bitmap? = null
 
     private val openBook = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { importAndOpen(it) }
@@ -102,7 +119,10 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
         binding.highlightButton.setOnClickListener {
             web.evaluateJavascript("window.highlightSelection && window.highlightSelection()", null)
         }
-        binding.openButton.setOnClickListener { showLedgerDirectory() }
+        // Wrench in the bottom bar → the book's controls modal (shelf/import/read-aloud/rotate/turns).
+        binding.openButton.setOnClickListener { showReaderControls() }
+        // Sunshine brings up the section nav (selection) rather than jumping straight back.
+        binding.todayButton.setOnClickListener { showLedgerDirectory() }
         binding.settingsButton.setOnClickListener { openSettings() }
         binding.gotoButton.setOnClickListener { showBookDirectory() }
         // Drag to move; tap the grip to hide/show the bar (books want a clean page).
@@ -110,8 +130,13 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
         applyReaderBarCollapse()
         setupTapZones()
 
+        // Empty-state add-book affordance (visible until a book is open).
+        binding.readerAddBook.setOnClickListener {
+            openBook.launch(arrayOf("application/epub+zip", "application/pdf", "application/x-mobipocket-ebook", "*/*"))
+        }
         // Resume the last book, else land on the reader's "waiting for a book" screen.
         restoreLastBook()
+        binding.readerEmpty.visibility = if (currentBookFile == null) View.VISIBLE else View.GONE
         web.loadUrl("$ORIGIN/reader-embed.html")
     }
 
@@ -128,39 +153,62 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
      * Cross-surface "get out" jumps live on the ▦ Ledger directory next to it.
      */
     private fun showBookDirectory() {
-        // Most-recent first (recency tracked by touching the file on open).
-        val books = booksDir().listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() } ?: emptyList()
-        val bookRows: List<Pair<String, () -> Unit>> =
-            books.map { f -> ("📖  " + f.nameWithoutExtension) to { loadBookFile(f) } } +
-            ("＋  Import a book…" to {
-                openBook.launch(arrayOf("application/epub+zip", "application/pdf", "application/x-mobipocket-ebook", "*/*"))
-            })
-        val t = tts
-        val readingRows: List<Pair<String, () -> Unit>> = when {
-            t?.isSpeaking == true -> listOf("⏸  Pause reading" to { t.pause() }, "⏹  Stop reading" to { t.stop() })
-            t?.isPaused == true -> listOf("▶  Resume reading" to { t.resume() }, "⏹  Stop reading" to { t.stop() })
-            else -> listOf("🔊  Read aloud" to { readAloud() })
-        }
+        // In-book navigation + the AI pipeline. Shelf/import/read-aloud/screen controls moved to the
+        // wrench (🔧) in the bottom bar; this ☰ stays about moving *within* the open book.
         val chapterRows: List<Pair<String, () -> Unit>> = tocItems.map { e ->
             ("${"  ".repeat(e.depth)}${if (e.depth == 0) "◦ " else "· "}${e.label}") to { goToHref(e.href) }
         }
-        val tapOn = readerNavPrefs().getBoolean("tap_zones", true)
-        val volOn = readerNavPrefs().getBoolean("volume_turn", true)
         val groups = mutableListOf(
-            "Recent books" to bookRows,
-            "Reading" to readingRows
+            "Synthesize" to listOf(
+                "🔬  3 questions → Synthesize" to { readerSynthesize() },
+                "✍  Writing prompt → Write" to { readerWritingPrompt() },
+                "🗒  Essay outline → Write" to { readerOutline() }
+            )
         )
         if (chapterRows.isNotEmpty()) groups += "Chapters" to chapterRows
-        groups += "Page turn" to listOf(
-            ((if (tapOn) "☑" else "☐") + "  Tap sides to turn") to { toggleReaderNav("tap_zones", !tapOn); setupTapZones() },
-            ((if (volOn) "☑" else "☐") + "  Volume keys turn") to { toggleReaderNav("volume_turn", !volOn) }
-        )
         showDirectory(groups)
     }
 
     /** ▦ Ledger directory — the shared cross-surface "get in/out" menu (Almanac/History/…). */
     private fun showLedgerDirectory() =
         showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
+
+    /**
+     * The wrench (🔧 in the bottom bar): everything *about* the book rather than moving within it —
+     * the shelf + import, read-aloud transport, screen rotate, and the finger/tap page-turn toggles.
+     */
+    private fun showReaderControls() {
+        val books = booksDir().listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() } ?: emptyList()
+        val bookRows: List<Pair<String, () -> Unit>> =
+            books.map { f -> ("📖  " + f.nameWithoutExtension) to { loadBookFile(f) } } +
+            ("＋  Import a book…" to {
+                openBook.launch(arrayOf("application/epub+zip", "application/pdf", "application/x-mobipocket-ebook", "*/*"))
+            })
+        val player = com.toolsboox.ui.plugin.LedgerPlayer
+        val readingRows: List<Pair<String, () -> Unit>> = when {
+            player.isSpeaking -> listOf(
+                "⏸  Pause reading" to { player.toggle() },
+                "🎛  Player…" to { player.showModal(requireContext()) },
+                "⏹  Stop reading" to { player.stop() })
+            player.isPaused -> listOf(
+                "▶  Resume reading" to { player.toggle() },
+                "⏹  Stop reading" to { player.stop() })
+            else -> listOf("🔊  Read aloud" to { readAloud() })
+        }
+        val tapOn = readerNavPrefs().getBoolean("tap_zones", true)
+        val volOn = readerNavPrefs().getBoolean("volume_turn", true)
+        showDirectory(listOf(
+            "Books" to bookRows,
+            "Reading" to readingRows,
+            "Screen" to listOf(
+                "🔄  Rotate screen" to { cycleScreenOrientation() }
+            ),
+            "Page turn (finger)" to listOf(
+                ((if (tapOn) "☑" else "☐") + "  Tap sides to turn") to { toggleReaderNav("tap_zones", !tapOn); setupTapZones() },
+                ((if (volOn) "☑" else "☐") + "  Volume keys turn") to { toggleReaderNav("volume_turn", !volOn) }
+            )
+        ))
+    }
 
     private fun goToHref(href: String) {
         if (href.isBlank()) return
@@ -219,10 +267,18 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
     }
 
     private fun loadBookFile(file: File) {
-        currentBookFile = file
         file.setLastModified(System.currentTimeMillis())   // track recency (last opened)
+        // Audiobooks aren't e-books — hand them to the shared player instead of the foliate WebView.
+        if (com.toolsboox.ui.plugin.LedgerPlayer.isAudioFile(file.name)) {
+            com.toolsboox.ui.plugin.LedgerPlayer.startAudio(
+                requireContext(), file.nameWithoutExtension, "Audiobook", null, file.absolutePath)
+            com.toolsboox.ui.plugin.LedgerPlayer.showModal(requireContext())
+            return
+        }
+        currentBookFile = file
         requireContext().getSharedPreferences(PREFS, 0).edit().putString(KEY_BOOK, file.absolutePath).apply()
         bookReady = false
+        binding.readerEmpty.visibility = View.GONE
         openWhenReady()
     }
 
@@ -291,19 +347,24 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
 
     private fun notFound() = WebResourceResponse("text/plain", "UTF-8", java.io.ByteArrayInputStream(ByteArray(0)))
 
-    /** Copy the picked document into the shelf (keyed by its real name) and open it. */
+    /** Copy the picked document into the shelf (keyed by its real name) and open it. The copy is
+     *  guarded: a null/throwing input stream or an empty result surfaces a message instead of
+     *  crashing (or handing the engine a zero-byte file) — the old first-import crash path. */
     private fun importAndOpen(uri: Uri) {
         lifecycleScope.launch {
             val file = withContext(Dispatchers.IO) {
-                val ext = extensionFor(uri)
-                val base = displayName(uri).substringBeforeLast('.', "book")
-                    .replace(Regex("[^\\w .-]"), "_").take(80).ifBlank { "book" }
-                val dest = File(booksDir(), "$base.$ext")
-                requireContext().contentResolver.openInputStream(uri)?.use { input ->
-                    dest.outputStream().use { input.copyTo(it) }
-                }
-                dest
+                runCatching {
+                    val ext = extensionFor(uri)
+                    val base = displayName(uri).substringBeforeLast('.', "book")
+                        .replace(Regex("[^\\w .-]"), "_").take(80).ifBlank { "book" }
+                    val dest = File(booksDir(), "$base.$ext")
+                    val copied = requireContext().contentResolver.openInputStream(uri)?.use { input ->
+                        dest.outputStream().use { input.copyTo(it) }
+                    }
+                    if (copied == null || !dest.exists() || dest.length() == 0L) null else dest
+                }.onFailure { Timber.w(it, "book import failed") }.getOrNull()
             }
+            if (file == null) { showMessage(R.string.reader_import_failed); return@launch }
             loadBookFile(file)
         }
     }
@@ -325,9 +386,20 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
         if (f.exists()) { currentBookFile = f; pendingOpen = true }
     }
 
-    /** Ask foliate to fetch the book from our host once the engine has signalled ready. */
+    /** Jump back to where we left off in this book (the CFI stored on the last relocate). */
+    private fun restoreReadingPosition() {
+        val f = currentBookFile ?: return
+        ReaderPositionStore.sync(requireContext())   // pull other devices' progress for this book
+        val cfi = ReaderPositionStore.get(requireContext(), f.nameWithoutExtension) ?: return
+        val esc = cfi.replace("\\", "\\\\").replace("'", "\\'")
+        binding.readerWeb.evaluateJavascript("window.goToCfi && window.goToCfi('$esc')", null)
+    }
+
+    /** Ask foliate to fetch the book from our host once the engine has signalled ready. Before the
+     *  engine is ready, defer (pendingOpen) — `handle("ready")` replays this so the book still opens. */
     private fun openWhenReady() {
         if (currentBookFile == null) return
+        if (!engineReady) { pendingOpen = true; return }
         binding.readerWeb.evaluateJavascript("window.openBookURL && window.openBookURL('$ORIGIN/book/current')", null)
     }
 
@@ -343,13 +415,39 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
 
     private fun handle(type: String, msg: JSONObject) {
         when (type) {
-            "ready" -> if (pendingOpen || currentBookFile != null) { pendingOpen = false; openWhenReady() }
+            "ready" -> {
+                engineReady = true
+                if (pendingOpen || currentBookFile != null) { pendingOpen = false; openWhenReady() }
+            }
             "loaded" -> {
                 bookReady = true
                 bookTitle = msg.optString("title").ifBlank { "Untitled" }
                 bookAuthor = msg.optString("author")
+                bookCover = null
                 applyReaderSettings()
                 restoreHighlights()
+                // Skip the first relocate (foliate's start-of-book report on open) so it can't clobber
+                // the saved spot before we jump back to it.
+                skipFirstRelocate = true
+                restoreReadingPosition()
+            }
+            "cover" -> {
+                // data:image/*;base64,<bytes> → the book cover bitmap for the book-gram card.
+                val dataUrl = msg.optString("dataUrl")
+                val comma = dataUrl.indexOf(',')
+                if (comma > 0) runCatching {
+                    val bytes = android.util.Base64.decode(dataUrl.substring(comma + 1), android.util.Base64.DEFAULT)
+                    bookCover = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                }
+            }
+            "relocate" -> {
+                // Foliate reports the current spot on every page turn — remember it per book (by NAME,
+                // so it's portable across devices) and round-trip it through WebDAV.
+                if (skipFirstRelocate) { skipFirstRelocate = false; return }
+                val cfi = msg.optString("cfi")
+                if (cfi.isNotBlank()) currentBookFile?.let {
+                    ReaderPositionStore.set(requireContext(), it.nameWithoutExtension, cfi)
+                }
             }
             "toc" -> {
                 val arr = msg.optJSONArray("items") ?: return
@@ -366,13 +464,14 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
                 // reopen. Then open the shared capture menu so the reader can add a note, photo,
                 // upload, or voice memo — with or without a text selection.
                 if (text.isNotEmpty() && cfi.isNotBlank()) rememberHighlight(cfi)
-                captureAnnotation(text) { selection, note, attachment ->
+                captureAnnotation(text, bookTitle.ifBlank { null }) { selection, note, attachment ->
                     logHighlight(selection, note, cfi, attachment)
                 }
             }
             "tapAnnotation" -> {
                 val cfi = msg.optString("cfi")
-                if (cfi.isNotBlank()) confirmDeleteHighlight(cfi)
+                val text = msg.optString("text").trim()
+                if (cfi.isNotBlank()) showHighlightMenu(cfi, text)
             }
             "openExternal" -> {
                 val href = msg.optString("href")
@@ -447,6 +546,199 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
+    /** Tapping an existing highlight opens its menu: copy the passage, add a note, or remove it —
+     *  not just Delete. (Selecting fresh text still uses the WebView's own Copy/Share popup + the
+     *  ✎ pill to highlight.) */
+    private fun showHighlightMenu(cfi: String, text: String) {
+        val ctx = requireContext()
+        val rows = mutableListOf<Pair<String, () -> Unit>>()
+        if (text.isNotBlank()) rows += "📋  Copy text" to {
+            val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("Ledger", text))
+            showMessage("Copied to clipboard")
+        }
+        rows += "🖍️  Add note" to {
+            captureAnnotation(text, bookTitle.ifBlank { null }) { selection, note, attachment ->
+                logHighlight(selection, note, cfi, attachment)
+            }
+        }
+        if (text.isNotBlank()) rows += "❝  Add to Pickings" to { highlightToPickings(text) }
+        rows += "🗑  Remove highlight" to { confirmDeleteHighlight(cfi) }
+        AlertDialog.Builder(ctx)
+            .setTitle(R.string.reader_highlight)
+            .setItems(rows.map { it.first }.toTypedArray()) { _, which -> rows[which].second() }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun unquoteJs(raw: String): String =
+        runCatching { org.json.JSONTokener(raw).nextValue() as? String }.getOrNull() ?: raw.removeSurrounding("\"")
+
+    private fun runLlmLines(creds: Triple<String, String, String>, system: String, text: String): List<String> {
+        val res = com.toolsboox.plugin.chat.nw.LedgerChatService().run(creds.first, creds.second, creds.third, system, text)
+        return if (res is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok)
+            res.answer.lines().map { it.trim().removePrefix("-").removePrefix("•").removePrefix("*").trim() }.filter { it.isNotEmpty() }
+        else emptyList()
+    }
+
+    /**
+     * The intake boundary for the reader's AI pipeline: a highlighted selection is the explicit
+     * boundary; with nothing selected it falls back to the whole current section. Either way it says
+     * which scope it used, so the intake is never a mystery.
+     */
+    private fun readerIntakeText(onText: (text: String, scope: String) -> Unit) {
+        binding.readerWeb.evaluateJavascript("window.getReaderSelectionText && window.getReaderSelectionText()") { rawSel ->
+            val sel = unquoteJs(rawSel)
+            if (sel.isNotBlank()) { showMessage("Using your selected text."); onText(sel, "selection"); return@evaluateJavascript }
+            binding.readerWeb.evaluateJavascript("window.getReaderText && window.getReaderText()") { raw ->
+                val text = unquoteJs(raw)
+                if (text.isBlank()) { showMessage("Select some text first, or open a readable page."); return@evaluateJavascript }
+                showMessage("Using this whole section (highlight text first to focus it).")
+                onText(text, "section")
+            }
+        }
+    }
+
+    /** The same Synthesize loop as the day pages, from the selected passage / current section: 3 questions. */
+    private fun readerSynthesize() {
+        val creds = com.toolsboox.plugin.chat.nw.AiCreds.get(requireContext())
+            ?: run { showMessage("Add your Ask-my-Ledger key in Settings first."); return }
+        readerIntakeText { text, scope ->
+            lifecycleScope.launch {
+                val qs = withContext(Dispatchers.IO) {
+                    runLlmLines(creds, "You are the reader's thinking partner. From the book passage below, propose " +
+                        "EXACTLY three focused, generative questions worth answering. Output ONLY the three questions, " +
+                        "one per line, no numbering.", text).take(3)
+                }
+                if (qs.isEmpty()) { showMessage("Couldn't synthesize."); return@launch }
+                // Grouped on the Synthesize page: a source gram (back-link to this book) + the questions.
+                val srcLink = currentBookFile?.let { "book://${it.absolutePath}" } ?: ""
+                val srcLabel = (bookTitle.ifBlank { currentBookFile?.nameWithoutExtension ?: "book" }) + " · " + scope
+                com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.add(
+                    requireContext(), LocalDate.now(), qs, "question", bookTitle.ifBlank { "book" })
+                withContext(Dispatchers.IO) {
+                    placeSourcedQuestionsToDay(qs, "synthesize", srcLink, srcLabel)
+                }
+                showMessage("3 questions placed on your Synthesize page.")
+                CalendarNavigator.toDayNote(this@ReaderFragment, LocalDate.now(), "synthesize")
+            }
+        }
+    }
+
+    /**
+     * Reader-side twin of the day page's grouped placement: a source gram card (with the back-link)
+     * at the top of the batch, then the question text boxes beneath it, written straight to today.
+     */
+    private fun placeSourcedQuestionsToDay(lines: List<String>, pageKey: String, sourceLink: String, sourceLabel: String) {
+        val root = documentsRoot(); val today = LocalDate.now()
+        val day = calendarDayService.load(root, today, null, Locale.getDefault())
+        var y = 140f
+        if (sourceLink.isNotBlank()) runCatching {
+            val bmp = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
+                "↩ Synthesized from\n$sourceLabel", null, null, 1100, 240)
+            val baos = java.io.ByteArrayOutputStream(); bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
+            val base64 = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+            val w = 620f; val h = w * bmp.height / bmp.width
+            day.imageElements.add(com.toolsboox.da.ImageElement(
+                x = 90f, y = y, width = w, height = h, data = base64, page = pageKey,
+                sourceLink = sourceLink, sourceLabel = sourceLabel))
+            y += h + 30f
+        }
+        for (line in lines) {
+            day.textElements.add(com.toolsboox.da.TextElement(
+                x = 90f, y = y, width = 1220f, height = 100f, text = line, pageKey = pageKey))
+            y += 120f
+        }
+        calendarDayService.save(root, today, day)
+    }
+
+    /** Offer 3 writing prompts from the selected passage / current section; the chosen one seeds Write. */
+    private fun readerWritingPrompt() {
+        val creds = com.toolsboox.plugin.chat.nw.AiCreds.get(requireContext())
+            ?: run { showMessage("Add your Ask-my-Ledger key in Settings first."); return }
+        readerIntakeText { text, _ ->
+            lifecycleScope.launch {
+                val prompts = withContext(Dispatchers.IO) {
+                    runLlmLines(creds, "From the book passage below, propose THREE distinct, compelling essay writing " +
+                        "prompts that could grow from these ideas. Output ONLY the three prompts, one per line, no numbering.",
+                        text).take(3)
+                }
+                if (prompts.isEmpty()) { showMessage("Couldn't draft prompts."); return@launch }
+                com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.add(
+                    requireContext(), LocalDate.now(), prompts, "prompt", bookTitle.ifBlank { "book" })
+                AlertDialog.Builder(requireContext())
+                    .setTitle("Pick a writing prompt")
+                    .setItems(prompts.toTypedArray()) { _, which ->
+                        lifecycleScope.launch {
+                            withContext(Dispatchers.IO) {
+                                val root = documentsRoot(); val today = LocalDate.now()
+                                val day = calendarDayService.load(root, today, null, Locale.getDefault())
+                                day.textElements.add(com.toolsboox.da.TextElement(
+                                    x = 90f, y = 140f, width = 1220f, height = 100f,
+                                    text = "Prompt: " + prompts[which], pageKey = "write"))
+                                calendarDayService.save(root, today, day)
+                            }
+                            CalendarNavigator.toDayNote(this@ReaderFragment, LocalDate.now(), "write")
+                        }
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+            }
+        }
+    }
+
+    /** Essay outline from the selected passage / current section → movable text boxes in the Write page. */
+    private fun readerOutline() {
+        val creds = com.toolsboox.plugin.chat.nw.AiCreds.get(requireContext())
+            ?: run { showMessage("Add your Ask-my-Ledger key in Settings first."); return }
+        readerIntakeText { text, _ ->
+            lifecycleScope.launch {
+                val lines = withContext(Dispatchers.IO) {
+                    runLlmLines(creds, "Sketch a CLASSIC bullet-pointed essay outline from the book passage below: a " +
+                        "one-line thesis, then Intro, three Body points each with 1–2 sub-bullets, and a Conclusion. " +
+                        "Keep each line short. Output ONLY the outline, one bullet per line.", text)
+                }
+                if (lines.isEmpty()) { showMessage("Couldn't outline that."); return@launch }
+                com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.add(
+                    requireContext(), LocalDate.now(), lines, "outline", bookTitle.ifBlank { "book" })
+                withContext(Dispatchers.IO) {
+                    val root = documentsRoot(); val today = LocalDate.now()
+                    val day = calendarDayService.load(root, today, null, Locale.getDefault())
+                    var y = 140f
+                    for (line in lines) {
+                        day.textElements.add(com.toolsboox.da.TextElement(
+                            x = 90f, y = y, width = 1220f, height = 100f, text = line, pageKey = "write"))
+                        y += 120f
+                    }
+                    calendarDayService.save(root, today, day)
+                }
+                showMessage("Outline placed in Write.")
+                CalendarNavigator.toDayNote(this@ReaderFragment, LocalDate.now(), "write")
+            }
+        }
+    }
+
+    /** Render a card from a book highlight and place it on a pickings board (chooser). The card now
+     *  carries the book title, author, and cover thumbnail. */
+    private fun highlightToPickings(text: String) {
+        val title = bookTitle.ifBlank { currentBookFile?.nameWithoutExtension ?: "" }
+        val author = bookAuthor.ifBlank { null }
+        val cover = bookCover
+        lifecycleScope.launch {
+            val bmp = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
+                    text, source = title, note = null,
+                    W = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.Format.SQUARE.w,
+                    H = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.Format.SQUARE.h,
+                    author = author, cover = cover)
+            }
+            val src = currentBookFile?.let { "book://${it.absolutePath}" } ?: ""
+            com.toolsboox.plugin.calendar.ot.PickingsPlacement.chooseAndPlace(
+                this@ReaderFragment, calendarDayService, documentsRoot(), bmp,
+                sourceLink = src, sourceLabel = bookTitle.ifBlank { currentBookFile?.nameWithoutExtension ?: "" })
+        }
+    }
+
     /** Tapping an existing highlight offers to remove it (mark + stored CFI). */
     private fun confirmDeleteHighlight(cfi: String) {
         AlertDialog.Builder(requireContext())
@@ -485,20 +777,20 @@ class ReaderFragment @Inject constructor() : ScreenFragment() {
     override fun showLoading() {}
     override fun hideLoading() {}
 
-    private var tts: com.toolsboox.ui.plugin.LedgerTts? = null
-
-    /** Read the current book section aloud via TTS (foliate exposes window.getReaderText). */
+    /** Read the current book section aloud via the process-wide player (foliate exposes
+     *  window.getReaderText). Keeps playing after you leave the book; drive it from the modal. */
     private fun readAloud() {
-        val engine = tts ?: com.toolsboox.ui.plugin.LedgerTts(requireContext()).also { tts = it }
         binding.readerWeb.evaluateJavascript("window.getReaderText && window.getReaderText()") { raw ->
             val text = runCatching { org.json.JSONTokener(raw).nextValue() as? String }.getOrNull()
                 ?: raw.removeSurrounding("\"")
-            if (text.isBlank()) showMessage(R.string.reader_capture_failed) else engine.speak(text)
+            if (text.isBlank()) { showMessage(R.string.reader_capture_failed); return@evaluateJavascript }
+            val player = com.toolsboox.ui.plugin.LedgerPlayer
+            player.start(requireContext(), bookTitle.ifBlank { "Reading" }, bookAuthor.ifBlank { null }, null, text)
+            player.showModal(requireContext())
         }
     }
 
     override fun onDestroyView() {
-        tts?.shutdown(); tts = null
         if (::binding.isInitialized) binding.readerWeb.destroy()
         super.onDestroyView()
     }

@@ -140,6 +140,8 @@
     <string name="calendar_settings_button_backup">Export backup</string>
     <string name="calendar_settings_backup_done">Calendar backup exported to the Downloads</string>
     <string name="calendar_settings_button_restore">Import backup</string>
+    <string name="calendar_settings_button_export_settings">Export settings</string>
+    <string name="calendar_settings_button_import_settings">Import settings</string>
     <string name="calendar_settings_restore_done">Calendar backup imported from the Downloads</string>
     <string name="calendar_settings_auto_sync_label">Automatic cloud sync</string>
     <string name="calendar_settings_auto_sync_enabled">Enable auto-sync</string>
@@ -156,6 +158,15 @@
     <string name="calendar_settings_ultrabridge_enabled_toast">WebCal backup enabled</string>
     <string name="calendar_settings_ultrabridge_disabled_toast">WebCal backup disabled</string>
     <string name="calendar_settings_ultrabridge_missing_fields">Please fill in all WebDAV fields</string>
+
+    <string name="calendar_settings_gcal_title">Google Calendar</string>
+    <string name="calendar_settings_gcal_enable">Add events to Google Calendar</string>
+    <string name="calendar_settings_extract_title">On-device extract</string>
+    <string name="calendar_settings_extract_enable">Extract tasks &amp; events on this device</string>
+    <string name="calendar_settings_gcal_id_hint">Calendar (primary, or an ID)</string>
+    <string name="calendar_settings_gcal_connect">Connect Google Calendar</string>
+    <string name="calendar_settings_gcal_connected_toast">Google Calendar connected</string>
+    <string name="calendar_settings_gcal_connect_failed_toast">Couldn\'t connect Google Calendar</string>
 
     <string name="calendar_settings_button_save">Save</string>
     <string name="calendar_settings_button_back">Back</string>
@@ -327,6 +338,8 @@
     <string name="dashboard_item_cloud_title">Cloud</string>
     <string name="dashboard_item_chat_title">Ask my\nLedger</string>
     <string name="go_to_title">Go to</string>
+    <string name="reader_empty_title">No book open yet.</string>
+    <string name="reader_add_book">Add a book</string>
     <string name="go_group_views">Almanac</string>
     <string name="go_group_day">On this day</string>
     <string name="go_group_ledger">Ledger</string>
@@ -347,7 +360,25 @@
     <string name="feeds_saved">Saved on this device.</string>
     <string name="feeds_empty">No unread entries.</string>
     <string name="feeds_later_empty">Nothing on your Later List yet — intake a link to read/watch/listen later.</string>
+    <string name="ledger_persona">🎭 Persona</string>
+    <string name="ledger_chat_dictate">🎤 Dictate</string>
+    <string name="ledger_chat_save_feed">💾 Save to feed</string>
+    <string name="ledger_chat_history">🕘 History</string>
+    <string name="text_notes_saving">Saving…</string>
+    <string name="text_notes_saved">Saved</string>
+    <string name="feeds_add_later">Add to Later</string>
+    <string name="feeds_added_later">Added to Later List.</string>
+    <string name="feeds_added_later_dl">Added to Later — downloading audio for offline…</string>
     <string name="feeds_need_creds">Add your Miniflux URL and API token to load your feeds.</string>
+    <string name="feeds_nothing_to_mark">Nothing to mark read.</string>
+    <string name="feeds_marking_read">Marking %d read…</string>
+    <string name="feeds_marked_read">Marked read.</string>
+    <string name="feeds_no_next">No next article.</string>
+    <string name="feeds_open_external">Open in app / browser</string>
+    <string name="feeds_open_external_failed">Couldn\'t open this link.</string>
+    <string name="feeds_no_prev">No previous article.</string>
+    <string name="feeds_next_article">Next article</string>
+    <string name="feeds_prev_article">Last article</string>
     <string name="feeds_starred">Starred and saved to your Ledger.</string>
     <string name="feeds_unstarred">Unstarred.</string>
     <string name="feeds_view_starred">★ Saved</string>
@@ -376,8 +407,10 @@
     <string name="reader_highlight_delete_confirm">Remove this highlight?</string>
     <string name="reader_highlight_delete">Remove</string>
     <string name="eraser_clear_page">Clear page</string>
-    <string name="reading_log_title">Notes &amp; Annotations</string>
-    <string name="reading_log_empty">No notes or annotations in this range yet. Highlight in a book, star an article, or capture an AV gram — they land here.</string>
+    <string name="reading_log_title">Ledger Log</string>
+    <string name="reading_log_empty">Nothing in your Ledger Log for this range yet. Highlight in a book, star an article, or capture an AV gram — they land here.</string>
+    <string name="reading_log_export">Export highlights</string>
+    <string name="reading_log_search_hint">Search your Ledger…</string>
     <string name="reading_log_untitled">Untitled</string>
     <string name="reading_log_origin_all">All</string>
     <string name="reading_log_range_all">All time</string>
@@ -390,6 +423,10 @@
     <string name="ledger_extract_unreadable">Couldn\'t read that selection.</string>
     <string name="ledger_extract_added">Added %1$s: %2$s</string>
     <string name="ledger_selection_title">Create from selection</string>
+    <string name="ledger_ai_key_needed">Add your Ask-my-Ledger API key in Settings first.</string>
+    <string name="ledger_educate_looking_up">Looking it up…</string>
+    <string name="ledger_educate_filed">Filed to your Later List → Educate (and your feed).</string>
+    <string name="ledger_educate_open">Open link</string>
     <string name="ledger_selection_card">Selection</string>
     <string name="ledger_share_read">Read later</string>
     <string name="ledger_share_watch">Watch</string>
@@ -426,10 +463,10 @@
     <string name="reading_log_av_video">Video note to self</string>
     <string name="reading_log_av_audio">Audio note to self</string>
     <string name="reading_log_av_photo">Photo</string>
-    <string name="card_pick_panel">Card from…</string>
+    <string name="card_pick_panel">Gram from…</string>
     <string name="card_whole_page">🗎  Whole page</string>
     <string name="card_render_failed">Couldn\'t render that panel. :(</string>
-    <string name="card_saved_to_notes">Saved “%s” to Notes &amp; Annotations.</string>
+    <string name="card_saved_to_notes">Saved “%s” to Ledger Log.</string>
     <string name="webhook_none">Add a webhook first — Tools → Webhooks…</string>
     <string name="webhook_pick">Send to which webhook?</string>
     <string name="webhook_sent">Sent “%1$s” to %2$s.</string>
@@ -442,12 +479,15 @@
     <string name="webhook_saved">Saved webhook “%s”.</string>
     <string name="webhook_invalid">Need a name and an http(s) URL.</string>
     <string name="reader_aa">Aa</string>
+    <string name="reader_read_aloud">Read aloud</string>
+    <string name="reader_controls">Screen controls</string>
     <string name="reader_settings_title">Reading</string>
     <string name="reader_font_smaller">A −</string>
     <string name="reader_font_larger">A +</string>
     <string name="reader_theme">Theme: %1$s</string>
     <string name="reader_shelf_title">Your books</string>
     <string name="reader_import_new">Import a book…</string>
+    <string name="reader_import_failed">Couldn\'t open that book — try importing it again.</string>
     <string name="reader_no_books">No books yet — import one.</string>
 
     <!-- Ask my Ledger (chat over the corpus) -->

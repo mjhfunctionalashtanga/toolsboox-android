@@ -22,8 +22,29 @@ import com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer
 class LedgerItemAdapter(
     private var items: List<LedgerItem>,
     private val strokeById: Map<String, Stroke>,
-    private val onChanged: (LedgerItem) -> Unit
+    private val onChanged: (LedgerItem) -> Unit,
+    private val onEnterSelection: () -> Unit,
+    private val onSelectionChanged: () -> Unit
 ) : RecyclerView.Adapter<LedgerItemAdapter.Holder>() {
+
+    /** Bulk-select state: long-press a row to enter, tap rows to toggle, then Delete. */
+    var selecting = false
+        private set
+    val selectedIds = linkedSetOf<String>()
+
+    fun currentItems(): List<LedgerItem> = items
+
+    fun startSelection(first: LedgerItem) {
+        selecting = true; selectedIds.clear(); selectedIds.add(first.id)
+        notifyDataSetChanged(); onEnterSelection(); onSelectionChanged()
+    }
+    fun clearSelection() {
+        selecting = false; selectedIds.clear(); notifyDataSetChanged(); onSelectionChanged()
+    }
+    private fun toggle(item: LedgerItem) {
+        if (!selectedIds.remove(item.id)) selectedIds.add(item.id)
+        onSelectionChanged()
+    }
 
     fun submit(list: List<LedgerItem>) { items = list; notifyDataSetChanged() }
 
@@ -43,6 +64,19 @@ class LedgerItemAdapter(
         val e = items[position]
         val isTask = e.kind == LedgerItem.Kind.TASK
 
+        // In selection mode the whole row is a checkbox; a tap toggles it, not the done state.
+        if (selecting) {
+            holder.lead.text = if (selectedIds.contains(e.id)) "☑" else "☐"
+            holder.lead.setOnClickListener(null)
+            holder.toggle.visibility = View.GONE
+            holder.itemView.setOnClickListener { toggle(e); notifyItemChanged(position) }
+            holder.itemView.setOnLongClickListener(null)
+            bindFace(holder, e, isTask)
+            return
+        }
+        holder.toggle.visibility = View.VISIBLE
+        holder.itemView.setOnClickListener(null)
+
         // Lead: checkbox for tasks (tap = done), time for events.
         if (isTask) {
             holder.lead.text = if (e.done) "☑" else "☐"
@@ -52,10 +86,25 @@ class LedgerItemAdapter(
             holder.lead.setOnClickListener(null)
         }
 
+        bindFace(holder, e, isTask)
+
+        // Toggle shows the OTHER face's glyph (tap to switch to it).
+        val showText = e.display == LedgerItem.Display.TEXT
+        holder.toggle.setImageResource(if (showText) R.drawable.ic_pencil else R.drawable.ic_reader_view)
+        holder.toggle.setOnClickListener {
+            e.display = if (e.display == LedgerItem.Display.TEXT) LedgerItem.Display.INK else LedgerItem.Display.TEXT
+            onChanged(e); notifyItemChanged(position)
+        }
+
+        // Long-press enters bulk-select mode with this row selected. (Single delete = swipe the row.)
+        holder.itemView.setOnLongClickListener { startSelection(e); true }
+    }
+
+    /** Render the row's text or ink face. */
+    private fun bindFace(holder: Holder, e: LedgerItem, isTask: Boolean) {
         val showText = e.display == LedgerItem.Display.TEXT
         holder.text.visibility = if (showText) View.VISIBLE else View.GONE
         holder.ink.visibility = if (showText) View.GONE else View.VISIBLE
-
         if (showText) {
             holder.text.text = e.text
             holder.text.paintFlags =
@@ -67,13 +116,6 @@ class LedgerItemAdapter(
                 val rect = RectF(e.left, e.top, e.right, e.bottom)
                 holder.ink.setImageBitmap(runCatching { CalendarPdfRenderer.renderInk(strokes, rect) }.getOrNull())
             } else holder.ink.setImageDrawable(null)
-        }
-
-        // Toggle shows the OTHER face's glyph (tap to switch to it).
-        holder.toggle.setImageResource(if (showText) R.drawable.ic_pencil else R.drawable.ic_reader_view)
-        holder.toggle.setOnClickListener {
-            e.display = if (e.display == LedgerItem.Display.TEXT) LedgerItem.Display.INK else LedgerItem.Display.TEXT
-            onChanged(e); notifyItemChanged(position)
         }
     }
 }

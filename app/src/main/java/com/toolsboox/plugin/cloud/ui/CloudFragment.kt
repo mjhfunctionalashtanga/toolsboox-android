@@ -166,18 +166,19 @@ class CloudFragment @Inject constructor() : ScreenFragment() {
             subscriptionFlow("yearly")
         }
 
-        // Test of crypto utility compatibility.
+        // Dev-only crypto compatibility self-test. It was unguarded: CryptoUtils.decrypt throws
+        // BadPadding/IllegalBlockSize on any mismatch, and an uncaught throw here crashed the app
+        // every time the Cloud screen opened. Guarded so it only logs, never crashes.
         lifecycleScope.launchWhenResumed {
-            val encrypted = CryptoUtils.encrypt("test-data".toByteArray(), "pass1234")
-            Timber.e("Encrypted Android:    " + Base64.getEncoder().encodeToString(encrypted))
-            val decrypted = CryptoUtils.decrypt(encrypted, "pass1234")
-            Timber.e("Decrypted Android:    " + String(decrypted))
-            val encryptedJavaScript = "U2FsdGVkX19+eYEXdhMkJPCnPpCCU125gBbr+6/voJU="
-            val decryptedJavaScript = CryptoUtils.decrypt(Base64.getDecoder().decode(encryptedJavaScript), "pass1234")
-            Timber.e("Decrypted JavaScript: " + String(decryptedJavaScript))
-            val encryptedOpenSSL = "U2FsdGVkX19Ofjk/W1o+wr8TlKyVB+0XU1WbSkLTFvw="
-            val decryptedOpenSSL = CryptoUtils.decrypt(Base64.getDecoder().decode(encryptedOpenSSL), "pass1234")
-            Timber.e("Decrypted OpenSSL:    " + String(decryptedOpenSSL))
+            runCatching {
+                val encrypted = CryptoUtils.encrypt("test-data".toByteArray(), "pass1234")
+                Timber.d("Encrypted Android:    " + Base64.getEncoder().encodeToString(encrypted))
+                Timber.d("Decrypted Android:    " + String(CryptoUtils.decrypt(encrypted, "pass1234")))
+                val encryptedJavaScript = "U2FsdGVkX19+eYEXdhMkJPCnPpCCU125gBbr+6/voJU="
+                Timber.d("Decrypted JavaScript: " + String(CryptoUtils.decrypt(Base64.getDecoder().decode(encryptedJavaScript), "pass1234")))
+                val encryptedOpenSSL = "U2FsdGVkX19Ofjk/W1o+wr8TlKyVB+0XU1WbSkLTFvw="
+                Timber.d("Decrypted OpenSSL:    " + String(CryptoUtils.decrypt(Base64.getDecoder().decode(encryptedOpenSSL), "pass1234")))
+            }.onFailure { Timber.w(it, "crypto self-test failed (non-fatal)") }
         }
 
         htmlLinks(
@@ -197,6 +198,9 @@ class CloudFragment @Inject constructor() : ScreenFragment() {
         // Update state of the buttons.
         updateButtons()
 
+        // Play Billing + Google Sign-In are not guaranteed on Boox e-ink devices (partial/absent Play
+        // Services). Guard so a missing-service throw can't take down the whole Cloud screen.
+        runCatching {
         BillingClientService.connectClient(
             requireActivity(),
             { billingClient ->
@@ -300,6 +304,7 @@ class CloudFragment @Inject constructor() : ScreenFragment() {
                     updateButtons()
                 }
             }
+        }.onFailure { Timber.w(it, "Cloud screen: Play Services / Billing unavailable") }
     }
 
     /**

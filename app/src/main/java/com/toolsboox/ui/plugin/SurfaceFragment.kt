@@ -1005,17 +1005,24 @@ abstract class SurfaceFragment : ScreenFragment() {
         requireActivity().findViewById<View>(R.id.drawerLayout)?.fitsSystemWindows = true
 
         // Drop pending debounced work (limit-rect apply, deferred stroke re-bake) so it can't
-        // run after teardown. Strokes are already persisted on pen-up; the page re-renders on
-        // return, so a missed bake is harmless.
+        // run after teardown.
         try {
             provideSurfaceView().removeCallbacks(applyLimitRectRunnable)
             provideSurfaceView().removeCallbacks(commitVisualRunnable)
+            // Boox: a stroke finished within the last COMMIT_VISUAL_DEBOUNCE_MS lives ONLY on the
+            // hardware raw-drawing overlay until the deferred bake runs. On a fast page turn we tear
+            // down before that — so bake it into the software surface NOW, or it lingers on the panel
+            // and overlaps the next page ("overlapping strokes when paging quickly").
+            if (touchHelper != null) runCatching { applyStrokes(strokes, true) }
         } catch (_: Exception) {}
 
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
 
         touchHelper?.closeRawDrawing()
+        // With the reader closed, force a full-screen EPD refresh so the stale hardware overlay is
+        // wiped and only the baked software surface remains.
+        if (touchHelper != null) forceFullEpdRefresh()
         bitmap?.recycle()
 
         // Tear down Viwoods AutoDraw and return the panel to reading mode. No-op on Boox.
@@ -1959,7 +1966,10 @@ abstract class SurfaceFragment : ScreenFragment() {
     fun handleCanvasLongPress(cx: Float, cy: Float, pressX: Float, pressY: Float) {
         val image = imageElementAt(cx, cy)
         if (image != null) {
-            enterImageManipulation(image)
+            // A gram that remembers where it came from offers a jump-back first; a plain image
+            // goes straight into move/resize as before.
+            if (image.sourceLink.isNotBlank()) showImageMenu(image, pressX, pressY)
+            else enterImageManipulation(image)
             return
         }
         val textBox = textElementAt(cx, cy)
@@ -1969,6 +1979,30 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
         showCanvasCreationMenu(cx, cy, pressX, pressY)
     }
+
+    /**
+     * Long-press on a gram that carries a source: jump back to the origin (article / ledger page)
+     * or drop into move/resize. Plain images skip this and go straight to manipulation.
+     */
+    private fun showImageMenu(element: ImageElement, pressX: Float, pressY: Float) {
+        if (context == null) return
+        val jumpLabel = "↩ Go to source" + (if (element.sourceLabel.isNotBlank()) " · ${element.sourceLabel}" else "")
+        LedgerContextMenu.show(
+            provideSurfaceView(), pressX, pressY, "GRAM",
+            listOf(
+                listOf(
+                    LedgerContextMenu.Item(jumpLabel) { onImageSource(element) },
+                    LedgerContextMenu.Item("Move / resize") { enterImageManipulation(element) }
+                )
+            )
+        )
+    }
+
+    /**
+     * Navigate to a gram's origin. Base is a no-op; surfaces that know how to route a source link
+     * (the day page → feed article / ledger page) override this.
+     */
+    protected open fun onImageSource(element: ImageElement) {}
 
     /** Select an image element and enter the manipulation mode (move/resize/chips). */
     private fun enterImageManipulation(element: ImageElement) {
@@ -2559,6 +2593,44 @@ abstract class SurfaceFragment : ScreenFragment() {
     open fun provideDisableRawInkCapture(): Boolean = false
 
     /**
+     * Floating overlay views (nav / tool pills + their grips) that sit ON TOP of the
+     * drawing surface. Their bounds are fed to the Onyx raw reader as EXCLUDE rects so
+     * the stylus neither inks a stray dot over them nor gets swallowed there — which lets
+     * a stylus drag/tap the pill (finger already worked via enableFingerTouch). Concrete
+     * drawing screens override this to return their pills. Re-fed via [refreshRawExcludeRects]
+     * when a pill is moved or collapsed.
+     */
+    open fun provideExcludeViews(): List<View> = emptyList()
+
+    /** Bounds of the visible exclude views, in the surface's own coordinate space. */
+    private fun rawExcludeRects(): ArrayList<Rect> {
+        val out = ArrayList<Rect>()
+        val surface = provideSurfaceView()
+        val s = IntArray(2); surface.getLocationOnScreen(s)
+        for (v in provideExcludeViews()) {
+            if (v.visibility != View.VISIBLE || v.width == 0 || v.height == 0) continue
+            val p = IntArray(2); v.getLocationOnScreen(p)
+            val left = p[0] - s[0]; val top = p[1] - s[1]
+            out.add(Rect(left, top, left + v.width, top + v.height))
+        }
+        return out
+    }
+
+    /**
+     * Re-apply the raw limit rect with fresh exclude rects (after a pill moved/collapsed).
+     * This cold-starts the pen reader, so only call it on drag-end, not per move.
+     */
+    fun refreshRawExcludeRects() {
+        val th = touchHelper ?: return
+        val v = provideSurfaceView()
+        if (v.width <= 0 || v.height <= 0) return
+        th.setRawDrawingEnabled(false)
+        th.setLimitRect(Rect(0, 0, v.width, v.height), rawExcludeRects())
+        th.setRawDrawingEnabled(true)
+        th.isRawDrawingRenderEnabled = true
+    }
+
+    /**
      * Initialize the surface view of drawing.
      *
      * @param first first initialization flag
@@ -2632,7 +2704,7 @@ abstract class SurfaceFragment : ScreenFragment() {
 
                     clearSurface()
 
-                    touchHelper?.setLimitRect(limit, ArrayList())?.setStrokeWidth(effectivePenWidth())?.openRawDrawing()
+                    touchHelper?.setLimitRect(limit, rawExcludeRects())?.setStrokeWidth(effectivePenWidth())?.openRawDrawing()
                     // Let FINGER touch pass through to normal Android dispatch while the
                     // raw session is open. Without this the Onyx raw input reader grabs
                     // finger input over the whole limit rect at the system level, so the
@@ -2765,7 +2837,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         if (w <= 0 || h <= 0) return
         if (w == appliedLimitWidth && h == appliedLimitHeight) return
         th.setRawDrawingEnabled(false)
-        th.setLimitRect(Rect(0, 0, w, h), ArrayList())
+        th.setLimitRect(Rect(0, 0, w, h), rawExcludeRects())
         th.setRawDrawingEnabled(true)
         th.isRawDrawingRenderEnabled = true
         appliedLimitWidth = w
@@ -2792,6 +2864,19 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideSurfaceView().holder.unlockCanvasAndPost(lockerCanvas)
 
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+    }
+
+    /**
+     * Force a full-screen (GC) EPD refresh. Onyx-only: wipes the hardware raw-drawing overlay so a
+     * just-finished stroke can't linger on the panel across a page turn. No-op / guarded elsewhere.
+     */
+    protected fun forceFullEpdRefresh() {
+        if (viwoodsInk != null) return
+        try {
+            EpdController.repaintEveryThing(com.onyx.android.sdk.api.device.epd.UpdateMode.GC)
+        } catch (t: Throwable) {
+            Timber.w(t, "EPD full refresh failed")
+        }
     }
 
     /**

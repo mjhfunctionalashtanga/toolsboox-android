@@ -4,6 +4,8 @@
     <cache-path name="camera" path="camera/"/>
     <!-- Panel PNG cards rendered for share / annotation. -->
     <cache-path name="cards" path="cards/"/>
+    <!-- Markdown/CSV highlight & annotation exports handed to the share sheet. -->
+    <cache-path name="exports" path="exports/"/>
     <!-- Photo/voice annotation + A/V-gram media (opened full-screen from History). -->
     <external-files-path name="attachments" path="Documents/attachments/"/>
 </paths>

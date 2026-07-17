@@ -60,11 +60,22 @@
             android:id="@+id/action_to_ledger_items"
             app:destination="@id/LedgerItemsFragment"/>
 
+    <action
+            android:id="@+id/action_to_text_notes"
+            app:destination="@id/TextNotesFragment"/>
+
     <fragment
             android:id="@+id/DashboardFragment"
             android:name="com.toolsboox.plugin.dashboard.ui.DashboardFragment"
             android:label="DashboardFragment"
             tools:layout="@layout/fragment_dashboard">
+    </fragment>
+
+    <fragment
+            android:id="@+id/TextNotesFragment"
+            android:name="com.toolsboox.plugin.textnotes.ui.TextNotesFragment"
+            android:label="TextNotesFragment"
+            tools:layout="@layout/fragment_text_notes">
     </fragment>
 
     <fragment

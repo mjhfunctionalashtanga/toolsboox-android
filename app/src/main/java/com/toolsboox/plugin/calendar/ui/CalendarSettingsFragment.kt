@@ -3,6 +3,7 @@ package com.toolsboox.plugin.calendar.ui
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Bundle
+import timber.log.Timber
 import android.text.format.DateFormat
 import android.view.View
 import android.view.inputmethod.InputMethodManager
@@ -15,8 +16,13 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.Scope
+import com.google.api.services.drive.DriveScopes
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.toolsboox.R
+import com.toolsboox.plugin.calendar.nw.LedgerEventSync
 import com.toolsboox.da.LocaleItem
 import com.toolsboox.databinding.FragmentCalendarSettingsBinding
 import com.toolsboox.ot.LocaleItemAdapter
@@ -42,6 +48,47 @@ import javax.inject.Inject
  */
 @AndroidEntryPoint
 class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
+
+    /** Picks a settings JSON to import (finger-friendly; any file type so JSON always shows). */
+    private val importSettingsLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri ?: return@registerForActivityResult
+        try {
+            val json = requireContext().contentResolver.openInputStream(uri)!!
+                .bufferedReader().use { it.readText() }
+            val applied = com.toolsboox.plugin.calendar.ot.SettingsBackup.importJson(requireContext(), json)
+            if (applied.contains("webdav")) {
+                sharedPreferences.edit().putBoolean("ultrabridgeEnabled", true).apply()
+                val ub = getUltrabridgeEncryptedPrefs()
+                binding.ultrabridgeUrlInput.setText(ub.getString("ultrabridge_webdav_url", ""))
+                binding.ultrabridgeUserInput.setText(ub.getString("ultrabridge_webdav_user", ""))
+                binding.ultrabridgePassInput.setText(ub.getString("ultrabridge_webdav_pass", ""))
+                binding.ultrabridgeEnableSwitch.isChecked = true
+            }
+            showMessage(
+                if (applied.isEmpty()) "Nothing to import" else "Imported: ${applied.joinToString(", ")}",
+                binding.root
+            )
+        } catch (e: Exception) {
+            Timber.w(e, "settings import failed")
+            showMessage("Import failed", binding.root)
+        }
+    }
+
+    /** Result of the Google Calendar consent flow — a toast either way; the granted scope now lets
+     *  [LedgerEventSync] fetch a token and push events. */
+    private val googleCalendarConnectLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val ok = result.resultCode == android.app.Activity.RESULT_OK
+        Toast.makeText(
+            requireContext(),
+            if (ok) R.string.calendar_settings_gcal_connected_toast
+            else R.string.calendar_settings_gcal_connect_failed_toast,
+            Toast.LENGTH_SHORT
+        ).show()
+    }
 
     /**
      * The shared preferences.
@@ -303,6 +350,32 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             updateUltrabridgeFieldsVisibility(isChecked)
         }
 
+        // Google Calendar (events) settings — events you add in Ledger land on this calendar.
+        val gcalEnabled = sharedPreferences.getBoolean(LedgerEventSync.ENABLED_KEY, false)
+        binding.gcalEnableSwitch.isChecked = gcalEnabled
+        binding.gcalIdInput.setText(sharedPreferences.getString(LedgerEventSync.CALENDAR_ID_KEY, "primary"))
+        updateGcalFieldsVisibility(gcalEnabled)
+
+        // On-device extract (redundant with the server OCR) — off by default.
+        binding.autoExtractSwitch.isChecked = sharedPreferences.getBoolean(
+            com.toolsboox.plugin.calendar.ot.LedgerExtractor.AUTO_EXTRACT_ENABLED_KEY, false)
+        binding.gcalEnableSwitch.setOnCheckedChangeListener { _, isChecked ->
+            updateGcalFieldsVisibility(isChecked)
+        }
+        binding.gcalConnectButton.setOnClickListener {
+            // Incremental consent for the Calendar-events scope (alongside Drive), so the signed-in
+            // account can push events. Reuses whatever Google account the app already uses.
+            val opts = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                .requestScopes(
+                    Scope(DriveScopes.DRIVE_APPDATA),
+                    Scope(DriveScopes.DRIVE_FILE),
+                    Scope(LedgerEventSync.CALENDAR_SCOPE)
+                )
+                .requestEmail()
+                .build()
+            googleCalendarConnectLauncher.launch(GoogleSignIn.getClient(requireContext(), opts).signInIntent)
+        }
+
         // Create shortcut of calendar
         binding.buttonShortcut.setOnClickListener {
             presenter.createShortcut(this@CalendarSettingsFragment, binding)
@@ -319,6 +392,29 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.buttonBackup.setOnClickListener {
             presenter.export(this@CalendarSettingsFragment, binding)
         }
+
+        // Settings transfer: export the connection settings (WebDAV / RSS / AI keys) as a JSON to
+        // share to another device; import applies one. Same schema as the iPad.
+        binding.buttonExportSettings.setOnClickListener {
+            try {
+                val json = com.toolsboox.plugin.calendar.ot.SettingsBackup.exportJson(requireContext())
+                val dir = java.io.File(requireContext().cacheDir, "settings").apply { mkdirs() }
+                val file = java.io.File(dir, "ledger-settings.json").apply { writeText(json) }
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    requireContext(), "${requireContext().packageName}.fileprovider", file
+                )
+                val share = android.content.Intent(android.content.Intent.ACTION_SEND)
+                    .setType("application/json")
+                    .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    .putExtra(android.content.Intent.EXTRA_SUBJECT, "Ledger settings")
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                startActivity(android.content.Intent.createChooser(share, getString(R.string.calendar_settings_button_export_settings)))
+            } catch (e: Exception) {
+                Timber.w(e, "settings export failed")
+                showMessage("Export failed", binding.root)
+            }
+        }
+        binding.buttonImportSettings.setOnClickListener { importSettingsLauncher.launch("*/*") }
 
         // Save and back
         binding.buttonSave.setOnClickListener {
@@ -423,6 +519,15 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 workManager.cancelUniqueWork(UltrabridgeSyncWorker.WORK_NAME)
             }
 
+            // Persist Google Calendar settings. The connection itself is the Google sign-in (button
+            // above); here we just record the on/off and which calendar to target.
+            val gcalId = binding.gcalIdInput.text?.toString()?.trim().let { if (it.isNullOrEmpty()) "primary" else it }
+            sharedPreferences.edit()
+                .putBoolean(LedgerEventSync.ENABLED_KEY, binding.gcalEnableSwitch.isChecked)
+                .putString(LedgerEventSync.CALENDAR_ID_KEY, gcalId)
+                .putBoolean(com.toolsboox.plugin.calendar.ot.LedgerExtractor.AUTO_EXTRACT_ENABLED_KEY, binding.autoExtractSwitch.isChecked)
+                .apply()
+
             this@CalendarSettingsFragment.requireActivity().onBackPressed()
         }
 
@@ -458,6 +563,15 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.ultrabridgeUrlLayout.visibility = visibility
         binding.ultrabridgeUserLayout.visibility = visibility
         binding.ultrabridgePassLayout.visibility = visibility
+    }
+
+    /**
+     * Show or hide the Google Calendar fields (target calendar + connect) based on the enable switch.
+     */
+    private fun updateGcalFieldsVisibility(enabled: Boolean) {
+        val visibility = if (enabled) View.VISIBLE else View.GONE
+        binding.gcalIdLayout.visibility = visibility
+        binding.gcalConnectButton.visibility = visibility
     }
 
 

@@ -29,7 +29,10 @@ enum class Section(val label: String) {
     BOOKS("Book highlights"),
     ARTICLES("Feed annotations"),
     PLANNER("Planner text"),
-    MEDIA("A/V grams");
+    MEDIA("A/V grams"),
+    SECTIONS("Page sections (OCR)"),
+    NOTES("Text notes"),
+    TASKS("Tasks & events");
 
     companion object {
         val ALL: Set<Section> get() = values().toSet()

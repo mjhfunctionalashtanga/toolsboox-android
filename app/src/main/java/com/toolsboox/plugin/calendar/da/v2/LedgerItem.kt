@@ -22,7 +22,7 @@ data class LedgerItem(
     /** OCR'd text (Layer-1 ink OCR, optionally upgraded by the Layer-2 vision pass). */
     var text: String,
     /** When it was extracted. */
-    val date: Date,
+    var date: Date,
     /** Source region in the 1404×1872 template space (links the item back to its ink). */
     val left: Float = 0f,
     val top: Float = 0f,

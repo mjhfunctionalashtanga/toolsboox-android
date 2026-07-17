@@ -25,5 +25,11 @@ data class ImageElement(
     // Which note page this image belongs to (notePage key, e.g. "pickings"/"0"/"default").
     // Kept as a flat list on CalendarDay; the fragment filters by page so images don't leak
     // across pages. New field with a default → backward-compatible with existing JSON.
-    var page: String = ""
+    var page: String = "",
+    // Where this gram came from, so tapping it can jump back to the origin. Either an http(s) URL
+    // (a feed article / book web source) or a ledger ref "ledger://<yyyy-MM-dd>/<pageKey>" for a card
+    // grammed off another ledger page. [sourceLabel] is the human name shown in the jump prompt.
+    // New fields with defaults → backward-compatible with existing JSON.
+    var sourceLink: String = "",
+    var sourceLabel: String = ""
 )

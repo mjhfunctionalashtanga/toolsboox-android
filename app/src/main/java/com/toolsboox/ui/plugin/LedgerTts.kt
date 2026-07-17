@@ -82,6 +82,24 @@ class LedgerTts(context: Context) {
         speakFrom(index.coerceIn(0, chunks.lastIndex))
     }
 
+    /** Progress through the current text, in engine chunks (roughly paragraphs). */
+    val chunkIndex: Int get() = index
+    val chunkCount: Int get() = chunks.size
+
+    /** Set the speech rate (1.0 = normal). Applies to the next utterance; re-speaks the current
+     *  chunk so the change is heard immediately while playing. */
+    fun setRate(rate: Float) {
+        tts?.setSpeechRate(rate)
+        if (!paused && chunks.isNotEmpty()) speakFrom(index.coerceIn(0, chunks.lastIndex))
+    }
+
+    /** Jump forward/back by [delta] chunks and keep speaking (used by the player's ⏭/⏮). */
+    fun skip(delta: Int) {
+        if (chunks.isEmpty()) return
+        paused = false
+        speakFrom((index + delta).coerceIn(0, chunks.lastIndex))
+    }
+
     fun stop() { paused = false; chunks = emptyList(); tts?.stop(); onStateChange?.invoke(false) }
 
     fun shutdown() { runCatching { tts?.stop(); tts?.shutdown() }; tts = null }

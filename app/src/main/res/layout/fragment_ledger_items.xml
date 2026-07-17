@@ -1,49 +1,90 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="vertical"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#FFFFFF">
 
+<LinearLayout
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- Menu anchor sits on the nav line, left of the back carrot; no title. -->
     <LinearLayout
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingHorizontal="14dp"
-        android:paddingTop="12dp"
+        android:paddingHorizontal="8dp"
+        android:paddingTop="8dp"
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
-        <TextView
-            android:text="@string/ledger_items_title"
-            android:textSize="24sp" android:textStyle="bold" android:textColor="#000000"
-            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
         <ImageButton
             android:id="@+id/ledger_button"
             android:src="@drawable/ic_calendar_today"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:scaleType="fitCenter" android:padding="4dp"
+            android:layout_marginEnd="4dp"
             android:contentDescription="@string/go_to_title"
             android:layout_width="34dp" android:layout_height="34dp"/>
+        <!-- The REAL Almanac day navigator (same strip the day page draws). -->
+        <ImageView
+            android:id="@+id/navigatorImageView"
+            android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="50dp"
+            android:scaleType="fitXY"
+            android:contentDescription="@string/calendar_navigator_image"/>
     </LinearLayout>
 
-    <!-- Day pager: ‹ date › -->
+    <!-- Finger / no-pen capture: type a task or event. -->
     <LinearLayout
         android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingHorizontal="8dp"
-        android:paddingBottom="6dp"
+        android:paddingHorizontal="12dp"
+        android:paddingBottom="8dp"
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
-        <ImageButton android:id="@+id/prev_button" android:src="@drawable/ic_nav_left"
-            android:background="?attr/selectableItemBackgroundBorderless" android:scaleType="fitCenter"
-            android:padding="8dp" android:contentDescription="@string/reader_prev"
-            android:layout_width="40dp" android:layout_height="40dp"/>
-        <TextView android:id="@+id/day_title" android:gravity="center" android:textSize="17sp"
-            android:textColor="#000000" android:maxLines="1"
+        <Button
+            android:id="@+id/add_task_button"
+            android:text="＋ Task"
+            android:textAllCaps="false" android:textColor="#000000" android:textSize="16sp"
+            android:background="@drawable/dialog_rounded_bg"
+            android:minHeight="48dp"
+            android:layout_marginEnd="8dp"
             android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
-        <ImageButton android:id="@+id/next_button" android:src="@drawable/ic_nav_right"
-            android:background="?attr/selectableItemBackgroundBorderless" android:scaleType="fitCenter"
-            android:padding="8dp" android:contentDescription="@string/reader_next"
-            android:layout_width="40dp" android:layout_height="40dp"/>
+        <Button
+            android:id="@+id/add_event_button"
+            android:text="＋ Event"
+            android:textAllCaps="false" android:textColor="#000000" android:textSize="16sp"
+            android:background="@drawable/dialog_rounded_bg"
+            android:minHeight="48dp"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <!-- Bulk-select action bar (shown after a long-press enters selection mode). -->
+    <LinearLayout
+        android:id="@+id/selection_bar"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="12dp"
+        android:paddingBottom="8dp"
+        android:visibility="gone"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+        <TextView
+            android:id="@+id/selection_count"
+            android:textColor="#000000" android:textSize="16sp"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/delete_selected_button"
+            android:text="🗑 Delete"
+            android:textAllCaps="false" android:textColor="#000000" android:textSize="16sp"
+            android:background="@drawable/dialog_rounded_bg" android:minHeight="48dp"
+            android:layout_marginEnd="8dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/cancel_selection_button"
+            android:text="Cancel"
+            android:textAllCaps="false" android:textColor="#000000" android:textSize="16sp"
+            android:background="@drawable/dialog_rounded_bg" android:minHeight="48dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
     </LinearLayout>
 
     <TextView
@@ -59,3 +100,29 @@
         android:layout_height="0dp"
         android:layout_weight="1"/>
 </LinearLayout>
+
+    <!-- Floating nav pill (unified): ‹ page-up · ☀ today/menu · page-down ›. -->
+    <LinearLayout
+        android:id="@+id/items_pill"
+        android:orientation="horizontal"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="16dp"
+        android:gravity="center_vertical"
+        android:background="@drawable/ledger_bar_bg"
+        android:padding="4dp">
+        <ImageView android:id="@+id/items_grip" android:layout_width="22dp" android:layout_height="44dp"
+            android:scaleType="fitCenter" android:src="@drawable/ic_grip" android:contentDescription="@null"/>
+        <ImageButton android:id="@+id/items_page_up" android:layout_width="46dp" android:layout_height="44dp"
+            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
+        <ImageButton android:id="@+id/items_goto" android:layout_width="46dp" android:layout_height="44dp"
+            android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_today"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+        <ImageButton android:id="@+id/items_page_down" android:layout_width="46dp" android:layout_height="44dp"
+            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
+    </LinearLayout>
+
+</FrameLayout>

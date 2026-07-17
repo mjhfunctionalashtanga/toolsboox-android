@@ -61,9 +61,12 @@ class CalendarDayPageNotes : Creator {
 
             val localDate = LocalDate.of(year, month, day)
 
+            // Any pickings board (default or a named "pickings-…") navigates like the classic one.
+            val np = if (PickingsStore.isPickings(notePage)) "pickings" else notePage
+
             when (gestureResult) {
                 OnGestureListener.UTD -> {
-                    when (notePage) {
+                    when (np) {
                         "pickings" -> CalendarNavigator.toDayPage(fragment, localDate)
                         "gratitude" -> CalendarNavigator.toDayNote(fragment, localDate, "pickings")
                         "intake" -> CalendarNavigator.toDayNote(fragment, localDate, "gratitude")
@@ -80,7 +83,7 @@ class CalendarDayPageNotes : Creator {
                 }
 
                 OnGestureListener.DTU -> {
-                    when (notePage) {
+                    when (np) {
                         "pickings" -> CalendarNavigator.toDayNote(fragment, localDate, "gratitude")
                         "gratitude" -> CalendarNavigator.toDayNote(fragment, localDate, "intake")
                         "intake" -> CalendarNavigator.toDayNote(fragment, localDate, "0")
@@ -110,7 +113,7 @@ class CalendarDayPageNotes : Creator {
                 drawGratitudePage(canvas)
                 return
             }
-            if (notePage == "pickings") {
+            if (PickingsStore.isPickings(notePage)) {
                 drawPickingsPage(canvas)
                 return
             }
@@ -120,10 +123,18 @@ class CalendarDayPageNotes : Creator {
                 CalendarDayPageIntake.drawPage(canvas, com.toolsboox.plugin.michaelfilter.da.IntakePageData())
                 return
             }
+            if (notePage == "synthesize" || notePage == "brainstorm") {
+                drawBrainstormPage(canvas)
+                return
+            }
 
             val page = notePage.toIntOrNull() ?: 0
 
             canvas.drawRect(0.0f, 0.0f, 1404.0f, 1872.0f, Creator.fillWhite)
+
+            // Title in the top margin so this freeform surface reads as "NOTES" — distinct from the
+            // "WRITE" page (post-Synthesize), which shares this same ruled template.
+            canvas.drawText(if (notePage == "write") "WRITE" else "NOTES", lo, to - 16.0f, Creator.textDefaultBlack)
 
             canvas.drawText("${page + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)
 
@@ -145,6 +156,28 @@ class CalendarDayPageNotes : Creator {
                     canvas.drawLine(lo + i * 50.0f, to + 0 * ceh, lo + i * 50.0f, to + 35 * ceh, Creator.lineDefaultGrey50)
                 }
                 canvas.drawLine(lo + 26 * 50.0f, to + 0 * ceh, lo + 26 * 50.0f, to + 35 * ceh, Creator.lineDefaultBlack)
+            }
+        }
+
+        /**
+         * Brainstorm / whiteboard page: a full-page light dot grid to arrange gram cards (dropped
+         * as images via "Here") and write freely around them.
+         */
+        private fun drawBrainstormPage(canvas: Canvas) {
+            canvas.drawRect(0f, 0f, 1404f, 1872f, Creator.fillWhite)
+            val dot = Paint().apply {
+                color = Color.argb(90, 0, 0, 0); style = Paint.Style.FILL; isAntiAlias = true
+            }
+            val step = 48f
+            val margin = 24f
+            var y = margin
+            while (y <= 1872f - margin) {
+                var x = margin
+                while (x <= 1404f - margin) {
+                    canvas.drawCircle(x, y, 2.2f, dot)
+                    x += step
+                }
+                y += step
             }
         }
 

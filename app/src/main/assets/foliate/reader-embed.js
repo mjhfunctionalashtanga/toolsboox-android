@@ -155,9 +155,12 @@ async function openBook(file) {
             // always reads on e-ink (the underline carries it; the band adds context).
             draw(einkHighlight, { color: annotation.color || '#ffd60a' })
         })
-        // Tapping an existing highlight → offer to delete it.
+        // Tapping an existing highlight → open its menu (copy / note / remove). Include the
+        // highlighted text (from the annotation's range) so the app can offer a Copy action.
         view.addEventListener('show-annotation', e => {
-            post('tapAnnotation', { cfi: e.detail.value })
+            let text = ''
+            try { text = e.detail.range ? e.detail.range.toString() : '' } catch (err) {}
+            post('tapAnnotation', { cfi: e.detail.value, text })
         })
         // Internal links → navigate in-book; external links → open via the app
         // (window.open is blocked in WKWebView). preventDefault stops foliate's own
@@ -179,6 +182,15 @@ async function openBook(file) {
             title: langMap(book.metadata?.title) || 'Untitled',
             author: contributor(book.metadata?.author),
         })
+        // Cover art → a data URL (for the book-gram card). Best-effort; foliate exposes getCover().
+        try {
+            const blob = await book.getCover?.()
+            if (blob) {
+                const fr = new FileReader()
+                fr.onload = () => post('cover', { dataUrl: String(fr.result || '') })
+                fr.readAsDataURL(blob)
+            }
+        } catch (e) {}
         // Surface the table of contents (flattened with depth for indenting).
         try {
             const toc = []
@@ -255,6 +267,9 @@ window.highlightSelection = () => {
 // Swift → JS: jump to a TOC entry (or search-result CFI).
 window.goToHref = (href) => { if (href) { try { view?.goTo(href) } catch (e) {} } }
 
+// Swift → JS: resume at a saved reading position (CFI) on open.
+window.goToCfi = (cfi) => { if (cfi) { try { view?.goTo(cfi) } catch (e) {} } }
+
 // Swift → JS: readable text of the current section (for Read Aloud). Prefers the
 // live section doc; falls back to scanning the iframes foliate renders into.
 window.getReaderText = () => {
@@ -263,6 +278,25 @@ window.getReaderText = () => {
         if (currentDoc?.body) { const t = clean(currentDoc.body.innerText); if (t) return t }
         for (const f of document.querySelectorAll('iframe')) {
             try { const t = clean(f.contentDocument?.body?.innerText); if (t) return t } catch (e) {}
+        }
+        return ''
+    } catch (e) { return '' }
+}
+
+// Swift → JS: the current text selection, if any (else ''). Lets Synthesize/Write use an explicit
+// highlighted boundary as their intake instead of the whole section. Scans the rendered iframes,
+// same as the highlight path.
+window.getReaderSelectionText = () => {
+    try {
+        const clean = s => (s || '').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim()
+        const docs = []
+        if (currentDoc) docs.push(currentDoc)
+        for (const f of document.querySelectorAll('iframe')) {
+            try { if (f.contentDocument) docs.push(f.contentDocument) } catch (e) {}
+        }
+        for (const d of docs) {
+            const s = d.getSelection && d.getSelection()
+            if (s && !s.isCollapsed && s.rangeCount && s.toString().trim()) return clean(s.toString())
         }
         return ''
     } catch (e) { return '' }

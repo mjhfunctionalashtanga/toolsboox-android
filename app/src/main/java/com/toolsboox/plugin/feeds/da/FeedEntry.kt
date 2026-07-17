@@ -15,11 +15,21 @@ data class FeedEntry(
     val content: String,
     val publishedAt: String,
     val starred: Boolean,
+    /** Miniflux read/unread status for this entry (true = read). */
+    val read: Boolean = false,
     /** Miniflux category/folder title (the feed's folder), null if uncategorised. */
     val category: String? = null,
     /** First image enclosure URL (podcast/video art), used when the content has no inline image. */
-    val enclosureImage: String? = null
+    val enclosureImage: String? = null,
+    /** First audio enclosure URL (the podcast episode's .mp3/.m4a), used to play the real audio. */
+    val enclosureAudio: String? = null
 ) {
+    /** The playable audio URL for this entry: the audio enclosure, else the entry URL if it looks
+     *  like a direct audio file. Null when there's nothing to play as audio. */
+    val audioUrl: String?
+        get() = enclosureAudio?.takeIf { it.startsWith("http") }
+            ?: url.takeIf { u -> listOf(".mp3", ".m4a", ".m4b", ".aac", ".ogg", ".opus").any { u.lowercase().substringBefore('?').endsWith(it) } }
+
     /** Read / Watch / Listen lens. Primary signal is the Miniflux category's leading emoji
      *  (📖 / 📺 / 🎧, per the shared grammar with the iPad); falls back to a media heuristic. */
     val kind: String

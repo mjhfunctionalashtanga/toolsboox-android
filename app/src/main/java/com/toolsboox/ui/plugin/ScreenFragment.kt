@@ -2,6 +2,7 @@ package com.toolsboox.ui.plugin
 
 import android.Manifest
 import android.content.Intent
+import android.graphics.Bitmap
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
@@ -207,6 +208,8 @@ abstract class ScreenFragment : Fragment() {
                         prefs.edit().putFloat("${key}_px", pill.translationX)
                             .putFloat("${key}_py", pill.translationY).apply()
                     }
+                    // The pill moved/collapsed → re-feed its bounds as a stylus exclude rect.
+                    pill.post { (this@ScreenFragment as? SurfaceFragment)?.refreshRawExcludeRects() }
                     true
                 }
                 else -> false
@@ -223,13 +226,19 @@ abstract class ScreenFragment : Fragment() {
     protected fun setupAlmanacNavPill(
         navWidget: View, navGrip: View, navUp: View, navDown: View,
         navGoto: ImageView, swipeUp: View, swipeDown: View,
-        @androidx.annotation.DrawableRes iconRes: Int, onHome: () -> Unit
+        @androidx.annotation.DrawableRes iconRes: Int,
+        isAtPresent: () -> Boolean = { false }, onHome: () -> Unit
     ) {
         navWidget.visibility = View.VISIBLE
         navUp.setOnClickListener { swipeUp.performClick() }
         navDown.setOnClickListener { swipeDown.performClick() }
         navGoto.setImageResource(iconRes)
-        navGoto.setOnClickListener { onHome() }
+        // First tap → jump to the present period; a second tap (already on the present
+        // period) brings down the Ledger section menu.
+        navGoto.setOnClickListener {
+            if (isAtPresent()) showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
+            else onHome()
+        }
         navWidget.bringToFront()
 
         // Vertical on narrow (phone) screens so it can't collide with the tool pill.
@@ -241,6 +250,25 @@ abstract class ScreenFragment : Fragment() {
 
         makeDraggable(navGrip, navWidget, "nav") { toggleNavPill(navUp, navDown) }
         applyNavPillCollapse(navUp, navDown)
+    }
+
+    /**
+     * Cycle the screen orientation through the user's allowed set (rotationOrientationMask) — the
+     * same rotate the day page's wrench does, shared so the feed/reader "quick controls" can rotate too.
+     */
+    protected fun cycleScreenOrientation() {
+        val activity = requireActivity()
+        val current = activity.requestedOrientation
+        val prefs = requireContext().getSharedPreferences("MAIN", 0)
+        val mask = prefs.getInt("rotationOrientationMask", 0b1111)
+        val cycle = mutableListOf<Int>()
+        if (mask and 0b0001 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
+        if (mask and 0b0010 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE)
+        if (mask and 0b0100 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT)
+        if (mask and 0b1000 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
+        if (cycle.isEmpty()) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
+        val idx = cycle.indexOf(current).takeIf { it >= 0 } ?: -1
+        activity.requestedOrientation = cycle[(idx + 1) % cycle.size]
     }
 
     /** Collapse the almanac nav pill to grip + centre glyph (↑↓ hide); tap the grip to toggle. */
@@ -265,6 +293,7 @@ abstract class ScreenFragment : Fragment() {
     /** Sink for a standalone A/V gram (no highlight/note) — takes precedence when set. */
     private var gramSink: ((Attachment) -> Unit)? = null
     private var captureSelection: String = ""
+    private var captureSource: String? = null
     private var pendingCameraFile: File? = null
     private var pendingCameraUri: Uri? = null
     private var pendingVideoFile: File? = null
@@ -342,18 +371,47 @@ abstract class ScreenFragment : Fragment() {
      * blank), then let the reader add a note, take/upload a photo, or record a voice memo.
      * [onCapture] persists the result for the calling surface (book vs article ReadingEvent).
      */
-    protected fun captureAnnotation(selection: String, onCapture: (String?, String?, Attachment?) -> Unit) {
+    protected fun captureAnnotation(
+        selection: String,
+        sourceTitle: String? = null,
+        onCapture: (String?, String?, Attachment?) -> Unit
+    ) {
         captureSelection = selection
+        captureSource = sourceTitle
         captureSink = onCapture
         gramSink = null
         val noteLabel = if (selection.isNotBlank()) getString(R.string.reader_capture_highlight_note)
         else getString(R.string.reader_capture_note)
-        showIconMenu(getString(R.string.reader_capture_title), listOf(
-            "🖍  $noteLabel" to { showNoteDialog() },
-            getString(R.string.reader_capture_photo) to { launchAnnCamera() },
-            getString(R.string.reader_capture_upload) to { annGalleryLauncher.launch("image/*") },
-            getString(R.string.reader_capture_voice) to { requestVoiceRecording() }
-        ))
+        val options = mutableListOf<Pair<String, () -> Unit>>(
+            "🖍  $noteLabel" to { showNoteDialog() }
+        )
+        // A highlight can become a shareable quote card (parity with the iPad annotation composer).
+        if (selection.isNotBlank()) options.add("🃏  Create gram" to { shareQuoteCard(selection, sourceTitle) })
+        options.add(getString(R.string.reader_capture_photo) to { launchAnnCamera() })
+        options.add(getString(R.string.reader_capture_upload) to { annGalleryLauncher.launch("image/*") })
+        options.add(getString(R.string.reader_capture_voice) to { requestVoiceRecording() })
+        showIconMenu(getString(R.string.reader_capture_title), options)
+    }
+
+    /** Render a highlighted passage into a quote card and share it (ACTION_SEND png). */
+    private fun shareQuoteCard(quote: String, source: String?) {
+        try {
+            val card = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(quote, source)
+            val dir = java.io.File(requireContext().cacheDir, "cards").apply { mkdirs() }
+            val file = java.io.File(dir, "quote-${java.util.UUID.randomUUID()}.png")
+            file.outputStream().use { card.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            val uri = FileProvider.getUriForFile(
+                requireContext(), "${requireContext().packageName}.fileprovider", file
+            )
+            val share = Intent(Intent.ACTION_SEND)
+                .setType("image/png")
+                .putExtra(Intent.EXTRA_STREAM, uri)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            startActivity(Intent.createChooser(share, getString(R.string.reader_capture_title)))
+        } catch (e: Exception) {
+            Timber.w(e, "quote card render/share failed")
+            showMessage(R.string.card_render_failed)
+        }
     }
 
     private fun showNoteDialog() {
@@ -527,7 +585,9 @@ abstract class ScreenFragment : Fragment() {
             "🃏" to R.drawable.ic_card, "👆" to R.drawable.ic_toolbar_hand_touch,
             "🔄" to R.drawable.ic_toolbar_rotate, "🔀" to R.drawable.ic_swap, "🎯" to R.drawable.ic_refresh,
             "🎓" to R.drawable.ic_book, "🗎" to R.drawable.ic_reader_view, "🗒" to R.drawable.ic_reader_view,
-            "📋" to R.drawable.ic_card
+            "📋" to R.drawable.ic_card,
+            "❤" to R.drawable.ic_heart, "📝" to R.drawable.ic_go_notes, "✍" to R.drawable.ic_edit,
+            "🔬" to R.drawable.ic_swap, "🧠" to R.drawable.ic_swap
         )
     }
 
@@ -556,10 +616,15 @@ abstract class ScreenFragment : Fragment() {
      */
     protected fun showIconMenu(title: CharSequence?, items: List<Pair<String, () -> Unit>>) {
         val ctx = requireContext()
-        val list = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-        val builder = AlertDialog.Builder(ctx)
-        if (title != null) builder.setTitle(title)
-        val dialog = builder.setView(androidx.core.widget.NestedScrollView(ctx).apply { addView(list) }).create()
+        fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+        // Reuse the rounded directory card so contextual menus (lasso Create task/event/card,
+        // Extract, etc.) read the same as the iPad's action menus instead of a stock AlertDialog.
+        val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
+        val list = root.findViewById<LinearLayout>(R.id.go_to_list)
+        val titleView = root.findViewById<TextView>(R.id.go_to_title)
+        if (title.isNullOrEmpty()) titleView.visibility = View.GONE else titleView.text = title
+        val dialog = AlertDialog.Builder(ctx).setView(root).create()
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         for ((label, action) in items) {
             val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
             r.findViewById<TextView>(R.id.go_label).text = applyRowIcon(r, label)
@@ -567,6 +632,7 @@ abstract class ScreenFragment : Fragment() {
             list.addView(r)
         }
         showModal(dialog)
+        dialog.window?.let { w -> w.attributes = w.attributes.apply { width = dp(300) } }
     }
 
     /**
@@ -617,14 +683,24 @@ abstract class ScreenFragment : Fragment() {
                 continue
             }
 
+            // An outline frames the expanded dropdown for clarity.
+            val outline = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.TRANSPARENT)
+                setStroke(dp(1), 0x66000000)
+                cornerRadius = dp(8).toFloat()
+            }
             val children = LinearLayout(requireContext()).apply {
                 orientation = LinearLayout.VERTICAL
                 visibility = if (folder.expanded) View.VISIBLE else View.GONE
+                background = if (folder.expanded) outline else null
+                setPadding(dp(2), dp(2), dp(2), dp(4))
             }
             fun caret() = if (children.visibility == View.VISIBLE) "▾" else "▸"
             headerLabel.text = "${caret()}  ${folder.title}"
             header.setOnClickListener {
-                children.visibility = if (children.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                val show = children.visibility != View.VISIBLE
+                children.visibility = if (show) View.VISIBLE else View.GONE
+                children.background = if (show) outline else null
                 headerLabel.text = "${caret()}  ${folder.title}"
             }
             for ((label, action) in folder.items) {
@@ -634,7 +710,10 @@ abstract class ScreenFragment : Fragment() {
                 r.setOnClickListener { dialog.dismiss(); action() }
                 children.addView(r)
             }
-            list.addView(header); list.addView(children)
+            val childLp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(dp(6), dp(1), dp(6), dp(4)) }
+            list.addView(header); list.addView(children, childLp)
         }
 
         dialog.setOnShowListener { onModalShown() }
@@ -644,7 +723,9 @@ abstract class ScreenFragment : Fragment() {
             val lp = w.attributes
             lp.gravity = Gravity.START or Gravity.TOP
             lp.x = dp(8); lp.y = dp(54); lp.width = dp(260)
-            lp.height = (resources.displayMetrics.heightPixels * 0.72f).toInt()
+            // Size to the menu's content (the inner ScrollView still scrolls if it's
+            // taller than the screen) — so the whole menu shows whenever it fits.
+            lp.height = android.view.WindowManager.LayoutParams.WRAP_CONTENT
             w.attributes = lp
         }
     }
@@ -693,19 +774,13 @@ abstract class ScreenFragment : Fragment() {
      * Ask). Lets you jump between the Ledger surfaces from anywhere.
      */
     protected fun showSurfacesMenu() {
-        val labels = arrayOf("Day", "Bookshelf", "Feed Ledger", "Ask my Ledger")
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.go_to_title)
-            .setItems(labels) { _, which ->
-                val nav = androidx.navigation.fragment.NavHostFragment.findNavController(this)
-                when (which) {
-                    0 -> nav.navigate(R.id.action_to_calendar_day)
-                    1 -> nav.navigate(R.id.action_to_reader)
-                    2 -> nav.navigate(R.id.action_to_feeds)
-                    3 -> nav.navigate(R.id.action_to_ledger_chat)
-                }
-            }
-            .show()
+        val nav = androidx.navigation.fragment.NavHostFragment.findNavController(this)
+        showIconMenu(getString(R.string.go_to_title), listOf(
+            "📅 Day" to { nav.navigate(R.id.action_to_calendar_day) },
+            "📚 Bookshelf" to { nav.navigate(R.id.action_to_reader) },
+            "📰 Feed Ledger" to { nav.navigate(R.id.action_to_feeds) },
+            "💬 Ask my Ledger" to { nav.navigate(R.id.action_to_ledger_chat) },
+        ))
     }
 
     /**

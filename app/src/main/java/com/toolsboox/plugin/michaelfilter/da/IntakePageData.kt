@@ -22,8 +22,28 @@ data class IntakePageData(
     var listenTyped: String = "",
     var educateTyped: String = "",
     var deliveredLinkUrls: MutableList<String> = mutableListOf(),
-    var deliveredEducateNote: String = ""
+    var deliveredEducateNote: String = "",
+    /**
+     * Structured capture per panel — kind ("read"/"watch"/"listen"/"educate") → section
+     * ("notes"/"quotes"/"image1"/"image2") → value (text, or a base64/data ref for images).
+     * Additive to the flat *Typed fields above so existing link capture is untouched.
+     */
+    var sections: MutableMap<String, MutableMap<String, String>> = mutableMapOf()
 ) {
+    /** Read a structured section (empty if unset). */
+    fun sectionFor(kindKey: String, section: String): String =
+        sections[kindKey]?.get(section).orEmpty()
+
+    /** Write a structured section, creating the panel bucket as needed. */
+    fun setSectionFor(kindKey: String, section: String, value: String) {
+        sections.getOrPut(kindKey) { mutableMapOf() }[section] = value
+    }
+
+    companion object {
+        /** The capture sections every intake panel exposes, in display order. */
+        val SECTIONS = listOf("notes", "quotes", "image1", "image2")
+    }
+
     /**
      * Get the typed text of a panel by its kind key.
      */

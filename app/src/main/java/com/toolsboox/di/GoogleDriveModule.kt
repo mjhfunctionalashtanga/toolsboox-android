@@ -65,7 +65,13 @@ object GoogleDriveModule {
     @Reusable
     fun provideSignInClient(@ApplicationContext context: Context): GoogleSignInClient {
         val googleSignInOptions = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestScopes(Scope(DriveScopes.DRIVE_APPDATA), Scope(DriveScopes.DRIVE_FILE))
+            .requestScopes(
+                Scope(DriveScopes.DRIVE_APPDATA),
+                Scope(DriveScopes.DRIVE_FILE),
+                // Lets Ledger add the events you write to your Google Calendar (events counterpart
+                // to the WebDAV task sync). Least-privilege: only events the app created.
+                Scope(com.toolsboox.plugin.calendar.nw.LedgerEventSync.CALENDAR_SCOPE)
+            )
             .requestEmail()
             .build()
 

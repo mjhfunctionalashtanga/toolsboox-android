@@ -2,6 +2,8 @@ package com.toolsboox.plugin.michaelfilter.nw
 
 import android.content.Context
 import com.squareup.moshi.Moshi
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import com.toolsboox.plugin.michaelfilter.da.IntakePageData
 import com.toolsboox.plugin.michaelfilter.da.IntakeSubmission
 import com.toolsboox.plugin.michaelfilter.ot.ShareTextParser
@@ -66,9 +68,67 @@ object IntakePageStore {
         try {
             val json = moshi.adapter(IntakePageData::class.java).toJson(data)
             fileFor(context, date).writeText(json, Charsets.UTF_8)
+            syncWebDav(context, date)
         } catch (e: Exception) {
             Timber.e(e, "$TAG: Failed to save intake page for $date")
         }
+    }
+
+    private fun remotePath(date: LocalDate) = "intake/intake-$date.json"
+
+    /** Union the non-blank lines of [a] and [b], preserving order (a first) and de-duplicating. */
+    private fun unionLines(a: String, b: String): String {
+        val seen = LinkedHashSet<String>()
+        for (s in (a + "\n" + b).split("\n")) { val t = s.trim(); if (t.isNotEmpty()) seen.add(t) }
+        return seen.joinToString("\n")
+    }
+
+    /**
+     * Merge two intake pages without losing either device's edits: the Read/Watch/Listen link lanes
+     * are append-style, so they union by line (matching the URL-dedup dispatch already does); Educate
+     * is a free note, so the longer text wins; delivered markers union; structured sections keep the
+     * non-blank side. Stops the old push-only clobber where the last device to save wiped the other.
+     */
+    private fun merge(local: IntakePageData, remote: IntakePageData): IntakePageData {
+        val m = IntakePageData()
+        m.readTyped = unionLines(local.readTyped, remote.readTyped)
+        m.watchTyped = unionLines(local.watchTyped, remote.watchTyped)
+        m.listenTyped = unionLines(local.listenTyped, remote.listenTyped)
+        m.educateTyped = if (remote.educateTyped.length > local.educateTyped.length) remote.educateTyped else local.educateTyped
+        m.deliveredLinkUrls = (local.deliveredLinkUrls + remote.deliveredLinkUrls).distinct().toMutableList()
+        m.deliveredEducateNote = local.deliveredEducateNote.ifBlank { remote.deliveredEducateNote }
+        for (k in (local.sections.keys + remote.sections.keys)) {
+            val ls = local.sections[k] ?: mutableMapOf(); val rs = remote.sections[k] ?: mutableMapOf()
+            val merged = mutableMapOf<String, String>()
+            for (sk in (ls.keys + rs.keys)) merged[sk] = ls[sk]?.takeIf { it.isNotBlank() } ?: rs[sk].orEmpty()
+            m.sections[k] = merged
+        }
+        return m
+    }
+
+    /**
+     * Round-trip the day's intake page through WebDAV: pull the remote copy, merge it with the local
+     * one, write the merged result back to disk, and push it. Fire-and-forget; no-op without creds.
+     * Lands at <root>/intake/intake-YYYY-MM-DD.json.
+     */
+    private fun syncWebDav(context: Context, date: LocalDate) {
+        com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.background { mergeFromRemote(context, date) }
+    }
+
+    /** Blocking pull-merge-push for [date]. Call off the main thread. Used to refresh the Later view
+     *  so links filed on another device show up here. */
+    fun pullLatest(context: Context, date: LocalDate) = mergeFromRemote(context, date)
+
+    private fun mergeFromRemote(context: Context, date: LocalDate) {
+        val adapter = moshi.adapter(IntakePageData::class.java)
+        val localText = fileFor(context, date).let { if (it.exists()) it.readText(Charsets.UTF_8) else "" }
+        val local = runCatching { adapter.fromJson(localText) }.getOrNull() ?: IntakePageData()
+        val remoteText = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.pull(context, remotePath(date))
+        val remote = remoteText?.let { runCatching { adapter.fromJson(it) }.getOrNull() }
+        val merged = if (remote == null) local else merge(local, remote)
+        val mergedJson = adapter.toJson(merged)
+        if (mergedJson != localText) runCatching { fileFor(context, date).writeText(mergedJson, Charsets.UTF_8) }
+        com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.push(context, remotePath(date), mergedJson)
     }
 
     /**
@@ -83,7 +143,61 @@ object IntakePageStore {
         data.setTypedFor(kind, if (existing.isEmpty()) entry else "$existing\n$entry")
         save(context, date, data)
         dispatch(context, date, data)
+        publish(context, kind, url, title ?: "")
     }
+
+    // No client-embedded shared secret: the server authorizes ingest on the per-user token and
+    // provision on a per-IP rate limit, so nothing sensitive ships in the APK.
+    private const val LATER_INGEST_URL = "https://mjh.yoga/wp-json/mjh/v1/later"
+    private const val LATER_PROVISION_URL = "https://mjh.yoga/wp-json/mjh/v1/later/provision"
+
+    private fun laterPrefs(context: Context) =
+        context.getSharedPreferences("ledger_later_prefs", Context.MODE_PRIVATE)
+
+    fun userToken(context: Context): String? =
+        laterPrefs(context).getString("later_feed_token", null)?.takeIf { it.isNotBlank() }
+
+    /** The user's personal subscribable feed URL, or null until provisioned. */
+    fun feedUrl(context: Context): String? =
+        userToken(context)?.let { "https://mjh.yoga/?mjh_later_feed=1&key=$it" }
+
+    /** Self-serve: mint (once) + store this user's token; returns the feed URL. Blocking — off main. */
+    fun provision(context: Context): String? {
+        feedUrl(context)?.let { return it }
+        val body = org.json.JSONObject().put("label", "Android").toString()
+        val req = okhttp3.Request.Builder().url(LATER_PROVISION_URL)
+            .post(body.toRequestBody("application/json".toMediaType())).build()
+        return runCatching {
+            okHttp.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val json = org.json.JSONObject(resp.body?.string() ?: return null)
+                val token = json.optString("token").takeIf { it.isNotBlank() } ?: return null
+                laterPrefs(context).edit().putString("later_feed_token", token).apply()
+                json.optString("feed_url").takeIf { it.isNotBlank() } ?: feedUrl(context)
+            }
+        }.getOrNull()
+    }
+
+    /**
+     * Publish the filed item to the user's personal Later List RSS feed on mjh.yoga (any RSS
+     * reader subscribes). Auto-provisions on first use; fire-and-forget.
+     */
+    fun publish(context: Context, kind: String, url: String, title: String) {
+        Thread {
+            var token = userToken(context)
+            if (token == null) { provision(context); token = userToken(context) }
+            if (token == null) return@Thread
+            val itemId = "android-" + (url + "|" + title).hashCode()
+            val body = org.json.JSONObject()
+                .put("token", token).put("title", title).put("url", url)
+                .put("kind", kind).put("item_id", itemId).toString()
+            val req = okhttp3.Request.Builder().url(LATER_INGEST_URL)
+                .post(body.toRequestBody("application/json".toMediaType())).build()
+            runCatching { okHttp.newCall(req).execute().close() }
+        }.start()
+    }
+
+    private val okHttp by lazy { okhttp3.OkHttpClient() }
 
     /**
      * Enqueue all not-yet-delivered typed content through the intake queue.

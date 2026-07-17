@@ -33,9 +33,12 @@ import java.nio.file.attribute.BasicFileAttributes
  * renders PDFs and pushes a flat json/ mirror for the OCR pipeline) by keeping the versioned day
  * files themselves converged between devices.
  *
- * Conflict resolution is last-write-wins by the day's [CalendarDay.updated] field — the same key
- * the Google Drive sync uses ([CalendarGoogleDriveSyncPresenter]). A cheap PROPFIND getlastmodified
- * pre-filter avoids downloading remote files that cannot be newer than the local copy.
+ * Conflict resolution is a conflict-free MERGE (shared [com.toolsboox.plugin.calendar.fi.CalendarDayMerger]
+ * — the same union+tombstone logic the Google Drive sync uses), so two devices editing the same day
+ * both keep their edits instead of the older `updated` losing everything. The merge is made
+ * deterministic (pair ordered by updated then json; timestamp = max, not "now") so devices converge to
+ * a byte-identical result and stop syncing rather than ping-ponging. A server-clock watermark + PROPFIND
+ * getlastmodified pre-filter skip files that haven't changed since the last converged pass.
  *
  * @param webdav the shared WebDAV HTTP/auth client
  * @param rootDir the app's external documents directory (parent of the "calendar/" tree)
@@ -52,6 +55,11 @@ class CalendarWebDavSyncService(
 
         // Matches the versioned day files both clients write: day-YYYY-MM-DD-v#.json
         private val DAY_FILE_REGEX = Regex("^day-.*-v\\d+\\.json$", RegexOption.IGNORE_CASE)
+
+        // getlastmodified is only 1-second resolution, so a change in the same wall-second as the last
+        // converged pass could share its mtime. Require the remote mtime to be this far BELOW the
+        // watermark before trusting "unchanged"; anything within the margin is re-fetched and merged.
+        private const val MTIME_MARGIN_MS = 2_000L
 
         /**
          * Build a Moshi instance matching the app's NetworkModule.provideMoshi().
@@ -136,9 +144,19 @@ class CalendarWebDavSyncService(
         val allPaths = localByPath.keys + remoteByPath.keys
         Timber.i("$TAG: local=${localByPath.size} remote=${remoteByPath.size} union=${allPaths.size}")
 
+        // Two watermarks from the last fully-converged pass, each compared only against its OWN clock:
+        //  - [watermark]: max remote getlastmodified (SERVER clock) → detect remote changes.
+        //  - [localWatermark]: max local CalendarDay.updated (DEVICE clock) → detect local changes.
+        // A both-sides file provably unchanged on both is skipped without a GET; mixing the two clocks
+        // (the old bug) is avoided entirely.
+        val (watermark, localWatermark) = readWatermarks()
+        var maxRemoteSeen = watermark
+        var maxLocalSeen = localWatermark
+
         for (remotePath in allPaths) {
             val local = localByPath[remotePath]
             val remote = remoteByPath[remotePath]
+            if (remote != null && remote.lastModified > maxRemoteSeen) maxRemoteSeen = remote.lastModified
             try {
                 when {
                     // Local-only → push it up.
@@ -149,25 +167,58 @@ class CalendarWebDavSyncService(
                     local == null && remote != null -> {
                         if (pull(remotePath)) pulled++ else failed++
                     }
-                    // On both sides → last-write-wins by the day's `updated` field.
+                    // On both sides → MERGE (union strokes/text/images/events by id, honouring erase
+                    // tombstones), not last-write-wins, so neither device's concurrent edits are lost.
                     local != null && remote != null -> {
-                        // Fast path: if the server copy cannot be newer than our local `updated`,
-                        // avoid the GET and just push if we are strictly newer.
-                        if (remote.lastModified in 1 until local.updated) {
-                            if (push(local)) pushed++ else failed++
-                            continue
+                        val rMtime = remote.lastModified
+                        // The local "changed?" signal is the FILE's own mtime (set when THIS device last
+                        // wrote it) — a pure device-clock value. We deliberately do NOT use
+                        // CalendarDay.updated here: the merge stamps updated = max(local, peer), so a
+                        // faster peer's clock would poison it and could persistently skip a real local edit.
+                        val lMtime = local.file.lastModified()
+                        if (lMtime > maxLocalSeen) maxLocalSeen = lMtime
+                        // Skip decisions use SAME-CLOCK comparisons only (server rMtime vs server
+                        // watermark; device lMtime vs device localWatermark). An unknown/0 mtime is never
+                        // "unchanged", so we never blind-push over a copy we didn't fetch. The MARGIN
+                        // covers the 1-second resolution of getlastmodified.
+                        val remoteUnchanged = rMtime > 0 && watermark > 0 && rMtime < watermark - MTIME_MARGIN_MS
+                        val localUnchanged = localWatermark > 0 && lMtime <= localWatermark
+                        // Both provably unchanged since the last converged pass → nothing to do.
+                        if (remoteUnchanged && localUnchanged) { skipped++; continue }
+                        // Remote provably unchanged (so local already ⊇ remote from the last converge) but
+                        // local changed → a plain push carries the new local edits without losing anything.
+                        if (remoteUnchanged) { if (push(local)) pushed++ else failed++; continue }
+                        // Remote changed or its mtime is unknown → fetch and merge (never blind-push).
+                        val remoteBytes = webdav.download(remotePath) ?: run { failed++; continue }
+                        val remoteDay = parseDay(remoteBytes)
+                        val localDay = parseDay(local.file.readBytes())
+                        // If EITHER side isn't a parseable v2 day (e.g. a forward-schema file from a newer
+                        // build), do nothing destructive: leave both copies as-is and log. Converges once
+                        // both builds understand the schema; never clobbers the side we can't read.
+                        if (remoteDay == null || localDay == null) {
+                            Timber.w("$TAG: unparseable day on one side, leaving both untouched: $remotePath")
+                            skipped++; continue
                         }
-                        val remoteBytes = webdav.download(remotePath)
-                        if (remoteBytes == null) {
-                            failed++
-                            continue
+                        // Deterministic merge: order the pair by (updated, then json) so every device
+                        // computes byte-identical output from the same two versions → convergence, not
+                        // ping-pong. Stamp updated = max(existing) rather than "now" for the same reason.
+                        val lu = localDay.updated?.time ?: 0L; val ru = remoteDay.updated?.time ?: 0L
+                        val (first, second) = when {
+                            lu < ru -> localDay to remoteDay
+                            lu > ru -> remoteDay to localDay
+                            dayJson(localDay) <= dayJson(remoteDay) -> localDay to remoteDay
+                            else -> remoteDay to localDay
                         }
-                        val remoteUpdated = parseUpdated(String(remoteBytes, Charsets.UTF_8))
-                            ?: remote.lastModified
-                        when {
-                            local.updated > remoteUpdated -> if (push(local)) pushed++ else failed++
-                            remoteUpdated > local.updated -> if (writeLocal(remotePath, remoteBytes)) pulled++ else failed++
-                            else -> skipped++
+                        val merged = com.toolsboox.plugin.calendar.fi.CalendarDayMerger.merge(first, second)
+                        merged.updated = java.util.Date(maxOf(lu, ru))
+                        merged.created = localDay.created ?: remoteDay.created
+                        val mergedJson = dayJson(merged)
+                        if (!sameContent(localDay, merged, mergedJson)) {
+                            if (writeLocal(remotePath, mergedJson.toByteArray(Charsets.UTF_8))) pulled++ else failed++
+                        }
+                        if (!sameContent(remoteDay, merged, mergedJson)) {
+                            ensureRemoteParents(remotePath)
+                            if (webdav.uploadBytes(mergedJson.toByteArray(Charsets.UTF_8), remotePath)) pushed++ else failed++
                         }
                     }
                 }
@@ -176,6 +227,10 @@ class CalendarWebDavSyncService(
                 Timber.e(e, "$TAG: Error syncing $remotePath")
             }
         }
+
+        // Only advance the watermarks when every file converged this pass; otherwise a file that failed
+        // to download/merge could be wrongly skipped (and its remote edits lost) next time.
+        if (failed == 0) writeWatermarks(maxRemoteSeen, maxLocalSeen)
 
         runCatching { syncAttachments() }.onFailure { Timber.w(it, "$TAG: attachment sync failed") }
 
@@ -256,6 +311,38 @@ class CalendarWebDavSyncService(
         } catch (e: Exception) {
             null
         }
+    }
+
+    /** Parse a day JSON to a [CalendarDay], or null if it isn't parseable. */
+    private fun parseDay(bytes: ByteArray): CalendarDay? =
+        try { moshi.adapter(CalendarDay::class.java).fromJson(String(bytes, Charsets.UTF_8)) } catch (e: Exception) { null }
+
+    /** Serialize a day the same way it's stored, so equal content produces equal strings. */
+    private fun dayJson(day: CalendarDay): String = moshi.adapter(CalendarDay::class.java).toJson(day)
+
+    /**
+     * True when [day] already holds exactly the merged content — comparing with the merge's
+     * timestamps normalised in, so a byte-equal check reflects content only. Used to avoid a needless
+     * local write / remote push (and the cross-device ping-pong that would cause).
+     */
+    private fun sameContent(day: CalendarDay, merged: CalendarDay, mergedJson: String): Boolean {
+        val n = day.deepCopy()
+        n.updated = merged.updated
+        n.created = merged.created
+        return dayJson(n) == mergedJson
+    }
+
+    private fun watermarkFile() = File(rootDir, ".calendar_webdav_sync_state")
+
+    /** (remoteWatermark, localWatermark) from the last converged pass; (0,0) if none. */
+    private fun readWatermarks(): Pair<Long, Long> = runCatching {
+        val parts = watermarkFile().readText().trim().split(",")
+        (parts.getOrNull(0)?.toLongOrNull() ?: 0L) to (parts.getOrNull(1)?.toLongOrNull() ?: 0L)
+    }.getOrDefault(0L to 0L)
+
+    private fun writeWatermarks(remote: Long, local: Long) {
+        runCatching { watermarkFile().writeText("$remote,$local") }
+            .onFailure { Timber.w(it, "$TAG: failed to store sync watermarks") }
     }
 
     /**

@@ -81,6 +81,14 @@
         android:layout_height="wrap_content"/>
 
     <Button
+        android:id="@+id/mic_button"
+        android:text="@string/ledger_chat_dictate"
+        android:textSize="16sp"
+        android:layout_marginTop="8dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+    <Button
         android:id="@+id/ask_button"
         android:text="@string/ledger_chat_ask"
         android:textColor="#FFFFFF"
@@ -115,6 +123,26 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"/>
     </ScrollView>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <Button
+            android:id="@+id/save_feed_button"
+            android:text="@string/ledger_chat_save_feed"
+            android:textSize="14sp"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/history_button"
+            android:text="@string/ledger_chat_history"
+            android:textSize="14sp"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
 
     <!-- Collapsible key/model row -->
     <TextView
@@ -171,6 +199,11 @@
         <Button
             android:id="@+id/save_key_button"
             android:text="@string/ledger_chat_save_key"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/persona_button"
+            android:text="@string/ledger_persona"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"/>
     </LinearLayout>
