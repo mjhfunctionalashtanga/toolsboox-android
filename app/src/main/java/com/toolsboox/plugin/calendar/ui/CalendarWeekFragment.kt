@@ -250,7 +250,7 @@ class CalendarWeekFragment @Inject constructor() : SurfaceFragment() {
         // was the date-strip navigator — hence "the old menu pops out on weeks".
         binding.goAppsButton.visibility = View.VISIBLE
         binding.goAppsButton.setOnClickListener {
-            showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
+            showSectionMenu()
         }
         binding.goAppsButton.bringToFront()
 

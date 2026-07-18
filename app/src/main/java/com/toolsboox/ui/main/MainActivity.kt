@@ -49,8 +49,12 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         val h = volumeKeyHandler
         if (h != null && event.action == android.view.KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
-                android.view.KeyEvent.KEYCODE_VOLUME_UP -> if (h(true)) return true
-                android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> if (h(false)) return true
+                // Boox page-turn buttons emit either volume OR page keycodes depending on device;
+                // accept both so the hardware buttons page everywhere a handler is registered.
+                android.view.KeyEvent.KEYCODE_VOLUME_UP,
+                android.view.KeyEvent.KEYCODE_PAGE_UP -> if (h(true)) return true
+                android.view.KeyEvent.KEYCODE_VOLUME_DOWN,
+                android.view.KeyEvent.KEYCODE_PAGE_DOWN -> if (h(false)) return true
             }
         }
         return super.dispatchKeyEvent(event)

@@ -298,6 +298,21 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                     out.add(LogItem(LogOrigin.PICKING, t.text.trim(), stamp(Date(fallback)), "", null, fallback))
                 }
 
+                // Every addition to a surface — tasks/events, text notes on any other page, and
+                // placed cards — so the Ledger Log is a full record, not only reading highlights.
+                for (item in day.ledgerItems.filter { it.text.isNotBlank() }) {
+                    val label = if (item.kind == com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) "Event" else "Task"
+                    val meta = listOfNotNull(item.time, stamp(item.date)).joinToString(" · ")
+                    out.add(LogItem(LogOrigin.TASK, item.text.trim(), meta, label, null, item.date.time))
+                }
+                for (t in day.textElements.filter { it.pageKey != "pickings" && it.text.isNotBlank() }) {
+                    out.add(LogItem(LogOrigin.NOTE, t.text.trim(), stamp(Date(t.timestamp)), "", null, t.timestamp))
+                }
+                for (img in day.imageElements) {
+                    out.add(LogItem(LogOrigin.CARD, "Card · ${img.page.ifBlank { "day" }}",
+                        stamp(Date(img.timestamp)), "", null, img.timestamp))
+                }
+
                 // Intake — links filed to Read / Watch / Listen / Educate (MichaelFilter),
                 // from the day's intake sidecar. One item per typed line.
                 dayDate?.let { d ->

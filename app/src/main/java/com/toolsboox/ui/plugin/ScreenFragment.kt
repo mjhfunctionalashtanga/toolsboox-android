@@ -236,7 +236,7 @@ abstract class ScreenFragment : Fragment() {
         // First tap → jump to the present period; a second tap (already on the present
         // period) brings down the Ledger section menu.
         navGoto.setOnClickListener {
-            if (isAtPresent()) showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
+            if (isAtPresent()) showSectionMenu()
             else onHome()
         }
         navWidget.bringToFront()
@@ -722,12 +722,42 @@ abstract class ScreenFragment : Fragment() {
         dialog.window?.let { w ->
             val lp = w.attributes
             lp.gravity = Gravity.START or Gravity.TOP
-            lp.x = dp(8); lp.y = dp(54); lp.width = dp(260)
-            // Size to the menu's content (the inner ScrollView still scrolls if it's
-            // taller than the screen) — so the whole menu shows whenever it fits.
-            lp.height = android.view.WindowManager.LayoutParams.WRAP_CONTENT
+            val metrics = resources.displayMetrics
+            lp.x = dp(8); lp.y = dp(54)
+            lp.width = minOf(dp(260), metrics.widthPixels - dp(16))
+            // Size to content, but clamp to the visible area below y so a tall menu scrolls
+            // within the screen instead of running off the bottom (small screens like the Palma).
+            val avail = metrics.heightPixels - lp.y - dp(16)
+            root.measure(
+                View.MeasureSpec.makeMeasureSpec(lp.width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            )
+            lp.height = if (root.measuredHeight > avail) avail
+                        else android.view.WindowManager.LayoutParams.WRAP_CONTENT
             w.attributes = lp
         }
+    }
+
+    /**
+     * The section switcher — the same "go to a surface" list the day page offers, so the almanac
+     * pages open THIS instead of the old ledger-directory drawer. Uses CalendarNavigator (works
+     * from any fragment) and the global feed/AV nav actions, so it's safe to call anywhere.
+     */
+    protected fun showSectionMenu() {
+        val nav = com.toolsboox.plugin.calendar.CalendarNavigator
+        val today = java.time.LocalDate.now()
+        val locale = java.util.Locale.getDefault()
+        fun go(action: Int) = androidx.navigation.Navigation.findNavController(requireView()).navigate(action)
+        showAccordion(listOf(
+            Folder("☀", "Day", action = { nav.toDayPage(this, today, com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE) }),
+            Folder("🔖", "Intake", action = { nav.toDayNote(this, today, "intake") }),
+            Folder("🙏", "Gratitude", action = { nav.toDayNote(this, today, "gratitude") }),
+            Folder("❝", "Pickings", action = { nav.toDayNote(this, today, "pickings") }),
+            Folder("✒", "Notes", action = { nav.toDayNote(this, today, "0") }),
+            Folder("📰", "Feed", action = { go(com.toolsboox.R.id.action_to_feeds) }),
+            Folder("🎬", "AV", action = { go(com.toolsboox.R.id.action_to_reading_log) }),
+            Folder("📆", "Almanac", action = { nav.toWeekPage(this, today, locale) })
+        ))
     }
 
     /**

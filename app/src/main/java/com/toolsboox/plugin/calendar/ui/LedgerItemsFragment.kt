@@ -146,6 +146,8 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         val d = day ?: return
         val ids = toDelete.map { it.id }.toSet()
         d.ledgerItems.removeAll { it.id in ids }
+        // Record tombstones so the union merge can't resurrect a deleted item from a synced copy.
+        ids.forEach { if (it !in d.deletedElementIds) d.deletedElementIds.add(it) }
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
                 runCatching { calendarDayService.save(documentsRoot(), anchor, d) }

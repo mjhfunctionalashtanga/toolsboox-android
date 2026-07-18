@@ -14,7 +14,10 @@ enum class LogOrigin(val label: String, val mark: String) {
     WATCH("Watch", "▶"),
     LISTEN("Listen", "♪"),
     PICKING("Picking", "❝"),
-    AV("AV", "◉")
+    AV("AV", "◉"),
+    TASK("Task", "☑"),
+    NOTE("Note", "✒"),
+    CARD("Card", "▦")
 }
 
 /** One row in the Notes & Annotations log, flattened from a reading event or an AV gram. */

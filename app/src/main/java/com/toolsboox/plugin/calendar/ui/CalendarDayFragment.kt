@@ -215,6 +215,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // Per-page text boxes: tag the current page's, keep every other page's.
         val pageKey = notePage ?: "default"
         textElements.forEach { it.pageKey = pageKey }
+        // Tombstone any text box removed from this page so the union merge can't resurrect it.
+        val currentIds = textElements.map { it.elementId.toString() }.toSet()
+        calendarDay.textElements
+            .filter { it.pageKey == pageKey && it.elementId.toString() !in currentIds }
+            .forEach { if (it.elementId.toString() !in calendarDay.deletedElementIds) calendarDay.deletedElementIds.add(it.elementId.toString()) }
         val others = calendarDay.textElements.filter { it.pageKey != pageKey }
         calendarDay.textElements = (others + textElements).toMutableList()
         calendarPattern.updateDay(calendarDay)
@@ -230,6 +235,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // Per-page images: tag the current page's images, keep every other page's untouched.
         val pageKey = notePage ?: "default"
         imageElements.forEach { it.page = pageKey }
+        // Tombstone any card removed from this page so the union merge can't resurrect it.
+        val currentIds = imageElements.map { it.elementId.toString() }.toSet()
+        calendarDay.imageElements
+            .filter { it.page == pageKey && it.elementId.toString() !in currentIds }
+            .forEach { if (it.elementId.toString() !in calendarDay.deletedElementIds) calendarDay.deletedElementIds.add(it.elementId.toString()) }
         val others = calendarDay.imageElements.filter { it.page != pageKey }
         calendarDay.imageElements = (others + imageElements).toMutableList()
         calendarPattern.updateDay(calendarDay)
@@ -1852,6 +1862,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             syncPresenter.backgroundSync(this@CalendarDayFragment, UUID.randomUUID())
         }
         maybeShowReturnChip()
+
+        // Hardware page-turn buttons (volume/page keycodes) paginate the day surface,
+        // same as the nav pill's up/down.
+        (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = { up ->
+            if (isResumed) {
+                if (up) binding.toolbarDrawing.toolbarSwipeUp.performClick()
+                else binding.toolbarDrawing.toolbarSwipeDown.performClick()
+                true
+            } else false
+        }
     }
 
     /** If we arrived here from an open article/book (to jot a note), offer a one-tap jump back to
@@ -1877,6 +1897,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     override fun onPause() {
         super.onPause()
+
+        // Release the hardware page-key handler so it doesn't page a stale surface.
+        (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = null
 
         // Leaving the intake page counts as "page exit" — hand any typed content
         // that has not been delivered yet to the intake queue.

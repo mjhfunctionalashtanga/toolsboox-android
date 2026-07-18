@@ -513,6 +513,13 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             // allowed to start without a gesture — otherwise the player errors out (150/152).
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
+            // Reliable double-tap + pinch zoom (no on-screen zoom buttons). Needs a wide viewport
+            // + overview mode so double-tap actually has something to zoom to.
+            setSupportZoom(true)
+            builtInZoomControls = true
+            displayZoomControls = false
+            useWideViewPort = true
+            loadWithOverviewMode = true
         }
         binding.articleWeb.webChromeClient = android.webkit.WebChromeClient()
         binding.articleTitle.text = entry.title
@@ -1116,24 +1123,27 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         )
         showAccordion(
             listOf(
-                Folder("📰", "All", action = { switchTo("feed", null) }),
-                Folder("⭐", "Stars", action = { switchTo("stars", null) }),
-                lens("📖", "Read", "read"),
-                lens("📺", "Watch", "watch"),
-                lens("🎧", "Listen", "listen"),
-                Folder("🔖", "Later List", listOf(
+                // Order per Michael: Later · The Read · The Watch · The Listen · Smart Feed · Ask · Search.
+                Folder("🔖", "Later", listOf(
                     "🔖  All" to { switchTo("later", null) },
-                    "📖  Read" to { switchTo("later", "read") },
-                    "📺  Watch" to { switchTo("later", "watch") },
-                    "🎧  Listen" to { switchTo("later", "listen") }
+                    "📖  The Read" to { switchTo("later", "read") },
+                    "📺  The Watch" to { switchTo("later", "watch") },
+                    "🎧  The Listen" to { switchTo("later", "listen") }
                 ), expanded = true),
-                Folder("🗨", "Ask Answers", action = { switchTo("asklog", null) }),
-                Folder("❝", "Feed Pickings", action = { switchTo("pickings", null) }),
-                Folder("🔎", "Smart Feeds",
+                lens("📖", "The Read", "read"),
+                lens("📺", "The Watch", "watch"),
+                lens("🎧", "The Listen", "listen"),
+                Folder("🔎", "Smart Feed",
                     com.toolsboox.plugin.feeds.nw.SmartFeedStore.all(requireContext()).map { sf ->
                         ("🔎  ${sf.name}" to { switchToSmart(sf) })
                     } + ("➕  Add smart feed…" to { promptAddSmartFeed() }),
-                    expanded = true)
+                    expanded = true),
+                Folder("🗨", "Ask", action = { switchTo("asklog", null) }),
+                Folder("🔍", "Search", action = { showFeedSearch() }),
+                // Kept available below the requested set.
+                Folder("📰", "All", action = { switchTo("feed", null) }),
+                Folder("⭐", "Stars", action = { switchTo("stars", null) }),
+                Folder("❝", "Feed Pickings", action = { switchTo("pickings", null) })
             )
         )
     }
