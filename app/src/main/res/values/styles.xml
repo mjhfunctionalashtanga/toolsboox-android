@@ -22,4 +22,10 @@
 
     <style name="App.Text.Headline6" parent="TextAppearance.MaterialComponents.Headline6">
     </style>
+
+    <!-- Left drawer: the ledger directory slides in/out from the left edge. -->
+    <style name="DrawerAnimation">
+        <item name="android:windowEnterAnimation">@anim/drawer_enter</item>
+        <item name="android:windowExitAnimation">@anim/drawer_exit</item>
+    </style>
 </resources>

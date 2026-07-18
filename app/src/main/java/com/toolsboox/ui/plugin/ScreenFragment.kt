@@ -765,20 +765,13 @@ abstract class ScreenFragment : Fragment() {
         dialog.setOnDismissListener { onModalDismissed() }
         dialog.show()
         dialog.window?.let { w ->
+            // Left drawer: flush-left, full-height, scrolls internally. No animation (e-ink).
             val lp = w.attributes
             lp.gravity = Gravity.START or Gravity.TOP
             val metrics = resources.displayMetrics
-            lp.x = dp(22); lp.y = dp(54)
-            lp.width = minOf(dp(200), (metrics.widthPixels * 0.44f).toInt())
-            // Size to content, but clamp to the visible area below y so a tall menu scrolls
-            // within the screen instead of running off the bottom (small screens like the Palma).
-            val avail = metrics.heightPixels - lp.y - dp(16)
-            root.measure(
-                View.MeasureSpec.makeMeasureSpec(lp.width, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-            )
-            lp.height = if (root.measuredHeight > avail) avail
-                        else android.view.WindowManager.LayoutParams.WRAP_CONTENT
+            lp.x = 0; lp.y = 0
+            lp.width = minOf(dp(300), (metrics.widthPixels * 0.66f).toInt())
+            lp.height = android.view.WindowManager.LayoutParams.MATCH_PARENT
             w.attributes = lp
         }
     }
