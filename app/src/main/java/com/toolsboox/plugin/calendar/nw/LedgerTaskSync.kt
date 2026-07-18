@@ -30,9 +30,9 @@ object LedgerTaskSync {
 
     private val client by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-            .writeTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+            .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
             .build()
     }
 

@@ -125,20 +125,22 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
 
     private fun addTask(text: String) {
         val today = java.time.LocalDate.now()
+        val item = LedgerItem(
+            id = "li-" + java.util.UUID.randomUUID().toString().lowercase(),
+            kind = LedgerItem.Kind.TASK, text = text, date = Date(), stage = "todo",
+            board = selectedBoard ?: ""
+        )
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
                 val root = documentsRoot()
                 val day = calendarDayService.load(root, today, null, Locale.getDefault())
-                val item = LedgerItem(
-                    id = "li-" + java.util.UUID.randomUUID().toString().lowercase(),
-                    kind = LedgerItem.Kind.TASK, text = text, date = Date(), stage = "todo",
-                    board = selectedBoard ?: ""
-                )
                 day.ledgerItems.add(item)
                 calendarDayService.save(root, today, day)
-                runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), item) }
             }
             load()
+            lifecycleScope.launch(Dispatchers.IO) {
+                runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), item) }
+            }
         }
     }
 
@@ -195,18 +197,21 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
     private fun setStage(item: LedgerItem, stage: String) {
         val ld = item.date.toInstant().atZone(ZoneId.of("UTC")).toLocalDate()
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
+            // Save + re-render immediately; push CalDAV in the background so the UI never waits on it.
+            val updated = withContext(Dispatchers.IO) {
                 val root = documentsRoot()
                 val day = calendarDayService.load(root, ld, null, Locale.getDefault())
                 val j = day.ledgerItems.indexOfFirst { it.id == item.id }
-                if (j >= 0) {
-                    day.ledgerItems[j].stage = stage
-                    day.ledgerItems[j].done = (stage == "done")
-                    calendarDayService.save(root, ld, day)
-                    runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), day.ledgerItems[j]) }
-                }
+                if (j < 0) return@withContext null
+                day.ledgerItems[j].stage = stage
+                day.ledgerItems[j].done = (stage == "done")
+                calendarDayService.save(root, ld, day)
+                day.ledgerItems[j]
             }
             load()
+            if (updated != null) lifecycleScope.launch(Dispatchers.IO) {
+                runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), updated) }
+            }
         }
     }
 
