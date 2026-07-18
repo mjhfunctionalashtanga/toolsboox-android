@@ -554,9 +554,16 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val entry = currentArticle ?: return
         val parsed = com.toolsboox.plugin.feeds.nw.FeedCache.loadContent(requireContext(), entry.id)
         val body = if (showParsed && !parsed.isNullOrBlank()) parsed else entry.content
+        val httpUrl = entry.url.takeIf { it.startsWith("http", ignoreCase = true) }
+        // No stored/parsed article (e.g. a gram's external source, content left blank) → load the
+        // live page directly in this pane's WebView rather than showing an empty article.
+        if (body.isBlank() && httpUrl != null) {
+            binding.articleWeb.loadUrl(httpUrl)
+            return
+        }
         // A real https baseUrl gives the document a valid origin/referer; a null baseUrl makes YouTube
         // (and other) embeds fail with "error 150" (embedding-not-allowed for the opaque origin).
-        val base = entry.url.takeIf { it.startsWith("http", ignoreCase = true) } ?: "https://www.youtube.com"
+        val base = httpUrl ?: "https://www.youtube.com"
         binding.articleWeb.loadDataWithBaseURL(base, buildArticleHtml(entry, body), "text/html", "UTF-8", null)
     }
 

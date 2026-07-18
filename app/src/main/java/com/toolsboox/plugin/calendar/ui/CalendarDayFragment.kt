@@ -1090,7 +1090,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                         id = link.hashCode().toLong(),
                         title = element.sourceLabel.ifBlank { "Source" },
                         feedTitle = "", url = link, author = null,
-                        content = "<p><em>Opening the source…</em></p>",
+                        // Blank content is the sentinel that tells the reader to load the live page
+                        // (there's no stored/parsed article for an arbitrary gram source URL).
+                        content = "",
                         publishedAt = java.time.Instant.now().toString(), starred = false
                     )
                 findNavController().navigate(R.id.action_to_feeds)
