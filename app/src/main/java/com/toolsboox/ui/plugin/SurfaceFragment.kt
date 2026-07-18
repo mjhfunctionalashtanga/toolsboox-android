@@ -2227,7 +2227,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         val top = box.top + pad
         val rects = mutableListOf<Pair<String, RectF>>()
         var right = box.right - pad
-        for (label in listOf("Del", "Crop", "Cut")) {
+        for (label in listOf("Del", "Crop", "Cut", "Rot")) {
             rects.add(label to RectF(right - s, top, right, top + s))
             right -= (s + pad)
         }
@@ -2287,6 +2287,16 @@ abstract class SurfaceFragment : ScreenFragment() {
                     "Del" -> {
                         lockCanvas.drawLine(il.toFloat(), it.toFloat(), ir.toFloat(), ib.toFloat(), border)
                         lockCanvas.drawLine(ir.toFloat(), it.toFloat(), il.toFloat(), ib.toFloat(), border)
+                    }
+                    "Rot" -> {
+                        // A ~300° arc with a small chevron arrowhead → "rotate a step".
+                        val cx = (il + ir) / 2f; val cy = (it + ib) / 2f
+                        val rad = (ir - il) / 2.2f
+                        lockCanvas.drawArc(RectF(cx - rad, cy - rad, cx + rad, cy + rad), 20f, 300f, false, border)
+                        val a = Math.toRadians(20.0)
+                        val ex = cx + (rad * Math.cos(a)).toFloat(); val ey = cy + (rad * Math.sin(a)).toFloat()
+                        lockCanvas.drawLine(ex, ey, ex - 7f, ey - 7f, border)
+                        lockCanvas.drawLine(ex, ey, ex + 7f, ey - 7f, border)
                     }
                 }
             }
@@ -3298,6 +3308,15 @@ abstract class SurfaceFragment : ScreenFragment() {
                                         selectedImage = null
                                         onImageElementsChanged(imageElements)
                                         applyStrokes(strokes, true)
+                                    }
+                                    "Rot" -> {
+                                        // Discrete 15° step, wrapped to [0,360). Bump the timestamp so a
+                                        // cross-device merge keeps the rotated version; keep it selected.
+                                        pushUndo()
+                                        sel.rotation = ((sel.rotation + 15f) % 360f + 360f) % 360f
+                                        sel.timestamp = System.currentTimeMillis()
+                                        onImageElementsChanged(imageElements)
+                                        drawImageSelection()
                                     }
                                 }
                                 return true
