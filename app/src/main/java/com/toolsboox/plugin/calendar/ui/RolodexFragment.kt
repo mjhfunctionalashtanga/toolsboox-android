@@ -47,6 +47,12 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
             else Toast.makeText(requireContext(), "Contacts permission is needed to import", Toast.LENGTH_SHORT).show()
         }
 
+    private val writeContactsPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) confirmPush()
+            else Toast.makeText(requireContext(), "Contacts permission is needed to push", Toast.LENGTH_SHORT).show()
+        }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentRolodexBinding.bind(view)
@@ -60,6 +66,7 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
 
         binding.addContactButton.setOnClickListener { openEditor(Contact()) }
         binding.importButton.setOnClickListener { startImport() }
+        binding.pushButton.setOnClickListener { startPush() }
         binding.searchField.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = applyFilter()
@@ -95,6 +102,38 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
             val (added, linked) = withContext(Dispatchers.IO) { DeviceContactImport.importFromDevice(requireContext()) }
             load()
             Toast.makeText(requireContext(), "Imported $added · linked $linked", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun startPush() {
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.WRITE_CONTACTS)
+            == PackageManager.PERMISSION_GRANTED
+        ) confirmPush()
+        else writeContactsPermission.launch(Manifest.permission.WRITE_CONTACTS)
+    }
+
+    /** Show what the push will do (non-destructively) before writing to the device address book. */
+    private fun confirmPush() {
+        lifecycleScope.launch {
+            val (toUpdate, toCreate) = withContext(Dispatchers.IO) { DeviceContactImport.pushCounts(requireContext()) }
+            AlertDialog.Builder(requireContext())
+                .setTitle("Push to device contacts?")
+                .setMessage(
+                    "Updates $toUpdate and creates $toCreate in your device contacts. " +
+                        "Existing names, phone numbers & emails are kept — nothing is deleted or overwritten."
+                )
+                .setPositiveButton("Push") { _, _ -> runPush() }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
+    private fun runPush() {
+        Toast.makeText(requireContext(), "Pushing to device contacts…", Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            val (updated, created) = withContext(Dispatchers.IO) { DeviceContactImport.pushToDevice(requireContext()) }
+            load()
+            Toast.makeText(requireContext(), "Updated $updated · created $created", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -141,15 +180,19 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
                 contact.birthday = bdayE.text.toString().trim()
                 contact.bio = bioE.text.toString().trim()
                 if (contact.name.isNotBlank()) {
-                    ContactStore.upsert(requireContext(), contact)
-                    load()
+                    lifecycleScope.launch {
+                        withContext(Dispatchers.IO) { ContactStore.upsert(requireContext(), contact) }
+                        load()
+                    }
                 }
             }
             .setNegativeButton("Cancel", null)
         if (contact.name.isNotBlank()) {
             builder.setNeutralButton("Delete") { _, _ ->
-                ContactStore.delete(requireContext(), contact.id)
-                load()
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) { ContactStore.delete(requireContext(), contact.id) }
+                    load()
+                }
             }
         }
         builder.show()
