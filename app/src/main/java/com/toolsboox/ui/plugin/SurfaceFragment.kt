@@ -1797,6 +1797,30 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** Share the current page as one image — the day-page subclass wires it to the share sheet. */
     open fun onSharePage() {}
 
+    /** Auto-arrange this page's grams into a tidy 3-column masonry (shortest-column flow, width-
+     *  normalised, aspect preserved) — the one-tap composition helper for a Pickings page. */
+    private fun arrangeGallery() {
+        if (imageElements.isEmpty()) return
+        val cols = 3
+        val margin = 60f; val gap = 30f
+        val cellW = (CANVAS_WIDTH - 2 * margin - (cols - 1) * gap) / cols
+        val colY = FloatArray(cols) { margin }
+        pushUndo()
+        for (e in imageElements.sortedWith(compareBy({ it.z }, { it.timestamp }))) {
+            val c = (0 until cols).minByOrNull { colY[it] } ?: 0
+            val h = cellW * (e.height / maxOf(e.width, 1f))
+            e.x = margin + c * (cellW + gap)
+            e.y = colY[c]
+            e.width = cellW
+            e.height = h
+            e.rotation = 0f
+            e.timestamp = System.currentTimeMillis()
+            colY[c] += h + gap
+        }
+        onImageElementsChanged(imageElements)
+        applyStrokes(strokes, true)
+    }
+
     /** Composite the whole page — grams + strokes + text on white — into one bitmap for sharing. */
     protected fun renderPageBitmap(): Bitmap {
         val bmp = Bitmap.createBitmap(CANVAS_WIDTH, CANVAS_HEIGHT, Bitmap.Config.ARGB_8888)
@@ -2187,6 +2211,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                     LedgerContextMenu.Item("Insert clipping…") { showClippingsPicker(cx, cy) }
                 ),
                 listOf(
+                    LedgerContextMenu.Item("Arrange as gallery") { arrangeGallery() },
                     LedgerContextMenu.Item("Paste") { pasteUnifiedAt(cx, cy) },
                     LedgerContextMenu.Item("Share page as image") { onSharePage() }
                 )
