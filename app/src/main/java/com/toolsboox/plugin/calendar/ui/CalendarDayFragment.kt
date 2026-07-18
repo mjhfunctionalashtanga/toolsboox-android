@@ -1061,11 +1061,34 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     .putString("current_book_path", link.removePrefix("book://")).apply()
                 findNavController().navigate(R.id.action_to_reader)
             }
-            link.startsWith("http") ->
-                runCatching {
-                    startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(link)))
-                }
+            link.startsWith("http") -> openSourceInApp(link)
         }
+    }
+
+    /** Open a gram's external source INSIDE Ledger (a WebView), with a one-tap "open original" fallback
+     *  to the browser — so "Go to source" keeps you in-app instead of ejecting to the system browser. */
+    private fun openSourceInApp(url: String) {
+        val ctx = requireContext()
+        val web = android.webkit.WebView(ctx).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.useWideViewPort = true; settings.loadWithOverviewMode = true
+            settings.builtInZoomControls = true; settings.displayZoomControls = false
+            webViewClient = android.webkit.WebViewClient()
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                (resources.displayMetrics.heightPixels * 0.72f).toInt())
+            loadUrl(url)
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setView(web)
+            .setPositiveButton("Open original ↗") { _, _ ->
+                runCatching { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
+            }
+            .setNegativeButton("Close", null)
+            .create()
+        // Over the drawing surface → pause the Onyx pen so stylus taps don't freeze.
+        showModal(dialog)
     }
 
     /** Choose a pickings board and drop this gram card onto it (current day). */
