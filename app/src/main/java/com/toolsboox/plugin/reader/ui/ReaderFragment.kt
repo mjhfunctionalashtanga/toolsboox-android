@@ -484,7 +484,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
     /** Append a book annotation (highlight passage, note, and/or media) to today's CalendarDay. */
     private fun logHighlight(
         text: String?, note: String? = null, cfi: String = "",
-        attachment: com.toolsboox.da.Attachment? = null
+        attachment: com.toolsboox.da.Attachment? = null, starred: Boolean = false
     ) {
         val title = bookTitle
         val author = bookAuthor
@@ -504,7 +504,8 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
                         excerpt = text?.ifBlank { null },
                         note = note?.ifBlank { null },
                         location = cfi.ifBlank { null },
-                        attachments = attachment?.let { mutableListOf(it) }
+                        attachments = attachment?.let { mutableListOf(it) },
+                        starred = starred
                     )
                 )
                 calendarDayService.save(root, today, day)
@@ -556,6 +557,10 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
             cm.setPrimaryClip(android.content.ClipData.newPlainText("Ledger", text))
             showMessage("Copied to clipboard")
+        }
+        if (text.isNotBlank()) rows += "⭐  Star this passage" to {
+            logHighlight(text, cfi = cfi, starred = true)
+            showMessage("Starred to your Ledger Log")
         }
         rows += "🖍️  Add note" to {
             captureAnnotation(text, bookTitle.ifBlank { null }) { selection, note, attachment ->

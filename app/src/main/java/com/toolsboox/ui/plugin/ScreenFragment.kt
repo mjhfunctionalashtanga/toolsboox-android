@@ -236,7 +236,7 @@ abstract class ScreenFragment : Fragment() {
         // First tap → jump to the present period; a second tap (already on the present
         // period) brings down the Ledger section menu.
         navGoto.setOnClickListener {
-            if (isAtPresent()) showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
+            if (isAtPresent()) showSectionMenu()
             else onHome()
         }
         navWidget.bringToFront()
@@ -561,6 +561,51 @@ abstract class ScreenFragment : Fragment() {
         val action: (() -> Unit)? = null
     )
 
+    /** One row in a [showGoModal] section/tools modal. */
+    data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
+
+    /**
+     * The compact "Go to…" modal (grouped rows), anchored top-left (directories) or up from the
+     * bottom pill (sections). Lifted from the day page so the almanac pages use the SAME modal
+     * instead of the old accordion drawer.
+     */
+    protected fun showGoModal(groups: List<Pair<String, List<GoItem>>>, anchorTop: Boolean) {
+        val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
+        val list = root.findViewById<LinearLayout>(R.id.go_to_list)
+        root.findViewById<TextView>(R.id.go_to_title).visibility = View.GONE
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(requireContext()).setView(root).create()
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+
+        fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+        for ((header, items) in groups) {
+            val tv = TextView(requireContext())
+            tv.text = header.uppercase()
+            tv.setTextColor(0xFF8A8A8A.toInt()); tv.textSize = 11f; tv.letterSpacing = 0.08f
+            tv.setPadding(dp(14), dp(10), dp(14), dp(2))
+            list.addView(tv)
+            for (item in items) {
+                val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
+                r.findViewById<TextView>(R.id.go_label).text = applyRowIcon(r, "${item.emoji}  ${item.label}")
+                r.setOnClickListener { dialog.dismiss(); item.action() }
+                list.addView(r)
+            }
+        }
+
+        dialog.setOnShowListener { onModalShown() }
+        dialog.setOnDismissListener { onModalDismissed() }
+        dialog.show()
+        dialog.window?.let { w ->
+            val lp = w.attributes
+            // Narrow, with a clear edge margin — never more than ~46% of the screen width.
+            lp.width = minOf(dp(230), (resources.displayMetrics.widthPixels * 0.56f).toInt())
+            // Always top-left, matching showAccordion/showDirectory — so the menu appears in the
+            // SAME position on every screen (day, feeds, reader) instead of jumping to the pill.
+            lp.gravity = Gravity.START or Gravity.TOP
+            lp.x = dp(16); lp.y = dp(54)
+            w.attributes = lp
+        }
+    }
+
     /**
      * Leading-emoji → monochrome outline icon, so every directory/menu row renders a crisp
      * high-contrast glyph on e-ink instead of a colour emoji. Base code points (no variation
@@ -722,12 +767,47 @@ abstract class ScreenFragment : Fragment() {
         dialog.window?.let { w ->
             val lp = w.attributes
             lp.gravity = Gravity.START or Gravity.TOP
-            lp.x = dp(8); lp.y = dp(54); lp.width = dp(260)
-            // Size to the menu's content (the inner ScrollView still scrolls if it's
-            // taller than the screen) — so the whole menu shows whenever it fits.
-            lp.height = android.view.WindowManager.LayoutParams.WRAP_CONTENT
+            val metrics = resources.displayMetrics
+            lp.x = dp(16); lp.y = dp(54)
+            lp.width = minOf(dp(230), (metrics.widthPixels * 0.56f).toInt())
+            // Size to content, but clamp to the visible area below y so a tall menu scrolls
+            // within the screen instead of running off the bottom (small screens like the Palma).
+            val avail = metrics.heightPixels - lp.y - dp(16)
+            root.measure(
+                View.MeasureSpec.makeMeasureSpec(lp.width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            )
+            lp.height = if (root.measuredHeight > avail) avail
+                        else android.view.WindowManager.LayoutParams.WRAP_CONTENT
             w.attributes = lp
         }
+    }
+
+    /**
+     * The section switcher — the same "go to a surface" list the day page offers, so the almanac
+     * pages open THIS instead of the old ledger-directory drawer. Uses CalendarNavigator (works
+     * from any fragment) and the global feed/AV nav actions, so it's safe to call anywhere.
+     */
+    protected fun showSectionMenu() {
+        val nav = com.toolsboox.plugin.calendar.CalendarNavigator
+        val today = java.time.LocalDate.now()
+        val locale = java.util.Locale.getDefault()
+        fun go(action: Int) = androidx.navigation.Navigation.findNavController(requireView()).navigate(action)
+        showGoModal(
+            listOf(
+                "" to listOf(
+                    GoItem("☀︎", "Day") { nav.toDayPage(this, today, com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE) },
+                    GoItem("🔖", "Intake") { nav.toDayNote(this, today, "intake") },
+                    GoItem("🙏", "Gratitude") { nav.toDayNote(this, today, "gratitude") },
+                    GoItem("❝", "Pickings") { nav.toDayNote(this, today, "pickings") },
+                    GoItem("✒️", "Notes") { nav.toDayNote(this, today, "0") },
+                    GoItem("📰", "Feed") { go(com.toolsboox.R.id.action_to_feeds) },
+                    GoItem("🎬", "AV") { go(com.toolsboox.R.id.action_to_reading_log) },
+                    GoItem("📆", "Almanac") { nav.toWeekPage(this, today, locale) }
+                )
+            ),
+            anchorTop = false
+        )
     }
 
     /**
@@ -763,7 +843,8 @@ abstract class ScreenFragment : Fragment() {
         dialog.window?.let { w ->
             val lp = w.attributes
             lp.gravity = Gravity.START or Gravity.TOP
-            lp.x = dp(8); lp.y = dp(54); lp.width = dp(250)
+            lp.x = dp(16); lp.y = dp(54)
+            lp.width = minOf(dp(230), (resources.displayMetrics.widthPixels * 0.56f).toInt())
             lp.height = (resources.displayMetrics.heightPixels * 0.7f).toInt()
             w.attributes = lp
         }

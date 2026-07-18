@@ -273,7 +273,8 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                     // Captured media rides on the event's attachments — show a photo thumb / play a memo.
                     val photo = e.attachments?.firstOrNull { it.kind == Attachment.Kind.PHOTO }
                     val audio = e.attachments?.firstOrNull { it.kind == Attachment.Kind.AUDIO }
-                    out.add(LogItem(o, e.title.ifBlank { getString(R.string.reading_log_untitled) }, meta, body,
+                    val evTitle = (if (e.starred) "⭐ " else "") + e.title.ifBlank { getString(R.string.reading_log_untitled) }
+                    out.add(LogItem(o, evTitle, meta, body,
                         e.url, e.date.time, imagePath = photo?.let { attachmentPath(it) }, audioPath = audio?.let { attachmentPath(it) }))
                 }
 
@@ -296,6 +297,25 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 // Pickings — the typed quotes on the day's Pickings page.
                 for (t in day.textElements.filter { it.pageKey == "pickings" && it.text.isNotBlank() }) {
                     out.add(LogItem(LogOrigin.PICKING, t.text.trim(), stamp(Date(fallback)), "", null, fallback))
+                }
+
+                // Every addition to a surface — tasks/events, text notes on any other page, and
+                // placed cards — so the Ledger Log is a full record, not only reading highlights.
+                for (item in day.ledgerItems.filter { it.text.isNotBlank() }) {
+                    val label = when {
+                        item.kind == com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT -> "Event"
+                        item.done -> "✓ Completed"      // task completion shows up as its own activity
+                        else -> "Task"
+                    }
+                    val meta = listOfNotNull(item.time, stamp(item.date)).joinToString(" · ")
+                    out.add(LogItem(LogOrigin.TASK, item.text.trim(), meta, label, null, item.date.time))
+                }
+                for (t in day.textElements.filter { it.pageKey != "pickings" && it.text.isNotBlank() }) {
+                    out.add(LogItem(LogOrigin.NOTE, t.text.trim(), stamp(Date(t.timestamp)), "", null, t.timestamp))
+                }
+                for (img in day.imageElements) {
+                    out.add(LogItem(LogOrigin.CARD, "Card · ${img.page.ifBlank { "day" }}",
+                        stamp(Date(img.timestamp)), "", null, img.timestamp))
                 }
 
                 // Intake — links filed to Read / Watch / Listen / Educate (MichaelFilter),

@@ -286,7 +286,6 @@ class CalendarDayPage {
             } else {
                 canvas.drawText(notesCalsText, lo + cew + 60.0f, to + 19 * ceh - 10.0f, Creator.textDefaultWhite)
             }
-
             // Notes grid
             canvas.drawLine(
                 lo + cew + 50.0f,
@@ -312,19 +311,50 @@ class CalendarDayPage {
                 Creator.lineDefaultBlack
             )
 
-            // Calendar events
-            for (i in 0..7) {
+            // Weather + moon — a subtle line, then a compact hour-by-hour temperature sparkline,
+            // right below the Notes & Other events bar.
+            val wmDate = java.time.LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day)
+            Creator.drawEllipsizedText(
+                canvas, WeatherMoon.summary(context, wmDate),
+                Creator.textSmallBlack, lo + cew + 60.0f, to + 20 * ceh - 12.0f, cew
+            )
+            val temps = WeatherMoon.hourly(context, wmDate)
+            if (temps.size >= 2) {
+                val x0 = lo + cew + 60.0f
+                val x1 = lo + 2 * cew + 40.0f
+                val yBot = to + 21 * ceh - 6.0f
+                val yTop = to + 20 * ceh + 10.0f
+                val minT = temps.minOrNull() ?: 0.0f
+                val range = ((temps.maxOrNull() ?: 0.0f) - minT).coerceAtLeast(1.0f)
+                val n = temps.size
+                fun px(i: Int) = x0 + (x1 - x0) * i / (n - 1)
+                fun py(t: Float) = yBot - (t - minT) / range * (yBot - yTop)
+                for (i in 1 until n) {
+                    canvas.drawLine(px(i - 1), py(temps[i - 1]), px(i), py(temps[i]), Creator.lineDefaultBlack)
+                }
+                // Dot the current hour.
+                val nowH = java.time.LocalTime.now().hour.coerceIn(0, n - 1)
+                val dot = android.graphics.Paint().apply {
+                    color = android.graphics.Color.BLACK
+                    style = android.graphics.Paint.Style.FILL
+                    isAntiAlias = true
+                }
+                canvas.drawCircle(px(nowH), py(temps[nowH]), 6.0f, dot)
+            }
+
+            // Calendar events (shifted one slot down to sit under the weather/moon line)
+            for (i in 0..6) {
                 if (i < notesTitle.size) {
                     Creator.drawEllipsizedText(
                         canvas, notesTitle[i], Creator.textDefaultBlack,
-                        lo + cew + 60.0f, to + (20 + i * 2) * ceh - 10.0f, cew
+                        lo + cew + 60.0f, to + (22 + i * 2) * ceh - 10.0f, cew
                     )
                     canvas.drawText(
-                        notesLeft[i], lo + cew + 60.0f, to + (21 + i * 2) * ceh - 10.0f,
+                        notesLeft[i], lo + cew + 60.0f, to + (23 + i * 2) * ceh - 10.0f,
                         Creator.textSmallBlack
                     )
                     canvas.drawText(
-                        notesRight[i], lo + cew + 40.0f + cew, to + (21 + i * 2) * ceh - 10.0f,
+                        notesRight[i], lo + cew + 40.0f + cew, to + (23 + i * 2) * ceh - 10.0f,
                         Creator.textSmallBlackRight
                     )
                 }

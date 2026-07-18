@@ -166,7 +166,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
 
         // System Back closes an open in-pane article (returns to the list) before leaving.
         articleBackCallback = object : androidx.activity.OnBackPressedCallback(false) {
-            override fun handleOnBackPressed() { closeArticlePane() }
+            override fun handleOnBackPressed() { closeArticlePane(restoreDrawer = false) }
         }
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, articleBackCallback!!)
 
@@ -293,15 +293,16 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
 
     /** In-feed search: filter the loaded list by title/blurb (Miniflux + local). */
     private fun showFeedSearch() {
-        val input = android.widget.EditText(requireContext()).apply { hint = "Search this feed"; setSingleLine() }
+        val input = android.widget.EditText(requireContext()).apply { hint = "Search all feeds"; setSingleLine() }
         androidx.appcompat.app.AlertDialog.Builder(requireContext())
             .setTitle("Search")
             .setView(input)
             .setPositiveButton("Search") { _, _ ->
                 val q = input.text.toString().trim().lowercase()
-                val base = applyKind(allEntries)
-                adapter.submit(if (q.isEmpty()) base else base.filter {
-                    it.title.lowercase().contains(q) || it.blurb.lowercase().contains(q)
+                // Search across ALL loaded feeds/lenses (not just the current view); empty clears back.
+                adapter.submit(if (q.isEmpty()) applyKind(allEntries) else allEntries.filter {
+                    it.title.lowercase().contains(q) || it.blurb.lowercase().contains(q) ||
+                        it.feedTitle.lowercase().contains(q)
                 })
             }
             .setNeutralButton("Clear") { _, _ -> adapter.submit(applyKind(allEntries)) }
@@ -513,6 +514,13 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             // allowed to start without a gesture — otherwise the player errors out (150/152).
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
+            // Reliable double-tap + pinch zoom (no on-screen zoom buttons). Needs a wide viewport
+            // + overview mode so double-tap actually has something to zoom to.
+            setSupportZoom(true)
+            builtInZoomControls = true
+            displayZoomControls = false
+            useWideViewPort = true
+            loadWithOverviewMode = true
         }
         binding.articleWeb.webChromeClient = android.webkit.WebChromeClient()
         binding.articleTitle.text = entry.title
@@ -524,7 +532,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         setDirectoryDrawerVisible(false)
         binding.articlePane.visibility = View.VISIBLE
         binding.articleTapZones.visibility = if (prefs().getBoolean("feeds_tap_zones", true)) View.VISIBLE else View.GONE
-        binding.articleBack.setOnClickListener { closeArticlePane() }
+        binding.articleBack.setOnClickListener { closeArticlePane(restoreDrawer = false) }
         // Open-externally fallback: a video whose owner blocks embedding errors (150/152) in the
         // in-pane player — this opens the original URL in the YouTube app / browser instead.
         val ext = entry.url.takeIf { it.startsWith("http", ignoreCase = true) }
@@ -546,9 +554,16 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val entry = currentArticle ?: return
         val parsed = com.toolsboox.plugin.feeds.nw.FeedCache.loadContent(requireContext(), entry.id)
         val body = if (showParsed && !parsed.isNullOrBlank()) parsed else entry.content
+        val httpUrl = entry.url.takeIf { it.startsWith("http", ignoreCase = true) }
+        // No stored/parsed article (e.g. a gram's external source, content left blank) → load the
+        // live page directly in this pane's WebView rather than showing an empty article.
+        if (body.isBlank() && httpUrl != null) {
+            binding.articleWeb.loadUrl(httpUrl)
+            return
+        }
         // A real https baseUrl gives the document a valid origin/referer; a null baseUrl makes YouTube
         // (and other) embeds fail with "error 150" (embedding-not-allowed for the opaque origin).
-        val base = entry.url.takeIf { it.startsWith("http", ignoreCase = true) } ?: "https://www.youtube.com"
+        val base = httpUrl ?: "https://www.youtube.com"
         binding.articleWeb.loadDataWithBaseURL(base, buildArticleHtml(entry, body), "text/html", "UTF-8", null)
     }
 
@@ -629,12 +644,13 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         }
     }
 
-    private fun closeArticlePane() {
+    private fun closeArticlePane(restoreDrawer: Boolean = true) {
         binding.articlePane.visibility = View.GONE
         binding.articleWeb.loadUrl("about:blank")
         binding.feedsRecycler.visibility = View.VISIBLE
-        // Restore the drawer to its saved state now the reader is closed.
-        setDirectoryDrawerVisible(prefs().getBoolean(KEY_DIR_OPEN, true))
+        // On an explicit Back, return straight to the article list — don't pop the drawer open as an
+        // intermediate step. Only restore it when the article was closed by picking a feed (in the drawer).
+        setDirectoryDrawerVisible(restoreDrawer && prefs().getBoolean(KEY_DIR_OPEN, true))
         articleBackCallback?.isEnabled = false
         currentArticle = null
         applyArticlePill()
@@ -1116,24 +1132,27 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         )
         showAccordion(
             listOf(
-                Folder("📰", "All", action = { switchTo("feed", null) }),
-                Folder("⭐", "Stars", action = { switchTo("stars", null) }),
-                lens("📖", "Read", "read"),
-                lens("📺", "Watch", "watch"),
-                lens("🎧", "Listen", "listen"),
-                Folder("🔖", "Later List", listOf(
+                // Order per Michael: Later · The Read · The Watch · The Listen · Smart Feed · Ask · Search.
+                Folder("🔖", "Later", listOf(
                     "🔖  All" to { switchTo("later", null) },
-                    "📖  Read" to { switchTo("later", "read") },
-                    "📺  Watch" to { switchTo("later", "watch") },
-                    "🎧  Listen" to { switchTo("later", "listen") }
+                    "📖  The Read" to { switchTo("later", "read") },
+                    "📺  The Watch" to { switchTo("later", "watch") },
+                    "🎧  The Listen" to { switchTo("later", "listen") }
                 ), expanded = true),
-                Folder("🗨", "Ask Answers", action = { switchTo("asklog", null) }),
-                Folder("❝", "Feed Pickings", action = { switchTo("pickings", null) }),
-                Folder("🔎", "Smart Feeds",
+                lens("📖", "The Read", "read"),
+                lens("📺", "The Watch", "watch"),
+                lens("🎧", "The Listen", "listen"),
+                Folder("🔎", "Smart Feed",
                     com.toolsboox.plugin.feeds.nw.SmartFeedStore.all(requireContext()).map { sf ->
                         ("🔎  ${sf.name}" to { switchToSmart(sf) })
                     } + ("➕  Add smart feed…" to { promptAddSmartFeed() }),
-                    expanded = true)
+                    expanded = true),
+                Folder("🗨", "Ask", action = { switchTo("asklog", null) }),
+                Folder("🔍", "Search", action = { showFeedSearch() }),
+                // Kept available below the requested set.
+                Folder("📰", "All", action = { switchTo("feed", null) }),
+                Folder("⭐", "Stars", action = { switchTo("stars", null) }),
+                Folder("❝", "Feed Pickings", action = { switchTo("pickings", null) })
             )
         )
     }

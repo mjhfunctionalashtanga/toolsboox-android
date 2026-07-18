@@ -80,13 +80,13 @@ fun ledgerDirectoryFolders(
             // The freeform multi-page handwriting surface (distinct from "Write" under Daily Ledgers).
             "✒  Notes" to { CalendarNavigator.toDayNote(fragment, today, "0") }
         )),
+        // Tasks & Events promoted to the top level — a one-tap jump, not buried in Ledger Log.
+        ScreenFragment.Folder("🗒", "Tasks & Events", action = { nav.navigate(R.id.action_to_ledger_items) }),
         ScreenFragment.Folder("📆", "Almanac", listOf(
             "📆  Week" to { CalendarNavigator.toWeekPage(fragment, today, locale) },
             "📅  Month" to { CalendarNavigator.toMonthPage(fragment, today) },
             "📊  Quarter" to { CalendarNavigator.toQuarterPage(fragment, today) },
-            "🗓️  Year" to { CalendarNavigator.toYearPage(fragment, today) },
-            // Almanac pages display tasks & events, so the list lives here (iOS parity).
-            "🗒  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) }
+            "🗓️  Year" to { CalendarNavigator.toYearPage(fragment, today) }
         )),
         ScreenFragment.Folder("❤️", "Daily Ledgers", listOf(
             "❝  Pickings" to { showPickingsPicker(fragment) },
@@ -113,8 +113,7 @@ fun ledgerDirectoryFolders(
             "🎧  Listened" to { openFeed("read", "listen") },
             "📺  Watched" to { openFeed("read", "watch") },
             "📰  Feed Read" to { openFeed("read", null) },
-            "📚  Books Read" to { openHistory(LogOrigin.BOOK) },
-            "🗒  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) }
+            "📚  Books Read" to { openHistory(LogOrigin.BOOK) }
         )),
         ScreenFragment.Folder("⚙", "Settings", listOf(
             "⚙  Settings" to { nav.navigate(R.id.action_to_settings) },

@@ -53,9 +53,11 @@ object CalendarDayMerger {
             a.avGrams.forEach { put(it.id, it) }
             b.avGrams.forEach { put(it.id, it) }
         }.values.toMutableList()
+        // Tasks/events union by id, but honour tombstones (shared with elements) so a
+        // deleted item stays deleted instead of resurrecting from the other device's copy.
         merged.ledgerItems = LinkedHashMap<String, LedgerItem>().apply {
-            a.ledgerItems.forEach { put(it.id, it) }
-            b.ledgerItems.forEach { put(it.id, it) }
+            a.ledgerItems.forEach { if (it.id !in elementTombstones) put(it.id, it) }
+            b.ledgerItems.forEach { if (it.id !in elementTombstones) put(it.id, it) }
         }.values.toMutableList()
 
         val values = LinkedHashMap<String, Map<String, Float?>>()

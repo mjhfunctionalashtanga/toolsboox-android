@@ -49,8 +49,12 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         val h = volumeKeyHandler
         if (h != null && event.action == android.view.KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
-                android.view.KeyEvent.KEYCODE_VOLUME_UP -> if (h(true)) return true
-                android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> if (h(false)) return true
+                // Boox page-turn buttons emit either volume OR page keycodes depending on device;
+                // accept both so the hardware buttons page everywhere a handler is registered.
+                android.view.KeyEvent.KEYCODE_VOLUME_UP,
+                android.view.KeyEvent.KEYCODE_PAGE_UP -> if (h(true)) return true
+                android.view.KeyEvent.KEYCODE_VOLUME_DOWN,
+                android.view.KeyEvent.KEYCODE_PAGE_DOWN -> if (h(false)) return true
             }
         }
         return super.dispatchKeyEvent(event)
@@ -93,6 +97,18 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // Global "pull up the Notes surface" button — available on every screen. It opens the SAME
+        // note page ("0") that every menu's "✒ Notes" opens, so the float and the menus are one
+        // consistent surface (previously it opened a separate "scratch" page with different content).
+        binding.floatNoteButton.setOnClickListener {
+            val today = java.time.LocalDate.now()
+            val bundle = bundleOf(
+                "year" to "${today.year}", "month" to "${today.monthValue}", "day" to "${today.dayOfMonth}",
+                "notePage" to "0"
+            )
+            binding.fragmentContent.findNavController().navigate(R.id.action_to_scratch, bundle)
+        }
 
         firebaseAnalytics = Firebase.analytics
 

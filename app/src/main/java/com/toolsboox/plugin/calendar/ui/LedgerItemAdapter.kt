@@ -38,6 +38,18 @@ class LedgerItemAdapter(
         selecting = true; selectedIds.clear(); selectedIds.add(first.id)
         notifyDataSetChanged(); onEnterSelection(); onSelectionChanged()
     }
+    /** Enter selection mode with nothing selected yet (from the "Select" button, no long-press needed). */
+    fun startEmptySelection() {
+        selecting = true; selectedIds.clear()
+        notifyDataSetChanged(); onEnterSelection(); onSelectionChanged()
+    }
+    /** Select (or, if already all-selected, clear) every shown item — the "Select all" toggle. */
+    fun selectAll() {
+        if (!selecting) { selecting = true; onEnterSelection() }
+        if (selectedIds.size == items.size) selectedIds.clear()
+        else { selectedIds.clear(); items.forEach { selectedIds.add(it.id) } }
+        notifyDataSetChanged(); onSelectionChanged()
+    }
     fun clearSelection() {
         selecting = false; selectedIds.clear(); notifyDataSetChanged(); onSelectionChanged()
     }
@@ -64,16 +76,22 @@ class LedgerItemAdapter(
         val e = items[position]
         val isTask = e.kind == LedgerItem.Kind.TASK
 
-        // In selection mode the whole row is a checkbox; a tap toggles it, not the done state.
+        // In selection mode the WHOLE row is one big checkbox: a tap anywhere toggles it. The
+        // lead glyph is enlarged so the checkbox is easy to see and hit (not a tiny square).
         if (selecting) {
-            holder.lead.text = if (selectedIds.contains(e.id)) "☑" else "☐"
-            holder.lead.setOnClickListener(null)
+            val checked = selectedIds.contains(e.id)
+            holder.lead.text = if (checked) "☑" else "☐"
+            holder.lead.textSize = 30f
+            holder.lead.setOnClickListener { toggle(e); notifyItemChanged(position) }
             holder.toggle.visibility = View.GONE
+            holder.itemView.setBackgroundColor(if (checked) 0xFFE6E6E6.toInt() else 0xFFFFFFFF.toInt())
             holder.itemView.setOnClickListener { toggle(e); notifyItemChanged(position) }
             holder.itemView.setOnLongClickListener(null)
             bindFace(holder, e, isTask)
             return
         }
+        holder.lead.textSize = 18f
+        holder.itemView.setBackgroundColor(0xFFFFFFFF.toInt())
         holder.toggle.visibility = View.VISIBLE
         holder.itemView.setOnClickListener(null)
 

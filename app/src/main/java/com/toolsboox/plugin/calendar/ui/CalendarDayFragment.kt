@@ -32,6 +32,7 @@ import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import com.toolsboox.plugin.calendar.ot.*
 import com.toolsboox.plugin.michaelfilter.da.IntakePageData
 import com.toolsboox.plugin.michaelfilter.nw.IntakePageStore
+import com.toolsboox.ui.plugin.ScreenFragment.GoItem
 import com.toolsboox.ui.plugin.SurfaceFragment
 import dagger.hilt.android.AndroidEntryPoint
 import androidx.security.crypto.EncryptedSharedPreferences
@@ -191,6 +192,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      *
      * @param strokes the actual strokes
      */
+    /** Set whenever ink changes; gates the auto-capture of section zones on page-leave so an
+     *  unchanged page never re-runs (and re-bills) the paid vision OCR. */
+    private var sectionsDirty = false
+
     override fun onStrokeChanged(strokes: MutableList<Stroke>) {
         val strokesCopy = Stroke.listDeepCopy(strokes)
         if (notePage != null) {
@@ -200,6 +205,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
 
         calendarPattern.updateDay(calendarDay)
+        sectionsDirty = true
 
         // Per-stroke save: suppress the loading indicator so its VISIBLE/INVISIBLE flash
         // doesn't trigger an e-ink refresh on every pen-up (reads as lag/freeze on lift).
@@ -215,6 +221,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // Per-page text boxes: tag the current page's, keep every other page's.
         val pageKey = notePage ?: "default"
         textElements.forEach { it.pageKey = pageKey }
+        // Tombstone any text box removed from this page so the union merge can't resurrect it.
+        val currentIds = textElements.map { it.elementId.toString() }.toSet()
+        calendarDay.textElements
+            .filter { it.pageKey == pageKey && it.elementId.toString() !in currentIds }
+            .forEach { if (it.elementId.toString() !in calendarDay.deletedElementIds) calendarDay.deletedElementIds.add(it.elementId.toString()) }
         val others = calendarDay.textElements.filter { it.pageKey != pageKey }
         calendarDay.textElements = (others + textElements).toMutableList()
         calendarPattern.updateDay(calendarDay)
@@ -230,6 +241,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // Per-page images: tag the current page's images, keep every other page's untouched.
         val pageKey = notePage ?: "default"
         imageElements.forEach { it.page = pageKey }
+        // Tombstone any card removed from this page so the union merge can't resurrect it.
+        val currentIds = imageElements.map { it.elementId.toString() }.toSet()
+        calendarDay.imageElements
+            .filter { it.page == pageKey && it.elementId.toString() !in currentIds }
+            .forEach { if (it.elementId.toString() !in calendarDay.deletedElementIds) calendarDay.deletedElementIds.add(it.elementId.toString()) }
         val others = calendarDay.imageElements.filter { it.page != pageKey }
         calendarDay.imageElements = (others + imageElements).toMutableList()
         calendarPattern.updateDay(calendarDay)
@@ -269,6 +285,36 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     override fun onStrokesProcrastinated(strokes: List<Stroke>) {
         firebaseAnalytics.logEvent("procrastinator", null)
         presenter.procrastinate(this, binding, Stroke.listDeepCopy(strokes), currentDate, calendarDay, calendarStyle)
+    }
+
+    /**
+     * Erased strokes MUST be tombstoned (deletedStrokeIds) or the union sync-merge resurrects them
+     * on the next open ("erase with no tombstone can resurrect", per CalendarDayMerger).
+     */
+    override fun onStrokesDeleted(strokeIds: List<java.util.UUID>) {
+        if (!::calendarDay.isInitialized || strokeIds.isEmpty()) return
+        val gone = strokeIds.map { it.toString() }.toSet()
+        var changed = false
+        for (s in gone) {
+            if (s !in calendarDay.deletedStrokeIds) { calendarDay.deletedStrokeIds.add(s); changed = true }
+        }
+        // An OCR'd task/note follows its ink: once every stroke that produced it is erased, drop
+        // the ledger item too (and tombstone it) so erasing on the day page really removes the task.
+        val orphaned = calendarDay.ledgerItems.filter { item ->
+            item.strokeIds.isNotEmpty() &&
+                item.strokeIds.all { it in gone || it in calendarDay.deletedStrokeIds }
+        }
+        if (orphaned.isNotEmpty()) {
+            calendarDay.ledgerItems.removeAll(orphaned)
+            for (item in orphaned) {
+                if (item.id !in calendarDay.deletedElementIds) calendarDay.deletedElementIds.add(item.id)
+            }
+            changed = true
+        }
+        if (changed) {
+            calendarPattern.updateDay(calendarDay)
+            presenter.save(this, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+        }
     }
 
     /**
@@ -450,6 +496,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // a further tap opens the Ledger hub (the iPad feed-carrot behavior).
         binding.navGoto.setImageResource(sectionIcon())
         binding.navGoto.setOnClickListener { onCenterTapped() }
+        // Long-press the center button → open the section menu directly (tap = today-then-menu).
+        binding.navGoto.setOnLongClickListener { showSectionSwitcher(); true }
         applyWidgetOrientation()
 
         // Lift the floating overlays above the drawing surface without elevation (which
@@ -616,7 +664,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             if (sharedPreferences.getBoolean(com.toolsboox.plugin.calendar.ot.LedgerExtractor.AUTO_EXTRACT_ENABLED_KEY, false))
                 add(GoItem("🗒", "Extract tasks & events") { extractStructured() })
             add(GoItem("📄", "Whole page → text") { wholePageToText() })
-            add(GoItem("🗂", "Capture sections") { captureSections() })
+            add(GoItem("🗂", "Capture sections") { captureSections() })   // auto-capture toggle now lives in Settings
             if (onSynth) add(GoItem("🔬", "Synthesize · 3 questions") { synthesizeQuestions() })
             if (onSynth || onWrite) add(GoItem("✍️", "Writing prompt → Write") { writingPrompts() })
             if (onSynth) add(GoItem("🗒", "Essay outline → Write") { essayOutline() })
@@ -637,7 +685,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         )
     }
 
-    private data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
 
     /** The card sources for this page: the whole page + each panel. */
     private fun cardChoices(): List<com.toolsboox.plugin.calendar.ot.LedgerPanel> =
@@ -730,12 +777,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             cm.setPrimaryClip(android.content.ClipData.newPlainText("Ledger", input.text.toString()))
             showMessage("Copied to clipboard", binding.root)
         }
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        showModal(androidx.appcompat.app.AlertDialog.Builder(ctx)
             .setTitle("Copy text")
             .setView(android.widget.ScrollView(ctx).apply { addView(box) })
             .setPositiveButton("Copy") { _, _ -> copy() }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create())
     }
 
     /**
@@ -848,7 +895,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     /** Show the looked-up description with an option to open the link; it's already filed to the feed. */
     private fun showEducateResult(term: String, desc: String, url: String) {
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        showModal(androidx.appcompat.app.AlertDialog.Builder(requireContext())
             .setTitle(term)
             .setMessage(desc + "\n\n" + getString(R.string.ledger_educate_filed))
             .setPositiveButton(R.string.ledger_educate_open) { _, _ ->
@@ -857,7 +904,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 }
             }
             .setNegativeButton(android.R.string.ok, null)
-            .show()
+            .create())
     }
 
     /** The DUE date for a created item: the page's own day at noon UTC (matches the iPad convention). */
@@ -1010,7 +1057,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .setNegativeButton(android.R.string.cancel, null)
             .create()
         pickBtn.setOnClickListener { dialog.dismiss(); placeGramToPickings(make()) }
-        dialog.show()
+        // Pause the Onyx pen while the gram studio is up, or stylus taps freeze the surface.
+        showModal(dialog)
     }
 
     /**
@@ -1034,11 +1082,48 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     .putString("current_book_path", link.removePrefix("book://")).apply()
                 findNavController().navigate(R.id.action_to_reader)
             }
-            link.startsWith("http") ->
-                runCatching {
-                    startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(link)))
-                }
+            link.startsWith("http") -> {
+                // Prefer the Feed Ledger's in-pane reader (clean native render, an "open original ↗"
+                // inside) over a raw WebView, which renders external pages badly on e-ink.
+                com.toolsboox.plugin.feeds.ui.FeedSelection.pendingInPaneEntry =
+                    com.toolsboox.plugin.feeds.da.FeedEntry(
+                        id = link.hashCode().toLong(),
+                        title = element.sourceLabel.ifBlank { "Source" },
+                        feedTitle = "", url = link, author = null,
+                        // Blank content is the sentinel that tells the reader to load the live page
+                        // (there's no stored/parsed article for an arbitrary gram source URL).
+                        content = "",
+                        publishedAt = java.time.Instant.now().toString(), starred = false
+                    )
+                findNavController().navigate(R.id.action_to_feeds)
+            }
         }
+    }
+
+    /** Open a gram's external source INSIDE Ledger (a WebView), with a one-tap "open original" fallback
+     *  to the browser — so "Go to source" keeps you in-app instead of ejecting to the system browser. */
+    private fun openSourceInApp(url: String) {
+        val ctx = requireContext()
+        val web = android.webkit.WebView(ctx).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.useWideViewPort = true; settings.loadWithOverviewMode = true
+            settings.builtInZoomControls = true; settings.displayZoomControls = false
+            webViewClient = android.webkit.WebViewClient()
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                (resources.displayMetrics.heightPixels * 0.72f).toInt())
+            loadUrl(url)
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setView(web)
+            .setPositiveButton("Open original ↗") { _, _ ->
+                runCatching { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
+            }
+            .setNegativeButton("Close", null)
+            .create()
+        // Over the drawing surface → pause the Onyx pen so stylus taps don't freeze.
+        showModal(dialog)
     }
 
     /** Choose a pickings board and drop this gram card onto it (current day). */
@@ -1215,17 +1300,29 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * page and store it under the zone's key; if the zone carries an AI prompt, run the OCR'd
      * text through the LLM and store the result under "<id>.ai". Saved per note-page + day.
      */
-    private fun captureSections() {
+    private fun captureSections() = runCaptureSections(silent = false)
+
+    /**
+     * OCR the current page's capture zones (paid vision OCR + optional per-zone LLM) into the
+     * section store. [silent] is the auto-on-page-leave path: no toasts, and it runs on a
+     * detached scope so it finishes even as the fragment pauses. Needs an AI key.
+     */
+    private fun runCaptureSections(silent: Boolean) {
         val notePageKey = currentNotePage()
         val zones = com.toolsboox.plugin.calendar.ot.PageZones.zones(notePageKey)
-        if (zones.isEmpty()) { showMessage("This page has no capture zones.", binding.root); return }
-        val creds = aiCreds()
+        if (zones.isEmpty()) { if (!silent) showMessage("This page has no capture zones.", binding.root); return }
+        val creds = aiCreds() ?: run {
+            if (!silent) showMessage(getString(R.string.ledger_ai_key_needed), binding.root); return
+        }
         val strokes = currentPageStrokes()
         val pageKey = notePageKey ?: "default"
-        showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
-        lifecycleScope.launch {
+        val ctx = requireContext().applicationContext
+        val date = currentDate
+        if (!silent) showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
+        sectionsDirty = false   // reset up-front; a stroke during capture re-marks it
+        (if (silent) GlobalScope else lifecycleScope).launch {
             val n = withContext(Dispatchers.IO) {
-                val values = com.toolsboox.plugin.calendar.ot.SectionStore.load(requireContext(), pageKey, currentDate)
+                val values = com.toolsboox.plugin.calendar.ot.SectionStore.load(ctx, pageKey, date)
                 for (zone in zones) {
                     if (zone.kind != com.toolsboox.plugin.calendar.ot.ZoneKind.TEXT) continue
                     val inZone = strokes.filter {
@@ -1234,21 +1331,20 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     }
                     if (inZone.isEmpty()) continue
                     val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(inZone, zone.rect, 1600)
-                    val text = if (creds != null)
-                        com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third) else null
+                    val text = com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third)
                     if (text.isNullOrBlank()) continue
                     values[zone.id] = text
                     val prompt = zone.aiPrompt
-                    if (prompt != null && creds != null) {
+                    if (prompt != null) {
                         val r = com.toolsboox.plugin.chat.nw.LedgerChatService()
                             .run(creds.first, creds.second, creds.third, prompt, text)
                         if (r is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok) values[zone.id + ".ai"] = r.answer
                     }
                 }
-                com.toolsboox.plugin.calendar.ot.SectionStore.save(requireContext(), pageKey, currentDate, values)
+                com.toolsboox.plugin.calendar.ot.SectionStore.save(ctx, pageKey, date, values)
                 values.keys.count { !it.endsWith(".ai") && !it.startsWith("__") }
             }
-            showMessage("Captured $n section(s)", binding.root)
+            if (!silent) showMessage("Captured $n section(s)", binding.root)
         }
     }
 
@@ -1797,45 +1893,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * Shared builder for the floating panels — a compact emoji list. Directories anchor
      * top-left (by the hamburger); sections anchor bottom (by the pill).
      */
-    private fun showGoModal(groups: List<Pair<String, List<GoItem>>>, anchorTop: Boolean) {
-        val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
-        val list = root.findViewById<LinearLayout>(R.id.go_to_list)
-        root.findViewById<TextView>(R.id.go_to_title).visibility = View.GONE
-        val dialog = AlertDialog.Builder(requireContext()).setView(root).create()
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-
-        fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-        for ((header, items) in groups) {
-            val tv = TextView(requireContext())
-            tv.text = header.uppercase()
-            tv.setTextColor(0xFF8A8A8A.toInt()); tv.textSize = 11f; tv.letterSpacing = 0.08f
-            tv.setPadding(dp(14), dp(10), dp(14), dp(2))
-            list.addView(tv)
-            for (item in items) {
-                val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
-                r.findViewById<TextView>(R.id.go_label).text = applyRowIcon(r, "${item.emoji}  ${item.label}")
-                r.setOnClickListener { dialog.dismiss(); item.action() }
-                list.addView(r)
-            }
-        }
-
-        dialog.setOnShowListener { onModalShown() }
-        dialog.setOnDismissListener { onModalDismissed() }
-        dialog.show()
-        dialog.window?.let { w ->
-            val lp = w.attributes
-            lp.width = dp(220)
-            if (anchorTop) {          // directories, under the top-left hamburger
-                lp.gravity = Gravity.START or Gravity.TOP
-                lp.x = dp(8); lp.y = dp(54)
-            } else {                  // sections, up from the bottom pill
-                lp.gravity = Gravity.END or Gravity.BOTTOM
-                lp.x = dp(10); lp.y = dp(80)
-            }
-            w.attributes = lp
-        }
-    }
-
     /**
      * OnResume hook.
      */
@@ -1847,11 +1904,26 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         updateNavigator(true)
 
         val defaultStartHour = sharedPreferences.getInt("calendarStartHour", 5)
+        val appCtx = requireContext().applicationContext
         timer = GlobalScope.launch(Dispatchers.Main) {
             presenter.load(this@CalendarDayFragment, binding, currentDate, defaultStartHour, locale)
             syncPresenter.backgroundSync(this@CalendarDayFragment, UUID.randomUUID())
+            // Weather is IP-based + cached ~1h; if it just refreshed, redraw so the header badge shows.
+            if (com.toolsboox.plugin.calendar.ot.WeatherMoon.refresh(appCtx) && isAdded && isResumed) {
+                presenter.load(this@CalendarDayFragment, binding, currentDate, defaultStartHour, locale)
+            }
         }
         maybeShowReturnChip()
+
+        // Hardware page-turn buttons (volume/page keycodes) paginate the day surface,
+        // same as the nav pill's up/down.
+        (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = { up ->
+            if (isResumed) {
+                if (up) binding.toolbarDrawing.toolbarSwipeUp.performClick()
+                else binding.toolbarDrawing.toolbarSwipeDown.performClick()
+                true
+            } else false
+        }
     }
 
     /** If we arrived here from an open article/book (to jot a note), offer a one-tap jump back to
@@ -1877,6 +1949,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     override fun onPause() {
         super.onPause()
+
+        // Release the hardware page-key handler so it doesn't page a stale surface.
+        (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = null
+
+        // Auto-capture this page's section zones on leave — only when the ink changed (sectionsDirty)
+        // and the setting is on, so an unchanged page never re-runs the paid vision OCR.
+        if (sectionsDirty && ::calendarDay.isInitialized &&
+            sharedPreferences.getBoolean("autoCaptureSections", true)) {
+            runCaptureSections(silent = true)
+        }
 
         // Leaving the intake page counts as "page exit" — hand any typed content
         // that has not been delivered yet to the intake queue.
@@ -1994,6 +2076,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         when (motionEvent.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 longPressFired = false
+                com.toolsboox.ot.LedgerContextMenu.dismissCurrent()   // clear any lingering menu
                 // Not while manipulating an element (finger drags move/resize there)
                 // and only for a single finger.
                 if (motionEvent.pointerCount == 1 && !isImageModeActive()) {

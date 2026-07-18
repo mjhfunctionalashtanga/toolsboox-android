@@ -303,6 +303,12 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             widgetPrefs.edit().putBoolean("vertical", checked).apply()
         }
 
+        // Auto-capture section zones on page-leave (paid vision OCR). Global, default on.
+        binding.autoCaptureSwitch.isChecked = sharedPreferences.getBoolean("autoCaptureSections", true)
+        binding.autoCaptureSwitch.setOnCheckedChangeListener { _, checked ->
+            sharedPreferences.edit().putBoolean("autoCaptureSections", checked).apply()
+        }
+
         // Auto-sync settings
         autoSyncEnabled = sharedPreferences.getBoolean("autoSyncEnabled", false)
         selectedAutoSyncInterval = sharedPreferences.getInt("autoSyncIntervalIndex", 1)

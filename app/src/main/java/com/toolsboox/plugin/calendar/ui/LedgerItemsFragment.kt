@@ -46,6 +46,10 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     private lateinit var binding: FragmentLedgerItemsBinding
     private lateinit var adapter: LedgerItemAdapter
     private var navBar: CalendarNavBarHost? = null
+    // "day" = the single anchor day; "week"/"month"/"quarter"/"year" = filter across that period.
+    private var navPeriod: String = "day"
+    // Each shown item's source day file, so a done-toggle/delete saves to the right day when filtering.
+    private val itemSourceDay = HashMap<String, LocalDate>()
 
     private var anchor: LocalDate = LocalDate.now()
     private var day: CalendarDay? = null
@@ -62,7 +66,10 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         // Reuse the real Almanac navigator: arrows step this surface's date in place,
         // the day/week/month slots jump into the calendar (see CalendarNavBarHost).
         navBar = CalendarNavBarHost(requireContext(), binding.navigatorImageView, this,
-            onStepDay = { d -> anchor = d; load() })
+            onStepDay = { d -> anchor = d; load() },
+            // Tapping a period slot (Day/Week/Month/Quarter/Year) FILTERS the list to that period
+            // instead of opening the almanac page for it.
+            onSelectPeriod = { period, d -> navPeriod = period; anchor = d; load() })
         binding.ledgerButton.setOnClickListener {
             showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
         }
@@ -86,6 +93,9 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         binding.itemsPill.bringToFront()
         makeDraggable(binding.itemsGrip, binding.itemsPill, "items_pill")
 
+        // Enter bulk-select without hunting for a long-press; the whole row then toggles.
+        binding.selectButton.setOnClickListener { adapter.startEmptySelection() }
+        binding.selectAllButton.setOnClickListener { adapter.selectAll() }
         binding.deleteSelectedButton.setOnClickListener { deleteSelected() }
         binding.cancelSelectionButton.setOnClickListener { adapter.clearSelection() }
         attachSwipeToDelete()
@@ -126,7 +136,9 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     private fun updateSelectionBar() {
         val selecting = adapter.selecting
         binding.selectionBar.visibility = if (selecting) View.VISIBLE else View.GONE
-        binding.selectionCount.text = "${adapter.selectedIds.size} selected"
+        binding.addBar.visibility = if (selecting) View.GONE else View.VISIBLE
+        val n = adapter.selectedIds.size
+        binding.selectionCount.text = if (n == 0) "Tap items to select" else "$n selected"
     }
 
     private fun deleteSelected() {
@@ -143,17 +155,50 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
 
     /** Remove [toDelete] from the day JSON (so they stop syncing) and their VTODOs. */
     private fun deleteItems(toDelete: List<LedgerItem>) {
-        val d = day ?: return
-        val ids = toDelete.map { it.id }.toSet()
-        d.ledgerItems.removeAll { it.id in ids }
         lifecycleScope.launch {
+            // Local removal + tombstone only — this is the fast path the UI waits on.
             withContext(Dispatchers.IO) {
-                runCatching { calendarDayService.save(documentsRoot(), anchor, d) }
-                    .onFailure { Timber.w(it, "ledger items: delete save failed") }
-                toDelete.forEach { runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.deleteTask(requireContext(), it) } }
-                toDelete.forEach { runCatching { com.toolsboox.plugin.calendar.nw.LedgerEventSync.deleteEvent(requireContext(), it) } }
+                val root = documentsRoot()
+                // Group by source day so a filtered (period) delete saves to the right day file each.
+                toDelete.groupBy { itemSourceDay[it.id] ?: anchor }.forEach { (srcDay, group) ->
+                    runCatching {
+                        val cd = calendarDayService.load(root, srcDay, null, Locale.getDefault())
+                        val ids = group.map { it.id }.toSet()
+                        cd.ledgerItems.removeAll { it.id in ids }
+                        // Tombstone so the union merge can't resurrect a deleted item from a synced copy.
+                        ids.forEach { if (it !in cd.deletedElementIds) cd.deletedElementIds.add(it) }
+
+                        // Also remove the item's ON-PAGE face, or a deleted task keeps showing on the
+                        // day page: ink tasks are strokes (by strokeIds), typed tasks are text boxes
+                        // (matched by text on the default page). Tombstone both so they stay gone.
+                        val strokeIds = group.flatMap { it.strokeIds }.toSet()
+                        if (strokeIds.isNotEmpty()) {
+                            cd.calendarStrokes[CalendarDay.DEFAULT_STYLE] =
+                                (cd.calendarStrokes[CalendarDay.DEFAULT_STYLE] ?: emptyList())
+                                    .filterNot { it.strokeId.toString() in strokeIds }
+                            strokeIds.forEach { if (it !in cd.deletedStrokeIds) cd.deletedStrokeIds.add(it) }
+                        }
+                        val texts = group.mapNotNull { it.text.takeIf { t -> t.isNotBlank() } }.toSet()
+                        if (texts.isNotEmpty()) {
+                            val boxes = cd.textElements.filter { it.pageKey == "default" && it.text in texts }
+                            cd.textElements.removeAll(boxes)
+                            boxes.forEach {
+                                val eid = it.elementId.toString()
+                                if (eid !in cd.deletedElementIds) cd.deletedElementIds.add(eid)
+                            }
+                        }
+                        calendarDayService.save(root, srcDay, cd)
+                    }.onFailure { Timber.w(it, "ledger items: delete save failed") }
+                }
             }
+            // Refresh the list right away — don't make the user wait on the network.
             load()
+        }
+        // Fire the remote VTODO/event deletes in the background; they must not block the UI.
+        val app = requireContext().applicationContext
+        lifecycleScope.launch(Dispatchers.IO) {
+            toDelete.forEach { runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.deleteTask(app, it) } }
+            toDelete.forEach { runCatching { com.toolsboox.plugin.calendar.nw.LedgerEventSync.deleteEvent(app, it) } }
         }
     }
 
@@ -162,12 +207,24 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     private fun load() {
         lifecycleScope.launch {
             val root = documentsRoot()
+            val period = navPeriod
             val (d, strokes, pattern) = withContext(Dispatchers.IO) {
-                val cd = runCatching { calendarDayService.load(root, anchor, null, Locale.getDefault()) }
-                    .onFailure { Timber.w(it, "ledger items: load failed") }.getOrNull()
+                itemSourceDay.clear()
                 val map = HashMap<String, Stroke>()
-                cd?.calendarStrokes?.values?.forEach { list -> list.forEach { map[it.strokeId.toString()] = it } }
-                cd?.noteStrokes?.values?.forEach { list -> list.forEach { map[it.strokeId.toString()] = it } }
+                val cd: CalendarDay? = if (period == "day") {
+                    val loaded = runCatching { calendarDayService.load(root, anchor, null, Locale.getDefault()) }
+                        .onFailure { Timber.w(it, "ledger items: load failed") }.getOrNull()
+                    loaded?.calendarStrokes?.values?.forEach { l -> l.forEach { map[it.strokeId.toString()] = it } }
+                    loaded?.noteStrokes?.values?.forEach { l -> l.forEach { map[it.strokeId.toString()] = it } }
+                    loaded?.ledgerItems?.forEach { itemSourceDay[it.id] = anchor }
+                    loaded
+                } else {
+                    // Filter mode: gather items across the whole period, tagging each with its day.
+                    val (start, end) = periodRange(period, anchor)
+                    val gathered = gatherRange(root, start, end, map)
+                    CalendarDay(anchor.year, anchor.monthValue, anchor.dayOfMonth, startHour = null)
+                        .also { it.ledgerItems = gathered.toMutableList() }
+                }
                 val pat = runCatching { calendarPatternService.load(root, anchor, Locale.getDefault()) }
                     .onFailure { Timber.w(it, "ledger items: pattern load failed") }.getOrNull()
                 Triple(cd, map, pat)
@@ -186,6 +243,45 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             binding.emptyText.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
         }
     }
+
+    /** Inclusive day range for a filter period around [date]. */
+    private fun periodRange(period: String, date: LocalDate): Pair<LocalDate, LocalDate> = when (period) {
+        "week" -> {
+            val s = date.with(java.time.temporal.WeekFields.of(Locale.getDefault()).dayOfWeek(), 1)
+            s to s.plusDays(6)
+        }
+        "month" -> date.withDayOfMonth(1) to date.withDayOfMonth(date.lengthOfMonth())
+        "quarter" -> {
+            val s = date.withMonth((date.monthValue - 1) / 3 * 3 + 1).withDayOfMonth(1)
+            val e = s.plusMonths(2)
+            s to e.withDayOfMonth(e.lengthOfMonth())
+        }
+        "year" -> LocalDate.of(date.year, 1, 1) to LocalDate.of(date.year, 12, 31)
+        else -> date to date
+    }
+
+    /** Walk the day files in [start, end] and collect their ledger items (+ strokes), tagging sources. */
+    private fun gatherRange(root: File, start: LocalDate, end: LocalDate, strokes: HashMap<String, Stroke>): List<LedgerItem> {
+        val cal = File(root, "calendar")
+        if (!cal.exists()) return emptyList()
+        val out = mutableListOf<LedgerItem>()
+        cal.walkTopDown()
+            .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
+            .forEach { file ->
+                val d = fileDate(file.name) ?: return@forEach
+                if (d.isBefore(start) || d.isAfter(end)) return@forEach
+                val cd = runCatching { calendarDayService.load(file) }.getOrNull() ?: return@forEach
+                cd.calendarStrokes.values.forEach { l -> l.forEach { strokes[it.strokeId.toString()] = it } }
+                cd.noteStrokes.values.forEach { l -> l.forEach { strokes[it.strokeId.toString()] = it } }
+                cd.ledgerItems.forEach { out.add(it); itemSourceDay[it.id] = d }
+            }
+        return out
+    }
+
+    private fun fileDate(name: String): LocalDate? = runCatching {
+        val m = Regex("""day-(\d{4})-(\d{2})-(\d{2})""").find(name) ?: return null
+        LocalDate.of(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt())
+    }.getOrNull()
 
     /** Finger / no-pen capture: type a task or event, set date (and time for events), add + push. */
     private fun showItemEntry(kind: LedgerItem.Kind) {
@@ -269,10 +365,17 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
 
     /** The item is a reference into [day].ledgerItems, so just re-save the day. */
     private fun persist(item: LedgerItem) {
-        val d = day ?: return
+        val srcDay = itemSourceDay[item.id] ?: anchor
         lifecycleScope.launch(Dispatchers.IO) {
-            runCatching { calendarDayService.save(documentsRoot(), anchor, d) }
-                .onFailure { Timber.w(it, "ledger items: save failed") }
+            val root = documentsRoot()
+            runCatching {
+                // Load the item's own day (may differ from the anchor when filtering a period),
+                // replace it, and save there.
+                val cd = calendarDayService.load(root, srcDay, null, Locale.getDefault())
+                val idx = cd.ledgerItems.indexOfFirst { it.id == item.id }
+                if (idx >= 0) cd.ledgerItems[idx] = item else cd.ledgerItems.add(item)
+                calendarDayService.save(root, srcDay, cd)
+            }.onFailure { Timber.w(it, "ledger items: save failed") }
             // Re-push so an edit/done-toggle reflects in its destination (idempotent by id): tasks to
             // CalDAV, events to Google Calendar. Each no-ops for the other kind.
             com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), item)
