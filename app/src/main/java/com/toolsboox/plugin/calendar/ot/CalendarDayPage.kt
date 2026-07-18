@@ -286,7 +286,6 @@ class CalendarDayPage {
             } else {
                 canvas.drawText(notesCalsText, lo + cew + 60.0f, to + 19 * ceh - 10.0f, Creator.textDefaultWhite)
             }
-
             // Notes grid
             canvas.drawLine(
                 lo + cew + 50.0f,
@@ -312,19 +311,26 @@ class CalendarDayPage {
                 Creator.lineDefaultBlack
             )
 
-            // Calendar events
-            for (i in 0..7) {
+            // Weather + moon phase — a subtle line right below the Notes & Other events bar.
+            Creator.drawEllipsizedText(
+                canvas,
+                WeatherMoon.summary(context, java.time.LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day)),
+                Creator.textSmallBlack, lo + cew + 60.0f, to + 20 * ceh - 12.0f, cew
+            )
+
+            // Calendar events (shifted one slot down to sit under the weather/moon line)
+            for (i in 0..6) {
                 if (i < notesTitle.size) {
                     Creator.drawEllipsizedText(
                         canvas, notesTitle[i], Creator.textDefaultBlack,
-                        lo + cew + 60.0f, to + (20 + i * 2) * ceh - 10.0f, cew
+                        lo + cew + 60.0f, to + (22 + i * 2) * ceh - 10.0f, cew
                     )
                     canvas.drawText(
-                        notesLeft[i], lo + cew + 60.0f, to + (21 + i * 2) * ceh - 10.0f,
+                        notesLeft[i], lo + cew + 60.0f, to + (23 + i * 2) * ceh - 10.0f,
                         Creator.textSmallBlack
                     )
                     canvas.drawText(
-                        notesRight[i], lo + cew + 40.0f + cew, to + (21 + i * 2) * ceh - 10.0f,
+                        notesRight[i], lo + cew + 40.0f + cew, to + (23 + i * 2) * ceh - 10.0f,
                         Creator.textSmallBlackRight
                     )
                 }

@@ -1857,9 +1857,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         updateNavigator(true)
 
         val defaultStartHour = sharedPreferences.getInt("calendarStartHour", 5)
+        val appCtx = requireContext().applicationContext
         timer = GlobalScope.launch(Dispatchers.Main) {
             presenter.load(this@CalendarDayFragment, binding, currentDate, defaultStartHour, locale)
             syncPresenter.backgroundSync(this@CalendarDayFragment, UUID.randomUUID())
+            // Weather is IP-based + cached ~1h; if it just refreshed, redraw so the header badge shows.
+            if (com.toolsboox.plugin.calendar.ot.WeatherMoon.refresh(appCtx) && isAdded && isResumed) {
+                presenter.load(this@CalendarDayFragment, binding, currentDate, defaultStartHour, locale)
+            }
         }
         maybeShowReturnChip()
 
