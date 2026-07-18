@@ -1975,10 +1975,9 @@ abstract class SurfaceFragment : ScreenFragment() {
     fun handleCanvasLongPress(cx: Float, cy: Float, pressX: Float, pressY: Float) {
         val image = imageElementAt(cx, cy)
         if (image != null) {
-            // A gram that remembers where it came from offers a jump-back first; a plain image
-            // goes straight into move/resize as before.
-            if (image.sourceLink.isNotBlank()) showImageMenu(image, pressX, pressY)
-            else enterImageManipulation(image)
+            // All images now get the long-press menu (move/resize, transforms, layer order);
+            // grams also surface a jump-back. Move/resize is one tap in, as before.
+            showImageMenu(image, pressX, pressY)
             return
         }
         val textBox = textElementAt(cx, cy)
@@ -1995,16 +1994,23 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     private fun showImageMenu(element: ImageElement, pressX: Float, pressY: Float) {
         if (context == null) return
-        val jumpLabel = "↩ Go to source" + (if (element.sourceLabel.isNotBlank()) " · ${element.sourceLabel}" else "")
-        LedgerContextMenu.show(
-            provideSurfaceView(), pressX, pressY, "GRAM",
-            listOf(
-                listOf(
-                    LedgerContextMenu.Item(jumpLabel) { onImageSource(element) },
-                    LedgerContextMenu.Item("Move / resize") { enterImageManipulation(element) }
-                )
-            )
-        )
+        val groups = mutableListOf<List<LedgerContextMenu.Item>>()
+        if (element.sourceLink.isNotBlank()) {
+            val jumpLabel = "↩ Go to source" + (if (element.sourceLabel.isNotBlank()) " · ${element.sourceLabel}" else "")
+            groups.add(listOf(LedgerContextMenu.Item(jumpLabel) { onImageSource(element) }))
+        }
+        groups.add(listOf(LedgerContextMenu.Item("Move / resize") { enterImageManipulation(element) }))
+        groups.add(listOf(
+            LedgerContextMenu.Item("Flip horizontal") { transformImageElement(element) { flipBitmap(it, true) } },
+            LedgerContextMenu.Item("Flip vertical") { transformImageElement(element) { flipBitmap(it, false) } },
+            LedgerContextMenu.Item("Invert") { transformImageElement(element) { invertBitmap(it) } },
+            LedgerContextMenu.Item("Line art (B&W)") { transformImageElement(element) { thresholdBitmap(it) } }
+        ))
+        groups.add(listOf(
+            LedgerContextMenu.Item("Bring to front") { bringImageToFront(element) },
+            LedgerContextMenu.Item("Send to back") { sendImageToBack(element) }
+        ))
+        LedgerContextMenu.show(provideSurfaceView(), pressX, pressY, "IMAGE", groups)
     }
 
     /**
@@ -2255,6 +2261,72 @@ abstract class SurfaceFragment : ScreenFragment() {
         element.width = c.width()
         element.height = c.height()
         imageBitmapCache[element.elementId] = cropped
+    }
+
+    /** Apply a bitmap transform to an image: re-encode PNG inline, refresh cache, persist, repaint. */
+    private fun transformImageElement(element: ImageElement, transform: (Bitmap) -> Bitmap) {
+        val bmp = bitmapForElement(element) ?: return
+        val out = transform(bmp)
+        val baos = ByteArrayOutputStream()
+        out.compress(Bitmap.CompressFormat.PNG, 100, baos)
+        pushUndo()
+        element.data = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        element.timestamp = System.currentTimeMillis()
+        imageBitmapCache[element.elementId] = out
+        onImageElementsChanged(imageElements)
+        applyStrokes(strokes, true)
+    }
+
+    private fun flipBitmap(bmp: Bitmap, horizontal: Boolean): Bitmap {
+        val m = Matrix().apply { if (horizontal) preScale(-1f, 1f) else preScale(1f, -1f) }
+        return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+    }
+
+    private fun invertBitmap(bmp: Bitmap): Bitmap {
+        val outBmp = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+        val cm = ColorMatrix(floatArrayOf(
+            -1f, 0f, 0f, 0f, 255f,
+            0f, -1f, 0f, 0f, 255f,
+            0f, 0f, -1f, 0f, 255f,
+            0f, 0f, 0f, 1f, 0f
+        ))
+        Canvas(outBmp).drawBitmap(bmp, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(cm) })
+        return outBmp
+    }
+
+    /** Threshold to 1-bit line art: dark pixels → opaque black, the rest → transparent (clean overlay). */
+    private fun thresholdBitmap(bmp: Bitmap, cutoff: Int = 128): Bitmap {
+        val w = bmp.width; val h = bmp.height
+        val pixels = IntArray(w * h)
+        bmp.getPixels(pixels, 0, w, 0, 0, w, h)
+        for (i in pixels.indices) {
+            val c = pixels[i]
+            val a = (c ushr 24) and 0xFF
+            val r = (c ushr 16) and 0xFF
+            val g = (c ushr 8) and 0xFF
+            val b = c and 0xFF
+            val lum = (r * 299 + g * 587 + b * 114) / 1000
+            pixels[i] = if (a > 32 && lum < cutoff) 0xFF000000.toInt() else 0x00000000
+        }
+        val outBmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        outBmp.setPixels(pixels, 0, w, 0, 0, w, h)
+        return outBmp
+    }
+
+    private fun bringImageToFront(element: ImageElement) {
+        pushUndo()
+        element.z = (imageElements.maxOfOrNull { it.z } ?: 0) + 1
+        element.timestamp = System.currentTimeMillis()
+        onImageElementsChanged(imageElements)
+        applyStrokes(strokes, true)
+    }
+
+    private fun sendImageToBack(element: ImageElement) {
+        pushUndo()
+        element.z = (imageElements.minOfOrNull { it.z } ?: 0) - 1
+        element.timestamp = System.currentTimeMillis()
+        onImageElementsChanged(imageElements)
+        applyStrokes(strokes, true)
     }
 
     /** Repaint the page plus the selected image's bounding box, resize handle and delete chip. */
