@@ -1794,6 +1794,34 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** "Where used" for a gram — the day page subclass walks day files for the same content + navigates. */
     open fun onImageWhereUsed(element: ImageElement) {}
 
+    /** Share the current page as one image — the day-page subclass wires it to the share sheet. */
+    open fun onSharePage() {}
+
+    /** Composite the whole page — grams + strokes + text on white — into one bitmap for sharing. */
+    protected fun renderPageBitmap(): Bitmap {
+        val bmp = Bitmap.createBitmap(CANVAS_WIDTH, CANVAS_HEIGHT, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        canvas.drawColor(android.graphics.Color.WHITE)
+        renderImageElements(canvas)
+        val strokePaint = Paint(paint)
+        for (stroke in strokes) drawStrokePath(canvas, strokePaint, stroke)
+        renderTextElements(canvas)
+        return bmp
+    }
+
+    /** Shape-crop: mask a bitmap to the largest centred circle (transparent outside). */
+    private fun circleCropBitmap(bmp: Bitmap): Bitmap {
+        val d = minOf(bmp.width, bmp.height)
+        val out = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paintC = Paint(Paint.ANTI_ALIAS_FLAG)
+        val cx = bmp.width / 2f; val cy = bmp.height / 2f
+        canvas.drawCircle(cx, cy, d / 2f, paintC)
+        paintC.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(bmp, 0f, 0f, paintC)
+        return out
+    }
+
     private fun bitmapForElement(element: ImageElement): Bitmap? {
         imageBitmapCache[element.elementId]?.let { return it }
         return try {
@@ -2057,7 +2085,8 @@ abstract class SurfaceFragment : ScreenFragment() {
             LedgerContextMenu.Item("Flip vertical") { transformImageElement(element) { flipBitmap(it, false) } },
             LedgerContextMenu.Item("Invert") { transformImageElement(element) { invertBitmap(it) } },
             LedgerContextMenu.Item("Line art (B&W)") { transformImageElement(element) { thresholdBitmap(it) } },
-            LedgerContextMenu.Item("Solid black") { transformImageElement(element) { solidBlackBitmap(it) } }
+            LedgerContextMenu.Item("Solid black") { transformImageElement(element) { solidBlackBitmap(it) } },
+            LedgerContextMenu.Item("Crop to circle") { transformImageElement(element) { circleCropBitmap(it) } }
         ))
         groups.add(listOf(
             LedgerContextMenu.Item("Bring to front") { bringImageToFront(element) },
@@ -2076,6 +2105,15 @@ abstract class SurfaceFragment : ScreenFragment() {
             LedgerContextMenu.Item("Save to Clippings") {
                 com.toolsboox.plugin.calendar.ot.ClippingsStore.add(requireContext(), element.data)
                 Toast.makeText(requireContext(), "Saved to Clippings", Toast.LENGTH_SHORT).show()
+            },
+            LedgerContextMenu.Item("Photo → Clipping") {
+                val bmp = bitmapForElement(element)
+                if (bmp != null) {
+                    val baos = ByteArrayOutputStream()
+                    thresholdBitmap(bmp).compress(Bitmap.CompressFormat.PNG, 100, baos)
+                    com.toolsboox.plugin.calendar.ot.ClippingsStore.add(requireContext(), Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP))
+                    Toast.makeText(requireContext(), "Line art saved to Clippings", Toast.LENGTH_SHORT).show()
+                }
             }
         ))
         LedgerContextMenu.show(provideSurfaceView(), pressX, pressY, "IMAGE", groups)
@@ -2149,7 +2187,8 @@ abstract class SurfaceFragment : ScreenFragment() {
                     LedgerContextMenu.Item("Insert clipping…") { showClippingsPicker(cx, cy) }
                 ),
                 listOf(
-                    LedgerContextMenu.Item("Paste") { pasteUnifiedAt(cx, cy) }
+                    LedgerContextMenu.Item("Paste") { pasteUnifiedAt(cx, cy) },
+                    LedgerContextMenu.Item("Share page as image") { onSharePage() }
                 )
             )
         )

@@ -1274,6 +1274,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         showMessage("Added to pickings.", binding.root)
     }
 
+    override fun onSharePage() {
+        runCatching { shareGramBitmap(renderPageBitmap()) }.onFailure { showMessage("Share failed", binding.root) }
+    }
+
     private fun gramFile(bmp: android.graphics.Bitmap): android.net.Uri {
         val dir = java.io.File(requireContext().cacheDir, "cards").apply { mkdirs() }
         val file = java.io.File(dir, "gram-${currentDate}-${bmp.width}x${bmp.height}.png")
