@@ -2,15 +2,27 @@ package com.toolsboox.plugin.calendar.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
+import android.view.Gravity
 import android.view.View
+import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.TextView
 import android.widget.Toast
+import com.toolsboox.plugin.calendar.da.v2.ContactNote
+import com.toolsboox.plugin.calendar.da.v2.LedgerItem
+import com.toolsboox.plugin.calendar.fi.CalendarDayService
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
@@ -36,6 +48,9 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class RolodexFragment @Inject constructor() : ScreenFragment() {
 
+    @Inject
+    lateinit var calendarDayService: CalendarDayService
+
     override val view = R.layout.fragment_rolodex
     private lateinit var binding: FragmentRolodexBinding
     private lateinit var adapter: ContactAdapter
@@ -57,7 +72,7 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentRolodexBinding.bind(view)
 
-        adapter = ContactAdapter(emptyList(), ::openEditor)
+        adapter = ContactAdapter(emptyList(), ::showContactDetail)
         binding.contactsRecycler.layoutManager = LinearLayoutManager(requireContext())
         binding.contactsRecycler.adapter = adapter
         binding.contactsRecycler.addItemDecoration(
@@ -146,6 +161,118 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         adapter.submit(filtered)
         binding.emptyText.visibility = if (filtered.isEmpty()) View.VISIBLE else View.GONE
     }
+
+    /** The contact "page": header, the tasks/events assigned to this person (gathered across day
+     *  files), and a running notes/history log you can append to. Edit opens the field form. */
+    private fun showContactDetail(contact: Contact) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        fun label(text: String, size: Float, bold: Boolean = false, color: Int = 0xFF000000.toInt()): TextView =
+            TextView(ctx).apply {
+                this.text = text; textSize = size; setTextColor(color)
+                if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
+            }
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(px(20), px(12), px(20), 0)
+        }
+
+        root.addView(label(contact.name.ifBlank { "Unnamed" }, 20f, bold = true))
+        if (contact.org.isNotBlank()) root.addView(label(contact.org, 14f, color = 0xFF666666.toInt()))
+        val line = listOfNotNull(contact.phone.ifBlank { null }, contact.email.ifBlank { null }).joinToString("  ·  ")
+        if (line.isNotBlank()) root.addView(label(line, 14f, color = 0xFF333333.toInt()).apply { setPadding(0, px(4), 0, 0) })
+        if (contact.birthday.isNotBlank()) root.addView(label("🎂 ${contact.birthday}", 14f).apply { setPadding(0, px(4), 0, 0) })
+
+        // Tasks & Events (gathered off-main).
+        root.addView(label("Tasks & Events", 13f, bold = true, color = 0xFF888888.toInt()).apply { setPadding(0, px(16), 0, px(4)) })
+        val tasksBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        tasksBox.addView(label("Loading…", 13f, color = 0xFF999999.toInt()))
+        root.addView(tasksBox)
+
+        // Notes & History.
+        root.addView(label("Notes & History", 13f, bold = true, color = 0xFF888888.toInt()).apply { setPadding(0, px(16), 0, px(4)) })
+        val noteInput = EditText(ctx).apply {
+            hint = "Add a note…"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val addBtn = Button(ctx).apply { text = "Add"; isAllCaps = false }
+        root.addView(LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            addView(noteInput); addView(addBtn)
+        })
+        val notesBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(notesBox)
+
+        fun renderNotes() {
+            notesBox.removeAllViews()
+            val sorted = contact.history.sortedByDescending { it.at }
+            if (sorted.isEmpty()) { notesBox.addView(label("No notes yet.", 13f, color = 0xFF999999.toInt())); return }
+            for (n in sorted) {
+                val row = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(0, px(6), 0, px(6)) }
+                row.addView(label(n.text, 14f))
+                row.addView(label(formatMillis(n.at), 11f, color = 0xFF999999.toInt()))
+                row.setOnLongClickListener {
+                    contact.history = contact.history.filterNot { it.id == n.id }
+                    lifecycleScope.launch { withContext(Dispatchers.IO) { ContactStore.upsert(requireContext(), contact) }; renderNotes() }
+                    Toast.makeText(ctx, "Note deleted", Toast.LENGTH_SHORT).show(); true
+                }
+                notesBox.addView(row)
+            }
+        }
+        renderNotes()
+
+        addBtn.setOnClickListener {
+            val t = noteInput.text.toString().trim()
+            if (t.isNotBlank()) {
+                contact.history = listOf(ContactNote(text = t)) + contact.history
+                noteInput.setText("")
+                lifecycleScope.launch { withContext(Dispatchers.IO) { ContactStore.upsert(requireContext(), contact) }; renderNotes() }
+            }
+        }
+
+        AlertDialog.Builder(ctx)
+            .setView(ScrollView(ctx).apply { addView(root) })
+            .setPositiveButton("Edit") { _, _ -> openEditor(contact) }
+            .setNegativeButton("Close", null)
+            .show()
+
+        lifecycleScope.launch {
+            val items = withContext(Dispatchers.IO) { gatherContactItems(contact.id) }
+            tasksBox.removeAllViews()
+            if (items.isEmpty()) { tasksBox.addView(label("None assigned yet.", 13f, color = 0xFF999999.toInt())); return@launch }
+            for (it in items) {
+                val mark = when { it.kind == LedgerItem.Kind.EVENT -> "📅"; it.done -> "✓"; else -> "○" }
+                tasksBox.addView(label("$mark  ${it.text}", 14f))
+                tasksBox.addView(label(formatDate(it.date) + (it.time?.let { t -> "  ·  $t" } ?: ""), 11f, color = 0xFF999999.toInt()))
+            }
+        }
+    }
+
+    /** Every ledger item (task/event) across day files assigned to [contactId], newest first. */
+    private fun gatherContactItems(contactId: String): List<LedgerItem> {
+        val calendarRoot = File(documentsRoot(), "calendar")
+        if (!calendarRoot.exists()) return emptyList()
+        val out = mutableListOf<LedgerItem>()
+        calendarRoot.walkTopDown()
+            .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
+            .forEach { file ->
+                val day = runCatching { calendarDayService.load(file) }.getOrNull() ?: return@forEach
+                out.addAll(day.ledgerItems.filter { it.contactId == contactId })
+            }
+        return out.sortedByDescending { it.date.time }
+    }
+
+    private fun documentsRoot(): File =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+            requireContext().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)!!
+        else
+            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
+
+    private fun formatMillis(ms: Long): String =
+        SimpleDateFormat("MMM d, yyyy · h:mm a", Locale.getDefault()).format(Date(ms))
+
+    private fun formatDate(d: Date): String =
+        SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(d)
 
     /** Add / edit a contact via a simple field dialog; Save upserts, Delete tombstones. */
     private fun openEditor(contact: Contact) {

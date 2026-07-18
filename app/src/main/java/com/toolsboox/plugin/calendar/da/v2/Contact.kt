@@ -35,7 +35,21 @@ data class Contact(
     // identifier; googleId is the People API resourceName ("people/..."). Prevents duplicating a
     // contact on push. New fields with defaults → backward-compatible with existing JSON.
     var appleId: String = "",
-    var googleId: String = ""
+    var googleId: String = "",
+    // Running notes / history log for this contact (newest shown first). Rides the same synced
+    // contacts.json; editing bumps `updated` so the whole record (log included) id-union merges.
+    var history: List<ContactNote> = emptyList()
 ) {
     val isDeleted: Boolean get() = deletedAt > 0L
 }
+
+/**
+ * One timestamped entry in a contact's notes / history log. Wire-compatible with the iOS `ContactNote`.
+ */
+@JsonClass(generateAdapter = true)
+data class ContactNote(
+    var id: String = UUID.randomUUID().toString(),
+    var text: String = "",
+    // Millis when written — used for newest-first ordering + the entry label.
+    var at: Long = System.currentTimeMillis()
+)
