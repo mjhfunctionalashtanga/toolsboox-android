@@ -84,9 +84,7 @@ fun ledgerDirectoryFolders(
             "📆  Week" to { CalendarNavigator.toWeekPage(fragment, today, locale) },
             "📅  Month" to { CalendarNavigator.toMonthPage(fragment, today) },
             "📊  Quarter" to { CalendarNavigator.toQuarterPage(fragment, today) },
-            "🗓️  Year" to { CalendarNavigator.toYearPage(fragment, today) },
-            // Almanac pages display tasks & events, so the list lives here (iOS parity).
-            "🗒  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) }
+            "🗓️  Year" to { CalendarNavigator.toYearPage(fragment, today) }
         )),
         ScreenFragment.Folder("❤️", "Daily Ledgers", listOf(
             "❝  Pickings" to { showPickingsPicker(fragment) },
