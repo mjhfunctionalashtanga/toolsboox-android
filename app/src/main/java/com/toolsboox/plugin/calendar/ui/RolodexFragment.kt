@@ -1,6 +1,7 @@
 package com.toolsboox.plugin.calendar.ui
 
 import android.Manifest
+import android.app.DatePickerDialog
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -10,20 +11,24 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import com.toolsboox.plugin.calendar.CalendarNavigator
 import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import com.toolsboox.plugin.calendar.da.v2.ContactNote
+import com.toolsboox.plugin.calendar.da.v2.CorrespondenceEntry
 import com.toolsboox.plugin.calendar.da.v2.LedgerItem
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
 import java.io.File
 import java.text.SimpleDateFormat
 import java.time.ZoneId
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,6 +41,7 @@ import com.toolsboox.R
 import com.toolsboox.databinding.FragmentRolodexBinding
 import com.toolsboox.plugin.calendar.da.v2.Contact
 import com.toolsboox.plugin.calendar.ot.ContactStore
+import com.toolsboox.plugin.calendar.ot.CorrespondenceStore
 import com.toolsboox.plugin.calendar.ot.DeviceContactImport
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
@@ -58,6 +64,7 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
     private lateinit var binding: FragmentRolodexBinding
     private lateinit var adapter: ContactAdapter
     private var allContacts: List<Contact> = emptyList()
+    private var correspondenceCounts: Map<String, Int> = emptyMap()
 
     private val contactsPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -75,7 +82,7 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentRolodexBinding.bind(view)
 
-        adapter = ContactAdapter(emptyList(), ::showContactDetail)
+        adapter = ContactAdapter(emptyList(), ::showContactDetail) { correspondenceCounts[it.id] ?: 0 }
         binding.contactsRecycler.layoutManager = LinearLayoutManager(requireContext())
         binding.contactsRecycler.adapter = adapter
         binding.contactsRecycler.addItemDecoration(
@@ -101,8 +108,11 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
 
     private fun load() {
         lifecycleScope.launch {
-            val contacts = withContext(Dispatchers.IO) { ContactStore.list(requireContext()) }
+            val (contacts, counts) = withContext(Dispatchers.IO) {
+                ContactStore.list(requireContext()) to CorrespondenceStore.countsByContact(requireContext())
+            }
             allContacts = contacts
+            correspondenceCounts = counts
             applyFilter()
         }
     }
@@ -197,6 +207,53 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         val elementsBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         elementsBox.addView(label("Loading…", 13f, color = 0xFF999999.toInt()))
         root.addView(elementsBox)
+
+        // Correspondence — the typed, dated exchanges (letters/emails/calls/meetings), distinct from
+        // the freeform running notes below. Rendered inline so the whole thread is on the page.
+        root.addView(label("Correspondence", 13f, bold = true, color = 0xFF888888.toInt()).apply { setPadding(0, px(16), 0, px(4)) })
+        val letterBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(letterBox)
+        val logBtn = Button(ctx).apply { text = "＋ Log correspondence"; isAllCaps = false }
+        root.addView(logBtn)
+
+        letterBox.addView(label("Loading…", 13f, color = 0xFF999999.toInt()))
+
+        /** Paint the thread from an already-gathered list (the read itself happens off-main). */
+        fun paintCorrespondence(entries: List<CorrespondenceEntry>, reload: () -> Unit) {
+            letterBox.removeAllViews()
+            correspondenceCounts = correspondenceCounts + (contact.id to entries.size)
+            if (entries.isEmpty()) {
+                letterBox.addView(label("Nothing logged yet.", 13f, color = 0xFF999999.toInt())); return
+            }
+            for (e in entries) {
+                val kind = CorrespondenceEntry.Kind.of(e.kind)
+                val dir = CorrespondenceEntry.Direction.of(e.direction)
+                val dirTag = if (dir == CorrespondenceEntry.Direction.NONE) "" else "  ·  ${dir.label}"
+                val row = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL; setPadding(0, px(6), 0, px(6)); isClickable = true
+                }
+                row.addView(label("${kind.glyph}  ${e.subject.ifBlank { kind.label }}", 14f))
+                row.addView(label(formatDate(Date(e.at)) + dirTag + "   ›", 11f, color = 0xFF999999.toInt()))
+                if (e.body.isNotBlank()) row.addView(label(e.body, 13f, color = 0xFF333333.toInt()))
+                row.setOnClickListener { openEntryEditor(contact, e, isNew = false, onSaved = reload) }
+                letterBox.addView(row)
+            }
+        }
+
+        // Re-gather off-main, then repaint. Passed to itself so an edit can refresh the thread.
+        fun reloadCorrespondence() {
+            lifecycleScope.launch {
+                val entries = withContext(Dispatchers.IO) { CorrespondenceStore.forContact(ctx, contact.id) }
+                paintCorrespondence(entries) { reloadCorrespondence() }
+            }
+        }
+        reloadCorrespondence()
+        logBtn.setOnClickListener {
+            openEntryEditor(
+                contact, CorrespondenceEntry(contactId = contact.id), isNew = true,
+                onSaved = { reloadCorrespondence() }
+            )
+        }
 
         // Notes & History.
         root.addView(label("Notes & History", 13f, bold = true, color = 0xFF888888.toInt()).apply { setPadding(0, px(16), 0, px(4)) })
@@ -386,6 +443,101 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
     private fun formatDate(d: Date): String =
         SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(d)
 
+    /**
+     * Add / edit one correspondence entry; Save upserts, Delete tombstones. [onSaved] refreshes the
+     * thread on the contact page behind this dialog.
+     */
+    private fun openEntryEditor(
+        contact: Contact,
+        entry: CorrespondenceEntry,
+        isNew: Boolean,
+        onSaved: () -> Unit
+    ) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        val pad = (16 * dp).toInt()
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+        }
+
+        // Editable date (entries are usually logged after the fact), held in a picker-mutated calendar.
+        val cal = Calendar.getInstance().apply { timeInMillis = entry.at }
+        val dateBtn = TextView(ctx).apply {
+            text = "📅 ${formatDate(cal.time)}"
+            textSize = 16f
+            setPadding(0, pad / 2, 0, pad / 2)
+            setOnClickListener {
+                DatePickerDialog(
+                    ctx,
+                    { _, y, m, d -> cal.set(y, m, d); text = "📅 ${formatDate(cal.time)}" },
+                    cal.get(Calendar.YEAR), cal.get(Calendar.MONTH), cal.get(Calendar.DAY_OF_MONTH)
+                ).show()
+            }
+        }
+        root.addView(dateBtn)
+
+        fun captioned(caption: String, control: View): View = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, pad / 2, 0, 0)
+            addView(TextView(ctx).apply { text = caption; textSize = 12f; setTextColor(0xFF888888.toInt()) })
+            addView(control)
+        }
+
+        val kinds = CorrespondenceEntry.Kind.values()
+        val kindSpinner = Spinner(ctx).apply {
+            adapter = ArrayAdapter(
+                ctx, android.R.layout.simple_spinner_dropdown_item, kinds.map { "${it.glyph} ${it.label}" }
+            )
+            setSelection(kinds.indexOf(CorrespondenceEntry.Kind.of(entry.kind)).coerceAtLeast(0))
+        }
+        root.addView(captioned("Kind", kindSpinner))
+
+        val dirs = CorrespondenceEntry.Direction.values()
+        val dirSpinner = Spinner(ctx).apply {
+            adapter = ArrayAdapter(ctx, android.R.layout.simple_spinner_dropdown_item, dirs.map { it.label })
+            setSelection(dirs.indexOf(CorrespondenceEntry.Direction.of(entry.direction)).coerceAtLeast(0))
+        }
+        root.addView(captioned("Direction", dirSpinner))
+
+        val subjectE = EditText(ctx).apply {
+            hint = "Subject"; setText(entry.subject); setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        }
+        root.addView(subjectE)
+        val bodyE = EditText(ctx).apply {
+            hint = "Notes"; setText(entry.body)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        }
+        root.addView(bodyE)
+
+        val builder = AlertDialog.Builder(ctx)
+            .setTitle(if (isNew) "Log correspondence" else "Edit entry")
+            .setView(ScrollView(ctx).apply { addView(root) })
+            .setPositiveButton("Save") { _, _ ->
+                entry.at = cal.timeInMillis
+                entry.kind = kinds[kindSpinner.selectedItemPosition].wire
+                entry.direction = dirs[dirSpinner.selectedItemPosition].wire
+                entry.subject = subjectE.text.toString().trim()
+                entry.body = bodyE.text.toString().trim()
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) { CorrespondenceStore.upsert(requireContext(), entry) }
+                    onSaved()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+        if (!isNew) {
+            builder.setNeutralButton("Delete") { _, _ ->
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) { CorrespondenceStore.delete(requireContext(), entry.id) }
+                    onSaved()
+                }
+            }
+        }
+        builder.show()
+    }
+
     /** Add / edit a contact via a simple field dialog; Save upserts, Delete tombstones. */
     private fun openEditor(contact: Contact) {
         val ctx = requireContext()
@@ -429,7 +581,11 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         if (contact.name.isNotBlank()) {
             builder.setNeutralButton("Delete") { _, _ ->
                 lifecycleScope.launch {
-                    withContext(Dispatchers.IO) { ContactStore.delete(requireContext(), contact.id) }
+                    withContext(Dispatchers.IO) {
+                        ContactStore.delete(requireContext(), contact.id)
+                        // Don't leave the contact's correspondence dangling — tombstone the thread too.
+                        CorrespondenceStore.deleteForContact(requireContext(), contact.id)
+                    }
                     load()
                 }
             }
