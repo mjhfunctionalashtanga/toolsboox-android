@@ -1,7 +1,9 @@
 package com.toolsboox.plugin.calendar.ui
 
+import android.graphics.BitmapFactory
 import android.graphics.Paint
 import android.graphics.RectF
+import android.util.Base64
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -11,6 +13,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.toolsboox.R
 import com.toolsboox.da.Stroke
+import com.toolsboox.plugin.calendar.da.v2.Contact
 import com.toolsboox.plugin.calendar.da.v2.LedgerItem
 import com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer
 
@@ -24,7 +27,9 @@ class LedgerItemAdapter(
     private val strokeById: Map<String, Stroke>,
     private val onChanged: (LedgerItem) -> Unit,
     private val onEnterSelection: () -> Unit,
-    private val onSelectionChanged: () -> Unit
+    private val onSelectionChanged: () -> Unit,
+    private val onAssign: (LedgerItem) -> Unit = {},
+    private val resolveContact: (String) -> Contact? = { null }
 ) : RecyclerView.Adapter<LedgerItemAdapter.Holder>() {
 
     /** Bulk-select state: long-press a row to enter, tap rows to toggle, then Delete. */
@@ -64,6 +69,7 @@ class LedgerItemAdapter(
         val lead: TextView = view.findViewById(R.id.li_lead)
         val text: TextView = view.findViewById(R.id.li_text)
         val ink: ImageView = view.findViewById(R.id.li_ink)
+        val assignee: ImageButton = view.findViewById(R.id.li_assignee)
         val toggle: ImageButton = view.findViewById(R.id.li_toggle)
     }
 
@@ -84,6 +90,7 @@ class LedgerItemAdapter(
             holder.lead.textSize = 30f
             holder.lead.setOnClickListener { toggle(e); notifyItemChanged(position) }
             holder.toggle.visibility = View.GONE
+            holder.assignee.visibility = View.GONE
             holder.itemView.setBackgroundColor(if (checked) 0xFFE6E6E6.toInt() else 0xFFFFFFFF.toInt())
             holder.itemView.setOnClickListener { toggle(e); notifyItemChanged(position) }
             holder.itemView.setOnLongClickListener(null)
@@ -113,6 +120,19 @@ class LedgerItemAdapter(
             e.display = if (e.display == LedgerItem.Display.TEXT) LedgerItem.Display.INK else LedgerItem.Display.TEXT
             onChanged(e); notifyItemChanged(position)
         }
+
+        // Assignee: the linked contact's avatar (or a faint person icon), tap to (re)assign.
+        holder.assignee.visibility = View.VISIBLE
+        val contact = e.contactId?.let { resolveContact(it) }
+        val avatar = contact?.avatarData?.takeIf { it.isNotBlank() }?.let {
+            runCatching {
+                val b = Base64.decode(it, Base64.DEFAULT); BitmapFactory.decodeByteArray(b, 0, b.size)
+            }.getOrNull()
+        }
+        if (avatar != null) holder.assignee.setImageBitmap(avatar)
+        else holder.assignee.setImageResource(R.drawable.ic_person)
+        holder.assignee.alpha = if (contact != null) 1f else 0.4f
+        holder.assignee.setOnClickListener { onAssign(e) }
 
         // Long-press enters bulk-select mode with this row selected. (Single delete = swipe the row.)
         holder.itemView.setOnLongClickListener { startSelection(e); true }

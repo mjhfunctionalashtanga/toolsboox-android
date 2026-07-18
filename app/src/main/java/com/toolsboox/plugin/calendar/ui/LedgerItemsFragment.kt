@@ -6,14 +6,17 @@ import android.os.Environment
 import android.text.format.DateFormat
 import android.view.View
 import androidx.lifecycle.lifecycleScope
+import androidx.appcompat.app.AlertDialog
 import androidx.recyclerview.widget.DividerItemDecoration
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.toolsboox.R
 import com.toolsboox.da.Stroke
 import com.toolsboox.databinding.FragmentLedgerItemsBinding
 import com.toolsboox.plugin.calendar.da.v2.CalendarDay
+import com.toolsboox.plugin.calendar.da.v2.Contact
 import com.toolsboox.plugin.calendar.da.v2.LedgerItem
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
+import com.toolsboox.plugin.calendar.ot.ContactStore
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +48,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
 
     private lateinit var binding: FragmentLedgerItemsBinding
     private lateinit var adapter: LedgerItemAdapter
+    private var contactsById: Map<String, Contact> = emptyMap()
     private var navBar: CalendarNavBarHost? = null
     // "day" = the single anchor day; "week"/"month"/"quarter"/"year" = filter across that period.
     private var navPeriod: String = "day"
@@ -230,6 +234,9 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 Triple(cd, map, pat)
             }
             day = d
+            contactsById = withContext(Dispatchers.IO) {
+                ContactStore.list(requireContext().applicationContext).associateBy { it.id }
+            }
             // Redraw the reused Almanac navigator for this date.
             val navDay = d ?: CalendarDay(anchor.year, anchor.monthValue, anchor.dayOfMonth, startHour = null)
             pattern?.let { navBar?.render(navDay, it) }
@@ -237,7 +244,9 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             val items = (d?.ledgerItems ?: emptyList()).sortedWith(
                 compareBy({ it.kind != LedgerItem.Kind.TASK }, { it.kind == LedgerItem.Kind.TASK && it.done }, { it.top })
             )
-            adapter = LedgerItemAdapter(items, strokes, ::persist, ::onEnterSelection, ::updateSelectionBar)
+            adapter = LedgerItemAdapter(
+                items, strokes, ::persist, ::onEnterSelection, ::updateSelectionBar, ::assign
+            ) { id -> contactsById[id] }
             binding.itemsRecycler.adapter = adapter
             attachSwipeToDelete()
             binding.emptyText.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
@@ -364,6 +373,21 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     }
 
     /** The item is a reference into [day].ledgerItems, so just re-save the day. */
+    /** Open a contact picker and link (or clear) the item's rolodex contact, then persist. */
+    private fun assign(item: LedgerItem) {
+        val contacts = contactsById.values.sortedBy { it.name.lowercase() }
+        val labels = (listOf("— None —") + contacts.map { it.name.ifBlank { "Unnamed" } }).toTypedArray()
+        AlertDialog.Builder(requireContext())
+            .setTitle("Assign to…")
+            .setItems(labels) { _, which ->
+                item.contactId = if (which == 0) null else contacts[which - 1].id
+                persist(item)
+                load()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun persist(item: LedgerItem) {
         val srcDay = itemSourceDay[item.id] ?: anchor
         lifecycleScope.launch(Dispatchers.IO) {

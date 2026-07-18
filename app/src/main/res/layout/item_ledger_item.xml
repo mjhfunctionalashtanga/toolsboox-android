@@ -40,6 +40,17 @@
         android:layout_weight="1"
         android:layout_height="wrap_content"/>
 
+    <!-- Assign a rolodex contact -->
+    <ImageButton
+        android:id="@+id/li_assignee"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:scaleType="fitCenter"
+        android:padding="6dp"
+        android:src="@drawable/ic_person"
+        android:contentDescription="@string/ledger_items_toggle"
+        android:layout_width="40dp"
+        android:layout_height="40dp"/>
+
     <!-- Per-item Ink/Text toggle -->
     <ImageButton
         android:id="@+id/li_toggle"
