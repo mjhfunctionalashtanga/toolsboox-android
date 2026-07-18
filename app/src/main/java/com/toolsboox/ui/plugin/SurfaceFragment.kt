@@ -373,13 +373,18 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     /** Which transform is currently being driven by the stylus (NONE = idle). */
-    private enum class SelectionDrag { NONE, HANDLE_TL, HANDLE_TR, HANDLE_BL, HANDLE_BR, MOVE }
+    private enum class SelectionDrag { NONE, HANDLE_TL, HANDLE_TR, HANDLE_BL, HANDLE_BR, MOVE, ROTATE }
     private var selectionDrag = SelectionDrag.NONE
 
     /** Anchor (opposite corner) for the active scale drag and the bbox snapshot at drag start. */
     private var scaleAnchorX = 0f
     private var scaleAnchorY = 0f
     private var scaleOrigBox: RectF? = null
+
+    /** Fixed pivot + press angle for a rotate drag of the selected strokes (about the box centre). */
+    private var rotateCenterX = 0f
+    private var rotateCenterY = 0f
+    private var rotateStartAngle = 0f
 
     /** Pen-down canvas coords when a MOVE drag begins. */
     private var moveStartX = 0f
@@ -1520,6 +1525,16 @@ abstract class SurfaceFragment : ScreenFragment() {
         return RectF(right - chipSize, top, right, top + chipSize)
     }
 
+    /** Delete chip (left of → item): remove the lassoed strokes outright, no clipboard copy. */
+    private fun deleteChipRect(box: RectF): RectF {
+        val top = chipBaseY(box)
+        val right = box.right - 3 * (chipSize + chipGap)
+        return RectF(right - chipSize, top, right, top + chipSize)
+    }
+
+    /** Rotation handle: a circle below the selection's bottom-centre — drag it to swing the strokes. */
+    private fun rotateHandleCenter(box: RectF): PointF = PointF(box.centerX(), box.bottom + chipSize)
+
     /**
      * A lasso selection asked to become a structured item (the "→ item" chip). The day page
      * overrides this to OCR the enclosed strokes and add a task/event; default is a no-op.
@@ -1544,6 +1559,17 @@ abstract class SurfaceFragment : ScreenFragment() {
         if (cutChipRect(box).contains(x, y)) {
             pushUndo()
             strokeClipboard.copy(selectedStrokes.toList())
+            val removedIds = selectedStrokes.map { it.strokeId }
+            strokes.removeAll { it.strokeId in removedIds.toSet() }
+            onStrokesDeleted(removedIds)
+            exitSelectionMode(deferRawResume = true)
+            applyStrokes(strokes, true)
+            onStrokeChanged(strokes)
+            return true
+        }
+        if (deleteChipRect(box).contains(x, y)) {
+            // Delete = remove the lassoed strokes outright, WITHOUT touching the clipboard.
+            pushUndo()
             val removedIds = selectedStrokes.map { it.strokeId }
             strokes.removeAll { it.strokeId in removedIds.toSet() }
             onStrokesDeleted(removedIds)
@@ -1578,7 +1604,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         SelectionDrag.HANDLE_TR -> box.left to box.bottom
         SelectionDrag.HANDLE_BL -> box.right to box.top
         SelectionDrag.HANDLE_BR -> box.left to box.top
-        SelectionDrag.NONE, SelectionDrag.MOVE -> 0f to 0f
+        SelectionDrag.NONE, SelectionDrag.MOVE, SelectionDrag.ROTATE -> 0f to 0f
     }
 
     /**
@@ -1639,13 +1665,29 @@ abstract class SurfaceFragment : ScreenFragment() {
             val cutR = cutChipRect(box)
             val copyR = copyChipRect(box)
             val itemR = itemChipRect(box)
+            val deleteR = deleteChipRect(box)
             val chipBg = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL; isAntiAlias = true }
             val chipBorder = Paint().apply {
                 color = Color.BLACK; style = Paint.Style.STROKE; strokeWidth = 3f; isAntiAlias = true
             }
-            for (r in listOf(cutR, copyR, itemR)) {
+            for (r in listOf(cutR, copyR, itemR, deleteR)) {
                 lockCanvas.drawRoundRect(r, 12f, 12f, chipBg)
                 lockCanvas.drawRoundRect(r, 12f, 12f, chipBorder)
+            }
+            // Delete chip icon = an X (drawn, like the image "Del" chip — no drawable needed).
+            run {
+                val p = 20f
+                lockCanvas.drawLine(deleteR.left + p, deleteR.top + p, deleteR.right - p, deleteR.bottom - p, chipBorder)
+                lockCanvas.drawLine(deleteR.right - p, deleteR.top + p, deleteR.left + p, deleteR.bottom - p, chipBorder)
+            }
+            // Rotation handle — a circle below the box with a small ↻ arc.
+            run {
+                val rc = rotateHandleCenter(box)
+                val rr = handleSize / 2f
+                lockCanvas.drawCircle(rc.x, rc.y, rr, handleFill)
+                lockCanvas.drawCircle(rc.x, rc.y, rr, handleStroke)
+                val ar = rr * 0.5f
+                lockCanvas.drawArc(RectF(rc.x - ar, rc.y - ar, rc.x + ar, rc.y + ar), 20f, 300f, false, handleStroke)
             }
             // Draw icons inside chips
             val pad = 14
@@ -3565,8 +3607,21 @@ abstract class SurfaceFragment : ScreenFragment() {
                 val box = selBox
                 if (box != null) {
                     if (actionDown) {
-                        // Chip taps (→ item / cut / copy) — shared with the finger path above.
+                        // Chip taps (→ item / cut / copy / delete) — shared with the finger path above.
                         if (handleSelectionChipTap(x, y)) return true
+                        // Rotation handle (below bottom-centre): swing the selected strokes freely.
+                        val rc = rotateHandleCenter(box)
+                        if (abs(x - rc.x) <= handleSize / 2f + handleHitPad && abs(y - rc.y) <= handleSize / 2f + handleHitPad) {
+                            pushUndo()
+                            selectionDrag = SelectionDrag.ROTATE
+                            rotateCenterX = box.centerX()
+                            rotateCenterY = box.centerY()
+                            rotateStartAngle = kotlin.math.atan2(y - rotateCenterY, x - rotateCenterX)
+                            scaleOrigPoints = selectedStrokes.associate { stroke ->
+                                stroke.strokeId to stroke.strokePoints.map { it.x to it.y }
+                            }
+                            return true
+                        }
                         // Corner handle?
                         val hit = hitTestHandle(x, y, box)
                         if (hit != SelectionDrag.NONE) {
@@ -3606,6 +3661,23 @@ abstract class SurfaceFragment : ScreenFragment() {
                                 val (ox, oy) = origs[i]
                                 pt.x = ox + dx
                                 pt.y = oy + dy
+                            }
+                        }
+                        selBox = computeSelBox(selectedStrokes)
+                        drawWithSelection()
+                        return true
+                    } else if (actionMove && selectionDrag == SelectionDrag.ROTATE) {
+                        // Rotate every original point about the fixed centre by the swing angle.
+                        val d = kotlin.math.atan2(y - rotateCenterY, x - rotateCenterX) - rotateStartAngle
+                        val cos = kotlin.math.cos(d); val sin = kotlin.math.sin(d)
+                        for (stroke in selectedStrokes) {
+                            val origs = scaleOrigPoints[stroke.strokeId] ?: continue
+                            for ((i, pt) in stroke.strokePoints.withIndex()) {
+                                if (i >= origs.size) break
+                                val (ox, oy) = origs[i]
+                                val rx = ox - rotateCenterX; val ry = oy - rotateCenterY
+                                pt.x = rotateCenterX + rx * cos - ry * sin
+                                pt.y = rotateCenterY + rx * sin + ry * cos
                             }
                         }
                         selBox = computeSelBox(selectedStrokes)

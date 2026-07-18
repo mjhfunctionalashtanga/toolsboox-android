@@ -352,7 +352,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
                 miniflux.toggleStar(url, token, e.id)
-                if (!wasStarred) logEvent(e, note = e.blurb.ifBlank { null })
+                if (!wasStarred) logEvent(e, note = e.blurb.ifBlank { null }, starred = true)
             }
             entry = e.copy(starred = !wasStarred)
             updateStar()
@@ -384,7 +384,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
     /** Append an article ReadingEvent (star marker, highlight passage, note, and/or media). */
     private fun logEvent(
         e: FeedEntry, excerpt: String? = null, note: String? = null,
-        attachment: com.toolsboox.da.Attachment? = null
+        attachment: com.toolsboox.da.Attachment? = null, starred: Boolean = false
     ) {
         try {
             val root = documentsRoot()
@@ -400,7 +400,8 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                     url = e.url.ifBlank { null },
                     excerpt = excerpt,
                     note = note,
-                    attachments = attachment?.let { mutableListOf(it) }
+                    attachments = attachment?.let { mutableListOf(it) },
+                    starred = starred
                 )
             )
             calendarDayService.save(root, today, day)

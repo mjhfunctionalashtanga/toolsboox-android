@@ -674,12 +674,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         }
     }
 
-    /** Star the open article (and log a reading event the first time). */
+    /** Star the open article. `toggleStar` is the single place that logs the star to the Ledger
+     *  (local + Miniflux paths), so we don't log a second time here — that used to double-log. */
     private fun starArticle(e: FeedEntry) {
         toggleStar(e)
-        lifecycleScope.launch(Dispatchers.IO) {
-            if (!e.starred) logArticleEvent(e, note = e.blurb.take(400).ifBlank { null })
-        }
     }
 
     /** Read the current selection (if any), then note/annotate the open article. */
@@ -1167,6 +1165,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     private fun toggleStar(entry: FeedEntry) {
         if (com.toolsboox.plugin.feeds.nw.LocalFeedStore.isLocal(entry.id)) {
             com.toolsboox.plugin.feeds.nw.LocalFeedStore.setStar(requireContext(), entry.url, !entry.starred)
+            // Newly starred → log to today's Ledger too, exactly like a Miniflux star, so local-feed
+            // stars aren't silently missing from the Notes / Ledger Log.
+            if (!entry.starred) lifecycleScope.launch(Dispatchers.IO) { logStar(entry) }
             showMessage(if (entry.starred) R.string.feeds_unstarred else R.string.feeds_starred)
             refresh()
             return
@@ -1200,7 +1201,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     title = entry.title,
                     source = entry.feedTitle.ifBlank { null },
                     url = entry.url.ifBlank { null },
-                    note = entry.blurb.ifBlank { null }
+                    note = entry.blurb.ifBlank { null },
+                    starred = true
                 )
             )
             calendarDayService.save(root, today, day)
