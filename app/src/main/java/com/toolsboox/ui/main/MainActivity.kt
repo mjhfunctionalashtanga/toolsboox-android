@@ -98,12 +98,14 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Global "pull up a scratch ink surface" button — available on every screen.
+        // Global "pull up the Notes surface" button — available on every screen. It opens the SAME
+        // note page ("0") that every menu's "✒ Notes" opens, so the float and the menus are one
+        // consistent surface (previously it opened a separate "scratch" page with different content).
         binding.floatNoteButton.setOnClickListener {
             val today = java.time.LocalDate.now()
             val bundle = bundleOf(
                 "year" to "${today.year}", "month" to "${today.monthValue}", "day" to "${today.dayOfMonth}",
-                "notePage" to "scratch"
+                "notePage" to "0"
             )
             binding.fragmentContent.findNavController().navigate(R.id.action_to_scratch, bundle)
         }
