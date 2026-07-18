@@ -35,5 +35,8 @@ data class ImageElement(
     // Rotation in degrees, clockwise, about the element's centre. Applied at render and
     // carried through the id-keyed merge like every other field. New field with a default
     // → backward-compatible with existing JSON (old images decode as un-rotated).
-    var rotation: Float = 0f
+    var rotation: Float = 0f,
+    // Layer order within a page: higher draws on top. New field with a default →
+    // backward-compatible; existing images (all z=0) keep their insertion order.
+    var z: Int = 0
 )

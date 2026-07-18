@@ -1756,7 +1756,8 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** Render all image elements (drawn under strokes/text so the user can write over them). */
     private fun renderImageElements(targetCanvas: Canvas) {
         if (imageElements.isEmpty()) return
-        for (element in imageElements) {
+        // Draw in layer order (z asc, then timestamp) so higher-z elements land on top.
+        for (element in imageElements.sortedWith(compareBy({ it.z }, { it.timestamp }))) {
             val bmp = bitmapForElement(element) ?: continue
             val rect = RectF(element.x, element.y, element.x + element.width, element.y + element.height)
             if (element.rotation != 0f) {
