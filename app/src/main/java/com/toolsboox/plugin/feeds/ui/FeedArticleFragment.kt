@@ -66,27 +66,16 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         // JS on so we can read the text selection for highlight-to-annotation.
         binding.articleWeb.settings.javaScriptEnabled = true
 
-        // Long-press a link → Add to Later List (files + publishes to the RSS feed).
-        binding.articleWeb.setOnLongClickListener {
-            val result = binding.articleWeb.hitTestResult
-            val url = result.extra
-            if ((result.type == android.webkit.WebView.HitTestResult.SRC_ANCHOR_TYPE ||
-                        result.type == android.webkit.WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) &&
-                !url.isNullOrBlank()
-            ) {
-                androidx.appcompat.app.AlertDialog.Builder(requireContext())
-                    .setTitle(url)
-                    .setItems(arrayOf("🔖  Add to Later List", "🌐  Open")) { _, which ->
-                        if (which == 0) {
-                            com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.fileLink(
-                                requireContext(), java.time.LocalDate.now(), "read", url, null)
-                            showMessage("Saved to Later List", binding.root)
-                        } else {
-                            startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
-                        }
-                    }.show()
-                true
-            } else false
+        // Tapping a link opens a menu (Open / Later / Copy); HOLDING now falls through to native
+        // text selection, so you can highlight & copy passages — including a link's text.
+        binding.articleWeb.webViewClient = object : android.webkit.WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                view: android.webkit.WebView, request: android.webkit.WebResourceRequest
+            ): Boolean {
+                val url = request.url?.toString().orEmpty()
+                if (url.startsWith("http")) { showLinkMenu(url); return true }
+                return false
+            }
         }
 
         // Floating nav pill: grip drags/collapses; ‹ › page, ⌃ ⌄ step articles, ✎ annotate.
@@ -140,6 +129,27 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
      * ☰ pulls up the directory as an overlay — WITHOUT leaving the article. Picking a feed view
      * returns to the list in that mode; the Ledger sections (almanac/history/…) navigate away.
      */
+    /** Link tapped in the article → Open / Add to Later / Copy (moved off long-press so holding can select). */
+    private fun showLinkMenu(url: String) {
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle(url)
+            .setItems(arrayOf("🌐  Open", "🔖  Add to Later List", "📋  Copy link")) { _, which ->
+                when (which) {
+                    0 -> startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
+                    1 -> {
+                        com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.fileLink(
+                            requireContext(), java.time.LocalDate.now(), "read", url, null)
+                        showMessage("Saved to Later List", binding.root)
+                    }
+                    2 -> {
+                        val cb = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        cb.setPrimaryClip(android.content.ClipData.newPlainText("link", url))
+                        showMessage("Link copied", binding.root)
+                    }
+                }
+            }.show()
+    }
+
     private fun openRssDirectory() {
         fun toFeeds(mode: String, kind: String?, feedTitle: String? = null) {
             FeedSelection.mode = mode; FeedSelection.kind = kind; FeedSelection.filterFeedTitle = feedTitle
