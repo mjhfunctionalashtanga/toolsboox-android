@@ -80,6 +80,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     @Inject
     lateinit var utils: CalendarUtils
 
+    @Inject
+    lateinit var calendarDayService: com.toolsboox.plugin.calendar.fi.CalendarDayService
+
     /**
      * The inflated layout.
      */
@@ -250,6 +253,52 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         calendarDay.imageElements = (others + imageElements).toMutableList()
         calendarPattern.updateDay(calendarDay)
         presenter.save(this, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+    }
+
+    /** "Where used": every day + page a gram with the same content is placed on — the rhizomatic web. */
+    override fun onImageWhereUsed(element: ImageElement) {
+        val target = element.data
+        if (target.isBlank()) return
+        lifecycleScope.launch {
+            val places = withContext(Dispatchers.IO) { gramPlacements(target) }
+            val ctx = context ?: return@launch
+            if (places.isEmpty()) {
+                android.widget.Toast.makeText(ctx, "Not placed anywhere else yet", android.widget.Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val labels = places.map { p ->
+                "${p.date}  ·  ${if (p.page == "day") "Day page" else p.page.replaceFirstChar { it.uppercase() }}"
+            }.toTypedArray()
+            AlertDialog.Builder(ctx)
+                .setTitle("Where used · ${places.size}")
+                .setItems(labels) { _, which ->
+                    CalendarNavigator.toDayPage(this@CalendarDayFragment, places[which].date, CalendarDay.DEFAULT_STYLE)
+                }
+                .setNegativeButton("Close", null)
+                .show()
+        }
+    }
+
+    private data class GramPlace(val date: LocalDate, val page: String, val millis: Long)
+
+    private fun gramPlacements(data: String): List<GramPlace> {
+        val root = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+            requireContext().getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)!!
+        else java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
+        val calendarRoot = java.io.File(root, "calendar")
+        if (!calendarRoot.exists()) return emptyList()
+        val out = mutableListOf<GramPlace>()
+        calendarRoot.walkTopDown()
+            .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
+            .forEach { file ->
+                val m = Regex("day-(\\d{4})-(\\d{2})-(\\d{2})").find(file.name) ?: return@forEach
+                val ld = runCatching { LocalDate.of(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt()) }.getOrNull() ?: return@forEach
+                val day = runCatching { calendarDayService.load(file) }.getOrNull() ?: return@forEach
+                for (img in day.imageElements) if (img.data == data) {
+                    out.add(GramPlace(ld, img.page.ifBlank { "day" }, img.timestamp))
+                }
+            }
+        return out.sortedByDescending { it.millis }
     }
 
     /**

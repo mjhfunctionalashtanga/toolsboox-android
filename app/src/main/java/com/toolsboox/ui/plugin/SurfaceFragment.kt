@@ -1791,6 +1791,9 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** Override to persist image changes (the day fragment writes them back to CalendarDay). */
     open fun onImageElementsChanged(imageElements: MutableList<ImageElement>) {}
 
+    /** "Where used" for a gram — the day page subclass walks day files for the same content + navigates. */
+    open fun onImageWhereUsed(element: ImageElement) {}
+
     private fun bitmapForElement(element: ImageElement): Bitmap? {
         imageBitmapCache[element.elementId]?.let { return it }
         return try {
@@ -2067,7 +2070,8 @@ abstract class SurfaceFragment : ScreenFragment() {
                     onImageElementsChanged(imageElements)
                     applyStrokes(strokes, true)
                 }
-            }
+            },
+            LedgerContextMenu.Item("Where used…") { onImageWhereUsed(element) }
         ))
         LedgerContextMenu.show(provideSurfaceView(), pressX, pressY, "IMAGE", groups)
     }
