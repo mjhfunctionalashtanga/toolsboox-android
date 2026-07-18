@@ -42,7 +42,11 @@ object LedgerTaskCarryOver {
         }
         if (open.isEmpty()) return false
         val existing = today.ledgerItems.map { it.id }.toSet()
-        val toCarry = open.filter { it.id !in existing }
+        // A task the user deleted on `today` is tombstoned by its id. Carry-over MUST honour that
+        // or it silently re-adds the deleted task every time the day reloads — the "won't delete /
+        // keeps reappearing" bug, since a deleted id is no longer in `existing`.
+        val tombstoned = today.deletedElementIds.toSet()
+        val toCarry = open.filter { it.id !in existing && it.id !in tombstoned }
         if (toCarry.isEmpty()) return false
 
         val used = occupiedRows(today)

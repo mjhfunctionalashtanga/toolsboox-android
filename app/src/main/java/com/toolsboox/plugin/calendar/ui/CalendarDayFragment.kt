@@ -2062,6 +2062,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         when (motionEvent.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 longPressFired = false
+                com.toolsboox.ot.LedgerContextMenu.dismissCurrent()   // clear any lingering menu
                 // Not while manipulating an element (finger drags move/resize there)
                 // and only for a single finger.
                 if (motionEvent.pointerCount == 1 && !isImageModeActive()) {

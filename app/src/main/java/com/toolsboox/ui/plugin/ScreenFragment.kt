@@ -597,7 +597,7 @@ abstract class ScreenFragment : Fragment() {
         dialog.window?.let { w ->
             val lp = w.attributes
             // Narrow, with a clear edge margin — never more than ~46% of the screen width.
-            lp.width = minOf(dp(190), (resources.displayMetrics.widthPixels * 0.48f).toInt())
+            lp.width = minOf(dp(230), (resources.displayMetrics.widthPixels * 0.56f).toInt())
             // Always top-left, matching showAccordion/showDirectory — so the menu appears in the
             // SAME position on every screen (day, feeds, reader) instead of jumping to the pill.
             lp.gravity = Gravity.START or Gravity.TOP
@@ -769,7 +769,7 @@ abstract class ScreenFragment : Fragment() {
             lp.gravity = Gravity.START or Gravity.TOP
             val metrics = resources.displayMetrics
             lp.x = dp(16); lp.y = dp(54)
-            lp.width = minOf(dp(190), (metrics.widthPixels * 0.48f).toInt())
+            lp.width = minOf(dp(230), (metrics.widthPixels * 0.56f).toInt())
             // Size to content, but clamp to the visible area below y so a tall menu scrolls
             // within the screen instead of running off the bottom (small screens like the Palma).
             val avail = metrics.heightPixels - lp.y - dp(16)
@@ -844,7 +844,7 @@ abstract class ScreenFragment : Fragment() {
             val lp = w.attributes
             lp.gravity = Gravity.START or Gravity.TOP
             lp.x = dp(16); lp.y = dp(54)
-            lp.width = minOf(dp(190), (resources.displayMetrics.widthPixels * 0.48f).toInt())
+            lp.width = minOf(dp(230), (resources.displayMetrics.widthPixels * 0.56f).toInt())
             lp.height = (resources.displayMetrics.heightPixels * 0.7f).toInt()
             w.attributes = lp
         }

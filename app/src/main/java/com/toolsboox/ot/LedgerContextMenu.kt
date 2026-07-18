@@ -36,6 +36,15 @@ object LedgerContextMenu {
     /** One tappable row of the menu. */
     data class Item(val label: String, val action: () -> Unit)
 
+    /** The popup currently on screen, so a new press replaces it instead of stacking. */
+    private var current: PopupWindow? = null
+
+    /** Dismiss any open menu. Safe to call when none is showing. */
+    fun dismissCurrent() {
+        current?.let { runCatching { it.dismiss() } }
+        current = null
+    }
+
     /**
      * Show the menu anchored at a press point.
      *
@@ -51,6 +60,7 @@ object LedgerContextMenu {
      */
     fun show(anchor: View, pressX: Float, pressY: Float, title: String, groups: List<List<Item>>) {
         val ctx = anchor.context ?: return
+        dismissCurrent()   // never stack menus — a fresh press replaces the last one
         val density = ctx.resources.displayMetrics.density
         fun dp(v: Float): Int = (v * density).roundToInt()
 
@@ -131,12 +141,18 @@ object LedgerContextMenu {
         // the window width, then hand the popup the exact card size.
         card.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
 
-        popup = PopupWindow(card, card.measuredWidth, card.measuredHeight, true).apply {
+        // NON-focusable on purpose: a focusable popup grabs a focus window, so the *next*
+        // finger-down (a second long-press) is swallowed to dismiss it and never reaches the
+        // surface — the menu "worked once, then died." Non-focusable lets that press dismiss
+        // this menu (via ACTION_OUTSIDE) AND still land on the surface to start a fresh press.
+        popup = PopupWindow(card, card.measuredWidth, card.measuredHeight, false).apply {
             isOutsideTouchable = true
             elevation = 0f
             animationStyle = 0
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            setOnDismissListener { if (current === this) current = null }
         }
+        current = popup
 
         // Anchor the card's top-left just off the fingertip, clamped on-window.
         val location = IntArray(2)
