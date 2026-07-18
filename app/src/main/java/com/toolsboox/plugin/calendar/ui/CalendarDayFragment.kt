@@ -740,12 +740,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             cm.setPrimaryClip(android.content.ClipData.newPlainText("Ledger", input.text.toString()))
             showMessage("Copied to clipboard", binding.root)
         }
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        showModal(androidx.appcompat.app.AlertDialog.Builder(ctx)
             .setTitle("Copy text")
             .setView(android.widget.ScrollView(ctx).apply { addView(box) })
             .setPositiveButton("Copy") { _, _ -> copy() }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create())
     }
 
     /**
@@ -858,7 +858,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     /** Show the looked-up description with an option to open the link; it's already filed to the feed. */
     private fun showEducateResult(term: String, desc: String, url: String) {
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        showModal(androidx.appcompat.app.AlertDialog.Builder(requireContext())
             .setTitle(term)
             .setMessage(desc + "\n\n" + getString(R.string.ledger_educate_filed))
             .setPositiveButton(R.string.ledger_educate_open) { _, _ ->
@@ -867,7 +867,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 }
             }
             .setNegativeButton(android.R.string.ok, null)
-            .show()
+            .create())
     }
 
     /** The DUE date for a created item: the page's own day at noon UTC (matches the iPad convention). */
@@ -1020,7 +1020,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .setNegativeButton(android.R.string.cancel, null)
             .create()
         pickBtn.setOnClickListener { dialog.dismiss(); placeGramToPickings(make()) }
-        dialog.show()
+        // Pause the Onyx pen while the gram studio is up, or stylus taps freeze the surface.
+        showModal(dialog)
     }
 
     /**
