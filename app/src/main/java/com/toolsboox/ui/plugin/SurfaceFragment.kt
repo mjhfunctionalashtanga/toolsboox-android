@@ -2056,7 +2056,8 @@ abstract class SurfaceFragment : ScreenFragment() {
             LedgerContextMenu.Item("Flip horizontal") { transformImageElement(element) { flipBitmap(it, true) } },
             LedgerContextMenu.Item("Flip vertical") { transformImageElement(element) { flipBitmap(it, false) } },
             LedgerContextMenu.Item("Invert") { transformImageElement(element) { invertBitmap(it) } },
-            LedgerContextMenu.Item("Line art (B&W)") { transformImageElement(element) { thresholdBitmap(it) } }
+            LedgerContextMenu.Item("Line art (B&W)") { transformImageElement(element) { thresholdBitmap(it) } },
+            LedgerContextMenu.Item("Solid black") { transformImageElement(element) { solidBlackBitmap(it) } }
         ))
         groups.add(listOf(
             LedgerContextMenu.Item("Bring to front") { bringImageToFront(element) },
@@ -2071,7 +2072,11 @@ abstract class SurfaceFragment : ScreenFragment() {
                     applyStrokes(strokes, true)
                 }
             },
-            LedgerContextMenu.Item("Where used…") { onImageWhereUsed(element) }
+            LedgerContextMenu.Item("Where used…") { onImageWhereUsed(element) },
+            LedgerContextMenu.Item("Save to Clippings") {
+                com.toolsboox.plugin.calendar.ot.ClippingsStore.add(requireContext(), element.data)
+                Toast.makeText(requireContext(), "Saved to Clippings", Toast.LENGTH_SHORT).show()
+            }
         ))
         LedgerContextMenu.show(provideSurfaceView(), pressX, pressY, "IMAGE", groups)
     }
@@ -2140,13 +2145,73 @@ abstract class SurfaceFragment : ScreenFragment() {
                     LedgerContextMenu.Item("Image — upload") {
                         pendingPlacePoint = PointF(cx, cy)
                         launchImagePicker()
-                    }
+                    },
+                    LedgerContextMenu.Item("Insert clipping…") { showClippingsPicker(cx, cy) }
                 ),
                 listOf(
                     LedgerContextMenu.Item("Paste") { pasteUnifiedAt(cx, cy) }
                 )
             )
         )
+    }
+
+    /** Grid picker of the Clippings library — tap to place at [cx],[cy]; long-press to delete. */
+    private fun showClippingsPicker(cx: Float, cy: Float) {
+        val ctx = requireContext()
+        val clippings = com.toolsboox.plugin.calendar.ot.ClippingsStore.list(ctx)
+        if (clippings.isEmpty()) {
+            Toast.makeText(ctx, "No clippings yet. Save a gram to your library first.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val grid = android.widget.GridLayout(ctx).apply {
+            columnCount = 3; setPadding(px(12), px(12), px(12), px(12))
+        }
+        lateinit var dialog: androidx.appcompat.app.AlertDialog
+        for (c in clippings) {
+            val bytes = runCatching { Base64.decode(c.data, Base64.DEFAULT) }.getOrNull() ?: continue
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: continue
+            val iv = android.widget.ImageView(ctx).apply {
+                setImageBitmap(bmp)
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                setBackgroundColor(0xFFF0F0F0.toInt())
+                layoutParams = android.widget.GridLayout.LayoutParams().apply {
+                    width = px(92); height = px(92); setMargins(px(6), px(6), px(6), px(6))
+                }
+                setOnClickListener { dialog.dismiss(); placeClippingAt(c.data, cx, cy) }
+                setOnLongClickListener {
+                    com.toolsboox.plugin.calendar.ot.ClippingsStore.delete(ctx, c.id)
+                    Toast.makeText(ctx, "Clipping deleted", Toast.LENGTH_SHORT).show()
+                    dialog.dismiss(); true
+                }
+            }
+            grid.addView(iv)
+        }
+        dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Insert clipping")
+            .setView(android.widget.ScrollView(ctx).apply { addView(grid) })
+            .setNegativeButton("Close", null)
+            .create()
+        dialog.show()
+    }
+
+    /** Place a saved clipping onto the surface at [cx],[cy], selected for immediate move/resize. */
+    private fun placeClippingAt(base64: String, cx: Float, cy: Float) {
+        val bytes = runCatching { Base64.decode(base64, Base64.DEFAULT) }.getOrNull() ?: return
+        val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
+        val w = (CANVAS_WIDTH * IMAGE_PLACE_FRACTION).coerceAtMost(bmp.width.toFloat())
+        val h = w * bmp.height / bmp.width
+        val pxp = (cx - w / 2f).coerceIn(0f, (CANVAS_WIDTH - w).coerceAtLeast(0f))
+        val pyp = (cy - h / 2f).coerceIn(0f, (CANVAS_HEIGHT - h).coerceAtLeast(0f))
+        val element = ImageElement(x = pxp, y = pyp, width = w, height = h, data = base64)
+        pushUndo()
+        imageElements.add(element)
+        onImageElementsChanged(imageElements)
+        imageMode = true
+        penState = false
+        selectedImage = element
+        applyStrokes(strokes, true)
     }
 
     /** Long-press on a text box: management menu (edit / move / clipboard ops / delete). */
@@ -2411,6 +2476,19 @@ abstract class SurfaceFragment : ScreenFragment() {
             val b = c and 0xFF
             val lum = (r * 299 + g * 587 + b * 114) / 1000
             pixels[i] = if (a > 32 && lum < cutoff) 0xFF000000.toInt() else 0x00000000
+        }
+        val outBmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        outBmp.setPixels(pixels, 0, w, 0, 0, w, h)
+        return outBmp
+    }
+
+    /** Fill the shape solid black — every non-transparent pixel → opaque black (a silhouette sticker). */
+    private fun solidBlackBitmap(bmp: Bitmap): Bitmap {
+        val w = bmp.width; val h = bmp.height
+        val pixels = IntArray(w * h)
+        bmp.getPixels(pixels, 0, w, 0, 0, w, h)
+        for (i in pixels.indices) {
+            pixels[i] = if (((pixels[i] ushr 24) and 0xFF) > 32) 0xFF000000.toInt() else 0x00000000
         }
         val outBmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         outBmp.setPixels(pixels, 0, w, 0, 0, w, h)
