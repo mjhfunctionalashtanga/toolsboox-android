@@ -148,6 +148,26 @@ class CalendarDayService @Inject constructor() {
     }
 
     /**
+     * A slim decode of a v2 day file — only the `ledgerItems`, so the Boards gather can walk every
+     * day without paying to parse the (large) stroke arrays. Moshi ignores unknown keys, so the
+     * strokes/elements simply aren't read. Mirrors iOS `DayLite`. Returns empty on any problem.
+     */
+    @com.squareup.moshi.JsonClass(generateAdapter = true)
+    data class DayLiteTasks(val ledgerItems: List<com.toolsboox.plugin.calendar.da.v2.LedgerItem> = emptyList())
+
+    fun loadLedgerItems(item: File): List<com.toolsboox.plugin.calendar.da.v2.LedgerItem> {
+        if (!item.exists() || !item.name.startsWith("day-") || !item.absolutePath.endsWith("-v2.json")) return emptyList()
+        val json = try { item.readText(Charsets.UTF_8) } catch (e: Exception) { return emptyList() }
+        if (json.isBlank()) return emptyList()
+        return try {
+            moshi.adapter(DayLiteTasks::class.java).fromJson(json)?.ledgerItems ?: emptyList()
+        } catch (e: Exception) {
+            Timber.w(e, "Corrupt day file ${item.name} (lite); skipping")
+            emptyList()
+        }
+    }
+
+    /**
      * Convert the data class to JSON.
      *
      * @param calendarDay the calendar day

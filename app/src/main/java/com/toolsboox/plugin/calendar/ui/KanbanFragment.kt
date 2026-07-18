@@ -227,8 +227,9 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
         calendarRoot.walkTopDown()
             .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
             .forEach { file ->
-                val day = runCatching { calendarDayService.load(file) }.getOrNull() ?: return@forEach
-                out.addAll(day.ledgerItems.filter { it.kind == LedgerItem.Kind.TASK })
+                // Slim decode — read only ledgerItems, skip the heavy stroke arrays (mirrors iOS DayLite).
+                val items = runCatching { calendarDayService.loadLedgerItems(file) }.getOrNull() ?: return@forEach
+                out.addAll(items.filter { it.kind == LedgerItem.Kind.TASK })
             }
         return out.sortedByDescending { it.date.time }
     }
