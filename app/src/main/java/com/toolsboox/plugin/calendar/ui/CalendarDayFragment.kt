@@ -257,10 +257,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     /** "Where used": every day + page a gram with the same content is placed on — the rhizomatic web. */
     override fun onImageWhereUsed(element: ImageElement) {
-        val target = element.data
-        if (target.isBlank()) return
+        val key = contentKey(element.gramId, element.data)
+        if (key.isBlank()) return
         lifecycleScope.launch {
-            val places = withContext(Dispatchers.IO) { gramPlacements(target) }
+            val places = withContext(Dispatchers.IO) { gramPlacements(key) }
             val ctx = context ?: return@launch
             if (places.isEmpty()) {
                 android.widget.Toast.makeText(ctx, "Not placed anywhere else yet", android.widget.Toast.LENGTH_SHORT).show()
@@ -281,7 +281,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     private data class GramPlace(val date: LocalDate, val page: String, val millis: Long)
 
-    private fun gramPlacements(data: String): List<GramPlace> {
+    /** Content-address key: lineage id if set, else md5 of the bytes (same md5 as iOS → cross-device). */
+    private fun contentKey(gramId: String?, data: String): String =
+        if (!gramId.isNullOrBlank()) gramId else com.toolsboox.ot.CryptoUtils.md5Hash(data.toByteArray())
+
+    private fun gramPlacements(key: String): List<GramPlace> {
         val root = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
             requireContext().getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)!!
         else java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
@@ -294,7 +298,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 val m = Regex("day-(\\d{4})-(\\d{2})-(\\d{2})").find(file.name) ?: return@forEach
                 val ld = runCatching { LocalDate.of(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt()) }.getOrNull() ?: return@forEach
                 val day = runCatching { calendarDayService.load(file) }.getOrNull() ?: return@forEach
-                for (img in day.imageElements) if (img.data == data) {
+                for (img in day.imageElements) if (contentKey(img.gramId, img.data) == key) {
                     out.add(GramPlace(ld, img.page.ifBlank { "day" }, img.timestamp))
                 }
             }

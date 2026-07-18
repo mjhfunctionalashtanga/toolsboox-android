@@ -41,5 +41,9 @@ data class ImageElement(
     var z: Int = 0,
     // Contact this gram/card is linked to (null = none) — bidirectional CRM linking, so the contact's
     // page can surface it. New field with a default → backward-compatible. Mirrors iOS.
-    var contactId: String? = null
+    var contactId: String? = null,
+    // Content-addressed lineage id for "where used" (null/"" = derive from data). Seeded from the
+    // pre-edit content hash on the first crop/transform and preserved after, so an edited variant
+    // still groups with its original. Match key = gramId if set, else md5(data). Mirrors iOS.
+    var gramId: String? = null
 )

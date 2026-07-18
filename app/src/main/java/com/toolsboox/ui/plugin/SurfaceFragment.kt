@@ -2349,6 +2349,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         val cropped = Bitmap.createBitmap(bmp, bx, by, bw, bh)
         val baos = ByteArrayOutputStream()
         cropped.compress(Bitmap.CompressFormat.PNG, 100, baos)
+        seedGramId(element)
         element.data = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
         element.x = c.left
         element.y = c.top
@@ -2364,11 +2365,20 @@ abstract class SurfaceFragment : ScreenFragment() {
         val baos = ByteArrayOutputStream()
         out.compress(Bitmap.CompressFormat.PNG, 100, baos)
         pushUndo()
+        seedGramId(element)
         element.data = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
         element.timestamp = System.currentTimeMillis()
         imageBitmapCache[element.elementId] = out
         onImageElementsChanged(imageElements)
         applyStrokes(strokes, true)
+    }
+
+    /** Seed a gram's lineage id from its current (pre-edit) content so an edited variant still groups
+     *  with unedited copies of the original in "where used". Match key = gramId if set, else md5(data). */
+    private fun seedGramId(element: ImageElement) {
+        if (element.gramId.isNullOrBlank()) {
+            element.gramId = com.toolsboox.ot.CryptoUtils.md5Hash(element.data.toByteArray())
+        }
     }
 
     private fun flipBitmap(bmp: Bitmap, horizontal: Boolean): Bitmap {
