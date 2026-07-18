@@ -2227,7 +2227,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         val top = box.top + pad
         val rects = mutableListOf<Pair<String, RectF>>()
         var right = box.right - pad
-        for (label in listOf("Del", "Crop", "Cut", "Rot")) {
+        for (label in listOf("Del", "Crop", "Cut", "Rot", "Dup")) {
             rects.add(label to RectF(right - s, top, right, top + s))
             right -= (s + pad)
         }
@@ -2297,6 +2297,13 @@ abstract class SurfaceFragment : ScreenFragment() {
                         val ex = cx + (rad * Math.cos(a)).toFloat(); val ey = cy + (rad * Math.sin(a)).toFloat()
                         lockCanvas.drawLine(ex, ey, ex - 7f, ey - 7f, border)
                         lockCanvas.drawLine(ex, ey, ex + 7f, ey - 7f, border)
+                    }
+                    "Dup" -> {
+                        // Two overlapping squares → "duplicate".
+                        val o = 5f
+                        lockCanvas.drawRect(il.toFloat() + o, it.toFloat() + o, ir.toFloat(), ib.toFloat(), border)
+                        lockCanvas.drawRect(il.toFloat(), it.toFloat(), ir.toFloat() - o, ib.toFloat() - o, fill)
+                        lockCanvas.drawRect(il.toFloat(), it.toFloat(), ir.toFloat() - o, ib.toFloat() - o, border)
                     }
                 }
             }
@@ -3315,6 +3322,20 @@ abstract class SurfaceFragment : ScreenFragment() {
                                         pushUndo()
                                         sel.rotation = ((sel.rotation + 15f) % 360f + 360f) % 360f
                                         sel.timestamp = System.currentTimeMillis()
+                                        onImageElementsChanged(imageElements)
+                                        drawImageSelection()
+                                    }
+                                    "Dup" -> {
+                                        // Copy in place with a slight offset (fresh id + timestamp);
+                                        // carries rotation and all fields. Select the new copy.
+                                        pushUndo()
+                                        val copy = sel.copy(
+                                            elementId = UUID.randomUUID(),
+                                            timestamp = System.currentTimeMillis(),
+                                            x = sel.x + 40f, y = sel.y + 40f
+                                        )
+                                        imageElements.add(copy)
+                                        selectedImage = copy
                                         onImageElementsChanged(imageElements)
                                         drawImageSelection()
                                     }
