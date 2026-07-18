@@ -41,7 +41,10 @@ data class LedgerItem(
     /** 0..1 OCR confidence; drives the default [display]. */
     val confidence: Float = 1f,
     /** Provenance: the page key, or "auto" / "lasso". */
-    val source: String? = null
+    val source: String? = null,
+    /** Optional rolodex cross-reference: the [Contact.id] this task/event is assigned to / about.
+     *  New field with a default → backward-compatible; the id-union merge carries it in the value. */
+    var contactId: String? = null
 ) {
     enum class Kind {
         @Json(name = "task") TASK,
