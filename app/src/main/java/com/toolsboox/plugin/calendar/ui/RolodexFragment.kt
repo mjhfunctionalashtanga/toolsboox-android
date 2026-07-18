@@ -16,11 +16,14 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.toolsboox.plugin.calendar.CalendarNavigator
+import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import com.toolsboox.plugin.calendar.da.v2.ContactNote
 import com.toolsboox.plugin.calendar.da.v2.LedgerItem
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
 import java.io.File
 import java.text.SimpleDateFormat
+import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
 import androidx.activity.result.contract.ActivityResultContracts
@@ -230,22 +233,32 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
             }
         }
 
-        AlertDialog.Builder(ctx)
+        val dialog = AlertDialog.Builder(ctx)
             .setView(ScrollView(ctx).apply { addView(root) })
             .setPositiveButton("Edit") { _, _ -> openEditor(contact) }
             .setNegativeButton("Close", null)
-            .show()
+            .create()
+        dialog.show()
 
         lifecycleScope.launch {
             val items = withContext(Dispatchers.IO) { gatherContactItems(contact.id) }
             tasksBox.removeAllViews()
             if (items.isEmpty()) { tasksBox.addView(label("None assigned yet.", 13f, color = 0xFF999999.toInt())); return@launch }
-            for (it in items) {
-                val mark = when { it.kind == LedgerItem.Kind.EVENT -> "📅"; it.done -> "✓"; else -> "○" }
-                tasksBox.addView(label("$mark  ${it.text}", 14f))
-                tasksBox.addView(label(formatDate(it.date) + (it.time?.let { t -> "  ·  $t" } ?: ""), 11f, color = 0xFF999999.toInt()))
+            for (item in items) {
+                val mark = when { item.kind == LedgerItem.Kind.EVENT -> "📅"; item.done -> "✓"; else -> "○" }
+                val row = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(0, px(4), 0, px(4)); isClickable = true }
+                row.addView(label("$mark  ${item.text}", 14f))
+                row.addView(label(formatDate(item.date) + (item.time?.let { t -> "  ·  $t" } ?: "") + "   ›", 11f, color = 0xFF999999.toInt()))
+                row.setOnClickListener { dialog.dismiss(); openDay(item.date) }
+                tasksBox.addView(row)
             }
         }
+    }
+
+    /** Jump the planner to the day a task/event lives on (dates are stored at noon UTC). */
+    private fun openDay(date: Date) {
+        val ld = date.toInstant().atZone(ZoneId.of("UTC")).toLocalDate()
+        CalendarNavigator.toDayPage(this, ld, CalendarDay.DEFAULT_STYLE)
     }
 
     /** Every ledger item (task/event) across day files assigned to [contactId], newest first. */
