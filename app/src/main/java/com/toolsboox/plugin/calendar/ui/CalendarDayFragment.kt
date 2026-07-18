@@ -466,6 +466,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // a further tap opens the Ledger hub (the iPad feed-carrot behavior).
         binding.navGoto.setImageResource(sectionIcon())
         binding.navGoto.setOnClickListener { onCenterTapped() }
+        // Long-press the center button → open the section menu directly (tap = today-then-menu).
+        binding.navGoto.setOnLongClickListener { showSectionSwitcher(); true }
         applyWidgetOrientation()
 
         // Lift the floating overlays above the drawing surface without elevation (which

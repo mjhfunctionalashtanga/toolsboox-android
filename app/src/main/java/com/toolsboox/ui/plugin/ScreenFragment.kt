@@ -596,13 +596,14 @@ abstract class ScreenFragment : Fragment() {
         dialog.show()
         dialog.window?.let { w ->
             val lp = w.attributes
-            lp.width = dp(220)
+            // Narrower, and never wider than the screen minus a comfortable margin (fits the Palma).
+            lp.width = minOf(dp(200), resources.displayMetrics.widthPixels - dp(40))
             if (anchorTop) {
                 lp.gravity = Gravity.START or Gravity.TOP
-                lp.x = dp(8); lp.y = dp(54)
+                lp.x = dp(12); lp.y = dp(54)
             } else {
                 lp.gravity = Gravity.END or Gravity.BOTTOM
-                lp.x = dp(10); lp.y = dp(80)
+                lp.x = dp(12); lp.y = dp(80)
             }
             w.attributes = lp
         }

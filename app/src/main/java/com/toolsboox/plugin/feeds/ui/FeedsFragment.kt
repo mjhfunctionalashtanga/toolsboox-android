@@ -166,7 +166,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
 
         // System Back closes an open in-pane article (returns to the list) before leaving.
         articleBackCallback = object : androidx.activity.OnBackPressedCallback(false) {
-            override fun handleOnBackPressed() { closeArticlePane() }
+            override fun handleOnBackPressed() { closeArticlePane(restoreDrawer = false) }
         }
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, articleBackCallback!!)
 
@@ -293,15 +293,16 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
 
     /** In-feed search: filter the loaded list by title/blurb (Miniflux + local). */
     private fun showFeedSearch() {
-        val input = android.widget.EditText(requireContext()).apply { hint = "Search this feed"; setSingleLine() }
+        val input = android.widget.EditText(requireContext()).apply { hint = "Search all feeds"; setSingleLine() }
         androidx.appcompat.app.AlertDialog.Builder(requireContext())
             .setTitle("Search")
             .setView(input)
             .setPositiveButton("Search") { _, _ ->
                 val q = input.text.toString().trim().lowercase()
-                val base = applyKind(allEntries)
-                adapter.submit(if (q.isEmpty()) base else base.filter {
-                    it.title.lowercase().contains(q) || it.blurb.lowercase().contains(q)
+                // Search across ALL loaded feeds/lenses (not just the current view); empty clears back.
+                adapter.submit(if (q.isEmpty()) applyKind(allEntries) else allEntries.filter {
+                    it.title.lowercase().contains(q) || it.blurb.lowercase().contains(q) ||
+                        it.feedTitle.lowercase().contains(q)
                 })
             }
             .setNeutralButton("Clear") { _, _ -> adapter.submit(applyKind(allEntries)) }
@@ -531,7 +532,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         setDirectoryDrawerVisible(false)
         binding.articlePane.visibility = View.VISIBLE
         binding.articleTapZones.visibility = if (prefs().getBoolean("feeds_tap_zones", true)) View.VISIBLE else View.GONE
-        binding.articleBack.setOnClickListener { closeArticlePane() }
+        binding.articleBack.setOnClickListener { closeArticlePane(restoreDrawer = false) }
         // Open-externally fallback: a video whose owner blocks embedding errors (150/152) in the
         // in-pane player — this opens the original URL in the YouTube app / browser instead.
         val ext = entry.url.takeIf { it.startsWith("http", ignoreCase = true) }
@@ -636,12 +637,13 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         }
     }
 
-    private fun closeArticlePane() {
+    private fun closeArticlePane(restoreDrawer: Boolean = true) {
         binding.articlePane.visibility = View.GONE
         binding.articleWeb.loadUrl("about:blank")
         binding.feedsRecycler.visibility = View.VISIBLE
-        // Restore the drawer to its saved state now the reader is closed.
-        setDirectoryDrawerVisible(prefs().getBoolean(KEY_DIR_OPEN, true))
+        // On an explicit Back, return straight to the article list — don't pop the drawer open as an
+        // intermediate step. Only restore it when the article was closed by picking a feed (in the drawer).
+        setDirectoryDrawerVisible(restoreDrawer && prefs().getBoolean(KEY_DIR_OPEN, true))
         articleBackCallback?.isEnabled = false
         currentArticle = null
         applyArticlePill()

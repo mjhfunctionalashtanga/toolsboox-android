@@ -301,7 +301,11 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 // Every addition to a surface — tasks/events, text notes on any other page, and
                 // placed cards — so the Ledger Log is a full record, not only reading highlights.
                 for (item in day.ledgerItems.filter { it.text.isNotBlank() }) {
-                    val label = if (item.kind == com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) "Event" else "Task"
+                    val label = when {
+                        item.kind == com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT -> "Event"
+                        item.done -> "✓ Completed"      // task completion shows up as its own activity
+                        else -> "Task"
+                    }
                     val meta = listOfNotNull(item.time, stamp(item.date)).joinToString(" · ")
                     out.add(LogItem(LogOrigin.TASK, item.text.trim(), meta, label, null, item.date.time))
                 }
