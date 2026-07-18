@@ -30,7 +30,12 @@ data class Contact(
     var tags: List<String> = emptyList(),
     var updated: Long = System.currentTimeMillis(),
     // Delete tombstone (0 = live; millis when deleted) so an id-union merge keeps deletes across devices.
-    var deletedAt: Long = 0L
+    var deletedAt: Long = 0L,
+    // External address-book identity (for two-way sync). "" = not linked. appleId is the CNContact
+    // identifier; googleId is the People API resourceName ("people/..."). Prevents duplicating a
+    // contact on push. New fields with defaults → backward-compatible with existing JSON.
+    var appleId: String = "",
+    var googleId: String = ""
 ) {
     val isDeleted: Boolean get() = deletedAt > 0L
 }
