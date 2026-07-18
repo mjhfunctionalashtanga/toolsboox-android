@@ -1082,7 +1082,19 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     .putString("current_book_path", link.removePrefix("book://")).apply()
                 findNavController().navigate(R.id.action_to_reader)
             }
-            link.startsWith("http") -> openSourceInApp(link)
+            link.startsWith("http") -> {
+                // Prefer the Feed Ledger's in-pane reader (clean native render, an "open original ↗"
+                // inside) over a raw WebView, which renders external pages badly on e-ink.
+                com.toolsboox.plugin.feeds.ui.FeedSelection.pendingInPaneEntry =
+                    com.toolsboox.plugin.feeds.da.FeedEntry(
+                        id = link.hashCode().toLong(),
+                        title = element.sourceLabel.ifBlank { "Source" },
+                        feedTitle = "", url = link, author = null,
+                        content = "<p><em>Opening the source…</em></p>",
+                        publishedAt = java.time.Instant.now().toString(), starred = false
+                    )
+                findNavController().navigate(R.id.action_to_feeds)
+            }
         }
     }
 

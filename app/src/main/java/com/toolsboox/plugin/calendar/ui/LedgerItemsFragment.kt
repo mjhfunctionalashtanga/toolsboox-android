@@ -167,6 +167,26 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                         cd.ledgerItems.removeAll { it.id in ids }
                         // Tombstone so the union merge can't resurrect a deleted item from a synced copy.
                         ids.forEach { if (it !in cd.deletedElementIds) cd.deletedElementIds.add(it) }
+
+                        // Also remove the item's ON-PAGE face, or a deleted task keeps showing on the
+                        // day page: ink tasks are strokes (by strokeIds), typed tasks are text boxes
+                        // (matched by text on the default page). Tombstone both so they stay gone.
+                        val strokeIds = group.flatMap { it.strokeIds }.toSet()
+                        if (strokeIds.isNotEmpty()) {
+                            cd.calendarStrokes[CalendarDay.DEFAULT_STYLE] =
+                                (cd.calendarStrokes[CalendarDay.DEFAULT_STYLE] ?: emptyList())
+                                    .filterNot { it.strokeId.toString() in strokeIds }
+                            strokeIds.forEach { if (it !in cd.deletedStrokeIds) cd.deletedStrokeIds.add(it) }
+                        }
+                        val texts = group.mapNotNull { it.text.takeIf { t -> t.isNotBlank() } }.toSet()
+                        if (texts.isNotEmpty()) {
+                            val boxes = cd.textElements.filter { it.pageKey == "default" && it.text in texts }
+                            cd.textElements.removeAll(boxes)
+                            boxes.forEach {
+                                val eid = it.elementId.toString()
+                                if (eid !in cd.deletedElementIds) cd.deletedElementIds.add(eid)
+                            }
+                        }
                         calendarDayService.save(root, srcDay, cd)
                     }.onFailure { Timber.w(it, "ledger items: delete save failed") }
                 }
