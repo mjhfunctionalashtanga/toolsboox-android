@@ -14,10 +14,12 @@ import com.toolsboox.plugin.calendar.da.v2.Contact
 /**
  * Rolodex list adapter. Mirrors [LedgerItemAdapter]'s constructor-callback pattern: a row tap flows
  * back to the fragment via [onClick]. Avatar is the contact's inline base64 photo, or a placeholder.
+ * [countFor] yields how many correspondence entries a contact has, shown as a "📜 N" badge.
  */
 class ContactAdapter(
     private var items: List<Contact>,
-    private val onClick: (Contact) -> Unit
+    private val onClick: (Contact) -> Unit,
+    private val countFor: (Contact) -> Int = { 0 }
 ) : RecyclerView.Adapter<ContactAdapter.Holder>() {
 
     class Holder(view: View) : RecyclerView.ViewHolder(view) {
@@ -34,7 +36,13 @@ class ContactAdapter(
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val c = items[position]
         holder.name.text = c.name.ifBlank { "Unnamed" }
-        holder.sub.text = listOf(c.org, c.email, c.phone).firstOrNull { it.isNotBlank() } ?: ""
+        val detail = listOf(c.org, c.email, c.phone).firstOrNull { it.isNotBlank() } ?: ""
+        val n = countFor(c)
+        holder.sub.text = when {
+            n > 0 && detail.isNotBlank() -> "$detail  ·  📜 $n"
+            n > 0 -> "📜 $n"
+            else -> detail
+        }
 
         val bmp = if (c.avatarData.isNotBlank()) {
             runCatching {
