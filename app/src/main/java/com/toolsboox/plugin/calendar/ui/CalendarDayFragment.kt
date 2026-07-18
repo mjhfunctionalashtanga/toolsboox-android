@@ -32,6 +32,7 @@ import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import com.toolsboox.plugin.calendar.ot.*
 import com.toolsboox.plugin.michaelfilter.da.IntakePageData
 import com.toolsboox.plugin.michaelfilter.nw.IntakePageStore
+import com.toolsboox.ui.plugin.ScreenFragment.GoItem
 import com.toolsboox.ui.plugin.SurfaceFragment
 import dagger.hilt.android.AndroidEntryPoint
 import androidx.security.crypto.EncryptedSharedPreferences
@@ -647,7 +648,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         )
     }
 
-    private data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
 
     /** The card sources for this page: the whole page + each panel. */
     private fun cardChoices(): List<com.toolsboox.plugin.calendar.ot.LedgerPanel> =
@@ -1807,45 +1807,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * Shared builder for the floating panels — a compact emoji list. Directories anchor
      * top-left (by the hamburger); sections anchor bottom (by the pill).
      */
-    private fun showGoModal(groups: List<Pair<String, List<GoItem>>>, anchorTop: Boolean) {
-        val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
-        val list = root.findViewById<LinearLayout>(R.id.go_to_list)
-        root.findViewById<TextView>(R.id.go_to_title).visibility = View.GONE
-        val dialog = AlertDialog.Builder(requireContext()).setView(root).create()
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-
-        fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-        for ((header, items) in groups) {
-            val tv = TextView(requireContext())
-            tv.text = header.uppercase()
-            tv.setTextColor(0xFF8A8A8A.toInt()); tv.textSize = 11f; tv.letterSpacing = 0.08f
-            tv.setPadding(dp(14), dp(10), dp(14), dp(2))
-            list.addView(tv)
-            for (item in items) {
-                val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
-                r.findViewById<TextView>(R.id.go_label).text = applyRowIcon(r, "${item.emoji}  ${item.label}")
-                r.setOnClickListener { dialog.dismiss(); item.action() }
-                list.addView(r)
-            }
-        }
-
-        dialog.setOnShowListener { onModalShown() }
-        dialog.setOnDismissListener { onModalDismissed() }
-        dialog.show()
-        dialog.window?.let { w ->
-            val lp = w.attributes
-            lp.width = dp(220)
-            if (anchorTop) {          // directories, under the top-left hamburger
-                lp.gravity = Gravity.START or Gravity.TOP
-                lp.x = dp(8); lp.y = dp(54)
-            } else {                  // sections, up from the bottom pill
-                lp.gravity = Gravity.END or Gravity.BOTTOM
-                lp.x = dp(10); lp.y = dp(80)
-            }
-            w.attributes = lp
-        }
-    }
-
     /**
      * OnResume hook.
      */

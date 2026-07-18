@@ -561,6 +561,53 @@ abstract class ScreenFragment : Fragment() {
         val action: (() -> Unit)? = null
     )
 
+    /** One row in a [showGoModal] section/tools modal. */
+    data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
+
+    /**
+     * The compact "Go to…" modal (grouped rows), anchored top-left (directories) or up from the
+     * bottom pill (sections). Lifted from the day page so the almanac pages use the SAME modal
+     * instead of the old accordion drawer.
+     */
+    protected fun showGoModal(groups: List<Pair<String, List<GoItem>>>, anchorTop: Boolean) {
+        val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
+        val list = root.findViewById<LinearLayout>(R.id.go_to_list)
+        root.findViewById<TextView>(R.id.go_to_title).visibility = View.GONE
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(requireContext()).setView(root).create()
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+
+        fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+        for ((header, items) in groups) {
+            val tv = TextView(requireContext())
+            tv.text = header.uppercase()
+            tv.setTextColor(0xFF8A8A8A.toInt()); tv.textSize = 11f; tv.letterSpacing = 0.08f
+            tv.setPadding(dp(14), dp(10), dp(14), dp(2))
+            list.addView(tv)
+            for (item in items) {
+                val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
+                r.findViewById<TextView>(R.id.go_label).text = applyRowIcon(r, "${item.emoji}  ${item.label}")
+                r.setOnClickListener { dialog.dismiss(); item.action() }
+                list.addView(r)
+            }
+        }
+
+        dialog.setOnShowListener { onModalShown() }
+        dialog.setOnDismissListener { onModalDismissed() }
+        dialog.show()
+        dialog.window?.let { w ->
+            val lp = w.attributes
+            lp.width = dp(220)
+            if (anchorTop) {
+                lp.gravity = Gravity.START or Gravity.TOP
+                lp.x = dp(8); lp.y = dp(54)
+            } else {
+                lp.gravity = Gravity.END or Gravity.BOTTOM
+                lp.x = dp(10); lp.y = dp(80)
+            }
+            w.attributes = lp
+        }
+    }
+
     /**
      * Leading-emoji → monochrome outline icon, so every directory/menu row renders a crisp
      * high-contrast glyph on e-ink instead of a colour emoji. Base code points (no variation
@@ -748,16 +795,21 @@ abstract class ScreenFragment : Fragment() {
         val today = java.time.LocalDate.now()
         val locale = java.util.Locale.getDefault()
         fun go(action: Int) = androidx.navigation.Navigation.findNavController(requireView()).navigate(action)
-        showAccordion(listOf(
-            Folder("☀", "Day", action = { nav.toDayPage(this, today, com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE) }),
-            Folder("🔖", "Intake", action = { nav.toDayNote(this, today, "intake") }),
-            Folder("🙏", "Gratitude", action = { nav.toDayNote(this, today, "gratitude") }),
-            Folder("❝", "Pickings", action = { nav.toDayNote(this, today, "pickings") }),
-            Folder("✒", "Notes", action = { nav.toDayNote(this, today, "0") }),
-            Folder("📰", "Feed", action = { go(com.toolsboox.R.id.action_to_feeds) }),
-            Folder("🎬", "AV", action = { go(com.toolsboox.R.id.action_to_reading_log) }),
-            Folder("📆", "Almanac", action = { nav.toWeekPage(this, today, locale) })
-        ))
+        showGoModal(
+            listOf(
+                "" to listOf(
+                    GoItem("☀︎", "Day") { nav.toDayPage(this, today, com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE) },
+                    GoItem("🔖", "Intake") { nav.toDayNote(this, today, "intake") },
+                    GoItem("🙏", "Gratitude") { nav.toDayNote(this, today, "gratitude") },
+                    GoItem("❝", "Pickings") { nav.toDayNote(this, today, "pickings") },
+                    GoItem("✒️", "Notes") { nav.toDayNote(this, today, "0") },
+                    GoItem("📰", "Feed") { go(com.toolsboox.R.id.action_to_feeds) },
+                    GoItem("🎬", "AV") { go(com.toolsboox.R.id.action_to_reading_log) },
+                    GoItem("📆", "Almanac") { nav.toWeekPage(this, today, locale) }
+                )
+            ),
+            anchorTop = false
+        )
     }
 
     /**
