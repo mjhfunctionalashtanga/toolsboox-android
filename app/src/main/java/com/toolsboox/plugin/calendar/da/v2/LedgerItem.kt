@@ -47,7 +47,10 @@ data class LedgerItem(
     var contactId: String? = null,
     /** Kanban stage for the Boards view: "todo" | "doing" | "done" ("" = todo). New field with a
      *  default → backward-compatible. Wire-compatible with iOS `stage`. */
-    var stage: String = ""
+    var stage: String = "",
+    /** Which named board this card belongs to ([Board.id]; "" = unfiled / on "All"). Wire-compatible
+     *  with iOS `board`. New field with a default → backward-compatible. */
+    var board: String = ""
 ) {
     enum class Kind {
         @Json(name = "task") TASK,

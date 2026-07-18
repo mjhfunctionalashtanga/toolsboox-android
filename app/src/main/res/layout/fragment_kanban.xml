@@ -13,11 +13,15 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
 
-        <TextView
-            android:text="Boards"
+        <Button
+            android:id="@+id/kanban_board"
+            android:text="All boards  ▾"
+            android:textAllCaps="false"
             android:textColor="#000000"
             android:textStyle="bold"
-            android:textSize="20sp"
+            android:textSize="18sp"
+            android:background="@android:color/transparent"
+            android:gravity="start|center_vertical"
             android:layout_width="0dp"
             android:layout_weight="1"
             android:layout_height="wrap_content"/>

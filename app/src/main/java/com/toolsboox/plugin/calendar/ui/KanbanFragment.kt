@@ -17,6 +17,7 @@ import com.toolsboox.plugin.calendar.CalendarNavigator
 import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import com.toolsboox.plugin.calendar.da.v2.LedgerItem
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
+import com.toolsboox.plugin.calendar.ot.BoardsStore
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -43,13 +44,59 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
     private lateinit var binding: FragmentKanbanBinding
 
     private val order = listOf("todo", "doing", "done")
+    private var selectedBoard: String? = null
+    private var boards: List<com.toolsboox.plugin.calendar.da.v2.Board> = emptyList()
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentKanbanBinding.bind(view)
         binding.kanbanClose.setOnClickListener { NavHostFragment.findNavController(this).popBackStack() }
         binding.kanbanNew.setOnClickListener { promptNewTask() }
+        binding.kanbanBoard.setOnClickListener { showBoardPicker() }
         load()
+    }
+
+    private fun updateBoardLabel() {
+        val name = selectedBoard?.let { id -> boards.firstOrNull { it.id == id }?.name } ?: "All boards"
+        binding.kanbanBoard.text = "$name  ▾"
+    }
+
+    /** All boards / each board / ＋ New board / Delete — the board switcher. */
+    private fun showBoardPicker() {
+        val ctx = requireContext()
+        val labels = mutableListOf("▦  All boards")
+        labels += boards.map { "▤  ${it.name.ifBlank { "Untitled" }}" }
+        labels += "＋  New board…"
+        val hasSel = selectedBoard != null
+        if (hasSel) labels += "🗑  Delete this board"
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Boards")
+            .setItems(labels.toTypedArray()) { _, which ->
+                when {
+                    which == 0 -> { selectedBoard = null; load() }
+                    which <= boards.size -> { selectedBoard = boards[which - 1].id; load() }
+                    which == boards.size + 1 -> promptNewBoard()
+                    else -> { selectedBoard?.let { BoardsStore.delete(ctx, it) }; selectedBoard = null; load() }
+                }
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun promptNewBoard() {
+        val ctx = requireContext()
+        val input = android.widget.EditText(ctx).apply { hint = "Board name"; setSingleLine() }
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input) }
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("New board")
+            .setView(box)
+            .setPositiveButton("Create") { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isNotBlank()) { selectedBoard = BoardsStore.add(ctx, name).id; load() }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     override fun onResume() {
@@ -84,7 +131,8 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
                 val day = calendarDayService.load(root, today, null, Locale.getDefault())
                 val item = LedgerItem(
                     id = "li-" + java.util.UUID.randomUUID().toString().lowercase(),
-                    kind = LedgerItem.Kind.TASK, text = text, date = Date(), stage = "todo"
+                    kind = LedgerItem.Kind.TASK, text = text, date = Date(), stage = "todo",
+                    board = selectedBoard ?: ""
                 )
                 day.ledgerItems.add(item)
                 calendarDayService.save(root, today, day)
@@ -96,7 +144,10 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
 
     private fun load() {
         lifecycleScope.launch {
-            val tasks = withContext(Dispatchers.IO) { gatherAllTasks() }
+            boards = withContext(Dispatchers.IO) { BoardsStore.list(requireContext()) }
+            updateBoardLabel()
+            val all = withContext(Dispatchers.IO) { gatherAllTasks() }
+            val tasks = selectedBoard?.let { b -> all.filter { it.board == b } } ?: all
             renderColumn(binding.colTodoCards, binding.colTodoHead, "TO DO", tasks.filter { colOf(it) == "todo" }, "todo")
             renderColumn(binding.colDoingCards, binding.colDoingHead, "DOING", tasks.filter { colOf(it) == "doing" }, "doing")
             renderColumn(binding.colDoneCards, binding.colDoneHead, "DONE", tasks.filter { colOf(it) == "done" }.take(40), "done")
