@@ -106,6 +106,17 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
 
     private fun colOf(i: LedgerItem): String = if (i.done) "done" else if (i.stage == "doing") "doing" else "todo"
 
+    /** Decode a pinned gram's base64 PNG (carried in `crop` when display == INK). Null if not one /
+     *  if `crop` is instead an OCR filename (which won't base64-decode to a bitmap). */
+    private fun cropBitmap(item: LedgerItem): android.graphics.Bitmap? {
+        if (item.display != LedgerItem.Display.INK) return null
+        val b64 = item.crop ?: return null
+        return try {
+            val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        } catch (e: Exception) { null }
+    }
+
     /** Create a new card straight from the board — a task on today's page, in the To do column. */
     private fun promptNewTask() {
         val ctx = requireContext()
@@ -169,6 +180,17 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
                 setBackgroundColor(0xFFFFFFFF.toInt())
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                     .apply { setMargins(0, 0, 0, px(8)) }
+            }
+            // A gram pinned from Pickings rides its PNG as base64 in `crop` (display == INK). Show it.
+            cropBitmap(item)?.let { bmp ->
+                card.addView(android.widget.ImageView(ctx).apply {
+                    setImageBitmap(bmp)
+                    adjustViewBounds = true
+                    maxHeight = px(120)
+                    scaleType = android.widget.ImageView.ScaleType.FIT_START
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                        .apply { setMargins(0, 0, 0, px(6)) }
+                })
             }
             card.addView(TextView(ctx).apply {
                 text = item.text; textSize = 13f; setTextColor(0xFF000000.toInt())
