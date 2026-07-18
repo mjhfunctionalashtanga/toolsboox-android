@@ -1,5 +1,7 @@
 package com.toolsboox.plugin.calendar.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
@@ -8,7 +10,10 @@ import android.view.View
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.DividerItemDecoration
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -16,6 +21,7 @@ import com.toolsboox.R
 import com.toolsboox.databinding.FragmentRolodexBinding
 import com.toolsboox.plugin.calendar.da.v2.Contact
 import com.toolsboox.plugin.calendar.ot.ContactStore
+import com.toolsboox.plugin.calendar.ot.DeviceContactImport
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +41,12 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
     private lateinit var adapter: ContactAdapter
     private var allContacts: List<Contact> = emptyList()
 
+    private val contactsPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) runImport()
+            else Toast.makeText(requireContext(), "Contacts permission is needed to import", Toast.LENGTH_SHORT).show()
+        }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentRolodexBinding.bind(view)
@@ -47,6 +59,7 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         )
 
         binding.addContactButton.setOnClickListener { openEditor(Contact()) }
+        binding.importButton.setOnClickListener { startImport() }
         binding.searchField.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = applyFilter()
@@ -66,6 +79,22 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
             val contacts = withContext(Dispatchers.IO) { ContactStore.list(requireContext()) }
             allContacts = contacts
             applyFilter()
+        }
+    }
+
+    private fun startImport() {
+        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.READ_CONTACTS)
+            == PackageManager.PERMISSION_GRANTED
+        ) runImport()
+        else contactsPermission.launch(Manifest.permission.READ_CONTACTS)
+    }
+
+    private fun runImport() {
+        Toast.makeText(requireContext(), "Importing contacts…", Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            val (added, linked) = withContext(Dispatchers.IO) { DeviceContactImport.importFromDevice(requireContext()) }
+            load()
+            Toast.makeText(requireContext(), "Imported $added · linked $linked", Toast.LENGTH_LONG).show()
         }
     }
 

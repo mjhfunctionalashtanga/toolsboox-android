@@ -26,6 +26,18 @@
             android:layout_height="wrap_content"/>
 
         <Button
+            android:id="@+id/import_button"
+            android:text="Import"
+            android:textAllCaps="false"
+            android:textColor="#000000"
+            android:textSize="14sp"
+            android:background="@drawable/dialog_rounded_bg"
+            android:minHeight="48dp"
+            android:layout_marginStart="8dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <Button
             android:id="@+id/add_contact_button"
             android:text="＋"
             android:textAllCaps="false"
