@@ -251,13 +251,28 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
                 gatherContactItems(contact.id) to gatherContactElements(contact.id)
             }
             tasksBox.removeAllViews()
-            if (items.isEmpty()) tasksBox.addView(label("None assigned yet.", 13f, color = 0xFF999999.toInt()))
-            else for (item in items) {
-                val mark = when { item.kind == LedgerItem.Kind.EVENT -> "📅"; item.done -> "✓"; else -> "○" }
-                val row = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(0, px(4), 0, px(4)); isClickable = true }
-                row.addView(label("$mark  ${item.text}", 14f))
-                row.addView(label(formatDate(item.date) + (item.time?.let { t -> "  ·  $t" } ?: "") + "   ›", 11f, color = 0xFF999999.toInt()))
-                row.setOnClickListener { dialog.dismiss(); openDay(item.date) }
+            val itemsSorted = sortUpcomingFirst(items)
+            if (itemsSorted.isEmpty()) tasksBox.addView(label("None assigned yet.", 13f, color = 0xFF999999.toInt()))
+            else for (item in itemsSorted) {
+                val row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, px(4), 0, px(4)) }
+                val textLabel = label(item.text, 14f).apply { if (item.done) paintFlags = paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG }
+                val markView = label(markFor(item.done, item.kind), 16f).apply { setPadding(0, 0, px(10), 0) }
+                if (item.kind == LedgerItem.Kind.TASK) markView.setOnClickListener {
+                    toggleDone(item) { done ->
+                        markView.text = markFor(done, item.kind)
+                        textLabel.paintFlags = if (done) textLabel.paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
+                        else textLabel.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG.inv()
+                    }
+                }
+                val col = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    isClickable = true
+                    setOnClickListener { dialog.dismiss(); openDay(item.date) }
+                }
+                col.addView(textLabel)
+                col.addView(label(formatDate(item.date) + (item.time?.let { t -> "  ·  $t" } ?: "") + "   ›", 11f, color = 0xFF999999.toInt()))
+                row.addView(markView); row.addView(col)
                 tasksBox.addView(row)
             }
             elementsBox.removeAllViews()
@@ -308,6 +323,41 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
     private fun openDay(date: Date) {
         val ld = date.toInstant().atZone(ZoneId.of("UTC")).toLocalDate()
         CalendarNavigator.toDayPage(this, ld, CalendarDay.DEFAULT_STYLE)
+    }
+
+    private fun markFor(done: Boolean, kind: LedgerItem.Kind): String =
+        when { kind == LedgerItem.Kind.EVENT -> "📅"; done -> "✓"; else -> "○" }
+
+    /** Undone, today-or-later tasks/events float up (soonest first); the rest fall below newest-first. */
+    private fun sortUpcomingFirst(items: List<LedgerItem>): List<LedgerItem> {
+        val today = java.time.LocalDate.now()
+        fun upcoming(i: LedgerItem): Boolean {
+            val d = i.date.toInstant().atZone(ZoneId.of("UTC")).toLocalDate()
+            return !i.done && !d.isBefore(today)
+        }
+        return items.sortedWith(Comparator { a, b ->
+            val ua = upcoming(a); val ub = upcoming(b)
+            if (ua != ub) if (ua) -1 else 1
+            else if (ua) a.date.compareTo(b.date) else b.date.compareTo(a.date)
+        })
+    }
+
+    /** Check a task off (or back on) from the contact page — writes to its day + pushes to CalDAV. */
+    private fun toggleDone(item: LedgerItem, onDone: (Boolean) -> Unit) {
+        val ld = item.date.toInstant().atZone(ZoneId.of("UTC")).toLocalDate()
+        lifecycleScope.launch {
+            val newState = withContext(Dispatchers.IO) {
+                val root = documentsRoot()
+                val day = calendarDayService.load(root, ld, null, Locale.getDefault())
+                val j = day.ledgerItems.indexOfFirst { it.id == item.id }
+                if (j < 0) return@withContext item.done
+                day.ledgerItems[j].done = !day.ledgerItems[j].done
+                calendarDayService.save(root, ld, day)
+                runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), day.ledgerItems[j]) }
+                day.ledgerItems[j].done
+            }
+            onDone(newState)
+        }
     }
 
     /** Every ledger item (task/event) across day files assigned to [contactId], newest first. */
