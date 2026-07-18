@@ -52,6 +52,12 @@
             android:id="@+id/action_to_reading_log"
             app:destination="@id/ReadingLogFragment"/>
 
+    <!-- Scratch ink surface (same fragment as the day page, but a DISTINCT destination so Back
+         pops it and returns to the previous screen instead of collapsing to the start dest). -->
+    <action
+            android:id="@+id/action_to_scratch"
+            app:destination="@id/CalendarScratchFragment"/>
+
     <action
             android:id="@+id/action_to_settings"
             app:destination="@id/CalendarSettingsFragment"/>
@@ -77,6 +83,13 @@
             android:label="TextNotesFragment"
             tools:layout="@layout/fragment_text_notes">
     </fragment>
+
+    <!-- Pull-up scratch surface: reuses CalendarDayFragment but as its own destination. -->
+    <fragment
+            android:id="@+id/CalendarScratchFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.CalendarDayFragment"
+            android:label="Scratch"
+            tools:layout="@layout/fragment_calendar"/>
 
     <fragment
             android:id="@+id/LedgerChatFragment"

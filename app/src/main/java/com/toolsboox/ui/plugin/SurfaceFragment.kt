@@ -2120,6 +2120,18 @@ abstract class SurfaceFragment : ScreenFragment() {
             applyStrokes(strokes, true)
             return
         }
+        // Internal clipboard: ink strokes — so recently cut/copied INK pastes as ink, not as
+        // stale system-clipboard text.
+        if (strokeClipboard.hasContent && !strokeClipboard.hasImage) {
+            val pasted = strokeClipboard.stampAt(cx, cy)
+            if (pasted.isNotEmpty()) {
+                pushUndo()
+                strokes.addAll(pasted)
+                applyStrokes(strokes, true)
+                onStrokeChanged(strokes)
+                return
+            }
+        }
         // System clipboard: image URI or plain text.
         try {
             val cm = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager

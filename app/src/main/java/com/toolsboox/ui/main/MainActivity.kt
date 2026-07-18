@@ -105,7 +105,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                 "year" to "${today.year}", "month" to "${today.monthValue}", "day" to "${today.dayOfMonth}",
                 "notePage" to "scratch"
             )
-            binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle)
+            binding.fragmentContent.findNavController().navigate(R.id.action_to_scratch, bundle)
         }
 
         firebaseAnalytics = Firebase.analytics
