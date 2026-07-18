@@ -192,6 +192,12 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         tasksBox.addView(label("Loading…", 13f, color = 0xFF999999.toInt()))
         root.addView(tasksBox)
 
+        // Pickings, Notes & Cards (grams / text boxes linked to this contact).
+        root.addView(label("Pickings, Notes & Cards", 13f, bold = true, color = 0xFF888888.toInt()).apply { setPadding(0, px(16), 0, px(4)) })
+        val elementsBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        elementsBox.addView(label("Loading…", 13f, color = 0xFF999999.toInt()))
+        root.addView(elementsBox)
+
         // Notes & History.
         root.addView(label("Notes & History", 13f, bold = true, color = 0xFF888888.toInt()).apply { setPadding(0, px(16), 0, px(4)) })
         val noteInput = EditText(ctx).apply {
@@ -241,10 +247,12 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         dialog.show()
 
         lifecycleScope.launch {
-            val items = withContext(Dispatchers.IO) { gatherContactItems(contact.id) }
+            val (items, elements) = withContext(Dispatchers.IO) {
+                gatherContactItems(contact.id) to gatherContactElements(contact.id)
+            }
             tasksBox.removeAllViews()
-            if (items.isEmpty()) { tasksBox.addView(label("None assigned yet.", 13f, color = 0xFF999999.toInt())); return@launch }
-            for (item in items) {
+            if (items.isEmpty()) tasksBox.addView(label("None assigned yet.", 13f, color = 0xFF999999.toInt()))
+            else for (item in items) {
                 val mark = when { item.kind == LedgerItem.Kind.EVENT -> "📅"; item.done -> "✓"; else -> "○" }
                 val row = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(0, px(4), 0, px(4)); isClickable = true }
                 row.addView(label("$mark  ${item.text}", 14f))
@@ -252,8 +260,49 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
                 row.setOnClickListener { dialog.dismiss(); openDay(item.date) }
                 tasksBox.addView(row)
             }
+            elementsBox.removeAllViews()
+            if (elements.isEmpty()) elementsBox.addView(label("None linked yet.", 13f, color = 0xFF999999.toInt()))
+            else for (el in elements) {
+                val mark = when (el.kind) { "Picking" -> "❝"; "Card" -> "🖼"; else -> "📝" }
+                val row = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(0, px(4), 0, px(4)); isClickable = true }
+                row.addView(label("$mark  ${el.title.ifBlank { el.kind }}", 14f))
+                row.addView(label("${el.kind} · ${el.date}   ›", 11f, color = 0xFF999999.toInt()))
+                row.setOnClickListener {
+                    dialog.dismiss()
+                    CalendarNavigator.toDayPage(this@RolodexFragment, el.date, CalendarDay.DEFAULT_STYLE)
+                }
+                elementsBox.addView(row)
+            }
         }
     }
+
+    private data class LinkedElement(val kind: String, val title: String, val date: java.time.LocalDate, val millis: Long)
+
+    /** Text boxes (pickings/notes) + gram-cards across day files linked to [contactId], newest first. */
+    private fun gatherContactElements(contactId: String): List<LinkedElement> {
+        val calendarRoot = File(documentsRoot(), "calendar")
+        if (!calendarRoot.exists()) return emptyList()
+        val out = mutableListOf<LinkedElement>()
+        calendarRoot.walkTopDown()
+            .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
+            .forEach { file ->
+                val ld = dayDateFromName(file.name) ?: return@forEach
+                val day = runCatching { calendarDayService.load(file) }.getOrNull() ?: return@forEach
+                for (t in day.textElements) if (t.contactId == contactId && t.text.isNotBlank()) {
+                    out.add(LinkedElement(if (t.pageKey == "pickings") "Picking" else "Note", t.text.trim(), ld, t.timestamp))
+                }
+                for (img in day.imageElements) if (img.contactId == contactId) {
+                    out.add(LinkedElement("Card", img.sourceLabel.ifBlank { "Card" }, ld, img.timestamp))
+                }
+            }
+        return out.sortedByDescending { it.millis }
+    }
+
+    /** "day-YYYY-MM-DD-v2.json" → LocalDate. */
+    private fun dayDateFromName(name: String): java.time.LocalDate? = runCatching {
+        val m = Regex("day-(\\d{4})-(\\d{2})-(\\d{2})").find(name) ?: return null
+        java.time.LocalDate.of(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt())
+    }.getOrNull()
 
     /** Jump the planner to the day a task/event lives on (dates are stored at noon UTC). */
     private fun openDay(date: Date) {

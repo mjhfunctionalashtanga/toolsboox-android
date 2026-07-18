@@ -38,5 +38,8 @@ data class ImageElement(
     var rotation: Float = 0f,
     // Layer order within a page: higher draws on top. New field with a default →
     // backward-compatible; existing images (all z=0) keep their insertion order.
-    var z: Int = 0
+    var z: Int = 0,
+    // Contact this gram/card is linked to (null = none) — bidirectional CRM linking, so the contact's
+    // page can surface it. New field with a default → backward-compatible. Mirrors iOS.
+    var contactId: String? = null
 )

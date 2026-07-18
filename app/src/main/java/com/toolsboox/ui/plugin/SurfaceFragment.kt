@@ -2059,7 +2059,28 @@ abstract class SurfaceFragment : ScreenFragment() {
             LedgerContextMenu.Item("Bring to front") { bringImageToFront(element) },
             LedgerContextMenu.Item("Send to back") { sendImageToBack(element) }
         ))
+        groups.add(listOf(
+            LedgerContextMenu.Item(if (element.contactId.isNullOrBlank()) "Assign to contact…" else "Contact…") {
+                pickContact { id ->
+                    element.contactId = id
+                    element.timestamp = System.currentTimeMillis()
+                    onImageElementsChanged(imageElements)
+                    applyStrokes(strokes, true)
+                }
+            }
+        ))
         LedgerContextMenu.show(provideSurfaceView(), pressX, pressY, "IMAGE", groups)
+    }
+
+    /** Pick a contact (or "None") to link a picking / note / gram to — bidirectional CRM linking. */
+    private fun pickContact(onPick: (String?) -> Unit) {
+        val contacts = com.toolsboox.plugin.calendar.ot.ContactStore.list(requireContext())
+        val names = (listOf("None") + contacts.map { it.name.ifBlank { "Unnamed" } }).toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("Assign to contact")
+            .setItems(names) { _, which -> onPick(if (which == 0) null else contacts[which - 1].id) }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     /**
@@ -2132,7 +2153,15 @@ abstract class SurfaceFragment : ScreenFragment() {
             listOf(
                 listOf(
                     LedgerContextMenu.Item("Edit text") { showTextEditDialog(element) },
-                    LedgerContextMenu.Item("Move — drag it") { enterTextBoxManipulation(element) }
+                    LedgerContextMenu.Item("Move — drag it") { enterTextBoxManipulation(element) },
+                    LedgerContextMenu.Item(if (element.contactId.isNullOrBlank()) "Assign to contact…" else "Contact…") {
+                        pickContact { id ->
+                            element.contactId = id
+                            element.timestamp = System.currentTimeMillis()
+                            onTextElementsChanged(textElements)
+                            applyStrokes(strokes, true)
+                        }
+                    }
                 ),
                 listOf(
                     LedgerContextMenu.Item("Duplicate") {
