@@ -48,6 +48,7 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentKanbanBinding.bind(view)
         binding.kanbanClose.setOnClickListener { NavHostFragment.findNavController(this).popBackStack() }
+        binding.kanbanNew.setOnClickListener { promptNewTask() }
         load()
     }
 
@@ -57,6 +58,41 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
     }
 
     private fun colOf(i: LedgerItem): String = if (i.done) "done" else if (i.stage == "doing") "doing" else "todo"
+
+    /** Create a new card straight from the board — a task on today's page, in the To do column. */
+    private fun promptNewTask() {
+        val ctx = requireContext()
+        val input = android.widget.EditText(ctx).apply { hint = "New task"; setSingleLine() }
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input) }
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("New card")
+            .setView(box)
+            .setPositiveButton("Add") { _, _ ->
+                val text = input.text.toString().trim()
+                if (text.isNotBlank()) addTask(text)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun addTask(text: String) {
+        val today = java.time.LocalDate.now()
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                val root = documentsRoot()
+                val day = calendarDayService.load(root, today, null, Locale.getDefault())
+                val item = LedgerItem(
+                    id = "li-" + java.util.UUID.randomUUID().toString().lowercase(),
+                    kind = LedgerItem.Kind.TASK, text = text, date = Date(), stage = "todo"
+                )
+                day.ledgerItems.add(item)
+                calendarDayService.save(root, today, day)
+                runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), item) }
+            }
+            load()
+        }
+    }
 
     private fun load() {
         lifecycleScope.launch {

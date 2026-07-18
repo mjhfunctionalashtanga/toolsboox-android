@@ -4,7 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:gravity="center_vertical"
-    android:background="?android:attr/selectableItemBackground"
+    android:background="@android:color/transparent"
     android:paddingHorizontal="14dp"
     android:paddingVertical="14dp">
 

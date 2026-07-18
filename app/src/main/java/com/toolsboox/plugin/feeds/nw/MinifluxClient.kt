@@ -73,6 +73,14 @@ class MinifluxClient @Inject constructor() {
         return put("${normalize(baseUrl)}/v1/entries", token, payload)
     }
 
+    /** PUT /v1/entries {entry_ids, status} — batch mark read/unread (for Clear feed + undo). */
+    fun setStatus(baseUrl: String, token: String, ids: List<Long>, status: String): Result<Unit> {
+        if (ids.isEmpty()) return Result.Ok(Unit)
+        val arr = JSONArray(); for (i in ids) arr.put(i)
+        val payload = JSONObject().put("entry_ids", arr).put("status", status).toString()
+        return put("${normalize(baseUrl)}/v1/entries", token, payload)
+    }
+
     /** GET /v1/entries/{id}/fetch-content — Miniflux's readability parse of the original page. */
     fun fetchContent(baseUrl: String, token: String, id: Long): Result<String> = try {
         val req = Request.Builder().url("${normalize(baseUrl)}/v1/entries/$id/fetch-content")

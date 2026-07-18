@@ -987,10 +987,18 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         if (url.isBlank() || token.isBlank()) { showMessage(R.string.feeds_need_creds); return }
         val ids = allEntries.map { it.id }
         if (ids.isEmpty()) { showMessage(R.string.feeds_nothing_to_mark); return }
-        showMessage(getString(R.string.feeds_marking_read, ids.size))
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) { ids.forEach { runCatching { miniflux.markRead(url, token, it) } } }
-            showMessage(R.string.feeds_marked_read); refresh()
+            withContext(Dispatchers.IO) { miniflux.setStatus(url, token, ids, "read") }
+            refresh()
+            // Undoable — one Snackbar action flips them all back to unread.
+            com.google.android.material.snackbar.Snackbar.make(
+                binding.root, "Cleared ${ids.size} — marked read", com.google.android.material.snackbar.Snackbar.LENGTH_LONG
+            ).setAction("Undo") {
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) { miniflux.setStatus(url, token, ids, "unread") }
+                    refresh()
+                }
+            }.show()
         }
     }
 
