@@ -67,44 +67,31 @@ class CalendarDayNavigator {
             when (motionEvent.action) {
                 MotionEvent.ACTION_UP -> {
                     val px = motionEvent.x * 1404.0f / view.width
-                    val py = motionEvent.y * 140.4f / view.height
-
-                    if (px >= lo + 0 * cew && px <= lo + 1 * cew && py >= to && py <= to + ceh) {
-                        // On a list surface (onStepDay set) the arrows move that surface's
-                        // date in place; on the day page they open the neighbouring day.
-                        if (onStepDay != null) onStepDay(localDate.minusDays(1L))
-                        else toSameDayPage(fragment, localDate.minusDays(1L))
-                        return true
-                    }
-                    if (px >= lo + 1 * cew && px <= lo + 3 * cew && py >= to && py <= to + ceh) {
-                        if (onSelectPeriod != null) onSelectPeriod("day", localDate)
-                        else CalendarNavigator.toDayPage(fragment, localDate)
-                        return true
-                    }
-                    if (px >= lo + 3 * cew && px <= lo + 9 * cew && py >= to && py <= to + ceh) {
-                        if (onSelectPeriod != null) onSelectPeriod("week", localDate)
-                        else CalendarNavigator.toWeekPage(fragment, localDate, locale)
-                        return true
-                    }
-                    if (px >= lo + 9 * cew && px <= lo + 13 * cew && py >= to && py <= to + ceh) {
-                        if (onSelectPeriod != null) onSelectPeriod("month", localDate)
-                        else CalendarNavigator.toMonthPage(fragment, localDate)
-                        return true
-                    }
-                    if (px >= lo + 13 * cew && px <= lo + 15 * cew && py >= to && py <= to + ceh) {
-                        if (onSelectPeriod != null) onSelectPeriod("quarter", localDate)
-                        else CalendarNavigator.toQuarterPage(fragment, localDate)
-                        return true
-                    }
-                    if (px >= lo + 15 * cew && px <= lo + 19 * cew && py >= to && py <= to + ceh) {
-                        if (onSelectPeriod != null) onSelectPeriod("year", localDate)
-                        else CalendarNavigator.toYearPage(fragment, localDate)
-                        return true
-                    }
-                    if (px >= lo + 19 * cew && px <= lo + 20 * cew && py >= to && py <= to + ceh) {
-                        if (onStepDay != null) onStepDay(localDate.plusDays(1L))
-                        else toSameDayPage(fragment, localDate.plusDays(1L))
-                        return true
+                    // Drawn slots (see draw()): [0]=Day (focal), [1]=weekday, [2]=Week, [3]=Month, [4]=Quarter, [5]=Year.
+                    // On a list surface (onStepDay/onSelectPeriod set) the arrows move that
+                    // surface's date in place and slots FILTER; on the day page they navigate.
+                    when (NavigatorRenderer.slotAt(px, 6)) {
+                        NavigatorRenderer.ARROW_PREV ->
+                            if (onStepDay != null) onStepDay(localDate.minusDays(1L))
+                            else toSameDayPage(fragment, localDate.minusDays(1L))
+                        NavigatorRenderer.ARROW_NEXT ->
+                            if (onStepDay != null) onStepDay(localDate.plusDays(1L))
+                            else toSameDayPage(fragment, localDate.plusDays(1L))
+                        0, 1 ->
+                            if (onSelectPeriod != null) onSelectPeriod("day", localDate)
+                            else CalendarNavigator.toDayPage(fragment, localDate)
+                        2 ->
+                            if (onSelectPeriod != null) onSelectPeriod("week", localDate)
+                            else CalendarNavigator.toWeekPage(fragment, localDate, locale)
+                        3 ->
+                            if (onSelectPeriod != null) onSelectPeriod("month", localDate)
+                            else CalendarNavigator.toMonthPage(fragment, localDate)
+                        4 ->
+                            if (onSelectPeriod != null) onSelectPeriod("quarter", localDate)
+                            else CalendarNavigator.toQuarterPage(fragment, localDate)
+                        5 ->
+                            if (onSelectPeriod != null) onSelectPeriod("year", localDate)
+                            else CalendarNavigator.toYearPage(fragment, localDate)
                     }
                 }
             }
