@@ -38,7 +38,9 @@ data class ReadingEvent(
     /** Photos / voice memos attached to this annotation. */
     val attachments: MutableList<Attachment>? = null,
     /** A featured/lead image URL for the source (articles), shown on the card. */
-    val image: String? = null
+    val image: String? = null,
+    /** Starred by the user (e.g. a starred book passage) — surfaced in the Ledger Log. */
+    val starred: Boolean = false
 ) {
     enum class Kind {
         @Json(name = "article") ARTICLE,

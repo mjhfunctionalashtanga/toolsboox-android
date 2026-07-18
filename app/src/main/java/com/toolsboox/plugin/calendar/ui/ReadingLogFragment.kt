@@ -273,7 +273,8 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                     // Captured media rides on the event's attachments — show a photo thumb / play a memo.
                     val photo = e.attachments?.firstOrNull { it.kind == Attachment.Kind.PHOTO }
                     val audio = e.attachments?.firstOrNull { it.kind == Attachment.Kind.AUDIO }
-                    out.add(LogItem(o, e.title.ifBlank { getString(R.string.reading_log_untitled) }, meta, body,
+                    val evTitle = (if (e.starred) "⭐ " else "") + e.title.ifBlank { getString(R.string.reading_log_untitled) }
+                    out.add(LogItem(o, evTitle, meta, body,
                         e.url, e.date.time, imagePath = photo?.let { attachmentPath(it) }, audioPath = audio?.let { attachmentPath(it) }))
                 }
 

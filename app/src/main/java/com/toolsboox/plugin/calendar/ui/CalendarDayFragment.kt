@@ -634,16 +634,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             if (sharedPreferences.getBoolean(com.toolsboox.plugin.calendar.ot.LedgerExtractor.AUTO_EXTRACT_ENABLED_KEY, false))
                 add(GoItem("🗒", "Extract tasks & events") { extractStructured() })
             add(GoItem("📄", "Whole page → text") { wholePageToText() })
-            add(GoItem("🗂", "Capture sections") { captureSections() })
-            // Auto-capture sections on page-leave (paid vision OCR) — on by default; toggle here on
-            // pages that actually have capture zones.
-            if (com.toolsboox.plugin.calendar.ot.PageZones.zones(currentNotePage()).isNotEmpty()) {
-                val autoOn = sharedPreferences.getBoolean("autoCaptureSections", true)
-                add(GoItem(if (autoOn) "☑️" else "⬜", "Auto-capture on leave") {
-                    sharedPreferences.edit().putBoolean("autoCaptureSections", !autoOn).apply()
-                    showMessage(if (!autoOn) "Auto-capture on" else "Auto-capture off", binding.root)
-                })
-            }
+            add(GoItem("🗂", "Capture sections") { captureSections() })   // auto-capture toggle now lives in Settings
             if (onSynth) add(GoItem("🔬", "Synthesize · 3 questions") { synthesizeQuestions() })
             if (onSynth || onWrite) add(GoItem("✍️", "Writing prompt → Write") { writingPrompts() })
             if (onSynth) add(GoItem("🗒", "Essay outline → Write") { essayOutline() })
