@@ -2413,26 +2413,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * @param calendarPattern the pattern data class
      * @param calendarEvents the calendar events
      */
-    /**
-     * One-time cleanup: an earlier build's floating button wrote ink to a separate "scratch" note
-     * page. Fold any such content into note page "0" — where every menu's "✒ Notes" now opens — so
-     * nothing gets stranded. Idempotent: once merged there's no "scratch" key left, so it's a no-op.
-     */
-    private fun migrateScratchIntoNotes(day: CalendarDay, pattern: CalendarPattern) {
-        var changed = false
-        day.noteStrokes["scratch"]?.let { scratch ->
-            if (scratch.isNotEmpty()) day.noteStrokes["0"] = (day.noteStrokes["0"] ?: emptyList()) + scratch
-            day.noteStrokes.remove("scratch")
-            changed = true
-        }
-        day.textElements.filter { it.pageKey == "scratch" }.forEach { it.pageKey = "0"; changed = true }
-        day.imageElements.filter { it.page == "scratch" }.forEach { it.page = "0"; changed = true }
-        if (changed) {
-            pattern.updateDay(day)
-            presenter.save(this, binding, day, pattern, currentDate, showProgress = false)
-        }
-    }
-
     fun renderPage(
         calendarDay: CalendarDay, calendarPattern: CalendarPattern, calendarEvents: List<CalendarEvent>
     ) {
@@ -2442,7 +2422,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         if (!isAdded || !isResumed) return
         this.calendarDay = calendarDay
         this.calendarPattern = calendarPattern
-        migrateScratchIntoNotes(calendarDay, calendarPattern)
         updateNavigator()
 
         // Load this page's text elements and images from the calendar data
