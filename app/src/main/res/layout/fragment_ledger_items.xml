@@ -36,6 +36,7 @@
 
     <!-- Finger / no-pen capture: type a task or event. -->
     <LinearLayout
+        android:id="@+id/add_bar"
         android:orientation="horizontal"
         android:paddingHorizontal="12dp"
         android:paddingBottom="8dp"
@@ -52,6 +53,14 @@
         <Button
             android:id="@+id/add_event_button"
             android:text="＋ Event"
+            android:textAllCaps="false" android:textColor="#000000" android:textSize="16sp"
+            android:background="@drawable/dialog_rounded_bg"
+            android:minHeight="48dp"
+            android:layout_marginEnd="8dp"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/select_button"
+            android:text="☑ Select"
             android:textAllCaps="false" android:textColor="#000000" android:textSize="16sp"
             android:background="@drawable/dialog_rounded_bg"
             android:minHeight="48dp"
@@ -72,6 +81,13 @@
             android:id="@+id/selection_count"
             android:textColor="#000000" android:textSize="16sp"
             android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/select_all_button"
+            android:text="All"
+            android:textAllCaps="false" android:textColor="#000000" android:textSize="16sp"
+            android:background="@drawable/dialog_rounded_bg" android:minHeight="48dp"
+            android:layout_marginEnd="8dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
         <Button
             android:id="@+id/delete_selected_button"
             android:text="🗑 Delete"

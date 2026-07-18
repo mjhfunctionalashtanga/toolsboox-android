@@ -93,6 +93,9 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         binding.itemsPill.bringToFront()
         makeDraggable(binding.itemsGrip, binding.itemsPill, "items_pill")
 
+        // Enter bulk-select without hunting for a long-press; the whole row then toggles.
+        binding.selectButton.setOnClickListener { adapter.startEmptySelection() }
+        binding.selectAllButton.setOnClickListener { adapter.selectAll() }
         binding.deleteSelectedButton.setOnClickListener { deleteSelected() }
         binding.cancelSelectionButton.setOnClickListener { adapter.clearSelection() }
         attachSwipeToDelete()
@@ -133,7 +136,9 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     private fun updateSelectionBar() {
         val selecting = adapter.selecting
         binding.selectionBar.visibility = if (selecting) View.VISIBLE else View.GONE
-        binding.selectionCount.text = "${adapter.selectedIds.size} selected"
+        binding.addBar.visibility = if (selecting) View.GONE else View.VISIBLE
+        val n = adapter.selectedIds.size
+        binding.selectionCount.text = if (n == 0) "Tap items to select" else "$n selected"
     }
 
     private fun deleteSelected() {
@@ -151,6 +156,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     /** Remove [toDelete] from the day JSON (so they stop syncing) and their VTODOs. */
     private fun deleteItems(toDelete: List<LedgerItem>) {
         lifecycleScope.launch {
+            // Local removal + tombstone only — this is the fast path the UI waits on.
             withContext(Dispatchers.IO) {
                 val root = documentsRoot()
                 // Group by source day so a filtered (period) delete saves to the right day file each.
@@ -164,10 +170,15 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                         calendarDayService.save(root, srcDay, cd)
                     }.onFailure { Timber.w(it, "ledger items: delete save failed") }
                 }
-                toDelete.forEach { runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.deleteTask(requireContext(), it) } }
-                toDelete.forEach { runCatching { com.toolsboox.plugin.calendar.nw.LedgerEventSync.deleteEvent(requireContext(), it) } }
             }
+            // Refresh the list right away — don't make the user wait on the network.
             load()
+        }
+        // Fire the remote VTODO/event deletes in the background; they must not block the UI.
+        val app = requireContext().applicationContext
+        lifecycleScope.launch(Dispatchers.IO) {
+            toDelete.forEach { runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.deleteTask(app, it) } }
+            toDelete.forEach { runCatching { com.toolsboox.plugin.calendar.nw.LedgerEventSync.deleteEvent(app, it) } }
         }
     }
 
