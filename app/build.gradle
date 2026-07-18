@@ -58,19 +58,11 @@ android {
             applicationIdSuffix ""
             dimension 'tier'
         }
-        // Default build for Boox and everything else — unchanged (targetSdk 36).
+        // Single device flavor for Boox and everything else (targetSdk 36). The Viwoods fast-ink
+        // variant was removed; VIWOODS_FAST_INK stays defined (false) since SurfaceFragment reads it.
         standard {
             dimension 'device'
             buildConfigField "boolean", "VIWOODS_FAST_INK", "false"
-        }
-        // Viwoods AiPaper build: targetSdk 30 puts the app in the untrusted_app_30 SELinux
-        // domain, which is required for ENoteSetting.initWriting() (libpaintworker.so) to
-        // load without crashing — enabling true full-screen hardware fast ink. Sideload the
-        // viwoods variant only to the Mini. See project_viwoods_fast_ink memory.
-        viwoods {
-            dimension 'device'
-            targetSdkVersion 30
-            buildConfigField "boolean", "VIWOODS_FAST_INK", "true"
         }
     }
 
