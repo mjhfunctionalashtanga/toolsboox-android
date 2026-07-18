@@ -98,6 +98,16 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // Global "pull up a scratch ink surface" button — available on every screen.
+        binding.floatNoteButton.setOnClickListener {
+            val today = java.time.LocalDate.now()
+            val bundle = bundleOf(
+                "year" to "${today.year}", "month" to "${today.monthValue}", "day" to "${today.dayOfMonth}",
+                "notePage" to "scratch"
+            )
+            binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle)
+        }
+
         firebaseAnalytics = Firebase.analytics
 
         if (BuildConfig.DEBUG) {

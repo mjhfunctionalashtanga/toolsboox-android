@@ -22,16 +22,34 @@
                 android:layout_height="0dp"
                 android:visibility="gone"/>
 
-        <androidx.fragment.app.FragmentContainerView
-                android:id="@+id/fragmentContent"
-
-                android:name="androidx.navigation.fragment.NavHostFragment"
+        <FrameLayout
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
+                android:layout_height="match_parent">
 
-                app:defaultNavHost="true"
-                app:navGraph="@navigation/navigation_main"
-                app:layout_behavior="@string/appbar_scrolling_view_behavior"/>
+            <androidx.fragment.app.FragmentContainerView
+                    android:id="@+id/fragmentContent"
+
+                    android:name="androidx.navigation.fragment.NavHostFragment"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+
+                    app:defaultNavHost="true"
+                    app:navGraph="@navigation/navigation_main"
+                    app:layout_behavior="@string/appbar_scrolling_view_behavior"/>
+
+            <!-- Global "pull up a scratch ink surface" button, on every screen. -->
+            <ImageButton
+                    android:id="@+id/floatNoteButton"
+                    android:layout_width="54dp"
+                    android:layout_height="54dp"
+                    android:layout_gravity="bottom|start"
+                    android:layout_margin="22dp"
+                    android:src="@android:drawable/ic_menu_edit"
+                    android:background="@drawable/dialog_rounded_bg"
+                    android:contentDescription="Scratch note"
+                    android:elevation="10dp"/>
+
+        </FrameLayout>
 
     </LinearLayout>
 
