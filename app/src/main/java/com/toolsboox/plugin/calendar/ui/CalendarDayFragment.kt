@@ -288,6 +288,23 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /**
+     * Erased strokes MUST be tombstoned (deletedStrokeIds) or the union sync-merge resurrects them
+     * on the next open ("erase with no tombstone can resurrect", per CalendarDayMerger).
+     */
+    override fun onStrokesDeleted(strokeIds: List<java.util.UUID>) {
+        if (!::calendarDay.isInitialized || strokeIds.isEmpty()) return
+        var changed = false
+        for (id in strokeIds) {
+            val s = id.toString()
+            if (s !in calendarDay.deletedStrokeIds) { calendarDay.deletedStrokeIds.add(s); changed = true }
+        }
+        if (changed) {
+            calendarPattern.updateDay(calendarDay)
+            presenter.save(this, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+        }
+    }
+
+    /**
      * On side switched event.
      */
     override fun onSideSwitched() {
