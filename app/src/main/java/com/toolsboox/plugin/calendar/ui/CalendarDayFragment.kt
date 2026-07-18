@@ -293,10 +293,23 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     override fun onStrokesDeleted(strokeIds: List<java.util.UUID>) {
         if (!::calendarDay.isInitialized || strokeIds.isEmpty()) return
+        val gone = strokeIds.map { it.toString() }.toSet()
         var changed = false
-        for (id in strokeIds) {
-            val s = id.toString()
+        for (s in gone) {
             if (s !in calendarDay.deletedStrokeIds) { calendarDay.deletedStrokeIds.add(s); changed = true }
+        }
+        // An OCR'd task/note follows its ink: once every stroke that produced it is erased, drop
+        // the ledger item too (and tombstone it) so erasing on the day page really removes the task.
+        val orphaned = calendarDay.ledgerItems.filter { item ->
+            item.strokeIds.isNotEmpty() &&
+                item.strokeIds.all { it in gone || it in calendarDay.deletedStrokeIds }
+        }
+        if (orphaned.isNotEmpty()) {
+            calendarDay.ledgerItems.removeAll(orphaned)
+            for (item in orphaned) {
+                if (item.id !in calendarDay.deletedElementIds) calendarDay.deletedElementIds.add(item.id)
+            }
+            changed = true
         }
         if (changed) {
             calendarPattern.updateDay(calendarDay)
