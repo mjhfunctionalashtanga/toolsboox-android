@@ -31,5 +31,9 @@ data class ImageElement(
     // grammed off another ledger page. [sourceLabel] is the human name shown in the jump prompt.
     // New fields with defaults → backward-compatible with existing JSON.
     var sourceLink: String = "",
-    var sourceLabel: String = ""
+    var sourceLabel: String = "",
+    // Rotation in degrees, clockwise, about the element's centre. Applied at render and
+    // carried through the id-keyed merge like every other field. New field with a default
+    // → backward-compatible with existing JSON (old images decode as un-rotated).
+    var rotation: Float = 0f
 )

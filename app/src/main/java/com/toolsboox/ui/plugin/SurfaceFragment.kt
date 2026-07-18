@@ -1758,7 +1758,15 @@ abstract class SurfaceFragment : ScreenFragment() {
         if (imageElements.isEmpty()) return
         for (element in imageElements) {
             val bmp = bitmapForElement(element) ?: continue
-            targetCanvas.drawBitmap(bmp, null, RectF(element.x, element.y, element.x + element.width, element.y + element.height), imagePaint)
+            val rect = RectF(element.x, element.y, element.x + element.width, element.y + element.height)
+            if (element.rotation != 0f) {
+                targetCanvas.save()
+                targetCanvas.rotate(element.rotation, rect.centerX(), rect.centerY())
+                targetCanvas.drawBitmap(bmp, null, rect, imagePaint)
+                targetCanvas.restore()
+            } else {
+                targetCanvas.drawBitmap(bmp, null, rect, imagePaint)
+            }
         }
     }
 
