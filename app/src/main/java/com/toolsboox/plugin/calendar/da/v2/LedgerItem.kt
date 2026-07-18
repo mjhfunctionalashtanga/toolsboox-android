@@ -44,7 +44,10 @@ data class LedgerItem(
     val source: String? = null,
     /** Optional rolodex cross-reference: the [Contact.id] this task/event is assigned to / about.
      *  New field with a default → backward-compatible; the id-union merge carries it in the value. */
-    var contactId: String? = null
+    var contactId: String? = null,
+    /** Kanban stage for the Boards view: "todo" | "doing" | "done" ("" = todo). New field with a
+     *  default → backward-compatible. Wire-compatible with iOS `stage`. */
+    var stage: String = ""
 ) {
     enum class Kind {
         @Json(name = "task") TASK,

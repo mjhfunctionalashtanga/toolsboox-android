@@ -71,6 +71,10 @@
             app:destination="@id/RolodexFragment"/>
 
     <action
+            android:id="@+id/action_to_kanban"
+            app:destination="@id/KanbanFragment"/>
+
+    <action
             android:id="@+id/action_to_text_notes"
             app:destination="@id/TextNotesFragment"/>
 
@@ -161,6 +165,12 @@
             android:name="com.toolsboox.plugin.calendar.ui.RolodexFragment"
             android:label="RolodexFragment"
             tools:layout="@layout/fragment_rolodex"/>
+
+    <fragment
+            android:id="@+id/KanbanFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.KanbanFragment"
+            android:label="KanbanFragment"
+            tools:layout="@layout/fragment_kanban"/>
 
     <fragment
             android:id="@+id/ReadingLogFragment"

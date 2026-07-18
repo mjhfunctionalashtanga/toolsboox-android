@@ -83,6 +83,7 @@ fun ledgerDirectoryFolders(
         // Tasks & Events promoted to the top level — a one-tap jump, not buried in Ledger Log.
         ScreenFragment.Folder("🗒", "Tasks & Events", action = { nav.navigate(R.id.action_to_ledger_items) }),
         ScreenFragment.Folder("👤", "Rolodex", action = { nav.navigate(R.id.action_to_rolodex) }),
+        ScreenFragment.Folder("▦", "Boards", action = { nav.navigate(R.id.action_to_kanban) }),
         ScreenFragment.Folder("📆", "Almanac", listOf(
             "📆  Week" to { CalendarNavigator.toWeekPage(fragment, today, locale) },
             "📅  Month" to { CalendarNavigator.toMonthPage(fragment, today) },
