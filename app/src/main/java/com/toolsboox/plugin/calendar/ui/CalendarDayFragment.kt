@@ -192,6 +192,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      *
      * @param strokes the actual strokes
      */
+    /** Set whenever ink changes; gates the auto-capture of section zones on page-leave so an
+     *  unchanged page never re-runs (and re-bills) the paid vision OCR. */
+    private var sectionsDirty = false
+
     override fun onStrokeChanged(strokes: MutableList<Stroke>) {
         val strokesCopy = Stroke.listDeepCopy(strokes)
         if (notePage != null) {
@@ -201,6 +205,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
 
         calendarPattern.updateDay(calendarDay)
+        sectionsDirty = true
 
         // Per-stroke save: suppress the loading indicator so its VISIBLE/INVISIBLE flash
         // doesn't trigger an e-ink refresh on every pen-up (reads as lag/freeze on lift).
@@ -628,6 +633,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 add(GoItem("🗒", "Extract tasks & events") { extractStructured() })
             add(GoItem("📄", "Whole page → text") { wholePageToText() })
             add(GoItem("🗂", "Capture sections") { captureSections() })
+            // Auto-capture sections on page-leave (paid vision OCR) — on by default; toggle here on
+            // pages that actually have capture zones.
+            if (com.toolsboox.plugin.calendar.ot.PageZones.zones(currentNotePage()).isNotEmpty()) {
+                val autoOn = sharedPreferences.getBoolean("autoCaptureSections", true)
+                add(GoItem(if (autoOn) "☑️" else "⬜", "Auto-capture on leave") {
+                    sharedPreferences.edit().putBoolean("autoCaptureSections", !autoOn).apply()
+                    showMessage(if (!autoOn) "Auto-capture on" else "Auto-capture off", binding.root)
+                })
+            }
             if (onSynth) add(GoItem("🔬", "Synthesize · 3 questions") { synthesizeQuestions() })
             if (onSynth || onWrite) add(GoItem("✍️", "Writing prompt → Write") { writingPrompts() })
             if (onSynth) add(GoItem("🗒", "Essay outline → Write") { essayOutline() })
@@ -1226,17 +1240,29 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * page and store it under the zone's key; if the zone carries an AI prompt, run the OCR'd
      * text through the LLM and store the result under "<id>.ai". Saved per note-page + day.
      */
-    private fun captureSections() {
+    private fun captureSections() = runCaptureSections(silent = false)
+
+    /**
+     * OCR the current page's capture zones (paid vision OCR + optional per-zone LLM) into the
+     * section store. [silent] is the auto-on-page-leave path: no toasts, and it runs on a
+     * detached scope so it finishes even as the fragment pauses. Needs an AI key.
+     */
+    private fun runCaptureSections(silent: Boolean) {
         val notePageKey = currentNotePage()
         val zones = com.toolsboox.plugin.calendar.ot.PageZones.zones(notePageKey)
-        if (zones.isEmpty()) { showMessage("This page has no capture zones.", binding.root); return }
-        val creds = aiCreds()
+        if (zones.isEmpty()) { if (!silent) showMessage("This page has no capture zones.", binding.root); return }
+        val creds = aiCreds() ?: run {
+            if (!silent) showMessage(getString(R.string.ledger_ai_key_needed), binding.root); return
+        }
         val strokes = currentPageStrokes()
         val pageKey = notePageKey ?: "default"
-        showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
-        lifecycleScope.launch {
+        val ctx = requireContext().applicationContext
+        val date = currentDate
+        if (!silent) showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
+        sectionsDirty = false   // reset up-front; a stroke during capture re-marks it
+        (if (silent) GlobalScope else lifecycleScope).launch {
             val n = withContext(Dispatchers.IO) {
-                val values = com.toolsboox.plugin.calendar.ot.SectionStore.load(requireContext(), pageKey, currentDate)
+                val values = com.toolsboox.plugin.calendar.ot.SectionStore.load(ctx, pageKey, date)
                 for (zone in zones) {
                     if (zone.kind != com.toolsboox.plugin.calendar.ot.ZoneKind.TEXT) continue
                     val inZone = strokes.filter {
@@ -1245,21 +1271,20 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     }
                     if (inZone.isEmpty()) continue
                     val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(inZone, zone.rect, 1600)
-                    val text = if (creds != null)
-                        com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third) else null
+                    val text = com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third)
                     if (text.isNullOrBlank()) continue
                     values[zone.id] = text
                     val prompt = zone.aiPrompt
-                    if (prompt != null && creds != null) {
+                    if (prompt != null) {
                         val r = com.toolsboox.plugin.chat.nw.LedgerChatService()
                             .run(creds.first, creds.second, creds.third, prompt, text)
                         if (r is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok) values[zone.id + ".ai"] = r.answer
                     }
                 }
-                com.toolsboox.plugin.calendar.ot.SectionStore.save(requireContext(), pageKey, currentDate, values)
+                com.toolsboox.plugin.calendar.ot.SectionStore.save(ctx, pageKey, date, values)
                 values.keys.count { !it.endsWith(".ai") && !it.startsWith("__") }
             }
-            showMessage("Captured $n section(s)", binding.root)
+            if (!silent) showMessage("Captured $n section(s)", binding.root)
         }
     }
 
@@ -1867,6 +1892,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         // Release the hardware page-key handler so it doesn't page a stale surface.
         (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = null
+
+        // Auto-capture this page's section zones on leave — only when the ink changed (sectionsDirty)
+        // and the setting is on, so an unchanged page never re-runs the paid vision OCR.
+        if (sectionsDirty && ::calendarDay.isInitialized &&
+            sharedPreferences.getBoolean("autoCaptureSections", true)) {
+            runCaptureSections(silent = true)
+        }
 
         // Leaving the intake page counts as "page exit" — hand any typed content
         // that has not been delivered yet to the intake queue.
