@@ -5,8 +5,10 @@ import android.os.Bundle
 import android.os.Environment
 import android.text.format.DateFormat
 import android.view.View
+import android.widget.TextView
 import androidx.lifecycle.lifecycleScope
 import androidx.appcompat.app.AlertDialog
+import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.DividerItemDecoration
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.toolsboox.R
@@ -237,6 +239,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             contactsById = withContext(Dispatchers.IO) {
                 ContactStore.list(requireContext().applicationContext).associateBy { it.id }
             }
+            renderBirthdays()
             // Redraw the reused Almanac navigator for this date.
             val navDay = d ?: CalendarDay(anchor.year, anchor.monthValue, anchor.dayOfMonth, startHour = null)
             pattern?.let { navBar?.render(navDay, it) }
@@ -373,6 +376,57 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     }
 
     /** The item is a reference into [day].ledgerItems, so just re-save the day. */
+    /** Populate the birthdays strip with the viewed day's rolodex birthdays (tappable → the contact). */
+    private fun renderBirthdays() {
+        val container = binding.birthdaysContainer
+        container.removeAllViews()
+        val bdays = contactsById.values
+            .filter { birthdayMatches(it.birthday, anchor.monthValue, anchor.dayOfMonth) }
+            .sortedBy { it.name.lowercase() }
+        container.visibility = if (bdays.isEmpty()) View.GONE else View.VISIBLE
+        for (c in bdays) {
+            container.addView(TextView(requireContext()).apply {
+                text = "🎂  ${c.name.ifBlank { "Unnamed" }}"
+                textSize = 16f
+                setTextColor(0xFF000000.toInt())
+                setPadding(0, 12, 0, 12)
+                setOnClickListener { showContact(c) }
+            })
+        }
+    }
+
+    /** Match a freeform birthday string ("Mar 4" / "3-4" / "03/04") to a month/day. */
+    private fun birthdayMatches(bday: String, month: Int, day: Int): Boolean {
+        val s = bday.lowercase().trim()
+        if (s.isEmpty()) return false
+        val months = mapOf(
+            "jan" to 1, "feb" to 2, "mar" to 3, "apr" to 4, "may" to 5, "jun" to 6,
+            "jul" to 7, "aug" to 8, "sep" to 9, "oct" to 10, "nov" to 11, "dec" to 12
+        )
+        val parts = s.split(' ', '-', '/', ',', '.').filter { it.isNotBlank() }
+        if (parts.size < 2) return false
+        val m = months[parts[0].take(3)] ?: parts[0].toIntOrNull()
+        val d = parts[1].toIntOrNull()
+        return m == month && d == day
+    }
+
+    /** Show a contact's details with a jump to the Rolodex — the birthday's "link back". */
+    private fun showContact(c: Contact) {
+        val info = listOfNotNull(
+            c.phone.takeIf { it.isNotBlank() }?.let { "📞  $it" },
+            c.email.takeIf { it.isNotBlank() }?.let { "✉  $it" },
+            c.org.takeIf { it.isNotBlank() },
+            c.birthday.takeIf { it.isNotBlank() }?.let { "🎂  $it" },
+            c.bio.takeIf { it.isNotBlank() }
+        ).joinToString("\n")
+        AlertDialog.Builder(requireContext())
+            .setTitle(c.name.ifBlank { "Contact" })
+            .setMessage(info.ifBlank { "No details yet." })
+            .setPositiveButton("Open Rolodex") { _, _ -> findNavController().navigate(R.id.action_to_rolodex) }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
     /** Open a contact picker and link (or clear) the item's rolodex contact, then persist. */
     private fun assign(item: LedgerItem) {
         val contacts = contactsById.values.sortedBy { it.name.lowercase() }

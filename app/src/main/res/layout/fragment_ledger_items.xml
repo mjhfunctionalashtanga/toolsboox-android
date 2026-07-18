@@ -110,6 +110,17 @@
         android:visibility="gone"
         android:layout_width="match_parent" android:layout_height="wrap_content"/>
 
+    <!-- Today's birthdays from the rolodex (tappable → the contact). Filled in code. -->
+    <LinearLayout
+        android:id="@+id/birthdays_container"
+        android:orientation="vertical"
+        android:visibility="gone"
+        android:paddingHorizontal="18dp"
+        android:paddingTop="4dp"
+        android:paddingBottom="6dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/items_recycler"
         android:layout_width="match_parent"
