@@ -252,10 +252,17 @@ abstract class SurfaceFragment : ScreenFragment() {
     private var imageMode = false
     private var imageElements: MutableList<ImageElement> = mutableListOf()
     private var selectedImage: ImageElement? = null
-    private enum class ImageDrag { NONE, MOVE, RESIZE }
+    private enum class ImageDrag { NONE, MOVE, RESIZE, ROTATE }
     private var imageDrag = ImageDrag.NONE
     private var imageDragStartX = 0f
     private var imageDragStartY = 0f
+    // Free-rotate drag off the "Rot" handle: swing about the image centre. A tap (no swing)
+    // falls back to the discrete 15° nudge, so both gestures live on the one handle.
+    private var imageRotateCX = 0f
+    private var imageRotateCY = 0f
+    private var imageRotateStartAngle = 0f
+    private var imageRotateOrigRotation = 0f
+    private var imageRotateMoved = false
 
     /** Text box selected in element-manipulation mode (dragged like an image). */
     private var selectedTextBox: TextElement? = null
@@ -3402,13 +3409,19 @@ abstract class SurfaceFragment : ScreenFragment() {
                                         applyStrokes(strokes, true)
                                     }
                                     "Rot" -> {
-                                        // Discrete 15° step, wrapped to [0,360). Bump the timestamp so a
-                                        // cross-device merge keeps the rotated version; keep it selected.
+                                        // Arm a free-rotate drag about the image centre. Swing the stylus/
+                                        // finger to set any angle; a plain tap (no swing) falls back to the
+                                        // discrete 15° nudge on release. Angle is measured relative to the
+                                        // press point so grabbing the handle never snaps the image.
                                         pushUndo()
-                                        sel.rotation = ((sel.rotation + 15f) % 360f + 360f) % 360f
-                                        sel.timestamp = System.currentTimeMillis()
-                                        onImageElementsChanged(imageElements)
-                                        drawImageSelection()
+                                        imageDrag = ImageDrag.ROTATE
+                                        imageRotateCX = box.centerX()
+                                        imageRotateCY = box.centerY()
+                                        imageRotateStartAngle = Math.toDegrees(
+                                            Math.atan2((y - imageRotateCY).toDouble(), (x - imageRotateCX).toDouble())
+                                        ).toFloat()
+                                        imageRotateOrigRotation = sel.rotation
+                                        imageRotateMoved = false
                                     }
                                     "Dup" -> {
                                         // Copy in place with a slight offset (fresh id + timestamp);
@@ -3490,7 +3503,21 @@ abstract class SurfaceFragment : ScreenFragment() {
                     sel.height = newW * (imageOrigRect.height() / imageOrigRect.width().coerceAtLeast(1f))
                     drawImageSelection()
                     return true
+                } else if (actionMove && sel != null && imageDrag == ImageDrag.ROTATE) {
+                    val ang = Math.toDegrees(
+                        Math.atan2((y - imageRotateCY).toDouble(), (x - imageRotateCX).toDouble())
+                    ).toFloat()
+                    val delta = ang - imageRotateStartAngle
+                    if (abs(delta) > 1.5f) imageRotateMoved = true
+                    sel.rotation = ((imageRotateOrigRotation + delta) % 360f + 360f) % 360f
+                    drawImageSelection()
+                    return true
                 } else if (actionUp && imageDrag != ImageDrag.NONE) {
+                    // A tap on the Rot handle (no swing) nudges a discrete 15° instead.
+                    if (imageDrag == ImageDrag.ROTATE && !imageRotateMoved && sel != null) {
+                        sel.rotation = ((imageRotateOrigRotation + 15f) % 360f + 360f) % 360f
+                    }
+                    if (sel != null) sel.timestamp = System.currentTimeMillis()
                     imageDrag = ImageDrag.NONE
                     onImageElementsChanged(imageElements)
                     applyStrokes(strokes, true)
