@@ -596,14 +596,14 @@ abstract class ScreenFragment : Fragment() {
         dialog.show()
         dialog.window?.let { w ->
             val lp = w.attributes
-            // Narrower, and never wider than the screen minus a comfortable margin (fits the Palma).
-            lp.width = minOf(dp(200), resources.displayMetrics.widthPixels - dp(40))
+            // Narrow, with a clear edge margin — never more than ~46% of the screen width.
+            lp.width = minOf(dp(176), (resources.displayMetrics.widthPixels * 0.46f).toInt())
             if (anchorTop) {
                 lp.gravity = Gravity.START or Gravity.TOP
-                lp.x = dp(12); lp.y = dp(54)
+                lp.x = dp(16); lp.y = dp(54)
             } else {
                 lp.gravity = Gravity.END or Gravity.BOTTOM
-                lp.x = dp(12); lp.y = dp(80)
+                lp.x = dp(16); lp.y = dp(80)
             }
             w.attributes = lp
         }
@@ -771,8 +771,8 @@ abstract class ScreenFragment : Fragment() {
             val lp = w.attributes
             lp.gravity = Gravity.START or Gravity.TOP
             val metrics = resources.displayMetrics
-            lp.x = dp(8); lp.y = dp(54)
-            lp.width = minOf(dp(260), metrics.widthPixels - dp(16))
+            lp.x = dp(16); lp.y = dp(54)
+            lp.width = minOf(dp(220), (metrics.widthPixels * 0.52f).toInt())
             // Size to content, but clamp to the visible area below y so a tall menu scrolls
             // within the screen instead of running off the bottom (small screens like the Palma).
             val avail = metrics.heightPixels - lp.y - dp(16)
@@ -846,7 +846,8 @@ abstract class ScreenFragment : Fragment() {
         dialog.window?.let { w ->
             val lp = w.attributes
             lp.gravity = Gravity.START or Gravity.TOP
-            lp.x = dp(8); lp.y = dp(54); lp.width = dp(250)
+            lp.x = dp(16); lp.y = dp(54)
+            lp.width = minOf(dp(220), (resources.displayMetrics.widthPixels * 0.52f).toInt())
             lp.height = (resources.displayMetrics.heightPixels * 0.7f).toInt()
             w.attributes = lp
         }

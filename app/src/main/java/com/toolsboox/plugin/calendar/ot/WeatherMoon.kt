@@ -9,16 +9,23 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 /**
- * The little "☀ 72° · 🌒 Waxing Crescent" line on the day page's Notes & Other events header.
+ * The weather + moon strip on the day page's Notes & Other events area:
+ *   line 1 — "⛅ 72°  ↑78° ↓61°  💧20%  🌒 Waxing Crescent"  (current, day high/low, precip, moon)
+ *   line 2 — a compact horizontal hour-by-hour temperature sparkline for the day.
  *
- * Moon phase is a pure local calculation (no network). Weather is fetched by IP geolocation
- * (no GPS / no permissions — fine on a Boox) from Open-Meteo, and cached for an hour.
+ * Moon phase is a pure local calculation. Weather is fetched by IP geolocation (no GPS/permission)
+ * from Open-Meteo and cached for an hour; it degrades to moon-only when offline.
  */
 object WeatherMoon {
     private const val PREFS = "weather_moon"
-    private const val KEY_SUMMARY = "summary"
-    private const val KEY_FETCHED = "fetched_at"
     private const val TTL_MS = 60 * 60 * 1000L
+    private const val K_SUMMARY = "summary"       // "⛅ 72°" (current glyph + temp)
+    private const val K_HIGH = "high"
+    private const val K_LOW = "low"
+    private const val K_PRECIP = "precip"          // day max precipitation probability, %
+    private const val K_HOURLY = "hourly"          // comma-joined hourly temps for the day
+    private const val K_FETCHED = "fetched_at"
+    private const val K_DAY = "day"                // ISO date the cache is for
 
     private val MOON_GLYPHS = listOf("🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘")
     private val MOON_NAMES = listOf(
@@ -36,39 +43,66 @@ object WeatherMoon {
         return MOON_GLYPHS[i] to MOON_NAMES[i]
     }
 
-    /** The full line for [date] — weather (if cached) then the moon phase with its name. */
+    private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    /** Header line for [date] — weather (only for today, if cached) then the moon phase. */
     fun summary(context: Context, date: LocalDate): String {
         val (glyph, name) = moon(date)
-        val weather = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_SUMMARY, null)
-        return if (weather.isNullOrBlank()) "$glyph $name" else "$weather · $glyph $name"
+        val p = prefs(context)
+        // Weather is for "today"; on other days show just the moon.
+        val current = p.getString(K_SUMMARY, null)
+        val forDay = p.getString(K_DAY, null)
+        if (current.isNullOrBlank() || forDay != date.toString()) return "$glyph $name"
+        val high = p.getInt(K_HIGH, Int.MIN_VALUE)
+        val low = p.getInt(K_LOW, Int.MIN_VALUE)
+        val precip = p.getInt(K_PRECIP, -1)
+        val parts = StringBuilder(current)
+        if (high != Int.MIN_VALUE && low != Int.MIN_VALUE) parts.append("  ↑${high}° ↓${low}°")
+        if (precip > 0) parts.append("  💧${precip}%")
+        parts.append("  $glyph $name")
+        return parts.toString()
     }
 
-    /** Compact badge for the narrow Notes & Other events bar — weather (if cached) + moon glyph. */
-    fun headerBadge(context: Context, date: LocalDate): String {
-        val glyph = moon(date).first
-        val weather = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_SUMMARY, null)
-        return if (weather.isNullOrBlank()) glyph else "$weather  $glyph"
+    /** The day's hourly temperatures for the sparkline (empty if not cached for [date]). */
+    fun hourly(context: Context, date: LocalDate): List<Float> {
+        val p = prefs(context)
+        if (p.getString(K_DAY, null) != date.toString()) return emptyList()
+        return p.getString(K_HOURLY, null)?.split(",")?.mapNotNull { it.toFloatOrNull() } ?: emptyList()
     }
 
-    /** Refresh the cached weather by IP location. Returns true if the cache changed. Safe to call often. */
+    /** Refresh by IP location. Returns true if the cache changed. Safe to call often. */
     suspend fun refresh(context: Context): Boolean = withContext(Dispatchers.IO) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (System.currentTimeMillis() - prefs.getLong(KEY_FETCHED, 0L) < TTL_MS && prefs.contains(KEY_SUMMARY)) {
-            return@withContext false
-        }
+        val p = prefs(context)
+        val today = LocalDate.now().toString()
+        val fresh = System.currentTimeMillis() - p.getLong(K_FETCHED, 0L) < TTL_MS
+        if (fresh && p.getString(K_DAY, null) == today && p.contains(K_SUMMARY)) return@withContext false
         try {
-            // ipwho.is: HTTPS, keyless, no rate-limit blocking (ipapi.co rate-limits datacenter IPs).
             val loc = JSONObject(URL("https://ipwho.is/").readText())
             val lat = loc.getDouble("latitude")
             val lon = loc.getDouble("longitude")
-            val wx = JSONObject(
-                URL("https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon" +
-                    "&current=temperature_2m,weather_code&temperature_unit=fahrenheit").readText()
-            ).getJSONObject("current")
-            val summary = "${glyphFor(wx.getInt("weather_code"))} ${wx.getDouble("temperature_2m").toInt()}°"
-            val before = prefs.getString(KEY_SUMMARY, null)
-            prefs.edit().putString(KEY_SUMMARY, summary).putLong(KEY_FETCHED, System.currentTimeMillis()).apply()
-            summary != before
+            val wx = JSONObject(URL(
+                "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon" +
+                    "&current=temperature_2m,weather_code" +
+                    "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
+                    "&hourly=temperature_2m&temperature_unit=fahrenheit&timezone=auto&forecast_days=1"
+            ).readText())
+
+            val cur = wx.getJSONObject("current")
+            val summary = "${glyphFor(cur.getInt("weather_code"))} ${cur.getDouble("temperature_2m").toInt()}°"
+            val daily = wx.getJSONObject("daily")
+            val high = daily.getJSONArray("temperature_2m_max").getDouble(0).toInt()
+            val low = daily.getJSONArray("temperature_2m_min").getDouble(0).toInt()
+            val precip = daily.getJSONArray("precipitation_probability_max").optInt(0, 0)
+            val hArr = wx.getJSONObject("hourly").getJSONArray("temperature_2m")
+            val hourly = (0 until hArr.length()).joinToString(",") { hArr.getDouble(it).toInt().toString() }
+
+            val before = p.getString(K_SUMMARY, null)
+            p.edit()
+                .putString(K_SUMMARY, summary).putInt(K_HIGH, high).putInt(K_LOW, low)
+                .putInt(K_PRECIP, precip).putString(K_HOURLY, hourly)
+                .putString(K_DAY, today).putLong(K_FETCHED, System.currentTimeMillis())
+                .apply()
+            summary != before || p.getString(K_DAY, null) != today
         } catch (_: Exception) {
             false   // offline / rate-limited: keep the last cache, moon phase still shows
         }
