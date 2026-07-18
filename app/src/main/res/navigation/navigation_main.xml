@@ -67,6 +67,10 @@
             app:destination="@id/LedgerItemsFragment"/>
 
     <action
+            android:id="@+id/action_to_rolodex"
+            app:destination="@id/RolodexFragment"/>
+
+    <action
             android:id="@+id/action_to_text_notes"
             app:destination="@id/TextNotesFragment"/>
 
@@ -151,6 +155,12 @@
             android:name="com.toolsboox.plugin.calendar.ui.LedgerItemsFragment"
             android:label="LedgerItemsFragment"
             tools:layout="@layout/fragment_ledger_items"/>
+
+    <fragment
+            android:id="@+id/RolodexFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.RolodexFragment"
+            android:label="RolodexFragment"
+            tools:layout="@layout/fragment_rolodex"/>
 
     <fragment
             android:id="@+id/ReadingLogFragment"
