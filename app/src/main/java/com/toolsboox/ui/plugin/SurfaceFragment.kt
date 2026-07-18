@@ -3595,9 +3595,14 @@ abstract class SurfaceFragment : ScreenFragment() {
                     showMessage(R.string.calendar_drawing_toolbar_pasted, provideSurfaceView())
                 }
                 if (actionUp) {
+                    // Leave the freshly pasted strokes as a LIVE selection (exactly like a lasso
+                    // commit) so they can be moved / rotated / scaled / deleted until the user taps
+                    // off — don't revert to the pen. syncRawInkToSelectionMenu keeps hardware ink
+                    // paused (hasSelection is true) so the stylus manipulates rather than draws.
                     pasteMode = false
                     provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
-                    provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
+                    syncRawInkToSelectionMenu()
+                    drawWithSelection()
                 }
                 return true
             }
