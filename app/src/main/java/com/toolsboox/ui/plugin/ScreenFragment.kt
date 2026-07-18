@@ -598,13 +598,10 @@ abstract class ScreenFragment : Fragment() {
             val lp = w.attributes
             // Narrow, with a clear edge margin — never more than ~46% of the screen width.
             lp.width = minOf(dp(176), (resources.displayMetrics.widthPixels * 0.46f).toInt())
-            if (anchorTop) {
-                lp.gravity = Gravity.START or Gravity.TOP
-                lp.x = dp(16); lp.y = dp(54)
-            } else {
-                lp.gravity = Gravity.END or Gravity.BOTTOM
-                lp.x = dp(16); lp.y = dp(80)
-            }
+            // Always top-left, matching showAccordion/showDirectory — so the menu appears in the
+            // SAME position on every screen (day, feeds, reader) instead of jumping to the pill.
+            lp.gravity = Gravity.START or Gravity.TOP
+            lp.x = dp(16); lp.y = dp(54)
             w.attributes = lp
         }
     }
