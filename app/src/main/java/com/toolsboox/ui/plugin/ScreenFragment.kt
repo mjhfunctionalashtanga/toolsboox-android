@@ -647,11 +647,41 @@ abstract class ScreenFragment : Fragment() {
     protected fun applyRowIcon(row: View, label: String): String {
         val icon = row.findViewById<ImageView>(R.id.go_icon)
         val res = emojiIconRes(label)
-        if (res == null) { icon.visibility = View.GONE; return label }
-        icon.setImageResource(res); icon.visibility = View.VISIBLE
-        val t = label.trimStart()
-        val emoji = emojiIcons.keys.first { t.startsWith(it) }
-        return t.removePrefix(emoji).trim()
+        if (res != null) {
+            icon.setImageResource(res); icon.visibility = View.VISIBLE
+            val t = label.trimStart()
+            val emoji = emojiIcons.keys.first { t.startsWith(it) }
+            return t.removePrefix(emoji).trim()
+        }
+        // Unmapped leading glyph ("@  Correspondence") → same bitmap fallback as folder headers,
+        // so child rows align identically. Convention: glyph + two spaces + label; indented rows
+        // (leading whitespace) and plain sentences pass through untouched.
+        if (!label.startsWith(" ")) {
+            val idx = label.indexOf("  ")
+            if (idx in 1..3) {
+                drawGlyphIcon(icon, label.substring(0, idx))
+                return label.substring(idx).trim()
+            }
+        }
+        icon.visibility = View.GONE
+        return label
+    }
+
+    /** Draw [glyph] into a bitmap the size of the icon slot — any character, pixel-aligned. */
+    private fun drawGlyphIcon(icon: ImageView, glyph: String) {
+        val size = (26 * resources.displayMetrics.density).toInt().coerceAtLeast(24)
+        val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bmp)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textAlign = android.graphics.Paint.Align.CENTER
+            textSize = size * 0.8f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        val y = size / 2f - (paint.descent() + paint.ascent()) / 2f
+        canvas.drawText(glyph, size / 2f, y, paint)
+        icon.setImageBitmap(bmp)
+        icon.visibility = View.VISIBLE
     }
 
     /**
@@ -704,19 +734,7 @@ abstract class ScreenFragment : Fragment() {
         val res = emojiIconRes(emoji)
         if (res != null) { icon.setImageResource(res); icon.visibility = View.VISIBLE; return true }
         if (emoji.isBlank()) { icon.visibility = View.GONE; return false }
-        val size = (26 * resources.displayMetrics.density).toInt().coerceAtLeast(24)
-        val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(bmp)
-        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.BLACK
-            textAlign = android.graphics.Paint.Align.CENTER
-            textSize = size * 0.8f
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-        }
-        val y = size / 2f - (paint.descent() + paint.ascent()) / 2f
-        canvas.drawText(emoji, size / 2f, y, paint)
-        icon.setImageBitmap(bmp)
-        icon.visibility = View.VISIBLE
+        drawGlyphIcon(icon, emoji)
         return true
     }
 
@@ -802,9 +820,9 @@ abstract class ScreenFragment : Fragment() {
             lp.gravity = Gravity.START or Gravity.TOP
             val metrics = resources.displayMetrics
             // Flush left, but BELOW the date-nav strip across the top (it stays usable).
-            lp.x = 0; lp.y = dp(96)
+            lp.x = 0; lp.y = dp(64)
             lp.width = minOf(dp(300), (metrics.widthPixels * 0.66f).toInt())
-            lp.height = metrics.heightPixels - dp(96)
+            lp.height = metrics.heightPixels - dp(64)
             w.attributes = lp
         }
     }
