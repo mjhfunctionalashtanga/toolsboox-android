@@ -71,6 +71,16 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     private var loading = false
     private var allEntries: List<FeedEntry> = emptyList()
 
+    override fun onResume() {
+        super.onResume()
+        // Returning from the article with "open the directory" flagged (the ☰ path): entries are
+        // already loaded, so fire it here — the refresh success path only covers fresh loads.
+        if (FeedSelection.openDirectoryOnArrival && allEntries.isNotEmpty()) {
+            FeedSelection.openDirectoryOnArrival = false
+            showFeedDirectory()
+        }
+    }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentFeedsBinding.bind(view)
@@ -940,7 +950,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val inCat = allEntries.filter { it.categoryLabel == label }
         val feeds = inCat.map { it.feedTitle }.filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }
         if (feeds.size <= 1) { adapter.submit(inCat); return }
-        val rows = listOf<Pair<String, () -> Unit>>("🗂  All — $label" to { adapter.submit(inCat) }) +
+        val rows = listOf<Pair<String, () -> Unit>>("📰  All — $label" to { adapter.submit(inCat) }) +
             feeds.map { f -> ("📰  $f" to { adapter.submit(inCat.filter { it.feedTitle == f }) }) }
         showDirectory(listOf(label to rows))
     }
@@ -1143,8 +1153,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                         ("🔎  ${sf.name}" to { switchToSmart(sf) })
                     } + ("➕  Add smart feed…" to { promptAddSmartFeed() }),
                     expanded = true),
-                Folder("🗨", "Ask", action = { switchTo("asklog", null) }),
-                Folder("🔍", "Search", action = { showFeedSearch() }),
+                Folder("💬", "Ask", action = { switchTo("asklog", null) }),
+                Folder("🔎", "Search", action = { showFeedSearch() }),
                 // Kept available below the requested set.
                 Folder("📰", "All", action = { switchTo("feed", null) }),
                 Folder("⭐", "Stars", action = { switchTo("stars", null) }),

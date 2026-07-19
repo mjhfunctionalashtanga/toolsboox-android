@@ -158,34 +158,11 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
             }.show()
     }
 
+    /** ☰ from the article: land back on the feeds list with THE feeds directory open — one
+     *  directory implementation (FeedsFragment.showFeedDirectory), one look, everywhere. */
     private fun openRssDirectory() {
-        fun toFeeds(mode: String, kind: String?, feedTitle: String? = null) {
-            FeedSelection.mode = mode; FeedSelection.kind = kind; FeedSelection.filterFeedTitle = feedTitle
-            findNavController().popBackStack()
-        }
-        // Each lens drills into its individual feeds (from the list this article came from).
-        fun lens(emoji: String, label: String, k: String): ScreenFragment.Folder {
-            val feeds = FeedSelection.list.filter { it.kind == k }
-                .map { it.feedTitle }.filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }
-            return ScreenFragment.Folder(emoji, label,
-                listOf<Pair<String, () -> Unit>>("$emoji  All $label" to { toFeeds("feed", k) }) +
-                    feeds.map { f -> ("      · $f" to { toFeeds("feed", k, f) }) },
-                expanded = true)
-        }
-        val folders = listOf(
-            ScreenFragment.Folder("📰", "All", action = { toFeeds("feed", null) }),
-            ScreenFragment.Folder("⭐", "Stars", action = { toFeeds("stars", null) }),
-            lens("📖", "Read", "read"),
-            lens("📺", "Watch", "watch"),
-            lens("🎧", "Listen", "listen"),
-            ScreenFragment.Folder("🔖", "Later List", listOf(
-                "🔖  All" to { toFeeds("later", null) },
-                "📖  Read" to { toFeeds("later", "read") },
-                "📺  Watch" to { toFeeds("later", "watch") },
-                "🎧  Listen" to { toFeeds("later", "listen") }
-            ), expanded = true)
-        ) + ledgerDirectoryFolders(this)
-        showAccordion(folders)
+        FeedSelection.openDirectoryOnArrival = true
+        findNavController().popBackStack()
     }
 
     /** Jump to the first article of the next feed source in the list. */
