@@ -166,6 +166,24 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 text = post.excerpt; textSize = 14f; setTextColor(0xFF000000.toInt())
             })
             val actions = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+            // Like — the FluentCommunity reaction, toggled straight from the Ledger.
+            var liked = post.liked
+            var likeCount = post.reactionsCount
+            actions.addView(TextView(ctx).apply {
+                fun label() = (if (liked) "♥" else "♡") + (if (likeCount > 0) "  $likeCount" else "")
+                text = label()
+                textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(6), px(18), 0)
+                setOnClickListener {
+                    val was = liked; val count0 = likeCount
+                    liked = !liked; likeCount = (likeCount + if (liked) 1 else -1).coerceAtLeast(0)
+                    text = label()   // optimistic flip
+                    lifecycleScope.launch {
+                        val res = withContext(Dispatchers.IO) { LedgerCorrespondence.reactPost(ctx, post.id) }
+                        if (res == null) { liked = was; likeCount = count0; text = label() }   // revert
+                        else { liked = res.first; likeCount = res.second; text = label() }
+                    }
+                }
+            })
             actions.addView(TextView(ctx).apply {
                 text = "✍  Reply in ink"
                 textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(6), px(18), 0)

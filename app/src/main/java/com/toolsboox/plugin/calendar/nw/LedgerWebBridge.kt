@@ -311,6 +311,8 @@ data class LedgerPost(
     val createdAt: String,
     val commentsCount: Int,
     val url: String,
+    val reactionsCount: Int = 0,
+    val liked: Boolean = false,
 )
 
 /** Correspondence fetch + ink reply — the Boox half of the Correspondence page. */
@@ -373,13 +375,39 @@ object LedgerCorrespondence {
                         it.optString("author", "?"),
                         it.optString("created_at", ""),
                         it.optInt("comments_count", 0),
-                        it.optString("url", "")
+                        it.optString("url", ""),
+                        it.optInt("reactions_count", 0),
+                        it.optBoolean("liked", false),
                     )
                 }
             }
         } catch (e: Exception) {
             Timber.w(e, "space feed fetch failed")
             emptyList()
+        }
+    }
+
+    /** Toggle a like on a community post. Returns (liked, count) or null on failure. Dispatchers.IO. */
+    fun reactPost(context: Context, feedId: Long): Pair<Boolean, Int>? {
+        val c = LedgerCommunityBridge.config(context)
+        if (!c.ready) return null
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("feed_id", feedId.toString())
+            .build()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/community/react")
+                .post(body)
+                .header("Authorization", Credentials.basic(c.user, c.pass))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val o = JSONObject(resp.body?.string() ?: return null)
+                o.optBoolean("liked", false) to o.optInt("reactions_count", 0)
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "react failed")
+            null
         }
     }
 

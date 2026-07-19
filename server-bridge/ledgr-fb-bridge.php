@@ -213,6 +213,13 @@ class Ledgr_FB_Bridge
             'permission_callback' => [$this, 'canCommunity'],
         ]);
 
+        // Like/unlike a community post (the multilike stack) — toggles for the current user.
+        register_rest_route(self::NS, '/community/react', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'reactPost'],
+            'permission_callback' => [$this, 'canCommunity'],
+        ]);
+
         register_rest_route(self::NS, '/community/courses', [
             'methods'             => 'GET',
             'callback'            => [$this, 'listCourses'],
@@ -1906,18 +1913,29 @@ class Ledgr_FB_Bridge
         try {
             $feeds = \FluentCommunity\App\Models\Feed::where('space_id', $spaceId)
                 ->orderBy('id', 'desc')->limit($limit)->get();
+            // Which of these the current user has already liked (one query, not per-post).
+            $uid       = get_current_user_id();
+            $feedIds   = $feeds->pluck('id')->all();
+            $likedIds  = [];
+            if ($feedIds && class_exists('\FluentCommunity\App\Models\Reaction')) {
+                $likedIds = \FluentCommunity\App\Models\Reaction::where('object_type', 'feed')
+                    ->where('type', 'like')->where('user_id', $uid)
+                    ->whereIn('object_id', $feedIds)->pluck('object_id')->map('intval')->all();
+            }
             foreach ($feeds as $f) {
                 $author = get_user_by('id', $f->user_id);
                 $body   = (string) ($f->message_rendered ?: $f->message);
                 $out[]  = [
-                    'id'             => (int) $f->id,
-                    'title'          => $f->title ?: null,
-                    'excerpt'        => wp_trim_words(wp_strip_all_tags($body), 60),
-                    'html'           => $body,
-                    'author'         => $author ? $author->display_name : ('User ' . $f->user_id),
-                    'created_at'     => (string) $f->created_at,
-                    'comments_count' => (int) ($f->comments_count ?? 0),
-                    'url'            => (method_exists($f, 'getPermalink') ? $f->getPermalink()
+                    'id'              => (int) $f->id,
+                    'title'           => $f->title ?: null,
+                    'excerpt'         => wp_trim_words(wp_strip_all_tags($body), 60),
+                    'html'            => $body,
+                    'author'          => $author ? $author->display_name : ('User ' . $f->user_id),
+                    'created_at'      => (string) $f->created_at,
+                    'comments_count'  => (int) ($f->comments_count ?? 0),
+                    'reactions_count' => (int) ($f->reactions_count ?? 0),
+                    'liked'           => in_array((int) $f->id, $likedIds, true),
+                    'url'             => (method_exists($f, 'getPermalink') ? $f->getPermalink()
                                              : apply_filters('ledgr_fb/thread_url', home_url('/portal/post/' . $f->id), 'community', $f->id)),
                 ];
             }
@@ -1925,6 +1943,76 @@ class Ledgr_FB_Bridge
             return new \WP_Error('ledgr_feed_failed', $e->getMessage(), ['status' => 500]);
         }
         return rest_ensure_response(['space_id' => $spaceId, 'items' => $out]);
+    }
+
+    /* ---------------------------------------------------------------
+     * POST /ledgr/v1/community/react
+     * body: feed_id (required)
+     * Toggle the current user's "like" on a community post — the same
+     * fcom_post_reactions row the web portal uses, then recount the cached
+     * total. Returns the new state so the card can flip its heart.
+     * ------------------------------------------------------------- */
+
+    public function reactPost(\WP_REST_Request $request)
+    {
+        if (!class_exists('\FluentCommunity\App\Models\Reaction')) {
+            return new \WP_Error('ledgr_no_community', 'FluentCommunity is not active', ['status' => 501]);
+        }
+        $feedId = (int) $request->get_param('feed_id');
+        if (!$feedId) {
+            return new \WP_Error('ledgr_bad_request', 'feed_id is required', ['status' => 400]);
+        }
+
+        try {
+            $feed = \FluentCommunity\App\Models\Feed::find($feedId);
+            if (!$feed) {
+                return new \WP_Error('ledgr_not_found', 'Post not found', ['status' => 404]);
+            }
+
+            // Members can react to a post only if it's in a public space or one they belong to.
+            if (!current_user_can('manage_options')) {
+                try {
+                    $memberOf = \FluentCommunity\App\Models\SpaceUserPivot::where('user_id', get_current_user_id())
+                        ->pluck('space_id')->all();
+                    $space = \FluentCommunity\App\Models\Space::find($feed->space_id);
+                    if ($space && $space->privacy !== 'public' && !in_array($feed->space_id, $memberOf)) {
+                        return new \WP_Error('ledgr_forbidden', 'not a member of this space', ['status' => 403]);
+                    }
+                } catch (\Exception $e) { /* fall through */ }
+            }
+
+            $uid      = get_current_user_id();
+            $existing = \FluentCommunity\App\Models\Reaction::where('object_type', 'feed')
+                ->where('type', 'like')->where('object_id', $feedId)->where('user_id', $uid)->first();
+
+            $liked = false;
+            if ($existing) {
+                $existing->delete();
+            } else {
+                $react = \FluentCommunity\App\Models\Reaction::create([
+                    'user_id'     => $uid,
+                    'object_id'   => $feedId,
+                    'object_type' => 'feed',
+                    'type'        => 'like',
+                ]);
+                $liked = true;
+                // Correct signature is ($reaction, $feed) — fires the "liked your post" notification.
+                do_action('fluent_community/feed/react_added', $react, $feed);
+            }
+
+            if (method_exists($feed, 'recountStats')) {
+                $feed->recountStats();
+            }
+
+            return rest_ensure_response([
+                'feed_id'         => $feedId,
+                'liked'           => $liked,
+                'reactions_count' => (int) \FluentCommunity\App\Models\Reaction::where('object_type', 'feed')
+                    ->where('type', 'like')->where('object_id', $feedId)->count(),
+            ]);
+        } catch (\Exception $e) {
+            return new \WP_Error('ledgr_react_failed', $e->getMessage(), ['status' => 400]);
+        }
     }
 
     /* ---------------------------------------------------------------
