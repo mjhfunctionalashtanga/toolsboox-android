@@ -494,7 +494,12 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             for (kind in kinds) {
                 data.typedFor(kind).lines().map { it.trim() }.filter { it.isNotBlank() }.forEach { line ->
                     val url = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.extractUrls(line).firstOrNull() ?: line
-                    val title = line.replace(url, "").trim().ifBlank { url }
+                    // A link saved without a title reads as its host ("nytimes.com"), not the
+                    // raw URL; stripping the URL also drops the " — " separator leftovers.
+                    val title = line.replace(url, "").trim().trim('—', '-', ' ')
+                        .ifBlank { runCatching { android.net.Uri.parse(url).host?.removePrefix("www.") }.getOrNull() ?: url }
+                    // Same link re-filed on another day shows once (newest day wins — we walk newest-first).
+                    if (out.any { it.url == url && it.title == title }) return@forEach
                     // Reuse the RSS kind field via category so applyKind() sees read/watch/listen.
                     out += FeedEntry(
                         id = idSeed++, title = title, feedTitle = "Later · $kind",

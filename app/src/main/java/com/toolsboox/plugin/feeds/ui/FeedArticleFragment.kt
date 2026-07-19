@@ -66,8 +66,9 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         // JS on so we can read the text selection for highlight-to-annotation.
         binding.articleWeb.settings.javaScriptEnabled = true
 
-        // Tapping a link opens a menu (Open / Later / Copy); HOLDING now falls through to native
-        // text selection, so you can highlight & copy passages — including a link's text.
+        // Tapping a link opens a menu (Open / Later / Copy). HOLDING a link opens the same
+        // menu (finger on the link → Save to Later List); holding plain text still falls
+        // through to native selection so passages stay highlightable.
         binding.articleWeb.webViewClient = object : android.webkit.WebViewClient() {
             override fun shouldOverrideUrlLoading(
                 view: android.webkit.WebView, request: android.webkit.WebResourceRequest
@@ -76,6 +77,15 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                 if (url.startsWith("http")) { showLinkMenu(url); return true }
                 return false
             }
+        }
+        binding.articleWeb.setOnLongClickListener {
+            val hit = binding.articleWeb.hitTestResult
+            val isLink = hit.type == android.webkit.WebView.HitTestResult.SRC_ANCHOR_TYPE ||
+                hit.type == android.webkit.WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE
+            val url = hit.extra
+            if (isLink && !url.isNullOrBlank() && url.startsWith("http")) {
+                showLinkMenu(url); true
+            } else false
         }
 
         // Floating nav pill: grip drags/collapses; ‹ › page, ⌃ ⌄ step articles, ✎ annotate.
@@ -141,7 +151,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
     private fun showLinkMenu(url: String) {
         androidx.appcompat.app.AlertDialog.Builder(requireContext())
             .setTitle(url)
-            .setItems(arrayOf("🌐  Open", "🔖  Add to Later List", "📋  Copy link")) { _, which ->
+            .setItems(arrayOf("🌐  Open", "🔖  Save to Later List", "📋  Copy link")) { _, which ->
                 when (which) {
                     0 -> startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
                     1 -> {
@@ -213,6 +223,15 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         val fixed: List<Pair<String, () -> Unit>> = listOf(
             "🌐  Open in browser" to {
                 entry?.url?.takeIf { it.isNotBlank() }?.let { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) }; Unit
+            },
+            "🔖  Save to Later List" to {
+                val e = entry
+                val u = e?.url?.takeIf { it.isNotBlank() }
+                if (u != null) {
+                    com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.fileLink(
+                        requireContext(), java.time.LocalDate.now(), "read", u, e.title)
+                    showMessage("Saved to Later List", binding.root)
+                } else showMessage("No link on this article", binding.root)
             },
             ((if (tapOn) "☑" else "☐") + "  Tap-zone paging") to { navPrefs().edit().putBoolean("tap_zones", !tapOn).apply(); setupTapZones() },
             ((if (volOn) "☑" else "☐") + "  Volume page-turn") to { navPrefs().edit().putBoolean("volume_turn", !volOn).apply(); Unit },
