@@ -1671,6 +1671,9 @@ class Ledgr_FB_Bridge
         $spaceId  = (int) $request->get_param('space_id');
         $text     = wp_strip_all_tags((string) $request->get_param('text'));
         $title    = sanitize_text_field((string) $request->get_param('title'));
+        // Provenance: a user-editable "↩ in reply to…" caption + an optional source link.
+        $provenance = wp_strip_all_tags((string) $request->get_param('provenance'));
+        $provUrl    = esc_url_raw((string) $request->get_param('prov_url'));
 
         if (!$noteUuid || !$spaceId) {
             return new \WP_Error('ledgr_bad_request', 'note_uuid and space_id are required', ['status' => 400]);
@@ -1735,7 +1738,18 @@ class Ledgr_FB_Bridge
             return new \WP_Error('ledgr_empty', 'A gram needs ink, voice, or text', ['status' => 400]);
         }
 
-        $html = $mediaHtml . ($text ? '<p>' . nl2br(esc_html($text)) . '</p>' : '');
+        // The provenance block leads the gram, so a reader sees what it answers.
+        $provHtml = '';
+        if ($provenance !== '') {
+            $provHtml = '<div class="ledgr-provenance" style="border-left:3px solid #999;padding-left:10px;'
+                . 'margin:0 0 12px;color:#555;font-style:italic">' . nl2br(esc_html($provenance));
+            if ($provUrl) {
+                $provHtml .= ' <a href="' . esc_url($provUrl) . '">↗</a>';
+            }
+            $provHtml .= '</div>';
+        }
+
+        $html = $provHtml . $mediaHtml . ($text ? '<p>' . nl2br(esc_html($text)) . '</p>' : '');
 
         try {
             $feed = \FluentCommunity\App\Models\Feed::create([

@@ -187,7 +187,11 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             actions.addView(TextView(ctx).apply {
                 text = "✍  Reply in ink"
                 textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(6), px(18), 0)
-                setOnClickListener { showInkReplyDialog(post.id, post.title.ifBlank { spaceTitle }) }
+                val provDefault = "↩ In reply to ${post.author}" +
+                    post.excerpt.trim().take(90).let { if (it.isNotBlank()) ": “$it”" else "" }
+                setOnClickListener {
+                    showInkReplyDialog(post.id, post.title.ifBlank { spaceTitle }, provDefault, post.url)
+                }
             })
             if (post.url.isNotBlank()) actions.addView(TextView(ctx).apply {
                 text = "↗  Open"
@@ -275,16 +279,26 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
 
     /** A white card you write on with the stylus; Done posts the ink as your comment. */
     @SuppressLint("ClickableViewAccessibility")
-    private fun showInkReplyDialog(feedId: Long, thread: String) {
+    private fun showInkReplyDialog(
+        feedId: Long, thread: String, provenanceDefault: String? = null, provUrl: String? = null
+    ) {
         val ctx = requireContext()
         val ink = InkPadView(ctx)
         val dp = resources.displayMetrics.density
-        val pad = (12 * dp).toInt()
+        fun px(v: Int) = (v * dp).toInt()
         val box = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0)
+            orientation = LinearLayout.VERTICAL; setPadding(px(12), px(6), px(12), 0)
             addView(ink, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (420 * dp).toInt()))
         }
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        // When there's provenance to carry, offer sharing this ink as a gram instead of a comment.
+        var shareAsGram: (() -> Unit)? = null
+        if (provenanceDefault != null) box.addView(TextView(ctx).apply {
+            text = "↗  Share as gram instead…"
+            textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(px(2), px(12), 0, px(4))
+            setOnClickListener { shareAsGram?.invoke() }
+        })
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
             .setTitle("Reply in ink · ${thread.ifBlank { "thread" }}")
             .setView(box)
             .setPositiveButton("Send") { _, _ ->
@@ -305,11 +319,69 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             }
             .setNeutralButton("Clear") { _, _ -> }
             .setNegativeButton("Cancel", null)
-            .show()
-            .also { dialog ->
-                // Keep the dialog open on Clear — re-bind the button after show().
-                dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { ink.clear() }
+            .create()
+        shareAsGram = {
+            val bmp = ink.render()
+            if (bmp == null) {
+                android.widget.Toast.makeText(ctx, "Nothing written", android.widget.Toast.LENGTH_SHORT).show()
+            } else {
+                dialog.dismiss()
+                showGramProvenanceEditor(bmp, provenanceDefault ?: "", provUrl)
             }
+        }
+        dialog.show()
+        // Keep the dialog open on Clear — re-bind the button after show().
+        dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { ink.clear() }
+    }
+
+    /**
+     * Confirm-and-edit step before a reply goes out as a gram: the provenance line is editable
+     * (redact or reword it) — outward-facing, so nothing shares until you say so.
+     */
+    private fun showGramProvenanceEditor(bmp: Bitmap, provenanceDefault: String, provUrl: String?) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        val preview = android.widget.ImageView(ctx).apply {
+            setImageBitmap(bmp); adjustViewBounds = true; setBackgroundColor(0xFFFFFFFF.toInt())
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, px(150))
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+        }
+        val input = android.widget.EditText(ctx).apply {
+            setText(provenanceDefault); setSelection(text.length)
+            textSize = 14f; setPadding(px(12), px(10), px(12), px(10)); minLines = 2
+        }
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(px(16), px(10), px(16), 0)
+            addView(preview)
+            addView(TextView(ctx).apply {
+                text = "PROVENANCE (edit before sharing)"
+                textSize = 11f; setTextColor(0xFF888888.toInt()); setPadding(0, px(12), 0, px(3))
+            })
+            addView(input)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Share as gram")
+            .setView(box)
+            .setPositiveButton("Share ↗") { _, _ ->
+                val baos = ByteArrayOutputStream()
+                bmp.compress(Bitmap.CompressFormat.PNG, 100, baos); bmp.recycle()
+                val b64 = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+                val provenance = input.text.toString().trim()
+                val uuid = "gram-" + java.util.UUID.randomUUID().toString().lowercase()
+                lifecycleScope.launch {
+                    val status = withContext(Dispatchers.IO) {
+                        com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.postGram(
+                            ctx, b64, "", uuid, spaceId, provenance.ifBlank { null }, provUrl
+                        )
+                    }
+                    android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
+                    if (status.startsWith("Posted")) load()
+                }
+            }
+            .setNegativeButton("Cancel") { _, _ -> bmp.recycle() }
+            .show()
     }
 
     /** Minimal stylus pad: white background, black ink, no Onyx pipeline needed for a short reply. */

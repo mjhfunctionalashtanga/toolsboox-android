@@ -253,8 +253,15 @@ object LedgerCommunityBridge {
         }
     }
 
-    /** Post a gram (base64 PNG) into [spaceId]. Returns a short toast status. Dispatchers.IO. */
-    fun postGram(context: Context, pngBase64: String, title: String, noteUuid: String, spaceId: Long): String {
+    /**
+     * Post a gram (base64 PNG) into [spaceId]. Optional [provenance] renders a "↩ in reply to…"
+     * block leading the gram (with [provUrl] as a source link) — the user edits it before sharing.
+     * Returns a short toast status. Dispatchers.IO.
+     */
+    fun postGram(
+        context: Context, pngBase64: String, title: String, noteUuid: String, spaceId: Long,
+        provenance: String? = null, provUrl: String? = null,
+    ): String {
         val c = config(context)
         if (!c.ready) return "Community bridge not configured"
         val png = try {
@@ -264,7 +271,11 @@ object LedgerCommunityBridge {
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("space_id", spaceId.toString())
             .addFormDataPart("note_uuid", noteUuid)
-            .apply { if (title.isNotBlank()) addFormDataPart("title", title) }
+            .apply {
+                if (title.isNotBlank()) addFormDataPart("title", title)
+                if (!provenance.isNullOrBlank()) addFormDataPart("provenance", provenance)
+                if (!provUrl.isNullOrBlank()) addFormDataPart("prov_url", provUrl)
+            }
             .addFormDataPart("png", "gram.png", png.toRequestBody("image/png".toMediaType()))
             .build()
 
