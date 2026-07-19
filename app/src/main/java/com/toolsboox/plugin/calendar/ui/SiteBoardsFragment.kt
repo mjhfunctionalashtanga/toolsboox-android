@@ -478,6 +478,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         val input = android.widget.EditText(ctx).apply {
             hint = "…or type a reply"; setPadding(px(14), px(12), px(14), px(12)); minLines = 1
         }
+        var shareAsGram: (() -> Unit)? = null
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; setPadding(px(12), px(6), px(12), 0)
             addView(TextView(ctx).apply {
@@ -487,8 +488,15 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             addView(input, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = px(8) })
+            // Share this handwriting out as a gram (into a community space), citing the card.
+            addView(TextView(ctx).apply {
+                text = "↗  Share as gram instead…"
+                setTextColor(Color.parseColor("#2F6F96")); textSize = 15f
+                setPadding(px(2), px(10), 0, px(2))
+                setOnClickListener { shareAsGram?.invoke() }
+            })
         }
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
             .setTitle("Reply · ${d.title.take(36)}")
             .setView(box)
             .setPositiveButton("Send") { _, _ ->
@@ -509,11 +517,83 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             }
             .setNeutralButton("Clear", null)
             .setNegativeButton("Cancel", null)
-            .show()
-            .also { dlg ->
-                dlg.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)
-                    ?.setOnClickListener { ink.clear(); input.text?.clear() }
+            .create()
+        shareAsGram = {
+            val bmp = ink.render()
+            if (bmp == null) toast("Nothing written")
+            else { dialog.dismiss(); shareCardAsGram(bmp, board, d) }
+        }
+        dialog.show()
+        dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)
+            ?.setOnClickListener { ink.clear(); input.text?.clear() }
+    }
+
+    /**
+     * Share a card's handwritten reply as a gram: pick the community space, review + edit the
+     * provenance line (which cites the card), then post. Outward-facing, so nothing goes until Share.
+     */
+    private fun shareCardAsGram(bmp: Bitmap, board: SiteBoard, d: SiteTaskDetail) {
+        val ctx = requireContext()
+        val provDefault = "↩ On board card “${d.title}” · ${board.title}"
+        lifecycleScope.launch {
+            val spaces = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.spaces(requireContext())
             }
+            if (!isAdded) return@launch
+            if (spaces.isEmpty()) { toast("No community spaces to share into"); bmp.recycle(); return@launch }
+            var chosen = spaces.first()
+
+            val preview = android.widget.ImageView(ctx).apply {
+                setImageBitmap(bmp); adjustViewBounds = true; setBackgroundColor(Color.WHITE)
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, px(150))
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            }
+            val spaceBtn = Button(ctx).apply {
+                text = "Space: ${chosen.title}  ▾"; isAllCaps = false
+                setOnClickListener {
+                    val names = spaces.map { it.title }.toTypedArray()
+                    androidx.appcompat.app.AlertDialog.Builder(ctx)
+                        .setTitle("Share to…")
+                        .setItems(names) { _, which -> chosen = spaces[which]; text = "Space: ${chosen.title}  ▾" }
+                        .show()
+                }
+            }
+            val provInput = android.widget.EditText(ctx).apply {
+                setText(provDefault); setSelection(text.length); textSize = 14f
+                setPadding(px(12), px(10), px(12), px(10)); minLines = 2
+            }
+            val box = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL; setPadding(px(16), px(10), px(16), 0)
+                addView(preview)
+                addView(spaceBtn)
+                addView(TextView(ctx).apply {
+                    text = "PROVENANCE (edit before sharing)"
+                    textSize = 11f; setTextColor(Color.parseColor("#888888")); setPadding(0, px(12), 0, px(3))
+                })
+                addView(provInput)
+            }
+            androidx.appcompat.app.AlertDialog.Builder(ctx)
+                .setTitle("Share as gram")
+                .setView(box)
+                .setPositiveButton("Share ↗") { _, _ ->
+                    val baos = java.io.ByteArrayOutputStream()
+                    bmp.compress(Bitmap.CompressFormat.PNG, 100, baos); bmp.recycle()
+                    val b64 = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+                    val provenance = provInput.text.toString().trim()
+                    val uuid = "gram-" + java.util.UUID.randomUUID().toString().lowercase()
+                    val spaceId = chosen.id
+                    lifecycleScope.launch {
+                        val status = withContext(Dispatchers.IO) {
+                            com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.postGram(
+                                requireContext(), b64, "", uuid, spaceId, provenance.ifBlank { null }, null
+                            )
+                        }
+                        toast(status)
+                    }
+                }
+                .setNegativeButton("Cancel") { _, _ -> bmp.recycle() }
+                .show()
+        }
     }
 
     /** Minimal stylus pad — plain touch, no Onyx pipeline (fine for a short handwritten reply). */
