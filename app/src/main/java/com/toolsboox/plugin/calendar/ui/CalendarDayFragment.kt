@@ -374,9 +374,19 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     val base = p.getString(com.toolsboox.plugin.feeds.ui.FeedsFragment.KEY_URL, "").orEmpty()
                     val token = p.getString(com.toolsboox.plugin.feeds.ui.FeedsFragment.KEY_TOKEN, "").orEmpty()
                     if (base.isBlank() || token.isBlank()) return@runCatching null
-                    val res = miniflux.search(base, token, ev.title.take(60), 50)
+                    // Punctuation breaks Miniflux's full-text search (tsquery) — search on plain
+                    // words only. URLs are compared NORMALIZED (scheme/www/query/slash stripped),
+                    // since feed URLs often differ from the starred one by tracking params.
+                    fun norm(u: String) = u.substringBefore('#').substringBefore('?')
+                        .removeSuffix("/").removePrefix("https://").removePrefix("http://").removePrefix("www.")
+                    val q = ev.title.replace(Regex("[^\\p{L}\\p{N} ]"), " ")
+                        .trim().replace(Regex("\\s+"), " ").split(" ").take(6).joinToString(" ")
+                    if (q.isBlank()) return@runCatching null
+                    val res = miniflux.search(base, token, q, 50)
                     val results = (res as? com.toolsboox.plugin.feeds.nw.MinifluxClient.Result.Ok)?.value ?: return@runCatching null
-                    val hit = results.firstOrNull { r -> r.url == url } ?: results.firstOrNull { r -> r.title == ev.title }
+                    val hit = results.firstOrNull { r -> norm(r.url) == norm(url) }
+                        ?: results.firstOrNull { r -> r.title.equals(ev.title, ignoreCase = true) }
+                        ?: results.firstOrNull { r -> r.title.contains(q, ignoreCase = true) }
                     if (hit != null) hit to results else null
                 }.getOrNull()
             }
