@@ -322,12 +322,136 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     // ------------------------------------------------------------------
 
     override fun extraCreationGroups(cx: Float, cy: Float): List<List<com.toolsboox.ot.LedgerContextMenu.Item>> {
-        if (notePage != "synthesize") return emptyList()
-        return listOf(listOf(
-            com.toolsboox.ot.LedgerContextMenu.Item("?  3 Questions") { runSynthesis("questions", pageMaterial()) },
-            com.toolsboox.ot.LedgerContextMenu.Item("✎  Writing Prompt") { runSynthesis("prompt", pageMaterial()) },
-            com.toolsboox.ot.LedgerContextMenu.Item("≡  Essay Outline") { runSynthesis("outline", pageMaterial()) }
-        ))
+        return when (notePage) {
+            "synthesize" -> listOf(listOf(
+                com.toolsboox.ot.LedgerContextMenu.Item("?  3 Questions") { runSynthesis("questions", pageMaterial()) },
+                com.toolsboox.ot.LedgerContextMenu.Item("✎  Writing Prompt") { runSynthesis("prompt", pageMaterial()) },
+                com.toolsboox.ot.LedgerContextMenu.Item("≡  Essay Outline") { runSynthesis("outline", pageMaterial()) }
+            ))
+            "write" -> listOf(listOf(
+                com.toolsboox.ot.LedgerContextMenu.Item("→  Share essay…") { shareEssay() }
+            ))
+            else -> emptyList()
+        }
+    }
+
+    /** Write → Share: the handwritten page leaves as a WP draft, an email, or a community post. */
+    private fun shareEssay() {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val titleIn = android.widget.EditText(ctx).apply { hint = "Essay title"; setSingleLine() }
+        val tagsIn = android.widget.EditText(ctx).apply { hint = "Tags (comma separated)"; setSingleLine() }
+        val box = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(px(16), px(8), px(16), 0); addView(titleIn); addView(tagsIn)
+        }
+        AlertDialog.Builder(ctx)
+            .setTitle("Share essay")
+            .setView(box)
+            .setPositiveButton("Next") { _, _ ->
+                val title = titleIn.text.toString().trim()
+                if (title.isBlank()) {
+                    android.widget.Toast.makeText(ctx, "It needs a title", android.widget.Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                pickEssayDestination(title, tagsIn.text.toString().trim())
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun pickEssayDestination(title: String, tags: String) {
+        val ctx = requireContext()
+        val boards = com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx)
+        val community = com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(ctx)
+        val rows = mutableListOf<Pair<String, () -> Unit>>()
+        if (boards.ready) rows.add("📄  WordPress draft — ${boards.site.removePrefix("https://")}" to {
+            sendEssay(boards.site, boards.user, boards.pass, "draft", title, tags, null)
+        })
+        if (community.ready) {
+            rows.add("📄  WordPress draft — ${community.site.removePrefix("https://")}" to {
+                sendEssay(community.site, community.user, community.pass, "draft", title, tags, null)
+            })
+            rows.add("👥  Community space…" to { postEssayToSpace(title) })
+        }
+        val mailSite = if (boards.ready) boards else if (community.ready)
+            com.toolsboox.plugin.calendar.nw.LedgerWebBridge.Config(community.site, community.user, community.pass, 0) else null
+        if (mailSite != null) rows.add("✉  Email…" to { promptEssayEmail(mailSite, title, tags) })
+        if (rows.isEmpty()) {
+            android.widget.Toast.makeText(ctx, "Set up the web bridge first (Boards → Web bridge…)", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        AlertDialog.Builder(ctx)
+            .setTitle("Send to")
+            .setItems(rows.map { it.first }.toTypedArray()) { _, which -> rows[which].second() }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun promptEssayEmail(site: com.toolsboox.plugin.calendar.nw.LedgerWebBridge.Config, title: String, tags: String) {
+        val ctx = requireContext()
+        val toIn = android.widget.EditText(ctx).apply {
+            hint = "to@example.com"; setSingleLine()
+            inputType = android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+        }
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val box = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(toIn)
+        }
+        AlertDialog.Builder(ctx).setTitle("Email the essay").setView(box)
+            .setPositiveButton("Send") { _, _ ->
+                val to = toIn.text.toString().trim()
+                if (to.isNotBlank()) sendEssay(site.site, site.user, site.pass, "email", title, tags, to)
+            }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun postEssayToSpace(title: String) {
+        val ctx = requireContext()
+        lifecycleScope.launch {
+            val spaces = withContext(Dispatchers.IO) { com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.spaces(ctx) }
+            if (spaces.isEmpty()) {
+                android.widget.Toast.makeText(ctx, "Couldn't load spaces", android.widget.Toast.LENGTH_SHORT).show(); return@launch
+            }
+            val labels = spaces.map { (if (it.privacy == "public") "🌐  " else "🔒  ") + it.title }.toTypedArray()
+            AlertDialog.Builder(ctx).setTitle("Post to space")
+                .setItems(labels) { _, which ->
+                    val space = spaces[which]
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        val png = pagePng()
+                        val b64 = android.util.Base64.encodeToString(png, android.util.Base64.NO_WRAP)
+                        val status = com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.postGram(
+                            ctx, b64, title, "essay-" + java.util.UUID.randomUUID().toString().lowercase(), space.id)
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+                .setNegativeButton("Cancel", null).show()
+        }
+    }
+
+    private fun sendEssay(site: String, user: String, pass: String, dest: String, title: String, tags: String, to: String?) {
+        val ctx = requireContext()
+        android.widget.Toast.makeText(ctx, "Sending…", android.widget.Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch(Dispatchers.IO) {
+            val png = pagePng()
+            val text = currentTextElements().filter { it.text.isNotBlank() }.joinToString("\n\n") { it.text.trim() }
+            val status = com.toolsboox.plugin.calendar.nw.LedgerEssay.send(site, user, pass, dest, title, tags, text, to, png)
+            withContext(Dispatchers.Main) {
+                android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /** The current page (ink + elements) rendered to PNG bytes — the essay's true face. */
+    private fun pagePng(): ByteArray {
+        val bmp = renderPageBitmap()
+        val baos = java.io.ByteArrayOutputStream()
+        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
+        bmp.recycle()
+        return baos.toByteArray()
     }
 
     override fun onSynthesizeText(element: com.toolsboox.da.TextElement) {

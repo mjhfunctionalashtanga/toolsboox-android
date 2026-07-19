@@ -369,3 +369,46 @@ object LedgerCorrespondence {
         }
     }
 }
+
+/** Write → Share: POST /ledgr/v1/essay (dest=draft|email). The handwriting IS the essay. */
+object LedgerEssay {
+    private val client by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS).writeTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS).build()
+    }
+
+    fun send(
+        site: String, user: String, pass: String,
+        dest: String, title: String, tags: String, text: String, to: String?, png: ByteArray?
+    ): String {
+        if (site.isBlank() || user.isBlank() || pass.isBlank()) return "Bridge not configured"
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("dest", dest)
+            .addFormDataPart("title", title)
+            .apply {
+                if (tags.isNotBlank()) addFormDataPart("tags", tags)
+                if (text.isNotBlank()) addFormDataPart("text", text)
+                if (!to.isNullOrBlank()) addFormDataPart("to", to)
+                if (png != null) addFormDataPart("png", "essay.png", png.toRequestBody("image/png".toMediaType()))
+            }.build()
+        return try {
+            val req = Request.Builder()
+                .url("${site.trimEnd('/')}/wp-json/ledgr/v1/essay").post(body)
+                .header("Authorization", Credentials.basic(user, pass)).build()
+            client.newCall(req).execute().use { resp ->
+                val t = resp.body?.string() ?: ""
+                when {
+                    resp.isSuccessful && t.contains("post_id") -> "Draft created"
+                    resp.isSuccessful && t.contains("\"sent\":true") -> "Emailed"
+                    else -> {
+                        val msg = try { JSONObject(t).optString("message") } catch (e: Exception) { "" }
+                        if (msg.isNotBlank()) msg else "Failed (${resp.code})"
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "essay send failed"); "Network error"
+        }
+    }
+}
