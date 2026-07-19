@@ -632,6 +632,94 @@ object LedgerBoards {
         }
     }
 
+    /** The board's people — the roster a card can be assigned to. Empty on failure. */
+    fun members(context: Context, boardId: Int): List<SiteAssignee> {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank()) return emptyList()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/board/$boardId/members")
+                .header("Authorization", auth(c))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val arr = JSONObject(resp.body?.string() ?: return emptyList()).optJSONArray("members") ?: return emptyList()
+                (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+                    SiteAssignee(it.optInt("id", 0), it.optString("name", "?"), it.optString("email", ""),
+                        it.optString("avatar", "").takeIf { s -> s.isNotBlank() && s != "null" })
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "board members fetch failed")
+            emptyList()
+        }
+    }
+
+    /**
+     * Edit a card: any of assignees (full desired roster, csv of ids), dueAt (yyyy-MM-dd or "" to
+     * clear), priority (low|medium|high|normal). Pass null to leave a field unchanged. Toast status.
+     */
+    fun updateTask(
+        context: Context, boardId: Int, taskId: Long,
+        assignees: List<Int>? = null, dueAt: String? = null, priority: String? = null,
+    ): String {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank()) return "Bridge not configured"
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .apply {
+                if (assignees != null) addFormDataPart("assignees", assignees.joinToString(","))
+                if (dueAt != null) addFormDataPart("due_at", dueAt)
+                if (priority != null) addFormDataPart("priority", priority)
+            }
+            .build()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/board/$boardId/task/$taskId/update")
+                .post(body)
+                .header("Authorization", auth(c))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val t = resp.body?.string() ?: ""
+                if (resp.isSuccessful && t.contains("task_id")) "Saved"
+                else {
+                    val msg = try { JSONObject(t).optString("message") } catch (e: Exception) { "" }
+                    if (msg.isNotBlank()) msg else "Save failed (${resp.code})"
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "task update failed")
+            "Network error"
+        }
+    }
+
+    /** Move a card to a stage at a precise 1-based index (0 = append). Returns toast status. */
+    fun moveTaskAt(context: Context, boardId: Int, taskId: Long, newStageId: Long, newIndex: Int): String {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank()) return "Bridge not configured"
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("new_stage_id", newStageId.toString())
+            .addFormDataPart("new_index", newIndex.toString())
+            .build()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/board/$boardId/task/$taskId/move")
+                .post(body)
+                .header("Authorization", auth(c))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: ""
+                if (resp.isSuccessful && text.contains("stage_id")) "Moved"
+                else {
+                    val msg = try { JSONObject(text).optString("message") } catch (e: Exception) { "" }
+                    if (msg.isNotBlank()) msg else "Move failed (${resp.code})"
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "task move failed")
+            "Network error"
+        }
+    }
+
     /** Add a comment to a card — typed text and/or a handwriting PNG. Returns toast status. */
     fun commentTask(context: Context, boardId: Int, taskId: Long, text: String?, png: ByteArray?): String {
         val c = LedgerWebBridge.config(context)

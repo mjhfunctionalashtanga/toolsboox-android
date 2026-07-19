@@ -27,6 +27,7 @@ import com.toolsboox.plugin.calendar.nw.SiteTask
 import com.toolsboox.plugin.calendar.nw.SiteTaskDetail
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -268,14 +269,9 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
                 DragEvent.ACTION_DROP -> {
                     container.setBackgroundColor(Color.TRANSPARENT)
                     val (task, view) = dragging ?: return@OnDragListener true
-                    if (task.stageId == stage.id) {
-                        view.visibility = View.VISIBLE   // dropped back on its own column
-                    } else {
-                        (view.parent as? ViewGroup)?.removeView(view)
-                        container.addView(view)
-                        view.visibility = View.VISIBLE
-                        moveOnServer(board, task, stage, view)
-                    }
+                    val insertAt = reparentInto(container, view, event.y)
+                    view.visibility = View.VISIBLE
+                    moveOnServer(board, task, stage, view, insertAt + 1)   // server index is 1-based
                     true
                 }
                 DragEvent.ACTION_DRAG_ENDED -> {
@@ -288,15 +284,34 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             }
         }
 
-    private fun moveOnServer(board: SiteBoard, task: SiteTask, stage: SiteStage, view: View) {
+    /**
+     * Drop [view] into [container] at the position the finger released, and return the 0-based
+     * index it landed at. The dragged view is removed first so the index math is against the
+     * settled child list — cross-column or reorder-in-place both work.
+     */
+    private fun reparentInto(container: LinearLayout, view: View, dropY: Float): Int {
+        var refChild: View? = null
+        for (i in 0 until container.childCount) {
+            val child = container.getChildAt(i)
+            if (child === view) continue
+            if (dropY <= child.top + child.height / 2f) { refChild = child; break }
+        }
+        (view.parent as? ViewGroup)?.removeView(view)
+        val insertAt = if (refChild != null) container.indexOfChild(refChild) else container.childCount
+        container.addView(view, insertAt)
+        return insertAt
+    }
+
+    private fun moveOnServer(board: SiteBoard, task: SiteTask, stage: SiteStage, view: View, index: Int) {
         // Reflect the new stage locally so a re-drop from here reads correctly.
         view.tag = task.copy(stageId = stage.id)
+        val samePlace = task.stageId == stage.id
         dragging = null
         lifecycleScope.launch {
             val status = withContext(Dispatchers.IO) {
-                LedgerBoards.moveTask(requireContext(), board.id, task.id, stage.id)
+                LedgerBoards.moveTaskAt(requireContext(), board.id, task.id, stage.id, index)
             }
-            toast(if (status == "Moved") "→ ${stage.title}" else status)
+            if (!samePlace) toast(if (status == "Moved") "→ ${stage.title}" else status)
             if (status != "Moved") openBoard?.let { loadBoard(it) }   // reconcile on failure
         }
     }
@@ -371,9 +386,26 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             })
         }
 
+        // Edit row — assign people, set a due date, set priority. Each saves through the
+        // FluentBoards update path (email + hooks fire), then reopens the card fresh.
+        val edits = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL; setPadding(0, px(16), 0, 0)
+        }
+        fun editButton(label: String, onTap: () -> Unit) = Button(ctx).apply {
+            text = label; isAllCaps = false; textSize = 13f
+            setPadding(px(14), 0, px(14), 0); minWidth = 0
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { marginEnd = px(6) }
+            setOnClickListener { onTap() }
+        }
+        edits.addView(editButton("Assign…") { promptAssign(board, d, dialog) })
+        edits.addView(editButton("Due…") { promptDue(board, d, dialog) })
+        edits.addView(editButton("Priority…") { promptPriority(board, d, dialog) })
+        col.addView(edits)
+
         val actions = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.END
-            setPadding(0, px(18), 0, 0)
+            setPadding(0, px(14), 0, 0)
         }
         actions.addView(Button(ctx).apply {
             text = "Reply"; isAllCaps = false
@@ -407,6 +439,70 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
                     toast(status)
                     if (status == "Reply posted") { parent.dismiss(); openDetail(board, taskStub(d)) }
                 }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** Save an edit through updateTask, then reopen the card so it shows the new state. */
+    private fun saveEdit(
+        board: SiteBoard, d: SiteTaskDetail, parent: androidx.appcompat.app.AlertDialog,
+        assignees: List<Int>? = null, dueAt: String? = null, priority: String? = null,
+    ) {
+        lifecycleScope.launch {
+            val status = withContext(Dispatchers.IO) {
+                LedgerBoards.updateTask(requireContext(), board.id, d.id, assignees, dueAt, priority)
+            }
+            toast(status)
+            if (status == "Saved") { parent.dismiss(); openDetail(board, taskStub(d)) }
+        }
+    }
+
+    private fun promptAssign(board: SiteBoard, d: SiteTaskDetail, parent: androidx.appcompat.app.AlertDialog) {
+        lifecycleScope.launch {
+            val roster = withContext(Dispatchers.IO) { LedgerBoards.members(requireContext(), board.id) }
+            if (!isAdded) return@launch
+            if (roster.isEmpty()) { toast("No people on this board to assign"); return@launch }
+            val names = roster.map { it.name }.toTypedArray()
+            val current = d.assignees.map { it.id }.toSet()
+            val checked = BooleanArray(roster.size) { roster[it].id in current }
+            androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                .setTitle("Assign people")
+                .setMultiChoiceItems(names, checked) { _, which, isChecked -> checked[which] = isChecked }
+                .setPositiveButton("Save") { _, _ ->
+                    val ids = roster.filterIndexed { i, _ -> checked[i] }.map { it.id }
+                    saveEdit(board, d, parent, assignees = ids)
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
+    private fun promptDue(board: SiteBoard, d: SiteTaskDetail, parent: androidx.appcompat.app.AlertDialog) {
+        val cal = java.util.Calendar.getInstance()
+        d.dueAt?.take(10)?.let { s ->
+            runCatching {
+                val p = s.split("-")
+                cal.set(p[0].toInt(), p[1].toInt() - 1, p[2].toInt())
+            }
+        }
+        val picker = android.app.DatePickerDialog(requireContext(), { _, y, m, day ->
+            saveEdit(board, d, parent, dueAt = String.format(Locale.US, "%04d-%02d-%02d", y, m + 1, day))
+        }, cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH), cal.get(java.util.Calendar.DAY_OF_MONTH))
+        if (d.dueAt != null) picker.setButton(
+            android.app.DatePickerDialog.BUTTON_NEUTRAL, "Clear"
+        ) { _, _ -> saveEdit(board, d, parent, dueAt = "") }
+        picker.show()
+    }
+
+    private fun promptPriority(board: SiteBoard, d: SiteTaskDetail, parent: androidx.appcompat.app.AlertDialog) {
+        val options = arrayOf("low", "normal", "high")
+        val cur = options.indexOf(d.priority ?: "normal").coerceAtLeast(0)
+        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            .setTitle("Priority")
+            .setSingleChoiceItems(options, cur) { dlg, which ->
+                saveEdit(board, d, parent, priority = options[which])
+                dlg.dismiss()
             }
             .setNegativeButton("Cancel", null)
             .show()

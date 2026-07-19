@@ -126,6 +126,20 @@ class Ledgr_FB_Bridge
             'permission_callback' => [$this, 'canReadBoard'],
         ]);
 
+        // The board's people — who a card can be assigned to.
+        register_rest_route(self::NS, '/board/(?P<board_id>\d+)/members', [
+            'methods'             => 'GET',
+            'callback'            => [$this, 'boardMembers'],
+            'permission_callback' => [$this, 'canReadBoard'],
+        ]);
+
+        // Edit a card from the device: assignees, due date, priority.
+        register_rest_route(self::NS, '/board/(?P<board_id>\d+)/task/(?P<task_id>\d+)/update', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'updateTask'],
+            'permission_callback' => [$this, 'canReadBoard'],
+        ]);
+
         register_rest_route(self::NS, '/card/(?P<task_id>\d+)/strokes', [
             'methods'             => 'GET',
             'callback'            => [$this, 'getStrokes'],
@@ -731,6 +745,92 @@ class Ledgr_FB_Bridge
             ]);
         } catch (\Exception $e) {
             return new \WP_Error('ledgr_comment_failed', $e->getMessage(), ['status' => 400]);
+        }
+    }
+
+    /* ---------------------------------------------------------------
+     * GET /ledgr/v1/board/{board_id}/members
+     * The board's people — the roster a card can be assigned to.
+     * ------------------------------------------------------------- */
+
+    public function boardMembers(\WP_REST_Request $request)
+    {
+        $boardId = (int) $request['board_id'];
+        $out = [];
+        try {
+            $board = \FluentBoards\App\Models\Board::with('users')->find($boardId);
+            if (!$board) {
+                return new \WP_Error('ledgr_not_found', 'Board not found', ['status' => 404]);
+            }
+            foreach ($board->users as $u) {
+                $out[] = [
+                    'id'     => (int) $u->ID,
+                    'name'   => $u->display_name,
+                    'email'  => $u->user_email,
+                    'avatar' => get_avatar_url($u->ID, ['size' => 96]),
+                ];
+            }
+        } catch (\Exception $e) {
+            return new \WP_Error('ledgr_members_failed', $e->getMessage(), ['status' => 500]);
+        }
+        return rest_ensure_response(['members' => $out]);
+    }
+
+    /* ---------------------------------------------------------------
+     * POST /ledgr/v1/board/{board_id}/task/{task_id}/update
+     * body (all optional): assignees (csv of user ids = the full desired
+     *      roster; the diff is toggled), due_at (Y-m-d or empty to clear),
+     *      priority (low|medium|high|normal)
+     * Each change routes through FluentBoards' own update path so email +
+     * hooks fire exactly as they do in the web UI.
+     * ------------------------------------------------------------- */
+
+    public function updateTask(\WP_REST_Request $request)
+    {
+        $boardId = (int) $request['board_id'];
+        $taskId  = (int) $request['task_id'];
+
+        try {
+            $service = new \FluentBoards\App\Services\TaskService();
+            $task    = $service->findTaskOnBoard($taskId, $boardId);
+            if (!$task) {
+                return new \WP_Error('ledgr_not_found', 'Task not found on this board', ['status' => 404]);
+            }
+
+            // Assignees: params carry the whole desired roster; toggle the diff.
+            if ($request->get_param('assignees') !== null) {
+                $csv     = (string) $request->get_param('assignees');
+                $desired = array_filter(array_map('intval', array_filter(explode(',', $csv), 'strlen')));
+                $current = $task->assignees->pluck('ID')->map('intval')->toArray();
+                $toAdd    = array_diff($desired, $current);
+                $toRemove = array_diff($current, $desired);
+                foreach (array_merge($toAdd, $toRemove) as $uid) {
+                    $service->updateAssignee($uid, $task);
+                }
+                $task = \FluentBoards\App\Models\Task::find($taskId);
+            }
+
+            if ($request->get_param('due_at') !== null) {
+                $due = trim((string) $request->get_param('due_at'));
+                $task = $service->updateTaskProperty('due_at', $due ?: null, $task);
+            }
+
+            if ($request->get_param('priority') !== null) {
+                $pri = sanitize_text_field((string) $request->get_param('priority'));
+                if (in_array($pri, ['low', 'medium', 'high', 'normal'], true)) {
+                    $task = $service->updateTaskProperty('priority', $pri, $task);
+                }
+            }
+
+            $task = \FluentBoards\App\Models\Task::find($taskId);
+            return rest_ensure_response([
+                'task_id'   => (int) $task->id,
+                'priority'  => $task->priority,
+                'due_at'    => $task->due_at,
+                'assignees' => $task->assignees->pluck('ID')->map('intval')->values()->all(),
+            ]);
+        } catch (\Exception $e) {
+            return new \WP_Error('ledgr_update_failed', $e->getMessage(), ['status' => 400]);
         }
     }
 
