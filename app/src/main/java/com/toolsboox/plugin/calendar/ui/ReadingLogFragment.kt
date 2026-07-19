@@ -383,7 +383,27 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 // Every item carries its home day — the rhizome edge back to the page it lives on.
                 fun put(item: LogItem) { out.add(item.copy(day = dayDate)) }
 
+                // Collapse the double log (iOS parity): starring writes art-<id> and each
+                // annotation appends art-<id>-xxxx — the same article showed two or three
+                // times. One card per article URL per day; the richest (note/excerpt)
+                // absorbs the others' star flag. Books keep every highlight.
+                val mergedByUrl = LinkedHashMap<String, ReadingEvent>()
+                val passthrough = mutableListOf<ReadingEvent>()
                 for (e in day.readingEvents) {
+                    val u = e.url
+                    if (e.kind != ReadingEvent.Kind.ARTICLE || u.isNullOrBlank()) { passthrough.add(e); continue }
+                    val prev = mergedByUrl[u]
+                    if (prev == null) { mergedByUrl[u] = e; continue }
+                    val richer = ((e.note ?: "") + (e.excerpt ?: "")).length >
+                        ((prev.note ?: "") + (prev.excerpt ?: "")).length
+                    val keep = if (richer) e else prev
+                    val other = if (richer) prev else e
+                    mergedByUrl[u] = keep.copy(
+                        starred = keep.starred || other.starred,
+                        published = keep.published ?: other.published
+                    )
+                }
+                for (e in passthrough + mergedByUrl.values) {
                     val o = if (e.kind == ReadingEvent.Kind.BOOK) LogOrigin.BOOK else LogOrigin.READ
                     // A star lives on two days (starred + published; see logStar). Each row
                     // clarifies the OTHER date: the star-day row shows "published MMM d",
