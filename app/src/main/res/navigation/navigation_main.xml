@@ -75,6 +75,10 @@
             app:destination="@id/KanbanFragment"/>
 
     <action
+            android:id="@+id/action_to_correspondence"
+            app:destination="@id/CorrespondenceFragment"/>
+
+    <action
             android:id="@+id/action_to_text_notes"
             app:destination="@id/TextNotesFragment"/>
 
@@ -171,6 +175,12 @@
             android:name="com.toolsboox.plugin.calendar.ui.KanbanFragment"
             android:label="KanbanFragment"
             tools:layout="@layout/fragment_kanban"/>
+
+    <fragment
+            android:id="@+id/CorrespondenceFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.CorrespondenceFragment"
+            android:label="CorrespondenceFragment"
+            tools:layout="@layout/fragment_correspondence"/>
 
     <fragment
             android:id="@+id/ReadingLogFragment"

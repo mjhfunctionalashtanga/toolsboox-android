@@ -285,3 +285,83 @@ object LedgerCommunityBridge {
         }
     }
 }
+
+/** One reply in the correspondence inbox (community comment / board-card comment). */
+data class LedgerReply(
+    val id: String,
+    val source: String,      // "community" | "boards"
+    val thread: String,
+    val threadId: Long,
+    val author: String,
+    val excerpt: String,
+    val createdAt: String,
+)
+
+/** Correspondence fetch + ink reply — the Boox half of the Correspondence page. */
+object LedgerCorrespondence {
+
+    private val client by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .build()
+    }
+
+    /** Replies to your posts + cards, newest first. Call from Dispatchers.IO. */
+    fun fetch(context: Context): List<LedgerReply> {
+        val c = LedgerCommunityBridge.config(context)
+        if (!c.ready) return emptyList()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/correspondence?limit=100")
+                .header("Authorization", Credentials.basic(c.user, c.pass))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val arr = JSONObject(resp.body?.string() ?: return emptyList()).optJSONArray("items") ?: return emptyList()
+                (0 until arr.length()).map { arr.getJSONObject(it) }.mapNotNull {
+                    val excerpt = it.optString("excerpt", "")
+                    if (excerpt.isBlank()) return@mapNotNull null
+                    LedgerReply(
+                        it.optString("id", ""), it.optString("source", "community"),
+                        it.optString("thread", ""), it.optLong("thread_id", 0),
+                        it.optString("author", "?"), excerpt, it.optString("created_at", "")
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "correspondence fetch failed")
+            emptyList()
+        }
+    }
+
+    /** Post handwriting as your comment on a community thread. Call from Dispatchers.IO. */
+    fun postInkReply(context: Context, feedId: Long, png: ByteArray): String {
+        val c = LedgerCommunityBridge.config(context)
+        if (!c.ready) return "Community bridge not configured"
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("feed_id", feedId.toString())
+            .addFormDataPart("note_uuid", "inkreply-" + java.util.UUID.randomUUID().toString().lowercase())
+            .addFormDataPart("png", "reply.png", png.toRequestBody("image/png".toMediaType()))
+            .build()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/community/comment")
+                .post(body)
+                .header("Authorization", Credentials.basic(c.user, c.pass))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: ""
+                if (resp.isSuccessful && text.contains("comment_id")) "Reply posted"
+                else {
+                    val msg = try { JSONObject(text).optString("message") } catch (e: Exception) { "" }
+                    if (msg.isNotBlank()) msg else "Reply failed (${resp.code})"
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "ink reply failed")
+            "Network error"
+        }
+    }
+}
