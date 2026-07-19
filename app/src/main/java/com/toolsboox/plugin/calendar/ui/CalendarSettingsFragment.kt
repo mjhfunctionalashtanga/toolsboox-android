@@ -443,6 +443,13 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         // On-device extract (redundant with the server OCR) — off by default.
         binding.autoExtractSwitch.isChecked = sharedPreferences.getBoolean(
             com.toolsboox.plugin.calendar.ot.LedgerExtractor.AUTO_EXTRACT_ENABLED_KEY, false)
+
+        // Community bridge (FluentCommunity) creds — one home for connection settings, instead
+        // of being buried under Boards → Web bridge.
+        val bridgeCfg = com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(requireContext())
+        binding.communitySiteInput.setText(bridgeCfg.site)
+        binding.communityUserInput.setText(bridgeCfg.user)
+        binding.communityPassInput.setText(bridgeCfg.pass)
         binding.gcalEnableSwitch.setOnCheckedChangeListener { _, isChecked ->
             updateGcalFieldsVisibility(isChecked)
         }
@@ -533,6 +540,17 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             sharedPreferences.edit().putBoolean("autoSyncEnabled", autoSyncEnabled).apply()
             sharedPreferences.edit().putInt("autoSyncIntervalIndex", selectedAutoSyncInterval).apply()
 
+            // Persist the independent toggles EARLY — before the Ultrabridge validation below,
+            // which can `return@setOnClickListener` and used to silently drop these (the
+            // "toggle says it works but doesn't turn" bug). Google Calendar on/off + target,
+            // and the on-device extract switch, have nothing to do with Ultrabridge.
+            val gcalIdEarly = binding.gcalIdInput.text?.toString()?.trim().let { if (it.isNullOrEmpty()) "primary" else it }
+            sharedPreferences.edit()
+                .putBoolean(LedgerEventSync.ENABLED_KEY, binding.gcalEnableSwitch.isChecked)
+                .putString(LedgerEventSync.CALENDAR_ID_KEY, gcalIdEarly)
+                .putBoolean(com.toolsboox.plugin.calendar.ot.LedgerExtractor.AUTO_EXTRACT_ENABLED_KEY, binding.autoExtractSwitch.isChecked)
+                .apply()
+
             // Enqueue or cancel periodic sync work
             val workManager = WorkManager.getInstance(requireContext())
             if (autoSyncEnabled) {
@@ -616,14 +634,17 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 workManager.cancelUniqueWork(UltrabridgeSyncWorker.WORK_NAME)
             }
 
-            // Persist Google Calendar settings. The connection itself is the Google sign-in (button
-            // above); here we just record the on/off and which calendar to target.
-            val gcalId = binding.gcalIdInput.text?.toString()?.trim().let { if (it.isNullOrEmpty()) "primary" else it }
-            sharedPreferences.edit()
-                .putBoolean(LedgerEventSync.ENABLED_KEY, binding.gcalEnableSwitch.isChecked)
-                .putString(LedgerEventSync.CALENDAR_ID_KEY, gcalId)
-                .putBoolean(com.toolsboox.plugin.calendar.ot.LedgerExtractor.AUTO_EXTRACT_ENABLED_KEY, binding.autoExtractSwitch.isChecked)
-                .apply()
+            // (Google Calendar + on-device extract were persisted early, above.)
+
+            // Community bridge (FluentCommunity) creds — moved here from Boards → Web bridge
+            // so all connection settings live in one place.
+            val bridgeSite = binding.communitySiteInput.text?.toString()?.trim().orEmpty()
+            val bridgeUser = binding.communityUserInput.text?.toString()?.trim().orEmpty()
+            val bridgePass = binding.communityPassInput.text?.toString().orEmpty()
+            com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.saveConfig(
+                requireContext(),
+                com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.Config(bridgeSite, bridgeUser, bridgePass)
+            )
 
             this@CalendarSettingsFragment.requireActivity().onBackPressed()
         }
