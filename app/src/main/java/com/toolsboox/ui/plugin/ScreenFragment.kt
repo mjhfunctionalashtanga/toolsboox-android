@@ -696,14 +696,28 @@ abstract class ScreenFragment : Fragment() {
     }
 
     /** Set a row's icon slot directly from an emoji (folder headers), else hide it. */
-    /** Returns true when a mapped drawable icon was shown; false = caller should prepend the
-     *  glyph to the label as TEXT (works for ANY character — the "missing glyphs" were simply
-     *  ones absent from the emoji→drawable map, silently hidden). */
+    /** Puts the row's glyph in the ICON SLOT: a mapped drawable when one exists, otherwise the
+     *  character DRAWN into a bitmap of the same size — so @ / # / ‹ sit pixel-aligned with the
+     *  drawable icons for any character. Returns false only for a blank glyph. */
     private fun setRowEmojiIcon(row: View, emoji: String): Boolean {
         val icon = row.findViewById<ImageView>(R.id.go_icon)
         val res = emojiIconRes(emoji)
-        return if (res == null) { icon.visibility = View.GONE; false }
-        else { icon.setImageResource(res); icon.visibility = View.VISIBLE; true }
+        if (res != null) { icon.setImageResource(res); icon.visibility = View.VISIBLE; return true }
+        if (emoji.isBlank()) { icon.visibility = View.GONE; return false }
+        val size = (26 * resources.displayMetrics.density).toInt().coerceAtLeast(24)
+        val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bmp)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textAlign = android.graphics.Paint.Align.CENTER
+            textSize = size * 0.8f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        val y = size / 2f - (paint.descent() + paint.ascent()) / 2f
+        canvas.drawText(emoji, size / 2f, y, paint)
+        icon.setImageBitmap(bmp)
+        icon.visibility = View.VISIBLE
+        return true
     }
 
     /**
