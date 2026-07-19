@@ -67,39 +67,32 @@ fun ledgerDirectoryFolders(
             action = { com.toolsboox.ui.plugin.LedgerPlayer.showModal(fragment.requireContext()) })
     else null
 
-    // Order: Today, Almanac (+Tasks&Events), Daily, Feed, Bookshelf, Ask, Ledger Log (+Tasks&Events), Settings.
+    // Order per Michael: Today (straight to the page, no submenu) · Daily Ledger · Desk Ledger ·
+    // Feed Ledger · Bookshelf · Ask my Ledger · Ledger Log · Settings.
     return listOfNotNull(
         nowPlaying,
-        // One-tap jump to today's Day page — the "home" the feed/book screens were missing. If we're
-        // leaving an open article/book, drop a return anchor so the Day page can jump straight back.
-        ScreenFragment.Folder("☀️", "Today", listOf(
-            "☀  Today's page" to {
-                (fragment as? com.toolsboox.ui.plugin.ReturnAnchorProvider)?.prepareReturnAnchor()
-                nav.navigate(R.id.action_to_calendar_day)
-            },
-            "📝  Text Notes" to { nav.navigate(R.id.action_to_text_notes) },
-            // The freeform multi-page handwriting surface (distinct from "Write" under Daily Ledgers).
-            "✒  Notes" to { CalendarNavigator.toDayNote(fragment, today, "0") }
-        )),
-        // Tasks & Events promoted to the top level — a one-tap jump, not buried in Ledger Log.
-        ScreenFragment.Folder("🗒", "Tasks & Events", action = { nav.navigate(R.id.action_to_ledger_items) }),
-        ScreenFragment.Folder("👤", "Rolodex", action = { nav.navigate(R.id.action_to_rolodex) }),
-        ScreenFragment.Folder("📋", "Boards", action = { nav.navigate(R.id.action_to_kanban) }),
-        ScreenFragment.Folder("@", "Correspondence", action = { nav.navigate(R.id.action_to_correspondence) }),
-        ScreenFragment.Folder("📆", "Almanac", listOf(
-            "📆  Week" to { CalendarNavigator.toWeekPage(fragment, today, locale) },
-            "📅  Month" to { CalendarNavigator.toMonthPage(fragment, today) },
-            "📊  Quarter" to { CalendarNavigator.toQuarterPage(fragment, today) },
-            "🗓️  Year" to { CalendarNavigator.toYearPage(fragment, today) }
-        )),
-        ScreenFragment.Folder("❤️", "Daily Ledgers", listOf(
+        // One-tap jump to today's Day page — no submenu. If we're leaving an open article/book,
+        // drop a return anchor so the Day page can jump straight back.
+        ScreenFragment.Folder("☀️", "Today", action = {
+            (fragment as? com.toolsboox.ui.plugin.ReturnAnchorProvider)?.prepareReturnAnchor()
+            nav.navigate(R.id.action_to_calendar_day)
+        }),
+        ScreenFragment.Folder("❤️", "Daily Ledger", listOf(
             "❝  Pickings" to { showPickingsPicker(fragment) },
             "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") },
             "🔬  Synthesize" to { CalendarNavigator.toDayNote(fragment, today, "synthesize") },
             "✍️  Write" to { CalendarNavigator.toDayNote(fragment, today, "write") }
         )),
-        // Feed Ledger — the RSS reader lenses. The first row lands with the feeds DIRECTORY
-        // already open (categories → individual feeds), not the flat listing.
+        // Desk Ledger — the working surfaces: notes, tasks, people, boards, correspondence.
+        ScreenFragment.Folder("🗒", "Desk Ledger", listOf(
+            "✒  Notes" to { CalendarNavigator.toDayNote(fragment, today, "0") },
+            "🗒  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
+            "👤  Rolodex" to { nav.navigate(R.id.action_to_rolodex) },
+            "📋  Boards" to { nav.navigate(R.id.action_to_kanban) },
+            "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
+            "📝  Text Notes" to { nav.navigate(R.id.action_to_text_notes) }
+        )),
+        // Feed Ledger — the RSS reader lenses.
         ScreenFragment.Folder("📰", "Feed Ledger", listOf(
             "📰  All" to { openFeed("feed", null) },
             "📖  The Read" to { openFeed("feed", "read") },
