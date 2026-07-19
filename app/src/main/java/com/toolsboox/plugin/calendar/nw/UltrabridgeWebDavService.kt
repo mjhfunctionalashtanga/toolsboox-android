@@ -200,9 +200,12 @@ class UltrabridgeWebDavService(
      * are omitted — only concrete files are returned.
      *
      * @param remoteDirPath the collection path relative to [baseUrl] (e.g. "calendar/")
-     * @return the discovered file entries, or an empty list on error
+     * @return the discovered file entries, or null on error — callers MUST distinguish
+     *   "listing failed" from "genuinely empty": treating a failed PROPFIND as an empty
+     *   server made sync classify every local file as local-only and blind-push over
+     *   remote edits (then advance the watermark past them).
      */
-    fun propfind(remoteDirPath: String): List<RemoteEntry> {
+    fun propfind(remoteDirPath: String): List<RemoteEntry>? {
         val normalizedBase = baseUrl.trimEnd('/')
         val anchor = remoteDirPath.trim('/')
         val url = "$normalizedBase/$anchor/"
@@ -223,13 +226,13 @@ class UltrabridgeWebDavService(
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     Timber.w("$TAG: PROPFIND failed for $remoteDirPath: ${response.code} ${response.message}")
-                    return emptyList()
+                    return null
                 }
                 parsePropfind(response.body?.string() ?: "", anchor)
             }
         } catch (e: IOException) {
             Timber.e(e, "$TAG: Network error listing $remoteDirPath")
-            emptyList()
+            null
         }
     }
 

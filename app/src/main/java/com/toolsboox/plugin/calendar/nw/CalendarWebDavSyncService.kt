@@ -10,6 +10,8 @@ import com.toolsboox.ot.LocaleJsonAdapter
 import com.toolsboox.ot.UUIDJsonAdapter
 import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
@@ -52,6 +54,11 @@ class CalendarWebDavSyncService(
     companion object {
         private const val TAG = "CalendarWebDavSync"
         private const val ENCRYPTED_PREFS_NAME = "ultrabridge_encrypted_prefs"
+
+        // One sync pass at a time, PROCESS-wide: the periodic worker and the on-open/on-pause
+        // one-shot use different unique work names, so WorkManager alone lets them overlap —
+        // two passes interleaving over the same tree and watermark file corrupt each other.
+        private val syncMutex = Mutex()
 
         // Matches the versioned day files both clients write: day-YYYY-MM-DD-v#.json
         private val DAY_FILE_REGEX = Regex("^day-.*-v\\d+\\.json$", RegexOption.IGNORE_CASE)
@@ -130,14 +137,20 @@ class CalendarWebDavSyncService(
      *
      * @return the pushed/pulled/skipped/failed counts
      */
-    suspend fun sync(): SyncStats = withContext(Dispatchers.IO) {
+    suspend fun sync(): SyncStats = syncMutex.withLock { withContext(Dispatchers.IO) {
         var pushed = 0
         var pulled = 0
         var skipped = 0
         var failed = 0
 
         val localByPath = inventoryLocal().associateBy { it.remotePath }
-        val remoteByPath = webdav.propfind("calendar/")
+        // A failed listing is NOT an empty server: pushing "local-only" files against an
+        // unknown remote would overwrite peer edits. Abort the pass; watermarks stay put.
+        val remoteListing = webdav.propfind("calendar/") ?: run {
+            Timber.w("$TAG: remote listing failed; aborting sync pass")
+            return@withContext SyncStats(0, 0, 0, 1)
+        }
+        val remoteByPath = remoteListing
             .filter { DAY_FILE_REGEX.matches(File(it.remotePath).name) }
             .associateBy { it.remotePath }
 
@@ -214,7 +227,14 @@ class CalendarWebDavSyncService(
                         merged.created = localDay.created ?: remoteDay.created
                         val mergedJson = dayJson(merged)
                         if (!sameContent(localDay, merged, mergedJson)) {
-                            if (writeLocal(remotePath, mergedJson.toByteArray(Charsets.UTF_8))) pulled++ else failed++
+                            // Pen-up guard: if the local file changed since we read it (a save
+                            // landed during the merge), our merge is stale — writing it would
+                            // discard that save (including erase tombstones, which then resurrect
+                            // permanently). Leave local alone; the next pass merges the fresh copy.
+                            if (local.file.lastModified() != lMtime) {
+                                Timber.i("$TAG: local $remotePath changed mid-merge; deferring local write")
+                                failed++    // hold the watermark back so the next pass re-merges
+                            } else if (writeLocal(remotePath, mergedJson.toByteArray(Charsets.UTF_8))) pulled++ else failed++
                         }
                         if (!sameContent(remoteDay, merged, mergedJson)) {
                             ensureRemoteParents(remotePath)
@@ -237,7 +257,7 @@ class CalendarWebDavSyncService(
         val stats = SyncStats(pushed, pulled, skipped, failed)
         Timber.i("$TAG: Day-JSON sync done: $stats")
         stats
-    }
+    } }
 
     /**
      * Sync the annotation / A/V-gram media blobs. These are immutable and UUID-named, so there
@@ -248,7 +268,12 @@ class CalendarWebDavSyncService(
     private fun syncAttachments() {
         val dir = File(rootDir, "attachments/")
         val local = dir.listFiles()?.filter { it.isFile } ?: emptyList()
-        val remote = runCatching { webdav.propfind("attachments/") }.getOrDefault(emptyList())
+        // On a failed listing, skip the pass — attachments are immutable so pushing is safe,
+        // but "remote lacks everything" would re-upload the entire media library.
+        val remote = runCatching { webdav.propfind("attachments/") }.getOrNull() ?: run {
+            Timber.w("$TAG: attachments listing failed; skipping attachment pass")
+            return
+        }
         val remoteNames = remote.map { File(it.remotePath).name }.toSet()
         val localNames = local.map { it.name }.toSet()
 
@@ -341,8 +366,14 @@ class CalendarWebDavSyncService(
     }.getOrDefault(0L to 0L)
 
     private fun writeWatermarks(remote: Long, local: Long) {
-        runCatching { watermarkFile().writeText("$remote,$local") }
-            .onFailure { Timber.w(it, "$TAG: failed to store sync watermarks") }
+        // Atomic: a truncated watermark parses as (0,0) which is safe (just re-merges), but
+        // temp+rename costs nothing and keeps the state.json lesson applied everywhere.
+        runCatching {
+            val f = watermarkFile()
+            val tmp = File(f.parentFile, f.name + ".tmp")
+            tmp.writeText("$remote,$local")
+            Files.move(tmp.toPath(), f.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }.onFailure { Timber.w(it, "$TAG: failed to store sync watermarks") }
     }
 
     /**

@@ -30,11 +30,16 @@ object CalendarDayMerger {
         val newer = if ((a.updated?.time ?: 0L) >= (b.updated?.time ?: 0L)) a else b
         val older = if (newer === a) b else a
 
+        // Tombstones compare case-insensitively: Android UUID.toString() is lowercase but
+        // iOS uuidString is UPPERCASE, and a case-mismatched tombstone silently resurrects
+        // the erased stroke. Normalize once here; the union helpers lowercase their side.
         val tombstones = LinkedHashSet<String>().apply {
-            addAll(a.deletedStrokeIds); addAll(b.deletedStrokeIds)
+            a.deletedStrokeIds.forEach { add(it.lowercase()) }
+            b.deletedStrokeIds.forEach { add(it.lowercase()) }
         }
         val elementTombstones = LinkedHashSet<String>().apply {
-            addAll(a.deletedElementIds); addAll(b.deletedElementIds)
+            a.deletedElementIds.forEach { add(it.lowercase()) }
+            b.deletedElementIds.forEach { add(it.lowercase()) }
         }
 
         val merged = newer.deepCopy()
@@ -70,7 +75,10 @@ object CalendarDayMerger {
         merged.calendarValues = values
 
         merged.created = a.created ?: b.created
-        merged.updated = Date()
+        // updated = max of the two sides, NOT Date(): a fresh stamp made every merge output
+        // look newer than both inputs, so two-device pairs re-merged and re-uploaded forever.
+        // With max(), merging is idempotent — identical content converges and sync goes quiet.
+        merged.updated = Date(maxOf(a.updated?.time ?: 0L, b.updated?.time ?: 0L))
         return merged
     }
 

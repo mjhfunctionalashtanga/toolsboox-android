@@ -206,7 +206,17 @@ class CalendarDayService @Inject constructor() {
         // The atomic rename guarantees the final file is always a complete day.
         val target = File(fullPath, "$baseName-v2.json")
         val temp = File(fullPath, "$baseName-v2.json.tmp")
-        PrintWriter(FileWriter(temp)).use { it.write(json(calendarDay)) }
+        // PrintWriter swallows IOExceptions — on a full disk it "succeeds" with a truncated
+        // temp file, and the atomic move would then replace the good day with garbage.
+        // checkError() surfaces the failure so we abort before the move.
+        PrintWriter(FileWriter(temp)).use {
+            it.write(json(calendarDay))
+            it.flush()
+            if (it.checkError()) {
+                temp.delete()
+                throw java.io.IOException("write failed (disk full?) for $baseName-v2.json")
+            }
+        }
         try {
             Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
         } catch (e: Exception) {
@@ -216,10 +226,17 @@ class CalendarDayService @Inject constructor() {
             Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
         }
 
-        // Try to rename the old file to .backup
+        // Try to rename the old v1 file to .backup. REPLACE_EXISTING: if a .backup already
+        // exists this used to throw FileAlreadyExistsException AFTER the save succeeded,
+        // crashing callers that treated save() as infallible.
         val source = File(fullPath, "$baseName.json")
         if (source.exists()) {
-            Files.move(source.toPath(), source.toPath().resolveSibling("$baseName.json.backup"))
+            runCatching {
+                Files.move(
+                    source.toPath(), source.toPath().resolveSibling("$baseName.json.backup"),
+                    StandardCopyOption.REPLACE_EXISTING
+                )
+            }.onFailure { Timber.w(it, "v1 backup rename failed for $baseName.json") }
         }
     }
 }
