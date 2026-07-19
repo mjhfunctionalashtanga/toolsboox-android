@@ -2112,6 +2112,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
         groups.add(listOf(LedgerContextMenu.Item("Move / resize") { enterImageManipulation(element) }))
         groups.add(listOf(
+            LedgerContextMenu.Item("✎ Edit in ink") { penEditImage(element) },
             LedgerContextMenu.Item("Flip horizontal") { transformImageElement(element) { flipBitmap(it, true) } },
             LedgerContextMenu.Item("Flip vertical") { transformImageElement(element) { flipBitmap(it, false) } },
             LedgerContextMenu.Item("Invert") { transformImageElement(element) { invertBitmap(it) } },
@@ -2602,6 +2603,104 @@ abstract class SurfaceFragment : ScreenFragment() {
         element.width = c.width()
         element.height = c.height()
         imageBitmapCache[element.elementId] = cropped
+    }
+
+    /**
+     * Pen-edit a placed gram: the image sits under a live ink pad; you write on it with the
+     * stylus and Done composites the ink into the bitmap at its NATIVE resolution. The edit
+     * rides transformImageElement, so gramId is seeded first and sourceLink/sourceLabel are
+     * untouched — the edited gram still jumps home and still groups in "Where used".
+     * Mirrors iOS PenEditView.
+     */
+    private fun penEditImage(element: ImageElement) {
+        val ctx = context ?: return
+        val src = bitmapForElement(element) ?: return
+        val pad = InkOverImageView(ctx, src)
+        val dm = resources.displayMetrics
+        // Size the pad to the gram's aspect, capped so the dialog buttons stay on screen.
+        val maxH = (dm.heightPixels * 0.68f).toInt()
+        val padW = (dm.widthPixels * 0.88f).toInt()
+        val padH = (padW.toFloat() * src.height / src.width).toInt()
+            .coerceAtLeast((240 * dm.density).toInt()).coerceAtMost(maxH)
+        val box = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            val p = (8 * dm.density).toInt(); setPadding(p, p / 2, p, 0)
+            addView(pad, android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, padH))
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Edit in ink")
+            .setView(box)
+            .setPositiveButton("Done") { _, _ ->
+                val edited = pad.composite()
+                if (edited != null) transformImageElement(element) { edited }
+            }
+            .setNeutralButton("Clear", null)
+            .setNegativeButton("Cancel", null)
+            .show()
+        // Keep the dialog open on Clear — re-bind after show().
+        dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { pad.clear() }
+    }
+
+    /** The gram drawn fit-to-view with a live ink layer on top. composite() bakes the ink into
+     *  a copy of the bitmap at native resolution (stroke width scales with the bitmap). */
+    private class InkOverImageView(context: android.content.Context, private val src: Bitmap) : View(context) {
+        private val paths = mutableListOf<android.graphics.Path>()
+        private var current: android.graphics.Path? = null
+        private val dst = RectF()
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.BLACK; style = Paint.Style.STROKE
+            strokeWidth = 4f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+        }
+
+        init { setBackgroundColor(android.graphics.Color.WHITE) }
+
+        override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
+            // Fit-center the gram; ink coordinates are captured in view space over this rect.
+            val scale = minOf(w / src.width.toFloat(), h / src.height.toFloat())
+            val dw = src.width * scale; val dh = src.height * scale
+            dst.set((w - dw) / 2f, (h - dh) / 2f, (w + dw) / 2f, (h + dh) / 2f)
+        }
+
+        @android.annotation.SuppressLint("ClickableViewAccessibility")
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    current = android.graphics.Path().also { it.moveTo(event.x, event.y); paths.add(it) }
+                }
+                MotionEvent.ACTION_MOVE -> current?.lineTo(event.x, event.y)
+                MotionEvent.ACTION_UP -> current = null
+            }
+            invalidate()
+            return true
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            canvas.drawBitmap(src, null, dst, null)
+            for (p in paths) canvas.drawPath(p, paint)
+        }
+
+        fun clear() { paths.clear(); current = null; invalidate() }
+
+        /** The gram with the ink baked in at native resolution, or null when nothing was drawn. */
+        fun composite(): Bitmap? {
+            if (paths.isEmpty() || dst.width() <= 0f) return null
+            val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+            val c = Canvas(out)
+            c.drawBitmap(src, 0f, 0f, null)
+            val scale = src.width / dst.width()
+            val m = Matrix().apply {
+                postTranslate(-dst.left, -dst.top)
+                postScale(scale, scale)
+            }
+            val inkPaint = Paint(paint).apply { strokeWidth = paint.strokeWidth * scale }
+            for (p in paths) {
+                val scaled = android.graphics.Path(p).apply { transform(m) }
+                c.drawPath(scaled, inkPaint)
+            }
+            return out
+        }
     }
 
     /** Apply a bitmap transform to an image: re-encode PNG inline, refresh cache, persist, repaint. */
