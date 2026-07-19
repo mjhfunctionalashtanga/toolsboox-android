@@ -356,6 +356,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     if (shown.isEmpty()) showEmpty(getString(R.string.feeds_empty))
                     else binding.emptyText.visibility = View.GONE
                     renderDirectory()
+                    if (FeedSelection.openDirectoryOnArrival) {
+                        FeedSelection.openDirectoryOnArrival = false
+                        showFeedDirectory()
+                    }
                 }
                 is MinifluxClient.Result.Err -> {
                     // Offline: fall back to the cached (offline-readable) copy.
@@ -1249,6 +1253,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
 /** Hand the tapped entry to the article fragment without stuffing it through nav args. */
 object FeedSelection {
     var entry: FeedEntry? = null
+
+    /** Set by the day-page directory: open the feeds directory drawer as soon as entries load. */
+    var openDirectoryOnArrival = false
 
     /** An article to open directly in the feed's in-pane reader on next open (e.g.
      *  from a gram's "Go to source"). Consumed once by FeedsFragment. */

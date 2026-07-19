@@ -97,8 +97,10 @@ fun ledgerDirectoryFolders(
             "🔬  Synthesize" to { CalendarNavigator.toDayNote(fragment, today, "synthesize") },
             "✍️  Write" to { CalendarNavigator.toDayNote(fragment, today, "write") }
         )),
-        // Feed Ledger — the RSS reader lenses.
+        // Feed Ledger — the RSS reader lenses. The first row lands with the feeds DIRECTORY
+        // already open (categories → individual feeds), not the flat listing.
         ScreenFragment.Folder("📰", "Feed Ledger", listOf(
+            "🗂  Feeds directory" to { FeedSelection.openDirectoryOnArrival = true; openFeed("feed", null) },
             "📰  All" to { openFeed("feed", null) },
             "📖  The Read" to { openFeed("feed", "read") },
             "📺  The Watch" to { openFeed("feed", "watch") },
