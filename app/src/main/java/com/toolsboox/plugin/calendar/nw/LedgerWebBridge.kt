@@ -632,6 +632,35 @@ object LedgerBoards {
         }
     }
 
+    /**
+     * Land replies on your shared items as cards on [boardId]'s first column — the Correspondence
+     * Inbox. Idempotent server-side, so re-running only adds the new ones. Returns (created, skipped)
+     * or null on failure.
+     */
+    fun syncInbox(context: Context, boardId: Int): Pair<Int, Int>? {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank()) return null
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("board_id", boardId.toString())
+            .addFormDataPart("limit", "50")
+            .build()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/correspondence/to-board")
+                .post(body)
+                .header("Authorization", auth(c))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val o = JSONObject(resp.body?.string() ?: return null)
+                o.optInt("created", 0) to o.optInt("skipped", 0)
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "inbox sync failed")
+            null
+        }
+    }
+
     /** The board's people — the roster a card can be assigned to. Empty on failure. */
     fun members(context: Context, boardId: Int): List<SiteAssignee> {
         val c = LedgerWebBridge.config(context)

@@ -113,11 +113,55 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             orientation = LinearLayout.VERTICAL
             setPadding(px(10), px(6), px(10), px(24))
         }
+        // Correspondence Inbox — replies to your shared items become cards on the configured board.
+        val inboxBoardId = com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).boardId
+        if (inboxBoardId > 0) col.addView(inboxRow(inboxBoardId))
         for (b in boards) {
             col.addView(boardRow(b))
         }
         scroll.addView(col)
         setContent(scroll)
+    }
+
+    /** The inbox pull: sync correspondence to the configured board, then open it. */
+    private fun inboxRow(boardId: Int): View {
+        val ctx = requireContext()
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(16), px(14), px(16), px(14))
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#F5F5F5")); setStroke(px(2), Color.BLACK); cornerRadius = px(2).toFloat()
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = px(8); bottomMargin = px(6) }
+            isClickable = true
+            setOnClickListener { syncInboxThenOpen(boardId) }
+        }
+        row.addView(TextView(ctx).apply {
+            text = "↩  Correspondence Inbox"
+            setTextColor(Color.BLACK); textSize = 18f; typeface = Typeface.DEFAULT_BOLD
+        })
+        row.addView(TextView(ctx).apply {
+            text = "Replies to what you've shared → land here as cards. Tap to sync & open."
+            setTextColor(Color.parseColor("#666666")); textSize = 13f
+            setPadding(0, px(3), 0, 0)
+        })
+        return row
+    }
+
+    private fun syncInboxThenOpen(boardId: Int) {
+        toast("Gathering replies…")
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { LedgerBoards.syncInbox(requireContext(), boardId) }
+            if (!isAdded) return@launch
+            if (result == null) { toast("Couldn't reach the inbox"); return@launch }
+            val (created, _) = result
+            toast(if (created > 0) "$created new" else "No new replies")
+            val board = boards.firstOrNull { it.id == boardId }
+                ?: SiteBoard(boardId, "Correspondence Inbox", null, 0, 0)
+            loadBoard(board)
+        }
     }
 
     private fun boardRow(board: SiteBoard): View {

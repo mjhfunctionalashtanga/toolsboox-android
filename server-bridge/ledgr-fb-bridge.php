@@ -176,6 +176,13 @@ class Ledgr_FB_Bridge
             'permission_callback' => [$this, 'canCommunity'],
         ]);
 
+        // Correspondence Inbox: land replies on your shared items as cards on a board.
+        register_rest_route(self::NS, '/correspondence/to-board', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'correspondenceToBoard'],
+            'permission_callback' => [$this, 'canReadBoard'],
+        ]);
+
         register_rest_route(self::NS, '/person/compact', [
             'methods'             => 'GET',
             'callback'            => [$this, 'compactPerson'],
@@ -1269,6 +1276,21 @@ class Ledgr_FB_Bridge
         $since = sanitize_text_field($request->get_param('since') ?: '');
         $limit = min(100, max(1, (int) ($request->get_param('limit') ?: 50)));
 
+        $out = $this->gatherCorrespondence($uid, $since, $limit);
+
+        return rest_ensure_response([
+            'items' => $out,
+            'rev'   => md5(wp_json_encode(array_column($out, 'id'))),
+        ]);
+    }
+
+    /**
+     * The replies-to-you set: FluentCommunity comments on your posts + FluentBoards comments on
+     * your Ledgr cards, newest first, each with a stable id (fcom-/fbs-). Shared by the inbox
+     * feed and the to-board sync so both see exactly the same conversation.
+     */
+    private function gatherCorrespondence($uid, $since, $limit)
+    {
         $out = [];
 
         // --- FluentCommunity replies ---
@@ -1347,11 +1369,85 @@ class Ledgr_FB_Bridge
             return strcmp($b['created_at'], $a['created_at']);
         });
 
-        $out = array_slice($out, 0, $limit);
+        return array_slice($out, 0, $limit);
+    }
+
+    /* ---------------------------------------------------------------
+     * POST /ledgr/v1/correspondence/to-board
+     * body: board_id (required), stage_id (optional; default first
+     *       stage), limit, since
+     * Lands each reply on your shared items as a card on the board, in
+     * the first column — "waiting for your next move." Idempotent on the
+     * reply id (source=ledgr-inbox, source_id=fcom-/fbs-id), so re-syncing
+     * only ever adds the new ones. The thread text + a link ride in the
+     * card so you can move it, assign it, or reply straight from the board.
+     * ------------------------------------------------------------- */
+
+    public function correspondenceToBoard(\WP_REST_Request $request)
+    {
+        $boardId = (int) $request->get_param('board_id');
+        $stageId = (int) $request->get_param('stage_id');
+        $since   = sanitize_text_field($request->get_param('since') ?: '');
+        $limit   = min(100, max(1, (int) ($request->get_param('limit') ?: 50)));
+        $uid     = get_current_user_id();
+
+        if (!$boardId) {
+            return new \WP_Error('ledgr_bad_request', 'board_id is required', ['status' => 400]);
+        }
+
+        // Default to the board's first column.
+        if (!$stageId) {
+            $firstStage = \FluentBoards\App\Models\Stage::where('board_id', $boardId)
+                ->whereNull('archived_at')->orderBy('position', 'asc')->first();
+            if (!$firstStage) {
+                return new \WP_Error('ledgr_no_stage', 'Board has no columns', ['status' => 400]);
+            }
+            $stageId = (int) $firstStage->id;
+        }
+
+        $replies = $this->gatherCorrespondence($uid, $since, $limit);
+
+        $created = 0;
+        $skipped = 0;
+        try {
+            $taskService = new \FluentBoards\App\Services\TaskService();
+            foreach ($replies as $r) {
+                $sourceId = $r['id'];   // fcom-<id> / fbs-<id>
+
+                $exists = \FluentBoards\App\Models\Task::where('source', 'ledgr-inbox')
+                    ->where('source_id', $sourceId)->first();
+                if ($exists) { $skipped++; continue; }
+
+                $thread = $r['thread'] ?: ($r['source'] === 'community' ? 'a post' : 'a card');
+                $title  = '↩ ' . $r['author'] . ': ' . wp_trim_words($r['excerpt'], 12);
+
+                $task = $taskService->createTask([
+                    'title'     => $title,
+                    'board_id'  => $boardId,
+                    'stage_id'  => $stageId,
+                    'source'    => 'ledgr-inbox',
+                    'source_id' => $sourceId,
+                ], $boardId);
+                $task = \FluentBoards\App\Models\Task::find($task->id);
+
+                $link = !empty($r['thread_url'])
+                    ? '<p><a href="' . esc_url($r['thread_url']) . '">Open the ' . esc_html($r['source']) . ' thread ↗</a></p>'
+                    : '';
+                $task->description = '<p><strong>' . esc_html($r['author']) . '</strong> on <em>'
+                    . esc_html($thread) . '</em>:</p><p>' . esc_html($r['excerpt']) . '</p>' . $link;
+                $task->save();
+
+                $created++;
+            }
+        } catch (\Exception $e) {
+            return new \WP_Error('ledgr_inbox_failed', $e->getMessage(), ['status' => 500]);
+        }
 
         return rest_ensure_response([
-            'items' => $out,
-            'rev'   => md5(wp_json_encode(array_column($out, 'id'))),
+            'board_id' => $boardId,
+            'stage_id' => $stageId,
+            'created'  => $created,
+            'skipped'  => $skipped,
         ]);
     }
 
