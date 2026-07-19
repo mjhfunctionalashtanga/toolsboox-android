@@ -755,9 +755,10 @@ abstract class ScreenFragment : Fragment() {
                 setPadding(dp(2), dp(2), dp(2), dp(4))
             }
             fun caret() = if (children.visibility == View.VISIBLE) "▾" else "▸"
+            // Glyph LEFT of the caret, matching where the mapped drawable icons sit.
             fun headerText(): CharSequence =
                 if (glyph.isEmpty()) "${caret()}  ${folder.title}"
-                else glyphLabel(glyph, folder.title).let { android.text.TextUtils.concat("${caret()}  ", it) }
+                else glyphLabel(glyph, "${caret()}  ${folder.title}")
             headerLabel.text = headerText()
             header.setOnClickListener {
                 val show = children.visibility != View.VISIBLE
