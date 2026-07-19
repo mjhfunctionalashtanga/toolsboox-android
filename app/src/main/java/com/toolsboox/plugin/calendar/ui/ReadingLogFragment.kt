@@ -823,11 +823,15 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 val url = item.url
                 if (!url.isNullOrBlank()) {
                     // Open the article inside the Feed Ledger's in-pane reader.
+                    // id = 0 marks a server-less entry (never sent to Miniflux — item.millis
+                    // as id could mark a REAL entry read); blank content makes the reader
+                    // load the live page. The old placeholder body ("Opening from your
+                    // Ledger…") was treated as real content and just… sat there.
                     com.toolsboox.plugin.feeds.ui.FeedSelection.pendingInPaneEntry =
                         com.toolsboox.plugin.feeds.da.FeedEntry(
-                            id = item.millis, title = item.title, feedTitle = "",
+                            id = 0L, title = item.title, feedTitle = "",
                             url = url, author = null,
-                            content = item.body.ifBlank { "<p><em>Opening from your Ledger…</em></p>" },
+                            content = item.body,
                             publishedAt = java.time.Instant.ofEpochMilli(item.millis).toString(),
                             starred = false
                         )
