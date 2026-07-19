@@ -381,56 +381,40 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
      *  on TODAY'S Synthesize page — the Log feeds the pressure chamber directly. */
     private fun synthesizeBasket() {
         val ctx = requireContext()
-        AlertDialog.Builder(ctx)
-            .setTitle("Synthesize ${basket.size} items")
-            .setItems(arrayOf("?  3 Questions", "✎  Writing Prompt", "≡  Essay Outline")) { _, which ->
-                val kind = listOf("questions", "prompt", "outline")[which]
-                val material = basket.joinToString("\n") { it2 ->
-                    "• [${it2.origin.label}] ${it2.title}" + (if (it2.body.isNotBlank()) " — ${it2.body}" else "")
-                }.take(6000)
-                val creds = com.toolsboox.plugin.chat.nw.AiCreds.get(ctx)
-                if (creds == null) {
-                    android.widget.Toast.makeText(ctx, "Add your AI key in Ask my Ledger settings", android.widget.Toast.LENGTH_LONG).show()
-                    return@setItems
-                }
-                val (provider, key, model) = creds
-                val (heading, prompt) = when (kind) {
-                    "questions" -> "? 3 Questions" to
-                        "From the gathered material, pose the 3 most GENERATIVE questions it raises — questions that push the author's own thinking further. Numbered, one line each. No preamble."
-                    "prompt" -> "✎ Writing Prompt" to
-                        "From the gathered material, write ONE vivid writing prompt (2–3 sentences) the author could start writing from immediately, in second person. No preamble."
-                    else -> "≡ Essay Outline" to
-                        "From the gathered material, draft an essay outline: a working title line, then 4–6 section headers each with one guiding sentence. Plain text. No preamble."
-                }
-                android.widget.Toast.makeText(ctx, "Synthesizing…", android.widget.Toast.LENGTH_SHORT).show()
-                lifecycleScope.launch(Dispatchers.IO) {
-                    val res = chatService.run(provider, key, model, prompt, material)
-                    withContext(Dispatchers.Main) {
-                        when (res) {
-                            is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok -> {
-                                lifecycleScope.launch(Dispatchers.IO) {
-                                    val today = LocalDate.now()
-                                    val day = calendarDayService.load(documentsRoot(), today, null, java.util.Locale.getDefault())
-                                    val y = (day.textElements.filter { it.pageKey == "synthesize" }
-                                        .maxOfOrNull { it.y } ?: 60f) + 140f
-                                    day.textElements.add(com.toolsboox.da.TextElement(
-                                        x = 80f, y = y.coerceAtMost(1600f), width = 1200f, height = 60f,
-                                        text = "$heading\n\n${res.answer.trim()}", pageKey = "synthesize"))
-                                    calendarDayService.save(documentsRoot(), today, day)
-                                    withContext(Dispatchers.Main) {
-                                        basket.clear()
-                                        android.widget.Toast.makeText(ctx, "On today's Synthesize page", android.widget.Toast.LENGTH_LONG).show()
-                                    }
-                                }
-                            }
-                            is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Err ->
-                                android.widget.Toast.makeText(ctx, "⚠ ${res.message}", android.widget.Toast.LENGTH_LONG).show()
+        com.toolsboox.plugin.calendar.ot.SynthEngines.pick(ctx, "Synthesize ${basket.size} items") { engine ->
+            val material = basket.joinToString("\n") { it2 ->
+                "• [${it2.origin.label}] ${it2.title}" + (if (it2.body.isNotBlank()) " — ${it2.body}" else "")
+            }.take(6000)
+            val creds = com.toolsboox.plugin.chat.nw.AiCreds.get(ctx)
+            if (creds == null) {
+                android.widget.Toast.makeText(ctx, "Add your AI key in Ask my Ledger settings", android.widget.Toast.LENGTH_LONG).show()
+                return@pick
+            }
+            val (provider, key, model) = creds
+            android.widget.Toast.makeText(ctx, "Synthesizing…", android.widget.Toast.LENGTH_SHORT).show()
+            lifecycleScope.launch(Dispatchers.IO) {
+                val res = chatService.run(provider, key, model, engine.prompt, material)
+                when (res) {
+                    is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok -> {
+                        val today = LocalDate.now()
+                        val day = calendarDayService.load(documentsRoot(), today, null, java.util.Locale.getDefault())
+                        val y = (day.textElements.filter { it.pageKey == "synthesize" }
+                            .maxOfOrNull { it.y } ?: 60f) + 140f
+                        day.textElements.add(com.toolsboox.da.TextElement(
+                            x = 80f, y = y.coerceAtMost(1600f), width = 1200f, height = 60f,
+                            text = "${engine.name}\n\n${res.answer.trim()}", pageKey = "synthesize"))
+                        calendarDayService.save(documentsRoot(), today, day)
+                        withContext(Dispatchers.Main) {
+                            basket.clear()
+                            android.widget.Toast.makeText(ctx, "On today's Synthesize page", android.widget.Toast.LENGTH_LONG).show()
                         }
+                    }
+                    is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Err -> withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(ctx, "⚠ ${res.message}", android.widget.Toast.LENGTH_LONG).show()
                     }
                 }
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+        }
     }
 
     /**

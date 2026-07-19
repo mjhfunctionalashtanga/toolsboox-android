@@ -322,22 +322,28 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     // ------------------------------------------------------------------
 
     override fun extraCreationGroups(cx: Float, cy: Float): List<List<com.toolsboox.ot.LedgerContextMenu.Item>> {
+        val ctx = context ?: return emptyList()
         return when (notePage) {
+            // Synthesize page: the engine LIBRARY (built-ins + your own prompts) on the day's gathering.
             "synthesize" -> listOf(listOf(
-                com.toolsboox.ot.LedgerContextMenu.Item("?  3 Questions") { runSynthesis("questions", pageMaterial()) },
-                com.toolsboox.ot.LedgerContextMenu.Item("✎  Writing Prompt") { runSynthesis("prompt", pageMaterial()) },
-                com.toolsboox.ot.LedgerContextMenu.Item("≡  Essay Outline") { runSynthesis("outline", pageMaterial()) }
+                com.toolsboox.ot.LedgerContextMenu.Item("⚗  Synthesize the day…") {
+                    com.toolsboox.plugin.calendar.ot.SynthEngines.pick(ctx, "Synthesize the day") { e ->
+                        runEngine(e, pageMaterial())
+                    }
+                }
             ))
             "write" -> listOf(listOf(
                 com.toolsboox.ot.LedgerContextMenu.Item("→  Share essay…") { shareEssay() }
             ))
             // Any other note page (pickings, notes, gratitude) is a SELECTION BASKET: copy a few
-            // cards/quotes onto it, then run the engines on just this page's gathering.
+            // cards/quotes onto it, then run an engine on just this page's gathering.
             null -> emptyList()
             else -> listOf(listOf(
-                com.toolsboox.ot.LedgerContextMenu.Item("?  3 Questions (this page)") { runSynthesis("questions", thisPageMaterial()) },
-                com.toolsboox.ot.LedgerContextMenu.Item("✎  Writing Prompt (this page)") { runSynthesis("prompt", thisPageMaterial()) },
-                com.toolsboox.ot.LedgerContextMenu.Item("≡  Essay Outline (this page)") { runSynthesis("outline", thisPageMaterial()) }
+                com.toolsboox.ot.LedgerContextMenu.Item("⚗  Synthesize this page…") {
+                    com.toolsboox.plugin.calendar.ot.SynthEngines.pick(ctx, "Synthesize this page") { e ->
+                        runEngine(e, thisPageMaterial())
+                    }
+                }
             ))
         }
     }
@@ -468,14 +474,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     override fun onSynthesizeText(element: com.toolsboox.da.TextElement) {
         val ctx = context ?: return
-        AlertDialog.Builder(ctx)
-            .setTitle("Synthesize this")
-            .setItems(arrayOf("?  3 Questions", "✎  Writing Prompt", "≡  Essay Outline")) { _, which ->
-                val kind = listOf("questions", "prompt", "outline")[which]
-                runSynthesis(kind, element.text)
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+        com.toolsboox.plugin.calendar.ot.SynthEngines.pick(ctx, "Synthesize this") { e ->
+            runEngine(e, element.text)
+        }
     }
 
     /** The day's gathered material: every text box on every page of today + starred excerpts. */
@@ -491,7 +492,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         return parts.joinToString("\n").take(6000)
     }
 
-    private fun runSynthesis(kind: String, material: String) {
+    private fun runEngine(engine: com.toolsboox.plugin.calendar.ot.SynthEngines.Engine, material: String) {
         val ctx = requireContext()
         if (material.isBlank()) {
             android.widget.Toast.makeText(ctx, "Nothing gathered yet — add some pickings or notes first", android.widget.Toast.LENGTH_LONG).show()
@@ -503,20 +504,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             return
         }
         val (provider, key, model) = creds
-        val (heading, prompt) = when (kind) {
-            "questions" -> "? 3 Questions" to
-                "From the gathered material, pose the 3 most GENERATIVE questions it raises — questions that would push the author's own thinking further, not comprehension checks. Numbered, one line each. No preamble."
-            "prompt" -> "✎ Writing Prompt" to
-                "From the gathered material, write ONE vivid writing prompt (2–3 sentences) the author could start writing from immediately, in second person. No preamble."
-            else -> "≡ Essay Outline" to
-                "From the gathered material, draft an essay outline: a working title on the first line, then 4–6 section headers, each with one guiding sentence. Plain text, no markdown. No preamble."
-        }
         android.widget.Toast.makeText(ctx, "Synthesizing…", android.widget.Toast.LENGTH_SHORT).show()
         lifecycleScope.launch {
-            val res = withContext(Dispatchers.IO) { chatService.run(provider, key, model, prompt, material) }
+            val res = withContext(Dispatchers.IO) { chatService.run(provider, key, model, engine.prompt, material) }
             when (res) {
                 is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok ->
-                    placeGeneratedText("$heading\n\n${res.answer.trim()}")
+                    placeGeneratedText("${engine.name}\n\n${res.answer.trim()}")
                 is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Err ->
                     android.widget.Toast.makeText(ctx, "⚠ ${res.message}", android.widget.Toast.LENGTH_LONG).show()
             }
