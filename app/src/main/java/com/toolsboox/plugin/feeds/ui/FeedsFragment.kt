@@ -1108,19 +1108,41 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
         val readerDefault = android.widget.CheckBox(ctx).apply { text = "Reader view by default"; isChecked = showParsed }
+        // On-star reactions (both off/empty by default) — see StarHooks.
+        val hookUrlIn = android.widget.EditText(ctx).apply {
+            setText(p.getString(com.toolsboox.plugin.feeds.nw.StarHooks.KEY_WEBHOOK_URL, ""))
+            hint = "https://… (POST each star here)"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+        }
+        val hookSecretIn = android.widget.EditText(ctx).apply {
+            setText(p.getString(com.toolsboox.plugin.feeds.nw.StarHooks.KEY_WEBHOOK_SECRET, ""))
+            hint = "Shared secret (optional)"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val autoSynth = android.widget.CheckBox(ctx).apply {
+            text = "Ask 3 questions on every star (uses your AI key)"
+            isChecked = p.getBoolean(com.toolsboox.plugin.feeds.nw.StarHooks.KEY_AUTOSYNTH, false)
+        }
         val box = android.widget.LinearLayout(ctx).apply {
             orientation = android.widget.LinearLayout.VERTICAL
             setPadding(dpPx(20), dpPx(4), dpPx(20), 0)
             addView(label(getString(R.string.feeds_url_hint))); addView(urlIn)
             addView(label(getString(R.string.feeds_token_hint))); addView(tokIn)
             addView(readerDefault)
+            addView(label("When you star an item"))
+            addView(label("Send to a webhook")); addView(hookUrlIn); addView(hookSecretIn)
+            addView(autoSynth)
         }
         androidx.appcompat.app.AlertDialog.Builder(ctx)
             .setTitle("Feed settings")
             .setView(android.widget.ScrollView(ctx).apply { addView(box) })
             .setPositiveButton("Save") { _, _ ->
                 p.edit().putString(KEY_URL, urlIn.text.toString().trim())
-                    .putString(KEY_TOKEN, tokIn.text.toString().trim()).apply()
+                    .putString(KEY_TOKEN, tokIn.text.toString().trim())
+                    .putString(com.toolsboox.plugin.feeds.nw.StarHooks.KEY_WEBHOOK_URL, hookUrlIn.text.toString().trim())
+                    .putString(com.toolsboox.plugin.feeds.nw.StarHooks.KEY_WEBHOOK_SECRET, hookSecretIn.text.toString().trim())
+                    .putBoolean(com.toolsboox.plugin.feeds.nw.StarHooks.KEY_AUTOSYNTH, autoSynth.isChecked)
+                    .apply()
                 showParsed = readerDefault.isChecked
                 if (currentArticle != null) renderArticle()
                 showMessage(R.string.feeds_saved); refresh()
@@ -1336,6 +1358,35 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         } catch (e: Exception) {
             Timber.w(e, "failed to log starred article")
         }
+        // Generic, opt-in on-star reactions (webhook-out / in-app synthesis). No-ops unless
+        // the user configured them in Feed settings.
+        runCatching {
+            com.toolsboox.plugin.feeds.nw.StarHooks.onNewStar(
+                requireContext().applicationContext, prefs(), entry
+            ) { title, body, srcUrl -> writeCorrespondence(title, body, srcUrl) }
+        }.onFailure { Timber.w(it, "star hooks failed") }
+    }
+
+    /** Write a correspondence ReadingEvent ("the Ledger wrote back") into today's day. The
+     *  "↩ " source prefix makes the Log render it as a reply and keeps it out of the feed. */
+    private fun writeCorrespondence(title: String, body: String, sourceUrl: String?) {
+        runCatching {
+            val root = documentsRoot()
+            val today = LocalDate.now()
+            val day = calendarDayService.load(root, today, null, Locale.getDefault())
+            day.readingEvents.add(
+                ReadingEvent(
+                    id = "reply-${java.util.UUID.randomUUID()}",
+                    kind = ReadingEvent.Kind.ARTICLE,        // wire kind (Boox/iOS both decode)
+                    date = Date(),
+                    title = title,
+                    source = "↩ the Ledger wrote back",       // "↩" flags it as correspondence
+                    url = sourceUrl?.ifBlank { null },
+                    excerpt = body.ifBlank { null }
+                )
+            )
+            calendarDayService.save(root, today, day)
+        }.onFailure { Timber.w(it, "failed to write correspondence") }
     }
 
     private fun documentsRoot(): File =

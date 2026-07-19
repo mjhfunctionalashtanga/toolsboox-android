@@ -20,7 +20,8 @@ enum class LogOrigin(val label: String, val mark: String) {
     CARD("Card", "▦"),
     /** Feed articles pulled in by the Log's opt-in feed toggle (never shown by default). */
     FEED("Feed", "📰"),
-    /** The Ledger writing back: MichaelFilter enrichments of your stars, community replies. */
+    /** Correspondence — "the Ledger writing back": community replies, and any reading
+     *  event flagged as correspondence (source starts with "↩"). Never a feed. */
     REPLY("Reply", "↩")
 }
 

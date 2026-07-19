@@ -391,7 +391,11 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 val passthrough = mutableListOf<ReadingEvent>()
                 for (e in day.readingEvents) {
                     val u = e.url
-                    if (e.kind != ReadingEvent.Kind.ARTICLE || u.isNullOrBlank()) { passthrough.add(e); continue }
+                    // Correspondence events (source starts with "↩", wire kind stays ARTICLE
+                    // for cross-platform decode) are their own rows, never collapsed into the
+                    // star they answer.
+                    if (e.kind != ReadingEvent.Kind.ARTICLE || u.isNullOrBlank() ||
+                        e.source?.startsWith("↩") == true) { passthrough.add(e); continue }
                     val prev = mergedByUrl[u]
                     if (prev == null) { mergedByUrl[u] = e; continue }
                     val richer = ((e.note ?: "") + (e.excerpt ?: "")).length >
@@ -404,7 +408,11 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                     )
                 }
                 for (e in passthrough + mergedByUrl.values) {
-                    val o = if (e.kind == ReadingEvent.Kind.BOOK) LogOrigin.BOOK else LogOrigin.READ
+                    val o = when {
+                        e.source?.startsWith("↩") == true -> LogOrigin.REPLY   // correspondence
+                        e.kind == ReadingEvent.Kind.BOOK -> LogOrigin.BOOK
+                        else -> LogOrigin.READ
+                    }
                     // A star lives on two days (starred + published; see logStar). Each row
                     // clarifies the OTHER date: the star-day row shows "published MMM d",
                     // the published-day companion carries "★ starred MMM d" in its note.
@@ -474,34 +482,6 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                     }
                 }
             }
-        // The Ledger writing back: every star begets a MichaelFilter journal entry
-        // (michaeljoelhall.com/journal/entry/…). Its Miniflux category is hidden from
-        // the unread flow (you already read the source) but surfaces HERE as ↩ Reply
-        // rows — correspondence, not intake. Low volume (1:1 with stars), so always on.
-        feedCreds()?.let { (fUrl, fTok) ->
-            val catId = michaelFilterCategoryId(fUrl, fTok)
-            if (catId != null) {
-                val zone = ZoneId.systemDefault()
-                val after = (start ?: LocalDate.now().minusYears(1)).atStartOfDay(zone).toEpochSecond()
-                val before = (end ?: LocalDate.now().plusDays(1)).atStartOfDay(zone).toEpochSecond()
-                val res = miniflux.fetchCategoryEntries(fUrl, fTok, catId, after, before)
-                if (res is com.toolsboox.plugin.feeds.nw.MinifluxClient.Result.Ok) {
-                    for (fe in res.value) {
-                        val q = searchQuery.trim().lowercase()
-                        if (q.isNotEmpty() && !fe.title.lowercase().contains(q)) continue
-                        val pubDay = runCatching { LocalDate.parse(fe.publishedAt.take(10)) }.getOrNull()
-                        val millis = pubDay?.atStartOfDay(zone)?.toInstant()?.toEpochMilli() ?: 0L
-                        out.add(LogItem(
-                            LogOrigin.REPLY, fe.title,
-                            listOfNotNull("↩ the Ledger wrote back", "MichaelFilter", pubDay?.toString())
-                                .joinToString(" · "),
-                            "", fe.url, millis, day = pubDay
-                        ))
-                    }
-                }
-            }
-        }
-
         // Feed articles are OPT-IN (feedMode): the general feed inside the log — or its
         // search — is noise by default, but the toggle folds the window's published
         // articles in as 📰 rows (unread / read / all).
@@ -539,19 +519,6 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             }
         }
         return out.sortedByDescending { it.millis }
-    }
-
-    /** The MichaelFilter category id, resolved once and cached (0 = known absent). */
-    private fun michaelFilterCategoryId(fUrl: String, fTok: String): Long? {
-        val p = filterPrefs()
-        val cached = p.getLong("mf_category_id", -1L)
-        if (cached == 0L) return null
-        if (cached > 0L) return cached
-        val res = miniflux.findCategoryId(fUrl, fTok, "MichaelFilter")
-        if (res !is com.toolsboox.plugin.feeds.nw.MinifluxClient.Result.Ok) return null   // transient — retry next load
-        val id = res.value
-        p.edit().putLong("mf_category_id", id ?: 0L).apply()
-        return id
     }
 
     /** Miniflux URL+token from the feeds plugin's encrypted prefs; null when unconfigured. */
@@ -617,10 +584,10 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             val items = basket.toList()
             android.widget.Toast.makeText(ctx, "Synthesizing…", android.widget.Toast.LENGTH_SHORT).show()
             lifecycleScope.launch(Dispatchers.IO) {
-                // Reply items (MichaelFilter enrichments) press their FULL text into the
-                // engine — the enriched entry is the richest version of the star, so the
-                // synthesis reads the essay, not just the headline. (Network fetch, so
-                // built here on IO, not while assembling the dialog.)
+                // Reply items (correspondence) with a link press their FULL text into the
+                // engine — the enriched reply is the richest version, so synthesis reads
+                // the essay, not just the headline. (Network fetch, so built here on IO,
+                // not while assembling the dialog.)
                 val material = items.joinToString("\n") { it2 ->
                     val full = if (it2.origin == LogOrigin.REPLY && !it2.url.isNullOrBlank()) {
                         val r = miniflux.fetchPageReadable(it2.url)
