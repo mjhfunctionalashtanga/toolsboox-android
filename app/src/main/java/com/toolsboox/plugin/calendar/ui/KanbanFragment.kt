@@ -286,6 +286,15 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
                 text = item.text; textSize = 13f; setTextColor(0xFF000000.toInt())
                 if (item.done) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
             })
+            // Contact + time chip (iOS parity): who it's for, when it's due.
+            val chipContact = item.contactId?.let { com.toolsboox.plugin.calendar.ot.ContactStore.get(ctx, it) }
+            val chip = listOfNotNull(
+                chipContact?.name?.ifBlank { "Unnamed" }?.let { "👤 $it" },
+                item.time?.takeIf { it.isNotBlank() }?.let { "· $it" }
+            ).joinToString("  ")
+            if (chip.isNotBlank()) card.addView(TextView(ctx).apply {
+                text = chip; textSize = 11f; setTextColor(0xFF666666.toInt()); setPadding(0, px(3), 0, 0)
+            })
             val row = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, px(6), 0, 0)
             }
