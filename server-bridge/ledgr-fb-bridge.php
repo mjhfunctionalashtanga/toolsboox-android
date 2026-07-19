@@ -755,6 +755,56 @@ class Ledgr_FB_Bridge
         }
     }
 
+    /**
+     * Drop a comment that @mentions freshly-assigned users, using FluentBoards' own mention
+     * pipeline (zero-width markers → processMentionAndLink → mentioned_id settings → notify), so
+     * the mention links, emails, and desktop notifications all behave like a comment typed in the
+     * web UI. Best-effort: a failure here never fails the assignment.
+     */
+    private function postAssignMention($task, $boardId, array $userIds)
+    {
+        try {
+            if (!class_exists('\FluentBoards\App\Services\CommentService')) {
+                return;
+            }
+            $ids = array_values(array_unique(array_map('intval', $userIds)));
+            if (!$ids) {
+                return;
+            }
+
+            $markers = [];
+            foreach ($ids as $uid) {
+                $u = get_userdata($uid);
+                if ($u) {
+                    // @<ZWSP>user_login<ZWNJ> — the exact marker FluentBoards parses.
+                    $markers[] = '@' . "\u{200B}" . $u->user_login . "\u{200C}";
+                }
+            }
+            if (!$markers) {
+                return;
+            }
+
+            $raw     = 'Assigned ' . implode(' ', $markers);
+            $service = new \FluentBoards\App\Services\CommentService();
+            $linked  = $service->processMentionAndLink($raw, $ids);
+
+            $comment = $service->create([
+                'task_id'     => $task->id,
+                'board_id'    => $boardId,
+                'description' => $linked,
+                'type'        => 'comment',
+                'created_by'  => get_current_user_id(),
+                'settings'    => ['raw_description' => $raw, 'mentioned_id' => $ids],
+            ], $task->id, $boardId);
+
+            if (class_exists('\FluentBoards\App\Services\NotificationService')) {
+                (new \FluentBoards\App\Services\NotificationService())->mentionInComment($comment, $ids);
+            }
+        } catch (\Exception $e) {
+            // Mention is a courtesy; assignment already succeeded.
+        }
+    }
+
     /* ---------------------------------------------------------------
      * GET /ledgr/v1/board/{board_id}/members
      * The board's people — the roster a card can be assigned to.
@@ -815,6 +865,14 @@ class Ledgr_FB_Bridge
                     $service->updateAssignee($uid, $task);
                 }
                 $task = \FluentBoards\App\Models\Task::find($taskId);
+
+                // Tagging someone on a card @mentions them in the thread, so they're
+                // pulled into the conversation (email + notification), not just added.
+                // Default on; pass mention=0 to suppress. Only the net-new assignees.
+                $mention = $request->get_param('mention');
+                if (!empty($toAdd) && $mention !== '0' && $mention !== 'false') {
+                    $this->postAssignMention($task, $boardId, array_values($toAdd));
+                }
             }
 
             if ($request->get_param('due_at') !== null) {
