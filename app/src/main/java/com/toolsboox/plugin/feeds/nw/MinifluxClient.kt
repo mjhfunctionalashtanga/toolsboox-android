@@ -41,6 +41,10 @@ class MinifluxClient @Inject constructor() {
     fun fetchRead(baseUrl: String, token: String, limit: Int = 100): Result<List<FeedEntry>> =
         fetch(baseUrl, token, "status=read", limit)
 
+    /** GET /v1/entries with no status filter — read AND unread together ("All"). */
+    fun fetchEverything(baseUrl: String, token: String, limit: Int = 150): Result<List<FeedEntry>> =
+        fetch(baseUrl, token, "globally_visible=true", limit)
+
     /** Full-text search across every entry on the server (Miniflux `search=`). */
     fun search(baseUrl: String, token: String, query: String, limit: Int = 100): Result<List<FeedEntry>> =
         fetch(baseUrl, token, "search=${java.net.URLEncoder.encode(query, "UTF-8")}", limit)

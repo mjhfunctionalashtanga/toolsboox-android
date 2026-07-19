@@ -696,11 +696,14 @@ abstract class ScreenFragment : Fragment() {
     }
 
     /** Set a row's icon slot directly from an emoji (folder headers), else hide it. */
-    private fun setRowEmojiIcon(row: View, emoji: String) {
+    /** Returns true when a mapped drawable icon was shown; false = caller should prepend the
+     *  glyph to the label as TEXT (works for ANY character — the "missing glyphs" were simply
+     *  ones absent from the emoji→drawable map, silently hidden). */
+    private fun setRowEmojiIcon(row: View, emoji: String): Boolean {
         val icon = row.findViewById<ImageView>(R.id.go_icon)
         val res = emojiIconRes(emoji)
-        if (res == null) icon.visibility = View.GONE
-        else { icon.setImageResource(res); icon.visibility = View.VISIBLE }
+        return if (res == null) { icon.visibility = View.GONE; false }
+        else { icon.setImageResource(res); icon.visibility = View.VISIBLE; true }
     }
 
     /**
@@ -717,12 +720,14 @@ abstract class ScreenFragment : Fragment() {
 
         for (folder in folders) {
             val header = layoutInflater.inflate(R.layout.item_go_to, list, false)
-            setRowEmojiIcon(header, folder.emoji)
+            val hasIcon = setRowEmojiIcon(header, folder.emoji)
+            // Unmapped glyph → carry it in the label as text (renders for any character).
+            val prefix = if (!hasIcon && folder.emoji.isNotBlank()) "${folder.emoji}  " else ""
             val headerLabel = header.findViewById<TextView>(R.id.go_label)
 
             // A leaf entry (has [action]) is a plain tappable row — no caret, no children.
             if (folder.action != null) {
-                headerLabel.text = folder.title
+                headerLabel.text = prefix + folder.title
                 header.setOnClickListener { dialog.dismiss(); folder.action.invoke() }
                 list.addView(header)
                 continue

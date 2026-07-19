@@ -140,9 +140,12 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // today's live feed; a second tap (already on today) opens the section menu.
         binding.feedsGoto.setImageResource(R.drawable.ic_nav_today)
         binding.feedsGoto.setOnClickListener {
-            if (navGranularity == "day" && navAnchor == java.time.LocalDate.now()) {
+            // "Home" means today AND unfiltered — a slim-pane feed filter counts as being away,
+            // so the first tap clears it back to the live list; only a second tap opens the menu.
+            if (slimFeedFilter == null && navGranularity == "day" && navAnchor == java.time.LocalDate.now()) {
                 showLedgerDirectory()
             } else {
+                slimFeedFilter = null
                 navGranularity = "day"; navAnchor = java.time.LocalDate.now()
                 renderNav(); onDateChanged()
             }
@@ -212,6 +215,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
 
     /** Current view: "feed" (unread RSS) · "stars" · "later" · "local" (no-server RSS). */
     private var mode: String = "feed"
+
+    /** Slim-pane per-feed filter (null = unfiltered) — counts as "away from home" for the goto. */
+    private var slimFeedFilter: String? = null
     /** Optional read/watch/listen lens. */
     private var kindFilter: String? = null
     /** Selected local subscription (null = all local) when mode == "local". */
@@ -347,6 +353,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 when (mode) {
                     "stars" -> miniflux.fetchStarred(url, token)
                     "read" -> miniflux.fetchRead(url, token)
+                    "both" -> miniflux.fetchEverything(url, token)
                     else -> miniflux.fetchUnread(url, token)
                 }
             }
@@ -1106,12 +1113,17 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             container.addView(tv)
         }
         val pool = applyKind(allEntries)
+        // Status first (before the Directory rung): unread / read / everything, ◉ marks current.
+        row((if (mode == "feed") "◉" else "○") + "  Unread", true, mode == "feed") { mode = "feed"; slimFeedFilter = null; refresh() }
+        row((if (mode == "read") "◉" else "○") + "  Read", true, mode == "read") { mode = "read"; slimFeedFilter = null; refresh() }
+        row((if (mode == "both") "◉" else "○") + "  All", true, mode == "both") { mode = "both"; slimFeedFilter = null; refresh() }
         // Ladder up: the slim pane's back row opens the full feeds directory.
         row("‹  Directory", true, false) { showFeedDirectory() }
-        row("📰  All", true, false) { adapter.submit(filterByNavDay(pool)) }
+        row("📰  All feeds", true, slimFeedFilter == null) { slimFeedFilter = null; adapter.submit(filterByNavDay(pool)) }
         pool.map { it.feedTitle }.filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }.forEach { f ->
             val unread = pool.count { it.feedTitle == f && !it.read }
-            row(if (unread > 0) "$f · $unread" else f, false, false) {
+            row(if (unread > 0) "$f · $unread" else f, false, slimFeedFilter == f) {
+                slimFeedFilter = f
                 adapter.submit(filterByNavDay(pool.filter { it.feedTitle == f }))
             }
         }
