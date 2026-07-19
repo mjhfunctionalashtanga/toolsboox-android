@@ -354,6 +354,15 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     "stars" -> miniflux.fetchStarred(url, token)
                     "read" -> miniflux.fetchRead(url, token)
                     "both" -> miniflux.fetchEverything(url, token)
+                    "edition" -> {
+                        val (s, e) = navWindow()
+                        val zone = java.time.ZoneId.systemDefault()
+                        miniflux.fetchPublishedWindow(
+                            url, token, null,
+                            s.atStartOfDay(zone).toEpochSecond(), e.atStartOfDay(zone).toEpochSecond(),
+                            limit = 300
+                        )
+                    }
                     else -> miniflux.fetchUnread(url, token)
                 }
             }
@@ -391,7 +400,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         }
     }
 
-    private fun cacheKey(): String = "${mode}_${kindFilter ?: "all"}"
+    private fun cacheKey(): String =
+        if (mode == "edition") "edition_${navGranularity}_${navAnchor}_${kindFilter ?: "all"}"
+        else "${mode}_${kindFilter ?: "all"}"
 
     /** Best-effort: fetch + cache the parsed (readability) HTML for each entry so the
      *  in-pane reader has an offline-readable version. Runs in the background. */
@@ -811,8 +822,13 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     /** Stepping/selecting keeps the chosen lens (The Watch stays The Watch across dates);
      *  today = the live view, past windows pull the read timeline for filtering. */
     private fun onDateChanged() {
+        // Today = the live unread feed. Any other window = that day's EDITION: everything
+        // published inside the window (read and unread alike), fetched server-side by
+        // published date — stepping the date nav pages through finished daily papers.
+        // (The old mode="read" showed only read items that happened to be in the last-100
+        // fetch, so past days were incomplete or empty.)
         val liveToday = navGranularity == "day" && navAnchor == java.time.LocalDate.now()
-        mode = if (liveToday) "feed" else "read"
+        mode = if (liveToday) "feed" else "edition"
         refresh()
     }
 
