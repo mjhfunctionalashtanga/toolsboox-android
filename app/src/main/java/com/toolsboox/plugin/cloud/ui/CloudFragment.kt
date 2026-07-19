@@ -130,6 +130,15 @@ class CloudFragment @Inject constructor() : ScreenFragment() {
 
         binding = FragmentCloudBinding.bind(view)
 
+        // Ledger fork: the toolsboox cloud SUBSCRIPTION offer is not part of Ledger — hide the
+        // whole block (title, pitch, status, monthly/yearly buttons). Billing code stays compiled
+        // but nothing user-facing invites a purchase.
+        binding.cloudTitle.visibility = View.GONE
+        binding.cloudSubscriptionMessage.visibility = View.GONE
+        binding.cloudSubscriptionStatusMessage.visibility = View.GONE
+        binding.cloudMonthlyButton.visibility = View.GONE
+        binding.cloudYearlyButton.visibility = View.GONE
+
         binding.cloudAccountSignUpButton.setOnClickListener {
             signUpDialog()
         }

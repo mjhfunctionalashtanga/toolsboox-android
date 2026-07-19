@@ -28,6 +28,8 @@ import java.util.concurrent.TimeUnit
  */
 object LedgerWebBridge {
 
+    @Volatile private var cachedPrefs: android.content.SharedPreferences? = null
+
     private val client by lazy {
         OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
@@ -40,12 +42,12 @@ object LedgerWebBridge {
         val ready: Boolean get() = site.isNotBlank() && user.isNotBlank() && pass.isNotBlank() && boardId > 0
     }
 
-    private fun prefs(context: Context) = EncryptedSharedPreferences.create(
+    private fun prefs(context: Context): android.content.SharedPreferences = cachedPrefs ?: EncryptedSharedPreferences.create(
         context, "ledgr_bridge_prefs",
         MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
         EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-    )
+    ).also { cachedPrefs = it }
 
     fun config(context: Context): Config = try {
         val p = prefs(context)
@@ -191,6 +193,8 @@ object LedgerWebBridge {
  */
 object LedgerCommunityBridge {
 
+    @Volatile private var cachedPrefs: android.content.SharedPreferences? = null
+
     private val client by lazy {
         OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
@@ -205,12 +209,12 @@ object LedgerCommunityBridge {
 
     data class Space(val id: Long, val title: String, val privacy: String)
 
-    private fun prefs(context: Context) = EncryptedSharedPreferences.create(
+    private fun prefs(context: Context): android.content.SharedPreferences = cachedPrefs ?: EncryptedSharedPreferences.create(
         context, "ledgr_bridge_prefs",
         MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
         EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-    )
+    ).also { cachedPrefs = it }
 
     fun config(context: Context): Config = try {
         val p = prefs(context)

@@ -272,21 +272,29 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         else -> date to date
     }
 
-    /** Walk the day files in [start, end] and collect their ledger items (+ strokes), tagging sources. */
+    /** Walk the day files in [start, end] and collect their ledger items (+ strokes), tagging sources.
+     *  Two passes: a SLIM decode collects the items (skipping the heavy stroke arrays entirely),
+     *  then only the days whose items actually reference ink get the full decode. This is what
+     *  keeps week/month/quarter scopes fast — most items are text-faced and never need strokes. */
     private fun gatherRange(root: File, start: LocalDate, end: LocalDate, strokes: HashMap<String, Stroke>): List<LedgerItem> {
         val cal = File(root, "calendar")
         if (!cal.exists()) return emptyList()
         val out = mutableListOf<LedgerItem>()
+        val needInk = mutableListOf<File>()
         cal.walkTopDown()
             .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
             .forEach { file ->
                 val d = fileDate(file.name) ?: return@forEach
                 if (d.isBefore(start) || d.isAfter(end)) return@forEach
-                val cd = runCatching { calendarDayService.load(file) }.getOrNull() ?: return@forEach
-                cd.calendarStrokes.values.forEach { l -> l.forEach { strokes[it.strokeId.toString()] = it } }
-                cd.noteStrokes.values.forEach { l -> l.forEach { strokes[it.strokeId.toString()] = it } }
-                cd.ledgerItems.forEach { out.add(it); itemSourceDay[it.id] = d }
+                val items = runCatching { calendarDayService.loadLedgerItems(file) }.getOrNull() ?: return@forEach
+                items.forEach { out.add(it); itemSourceDay[it.id] = d }
+                if (items.any { it.strokeIds.isNotEmpty() }) needInk.add(file)
             }
+        needInk.forEach { file ->
+            val cd = runCatching { calendarDayService.load(file) }.getOrNull() ?: return@forEach
+            cd.calendarStrokes.values.forEach { l -> l.forEach { strokes[it.strokeId.toString()] = it } }
+            cd.noteStrokes.values.forEach { l -> l.forEach { strokes[it.strokeId.toString()] = it } }
+        }
         return out
     }
 

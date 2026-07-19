@@ -330,7 +330,27 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
     private fun articleBaseUrl(e: FeedEntry): String =
         e.url.takeIf { it.startsWith("http", ignoreCase = true) } ?: "https://www.youtube.com"
 
-    private fun buildHtml(e: FeedEntry, content: String): String {
+    /**
+     * YouTube refuses many embeds in a WebView (error 150/152 — embedding disabled), leaving a
+     * dead player you can't even tap. Rewrite every YouTube iframe into a tappable thumbnail card
+     * that links to the watch page — the link menu / external open handles it from there.
+     */
+    private fun rewriteYouTubeEmbeds(content: String): String {
+        val iframe = Regex(
+            """<iframe[^>]*src=["'][^"']*(?:youtube(?:-nocookie)?\.com/embed/|youtu\.be/)([A-Za-z0-9_\-]{6,})[^"']*["'][^>]*>\s*</iframe>""",
+            RegexOption.IGNORE_CASE
+        )
+        return iframe.replace(content) { m ->
+            val id = m.groupValues[1]
+            """<a href="https://www.youtube.com/watch?v=$id" style="display:block;text-decoration:none">
+               <img src="https://img.youtube.com/vi/$id/hqdefault.jpg" style="width:100%;display:block"/>
+               <span style="display:block;padding:8px 0;font-weight:bold;color:#000">▶ Watch on YouTube</span>
+               </a>"""
+        }
+    }
+
+    private fun buildHtml(e: FeedEntry, rawContent: String): String {
+        val content = rewriteYouTubeEmbeds(rawContent)
         val meta = listOf(e.feedTitle, e.author ?: "").filter { it.isNotBlank() }.joinToString(" · ")
         return """
             <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">

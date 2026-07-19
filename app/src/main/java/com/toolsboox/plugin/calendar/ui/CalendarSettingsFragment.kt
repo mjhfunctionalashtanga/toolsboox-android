@@ -149,6 +149,7 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
     private var selectedAutoSyncInterval: Int = 1
 
     companion object {
+        @Volatile private var cachedUbPrefs: SharedPreferences? = null
         private const val WORK_NAME = "calendar-cloud-sync"
         private const val ULTRABRIDGE_ENCRYPTED_PREFS_NAME = "ultrabridge_encrypted_prefs"
 
@@ -160,8 +161,11 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
 
     /**
      * Get or create EncryptedSharedPreferences for Ultrabridge WebDAV credentials.
+     * MEMOIZED process-wide: EncryptedSharedPreferences.create + MasterKey take 200ms–2s on
+     * e-ink flash, and this used to run on the main thread every settings open — the lag.
      */
     private fun getUltrabridgeEncryptedPrefs(): SharedPreferences {
+        cachedUbPrefs?.let { return it }
         val masterKey = MasterKey.Builder(requireContext())
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
@@ -172,7 +176,7 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             masterKey,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
+        ).also { cachedUbPrefs = it }
     }
 
     /**

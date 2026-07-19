@@ -84,7 +84,7 @@ fun ledgerDirectoryFolders(
         ScreenFragment.Folder("🗒", "Tasks & Events", action = { nav.navigate(R.id.action_to_ledger_items) }),
         ScreenFragment.Folder("👤", "Rolodex", action = { nav.navigate(R.id.action_to_rolodex) }),
         ScreenFragment.Folder("📋", "Boards", action = { nav.navigate(R.id.action_to_kanban) }),
-        ScreenFragment.Folder("✉", "Correspondence", action = { nav.navigate(R.id.action_to_correspondence) }),
+        ScreenFragment.Folder("✉️", "Correspondence", action = { nav.navigate(R.id.action_to_correspondence) }),
         ScreenFragment.Folder("📆", "Almanac", listOf(
             "📆  Week" to { CalendarNavigator.toWeekPage(fragment, today, locale) },
             "📅  Month" to { CalendarNavigator.toMonthPage(fragment, today) },
