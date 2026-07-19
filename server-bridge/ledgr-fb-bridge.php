@@ -220,6 +220,13 @@ class Ledgr_FB_Bridge
             'permission_callback' => [$this, 'canCommunity'],
         ]);
 
+        // Handwriting in chat: upload the ink and post it as a message on a chat thread.
+        register_rest_route(self::NS, '/chat/(?P<thread_id>\d+)/ink', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'chatInk'],
+            'permission_callback' => [$this, 'canCommunity'],
+        ]);
+
         register_rest_route(self::NS, '/community/courses', [
             'methods'             => 'GET',
             'callback'            => [$this, 'listCourses'],
@@ -2012,6 +2019,78 @@ class Ledgr_FB_Bridge
             ]);
         } catch (\Exception $e) {
             return new \WP_Error('ledgr_react_failed', $e->getMessage(), ['status' => 400]);
+        }
+    }
+
+    /* ---------------------------------------------------------------
+     * POST /ledgr/v1/chat/{thread_id}/ink
+     * multipart: png (required, handwriting), text (optional)
+     * Posts a handwritten chat message. The chat's own send path wants a
+     * pre-registered media-key URL, so instead we sideload the PNG and
+     * build the message HTML the way ChatController does, then create the
+     * Message directly — the model's boot increments the thread's count.
+     * ------------------------------------------------------------- */
+
+    public function chatInk(\WP_REST_Request $request)
+    {
+        if (!class_exists('\FluentMessaging\App\Models\Thread')) {
+            return new \WP_Error('ledgr_no_chat', 'Messaging is not active on this site', ['status' => 501]);
+        }
+
+        $threadId = (int) $request['thread_id'];
+        $text     = wp_strip_all_tags((string) $request->get_param('text'));
+
+        try {
+            $thread = \FluentMessaging\App\Models\Thread::where('id', $threadId)
+                ->where('status', 'active')->first();
+            if (!$thread) {
+                return new \WP_Error('ledgr_not_found', 'Chat thread not found', ['status' => 404]);
+            }
+
+            if (!\FluentMessaging\App\Services\ChatHelper::hasChatAccess($thread, get_current_user_id())) {
+                return new \WP_Error('ledgr_forbidden', 'Not a member of this chat', ['status' => 403]);
+            }
+
+            $files = $request->get_file_params();
+            if (!isset($files['png'])) {
+                return new \WP_Error('ledgr_bad_request', 'png is required', ['status' => 400]);
+            }
+            $err = $this->validateUpload($files['png'], ['image/png', 'image/jpeg', 'image/webp'], self::MAX_PNG_BYTES);
+            if (is_wp_error($err)) {
+                return $err;
+            }
+
+            $url = $this->sideloadToMedia($files['png']);
+            if (!$url) {
+                return new \WP_Error('ledgr_upload_failed', 'Could not store the handwriting', ['status' => 500]);
+            }
+
+            // Mirror ChatController@addMessage's HTML: optional text, then the media block.
+            $html = '';
+            if ($text !== '') {
+                $html .= '<div class="chat_text"><p>' . esc_html($text) . '</p></div>';
+            }
+            $html .= '<div class="chat_medias"><div class="chat_media">'
+                . '<img src="' . esc_url($url) . '" alt="Handwritten message"></div>'
+                . '<div class="chat_media_overlay"></div></div>';
+
+            $message = \FluentMessaging\App\Models\Message::create([
+                'thread_id' => $threadId,
+                'text'      => $html,
+                'user_id'   => get_current_user_id(),
+            ]);
+
+            // Mark the sender caught up (matches the web send path).
+            \FluentMessaging\App\Models\ThreadUser::where('user_id', get_current_user_id())
+                ->where('thread_id', $threadId)
+                ->update(['last_seen_message_id' => $message->id]);
+
+            return rest_ensure_response([
+                'message_id' => (int) $message->id,
+                'thread_id'  => $threadId,
+            ]);
+        } catch (\Exception $e) {
+            return new \WP_Error('ledgr_chat_ink_failed', $e->getMessage(), ['status' => 400]);
         }
     }
 

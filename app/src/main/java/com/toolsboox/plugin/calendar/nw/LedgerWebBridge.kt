@@ -818,13 +818,14 @@ data class ChatThread(
     val updatedAt: String,
 )
 
-/** One chat message. [text] is the server's HTML; [mine] flags the current user's own. */
+/** One chat message. [text] is the plain body; [imageUrl] is a handwriting/media image if any. */
 data class ChatMessage(
     val id: Long,
     val author: String,
     val text: String,
     val createdAt: String,
     val mine: Boolean,
+    val imageUrl: String? = null,
 )
 
 /**
@@ -887,14 +888,17 @@ object LedgerChat {
         // Messages come back paginated under messages.data (newest-first page); return oldest-first.
         val data = o.optJSONObject("messages")?.optJSONArray("data")
             ?: o.optJSONArray("messages") ?: o.optJSONArray("data") ?: return emptyList()
+        val imgRe = Regex("<img[^>]+src=\"([^\"]+)\"")
         val list = (0 until data.length()).map { data.getJSONObject(it) }.map {
             val xp = it.optJSONObject("xprofile")
+            val raw = it.optString("text", "")
             ChatMessage(
                 it.optLong("id", 0),
                 xp?.optString("display_name", "?") ?: "?",
-                plain(it.optString("text", "")),
+                plain(raw),
                 it.optString("created_at", ""),
                 xp?.optString("username", "") == myUsername,
+                imgRe.find(raw)?.groupValues?.get(1),
             )
         }
         return list.sortedBy { it.id }
@@ -947,6 +951,46 @@ object LedgerChat {
         } catch (e: Exception) {
             Timber.w(e, "chat send failed")
             false
+        }
+    }
+
+    /**
+     * Send a handwritten message (+ optional text) via the bridge — it sideloads the PNG and posts
+     * it as a chat message, since the chat's own send wants a pre-registered media URL. True on OK.
+     */
+    fun sendInk(context: Context, threadId: Long, text: String?, png: ByteArray): Boolean {
+        val c = LedgerCommunityBridge.config(context)
+        if (!c.ready) return false
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("png", "ink.png", png.toRequestBody("image/png".toMediaType()))
+            .apply { if (!text.isNullOrBlank()) addFormDataPart("text", text) }
+            .build()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/chat/$threadId/ink")
+                .post(body)
+                .header("Authorization", auth(c)).build()
+            client.newCall(req).execute().use { it.isSuccessful }
+        } catch (e: Exception) {
+            Timber.w(e, "chat ink send failed")
+            false
+        }
+    }
+
+    /** Fetch a chat image to a bitmap (for rendering inbound handwriting). Null on failure. */
+    fun loadImage(context: Context, url: String): android.graphics.Bitmap? {
+        val c = LedgerCommunityBridge.config(context)
+        return try {
+            val req = Request.Builder().url(url)
+                .apply { if (c.ready) header("Authorization", auth(c)) }.build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val bytes = resp.body?.bytes() ?: return null
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "chat image load failed")
+            null
         }
     }
 }

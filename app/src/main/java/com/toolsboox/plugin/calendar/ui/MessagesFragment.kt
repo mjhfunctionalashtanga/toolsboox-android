@@ -1,15 +1,22 @@
 package com.toolsboox.plugin.calendar.ui
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -207,17 +214,25 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
             }
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
+        val inkBtn = Button(ctx).apply {
+            text = "✍"; isAllCaps = false; textSize = 18f
+            minWidth = 0; setPadding(px(12), 0, px(12), 0)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = px(6) }
+            setOnClickListener { showInkComposer(thread, input) }
+        }
         val sendBtn = Button(ctx).apply {
             text = "Send"; isAllCaps = false
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { marginStart = px(8) }
+            ).apply { marginStart = px(6) }
             setOnClickListener { sendMessage(thread, input) }
         }
         val composer = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(px(10), px(8), px(10), px(10))
-            addView(input); addView(sendBtn)
+            addView(input); addView(inkBtn); addView(sendBtn)
         }
 
         root.addView(scroll)
@@ -243,8 +258,8 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
             text = m.author; setTextColor(Color.parseColor("#888888")); textSize = 11f
             setPadding(px(6), 0, px(6), px(1))
         })
-        wrap.addView(TextView(ctx).apply {
-            text = m.text; setTextColor(Color.BLACK); textSize = 15f
+        val bubbleBox = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(px(12), px(9), px(12), px(9))
             background = GradientDrawable().apply {
                 setColor(if (m.mine) Color.parseColor("#ECECEC") else Color.WHITE)
@@ -256,7 +271,25 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
             lp.marginStart = px(40).takeIf { m.mine } ?: 0
             lp.marginEnd = px(40).takeIf { !m.mine } ?: 0
             layoutParams = lp
+        }
+        if (m.text.isNotBlank()) bubbleBox.addView(TextView(ctx).apply {
+            text = m.text; setTextColor(Color.BLACK); textSize = 15f
         })
+        if (m.imageUrl != null) {
+            val img = ImageView(ctx).apply {
+                adjustViewBounds = true
+                setBackgroundColor(Color.WHITE)
+                layoutParams = LinearLayout.LayoutParams(px(200), ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = if (m.text.isNotBlank()) px(6) else 0 }
+            }
+            bubbleBox.addView(img)
+            val url = m.imageUrl
+            lifecycleScope.launch {
+                val bmp = withContext(Dispatchers.IO) { LedgerChat.loadImage(requireContext(), url) }
+                if (bmp != null && isAdded) img.setImageBitmap(bmp)
+            }
+        }
+        wrap.addView(bubbleBox)
         return wrap
     }
 
@@ -268,6 +301,73 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
             val ok = withContext(Dispatchers.IO) { LedgerChat.send(requireContext(), thread.id, text) }
             if (!ok) { toast("Couldn't send"); input.setText(text); return@launch }
             pollOnce(thread)   // pull our own message (+ any others) straight back
+        }
+    }
+
+    /** Handwrite a message — the pad's PNG (plus any typed text) posts as one chat message. */
+    private fun showInkComposer(thread: ChatThread, input: EditText) {
+        val ctx = requireContext()
+        val ink = InkPadView(ctx)
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(px(12), px(6), px(12), 0)
+            addView(TextView(ctx).apply {
+                text = "Write your message:"; setTextColor(Color.parseColor("#888888")); textSize = 12f
+            })
+            addView(ink, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, px(320)))
+        }
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Handwrite · ${thread.title.take(32)}")
+            .setView(box)
+            .setPositiveButton("Send") { _, _ ->
+                val bmp = ink.render() ?: run { toast("Nothing written"); return@setPositiveButton }
+                val baos = java.io.ByteArrayOutputStream()
+                bmp.compress(Bitmap.CompressFormat.PNG, 100, baos); bmp.recycle()
+                val typed = input.text.toString().trim().ifBlank { null }
+                lifecycleScope.launch {
+                    val ok = withContext(Dispatchers.IO) {
+                        LedgerChat.sendInk(requireContext(), thread.id, typed, baos.toByteArray())
+                    }
+                    if (!ok) { toast("Couldn't send"); return@launch }
+                    input.text.clear()
+                    pollOnce(thread)
+                }
+            }
+            .setNeutralButton("Clear", null)
+            .setNegativeButton("Cancel", null)
+            .show()
+            .also { dlg ->
+                dlg.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { ink.clear() }
+            }
+    }
+
+    /** Minimal stylus pad — plain touch, no Onyx pipeline (fine for a short handwritten message). */
+    private class InkPadView(context: Context) : View(context) {
+        private val paths = mutableListOf<Path>()
+        private var current: Path? = null
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK; style = Paint.Style.STROKE
+            strokeWidth = 4f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+        }
+        init { setBackgroundColor(Color.WHITE) }
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> current = Path().also { it.moveTo(event.x, event.y); paths.add(it) }
+                MotionEvent.ACTION_MOVE -> current?.lineTo(event.x, event.y)
+                MotionEvent.ACTION_UP -> current = null
+            }
+            invalidate(); return true
+        }
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            for (p in paths) canvas.drawPath(p, paint)
+        }
+        fun clear() { paths.clear(); current = null; invalidate() }
+        fun render(): Bitmap? {
+            if (paths.isEmpty() || width == 0 || height == 0) return null
+            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val c = Canvas(bmp); c.drawColor(Color.WHITE)
+            for (p in paths) c.drawPath(p, paint)
+            return bmp
         }
     }
 
