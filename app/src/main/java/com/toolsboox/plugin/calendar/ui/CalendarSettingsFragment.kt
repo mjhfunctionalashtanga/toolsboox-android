@@ -450,8 +450,15 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.communitySiteInput.setText(bridgeCfg.site)
         binding.communityUserInput.setText(bridgeCfg.user)
         binding.communityPassInput.setText(bridgeCfg.pass)
+        // Persist toggles the INSTANT they flip — not only on the Save button. Users expect a
+        // toggle to stick; tapping Connect or backing out used to lose an un-Saved flip.
         binding.gcalEnableSwitch.setOnCheckedChangeListener { _, isChecked ->
+            sharedPreferences.edit().putBoolean(LedgerEventSync.ENABLED_KEY, isChecked).apply()
             updateGcalFieldsVisibility(isChecked)
+        }
+        binding.autoExtractSwitch.setOnCheckedChangeListener { _, isChecked ->
+            sharedPreferences.edit().putBoolean(
+                com.toolsboox.plugin.calendar.ot.LedgerExtractor.AUTO_EXTRACT_ENABLED_KEY, isChecked).apply()
         }
         binding.gcalConnectButton.setOnClickListener {
             // Incremental consent for the Calendar-events scope (alongside Drive), so the signed-in
@@ -640,7 +647,9 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             // so all connection settings live in one place.
             val bridgeSite = binding.communitySiteInput.text?.toString()?.trim().orEmpty()
             val bridgeUser = binding.communityUserInput.text?.toString()?.trim().orEmpty()
-            val bridgePass = binding.communityPassInput.text?.toString().orEmpty()
+            // WordPress application passwords display in spaced groups ("abcd efgh …") but the
+            // real secret has no spaces — strip them so a cut-and-paste of either form works.
+            val bridgePass = binding.communityPassInput.text?.toString().orEmpty().replace(" ", "")
             com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.saveConfig(
                 requireContext(),
                 com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.Config(bridgeSite, bridgeUser, bridgePass)
