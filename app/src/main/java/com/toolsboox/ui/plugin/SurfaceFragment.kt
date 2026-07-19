@@ -2136,7 +2136,9 @@ abstract class SurfaceFragment : ScreenFragment() {
             LedgerContextMenu.Item("Post to community…") { postGramToCommunity(element) },
             LedgerContextMenu.Item("Pin to Board…") { onImagePinToBoard(element) },
             LedgerContextMenu.Item("Save to Clippings") {
-                com.toolsboox.plugin.calendar.ot.ClippingsStore.add(requireContext(), element.data)
+                com.toolsboox.plugin.calendar.ot.ClippingsStore.add(
+                    requireContext(), element.data, label = element.sourceLabel,
+                    gramId = element.gramId ?: "", sourceLink = element.sourceLink, sourceLabel = element.sourceLabel)
                 Toast.makeText(requireContext(), "Saved to Clippings", Toast.LENGTH_SHORT).show()
             },
             LedgerContextMenu.Item("Photo → Clipping") {
@@ -2144,7 +2146,11 @@ abstract class SurfaceFragment : ScreenFragment() {
                 if (bmp != null) {
                     val baos = ByteArrayOutputStream()
                     thresholdBitmap(bmp).compress(Bitmap.CompressFormat.PNG, 100, baos)
-                    com.toolsboox.plugin.calendar.ot.ClippingsStore.add(requireContext(), Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP))
+                    // The line-art keeps the ORIGINAL's lineage — it's a variant of the same gram.
+                    com.toolsboox.plugin.calendar.ot.ClippingsStore.add(
+                        requireContext(), Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP),
+                        label = element.sourceLabel,
+                        gramId = element.gramId ?: "", sourceLink = element.sourceLink, sourceLabel = element.sourceLabel)
                     Toast.makeText(requireContext(), "Line art saved to Clippings", Toast.LENGTH_SHORT).show()
                 }
             }
@@ -2309,21 +2315,50 @@ abstract class SurfaceFragment : ScreenFragment() {
         for (c in clippings) {
             val bytes = runCatching { Base64.decode(c.data, Base64.DEFAULT) }.getOrNull() ?: continue
             val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: continue
+            val cell = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = android.widget.GridLayout.LayoutParams().apply {
+                    width = px(100); setMargins(px(6), px(6), px(6), px(6))
+                }
+            }
             val iv = android.widget.ImageView(ctx).apply {
                 setImageBitmap(bmp)
                 scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
                 setBackgroundColor(0xFFF0F0F0.toInt())
-                layoutParams = android.widget.GridLayout.LayoutParams().apply {
-                    width = px(92); height = px(92); setMargins(px(6), px(6), px(6), px(6))
-                }
-                setOnClickListener { dialog.dismiss(); placeClippingAt(c.data, cx, cy) }
-                setOnLongClickListener {
-                    com.toolsboox.plugin.calendar.ot.ClippingsStore.delete(ctx, c.id)
-                    Toast.makeText(ctx, "Clipping deleted", Toast.LENGTH_SHORT).show()
-                    dialog.dismiss(); true
-                }
+                layoutParams = LinearLayout.LayoutParams(px(100), px(92))
             }
-            grid.addView(iv)
+            cell.addView(iv)
+            cell.addView(TextView(ctx).apply {
+                text = c.label.ifBlank { " " }
+                textSize = 10f; setTextColor(0xFF555555.toInt()); maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                gravity = Gravity.CENTER_HORIZONTAL
+            })
+            cell.setOnClickListener { dialog.dismiss(); placeClippingAt(c, cx, cy) }
+            // Long-press: manage — rename (label follows the clip everywhere) or delete.
+            cell.setOnLongClickListener {
+                androidx.appcompat.app.AlertDialog.Builder(ctx)
+                    .setTitle(c.label.ifBlank { "Clipping" })
+                    .setItems(arrayOf("✎  Rename", "🗑  Delete")) { _, which ->
+                        if (which == 0) {
+                            val input = EditText(ctx).apply { hint = "Name"; setText(c.label); setSingleLine() }
+                            val pad = px(16)
+                            val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input) }
+                            androidx.appcompat.app.AlertDialog.Builder(ctx)
+                                .setTitle("Rename clipping").setView(box)
+                                .setPositiveButton("Save") { _, _ ->
+                                    com.toolsboox.plugin.calendar.ot.ClippingsStore.rename(ctx, c.id, input.text.toString().trim())
+                                }
+                                .setNegativeButton("Cancel", null).show()
+                        } else {
+                            com.toolsboox.plugin.calendar.ot.ClippingsStore.delete(ctx, c.id)
+                            Toast.makeText(ctx, "Clipping deleted", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    .setNegativeButton("Cancel", null).show()
+                dialog.dismiss(); true
+            }
+            grid.addView(cell)
         }
         dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
             .setTitle("Insert clipping")
@@ -2333,15 +2368,23 @@ abstract class SurfaceFragment : ScreenFragment() {
         dialog.show()
     }
 
-    /** Place a saved clipping onto the surface at [cx],[cy], selected for immediate move/resize. */
-    private fun placeClippingAt(base64: String, cx: Float, cy: Float) {
+    /** Place a saved clipping onto the surface at [cx],[cy], selected for immediate move/resize.
+     *  LINEAGE PRESERVED: the placed gram carries the clipping's gramId + source pointers, so
+     *  "Where used" groups it with every other placement and "Go to source" still jumps home. */
+    private fun placeClippingAt(clip: com.toolsboox.plugin.calendar.da.v2.Clipping, cx: Float, cy: Float) {
+        val base64 = clip.data
         val bytes = runCatching { Base64.decode(base64, Base64.DEFAULT) }.getOrNull() ?: return
         val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
         val w = (CANVAS_WIDTH * IMAGE_PLACE_FRACTION).coerceAtMost(bmp.width.toFloat())
         val h = w * bmp.height / bmp.width
         val pxp = (cx - w / 2f).coerceIn(0f, (CANVAS_WIDTH - w).coerceAtLeast(0f))
         val pyp = (cy - h / 2f).coerceIn(0f, (CANVAS_HEIGHT - h).coerceAtLeast(0f))
-        val element = ImageElement(x = pxp, y = pyp, width = w, height = h, data = base64)
+        val element = ImageElement(
+            x = pxp, y = pyp, width = w, height = h, data = base64,
+            gramId = clip.gramId.ifBlank { null },
+            sourceLink = clip.sourceLink,
+            sourceLabel = clip.sourceLabel.ifBlank { clip.label }
+        )
         pushUndo()
         imageElements.add(element)
         onImageElementsChanged(imageElements)

@@ -36,10 +36,25 @@ object ClippingsStore {
             .onFailure { Timber.w(it, "clippings save failed") }
     }
 
-    fun add(context: Context, data: String, label: String = "") {
+    fun add(
+        context: Context, data: String, label: String = "",
+        gramId: String = "", sourceLink: String = "", sourceLabel: String = ""
+    ) {
         if (data.isBlank()) return
         val all = loadAll(context)
-        all.add(Clipping(data = data, label = label))
+        // Lineage rides in: content-address (fall back to md5 of the pixels) + source pointers,
+        // so anything placed FROM the library keeps Where-used + Go-to-source.
+        val gid = gramId.ifBlank { com.toolsboox.ot.CryptoUtils.md5Hash(data.toByteArray()) }
+        all.add(Clipping(data = data, label = label, gramId = gid,
+            sourceLink = sourceLink, sourceLabel = sourceLabel))
+        saveAll(context, all)
+        sync(context)
+    }
+
+    /** Rename a clipping (its label shows in the picker + becomes the placed gram's label). */
+    fun rename(context: Context, id: String, label: String) {
+        val all = loadAll(context)
+        all.firstOrNull { it.id == id }?.apply { this.label = label; updated = System.currentTimeMillis() }
         saveAll(context, all)
         sync(context)
     }
