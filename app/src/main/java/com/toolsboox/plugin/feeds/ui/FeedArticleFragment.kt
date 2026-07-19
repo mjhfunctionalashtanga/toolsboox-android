@@ -281,6 +281,9 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         binding.articleWeb.loadDataWithBaseURL(articleBaseUrl(e), buildHtml(e, e.content), "text/html", "UTF-8", null)
         updateStar()
         updateParse()
+        // A content-less entry (opened from a Stars & Events row, where only the URL rides along)
+        // fetches its readable text immediately — no blank page, no manual ¶ tap.
+        if (e.content.isBlank() && e.url.startsWith("http")) toggleParse()
         val p = prefs()
         val url = p.getString(FeedsFragment.KEY_URL, "").orEmpty()
         val token = p.getString(FeedsFragment.KEY_TOKEN, "").orEmpty()

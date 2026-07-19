@@ -202,8 +202,9 @@ class CalendarDayPage {
             if (notesTitle.size < 8) {
                 calendarDay.readingEvents.takeLast(8 - notesTitle.size).forEach {
                     val label = it.excerpt?.takeIf { e -> e.isNotBlank() } ?: it.title
-                    notesTitle.add(it.source?.let { s -> "$s — $label" } ?: label)
-                    notesLeft.add("★")   // ★
+                    // Row 1: ★ + title. Row 2: the feed/site it came from (time on the right).
+                    notesTitle.add("★  $label")
+                    notesLeft.add(it.source ?: "")
                     notesRight.add(DateFormat.getTimeFormat(context).format(it.date))
                     notesThumb.add(starThumbPath(context, it.image))
                 }

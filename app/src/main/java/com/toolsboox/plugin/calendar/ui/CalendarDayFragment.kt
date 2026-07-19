@@ -315,15 +315,51 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         if (cx < 670f || cx > 1270f || cy < to + 21 * ceh || cy > to + 35 * ceh) return false
         val stars = calendarDay.readingEvents.filter { !it.url.isNullOrBlank() }
         if (stars.isEmpty()) return false
-        val labels = stars.map { "★  " + (it.excerpt?.takeIf { e -> e.isNotBlank() } ?: it.title) }.toTypedArray()
-        AlertDialog.Builder(requireContext())
-            .setTitle("Stars · open")
-            .setItems(labels) { _, which ->
-                startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(stars[which].url)))
+        // Compact custom list (tight rows) — the stock dialog rows sprawl once there are many stars.
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val list = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(px(6), px(4), px(6), px(8))
+        }
+        val scroll = android.widget.ScrollView(ctx).apply { addView(list) }
+        val dialog = AlertDialog.Builder(ctx).setTitle("Stars · open").setView(scroll)
+            .setNegativeButton("Close", null).create()
+        for (ev in stars) {
+            val row = android.widget.LinearLayout(ctx).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                setPadding(px(10), px(6), px(10), px(6))
             }
-            .setNegativeButton("Close", null)
-            .show()
+            row.addView(android.widget.TextView(ctx).apply {
+                text = "★  " + (ev.excerpt?.takeIf { e -> e.isNotBlank() } ?: ev.title)
+                textSize = 14f; setTextColor(0xFF000000.toInt()); maxLines = 2
+            })
+            val src = ev.source ?: ""
+            if (src.isNotBlank()) {
+                row.addView(android.widget.TextView(ctx).apply {
+                    text = src; textSize = 11f; setTextColor(0xFF777777.toInt()); maxLines = 1
+                })
+            }
+            row.setOnClickListener {
+                dialog.dismiss()
+                openStarInLedger(ev)
+            }
+            list.addView(row)
+        }
+        dialog.show()
         return true
+    }
+
+    /** Open a starred article in the Ledger's own feed reader (not the browser). */
+    private fun openStarInLedger(ev: com.toolsboox.plugin.calendar.da.v2.ReadingEvent) {
+        val url = ev.url ?: return
+        com.toolsboox.plugin.feeds.ui.FeedSelection.entry = com.toolsboox.plugin.feeds.da.FeedEntry(
+            id = 0, title = ev.title, feedTitle = ev.source ?: "", url = url,
+            author = null, content = "", publishedAt = "", starred = true
+        )
+        com.toolsboox.plugin.feeds.ui.FeedSelection.list = emptyList()
+        androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.action_to_feed_article)
     }
 
     /** "Pin to Board…": file this gram onto a kanban board as a card that shows the picture.
