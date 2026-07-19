@@ -101,16 +101,11 @@ fun ledgerDirectoryFolders(
             "🔖  Later" to { openFeed("later", null) }
         ), expanded = expandFeedLedger),
         bookshelf,
-        ScreenFragment.Folder("💬", "Ask", action = { nav.navigate(R.id.action_to_ledger_chat) }),
-        // Ledger Log — everything consumed: stars, annotations, read/watched/listened, books.
+        // Log — the zettelkasten: one screen with range/origin/search inside; Ask lives with it
+        // (asking IS querying the log).
         ScreenFragment.Folder("🕘", "Log", listOf(
-            "🗂  All" to { openHistory(null) },
-            "⭐  Stars" to { openFeed("stars", null) },
-            "🖍️  Annotations" to { openHistory(null) },
-            "🎧  Listened" to { openFeed("read", "listen") },
-            "📺  Watched" to { openFeed("read", "watch") },
-            "📰  Feed Read" to { openFeed("read", null) },
-            "📚  Books Read" to { openHistory(LogOrigin.BOOK) }
+            "🕘  Log" to { openHistory(null) },
+            "💬  Ask" to { nav.navigate(R.id.action_to_ledger_chat) }
         )),
         ScreenFragment.Folder("⚙", "Settings", listOf(
             "⚙  Settings" to { nav.navigate(R.id.action_to_settings) },

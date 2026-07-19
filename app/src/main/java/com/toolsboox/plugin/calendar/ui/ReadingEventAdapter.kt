@@ -31,7 +31,9 @@ data class LogItem(
     /** Local image path (panel card or photo attachment); shown as a thumbnail when present. */
     val imagePath: String? = null,
     /** Local voice-memo path; shows a ▶ chip and plays on tap. */
-    val audioPath: String? = null
+    val audioPath: String? = null,
+    /** The day page this item lives on — the rhizome edge back to its home. */
+    val day: java.time.LocalDate? = null
 )
 
 /**
@@ -40,7 +42,8 @@ data class LogItem(
  */
 class ReadingEventAdapter(
     private var items: List<LogItem>,
-    private val onOpen: (LogItem) -> Unit
+    private val onOpen: (LogItem) -> Unit,
+    private val onLong: (LogItem) -> Unit = {}
 ) : RecyclerView.Adapter<ReadingEventAdapter.Holder>() {
 
     fun submit(list: List<LogItem>) {
@@ -85,5 +88,6 @@ class ReadingEventAdapter(
         }
 
         holder.itemView.setOnClickListener { onOpen(e) }
+        holder.itemView.setOnLongClickListener { onLong(e); true }
     }
 }

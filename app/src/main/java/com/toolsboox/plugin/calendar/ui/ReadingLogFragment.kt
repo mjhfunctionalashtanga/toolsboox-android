@@ -107,7 +107,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         // Honour a preset origin chosen from the History menu (one-shot).
         ReadingLogSelection.origin?.let { origin = it; ReadingLogSelection.origin = null }
 
-        adapter = ReadingEventAdapter(emptyList(), onOpen = ::openItem)
+        adapter = ReadingEventAdapter(emptyList(), onOpen = ::openItem, onLong = ::showRhizome)
         binding.readingRecycler.layoutManager = LinearLayoutManager(requireContext())
         binding.readingRecycler.adapter = adapter
         binding.readingRecycler.addItemDecoration(
@@ -265,6 +265,8 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 }
                 val day = runCatching { calendarDayService.load(file) }
                     .onFailure { Timber.w(it, "reading-log: skipping ${file.name}") }.getOrNull() ?: return@forEach
+                // Every item carries its home day — the rhizome edge back to the page it lives on.
+                fun put(item: LogItem) { out.add(item.copy(day = dayDate)) }
 
                 for (e in day.readingEvents) {
                     val o = if (e.kind == ReadingEvent.Kind.BOOK) LogOrigin.BOOK else LogOrigin.READ
@@ -274,7 +276,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                     val photo = e.attachments?.firstOrNull { it.kind == Attachment.Kind.PHOTO }
                     val audio = e.attachments?.firstOrNull { it.kind == Attachment.Kind.AUDIO }
                     val evTitle = (if (e.starred) "⭐ " else "") + e.title.ifBlank { getString(R.string.reading_log_untitled) }
-                    out.add(LogItem(o, evTitle, meta, body,
+                    put(LogItem(o, evTitle, meta, body,
                         e.url, e.date.time, imagePath = photo?.let { attachmentPath(it) }, audioPath = audio?.let { attachmentPath(it) }))
                 }
 
@@ -289,14 +291,14 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                     }
                     val meta = listOfNotNull(a.duration?.let { mmss(it) }, a.date?.let { stamp(it) }).joinToString(" · ")
                     val path = attachmentPath(a)
-                    out.add(LogItem(LogOrigin.AV, label, meta, "", null, a.date?.time ?: fallback,
+                    put(LogItem(LogOrigin.AV, label, meta, "", null, a.date?.time ?: fallback,
                         imagePath = if (a.kind == Attachment.Kind.PHOTO) path else null,
                         audioPath = if (a.kind == Attachment.Kind.AUDIO) path else null))
                 }
 
                 // Pickings — the typed quotes on the day's Pickings page.
                 for (t in day.textElements.filter { it.pageKey == "pickings" && it.text.isNotBlank() }) {
-                    out.add(LogItem(LogOrigin.PICKING, t.text.trim(), stamp(Date(fallback)), "", null, fallback))
+                    put(LogItem(LogOrigin.PICKING, t.text.trim(), stamp(Date(fallback)), "", null, fallback))
                 }
 
                 // Every addition to a surface — tasks/events, text notes on any other page, and
@@ -308,13 +310,13 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                         else -> "Task"
                     }
                     val meta = listOfNotNull(item.time, stamp(item.date)).joinToString(" · ")
-                    out.add(LogItem(LogOrigin.TASK, item.text.trim(), meta, label, null, item.date.time))
+                    put(LogItem(LogOrigin.TASK, item.text.trim(), meta, label, null, item.date.time))
                 }
                 for (t in day.textElements.filter { it.pageKey != "pickings" && it.text.isNotBlank() }) {
-                    out.add(LogItem(LogOrigin.NOTE, t.text.trim(), stamp(Date(t.timestamp)), "", null, t.timestamp))
+                    put(LogItem(LogOrigin.NOTE, t.text.trim(), stamp(Date(t.timestamp)), "", null, t.timestamp))
                 }
                 for (img in day.imageElements) {
-                    out.add(LogItem(LogOrigin.CARD, "Card · ${img.page.ifBlank { "day" }}",
+                    put(LogItem(LogOrigin.CARD, "Card · ${img.page.ifBlank { "day" }}",
                         stamp(Date(img.timestamp)), "", null, img.timestamp))
                 }
 
@@ -325,7 +327,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                     for ((kind, o) in intakeKinds) {
                         intake.typedFor(kind).lines().map { it.trim() }.filter { it.isNotBlank() }.forEach { line ->
                             val url = ShareTextParser.extractUrls(line).firstOrNull()
-                            out.add(LogItem(o, line, stamp(Date(fallback)), "", url, fallback))
+                            put(LogItem(o, line, stamp(Date(fallback)), "", url, fallback))
                         }
                     }
                 }
@@ -365,6 +367,63 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     /** Tapping a note/annotation slides up a detail popup with its full info + actions. */
     private fun openItem(item: LogItem) {
         showItemDetail(item)
+    }
+
+    /**
+     * The rhizome menu — every log item is a zettel that reaches its neighbors. Long-press:
+     * open the DAY it lives on, open its SOURCE in the reader, PULL THE THREAD (search the
+     * whole log for kin), or SEND it to today's Pickings to work with it in ink.
+     */
+    private fun showRhizome(item: LogItem) {
+        val ctx = requireContext()
+        val rows = mutableListOf<Pair<String, () -> Unit>>()
+        item.day?.let { d ->
+            rows.add("☀  Open its day · $d" to {
+                CalendarNavigator.toDayPage(this, d, com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE)
+            })
+        }
+        item.url?.takeIf { it.startsWith("http") }?.let { url ->
+            rows.add("📰  Open source in reader" to {
+                com.toolsboox.plugin.feeds.ui.FeedSelection.entry = com.toolsboox.plugin.feeds.da.FeedEntry(
+                    id = 0, title = item.title.removePrefix("⭐ "), feedTitle = "", url = url,
+                    author = null, content = "", publishedAt = "", starred = false
+                )
+                com.toolsboox.plugin.feeds.ui.FeedSelection.list = emptyList()
+                androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.FeedArticleFragment)
+            })
+        }
+        rows.add("＃  Pull the thread" to {
+            // Kin across the WHOLE log: widen to All time and search the item's key words.
+            val words = item.title.removePrefix("⭐ ").replace(Regex("[^\\p{L}\\p{N} ]"), " ")
+                .trim().split(Regex("\\s+")).take(4).joinToString(" ")
+            if (words.isNotBlank()) {
+                range = Range.ALL
+                searchQuery = words
+                binding.searchField.setText(words)
+                renderNav()
+                load()
+            }
+        })
+        rows.add("❝  Send to today's Pickings" to {
+            lifecycleScope.launch(Dispatchers.IO) {
+                val today = LocalDate.now()
+                val day = calendarDayService.load(documentsRoot(), today, null, java.util.Locale.getDefault())
+                day.textElements.add(com.toolsboox.da.TextElement(
+                    x = 80f, y = 120f, width = 760f, height = 60f,
+                    text = item.title.removePrefix("⭐ ") + (if (item.body.isNotBlank()) "\n" + item.body else ""),
+                    pageKey = "pickings"
+                ))
+                calendarDayService.save(documentsRoot(), today, day)
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(ctx, "On today's Pickings", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        })
+        AlertDialog.Builder(ctx)
+            .setTitle(item.title.take(60).ifBlank { "Item" })
+            .setItems(rows.map { it.first }.toTypedArray()) { _, which -> rows[which].second() }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     /** A read-only detail card for one log item — title, source/date, image, full
