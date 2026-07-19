@@ -1234,13 +1234,25 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val token = p.getString(KEY_TOKEN, "").orEmpty()
         val wasStarred = entry.starred
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                miniflux.toggleStar(url, token, entry.id)
-                // Newly starred → log to today's Ledger so it joins the corpus + sync.
-                if (!wasStarred) logStar(entry)
+            // Honest UI: only toast success and log to the corpus when the server call
+            // succeeded. Discarding the Result meant offline stars toasted "Starred",
+            // entered the Ledger, and silently never reached Miniflux — shelf and corpus
+            // then disagreed forever.
+            val res = withContext(Dispatchers.IO) { miniflux.toggleStar(url, token, entry.id) }
+            when (res) {
+                is com.toolsboox.plugin.feeds.nw.MinifluxClient.Result.Ok -> {
+                    // Newly starred → log to today's Ledger so it joins the corpus + sync.
+                    if (!wasStarred) withContext(Dispatchers.IO) { logStar(entry) }
+                    showMessage(if (wasStarred) R.string.feeds_unstarred else R.string.feeds_starred)
+                    refresh()
+                }
+                is com.toolsboox.plugin.feeds.nw.MinifluxClient.Result.Err -> {
+                    android.widget.Toast.makeText(
+                        requireContext(), "⚠ Star didn't reach Miniflux — ${res.message}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
             }
-            showMessage(if (wasStarred) R.string.feeds_unstarred else R.string.feeds_starred)
-            refresh()
         }
     }
 
@@ -1250,9 +1262,13 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             val root = documentsRoot()
             val today = LocalDate.now()
             val day = calendarDayService.load(root, today, null, Locale.getDefault())
+            // Idempotent by id: star → unstar → star used to append duplicate art-<id>
+            // events that rode sync to every device.
+            val id = "art-${entry.id}"
+            day.readingEvents.removeAll { it.id == id }
             day.readingEvents.add(
                 ReadingEvent(
-                    id = "art-${entry.id}",
+                    id = id,
                     kind = ReadingEvent.Kind.ARTICLE,
                     date = Date(),
                     title = entry.title,

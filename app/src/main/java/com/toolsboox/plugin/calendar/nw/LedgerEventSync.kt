@@ -55,10 +55,31 @@ object LedgerEventSync {
             // Update in place first; if it doesn't exist yet (404) or was previously deleted (410),
             // insert it with the same id.
             val putCode = send("PUT", eventsUrl(context) + "/" + gid, token, body)
-            if (putCode == 404 || putCode == 410) send("POST", eventsUrl(context), token, body)
+            val finalCode = if (putCode == 404 || putCode == 410)
+                send("POST", eventsUrl(context), token, body) else putCode
+            // Every other failure used to vanish silently — an expired token meant events
+            // never reached Google Calendar with zero trace. Record it so the UI can tell.
+            if (finalCode in 200..299) {
+                prefs(context).edit().remove(LAST_ERROR_KEY).apply()
+            } else {
+                recordFailure(context, finalCode, item.id)
+            }
         } catch (e: Exception) {
             Timber.w(e, "Calendar event push failed for ${item.id}")
         }
+    }
+
+    /** Human-readable status of the last push ("" = healthy) — for settings/status surfaces. */
+    fun lastError(context: Context): String =
+        prefs(context).getString(LAST_ERROR_KEY, "") ?: ""
+
+    private const val LAST_ERROR_KEY = "googleCalendarLastError"
+
+    private fun recordFailure(context: Context, code: Int, itemId: String) {
+        val hint = if (code == 401 || code == 403)
+            "Google sign-in expired — reconnect in Calendar settings" else "HTTP $code"
+        Timber.w("Calendar push failed for $itemId: $hint")
+        prefs(context).edit().putString(LAST_ERROR_KEY, hint).apply()
     }
 
     /** Remove the event's Google Calendar entry (item deleted). Best-effort. */

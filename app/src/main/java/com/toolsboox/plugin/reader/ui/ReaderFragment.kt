@@ -71,8 +71,10 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
 
     private var bookReady = false
     private var pendingOpen = false
-    /** Ignore the next relocate (foliate's start-of-book report on open) so resume can't be clobbered. */
-    private var skipFirstRelocate = false
+    /** Relocates to swallow: foliate's start-of-book report + each programmatic goToCfi
+     *  jump fires one, and stamping those would overwrite the saved spot with a stale CFI
+     *  (fresh timestamp) — which then out-merged genuinely newer cross-device progress. */
+    private var skipRelocates = 0
     /** The foliate engine has posted "ready" — `window.openBookURL` exists. Opening a book before
      *  this is what made the FIRST import fail (engine still loading) and work on the retry. */
     private var engineReady = false
@@ -389,10 +391,28 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
     /** Jump back to where we left off in this book (the CFI stored on the last relocate). */
     private fun restoreReadingPosition() {
         val f = currentBookFile ?: return
-        ReaderPositionStore.sync(requireContext())   // pull other devices' progress for this book
-        val cfi = ReaderPositionStore.get(requireContext(), f.nameWithoutExtension) ?: return
-        val esc = cfi.replace("\\", "\\\\").replace("'", "\\'")
-        binding.readerWeb.evaluateJavascript("window.goToCfi && window.goToCfi('$esc')", null)
+        val book = f.nameWithoutExtension
+        val ctx = requireContext().applicationContext
+        // Resume instantly from the LOCAL spot, then re-jump once the pull merges if another
+        // device's position is newer. The old fire-and-forget sync raced this restore: the
+        // reader jumped to the stale local spot, the first page turn re-stamped it as newest,
+        // and the push reverted the other device's progress — silently, on every open.
+        fun jump(cfi: String) {
+            val esc = cfi.replace("\\", "\\\\").replace("'", "\\'")
+            binding.readerWeb.evaluateJavascript("window.goToCfi && window.goToCfi('$esc')", null)
+        }
+        val localCfi = ReaderPositionStore.get(ctx, book)
+        localCfi?.let { jump(it) }
+        ReaderPositionStore.sync(ctx) { merged ->
+            val remoteCfi = merged.optJSONObject(book)?.optString("cfi")?.takeIf { it.isNotBlank() }
+            if (remoteCfi != null && remoteCfi != localCfi) {
+                binding.readerWeb.post {
+                    if (!isAdded) return@post
+                    skipRelocates++    // the re-jump's own relocate must not re-stamp
+                    jump(remoteCfi)
+                }
+            }
+        }
     }
 
     /** Ask foliate to fetch the book from our host once the engine has signalled ready. Before the
@@ -428,7 +448,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
                 restoreHighlights()
                 // Skip the first relocate (foliate's start-of-book report on open) so it can't clobber
                 // the saved spot before we jump back to it.
-                skipFirstRelocate = true
+                skipRelocates = 1    // foliate's start-of-book relocate
                 restoreReadingPosition()
             }
             "cover" -> {
@@ -443,7 +463,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             "relocate" -> {
                 // Foliate reports the current spot on every page turn — remember it per book (by NAME,
                 // so it's portable across devices) and round-trip it through WebDAV.
-                if (skipFirstRelocate) { skipFirstRelocate = false; return }
+                if (skipRelocates > 0) { skipRelocates--; return }
                 val cfi = msg.optString("cfi")
                 if (cfi.isNotBlank()) currentBookFile?.let {
                     ReaderPositionStore.set(requireContext(), it.nameWithoutExtension, cfi)

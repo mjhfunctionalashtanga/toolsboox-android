@@ -21,8 +21,14 @@ object ReaderPositionStore {
         runCatching { JSONObject(file(context).readText()) }.getOrDefault(JSONObject())
 
     private fun write(context: Context, obj: JSONObject) =
-        runCatching { file(context).writeText(obj.toString()) }
-            .onFailure { Timber.w(it, "reader positions save failed") }.let {}
+        runCatching {
+            // Atomic (temp+rename): positions.json is sync-authoritative — a truncated
+            // write would push garbage to every device (the state.json lesson).
+            val f = file(context)
+            val tmp = File(f.parentFile, f.name + ".tmp")
+            tmp.writeText(obj.toString())
+            if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
+        }.onFailure { Timber.w(it, "reader positions save failed") }.let {}
 
     /** The saved CFI for [book], or null. */
     fun get(context: Context, book: String): String? =
@@ -37,8 +43,11 @@ object ReaderPositionStore {
         sync(context)
     }
 
-    /** Pull the remote map, merge per book (newest ts wins), save, and push. Fire-and-forget. */
-    fun sync(context: Context) {
+    /** Pull the remote map, merge per book (newest ts wins), save, and push.
+     *  [onMerged] (background thread) receives the merged map once the pull lands — the
+     *  reader uses it to RE-jump when another device's position turns out to be newer
+     *  than the local spot it already resumed to. */
+    fun sync(context: Context, onMerged: ((JSONObject) -> Unit)? = null) {
         LedgerSidecarSync.background {
             val local = read(context)
             val remoteText = LedgerSidecarSync.pull(context, REMOTE)
@@ -58,6 +67,7 @@ object ReaderPositionStore {
             }
             write(context, merged)
             LedgerSidecarSync.push(context, REMOTE, merged.toString())
+            onMerged?.invoke(merged)
         }
     }
 }
