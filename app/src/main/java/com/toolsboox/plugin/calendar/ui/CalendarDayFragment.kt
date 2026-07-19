@@ -985,7 +985,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     /**
      * The sunshine's sections switcher: pick a section and land on its TODAY page; the
      * center emoji then adopts that section (Day/Intake/Gratitude/Pickings/Notes all show
-     * their glyph on the pill). Feed / AV / Almanac open their own surfaces.
+     * their glyph on the pill). Feed / Bookshelf / Ask / Log open their own surfaces.
      */
     private fun showSectionSwitcher() = showGoModal(
         listOf(
@@ -996,8 +996,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this, LocalDate.now(), "pickings") },
                 GoItem("✒️", "Notes") { CalendarNavigator.toDayNote(this, LocalDate.now(), "0") },
                 GoItem("📰", "Feed") { findNavController().navigate(R.id.action_to_feeds) },
-                GoItem("🎬", "AV") { findNavController().navigate(R.id.action_to_reading_log) },
-                GoItem("📆", "Almanac") { CalendarNavigator.toWeekPage(this, LocalDate.now(), locale) }
+                GoItem("📚", "Bookshelf") { findNavController().navigate(R.id.action_to_reader) },
+                GoItem("💬", "Ask") { findNavController().navigate(R.id.action_to_ledger_chat) },
+                GoItem("🕘", "Log") {
+                    ReadingLogSelection.origin = null
+                    findNavController().navigate(R.id.action_to_reading_log)
+                }
             )
         ),
         anchorTop = false

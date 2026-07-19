@@ -450,7 +450,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val root = documentsRoot()
         val locale = java.util.Locale.getDefault()
         val out = mutableListOf<FeedEntry>()
-        var id = 0L
+        // Synthetic rows must NEVER collide with real Miniflux entry ids (small positive ints)
+        // or LocalFeedStore ids (-1000 .. -1e9): pickings boards live in their own negative band.
+        var id = PICKINGS_ID_BASE
         for (d in 0L..60L) {
             val date = java.time.LocalDate.now().minusDays(d)
             val boards = com.toolsboox.plugin.calendar.ot.PickingsStore.list(ctx, date)
@@ -464,7 +466,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     if (strokes > 0) "$strokes stroke${if (strokes == 1) "" else "s"}" else null
                 ).joinToString(" · ")
                 out += FeedEntry(
-                    id = id++, title = b.name, feedTitle = "Pickings · $date",
+                    id = id--, title = b.name, feedTitle = "Pickings · $date",
                     url = "ledger://pickings/$date/${b.key}", author = null,
                     content = "<p>$bits</p>", publishedAt = date.toString(),
                     starred = false, category = "pickings-board"
@@ -487,7 +489,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val ctx = requireContext().applicationContext
         val out = mutableListOf<FeedEntry>()
         val kinds = listOf("read", "watch", "listen", "educate")
-        var idSeed = 0L
+        // Own negative band — see PICKINGS_ID_BASE: a synthetic id must never reach Miniflux.
+        var idSeed = LATER_ID_BASE
         for (d in 0L..120L) {
             val date = java.time.LocalDate.now().minusDays(d)
             val data = com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.load(ctx, date)
@@ -507,7 +510,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     if (cached == null) com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.cacheArticle(ctx, url)
                     // Reuse the RSS kind field via category so applyKind() sees read/watch/listen.
                     out += FeedEntry(
-                        id = idSeed++, title = title, feedTitle = "Later · $kind",
+                        id = idSeed--, title = title, feedTitle = "Later · $kind",
                         url = url, author = null, content = cached.orEmpty(), publishedAt = date.toString(),
                         starred = false, category = if (kind == "educate") "read" else kind
                     )
@@ -1020,7 +1023,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val p = prefs()
         val url = p.getString(KEY_URL, "").orEmpty(); val token = p.getString(KEY_TOKEN, "").orEmpty()
         if (url.isBlank() || token.isBlank()) { showMessage(R.string.feeds_need_creds); return }
-        val ids = allEntries.map { it.id }
+        // Synthetic rows (negative ids: Later, Pickings, local feeds) have no server entry —
+        // sending their ids would mark unrelated real Miniflux entries read.
+        val ids = allEntries.map { it.id }.filter { it > 0 }
         if (ids.isEmpty()) { showMessage(R.string.feeds_nothing_to_mark); return }
         lifecycleScope.launch {
             withContext(Dispatchers.IO) { miniflux.setStatus(url, token, ids, "read") }
@@ -1046,7 +1051,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         FeedReadState.mark(entry.id)
         if (notify) adapter.notifyDataSetChanged()
         val p = prefs(); val u = p.getString(KEY_URL, "").orEmpty(); val tk = p.getString(KEY_TOKEN, "").orEmpty()
-        if (u.isNotBlank() && tk.isNotBlank() && !com.toolsboox.plugin.feeds.nw.LocalFeedStore.isLocal(entry.id))
+        // Only real Miniflux entries have positive ids — synthetic rows (Later, Pickings,
+        // local feeds) are all negative and must never be pushed to the server, where a
+        // small synthetic id would address someone ELSE's entry.
+        if (u.isNotBlank() && tk.isNotBlank() && entry.id > 0)
             lifecycleScope.launch(Dispatchers.IO) { runCatching { miniflux.markRead(u, tk, entry.id) } }
     }
 
@@ -1213,6 +1221,14 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             refresh()
             return
         }
+        if (entry.id <= 0) {
+            // Later/Pickings rows have synthetic negative ids and no Miniflux entry: star into
+            // the Ledger corpus only — never send a synthetic id to the server.
+            if (!entry.starred) lifecycleScope.launch(Dispatchers.IO) { logStar(entry) }
+            showMessage(if (entry.starred) R.string.feeds_unstarred else R.string.feeds_starred)
+            refresh()
+            return
+        }
         val p = prefs()
         val url = p.getString(KEY_URL, "").orEmpty()
         val token = p.getString(KEY_TOKEN, "").orEmpty()
@@ -1276,6 +1292,12 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         const val KEY_URL = "miniflux_url"
         const val KEY_TOKEN = "miniflux_token"
         const val KEY_DIR_OPEN = "feeds_dir_open"
+
+        // Synthetic-row id bands, below LocalFeedStore's (-1000 .. -1e9) so a made-up id
+        // can never collide with a real Miniflux or local-feed entry. Rows count DOWN
+        // from their base (id--), so each band stays disjoint.
+        private const val PICKINGS_ID_BASE = -1_100_000_000L
+        private const val LATER_ID_BASE = -1_200_000_000L
     }
 }
 
