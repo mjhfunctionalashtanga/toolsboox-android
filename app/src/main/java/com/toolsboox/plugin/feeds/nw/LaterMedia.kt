@@ -41,4 +41,26 @@ object LaterMedia {
             onDone?.invoke(if (ok && isDownloaded(app, url)) dest else null)
         }.apply { isDaemon = true }.start()
     }
+
+    private const val MAX_BYTES = 1_500L * 1024 * 1024   // ~1.5 GB of podcasts
+    private const val MAX_AGE_DAYS = 45L
+
+    /** Janitor: failed downloads leaked .part files forever and finished episodes never
+     *  aged out — cap by age, then by total size (oldest first). */
+    fun prune(context: Context) = runCatching {
+        val files = dir(context).listFiles()?.filter { it.isFile } ?: return@runCatching
+        val now = System.currentTimeMillis()
+        val cutoff = now - MAX_AGE_DAYS * 24 * 3600 * 1000
+        // Stale .part = an interrupted download (anything older than a day is dead).
+        files.filter { it.name.endsWith(".part") && it.lastModified() < now - 24 * 3600 * 1000 }
+            .forEach { it.delete() }
+        val live = files.filter { !it.name.endsWith(".part") }.sortedBy { it.lastModified() }
+        var total = live.sumOf { it.length() }
+        for (f in live) {
+            if (f.lastModified() < cutoff || total > MAX_BYTES) {
+                total -= f.length()
+                f.delete()
+            } else break
+        }
+    }.let {}
 }

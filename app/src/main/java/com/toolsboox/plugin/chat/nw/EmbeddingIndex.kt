@@ -42,26 +42,41 @@ object EmbeddingIndex {
     private fun cacheFile(context: Context) =
         File(context.filesDir, "ledger-embeddings").apply { mkdirs() }.let { File(it, "vectors.json") }
 
+    /** Growth cap: keyed by content hash with no recency metadata, the map only ever grew.
+     *  LinkedHashMap keeps insertion order ≈ age, so the janitor drops the oldest. */
+    private const val MAX_ENTRIES = 8000
+
     fun loadCache(context: Context): MutableMap<String, FloatArray> {
         val f = cacheFile(context)
-        if (!f.exists()) return HashMap()
+        if (!f.exists()) return LinkedHashMap()
         return runCatching {
             val obj = JSONObject(f.readText())
-            val map = HashMap<String, FloatArray>()
+            val map = LinkedHashMap<String, FloatArray>()
             val keys = obj.keys()
             while (keys.hasNext()) {
                 val k = keys.next(); val arr = obj.getJSONArray(k)
                 map[k] = FloatArray(arr.length()) { arr.getDouble(it).toFloat() }
             }
             map
-        }.getOrDefault(HashMap())
+        }.getOrDefault(LinkedHashMap())
     }
 
     fun saveCache(context: Context, map: Map<String, FloatArray>) {
         runCatching {
+            val capped: Map<String, FloatArray> =
+                if (map.size > MAX_ENTRIES) {
+                    val drop = map.size - MAX_ENTRIES
+                    LinkedHashMap<String, FloatArray>().apply {
+                        map.entries.drop(drop).forEach { put(it.key, it.value) }
+                    }
+                } else map
             val obj = JSONObject()
-            for ((k, v) in map) { val a = JSONArray(); for (x in v) a.put(x.toDouble()); obj.put(k, a) }
-            cacheFile(context).writeText(obj.toString())
+            for ((k, v) in capped) { val a = JSONArray(); for (x in v) a.put(x.toDouble()); obj.put(k, a) }
+            // Atomic — the state.json lesson applies to every sidecar file.
+            val f = cacheFile(context)
+            val tmp = File(f.parentFile, f.name + ".tmp")
+            tmp.writeText(obj.toString())
+            if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
         }.onFailure { Timber.w(it, "embedding cache save failed") }
     }
 

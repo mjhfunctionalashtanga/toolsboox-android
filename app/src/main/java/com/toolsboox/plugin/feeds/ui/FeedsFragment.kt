@@ -373,6 +373,12 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     allEntries = result.value
                     com.toolsboox.plugin.feeds.nw.FeedCache.saveEntries(requireContext(), cacheKey(), result.value)
                     prefetchParsed(url, token, result.value)   // download readable (parsed) versions offline
+                    // Opportunistic janitor — parsed HTML accrued forever (the .versions lesson).
+                    val appCtx = requireContext().applicationContext
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        com.toolsboox.plugin.feeds.nw.FeedCache.prune(appCtx)
+                        com.toolsboox.plugin.feeds.nw.LaterMedia.prune(appCtx)
+                    }
                     val filter = FeedSelection.filterFeedTitle
                     FeedSelection.filterFeedTitle = null
                     var shown = applyKind(result.value)

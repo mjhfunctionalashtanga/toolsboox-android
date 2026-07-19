@@ -62,4 +62,27 @@ object FeedCache {
     fun loadContent(context: Context, id: Long): String? = runCatching {
         val f = contentFile(context, id); if (f.exists()) f.readText() else null
     }.getOrNull()
+
+    // MARK: - Janitor
+
+    private const val MAX_CONTENT_FILES = 400
+    private const val MAX_AGE_DAYS = 60L
+
+    /**
+     * Prune old parsed-article HTML. Every refresh can add up to ~60 content-<id>.html
+     * files and nothing ever removed them (the `.versions` disk-fill lesson): cap by age
+     * AND count, oldest first. Cheap (one listFiles) — call opportunistically after a
+     * refresh, off the main thread.
+     */
+    fun prune(context: Context) = runCatching {
+        val files = dir(context).listFiles { f -> f.name.startsWith("content-") } ?: return@runCatching
+        val cutoff = System.currentTimeMillis() - MAX_AGE_DAYS * 24 * 3600 * 1000
+        val sorted = files.sortedBy { it.lastModified() }
+        var live = sorted.size
+        for (f in sorted) {
+            if (f.lastModified() < cutoff || live > MAX_CONTENT_FILES) {
+                if (f.delete()) live--
+            } else break
+        }
+    }.let {}
 }
