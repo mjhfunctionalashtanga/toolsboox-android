@@ -801,9 +801,10 @@ abstract class ScreenFragment : Fragment() {
             val lp = w.attributes
             lp.gravity = Gravity.START or Gravity.TOP
             val metrics = resources.displayMetrics
-            lp.x = 0; lp.y = 0
+            // Flush left, but BELOW the date-nav strip across the top (it stays usable).
+            lp.x = 0; lp.y = dp(96)
             lp.width = minOf(dp(300), (metrics.widthPixels * 0.66f).toInt())
-            lp.height = android.view.WindowManager.LayoutParams.MATCH_PARENT
+            lp.height = metrics.heightPixels - dp(96)
             w.attributes = lp
         }
     }
