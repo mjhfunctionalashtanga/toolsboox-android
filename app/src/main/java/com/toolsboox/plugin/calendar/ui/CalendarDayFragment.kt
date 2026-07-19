@@ -83,6 +83,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     @Inject
     lateinit var calendarDayService: com.toolsboox.plugin.calendar.fi.CalendarDayService
 
+    @Inject
+    lateinit var miniflux: com.toolsboox.plugin.feeds.nw.MinifluxClient
+
     /**
      * The inflated layout.
      */
@@ -351,15 +354,45 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         return true
     }
 
-    /** Open a starred article in the Ledger's own feed reader (not the browser). */
+    /** Open a starred article in the Ledger's own feed reader. First choice: find the REAL
+     *  Miniflux entry by URL (search by title, match by url) so the article opens with its feed
+     *  context — full content, star state, prev/next through the search results. Fallback when
+     *  offline / not found: a URL-only entry whose readable text auto-fetches on open. */
     private fun openStarInLedger(ev: com.toolsboox.plugin.calendar.da.v2.ReadingEvent) {
         val url = ev.url ?: return
-        com.toolsboox.plugin.feeds.ui.FeedSelection.entry = com.toolsboox.plugin.feeds.da.FeedEntry(
-            id = 0, title = ev.title, feedTitle = ev.source ?: "", url = url,
-            author = null, content = "", publishedAt = "", starred = true
-        )
-        com.toolsboox.plugin.feeds.ui.FeedSelection.list = emptyList()
-        androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.FeedArticleFragment)
+        val ctx = requireContext()
+        lifecycleScope.launch {
+            val real = withContext(Dispatchers.IO) {
+                runCatching {
+                    val p = androidx.security.crypto.EncryptedSharedPreferences.create(
+                        ctx, com.toolsboox.plugin.feeds.ui.FeedsFragment.PREFS,
+                        androidx.security.crypto.MasterKey.Builder(ctx)
+                            .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build(),
+                        androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                        androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                    )
+                    val base = p.getString(com.toolsboox.plugin.feeds.ui.FeedsFragment.KEY_URL, "").orEmpty()
+                    val token = p.getString(com.toolsboox.plugin.feeds.ui.FeedsFragment.KEY_TOKEN, "").orEmpty()
+                    if (base.isBlank() || token.isBlank()) return@runCatching null
+                    val res = miniflux.search(base, token, ev.title.take(60), 50)
+                    val results = (res as? com.toolsboox.plugin.feeds.nw.MinifluxClient.Result.Ok)?.value ?: return@runCatching null
+                    val hit = results.firstOrNull { r -> r.url == url } ?: results.firstOrNull { r -> r.title == ev.title }
+                    if (hit != null) hit to results else null
+                }.getOrNull()
+            }
+            if (real != null) {
+                com.toolsboox.plugin.feeds.ui.FeedSelection.entry = real.first
+                com.toolsboox.plugin.feeds.ui.FeedSelection.list = real.second
+            } else {
+                com.toolsboox.plugin.feeds.ui.FeedSelection.entry = com.toolsboox.plugin.feeds.da.FeedEntry(
+                    id = 0, title = ev.title, feedTitle = ev.source ?: "", url = url,
+                    author = null, content = "", publishedAt = "", starred = true
+                )
+                com.toolsboox.plugin.feeds.ui.FeedSelection.list = emptyList()
+            }
+            androidx.navigation.fragment.NavHostFragment.findNavController(this@CalendarDayFragment)
+                .navigate(R.id.FeedArticleFragment)
+        }
     }
 
     /** "Pin to Board…": file this gram onto a kanban board as a card that shows the picture.
