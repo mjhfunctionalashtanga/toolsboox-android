@@ -474,6 +474,34 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                     }
                 }
             }
+        // The Ledger writing back: every star begets a MichaelFilter journal entry
+        // (michaeljoelhall.com/journal/entry/…). Its Miniflux category is hidden from
+        // the unread flow (you already read the source) but surfaces HERE as ↩ Reply
+        // rows — correspondence, not intake. Low volume (1:1 with stars), so always on.
+        feedCreds()?.let { (fUrl, fTok) ->
+            val catId = michaelFilterCategoryId(fUrl, fTok)
+            if (catId != null) {
+                val zone = ZoneId.systemDefault()
+                val after = (start ?: LocalDate.now().minusYears(1)).atStartOfDay(zone).toEpochSecond()
+                val before = (end ?: LocalDate.now().plusDays(1)).atStartOfDay(zone).toEpochSecond()
+                val res = miniflux.fetchCategoryEntries(fUrl, fTok, catId, after, before)
+                if (res is com.toolsboox.plugin.feeds.nw.MinifluxClient.Result.Ok) {
+                    for (fe in res.value) {
+                        val q = searchQuery.trim().lowercase()
+                        if (q.isNotEmpty() && !fe.title.lowercase().contains(q)) continue
+                        val pubDay = runCatching { LocalDate.parse(fe.publishedAt.take(10)) }.getOrNull()
+                        val millis = pubDay?.atStartOfDay(zone)?.toInstant()?.toEpochMilli() ?: 0L
+                        out.add(LogItem(
+                            LogOrigin.REPLY, fe.title,
+                            listOfNotNull("↩ the Ledger wrote back", "MichaelFilter", pubDay?.toString())
+                                .joinToString(" · "),
+                            "", fe.url, millis, day = pubDay
+                        ))
+                    }
+                }
+            }
+        }
+
         // Feed articles are OPT-IN (feedMode): the general feed inside the log — or its
         // search — is noise by default, but the toggle folds the window's published
         // articles in as 📰 rows (unread / read / all).
@@ -511,6 +539,19 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             }
         }
         return out.sortedByDescending { it.millis }
+    }
+
+    /** The MichaelFilter category id, resolved once and cached (0 = known absent). */
+    private fun michaelFilterCategoryId(fUrl: String, fTok: String): Long? {
+        val p = filterPrefs()
+        val cached = p.getLong("mf_category_id", -1L)
+        if (cached == 0L) return null
+        if (cached > 0L) return cached
+        val res = miniflux.findCategoryId(fUrl, fTok, "MichaelFilter")
+        if (res !is com.toolsboox.plugin.feeds.nw.MinifluxClient.Result.Ok) return null   // transient — retry next load
+        val id = res.value
+        p.edit().putLong("mf_category_id", id ?: 0L).apply()
+        return id
     }
 
     /** Miniflux URL+token from the feeds plugin's encrypted prefs; null when unconfigured. */
@@ -567,17 +608,30 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     private fun synthesizeBasket() {
         val ctx = requireContext()
         com.toolsboox.plugin.calendar.ot.SynthEngines.pick(ctx, "Synthesize ${basket.size} items") { engine ->
-            val material = basket.joinToString("\n") { it2 ->
-                "• [${it2.origin.label}] ${it2.title}" + (if (it2.body.isNotBlank()) " — ${it2.body}" else "")
-            }.take(6000)
             val creds = com.toolsboox.plugin.chat.nw.AiCreds.get(ctx)
             if (creds == null) {
                 android.widget.Toast.makeText(ctx, "Add your AI key in Ask my Ledger settings", android.widget.Toast.LENGTH_LONG).show()
                 return@pick
             }
             val (provider, key, model) = creds
+            val items = basket.toList()
             android.widget.Toast.makeText(ctx, "Synthesizing…", android.widget.Toast.LENGTH_SHORT).show()
             lifecycleScope.launch(Dispatchers.IO) {
+                // Reply items (MichaelFilter enrichments) press their FULL text into the
+                // engine — the enriched entry is the richest version of the star, so the
+                // synthesis reads the essay, not just the headline. (Network fetch, so
+                // built here on IO, not while assembling the dialog.)
+                val material = items.joinToString("\n") { it2 ->
+                    val full = if (it2.origin == LogOrigin.REPLY && !it2.url.isNullOrBlank()) {
+                        val r = miniflux.fetchPageReadable(it2.url)
+                        if (r is com.toolsboox.plugin.feeds.nw.MinifluxClient.Result.Ok)
+                            "\n" + android.text.Html.fromHtml(r.value, android.text.Html.FROM_HTML_MODE_LEGACY)
+                                .toString().replace(Regex("\\s+"), " ").trim().take(1800)
+                        else ""
+                    } else ""
+                    "• [${it2.origin.label}] ${it2.title}" +
+                        (if (it2.body.isNotBlank()) " — ${it2.body}" else "") + full
+                }.take(9000)
                 val res = chatService.run(provider, key, model, engine.prompt, material)
                 when (res) {
                     is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok -> {

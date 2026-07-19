@@ -49,6 +49,36 @@ class MinifluxClient @Inject constructor() {
     fun search(baseUrl: String, token: String, query: String, limit: Int = 100): Result<List<FeedEntry>> =
         fetch(baseUrl, token, "search=${java.net.URLEncoder.encode(query, "UTF-8")}", limit)
 
+    /** The id of the category named [title], or null (Ok(null) = no such category). */
+    fun findCategoryId(baseUrl: String, token: String, title: String): Result<Long?> {
+        if (baseUrl.isBlank() || token.isBlank()) return Result.Err("Add your Miniflux URL and token in Settings.")
+        return try {
+            val req = Request.Builder().url("${normalize(baseUrl)}/v1/categories")
+                .addHeader("X-Auth-Token", token).get().build()
+            client.newCall(req).execute().use { resp ->
+                val body = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) return Result.Err("Miniflux error ${resp.code}")
+                val arr = org.json.JSONArray(body)
+                for (i in 0 until arr.length()) {
+                    val c = arr.getJSONObject(i)
+                    if (c.optString("title") == title) return Result.Ok(c.getLong("id"))
+                }
+                Result.Ok(null)
+            }
+        } catch (e: Exception) {
+            Result.Err("Network error: ${e.message}")
+        }
+    }
+
+    /** A category's entries published inside the window — includes hide_globally
+     *  categories (the MichaelFilter column), which the global fetches exclude. */
+    fun fetchCategoryEntries(
+        baseUrl: String, token: String, categoryId: Long,
+        afterEpochSec: Long, beforeEpochSec: Long, limit: Int = 100
+    ): Result<List<FeedEntry>> =
+        fetch(baseUrl, token,
+            "category_id=$categoryId&published_after=$afterEpochSec&published_before=$beforeEpochSec", limit)
+
     /** Entries PUBLISHED inside [afterEpochSec, beforeEpochSec), optionally filtered by
      *  status ("unread"/"read", null = all) — the Ledger Log's opt-in feed window. */
     fun fetchPublishedWindow(

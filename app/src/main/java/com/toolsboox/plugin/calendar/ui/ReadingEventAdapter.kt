@@ -19,7 +19,9 @@ enum class LogOrigin(val label: String, val mark: String) {
     NOTE("Note", "✒"),
     CARD("Card", "▦"),
     /** Feed articles pulled in by the Log's opt-in feed toggle (never shown by default). */
-    FEED("Feed", "📰")
+    FEED("Feed", "📰"),
+    /** The Ledger writing back: MichaelFilter enrichments of your stars, community replies. */
+    REPLY("Reply", "↩")
 }
 
 /** One row in the Notes & Annotations log, flattened from a reading event or an AV gram. */
