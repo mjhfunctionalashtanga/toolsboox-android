@@ -19,7 +19,8 @@ import java.util.Locale
  */
 fun ledgerDirectoryFolders(
     fragment: ScreenFragment,
-    recentBooks: List<Pair<String, () -> Unit>> = emptyList()
+    recentBooks: List<Pair<String, () -> Unit>> = emptyList(),
+    expandFeedLedger: Boolean = false
 ): List<ScreenFragment.Folder> {
     val nav = NavHostFragment.findNavController(fragment)
     val today = LocalDate.now()
@@ -100,13 +101,12 @@ fun ledgerDirectoryFolders(
         // Feed Ledger — the RSS reader lenses. The first row lands with the feeds DIRECTORY
         // already open (categories → individual feeds), not the flat listing.
         ScreenFragment.Folder("📰", "Feed Ledger", listOf(
-            "🗂  Feeds directory" to { FeedSelection.openDirectoryOnArrival = true; openFeed("feed", null) },
             "📰  All" to { openFeed("feed", null) },
             "📖  The Read" to { openFeed("feed", "read") },
             "📺  The Watch" to { openFeed("feed", "watch") },
             "🎧  The Listen" to { openFeed("feed", "listen") },
             "🔖  Later" to { openFeed("later", null) }
-        )),
+        ), expanded = expandFeedLedger),
         bookshelf,
         ScreenFragment.Folder("💬", "Ask my Ledger", action = { nav.navigate(R.id.action_to_ledger_chat) }),
         // Ledger Log — everything consumed: stars, annotations, read/watched/listened, books.

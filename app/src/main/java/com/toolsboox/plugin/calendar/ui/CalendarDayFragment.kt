@@ -2123,6 +2123,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.navigatorImageView.setImageBitmap(navigatorBitmap)
         updateNavigator(true)
 
+        // The feeds directory's back button lands here with the today menu open, Feed Ledger
+        // folder expanded — the last rung of the slim-pane ⇄ directory ⇄ today-menu ladder.
+        if (com.toolsboox.plugin.feeds.ui.FeedSelection.openTodayHubOnArrival) {
+            com.toolsboox.plugin.feeds.ui.FeedSelection.openTodayHubOnArrival = false
+            binding.root.post {
+                showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this, expandFeedLedger = true))
+            }
+        }
+
         val defaultStartHour = sharedPreferences.getInt("calendarStartHour", 5)
         val appCtx = requireContext().applicationContext
         timer = GlobalScope.launch(Dispatchers.Main) {

@@ -1106,6 +1106,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             container.addView(tv)
         }
         val pool = applyKind(allEntries)
+        // Ladder up: the slim pane's back row opens the full feeds directory.
+        row("‹  Directory", true, false) { showFeedDirectory() }
         row("📰  All", true, false) { adapter.submit(filterByNavDay(pool)) }
         pool.map { it.feedTitle }.filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }.forEach { f ->
             val unread = pool.count { it.feedTitle == f && !it.read }
@@ -1124,7 +1126,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         fun categoriesOf(k: String) =
             allEntries.filter { it.kind == k }.mapNotNull { it.categoryLabel }.distinct().sortedBy { it.lowercase() }
         // Each lens drills two levels deep inline: category → its individual feeds (indented).
-        // Opens expanded so the feeds are visible at a glance.
+        // FOCUSED opening: only the folder matching where you came from (current mode/kind)
+        // starts expanded — the rest sit collapsed instead of sprawling.
+        val focusLens = if (mode == "feed") kindFilter else null
         fun lens(emoji: String, label: String, k: String) = Folder(emoji, label,
             listOf<Pair<String, () -> Unit>>("$emoji  All $label" to { switchTo("feed", k) }) +
             categoriesOf(k).flatMap { c ->
@@ -1134,27 +1138,32 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     if (feeds.size > 1) feeds.map { f -> ("      · $f" to { adapter.submit(inCat.filter { it.feedTitle == f }) }) }
                     else emptyList()
             },
-            expanded = true
+            expanded = focusLens == k
         )
         showAccordion(
             listOf(
+                // Back rung of the ladder: today-page menu, Feed Ledger expanded.
+                Folder("‹", "Today menu", action = {
+                    FeedSelection.openTodayHubOnArrival = true
+                    androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.action_to_calendar_day)
+                }),
                 // Order per Michael: Later · The Read · The Watch · The Listen · Smart Feed · Ask · Search.
                 Folder("🔖", "Later", listOf(
                     "🔖  All" to { switchTo("later", null) },
                     "📖  The Read" to { switchTo("later", "read") },
                     "📺  The Watch" to { switchTo("later", "watch") },
                     "🎧  The Listen" to { switchTo("later", "listen") }
-                ), expanded = true),
+                ), expanded = mode == "later"),
                 lens("📖", "The Read", "read"),
                 lens("📺", "The Watch", "watch"),
                 lens("🎧", "The Listen", "listen"),
-                Folder("🔎", "Smart Feed",
+                Folder("✨", "Smart Feed",
                     com.toolsboox.plugin.feeds.nw.SmartFeedStore.all(requireContext()).map { sf ->
-                        ("🔎  ${sf.name}" to { switchToSmart(sf) })
+                        ("✨  ${sf.name}" to { switchToSmart(sf) })
                     } + ("➕  Add smart feed…" to { promptAddSmartFeed() }),
-                    expanded = true),
+                    expanded = false),
                 Folder("💬", "Ask", action = { switchTo("asklog", null) }),
-                Folder("🔎", "Search", action = { showFeedSearch() }),
+                Folder("🔭", "Search", action = { showFeedSearch() }),
                 // Kept available below the requested set.
                 Folder("📰", "All", action = { switchTo("feed", null) }),
                 Folder("⭐", "Stars", action = { switchTo("stars", null) }),
@@ -1252,6 +1261,9 @@ object FeedSelection {
 
     /** Set by the day-page directory: open the feeds directory drawer as soon as entries load. */
     var openDirectoryOnArrival = false
+
+    /** Back-ladder: land on the day page with the today menu open, Feed Ledger expanded. */
+    var openTodayHubOnArrival = false
 
     /** An article to open directly in the feed's in-pane reader on next open (e.g.
      *  from a gram's "Go to source"). Consumed once by FeedsFragment. */
