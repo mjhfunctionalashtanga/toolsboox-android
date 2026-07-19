@@ -2118,7 +2118,10 @@ abstract class SurfaceFragment : ScreenFragment() {
             LedgerContextMenu.Item("Invert") { transformImageElement(element) { invertBitmap(it) } },
             LedgerContextMenu.Item("Line art (B&W)") { transformImageElement(element) { thresholdBitmap(it) } },
             LedgerContextMenu.Item("Solid black") { transformImageElement(element) { solidBlackBitmap(it) } },
-            LedgerContextMenu.Item("Crop to circle") { transformImageElement(element) { circleCropBitmap(it) } }
+            LedgerContextMenu.Item("Crop to circle") { transformImageElement(element) { circleCropBitmap(it) } },
+            LedgerContextMenu.Item("🖼 Polaroid frame") { transformImageElement(element, preserveAspect = true) { polaroidBitmap(it, tape = false) } },
+            LedgerContextMenu.Item("🖼 Polaroid + tape") { transformImageElement(element, preserveAspect = true) { polaroidBitmap(it, tape = true) } },
+            LedgerContextMenu.Item("✂ Tape corners") { transformImageElement(element, preserveAspect = true) { tapeBitmap(it) } }
         ))
         groups.add(listOf(
             LedgerContextMenu.Item("Bring to front") { bringImageToFront(element) },
@@ -2704,7 +2707,9 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     /** Apply a bitmap transform to an image: re-encode PNG inline, refresh cache, persist, repaint. */
-    private fun transformImageElement(element: ImageElement, transform: (Bitmap) -> Bitmap) {
+    private fun transformImageElement(
+        element: ImageElement, preserveAspect: Boolean = false, transform: (Bitmap) -> Bitmap
+    ) {
         val bmp = bitmapForElement(element) ?: return
         val out = transform(bmp)
         val baos = ByteArrayOutputStream()
@@ -2712,6 +2717,11 @@ abstract class SurfaceFragment : ScreenFragment() {
         pushUndo()
         seedGramId(element)
         element.data = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        // Frames change the aspect ratio — grow the placed box to match so the
+        // polaroid isn't squashed into the photo's old proportions.
+        if (preserveAspect && out.width > 0) {
+            element.height = element.width * out.height.toFloat() / out.width
+        }
         element.timestamp = System.currentTimeMillis()
         imageBitmapCache[element.elementId] = out
         onImageElementsChanged(imageElements)
@@ -2729,6 +2739,70 @@ abstract class SurfaceFragment : ScreenFragment() {
     private fun flipBitmap(bmp: Bitmap, horizontal: Boolean): Bitmap {
         val m = Matrix().apply { if (horizontal) preScale(-1f, 1f) else preScale(1f, -1f) }
         return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+    }
+
+    /**
+     * Bake a classic polaroid frame around the photo — even white border, deep chin at the
+     * bottom, hairline outline — optionally with two translucent tape strips over the top
+     * corners. Baked into the pixels so it syncs to every device and costs nothing to render;
+     * grayscale-friendly for e-ink.
+     */
+    private fun polaroidBitmap(src: Bitmap, tape: Boolean): Bitmap {
+        val side = (src.width * 0.06f).coerceAtLeast(14f)
+        val chin = (src.width * 0.22f).coerceAtLeast(48f)
+        // Room for the tape to hang past the frame's top corners.
+        val overhang = if (tape) (src.width * 0.06f).coerceAtLeast(16f) else 0f
+        val w = (src.width + side * 2 + overhang * 2).toInt()
+        val h = (src.height + side + chin + overhang).toInt()
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(out)
+        val frame = android.graphics.RectF(
+            overhang, overhang, overhang + src.width + side * 2, overhang + src.height + side + chin
+        )
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.style = Paint.Style.FILL; paint.color = Color.WHITE
+        c.drawRect(frame, paint)
+        c.drawBitmap(src, frame.left + side, frame.top + side, null)
+        paint.style = Paint.Style.STROKE; paint.strokeWidth = 2f
+        paint.color = 0xFF9A9A9A.toInt()
+        c.drawRect(frame, paint)          // the print's edge
+        paint.color = 0xFFB8B8B8.toInt()
+        c.drawRect(frame.left + side, frame.top + side,
+            frame.left + side + src.width, frame.top + side + src.height, paint)  // photo well
+        if (tape) {
+            drawTape(c, frame.left, frame.top, -35f, src.width)
+            drawTape(c, frame.right, frame.top, 35f, src.width)
+        }
+        return out
+    }
+
+    /** Just the tape, no frame — two strips across the photo's top corners. */
+    private fun tapeBitmap(src: Bitmap): Bitmap {
+        val overhang = (src.width * 0.06f).coerceAtLeast(16f)
+        val w = (src.width + overhang * 2).toInt()
+        val h = (src.height + overhang).toInt()
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(out)
+        c.drawBitmap(src, overhang, overhang, null)
+        drawTape(c, overhang, overhang, -35f, src.width)
+        drawTape(c, overhang + src.width, overhang, 35f, src.width)
+        return out
+    }
+
+    /** One translucent tape strip centred on (x, y), rotated by [angle] degrees. */
+    private fun drawTape(c: Canvas, x: Float, y: Float, angle: Float, refWidth: Int) {
+        val tw = (refWidth * 0.26f).coerceAtLeast(60f)
+        val th = (refWidth * 0.085f).coerceAtLeast(22f)
+        c.save()
+        c.rotate(angle, x, y)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.style = Paint.Style.FILL
+        paint.color = 0x59AFAFAF   // translucent gray — the photo ghosts through like real tape
+        c.drawRect(x - tw / 2, y - th / 2, x + tw / 2, y + th / 2, paint)
+        paint.style = Paint.Style.STROKE; paint.strokeWidth = 1.5f
+        paint.color = 0x66808080
+        c.drawRect(x - tw / 2, y - th / 2, x + tw / 2, y + th / 2, paint)
+        c.restore()
     }
 
     private fun invertBitmap(bmp: Bitmap): Bitmap {
