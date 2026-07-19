@@ -413,6 +413,257 @@ object LedgerCorrespondence {
     }
 }
 
+/** One board in the site-boards browser. */
+data class SiteBoard(
+    val id: Int,
+    val title: String,
+    val color: String?,
+    val taskCount: Int,
+    val stageCount: Int,
+)
+
+/** One column of a board. */
+data class SiteStage(val id: Long, val title: String, val position: Double)
+
+/** One card on a board (the compact form the browser lays out). */
+data class SiteTask(
+    val id: Long,
+    val title: String,
+    val stageId: Long,
+    val position: Double,
+    val priority: String?,
+    val status: String?,
+    val dueAt: String?,
+    val coverUrl: String?,
+    val isLedgr: Boolean,
+)
+
+/** A whole board: its columns and its cards. */
+data class SiteBoardCompact(val stages: List<SiteStage>, val tasks: List<SiteTask>)
+
+/** A person on a card. */
+data class SiteAssignee(val id: Int, val name: String, val email: String, val avatar: String?)
+
+/** A label on a card. */
+data class SiteLabel(val id: Long, val title: String, val color: String?)
+
+/** A comment on a card. */
+data class SiteComment(val id: Long, val author: String, val excerpt: String, val createdAt: String)
+
+/** The full task behind a card — the deep-detail view. */
+data class SiteTaskDetail(
+    val id: Long,
+    val boardId: Int,
+    val title: String,
+    val description: String,
+    val stageId: Long,
+    val priority: String?,
+    val status: String?,
+    val dueAt: String?,
+    val coverUrl: String?,
+    val isLedgr: Boolean,
+    val assignees: List<SiteAssignee>,
+    val labels: List<SiteLabel>,
+    val comments: List<SiteComment>,
+    val crmName: String?,
+    val crmEmail: String?,
+)
+
+/**
+ * The site-boards browser client: reads every FluentBoards board on the site, renders one as
+ * tactile columns, and writes card moves + comments back through the ledgr-fb-bridge plugin.
+ * Reuses [LedgerWebBridge]'s stored site/user/pass creds (the same "Community & Boards" settings).
+ * All calls run on Dispatchers.IO and swallow failures to an empty/null result, e-ink-quietly.
+ */
+object LedgerBoards {
+
+    private val client by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private fun auth(c: LedgerWebBridge.Config) = Credentials.basic(c.user, c.pass)
+
+    /** Every board the signed-in user can see, alphabetical. Empty on any failure. */
+    fun boards(context: Context): List<SiteBoard> {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank() || c.user.isBlank() || c.pass.isBlank()) return emptyList()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/boards")
+                .header("Authorization", auth(c))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val arr = JSONObject(resp.body?.string() ?: return emptyList()).optJSONArray("boards") ?: return emptyList()
+                (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+                    SiteBoard(
+                        it.optInt("id", 0),
+                        it.optString("title", "Untitled"),
+                        it.optString("color", "").takeIf { s -> s.isNotBlank() && s != "null" },
+                        it.optInt("task_count", 0),
+                        it.optInt("stage_count", 0),
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "boards list fetch failed")
+            emptyList()
+        }
+    }
+
+    /** A board's columns and cards. Null on any failure. */
+    fun compactBoard(context: Context, boardId: Int): SiteBoardCompact? {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank()) return null
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/board/$boardId/compact")
+                .header("Authorization", auth(c))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val obj = JSONObject(resp.body?.string() ?: return null)
+                val stagesArr = obj.optJSONArray("stages") ?: return null
+                val stages = (0 until stagesArr.length()).map { stagesArr.getJSONObject(it) }.map {
+                    SiteStage(it.getLong("id"), it.optString("title", ""), it.optDouble("position", 0.0))
+                }.sortedBy { it.position }
+                val tasksArr = obj.optJSONArray("tasks")
+                val tasks = if (tasksArr == null) emptyList() else
+                    (0 until tasksArr.length()).map { tasksArr.getJSONObject(it) }.map {
+                        SiteTask(
+                            it.getLong("id"),
+                            it.optString("title", ""),
+                            it.optLong("stage_id", 0),
+                            it.optDouble("position", 0.0),
+                            it.optString("priority", "").takeIf { s -> s.isNotBlank() && s != "null" },
+                            it.optString("status", "").takeIf { s -> s.isNotBlank() && s != "null" },
+                            it.optString("due_at", "").takeIf { s -> s.isNotBlank() && s != "null" },
+                            it.optString("cover_url", "").takeIf { s -> s.isNotBlank() && s != "null" },
+                            it.optBoolean("is_ledgr", false),
+                        )
+                    }.sortedBy { it.position }
+                SiteBoardCompact(stages, tasks)
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "compact board fetch failed")
+            null
+        }
+    }
+
+    /** Move a card to a stage (append to the end). Returns a short toast status. */
+    fun moveTask(context: Context, boardId: Int, taskId: Long, newStageId: Long): String {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank()) return "Bridge not configured"
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("new_stage_id", newStageId.toString())
+            .build()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/board/$boardId/task/$taskId/move")
+                .post(body)
+                .header("Authorization", auth(c))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: ""
+                if (resp.isSuccessful && text.contains("stage_id")) "Moved"
+                else {
+                    val msg = try { JSONObject(text).optString("message") } catch (e: Exception) { "" }
+                    if (msg.isNotBlank()) msg else "Move failed (${resp.code})"
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "task move failed")
+            "Network error"
+        }
+    }
+
+    /** The full task behind a card. Null on any failure. */
+    fun taskDetail(context: Context, boardId: Int, taskId: Long): SiteTaskDetail? {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank()) return null
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/board/$boardId/task/$taskId")
+                .header("Authorization", auth(c))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val o = JSONObject(resp.body?.string() ?: return null)
+                val assignees = o.optJSONArray("assignees").let { arr ->
+                    if (arr == null) emptyList() else (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+                        SiteAssignee(it.optInt("id", 0), it.optString("name", "?"), it.optString("email", ""),
+                            it.optString("avatar", "").takeIf { s -> s.isNotBlank() && s != "null" })
+                    }
+                }
+                val labels = o.optJSONArray("labels").let { arr ->
+                    if (arr == null) emptyList() else (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+                        SiteLabel(it.optLong("id", 0), it.optString("title", ""),
+                            it.optString("color", "").takeIf { s -> s.isNotBlank() && s != "null" })
+                    }
+                }
+                val comments = o.optJSONArray("comments").let { arr ->
+                    if (arr == null) emptyList() else (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+                        SiteComment(it.optLong("id", 0), it.optString("author", "?"),
+                            it.optString("excerpt", ""), it.optString("created_at", ""))
+                    }
+                }
+                val crm = o.optJSONObject("crm")
+                SiteTaskDetail(
+                    o.optLong("id", 0), o.optInt("board_id", boardId),
+                    o.optString("title", ""), o.optString("description", ""),
+                    o.optLong("stage_id", 0),
+                    o.optString("priority", "").takeIf { s -> s.isNotBlank() && s != "null" },
+                    o.optString("status", "").takeIf { s -> s.isNotBlank() && s != "null" },
+                    o.optString("due_at", "").takeIf { s -> s.isNotBlank() && s != "null" },
+                    o.optString("cover_url", "").takeIf { s -> s.isNotBlank() && s != "null" },
+                    o.optBoolean("is_ledgr", false),
+                    assignees, labels, comments,
+                    crm?.optString("name", "")?.takeIf { it.isNotBlank() },
+                    crm?.optString("email", "")?.takeIf { it.isNotBlank() },
+                )
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "task detail fetch failed")
+            null
+        }
+    }
+
+    /** Add a comment to a card — typed text and/or a handwriting PNG. Returns toast status. */
+    fun commentTask(context: Context, boardId: Int, taskId: Long, text: String?, png: ByteArray?): String {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank()) return "Bridge not configured"
+        if (text.isNullOrBlank() && png == null) return "Nothing to send"
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .apply {
+                if (!text.isNullOrBlank()) addFormDataPart("text", text)
+                if (png != null) addFormDataPart("png", "reply.png", png.toRequestBody("image/png".toMediaType()))
+            }
+            .build()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/board/$boardId/task/$taskId/comment")
+                .post(body)
+                .header("Authorization", auth(c))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val t = resp.body?.string() ?: ""
+                if (resp.isSuccessful && t.contains("comment_id")) "Reply posted"
+                else {
+                    val msg = try { JSONObject(t).optString("message") } catch (e: Exception) { "" }
+                    if (msg.isNotBlank()) msg else "Reply failed (${resp.code})"
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "task comment failed")
+            "Network error"
+        }
+    }
+}
+
 /** Write → Share: POST /ledgr/v1/essay (dest=draft|email). The handwriting IS the essay. */
 object LedgerEssay {
     private val client by lazy {

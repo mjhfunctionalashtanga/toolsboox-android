@@ -89,6 +89,7 @@ fun ledgerDirectoryFolders(
             "🗒  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
             "👤  Rolodex" to { nav.navigate(R.id.action_to_rolodex) },
             "📋  Boards" to { nav.navigate(R.id.action_to_kanban) },
+            "🌐  Site Boards" to { nav.navigate(R.id.action_to_site_boards) },
             "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
             "📝  Text Notes" to { nav.navigate(R.id.action_to_text_notes) }
         )),

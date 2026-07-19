@@ -79,6 +79,10 @@
             app:destination="@id/CorrespondenceFragment"/>
 
     <action
+            android:id="@+id/action_to_site_boards"
+            app:destination="@id/SiteBoardsFragment"/>
+
+    <action
             android:id="@+id/action_to_text_notes"
             app:destination="@id/TextNotesFragment"/>
 
@@ -181,6 +185,12 @@
             android:name="com.toolsboox.plugin.calendar.ui.CorrespondenceFragment"
             android:label="CorrespondenceFragment"
             tools:layout="@layout/fragment_correspondence"/>
+
+    <fragment
+            android:id="@+id/SiteBoardsFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.SiteBoardsFragment"
+            android:label="SiteBoardsFragment"
+            tools:layout="@layout/fragment_site_boards"/>
 
     <fragment
             android:id="@+id/ReadingLogFragment"
