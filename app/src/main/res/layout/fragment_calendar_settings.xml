@@ -722,10 +722,10 @@
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintEnd_toEndOf="parent"/>
 
-            <!-- Community bridge (FluentCommunity) — moved here from Boards → Web bridge -->
+            <!-- Community + Boards bridge (FluentCommunity / FluentBoards) — one home -->
             <TextView
                     android:id="@+id/community_section_label"
-                    android:text="Community (FluentCommunity)"
+                    android:text="Community &amp; Boards (Fluent)"
                     android:textSize="18sp"
                     android:textStyle="bold"
 
@@ -801,6 +801,27 @@
                         android:singleLine="true"/>
             </com.google.android.material.textfield.TextInputLayout>
 
+            <com.google.android.material.textfield.TextInputLayout
+                    android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    android:id="@+id/community_board_layout"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginStart="16dp"
+                    android:layout_marginEnd="16dp"
+                    android:hint="FluentBoards board ID (for pinned grams)"
+                    app:layout_constraintTop_toBottomOf="@id/community_pass_layout"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent">
+                <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/community_board_input"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="number"
+                        android:singleLine="true"/>
+            </com.google.android.material.textfield.TextInputLayout>
+
             <View
                     android:id="@+id/divider_ultrabridge"
                     android:layout_width="match_parent"
@@ -808,7 +829,7 @@
                     android:layout_marginTop="8dp"
                     android:background="#e0e0e0"
 
-                    app:layout_constraintTop_toBottomOf="@id/community_pass_layout"
+                    app:layout_constraintTop_toBottomOf="@id/community_board_layout"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintEnd_toEndOf="parent"/>
 

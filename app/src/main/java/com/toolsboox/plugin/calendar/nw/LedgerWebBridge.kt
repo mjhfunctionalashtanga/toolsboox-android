@@ -302,6 +302,17 @@ data class LedgerReply(
     val threadUrl: String = "",
 )
 
+/** One post ("cute card") in a community space — repliable in the Correspondence view. */
+data class LedgerPost(
+    val id: Long,
+    val title: String,
+    val excerpt: String,
+    val author: String,
+    val createdAt: String,
+    val commentsCount: Int,
+    val url: String,
+)
+
 /** Correspondence fetch + ink reply — the Boox half of the Correspondence page. */
 object LedgerCorrespondence {
 
@@ -338,6 +349,36 @@ object LedgerCorrespondence {
             }
         } catch (e: Exception) {
             Timber.w(e, "correspondence fetch failed")
+            emptyList()
+        }
+    }
+
+    /** A space's posts (the cute cards shared in), newest first. Call from Dispatchers.IO. */
+    fun fetchSpaceFeed(context: Context, spaceId: Long, limit: Int = 50): List<LedgerPost> {
+        val c = LedgerCommunityBridge.config(context)
+        if (!c.ready) return emptyList()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/community/feed?space=$spaceId&limit=$limit")
+                .header("Authorization", Credentials.basic(c.user, c.pass))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val arr = JSONObject(resp.body?.string() ?: return emptyList()).optJSONArray("items") ?: return emptyList()
+                (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+                    LedgerPost(
+                        it.optLong("id", 0),
+                        it.optString("title", "").takeIf { t -> t != "null" } ?: "",
+                        it.optString("excerpt", ""),
+                        it.optString("author", "?"),
+                        it.optString("created_at", ""),
+                        it.optInt("comments_count", 0),
+                        it.optString("url", "")
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "space feed fetch failed")
             emptyList()
         }
     }

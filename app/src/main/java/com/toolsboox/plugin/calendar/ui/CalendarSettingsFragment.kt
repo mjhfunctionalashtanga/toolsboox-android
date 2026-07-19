@@ -447,9 +447,12 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         // Community bridge (FluentCommunity) creds — one home for connection settings, instead
         // of being buried under Boards → Web bridge.
         val bridgeCfg = com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(requireContext())
-        binding.communitySiteInput.setText(bridgeCfg.site)
-        binding.communityUserInput.setText(bridgeCfg.user)
-        binding.communityPassInput.setText(bridgeCfg.pass)
+        val boardsCfg = com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(requireContext())
+        // Prefer whichever bridge already holds creds (they share site/user/pass on one site).
+        binding.communitySiteInput.setText(bridgeCfg.site.ifBlank { boardsCfg.site })
+        binding.communityUserInput.setText(bridgeCfg.user.ifBlank { boardsCfg.user })
+        binding.communityPassInput.setText(bridgeCfg.pass.ifBlank { boardsCfg.pass })
+        binding.communityBoardInput.setText(if (boardsCfg.boardId > 0) boardsCfg.boardId.toString() else "")
         // Persist toggles the INSTANT they flip — not only on the Save button. Users expect a
         // toggle to stick; tapping Connect or backing out used to lose an un-Saved flip.
         binding.gcalEnableSwitch.setOnCheckedChangeListener { _, isChecked ->
@@ -653,6 +656,12 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.saveConfig(
                 requireContext(),
                 com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.Config(bridgeSite, bridgeUser, bridgePass)
+            )
+            // Same site/user/pass also drive the Boards bridge (gram pinning); board ID is its own.
+            val bridgeBoard = binding.communityBoardInput.text?.toString()?.trim()?.toIntOrNull() ?: 0
+            com.toolsboox.plugin.calendar.nw.LedgerWebBridge.saveConfig(
+                requireContext(),
+                com.toolsboox.plugin.calendar.nw.LedgerWebBridge.Config(bridgeSite, bridgeUser, bridgePass, bridgeBoard)
             )
 
             this@CalendarSettingsFragment.requireActivity().onBackPressed()
