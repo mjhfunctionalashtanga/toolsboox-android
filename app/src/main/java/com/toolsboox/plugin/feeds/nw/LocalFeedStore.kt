@@ -21,7 +21,9 @@ object LocalFeedStore {
     private const val PREFS = "ledger_local_feeds"
     private val http = OkHttpClient()
 
-    fun isLocal(id: Long): Boolean = id <= -1000L
+    // Precise range, matching idFor()/entries() (= -(hash % 1e9) - 1000): the feed UI's other
+    // synthetic rows (Later, Pickings) live in bands BELOW this and must not classify as local.
+    fun isLocal(id: Long): Boolean = id in -1_000_000_999L..-1000L
     private fun idFor(url: String): Long = -(abs(url.hashCode().toLong()) % 1_000_000_000L) - 1000L
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
