@@ -718,16 +718,25 @@ abstract class ScreenFragment : Fragment() {
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
+        // Unmapped glyph → carry it in the label as ENLARGED text (renders for any character,
+        // sized to sit alongside the mapped drawable icons instead of shrinking into the label).
+        fun glyphLabel(glyph: String, text: String): CharSequence {
+            if (glyph.isBlank()) return text
+            val s = android.text.SpannableString("$glyph  $text")
+            s.setSpan(android.text.style.RelativeSizeSpan(1.35f), 0, glyph.length, 0)
+            s.setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), 0, glyph.length, 0)
+            return s
+        }
+
         for (folder in folders) {
             val header = layoutInflater.inflate(R.layout.item_go_to, list, false)
             val hasIcon = setRowEmojiIcon(header, folder.emoji)
-            // Unmapped glyph → carry it in the label as text (renders for any character).
-            val prefix = if (!hasIcon && folder.emoji.isNotBlank()) "${folder.emoji}  " else ""
+            val glyph = if (!hasIcon && folder.emoji.isNotBlank()) folder.emoji else ""
             val headerLabel = header.findViewById<TextView>(R.id.go_label)
 
             // A leaf entry (has [action]) is a plain tappable row — no caret, no children.
             if (folder.action != null) {
-                headerLabel.text = prefix + folder.title
+                headerLabel.text = glyphLabel(glyph, folder.title)
                 header.setOnClickListener { dialog.dismiss(); folder.action.invoke() }
                 list.addView(header)
                 continue
@@ -746,12 +755,15 @@ abstract class ScreenFragment : Fragment() {
                 setPadding(dp(2), dp(2), dp(2), dp(4))
             }
             fun caret() = if (children.visibility == View.VISIBLE) "▾" else "▸"
-            headerLabel.text = "${caret()}  ${folder.title}"
+            fun headerText(): CharSequence =
+                if (glyph.isEmpty()) "${caret()}  ${folder.title}"
+                else glyphLabel(glyph, folder.title).let { android.text.TextUtils.concat("${caret()}  ", it) }
+            headerLabel.text = headerText()
             header.setOnClickListener {
                 val show = children.visibility != View.VISIBLE
                 children.visibility = if (show) View.VISIBLE else View.GONE
                 children.background = if (show) outline else null
-                headerLabel.text = "${caret()}  ${folder.title}"
+                headerLabel.text = headerText()
             }
             for ((label, action) in folder.items) {
                 val r = layoutInflater.inflate(R.layout.item_go_to, children, false)

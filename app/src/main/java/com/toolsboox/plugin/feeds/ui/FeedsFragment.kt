@@ -1141,14 +1141,12 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // FOCUSED opening: only the folder matching where you came from (current mode/kind)
         // starts expanded — the rest sit collapsed instead of sprawling.
         val focusLens = if (mode == "feed") kindFilter else null
+        // Lenses stop at CATEGORIES here — the individual feeds live in the slim pane, so the
+        // directory doesn't duplicate the per-feed list one rung down.
         fun lens(emoji: String, label: String, k: String) = Folder(emoji, label,
             listOf<Pair<String, () -> Unit>>("$emoji  All $label" to { switchTo("feed", k) }) +
-            categoriesOf(k).flatMap { c ->
-                val inCat = allEntries.filter { it.categoryLabel == c }
-                val feeds = inCat.map { it.feedTitle }.filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }
-                listOf<Pair<String, () -> Unit>>("🗂  $c" to { adapter.submit(inCat) }) +
-                    if (feeds.size > 1) feeds.map { f -> ("      · $f" to { adapter.submit(inCat.filter { it.feedTitle == f }) }) }
-                    else emptyList()
+            categoriesOf(k).map { c ->
+                "🗂  $c" to { adapter.submit(allEntries.filter { it.categoryLabel == c }); Unit }
             },
             expanded = focusLens == k
         )
