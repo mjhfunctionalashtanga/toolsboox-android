@@ -1853,6 +1853,169 @@ abstract class SurfaceFragment : ScreenFragment() {
         return out
     }
 
+    /** Crop to a full-frame oval (no square pre-crop — portraits stay portrait). */
+    private fun ovalCropBitmap(bmp: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        canvas.drawOval(RectF(0f, 0f, bmp.width.toFloat(), bmp.height.toFloat()), paint)
+        paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(bmp, 0f, 0f, paint)
+        return out
+    }
+
+    private fun roundedCornersBitmap(bmp: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val r = minOf(bmp.width, bmp.height) * 0.09f
+        canvas.drawRoundRect(RectF(0f, 0f, bmp.width.toFloat(), bmp.height.toFloat()), r, r, paint)
+        paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(bmp, 0f, 0f, paint)
+        return out
+    }
+
+    /** Crop the CENTER SQUARE of the photo to an arbitrary unit path (0..1 space). */
+    private fun pathCropBitmap(bmp: Bitmap, unitPath: (android.graphics.Path) -> Unit): Bitmap {
+        val d = minOf(bmp.width, bmp.height)
+        val out = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val path = android.graphics.Path()
+        unitPath(path)
+        val m = Matrix()
+        m.postScale(d.toFloat(), d.toFloat())
+        m.postTranslate((bmp.width - d) / 2f, (bmp.height - d) / 2f)
+        path.transform(m)
+        canvas.drawPath(path, paint)
+        paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(bmp, 0f, 0f, paint)
+        return out
+    }
+
+    /** Classic two-lobe heart in unit space. */
+    private fun heartPath(p: android.graphics.Path) {
+        p.moveTo(0.5f, 0.95f)
+        p.cubicTo(0.16f, 0.72f, 0.02f, 0.48f, 0.06f, 0.30f)
+        p.cubicTo(0.10f, 0.10f, 0.36f, 0.05f, 0.5f, 0.24f)
+        p.cubicTo(0.64f, 0.05f, 0.90f, 0.10f, 0.94f, 0.30f)
+        p.cubicTo(0.98f, 0.48f, 0.84f, 0.72f, 0.5f, 0.95f)
+        p.close()
+    }
+
+    /** Five-point star in unit space. */
+    private fun starPath(p: android.graphics.Path) {
+        val cx = 0.5f; val cy = 0.52f
+        val rOut = 0.48f; val rIn = 0.20f
+        for (i in 0 until 10) {
+            val r = if (i % 2 == 0) rOut else rIn
+            val a = Math.toRadians((i * 36 - 90).toDouble())
+            val x = cx + (r * Math.cos(a)).toFloat()
+            val y = cy + (r * Math.sin(a)).toFloat()
+            if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
+        }
+        p.close()
+    }
+
+    /** Eight-petal flower (overlapping circles around a center) in unit space. */
+    private fun flowerPath(p: android.graphics.Path) {
+        val petal = 0.19f
+        for (i in 0 until 8) {
+            val a = Math.toRadians((i * 45).toDouble())
+            val x = 0.5f + (0.30f * Math.cos(a)).toFloat()
+            val y = 0.5f + (0.30f * Math.sin(a)).toFloat()
+            p.addCircle(x, y, petal, android.graphics.Path.Direction.CW)
+        }
+        p.addCircle(0.5f, 0.5f, 0.31f, android.graphics.Path.Direction.CW)
+    }
+
+    /** Postage stamp: white border with perforation notches punched along the outer edge. */
+    private fun stampBitmap(src: Bitmap): Bitmap {
+        val border = (src.width * 0.055f).coerceAtLeast(14f)
+        val w = (src.width + border * 2).toInt()
+        val h = (src.height + border * 2).toInt()
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = Color.WHITE
+        canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
+        canvas.drawBitmap(src, border, border, null)
+        // Perforations: transparent circles punched along all four edges.
+        val hole = border * 0.42f
+        val pitch = hole * 2.6f
+        paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
+        var x = pitch / 2
+        while (x < w) { canvas.drawCircle(x, 0f, hole, paint); canvas.drawCircle(x, h.toFloat(), hole, paint); x += pitch }
+        var y = pitch / 2
+        while (y < h) { canvas.drawCircle(0f, y, hole, paint); canvas.drawCircle(w.toFloat(), y, hole, paint); y += pitch }
+        return out
+    }
+
+    /** Scalloped edge: the photo clipped to a ring of half-round bites (lace doily edge). */
+    private fun scallopedEdgeBitmap(bmp: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val r = minOf(bmp.width, bmp.height) * 0.045f
+        val path = android.graphics.Path()
+        val inset = r
+        path.addRect(inset, inset, bmp.width - inset, bmp.height - inset, android.graphics.Path.Direction.CW)
+        // Bumps outward along each edge.
+        fun bumps(fixed: Float, from: Float, to: Float, horizontal: Boolean) {
+            var t = from + r
+            while (t + r <= to) {
+                if (horizontal) path.addCircle(t, fixed, r, android.graphics.Path.Direction.CW)
+                else path.addCircle(fixed, t, r, android.graphics.Path.Direction.CW)
+                t += r * 2.1f
+            }
+        }
+        bumps(inset, inset, bmp.width - inset, true)
+        bumps(bmp.height - inset, inset, bmp.width - inset, true)
+        bumps(inset, inset, bmp.height - inset, false)
+        bumps(bmp.width - inset, inset, bmp.height - inset, false)
+        canvas.drawPath(path, paint)
+        paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(bmp, 0f, 0f, paint)
+        return out
+    }
+
+    /** Torn paper: a thin white deckle border with an irregular hand-torn edge. Deterministic
+     *  per size (seeded) so re-applying or re-syncing renders the identical tear. */
+    private fun tornEdgeBitmap(src: Bitmap): Bitmap {
+        val margin = (src.width * 0.05f).coerceAtLeast(12f)
+        val w = (src.width + margin * 2).toInt()
+        val h = (src.height + margin * 2).toInt()
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val rnd = kotlin.random.Random(src.width * 31 + src.height)
+        val path = android.graphics.Path()
+        val step = (w / 24f).coerceAtLeast(10f)
+        fun jitter() = (rnd.nextFloat() - 0.35f) * margin
+        // Walk the perimeter with jittered points.
+        path.moveTo(margin / 2, margin / 2)
+        var x = margin / 2
+        while (x < w - margin / 2) { path.lineTo(x, margin / 2 + jitter()); x += step }
+        path.lineTo(w - margin / 2, margin / 2)
+        var y = margin / 2
+        while (y < h - margin / 2) { path.lineTo(w - margin / 2 + jitter(), y); y += step }
+        path.lineTo(w - margin / 2, h - margin / 2)
+        x = w - margin / 2
+        while (x > margin / 2) { path.lineTo(x, h - margin / 2 + jitter()); x -= step }
+        path.lineTo(margin / 2, h - margin / 2)
+        y = h - margin / 2
+        while (y > margin / 2) { path.lineTo(margin / 2 + jitter(), y); y -= step }
+        path.close()
+        // White paper clipped to the tear, then the photo inset on top.
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = Color.WHITE
+        canvas.drawPath(path, paint)
+        canvas.save()
+        canvas.clipPath(path)
+        canvas.drawBitmap(src, margin, margin, null)
+        canvas.restore()
+        return out
+    }
+
     private fun bitmapForElement(element: ImageElement): Bitmap? {
         imageBitmapCache[element.elementId]?.let { return it }
         return try {
@@ -2118,10 +2281,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             LedgerContextMenu.Item("Invert") { transformImageElement(element) { invertBitmap(it) } },
             LedgerContextMenu.Item("Line art (B&W)") { transformImageElement(element) { thresholdBitmap(it) } },
             LedgerContextMenu.Item("Solid black") { transformImageElement(element) { solidBlackBitmap(it) } },
-            LedgerContextMenu.Item("Crop to circle") { transformImageElement(element) { circleCropBitmap(it) } },
-            LedgerContextMenu.Item("🖼 Polaroid frame") { transformImageElement(element, preserveAspect = true) { polaroidBitmap(it, tape = false) } },
-            LedgerContextMenu.Item("🖼 Polaroid + tape") { transformImageElement(element, preserveAspect = true) { polaroidBitmap(it, tape = true) } },
-            LedgerContextMenu.Item("✂ Tape corners") { transformImageElement(element, preserveAspect = true) { tapeBitmap(it) } }
+            LedgerContextMenu.Item("🖼 Shapes & cute cuts…") { showShapeMenu(element, pressX, pressY) }
         ))
         groups.add(listOf(
             LedgerContextMenu.Item("Bring to front") { bringImageToFront(element) },
@@ -2160,6 +2320,35 @@ abstract class SurfaceFragment : ScreenFragment() {
             }
         ))
         LedgerContextMenu.show(provideSurfaceView(), pressX, pressY, "IMAGE", groups)
+    }
+
+    /**
+     * The scrapbook drawer: shape crops and edge treatments that make a gram cute. Every
+     * one bakes into the PNG (syncs as pixels, free to render, grayscale-safe on e-ink).
+     */
+    private fun showShapeMenu(element: ImageElement, pressX: Float, pressY: Float) {
+        LedgerContextMenu.show(
+            provideSurfaceView(), pressX, pressY, "SHAPE & CUT", listOf(
+                listOf(
+                    LedgerContextMenu.Item("● Circle") { transformImageElement(element) { circleCropBitmap(it) } },
+                    LedgerContextMenu.Item("⬭ Oval") { transformImageElement(element) { ovalCropBitmap(it) } },
+                    LedgerContextMenu.Item("▢ Rounded corners") { transformImageElement(element) { roundedCornersBitmap(it) } },
+                    LedgerContextMenu.Item("♥ Heart") { transformImageElement(element) { pathCropBitmap(it, ::heartPath) } },
+                    LedgerContextMenu.Item("★ Star") { transformImageElement(element) { pathCropBitmap(it, ::starPath) } },
+                    LedgerContextMenu.Item("✿ Flower") { transformImageElement(element) { pathCropBitmap(it, ::flowerPath) } }
+                ),
+                listOf(
+                    LedgerContextMenu.Item("✉ Postage stamp") { transformImageElement(element, preserveAspect = true) { stampBitmap(it) } },
+                    LedgerContextMenu.Item("⌇ Torn paper edge") { transformImageElement(element, preserveAspect = true) { tornEdgeBitmap(it) } },
+                    LedgerContextMenu.Item("✂ Scalloped edge") { transformImageElement(element) { scallopedEdgeBitmap(it) } }
+                ),
+                listOf(
+                    LedgerContextMenu.Item("🖼 Polaroid frame") { transformImageElement(element, preserveAspect = true) { polaroidBitmap(it, tape = false) } },
+                    LedgerContextMenu.Item("🖼 Polaroid + tape") { transformImageElement(element, preserveAspect = true) { polaroidBitmap(it, tape = true) } },
+                    LedgerContextMenu.Item("➰ Tape corners") { transformImageElement(element, preserveAspect = true) { tapeBitmap(it) } }
+                )
+            )
+        )
     }
 
     /**
