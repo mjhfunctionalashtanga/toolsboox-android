@@ -1,12 +1,18 @@
 package com.toolsboox.plugin.calendar.ui
 
 import android.content.ClipData
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.DragEvent
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -465,27 +471,80 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         return scroll
     }
 
+    /** Reply to a card in handwriting and/or typed text — both ride to the same comment. */
     private fun promptReply(board: SiteBoard, d: SiteTaskDetail, parent: androidx.appcompat.app.AlertDialog) {
         val ctx = requireContext()
+        val ink = InkPadView(ctx)
         val input = android.widget.EditText(ctx).apply {
-            hint = "Your reply…"; setPadding(px(20), px(16), px(20), px(16)); minLines = 2
+            hint = "…or type a reply"; setPadding(px(14), px(12), px(14), px(12)); minLines = 1
+        }
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(px(12), px(6), px(12), 0)
+            addView(TextView(ctx).apply {
+                text = "Write here:"; setTextColor(Color.parseColor("#888888")); textSize = 12f
+            })
+            addView(ink, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, px(300)))
+            addView(input, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = px(8) })
         }
         androidx.appcompat.app.AlertDialog.Builder(ctx)
-            .setTitle("Comment on “${d.title.take(40)}”")
-            .setView(input)
+            .setTitle("Reply · ${d.title.take(36)}")
+            .setView(box)
             .setPositiveButton("Send") { _, _ ->
-                val text = input.text.toString().trim()
-                if (text.isEmpty()) return@setPositiveButton
+                val text = input.text.toString().trim().ifBlank { null }
+                val png = ink.render()?.let { bmp ->
+                    val baos = java.io.ByteArrayOutputStream()
+                    bmp.compress(Bitmap.CompressFormat.PNG, 100, baos); bmp.recycle()
+                    baos.toByteArray()
+                }
+                if (text == null && png == null) { toast("Nothing to send"); return@setPositiveButton }
                 lifecycleScope.launch {
                     val status = withContext(Dispatchers.IO) {
-                        LedgerBoards.commentTask(requireContext(), board.id, d.id, text, null)
+                        LedgerBoards.commentTask(requireContext(), board.id, d.id, text, png)
                     }
                     toast(status)
                     if (status == "Reply posted") { parent.dismiss(); openDetail(board, taskStub(d)) }
                 }
             }
+            .setNeutralButton("Clear", null)
             .setNegativeButton("Cancel", null)
             .show()
+            .also { dlg ->
+                dlg.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)
+                    ?.setOnClickListener { ink.clear(); input.text?.clear() }
+            }
+    }
+
+    /** Minimal stylus pad — plain touch, no Onyx pipeline (fine for a short handwritten reply). */
+    private class InkPadView(context: Context) : View(context) {
+        private val paths = mutableListOf<Path>()
+        private var current: Path? = null
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK; style = Paint.Style.STROKE
+            strokeWidth = 4f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+        }
+        init { setBackgroundColor(Color.WHITE) }
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> current = Path().also { it.moveTo(event.x, event.y); paths.add(it) }
+                MotionEvent.ACTION_MOVE -> current?.lineTo(event.x, event.y)
+                MotionEvent.ACTION_UP -> current = null
+            }
+            invalidate(); return true
+        }
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            for (p in paths) canvas.drawPath(p, paint)
+        }
+        fun clear() { paths.clear(); current = null; invalidate() }
+        fun render(): Bitmap? {
+            if (paths.isEmpty() || width == 0 || height == 0) return null
+            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val c = Canvas(bmp); c.drawColor(Color.WHITE)
+            for (p in paths) c.drawPath(p, paint)
+            return bmp
+        }
     }
 
     /** Save an edit through updateTask, then reopen the card so it shows the new state. */
