@@ -1072,22 +1072,21 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         if (!::binding.isInitialized) return
         val container = binding.feedsDirectory
         container.removeAllViews()
-        // ONE directory style: the in-layout side panel was the old listing and sat behind the
-        // drawer — the accordion drawer (showFeedDirectory) is THE directory now. Keep the panel
-        // collapsed so the article list gets the full width.
-        container.visibility = View.GONE
-        if (true) return
+        // SLIM per-feed pane: just the INDIVIDUAL FEEDS of the current lens, small type, unread
+        // counts. The full tree (lenses, categories, Later, local, OPML…) lives in the accordion
+        // drawer (☰) — one directory style; this pane is a quick filter, toggled by the RSS button.
         val ctx = requireContext()
-        fun row(label: String, count: Int?, indent: Int, selected: Boolean, onClick: () -> Unit) {
+        fun row(label: String, bold: Boolean, selected: Boolean, onClick: () -> Unit) {
             val tv = android.widget.TextView(ctx).apply {
-                text = if (count != null && count > 0) "$label  ·  $count" else label
-                textSize = if (indent == 0) 19f else 16f
+                text = label
+                textSize = if (bold) 15f else 13.5f
                 setTextColor(0xFF000000.toInt())
-                setPadding(dpPx(12 + indent * 14), dpPx(11), dpPx(10), dpPx(11))
+                setPadding(dpPx(10), dpPx(9), dpPx(8), dpPx(9))
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
                 isClickable = true
-                if (selected) setBackgroundColor(0x33000000)
+                if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                if (selected) setBackgroundColor(0x22000000)
                 setOnClickListener {
                     // Selecting a feed while reading returns to the list.
                     if (binding.articlePane.visibility == View.VISIBLE) closeArticlePane()
@@ -1096,32 +1095,14 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             }
             container.addView(tv)
         }
-        row(if (mode == "read") "◉  Read" else "○  Unread", null, 0, false) {
-            mode = if (mode == "read") "feed" else "read"; kindFilter = null; refresh()
-        }
-        row("🔍  Search…", null, 0, false) { showFeedSearch() }
-        row("📰  All", allEntries.size, 0, mode == "feed" && kindFilter == null) { switchTo("feed", null) }
-        row("⭐  Stars", null, 0, mode == "stars") { switchTo("stars", null) }
-        for (t in listOf(Triple("📖", "read", "Read"), Triple("📺", "watch", "Watch"), Triple("🎧", "listen", "Listen"))) {
-            val (emoji, k, name) = t
-            val inLens = allEntries.filter { it.kind == k }
-            row("$emoji  $name", inLens.size, 0, mode == "feed" && kindFilter == k) { switchTo("feed", k) }
-            inLens.mapNotNull { it.categoryLabel }.distinct().sortedBy { it.lowercase() }.forEach { cat ->
-                val inCat = inLens.filter { it.categoryLabel == cat }
-                row("🗂  $cat", inCat.size, 1, false) { adapter.submit(inCat) }
+        val pool = applyKind(allEntries)
+        row("📰  All", true, false) { adapter.submit(filterByNavDay(pool)) }
+        pool.map { it.feedTitle }.filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }.forEach { f ->
+            val unread = pool.count { it.feedTitle == f && !it.read }
+            row(if (unread > 0) "$f · $unread" else f, false, false) {
+                adapter.submit(filterByNavDay(pool.filter { it.feedTitle == f }))
             }
         }
-        row("🔖  Later List", null, 0, mode == "later") { switchTo("later", null) }
-        row("🗨  Ask Answers", null, 0, mode == "asklog") { switchTo("asklog", null) }
-        row("❝  Feed Pickings", null, 0, mode == "pickings") { switchTo("pickings", null) }
-        // Local Feeds (no server): All Local + each subscription + add / OPML.
-        row("📡  Local Feeds", null, 0, mode == "local" && localSub == null) { switchToLocal(null) }
-        com.toolsboox.plugin.feeds.nw.LocalFeedStore.subscriptions(requireContext()).forEach { s ->
-            row("•  ${s.title}", null, 1, mode == "local" && localSub?.id == s.id) { switchToLocal(s) }
-        }
-        row("➕  Add feed", null, 1, false) { showAddLocalFeed() }
-        row("📥  Import OPML", null, 1, false) { opmlPicker.launch("*/*") }
-        row("📤  Export OPML", null, 1, false) { exportOpml() }
     }
 
     /**

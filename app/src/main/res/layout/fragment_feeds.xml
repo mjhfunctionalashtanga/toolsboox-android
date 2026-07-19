@@ -14,9 +14,8 @@
          filter. Populated in code by renderDirectory(). Replaces the floating dropdown. -->
     <ScrollView
         android:id="@+id/directory_scroll"
-        android:visibility="gone"
         android:layout_width="0dp"
-        android:layout_weight="0.34"
+        android:layout_weight="0.24"
         android:layout_height="match_parent"
         android:background="#F4F2ED"
         android:scrollbars="none">
@@ -29,13 +28,12 @@
     </ScrollView>
 
     <View android:id="@+id/directory_divider"
-        android:visibility="gone"
         android:layout_width="1dp" android:layout_height="match_parent" android:background="#D8D5CE"/>
 
     <LinearLayout
     android:orientation="vertical"
     android:layout_width="0dp"
-    android:layout_weight="0.66"
+    android:layout_weight="0.76"
     android:layout_height="match_parent"
     android:background="#FFFFFF">
 

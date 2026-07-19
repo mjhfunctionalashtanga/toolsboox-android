@@ -80,6 +80,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
 
         // Floating nav pill: grip drags/collapses; ‹ › page, ⌃ ⌄ step articles, ✎ annotate.
         makeDraggable(binding.artGrip, binding.artPill, "article")
+        applyArticlePillOrientation()
         binding.artMenu.setOnClickListener { openRssDirectory() }
         binding.artToday.setOnClickListener {
             androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.action_to_calendar_day)
@@ -100,6 +101,13 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
     // --- Capy-style navigation: tap zones + volume keys, both toggle-able ---
 
     private fun navPrefs() = requireContext().getSharedPreferences("ledger_reader_nav", 0)
+
+    /** Horizontal ⇄ vertical pill, per the wrench toggle (persisted). */
+    private fun applyArticlePillOrientation() {
+        (binding.artPill as? android.widget.LinearLayout)?.orientation =
+            if (navPrefs().getBoolean("article_pill_vertical", false)) android.widget.LinearLayout.VERTICAL
+            else android.widget.LinearLayout.HORIZONTAL
+    }
     private fun tapZonesOn() = navPrefs().getBoolean("tap_zones", false)
     private fun volumeTurnOn() = navPrefs().getBoolean("volume_turn", false)
 
@@ -230,7 +238,19 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                 entry?.url?.takeIf { it.isNotBlank() }?.let { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) }; Unit
             },
             ((if (tapOn) "☑" else "☐") + "  Tap-zone paging") to { navPrefs().edit().putBoolean("tap_zones", !tapOn).apply(); setupTapZones() },
-            ((if (volOn) "☑" else "☐") + "  Volume page-turn") to { navPrefs().edit().putBoolean("volume_turn", !volOn).apply(); Unit }
+            ((if (volOn) "☑" else "☐") + "  Volume page-turn") to { navPrefs().edit().putBoolean("volume_turn", !volOn).apply(); Unit },
+            "🔄  Rotate screen" to {
+                val a = requireActivity()
+                a.requestedOrientation =
+                    if (a.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE)
+                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                    else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            },
+            "↕  Flip pill layout" to {
+                val v = !navPrefs().getBoolean("article_pill_vertical", false)
+                navPrefs().edit().putBoolean("article_pill_vertical", v).apply()
+                applyArticlePillOrientation()
+            }
         )
         val all = fixed.take(1) + readItems + fixed.drop(1)
         showIconMenu(null, all)
