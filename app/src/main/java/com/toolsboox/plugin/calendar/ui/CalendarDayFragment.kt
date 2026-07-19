@@ -279,6 +279,53 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
     }
 
+    /** Download any missing star featured-image thumbnails (small, grayscale-friendly PNGs) and
+     *  re-render the page when new ones land — the "tiny card" look for Stars & Events. */
+    private fun warmStarThumbs(events: List<CalendarEvent>) {
+        val ctx = context ?: return
+        val wanted = calendarDay.readingEvents.mapNotNull { it.image?.takeIf { u -> u.startsWith("http") } }
+            .distinct().filter { !java.io.File(com.toolsboox.plugin.calendar.ot.CalendarDayPage.starThumbFile(ctx, it).absolutePath).exists() }
+        if (wanted.isEmpty()) return
+        lifecycleScope.launch(Dispatchers.IO) {
+            var got = 0
+            for (url in wanted.take(8)) {
+                runCatching {
+                    val bytes = java.net.URL(url).openStream().use { it.readBytes() }
+                    val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return@runCatching
+                    val side = minOf(bmp.width, bmp.height)
+                    val square = android.graphics.Bitmap.createBitmap(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side)
+                    val small = android.graphics.Bitmap.createScaledBitmap(square, 128, 128, true)
+                    com.toolsboox.plugin.calendar.ot.CalendarDayPage.starThumbFile(ctx, url).outputStream().use {
+                        small.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it)
+                    }
+                    bmp.recycle(); if (square !== bmp) square.recycle(); small.recycle()
+                    got++
+                }
+            }
+            if (got > 0) withContext(Dispatchers.Main) {
+                runCatching { renderPage(calendarDay, calendarPattern, events) }
+            }
+        }
+    }
+
+    /** Tap in the Stars & Events section → the day's starred articles; picking one opens its link.
+     *  Region: right column (x 670–1270), rows below the weather strip (y from to+21·ceh down). */
+    override fun onCanvasSingleTap(cx: Float, cy: Float): Boolean {
+        val to = 61f; val ceh = 50f
+        if (cx < 670f || cx > 1270f || cy < to + 21 * ceh || cy > to + 35 * ceh) return false
+        val stars = calendarDay.readingEvents.filter { !it.url.isNullOrBlank() }
+        if (stars.isEmpty()) return false
+        val labels = stars.map { "★  " + (it.excerpt?.takeIf { e -> e.isNotBlank() } ?: it.title) }.toTypedArray()
+        AlertDialog.Builder(requireContext())
+            .setTitle("Stars · open")
+            .setItems(labels) { _, which ->
+                startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(stars[which].url)))
+            }
+            .setNegativeButton("Close", null)
+            .show()
+        return true
+    }
+
     /** "Pin to Board…": file this gram onto a kanban board as a card that shows the picture.
      *  The PNG rides in the card's `crop` (base64, display=INK) — same wire shape as iOS. */
     override fun onImagePinToBoard(element: ImageElement) {
@@ -2118,6 +2165,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             binding.toolbarDrawing.toolbarProcrastinator.visibility = View.VISIBLE
             val calendarStrokes = calendarDay.calendarStrokes[calendarStyle] ?: listOf()
             CalendarDayPage.drawPage(this.requireContext(), templateCanvas, calendarDay, calendarEvents)
+            warmStarThumbs(calendarEvents)
             applyStrokes(Stroke.listDeepCopy(calendarStrokes), true)
         }
         // The template was just drawn into templateBitmap; force the ImageView to repaint so

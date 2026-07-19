@@ -815,19 +815,39 @@ abstract class ScreenFragment : Fragment() {
         val dialog = AlertDialog.Builder(requireContext()).setView(root).create()
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+        val dirPrefs = requireContext().getSharedPreferences("ledger_directory_state", 0)
         for ((header, items) in groups) {
+            // Headerless groups render flat; named groups COLLAPSE/EXPAND on tap (▸/▾),
+            // and the state persists so the directory stays how you left it.
+            val container: LinearLayout
             if (header.isNotEmpty()) {
+                val key = "dir_$header"
+                var expanded = dirPrefs.getBoolean(key, true)
                 val tv = TextView(requireContext())
-                tv.text = header.uppercase()
-                tv.setTextColor(0xFF8A8A8A.toInt()); tv.textSize = 11f; tv.letterSpacing = 0.08f
-                tv.setPadding(dp(14), dp(12), dp(14), dp(2))
+                fun caret() = if (expanded) "▾  " else "▸  "
+                tv.text = caret() + header.uppercase()
+                tv.setTextColor(0xFF555555.toInt()); tv.textSize = 12f; tv.letterSpacing = 0.08f
+                tv.setPadding(dp(14), dp(12), dp(14), dp(6))
                 list.addView(tv)
+                container = LinearLayout(requireContext()).apply {
+                    orientation = LinearLayout.VERTICAL
+                    visibility = if (expanded) View.VISIBLE else View.GONE
+                }
+                list.addView(container)
+                tv.setOnClickListener {
+                    expanded = !expanded
+                    container.visibility = if (expanded) View.VISIBLE else View.GONE
+                    tv.text = caret() + header.uppercase()
+                    dirPrefs.edit().putBoolean(key, expanded).apply()
+                }
+            } else {
+                container = list
             }
             for ((label, action) in items) {
-                val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
+                val r = layoutInflater.inflate(R.layout.item_go_to, container, false)
                 r.findViewById<TextView>(R.id.go_label).text = applyRowIcon(r, label)
                 r.setOnClickListener { dialog.dismiss(); action() }
-                list.addView(r)
+                container.addView(r)
             }
         }
         dialog.setOnShowListener { onModalShown() }

@@ -1402,6 +1402,12 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         if (doubleTapDetector == null) {
             doubleTapDetector = GestureDetector(requireContext(), object : GestureDetector.SimpleOnGestureListener() {
+                override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                    val pts = floatArrayOf(e.x, e.y)
+                    inverseViewMatrix.mapPoints(pts)
+                    return onCanvasSingleTap(pts[0], pts[1])
+                }
+
                 override fun onDoubleTap(e: MotionEvent): Boolean {
                     if (isZoomed()) {
                         resetZoom()
@@ -2189,6 +2195,9 @@ abstract class SurfaceFragment : ScreenFragment() {
 
     /** "Pin to Board…" — the day page subclass files the gram as a kanban card. Base is a no-op. */
     protected open fun onImagePinToBoard(element: ImageElement) {}
+
+    /** Finger single-tap in canvas (design) space. Return true when handled (e.g. a star row). */
+    protected open fun onCanvasSingleTap(cx: Float, cy: Float): Boolean = false
 
     /** Pick a contact (or "None") to link a picking / note / gram to — bidirectional CRM linking. */
     private fun pickContact(onPick: (String?) -> Unit) {

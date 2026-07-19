@@ -196,12 +196,16 @@ class CalendarDayPage {
             // Reading Ledger: today's book highlights + article stars (synced from the
             // iPad / logged in the reader) shown here so they're visible on the Boox, not
             // just preserved through sync. "★" marks the row; the excerpt is the title.
+            // A cached featured thumbnail (warmed by the fragment) makes the row a tiny card.
+            val notesThumb = mutableListOf<String?>()
+            repeat(notesTitle.size) { notesThumb.add(null) }
             if (notesTitle.size < 8) {
                 calendarDay.readingEvents.takeLast(8 - notesTitle.size).forEach {
                     val label = it.excerpt?.takeIf { e -> e.isNotBlank() } ?: it.title
                     notesTitle.add(it.source?.let { s -> "$s — $label" } ?: label)
                     notesLeft.add("★")   // ★
                     notesRight.add(DateFormat.getTimeFormat(context).format(it.date))
+                    notesThumb.add(starThumbPath(context, it.image))
                 }
             }
 
@@ -342,15 +346,27 @@ class CalendarDayPage {
                 canvas.drawCircle(px(nowH), py(temps[nowH]), 6.0f, dot)
             }
 
-            // Calendar events (shifted one slot down to sit under the weather/moon line)
+            // Calendar events (shifted one slot down to sit under the weather/moon line).
+            // Star rows with a cached featured image render as a tiny card: 86px thumb + title.
             for (i in 0..6) {
                 if (i < notesTitle.size) {
+                    var textX = lo + cew + 60.0f
+                    val thumb = notesThumb.getOrNull(i)?.let { p ->
+                        runCatching { android.graphics.BitmapFactory.decodeFile(p) }.getOrNull()
+                    }
+                    if (thumb != null) {
+                        val top = to + (21 + i * 2) * ceh + 7.0f
+                        val dst = android.graphics.RectF(textX, top, textX + 86.0f, top + 86.0f)
+                        canvas.drawBitmap(thumb, null, dst, null)
+                        canvas.drawRect(dst, Creator.lineDefaultGrey50)
+                        textX += 100.0f
+                    }
                     Creator.drawEllipsizedText(
                         canvas, notesTitle[i], Creator.textDefaultBlack,
-                        lo + cew + 60.0f, to + (22 + i * 2) * ceh - 10.0f, cew
+                        textX, to + (22 + i * 2) * ceh - 10.0f, cew - (textX - lo - cew - 60.0f)
                     )
                     canvas.drawText(
-                        notesLeft[i], lo + cew + 60.0f, to + (23 + i * 2) * ceh - 10.0f,
+                        notesLeft[i], textX, to + (23 + i * 2) * ceh - 10.0f,
                         Creator.textSmallBlack
                     )
                     canvas.drawText(
@@ -359,6 +375,21 @@ class CalendarDayPage {
                     )
                 }
             }
+        }
+
+        /** Cached thumbnail path for a star's featured image, or null when absent / not yet warmed. */
+        fun starThumbPath(context: Context, imageUrl: String?): String? {
+            if (imageUrl.isNullOrBlank()) return null
+            val dir = java.io.File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS), "star-thumbs")
+            val f = java.io.File(dir, com.toolsboox.ot.CryptoUtils.md5Hash(imageUrl.toByteArray()) + ".png")
+            return if (f.exists()) f.absolutePath else null
+        }
+
+        /** Where a star's thumbnail should be cached (whether or not it exists yet). */
+        fun starThumbFile(context: Context, imageUrl: String): java.io.File {
+            val dir = java.io.File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS), "star-thumbs")
+            dir.mkdirs()
+            return java.io.File(dir, com.toolsboox.ot.CryptoUtils.md5Hash(imageUrl.toByteArray()) + ".png")
         }
 
         private fun drawEventLane(canvas: Canvas, startHour: Int, lane: MutableList<CalendarEvent>, llo: Float, lw: Float) {
