@@ -331,9 +331,21 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             "write" -> listOf(listOf(
                 com.toolsboox.ot.LedgerContextMenu.Item("→  Share essay…") { shareEssay() }
             ))
-            else -> emptyList()
+            // Any other note page (pickings, notes, gratitude) is a SELECTION BASKET: copy a few
+            // cards/quotes onto it, then run the engines on just this page's gathering.
+            null -> emptyList()
+            else -> listOf(listOf(
+                com.toolsboox.ot.LedgerContextMenu.Item("?  3 Questions (this page)") { runSynthesis("questions", thisPageMaterial()) },
+                com.toolsboox.ot.LedgerContextMenu.Item("✎  Writing Prompt (this page)") { runSynthesis("prompt", thisPageMaterial()) },
+                com.toolsboox.ot.LedgerContextMenu.Item("≡  Essay Outline (this page)") { runSynthesis("outline", thisPageMaterial()) }
+            ))
         }
     }
+
+    /** Just THIS page's gathered text — the page as a selection basket. */
+    private fun thisPageMaterial(): String =
+        currentTextElements().filter { it.text.isNotBlank() }
+            .joinToString("\n") { "• ${it.text.trim()}" }.take(6000)
 
     /** Write → Share: the handwritten page leaves as a WP draft, an email, or a community post. */
     private fun shareEssay() {

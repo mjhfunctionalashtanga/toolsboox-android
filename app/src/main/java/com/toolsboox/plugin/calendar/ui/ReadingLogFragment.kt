@@ -48,6 +48,14 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     @Inject
     lateinit var calendarDayService: CalendarDayService
 
+    @Inject
+    lateinit var chatService: com.toolsboox.plugin.chat.nw.LedgerChatService
+
+    companion object {
+        /** The synthesis basket — survives navigation within the session. */
+        val basket = mutableListOf<LogItem>()
+    }
+
     override val view = R.layout.fragment_reading_log
 
     private lateinit var binding: FragmentReadingLogBinding
@@ -369,6 +377,62 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         showItemDetail(item)
     }
 
+    /** Press the basket's gathered items through one of the three engines; the artifact lands
+     *  on TODAY'S Synthesize page — the Log feeds the pressure chamber directly. */
+    private fun synthesizeBasket() {
+        val ctx = requireContext()
+        AlertDialog.Builder(ctx)
+            .setTitle("Synthesize ${basket.size} items")
+            .setItems(arrayOf("?  3 Questions", "✎  Writing Prompt", "≡  Essay Outline")) { _, which ->
+                val kind = listOf("questions", "prompt", "outline")[which]
+                val material = basket.joinToString("\n") { it2 ->
+                    "• [${it2.origin.label}] ${it2.title}" + (if (it2.body.isNotBlank()) " — ${it2.body}" else "")
+                }.take(6000)
+                val creds = com.toolsboox.plugin.chat.nw.AiCreds.get(ctx)
+                if (creds == null) {
+                    android.widget.Toast.makeText(ctx, "Add your AI key in Ask my Ledger settings", android.widget.Toast.LENGTH_LONG).show()
+                    return@setItems
+                }
+                val (provider, key, model) = creds
+                val (heading, prompt) = when (kind) {
+                    "questions" -> "? 3 Questions" to
+                        "From the gathered material, pose the 3 most GENERATIVE questions it raises — questions that push the author's own thinking further. Numbered, one line each. No preamble."
+                    "prompt" -> "✎ Writing Prompt" to
+                        "From the gathered material, write ONE vivid writing prompt (2–3 sentences) the author could start writing from immediately, in second person. No preamble."
+                    else -> "≡ Essay Outline" to
+                        "From the gathered material, draft an essay outline: a working title line, then 4–6 section headers each with one guiding sentence. Plain text. No preamble."
+                }
+                android.widget.Toast.makeText(ctx, "Synthesizing…", android.widget.Toast.LENGTH_SHORT).show()
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val res = chatService.run(provider, key, model, prompt, material)
+                    withContext(Dispatchers.Main) {
+                        when (res) {
+                            is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok -> {
+                                lifecycleScope.launch(Dispatchers.IO) {
+                                    val today = LocalDate.now()
+                                    val day = calendarDayService.load(documentsRoot(), today, null, java.util.Locale.getDefault())
+                                    val y = (day.textElements.filter { it.pageKey == "synthesize" }
+                                        .maxOfOrNull { it.y } ?: 60f) + 140f
+                                    day.textElements.add(com.toolsboox.da.TextElement(
+                                        x = 80f, y = y.coerceAtMost(1600f), width = 1200f, height = 60f,
+                                        text = "$heading\n\n${res.answer.trim()}", pageKey = "synthesize"))
+                                    calendarDayService.save(documentsRoot(), today, day)
+                                    withContext(Dispatchers.Main) {
+                                        basket.clear()
+                                        android.widget.Toast.makeText(ctx, "On today's Synthesize page", android.widget.Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            }
+                            is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Err ->
+                                android.widget.Toast.makeText(ctx, "⚠ ${res.message}", android.widget.Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     /**
      * The rhizome menu — every log item is a zettel that reaches its neighbors. Long-press:
      * open the DAY it lives on, open its SOURCE in the reader, PULL THE THREAD (search the
@@ -404,6 +468,21 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 load()
             }
         })
+        // The synthesis BASKET — gather a few items from anywhere in history, then press them
+        // together through an engine. The result lands on today's Synthesize page.
+        val inBasket = basket.any { it.millis == item.millis && it.title == item.title }
+        rows.add((if (inBasket) "⊖  Remove from synthesis basket" else "⊕  Add to synthesis basket (${basket.size})") to {
+            if (inBasket) basket.removeAll { it.millis == item.millis && it.title == item.title }
+            else basket.add(item)
+            android.widget.Toast.makeText(ctx, "${basket.size} in the basket", android.widget.Toast.LENGTH_SHORT).show()
+        })
+        if (basket.isNotEmpty()) {
+            rows.add("⚗  Synthesize ${basket.size} selected…" to { synthesizeBasket() })
+            rows.add("∅  Empty the basket" to {
+                basket.clear()
+                android.widget.Toast.makeText(ctx, "Basket emptied", android.widget.Toast.LENGTH_SHORT).show()
+            })
+        }
         rows.add("❝  Send to today's Pickings" to {
             lifecycleScope.launch(Dispatchers.IO) {
                 val today = LocalDate.now()
