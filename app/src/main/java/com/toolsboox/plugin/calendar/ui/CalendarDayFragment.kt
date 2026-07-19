@@ -359,7 +359,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             author = null, content = "", publishedAt = "", starred = true
         )
         com.toolsboox.plugin.feeds.ui.FeedSelection.list = emptyList()
-        androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.action_to_feed_article)
+        androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.FeedArticleFragment)
     }
 
     /** "Pin to Board…": file this gram onto a kanban board as a card that shows the picture.
