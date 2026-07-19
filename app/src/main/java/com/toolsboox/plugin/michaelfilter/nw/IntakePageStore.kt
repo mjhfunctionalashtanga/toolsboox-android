@@ -144,6 +144,53 @@ object IntakePageStore {
         save(context, date, data)
         dispatch(context, date, data)
         publish(context, kind, url, title ?: "")
+        cacheArticle(context, url)
+    }
+
+    // ------------------------------------------------------------------
+    // Offline article cache — a Later List link behaves like any other feed
+    // entry: a parsed (readable) copy is saved AT FILE TIME so the article
+    // opens in the reader with no connection.
+    // ------------------------------------------------------------------
+
+    private fun articleCacheDir(context: Context): File =
+        File(context.filesDir, "later-article-cache").apply { mkdirs() }
+
+    private fun articleCacheFile(context: Context, url: String): File =
+        File(articleCacheDir(context), com.toolsboox.ot.CryptoUtils.md5Hash(url.trim().toByteArray()) + ".html")
+
+    /** The cached readable copy of a filed link, or null when never fetched. */
+    fun cachedArticle(context: Context, url: String): String? =
+        articleCacheFile(context, url).takeIf { it.exists() }?.readText()?.takeIf { it.isNotBlank() }
+
+    /** Fetch + readability-strip the page in the background and cache it (idempotent). */
+    fun cacheArticle(context: Context, url: String) {
+        if (!url.startsWith("http")) return
+        val file = articleCacheFile(context, url)
+        if (file.exists()) return
+        Thread {
+            runCatching {
+                val req = okhttp3.Request.Builder().url(url)
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 11) LedgerReader/1.0")
+                    .get().build()
+                okHttp.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@Thread
+                    var html = resp.body?.string().orEmpty()
+                    html = html
+                        .replace(Regex("(?is)<script.*?</script>"), "")
+                        .replace(Regex("(?is)<style.*?</style>"), "")
+                        .replace(Regex("(?is)<nav\\b.*?</nav>"), "")
+                        .replace(Regex("(?is)<header\\b.*?</header>"), "")
+                        .replace(Regex("(?is)<footer\\b.*?</footer>"), "")
+                        .replace(Regex("(?is)<aside\\b.*?</aside>"), "")
+                    val article = Regex("(?is)<article[^>]*>(.*?)</article>").find(html)?.groupValues?.get(1)
+                    val body = article
+                        ?: Regex("(?is)<body[^>]*>(.*)</body>").find(html)?.groupValues?.get(1)
+                        ?: html
+                    if (body.isNotBlank()) file.writeText(body)
+                }
+            }
+        }.start()
     }
 
     // No client-embedded shared secret: the server authorizes ingest on the per-user token and

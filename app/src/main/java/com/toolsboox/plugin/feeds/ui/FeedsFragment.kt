@@ -500,10 +500,15 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                         .ifBlank { runCatching { android.net.Uri.parse(url).host?.removePrefix("www.") }.getOrNull() ?: url }
                     // Same link re-filed on another day shows once (newest day wins — we walk newest-first).
                     if (out.any { it.url == url && it.title == title }) return@forEach
+                    // The offline parsed copy saved at file time IS the entry content — the
+                    // article opens in the reader like any other feed entry, no connection
+                    // needed. Older items without a copy get one fetched now (background).
+                    val cached = com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.cachedArticle(ctx, url)
+                    if (cached == null) com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.cacheArticle(ctx, url)
                     // Reuse the RSS kind field via category so applyKind() sees read/watch/listen.
                     out += FeedEntry(
                         id = idSeed++, title = title, feedTitle = "Later · $kind",
-                        url = url, author = null, content = "", publishedAt = date.toString(),
+                        url = url, author = null, content = cached.orEmpty(), publishedAt = date.toString(),
                         starred = false, category = if (kind == "educate") "read" else kind
                     )
                 }
