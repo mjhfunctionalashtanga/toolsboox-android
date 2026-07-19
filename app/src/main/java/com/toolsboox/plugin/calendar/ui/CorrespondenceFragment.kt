@@ -107,6 +107,16 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 })
                 container.addView(card)
             }
+            if (head.source == "community" && head.threadUrl.isNotBlank()) {
+                container.addView(TextView(ctx).apply {
+                    text = "↗  Open the thread"
+                    textSize = 15f; setTextColor(0xFF2F6F96.toInt())
+                    setPadding(px(10), px(2), px(10), px(4))
+                    setOnClickListener {
+                        startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(head.threadUrl)))
+                    }
+                })
+            }
             if (head.source == "community") {
                 container.addView(TextView(ctx).apply {
                     text = "✍  Reply in ink"

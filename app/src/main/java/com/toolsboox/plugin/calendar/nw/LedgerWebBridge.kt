@@ -299,6 +299,7 @@ data class LedgerReply(
     val author: String,
     val excerpt: String,
     val createdAt: String,
+    val threadUrl: String = "",
 )
 
 /** Correspondence fetch + ink reply — the Boox half of the Correspondence page. */
@@ -330,7 +331,8 @@ object LedgerCorrespondence {
                     LedgerReply(
                         it.optString("id", ""), it.optString("source", "community"),
                         it.optString("thread", ""), it.optLong("thread_id", 0),
-                        it.optString("author", "?"), excerpt, it.optString("created_at", "")
+                        it.optString("author", "?"), excerpt, it.optString("created_at", ""),
+                        it.optString("thread_url", "")
                     )
                 }
             }
