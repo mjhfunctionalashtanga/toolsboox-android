@@ -10,6 +10,8 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -73,6 +75,78 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         } catch (e: Exception) {
             Timber.w(e, "settings import failed")
             showMessage("Import failed", binding.root)
+        }
+    }
+
+    /** FULL ledger backup: zip the entire external Documents tree into the file the user picked.
+     *  APFS-style cheap it is not, but a personal ledger zips in seconds on device. */
+    private val backupCreateLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        uri ?: return@registerForActivityResult
+        val ctx = requireContext()
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val ok = runCatching {
+                val root = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+                    ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)!!
+                else java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
+                ctx.contentResolver.openOutputStream(uri)!!.use { out ->
+                    java.util.zip.ZipOutputStream(out.buffered()).use { zip ->
+                        // Settings ride inside the backup.
+                        zip.putNextEntry(java.util.zip.ZipEntry("ledger-settings.json"))
+                        zip.write(com.toolsboox.plugin.calendar.ot.SettingsBackup.exportJson(ctx).toByteArray())
+                        zip.closeEntry()
+                        root.walkTopDown().filter { it.isFile }.forEach { f ->
+                            zip.putNextEntry(java.util.zip.ZipEntry(f.relativeTo(root).path))
+                            f.inputStream().use { it.copyTo(zip) }
+                            zip.closeEntry()
+                        }
+                    }
+                }
+            }.isSuccess
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                showMessage(if (ok) "Ledger backed up" else "Backup failed", binding.root)
+            }
+        }
+    }
+
+    /** Restore a backup zip over the Documents tree (backup's copies win); settings re-import. */
+    private val backupRestoreLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri ?: return@registerForActivityResult
+        val ctx = requireContext()
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            var files = 0
+            val ok = runCatching {
+                val root = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+                    ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)!!
+                else java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
+                ctx.contentResolver.openInputStream(uri)!!.use { input ->
+                    java.util.zip.ZipInputStream(input.buffered()).use { zip ->
+                        var entry = zip.nextEntry
+                        while (entry != null) {
+                            if (!entry.isDirectory) {
+                                if (entry.name == "ledger-settings.json") {
+                                    val json = zip.readBytes().toString(Charsets.UTF_8)
+                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                        runCatching { com.toolsboox.plugin.calendar.ot.SettingsBackup.importJson(ctx, json) }
+                                    }
+                                } else if (!entry.name.contains("..")) {   // zip-slip guard
+                                    val dest = java.io.File(root, entry.name)
+                                    dest.parentFile?.mkdirs()
+                                    dest.outputStream().use { zip.copyTo(it) }
+                                    files++
+                                }
+                            }
+                            zip.closeEntry(); entry = zip.nextEntry
+                        }
+                    }
+                }
+            }.isSuccess
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                showMessage(if (ok) "Restored $files files — restart the app" else "Restore failed", binding.root)
+            }
         }
     }
 
@@ -425,6 +499,19 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             }
         }
         binding.buttonImportSettings.setOnClickListener { importSettingsLauncher.launch("*/*") }
+
+        // FULL ledger backup/restore (data, not just settings): long-press Export = zip the whole
+        // Documents tree (every day page, contact, board, clipping) to a file you pick; long-press
+        // Import = restore a backup zip over it. Settings JSON is included in the zip.
+        binding.buttonExportSettings.setOnLongClickListener {
+            val df = java.text.SimpleDateFormat("yyyy-MM-dd-HHmm", java.util.Locale.US)
+            backupCreateLauncher.launch("ledger-backup-${df.format(java.util.Date())}.zip")
+            true
+        }
+        binding.buttonImportSettings.setOnLongClickListener {
+            backupRestoreLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+            true
+        }
 
         // Save and back
         binding.buttonSave.setOnClickListener {
