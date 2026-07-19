@@ -1157,13 +1157,13 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 lens("📖", "The Read", "read"),
                 lens("📺", "The Watch", "watch"),
                 lens("🎧", "The Listen", "listen"),
-                Folder("✦", "Smart Feed",
+                Folder("#", "Smart Feed",
                     com.toolsboox.plugin.feeds.nw.SmartFeedStore.all(requireContext()).map { sf ->
-                        ("✦  ${sf.name}" to { switchToSmart(sf) })
+                        ("#  ${sf.name}" to { switchToSmart(sf) })
                     } + ("➕  Add smart feed…" to { promptAddSmartFeed() }),
                     expanded = false),
                 Folder("💬", "Ask", action = { switchTo("asklog", null) }),
-                Folder("⚲", "Search", action = { showFeedSearch() }),
+                Folder("🔬", "Search", action = { showFeedSearch() }),
                 // Kept available below the requested set.
                 Folder("📰", "All", action = { switchTo("feed", null) }),
                 Folder("⭐", "Stars", action = { switchTo("stars", null) }),
