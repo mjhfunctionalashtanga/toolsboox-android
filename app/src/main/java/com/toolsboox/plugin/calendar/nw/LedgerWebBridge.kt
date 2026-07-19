@@ -809,6 +809,148 @@ object LedgerBoards {
     }
 }
 
+/** One chat thread — a group (space) chat or a 1:1 DM. */
+data class ChatThread(
+    val id: Long,
+    val title: String,
+    val isGroup: Boolean,
+    val messageCount: Int,
+    val updatedAt: String,
+)
+
+/** One chat message. [text] is the server's HTML; [mine] flags the current user's own. */
+data class ChatMessage(
+    val id: Long,
+    val author: String,
+    val text: String,
+    val createdAt: String,
+    val mine: Boolean,
+)
+
+/**
+ * The Ledger's window into FluentCommunity messaging (the live `fluent-messaging` plugin) — group
+ * space chats + 1:1 DMs. Talks straight to the `fluent-community/v2/chat` REST routes with the same
+ * community bridge creds (PortalPolicy just needs a logged-in member). Text is a pure passthrough;
+ * polling `/new` keeps a thread fresh without sockets (ideal for e-ink). All calls Dispatchers.IO.
+ */
+object LedgerChat {
+
+    private val client by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private const val JSON = "application/json; charset=utf-8"
+    private fun base(c: LedgerCommunityBridge.Config) = "${c.site}/wp-json/fluent-community/v2/chat"
+    private fun auth(c: LedgerCommunityBridge.Config) = Credentials.basic(c.user, c.pass)
+
+    /** Strip the server's chat HTML to plain text for e-ink rendering. */
+    private fun plain(html: String): String =
+        html.replace(Regex("<[^>]+>"), " ").replace("&amp;", "&").replace("&lt;", "<")
+            .replace("&gt;", ">").replace("&#039;", "'").replace("&quot;", "\"")
+            .replace(Regex("\\s+"), " ").trim()
+
+    /** Group (space) chats first, then DMs. Empty on failure. */
+    fun threads(context: Context): List<ChatThread> {
+        val c = LedgerCommunityBridge.config(context)
+        if (!c.ready) return emptyList()
+        return try {
+            val req = Request.Builder().url("${base(c)}/threads")
+                .header("Authorization", auth(c)).build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val o = JSONObject(resp.body?.string() ?: return emptyList())
+                fun parse(key: String, group: Boolean): List<ChatThread> {
+                    val arr = o.optJSONArray(key) ?: return emptyList()
+                    return (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+                        ChatThread(
+                            it.optLong("id", 0),
+                            it.optString("title", "Chat").takeIf { t -> t.isNotBlank() && t != "null" } ?: "Chat",
+                            group,
+                            it.optString("message_count", "0").toIntOrNull() ?: 0,
+                            it.optString("updated_at", ""),
+                        )
+                    }
+                }
+                parse("community_threads", true) + parse("threads", false)
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "chat threads fetch failed")
+            emptyList()
+        }
+    }
+
+    private fun parseMessages(o: JSONObject, myUsername: String): List<ChatMessage> {
+        // Messages come back paginated under messages.data (newest-first page); return oldest-first.
+        val data = o.optJSONObject("messages")?.optJSONArray("data")
+            ?: o.optJSONArray("messages") ?: o.optJSONArray("data") ?: return emptyList()
+        val list = (0 until data.length()).map { data.getJSONObject(it) }.map {
+            val xp = it.optJSONObject("xprofile")
+            ChatMessage(
+                it.optLong("id", 0),
+                xp?.optString("display_name", "?") ?: "?",
+                plain(it.optString("text", "")),
+                it.optString("created_at", ""),
+                xp?.optString("username", "") == myUsername,
+            )
+        }
+        return list.sortedBy { it.id }
+    }
+
+    /** A thread's recent messages, oldest-first. Your own are flagged by [myUsername]. Empty on failure. */
+    fun messages(context: Context, threadId: Long): List<ChatMessage> {
+        val c = LedgerCommunityBridge.config(context)
+        if (!c.ready) return emptyList()
+        return try {
+            val req = Request.Builder().url("${base(c)}/messages/$threadId")
+                .header("Authorization", auth(c)).build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                parseMessages(JSONObject(resp.body?.string() ?: return emptyList()), c.user)
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "chat messages fetch failed")
+            emptyList()
+        }
+    }
+
+    /** Messages newer than [lastId] (polling). Empty when nothing new or on failure. */
+    fun newMessages(context: Context, threadId: Long, lastId: Long): List<ChatMessage> {
+        val c = LedgerCommunityBridge.config(context)
+        if (!c.ready) return emptyList()
+        return try {
+            val req = Request.Builder().url("${base(c)}/messages/$threadId/new?last_message_id=$lastId")
+                .header("Authorization", auth(c)).build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                parseMessages(JSONObject(resp.body?.string() ?: return emptyList()), c.user)
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "chat poll failed")
+            emptyList()
+        }
+    }
+
+    /** Send a text message. Returns true on success. */
+    fun send(context: Context, threadId: Long, text: String): Boolean {
+        val c = LedgerCommunityBridge.config(context)
+        if (!c.ready || text.isBlank()) return false
+        return try {
+            val payload = JSONObject().put("text", text).toString()
+            val req = Request.Builder().url("${base(c)}/messages/$threadId")
+                .post(payload.toRequestBody(JSON.toMediaType()))
+                .header("Authorization", auth(c)).build()
+            client.newCall(req).execute().use { it.isSuccessful }
+        } catch (e: Exception) {
+            Timber.w(e, "chat send failed")
+            false
+        }
+    }
+}
+
 /** Write → Share: POST /ledgr/v1/essay (dest=draft|email). The handwriting IS the essay. */
 object LedgerEssay {
     private val client by lazy {

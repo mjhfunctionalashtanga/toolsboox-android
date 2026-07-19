@@ -83,6 +83,10 @@
             app:destination="@id/SiteBoardsFragment"/>
 
     <action
+            android:id="@+id/action_to_messages"
+            app:destination="@id/MessagesFragment"/>
+
+    <action
             android:id="@+id/action_to_text_notes"
             app:destination="@id/TextNotesFragment"/>
 
@@ -191,6 +195,12 @@
             android:name="com.toolsboox.plugin.calendar.ui.SiteBoardsFragment"
             android:label="SiteBoardsFragment"
             tools:layout="@layout/fragment_site_boards"/>
+
+    <fragment
+            android:id="@+id/MessagesFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.MessagesFragment"
+            android:label="MessagesFragment"
+            tools:layout="@layout/fragment_messages"/>
 
     <fragment
             android:id="@+id/ReadingLogFragment"

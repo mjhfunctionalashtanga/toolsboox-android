@@ -91,6 +91,7 @@ fun ledgerDirectoryFolders(
             "📋  Boards" to { nav.navigate(R.id.action_to_kanban) },
             "🌐  Site Boards" to { nav.navigate(R.id.action_to_site_boards) },
             "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
+            "💬  Messages" to { nav.navigate(R.id.action_to_messages) },
             "📝  Text Notes" to { nav.navigate(R.id.action_to_text_notes) }
         )),
         // Feed Ledger — the RSS reader lenses.
