@@ -48,7 +48,14 @@ object PickingsPlacement {
     fun chooseAndPlace(
         fragment: ScreenFragment, service: CalendarDayService, root: File, bitmap: Bitmap,
         date: LocalDate = LocalDate.now(), sourceLink: String = "", sourceLabel: String = ""
+    ) = chooseAndPlace(fragment, service, root, listOf(bitmap), date, sourceLink, sourceLabel)
+
+    /** Same chooser for SEVERAL cards (a gram series) — one board pick, all placed. */
+    fun chooseAndPlace(
+        fragment: ScreenFragment, service: CalendarDayService, root: File, bitmaps: List<Bitmap>,
+        date: LocalDate = LocalDate.now(), sourceLink: String = "", sourceLabel: String = ""
     ) {
+        val bitmap = bitmaps.firstOrNull() ?: return
         val ctx = fragment.requireContext()
         val saved = PickingsStore.list(ctx, date).filter { it.key != PickingsStore.DEFAULT_KEY }
         val labels = (listOf("❝  Today's Pickings", "＋  New pickings…") + saved.map { "❝  ${it.name}" }).toTypedArray()
@@ -56,7 +63,7 @@ object PickingsPlacement {
             .setTitle("Add to Pickings")
             .setItems(labels) { _, which ->
                 when (which) {
-                    0 -> placeAsync(fragment, service, root, bitmap, date, PickingsStore.DEFAULT_KEY, "today's Pickings", sourceLink, sourceLabel)
+                    0 -> placeAsync(fragment, service, root, bitmaps, date, PickingsStore.DEFAULT_KEY, "today's Pickings", sourceLink, sourceLabel)
                     1 -> {
                         val input = android.widget.EditText(ctx).apply { hint = "Pickings name"; setSingleLine() }
                         val pad = (16 * ctx.resources.displayMetrics.density).toInt()
@@ -66,24 +73,25 @@ object PickingsPlacement {
                         androidx.appcompat.app.AlertDialog.Builder(ctx).setTitle("New pickings").setView(box)
                             .setPositiveButton("Create") { _, _ ->
                                 val page = PickingsStore.add(ctx, date, input.text.toString().trim())
-                                placeAsync(fragment, service, root, bitmap, date, page.key, page.name, sourceLink, sourceLabel)
+                                placeAsync(fragment, service, root, bitmaps, date, page.key, page.name, sourceLink, sourceLabel)
                             }.setNegativeButton(android.R.string.cancel, null).show()
                     }
                     else -> {
                         val board = saved[which - 2]
-                        placeAsync(fragment, service, root, bitmap, date, board.key, board.name, sourceLink, sourceLabel)
+                        placeAsync(fragment, service, root, bitmaps, date, board.key, board.name, sourceLink, sourceLabel)
                     }
                 }
             }.setNegativeButton(android.R.string.cancel, null).show()
     }
 
     private fun placeAsync(
-        fragment: ScreenFragment, service: CalendarDayService, root: File, bitmap: Bitmap,
+        fragment: ScreenFragment, service: CalendarDayService, root: File, bitmaps: List<Bitmap>,
         date: LocalDate, key: String, name: String, sourceLink: String = "", sourceLabel: String = ""
     ) {
         Thread {
-            runCatching { place(service, root, bitmap, date, key, sourceLink, sourceLabel) }
-            runCatching { fragment.requireActivity().runOnUiThread { fragment.showMessage("Placed on $name.") } }
+            for (b in bitmaps) runCatching { place(service, root, b, date, key, sourceLink, sourceLabel) }
+            val what = if (bitmaps.size > 1) "${bitmaps.size} cards" else "Placed"
+            runCatching { fragment.requireActivity().runOnUiThread { fragment.showMessage("$what on $name.") } }
         }.apply { isDaemon = true }.start()
     }
 }

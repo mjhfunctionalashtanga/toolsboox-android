@@ -405,20 +405,31 @@ abstract class ScreenFragment : Fragment() {
         showIconMenu(getString(R.string.reader_capture_title), options)
     }
 
-    /** Render a highlighted passage into a quote card and share it (ACTION_SEND png). */
+    /** Open the shared gram studio for a highlighted passage (formats + fit), then share. */
     private fun shareQuoteCard(quote: String, source: String?) {
+        com.toolsboox.plugin.calendar.ot.GramStudio.show(
+            this, quote, source = source,
+            onShare = { cards -> shareCardBitmaps(cards) }
+        )
+    }
+
+    /** Share rendered card bitmap(s) via ACTION_SEND / ACTION_SEND_MULTIPLE. */
+    fun shareCardBitmaps(cards: List<Bitmap>) {
         try {
-            val card = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(quote, source)
             val dir = java.io.File(requireContext().cacheDir, "cards").apply { mkdirs() }
-            val file = java.io.File(dir, "quote-${java.util.UUID.randomUUID()}.png")
-            file.outputStream().use { card.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            val uri = FileProvider.getUriForFile(
-                requireContext(), "${requireContext().packageName}.fileprovider", file
-            )
-            val share = Intent(Intent.ACTION_SEND)
-                .setType("image/png")
-                .putExtra(Intent.EXTRA_STREAM, uri)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            val uris = ArrayList<Uri>()
+            for (card in cards) {
+                val file = java.io.File(dir, "quote-${java.util.UUID.randomUUID()}.png")
+                file.outputStream().use { card.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                uris.add(FileProvider.getUriForFile(
+                    requireContext(), "${requireContext().packageName}.fileprovider", file))
+            }
+            val share = if (uris.size == 1)
+                Intent(Intent.ACTION_SEND).setType("image/png").putExtra(Intent.EXTRA_STREAM, uris[0])
+            else
+                Intent(Intent.ACTION_SEND_MULTIPLE).setType("image/png")
+                    .putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+            share.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             startActivity(Intent.createChooser(share, getString(R.string.reader_capture_title)))
         } catch (e: Exception) {
             Timber.w(e, "quote card render/share failed")
@@ -740,7 +751,7 @@ abstract class ScreenFragment : Fragment() {
     protected open fun onModalShown() {}
     protected open fun onModalDismissed() {}
 
-    protected fun showModal(dialog: AlertDialog) {
+    fun showModal(dialog: AlertDialog) {
         dialog.setOnShowListener { onModalShown() }
         dialog.setOnDismissListener { onModalDismissed() }
         dialog.show()

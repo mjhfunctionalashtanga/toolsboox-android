@@ -2286,7 +2286,10 @@ abstract class SurfaceFragment : ScreenFragment() {
             LedgerContextMenu.Item("Invert") { transformImageElement(element) { invertBitmap(it) } },
             LedgerContextMenu.Item("Line art (B&W)") { transformImageElement(element) { thresholdBitmap(it) } },
             LedgerContextMenu.Item("Solid black") { transformImageElement(element) { solidBlackBitmap(it) } },
-            LedgerContextMenu.Item("🖼 Shapes & cute cuts…") { showShapeMenu(element, pressX, pressY) }
+            LedgerContextMenu.Item("🖼 Shapes & cute cuts…") { showShapeMenu(element, pressX, pressY) },
+            LedgerContextMenu.Item("⤢ Size · S") { setGramWidth(element, 380f) },
+            LedgerContextMenu.Item("⤢ Size · M") { setGramWidth(element, 590f) },
+            LedgerContextMenu.Item("⤢ Size · L") { setGramWidth(element, 900f) }
         ))
         groups.add(listOf(
             LedgerContextMenu.Item("Bring to front") { bringImageToFront(element) },
@@ -2901,6 +2904,18 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     /** Apply a bitmap transform to an image: re-encode PNG inline, refresh cache, persist, repaint. */
+    /** Discrete gram sizes (long-press menu): width in page units, aspect kept.
+     *  Default placement is ~590 wide (M); S tucks in a corner, L dominates the page. */
+    private fun setGramWidth(element: ImageElement, width: Float) {
+        val aspect = if (element.width > 0f) element.height / element.width else 1f
+        pushUndo()
+        element.width = width
+        element.height = width * aspect
+        element.timestamp = System.currentTimeMillis()
+        onImageElementsChanged(imageElements)
+        applyStrokes(strokes, true)
+    }
+
     private fun transformImageElement(
         element: ImageElement, preserveAspect: Boolean = false, transform: (Bitmap) -> Bitmap
     ) {

@@ -709,20 +709,19 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // control it from the "▶ Now Playing" modal.
     }
 
-    /** Render a card from article text and place it on a pickings board (chooser). */
+    /** Open the shared gram studio for article text — formats + long-text fit, then
+     *  share or place on a pickings board (the old path silently rendered a fixed square). */
     private fun articleGramToPickings(text: String) {
-        lifecycleScope.launch {
-            val bmp = withContext(Dispatchers.IO) {
-                com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
-                    text.ifBlank { "Clipping" }, null, null,
-                    com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.Format.SQUARE.w,
-                    com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.Format.SQUARE.h)
+        val src = currentArticle?.url?.takeIf { it.startsWith("http", ignoreCase = true) } ?: ""
+        com.toolsboox.plugin.calendar.ot.GramStudio.show(
+            this, text.ifBlank { "Clipping" }, source = currentArticle?.feedTitle,
+            onShare = { cards -> shareCardBitmaps(cards) },
+            onPickings = { cards ->
+                com.toolsboox.plugin.calendar.ot.PickingsPlacement.chooseAndPlace(
+                    this, calendarDayService, documentsRoot(), cards,
+                    sourceLink = src, sourceLabel = currentArticle?.title ?: "")
             }
-            val src = currentArticle?.url?.takeIf { it.startsWith("http", ignoreCase = true) } ?: ""
-            com.toolsboox.plugin.calendar.ot.PickingsPlacement.chooseAndPlace(
-                this@FeedsFragment, calendarDayService, documentsRoot(), bmp,
-                sourceLink = src, sourceLabel = currentArticle?.title ?: "")
-        }
+        )
     }
 
     /** Star the open article. `toggleStar` is the single place that logs the star to the Ledger
@@ -755,7 +754,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                         showMessage("Saved to Ledger Log", binding.root)
                     }
                 }
-                .setNeutralButton("❝ Pickings") { _, _ ->
+                .setNeutralButton("🃏 Gram…") { _, _ ->
                     val cardText = listOf(sel.ifBlank { e.blurb }, "— ${e.feedTitle}").filter { it.isNotBlank() }.joinToString("\n\n")
                     articleGramToPickings(cardText)
                 }

@@ -1448,42 +1448,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
     }
 
-    /** Multi-format gram studio: pick square/portrait/landscape/story, preview, then Share or drop Here. */
+    /** Multi-format gram studio (shared) — formats, long-text fit strategies, Share/Here/Pickings. */
     private fun showGramStudio(text: String) {
-        val t = text.trim(); if (t.isEmpty()) return
-        val ctx = requireContext()
-        val fmt = arrayOf(com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.Format.SQUARE)
-        fun make() = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(t, null, null, fmt[0].w, fmt[0].h)
-        val preview = android.widget.ImageView(ctx).apply { adjustViewBounds = true; setImageBitmap(make()) }
-        val row = android.widget.LinearLayout(ctx).apply { orientation = android.widget.LinearLayout.HORIZONTAL }
-        for (f in com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.Format.values()) {
-            row.addView(android.widget.Button(ctx).also {
-                it.text = f.label; it.isAllCaps = false; it.textSize = 12f
-                it.setOnClickListener { fmt[0] = f; preview.setImageBitmap(make()) }
-            }, android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        }
-        val padPx = (16 * resources.displayMetrics.density).toInt()
-        val pickBtn = android.widget.Button(ctx).also { it.text = "❝  Add to Pickings"; it.isAllCaps = false }
-        val container = android.widget.LinearLayout(ctx).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(padPx, padPx / 2, padPx, 0)
-            addView(row)
-            addView(preview, android.widget.LinearLayout.LayoutParams(
-                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
-                (resources.displayMetrics.heightPixels * 0.42f).toInt()
-            ).apply { topMargin = padPx })
-            addView(pickBtn)
-        }
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
-            .setTitle("Gram")
-            .setView(android.widget.ScrollView(ctx).apply { addView(container) })
-            .setPositiveButton("Share") { _, _ -> shareGramBitmap(make()) }
-            .setNeutralButton("Here") { _, _ -> placeGramBitmap(make()) }
-            .setNegativeButton(android.R.string.cancel, null)
-            .create()
-        pickBtn.setOnClickListener { dialog.dismiss(); placeGramToPickings(make()) }
-        // Pause the Onyx pen while the gram studio is up, or stylus taps freeze the surface.
-        showModal(dialog)
+        com.toolsboox.plugin.calendar.ot.GramStudio.show(
+            this, text,
+            onShare = { cards -> cards.forEach { shareGramBitmap(it) } },
+            onPickings = { cards -> cards.forEach { placeGramToPickings(it) } },
+            onHere = { cards -> cards.forEach { placeGramBitmap(it) } }
+        )
     }
 
     /**
