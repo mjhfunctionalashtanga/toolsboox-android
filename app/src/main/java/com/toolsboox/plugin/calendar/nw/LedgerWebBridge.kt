@@ -1,0 +1,287 @@
+package com.toolsboox.plugin.calendar.nw
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import com.toolsboox.plugin.calendar.da.v2.LedgerItem
+import okhttp3.Credentials
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import timber.log.Timber
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.TimeUnit
+
+/**
+ * Pushes a Boards card to the FluentBoards web board through the ledgr-fb-bridge WP plugin
+ * (namespace ledgr/v1). The card's ink face (base64 `crop`) uploads as the task's cover image —
+ * the web board shows the handwriting — and the text rides as the title. `note_uuid` = the
+ * LedgerItem id, so re-pushing never duplicates (the bridge is idempotent on it). Mirrors iOS
+ * `LedgerBridge` in LedgerItemsView.swift, including the To do/Doing/Done → remote-stage-by-position map.
+ */
+object LedgerWebBridge {
+
+    private val client by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .build()
+    }
+
+    data class Config(val site: String, val user: String, val pass: String, val boardId: Int) {
+        val ready: Boolean get() = site.isNotBlank() && user.isNotBlank() && pass.isNotBlank() && boardId > 0
+    }
+
+    private fun prefs(context: Context) = EncryptedSharedPreferences.create(
+        context, "ledgr_bridge_prefs",
+        MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+    )
+
+    fun config(context: Context): Config = try {
+        val p = prefs(context)
+        Config(
+            p.getString("site", "") ?: "",
+            p.getString("user", "") ?: "",
+            p.getString("pass", "") ?: "",
+            p.getInt("boardId", 0)
+        )
+    } catch (e: Exception) {
+        Config("", "", "", 0)
+    }
+
+    fun saveConfig(context: Context, c: Config) {
+        try {
+            prefs(context).edit()
+                .putString("site", c.site.trim().trimEnd('/'))
+                .putString("user", c.user.trim())
+                .putString("pass", c.pass.trim())
+                .putInt("boardId", c.boardId)
+                .apply()
+        } catch (e: Exception) {
+            Timber.w(e, "bridge config save failed")
+        }
+    }
+
+    private var cachedStages: Pair<Int, List<Long>>? = null
+
+    /** Remote stage ids ordered by position (0 = To do, 1 = Doing, 2 = Done). */
+    private fun stageIds(c: Config): List<Long> {
+        cachedStages?.let { if (it.first == c.boardId) return it.second }
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/board/${c.boardId}/compact")
+                .header("Authorization", Credentials.basic(c.user, c.pass))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val obj = JSONObject(resp.body?.string() ?: return emptyList())
+                val stages = obj.optJSONArray("stages") ?: return emptyList()
+                val list = (0 until stages.length())
+                    .map { stages.getJSONObject(it) }
+                    .sortedBy { it.optDouble("position", 0.0) }
+                    .map { it.getLong("id") }
+                cachedStages = c.boardId to list
+                list
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "bridge stages fetch failed")
+            emptyList()
+        }
+    }
+
+    /** Push one card. Returns a short human status for a toast. Call from Dispatchers.IO. */
+    fun pushCard(context: Context, item: LedgerItem): String {
+        val c = config(context)
+        if (!c.ready) return "Web bridge not configured"
+        val stages = stageIds(c)
+        if (stages.isEmpty()) return "Couldn't reach the web board"
+        val col = if (item.done) 2 else if (item.stage == "doing") 1 else 0
+        val stageId = stages[minOf(col, stages.size - 1)]
+
+        val png: ByteArray? = inkPng(item) ?: renderTextCard(item.text)
+
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("board_id", c.boardId.toString())
+            .addFormDataPart("stage_id", stageId.toString())
+            .addFormDataPart("note_uuid", item.id)
+            .apply {
+                if (item.text.isNotBlank()) addFormDataPart("ocr_title", item.text)
+                if (png != null) addFormDataPart("png", "card.png", png.toRequestBody("image/png".toMediaType()))
+            }
+            .build()
+
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/card")
+                .post(body)
+                .header("Authorization", Credentials.basic(c.user, c.pass))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: ""
+                if (resp.isSuccessful && text.contains("task_id")) {
+                    if (JSONObject(text).optBoolean("existing")) "Already on the web board" else "→ web board"
+                } else {
+                    val msg = try { JSONObject(text).optString("message") } catch (e: Exception) { "" }
+                    if (msg.isNotBlank()) msg else "Push failed (${resp.code})"
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "bridge push failed for ${item.id}")
+            "Network error"
+        }
+    }
+
+    /** The card's ink face: the base64 PNG in `crop` (an old OCR filename simply fails to decode). */
+    private fun inkPng(item: LedgerItem): ByteArray? {
+        val b64 = item.crop ?: return null
+        return try {
+            val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+            if (android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) != null) bytes else null
+        } catch (e: Exception) { null }
+    }
+
+    /** A clean rendered text card for cards with no ink, so the web cover still reads like Ledger. */
+    private fun renderTextCard(text: String): ByteArray? {
+        if (text.isBlank()) return null
+        val w = 900; val h = 360
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        canvas.drawColor(Color.WHITE)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 44f }
+        var y = 96f
+        for (line in wrap(text, paint, w - 96f)) {
+            canvas.drawText(line, 48f, y, paint)
+            y += 56f
+            if (y > h - 24f) break
+        }
+        val out = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+        bmp.recycle()
+        return out.toByteArray()
+    }
+
+    private fun wrap(text: String, paint: Paint, maxWidth: Float): List<String> {
+        val words = text.split(Regex("\\s+"))
+        val lines = mutableListOf<String>()
+        var line = ""
+        for (word in words) {
+            val candidate = if (line.isEmpty()) word else "$line $word"
+            if (paint.measureText(candidate) <= maxWidth) line = candidate
+            else { if (line.isNotEmpty()) lines.add(line); line = word }
+        }
+        if (line.isNotEmpty()) lines.add(line)
+        return lines
+    }
+}
+
+/**
+ * Community half of the bridge (FluentCommunity on a possibly-different site, e.g. ashtanga.tech).
+ * Grams post into a space you pick; the handwriting PNG IS the post. Idempotent on note_uuid.
+ * Mirrors iOS `CommunityBridge`.
+ */
+object LedgerCommunityBridge {
+
+    private val client by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .build()
+    }
+
+    data class Config(val site: String, val user: String, val pass: String) {
+        val ready: Boolean get() = site.isNotBlank() && user.isNotBlank() && pass.isNotBlank()
+    }
+
+    data class Space(val id: Long, val title: String, val privacy: String)
+
+    private fun prefs(context: Context) = EncryptedSharedPreferences.create(
+        context, "ledgr_bridge_prefs",
+        MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+    )
+
+    fun config(context: Context): Config = try {
+        val p = prefs(context)
+        Config(p.getString("communitySite", "") ?: "", p.getString("communityUser", "") ?: "", p.getString("communityPass", "") ?: "")
+    } catch (e: Exception) { Config("", "", "") }
+
+    fun saveConfig(context: Context, c: Config) {
+        try {
+            prefs(context).edit()
+                .putString("communitySite", c.site.trim().trimEnd('/'))
+                .putString("communityUser", c.user.trim())
+                .putString("communityPass", c.pass.trim())
+                .apply()
+        } catch (e: Exception) { Timber.w(e, "community config save failed") }
+    }
+
+    /** The site's spaces, or empty on any failure. Call from Dispatchers.IO. */
+    fun spaces(context: Context): List<Space> {
+        val c = config(context)
+        if (!c.ready) return emptyList()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/community/spaces")
+                .header("Authorization", Credentials.basic(c.user, c.pass))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val arr = JSONObject(resp.body?.string() ?: return emptyList()).optJSONArray("spaces") ?: return emptyList()
+                (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+                    Space(it.getLong("id"), it.optString("title", "Untitled"), it.optString("privacy", ""))
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "community spaces fetch failed")
+            emptyList()
+        }
+    }
+
+    /** Post a gram (base64 PNG) into [spaceId]. Returns a short toast status. Dispatchers.IO. */
+    fun postGram(context: Context, pngBase64: String, title: String, noteUuid: String, spaceId: Long): String {
+        val c = config(context)
+        if (!c.ready) return "Community bridge not configured"
+        val png = try {
+            android.util.Base64.decode(pngBase64, android.util.Base64.DEFAULT)
+        } catch (e: Exception) { return "Bad image data" }
+
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("space_id", spaceId.toString())
+            .addFormDataPart("note_uuid", noteUuid)
+            .apply { if (title.isNotBlank()) addFormDataPart("title", title) }
+            .addFormDataPart("png", "gram.png", png.toRequestBody("image/png".toMediaType()))
+            .build()
+
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/community/gram")
+                .post(body)
+                .header("Authorization", Credentials.basic(c.user, c.pass))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val text = resp.body?.string() ?: ""
+                if (resp.isSuccessful && text.contains("feed_id")) {
+                    if (JSONObject(text).optBoolean("existing")) "Already posted" else "Posted to the space"
+                } else {
+                    val msg = try { JSONObject(text).optString("message") } catch (e: Exception) { "" }
+                    if (msg.isNotBlank()) msg else "Post failed (${resp.code})"
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "community gram post failed")
+            "Network error"
+        }
+    }
+}

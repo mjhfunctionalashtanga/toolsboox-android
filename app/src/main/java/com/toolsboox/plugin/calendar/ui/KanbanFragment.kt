@@ -61,12 +61,14 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
         binding.kanbanBoard.text = "$name  ▾"
     }
 
-    /** All boards / each board / ＋ New board / Delete — the board switcher. */
+    /** All boards / each board / ＋ New board / web bridge / Delete — the board switcher. */
     private fun showBoardPicker() {
         val ctx = requireContext()
         val labels = mutableListOf("▦  All boards")
         labels += boards.map { "▤  ${it.name.ifBlank { "Untitled" }}" }
         labels += "＋  New board…"
+        labels += "⬆  Send board to web"
+        labels += "🌐  Web bridge…"
         val hasSel = selectedBoard != null
         if (hasSel) labels += "🗑  Delete this board"
         androidx.appcompat.app.AlertDialog.Builder(ctx)
@@ -76,11 +78,99 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
                     which == 0 -> { selectedBoard = null; load() }
                     which <= boards.size -> { selectedBoard = boards[which - 1].id; load() }
                     which == boards.size + 1 -> promptNewBoard()
+                    which == boards.size + 2 -> sendBoardToWeb()
+                    which == boards.size + 3 -> promptBridgeSettings()
                     else -> { selectedBoard?.let { BoardsStore.delete(ctx, it) }; selectedBoard = null; load() }
                 }
             }
             .setNegativeButton("Close", null)
             .show()
+    }
+
+    /** Boards-site + Community-site credentials for the web bridge (mirrors iOS BridgeSettingsView). */
+    private fun promptBridgeSettings() {
+        val ctx = requireContext()
+        val c = com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx)
+        val cc = com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(ctx)
+        fun field(hint: String, value: String, password: Boolean = false) = android.widget.EditText(ctx).apply {
+            this.hint = hint; setText(value); setSingleLine()
+            if (password) inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        fun header(text: String) = TextView(ctx).apply {
+            this.text = text; textSize = 13f; setTextColor(0xFF666666.toInt())
+            setPadding(0, (12 * resources.displayMetrics.density).toInt(), 0, 0)
+        }
+        val site = field("https://theyoga.club", c.site)
+        val user = field("WP username", c.user)
+        val pass = field("Application password", c.pass, password = true)
+        val board = field("FluentBoards board id", if (c.boardId > 0) c.boardId.toString() else "")
+        val cSite = field("https://ashtanga.tech", cc.site)
+        val cUser = field("WP username", cc.user)
+        val cPass = field("Application password", cc.pass, password = true)
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0)
+            addView(header("BOARDS SITE (FluentBoards)"))
+            addView(site); addView(user); addView(pass); addView(board)
+            addView(header("COMMUNITY SITE (FluentCommunity)"))
+            addView(cSite); addView(cUser); addView(cPass)
+        }
+        val scroll = android.widget.ScrollView(ctx).apply { addView(box) }
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Web bridge")
+            .setView(scroll)
+            .setPositiveButton("Save") { _, _ ->
+                com.toolsboox.plugin.calendar.nw.LedgerWebBridge.saveConfig(
+                    ctx,
+                    com.toolsboox.plugin.calendar.nw.LedgerWebBridge.Config(
+                        site.text.toString(), user.text.toString(), pass.text.toString(),
+                        board.text.toString().trim().toIntOrNull() ?: 0
+                    )
+                )
+                com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.saveConfig(
+                    ctx,
+                    com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.Config(
+                        cSite.text.toString(), cUser.text.toString(), cPass.text.toString()
+                    )
+                )
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** Push one card to the web board; toast the result. */
+    private fun sendToWeb(item: LedgerItem) {
+        lifecycleScope.launch {
+            val status = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.nw.LedgerWebBridge.pushCard(requireContext(), item)
+            }
+            android.widget.Toast.makeText(requireContext(), status, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Push every open card on the visible board (selected board, or all). */
+    private fun sendBoardToWeb() {
+        val ctx = requireContext()
+        lifecycleScope.launch {
+            val all = withContext(Dispatchers.IO) { gatherAllTasks() }
+            val toSend = (selectedBoard?.let { b -> all.filter { it.board == b } } ?: all).filter { !it.done }
+            if (toSend.isEmpty()) {
+                android.widget.Toast.makeText(ctx, "Nothing to send", android.widget.Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val status = withContext(Dispatchers.IO) {
+                var sent = 0; var dup = 0; var failed = 0; var firstError = ""
+                for (item in toSend) {
+                    when (val s = com.toolsboox.plugin.calendar.nw.LedgerWebBridge.pushCard(ctx, item)) {
+                        "→ web board" -> sent++
+                        "Already on the web board" -> dup++
+                        else -> { failed++; if (firstError.isEmpty()) firstError = s }
+                    }
+                }
+                if (failed > 0) firstError else "$sent sent" + if (dup > 0) ", $dup already there" else ""
+            }
+            android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun promptNewBoard() {
@@ -209,6 +299,15 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
             row.addView(Space(ctx).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })
             if (col != "done") row.addView(glyph("›", 20f) { setStage(item, next(col)) })
             card.addView(row)
+            // Long-press a card for the extras (web push).
+            card.setOnLongClickListener {
+                androidx.appcompat.app.AlertDialog.Builder(ctx)
+                    .setTitle(item.text.ifBlank { "Card" })
+                    .setItems(arrayOf("⬆  Send to web board")) { _, _ -> sendToWeb(item) }
+                    .setNegativeButton("Close", null)
+                    .show()
+                true
+            }
             container.addView(card)
         }
     }

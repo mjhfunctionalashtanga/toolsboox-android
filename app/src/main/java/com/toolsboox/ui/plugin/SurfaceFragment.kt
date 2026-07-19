@@ -69,6 +69,7 @@ import com.toolsboox.ot.StrokeClipboard
 import com.toolsboox.plugin.calendar.CalendarNavigator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.tasks.await
 import timber.log.Timber
 import java.io.File
@@ -2126,6 +2127,8 @@ abstract class SurfaceFragment : ScreenFragment() {
                 }
             },
             LedgerContextMenu.Item("Where used…") { onImageWhereUsed(element) },
+            LedgerContextMenu.Item("Post to community…") { postGramToCommunity(element) },
+            LedgerContextMenu.Item("Pin to Board…") { onImagePinToBoard(element) },
             LedgerContextMenu.Item("Save to Clippings") {
                 com.toolsboox.plugin.calendar.ot.ClippingsStore.add(requireContext(), element.data)
                 Toast.makeText(requireContext(), "Saved to Clippings", Toast.LENGTH_SHORT).show()
@@ -2142,6 +2145,50 @@ abstract class SurfaceFragment : ScreenFragment() {
         ))
         LedgerContextMenu.show(provideSurfaceView(), pressX, pressY, "IMAGE", groups)
     }
+
+    /**
+     * Post a gram into a FluentCommunity space through the ledgr-fb-bridge: space picker first
+     * (never auto-posts), then the ink PNG becomes the post. Idempotent on the gram's content key,
+     * so re-sharing the same gram never double-posts. Mirrors iOS "Post to community…".
+     */
+    private fun postGramToCommunity(element: ImageElement) {
+        val ctx = context ?: return
+        if (!com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(ctx).ready) {
+            Toast.makeText(ctx, "Set up the community bridge in Boards → Web bridge…", Toast.LENGTH_LONG).show()
+            return
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            val spaces = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.spaces(ctx)
+            }
+            if (spaces.isEmpty()) {
+                Toast.makeText(ctx, "Couldn't load spaces", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val labels = spaces.map { (if (it.privacy == "public") "🌐  " else "🔒  ") + it.title }.toTypedArray()
+            androidx.appcompat.app.AlertDialog.Builder(ctx)
+                .setTitle("Post to space")
+                .setItems(labels) { _, which ->
+                    val space = spaces[which]
+                    val key = element.gramId?.ifBlank { null } ?: run {
+                        com.toolsboox.ot.CryptoUtils.md5Hash(element.data.toByteArray())
+                    }
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        val status = withContext(Dispatchers.IO) {
+                            com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.postGram(
+                                ctx, element.data, element.sourceLabel, "gram-$key", space.id
+                            )
+                        }
+                        Toast.makeText(ctx, status, Toast.LENGTH_SHORT).show()
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
+    /** "Pin to Board…" — the day page subclass files the gram as a kanban card. Base is a no-op. */
+    protected open fun onImagePinToBoard(element: ImageElement) {}
 
     /** Pick a contact (or "None") to link a picking / note / gram to — bidirectional CRM linking. */
     private fun pickContact(onPick: (String?) -> Unit) {

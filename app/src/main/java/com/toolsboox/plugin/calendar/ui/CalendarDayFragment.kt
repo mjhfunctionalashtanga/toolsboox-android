@@ -279,6 +279,43 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
     }
 
+    /** "Pin to Board…": file this gram onto a kanban board as a card that shows the picture.
+     *  The PNG rides in the card's `crop` (base64, display=INK) — same wire shape as iOS. */
+    override fun onImagePinToBoard(element: ImageElement) {
+        val ctx = context ?: return
+        val boards = com.toolsboox.plugin.calendar.ot.BoardsStore.list(ctx)
+        val labels = (boards.map { it.name.ifBlank { "Untitled" } } + "Unfiled (All boards)").toTypedArray()
+        AlertDialog.Builder(ctx)
+            .setTitle("Pin to which board?")
+            .setItems(labels) { _, which ->
+                val boardId = if (which < boards.size) boards[which].id else ""
+                val today = LocalDate.now()
+                val item = com.toolsboox.plugin.calendar.da.v2.LedgerItem(
+                    id = "li-" + java.util.UUID.randomUUID().toString().lowercase(),
+                    kind = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
+                    text = element.sourceLabel.ifBlank { "Gram" },
+                    date = java.util.Date(),
+                    crop = element.data,
+                    display = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Display.INK,
+                    source = "gram", stage = "todo", board = boardId
+                )
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val root = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+                        requireContext().getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)!!
+                    else java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
+                    val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
+                    day.ledgerItems.add(item)
+                    calendarDayService.save(root, today, day)
+                    runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), item) }
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(ctx, "Pinned to board", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private data class GramPlace(val date: LocalDate, val page: String, val millis: Long)
 
     /** Content-address key: lineage id if set, else md5 of the bytes (same md5 as iOS → cross-device). */
