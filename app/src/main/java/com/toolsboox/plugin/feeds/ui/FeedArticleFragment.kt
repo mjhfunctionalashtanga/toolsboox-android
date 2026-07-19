@@ -287,7 +287,8 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         val p = prefs()
         val url = p.getString(FeedsFragment.KEY_URL, "").orEmpty()
         val token = p.getString(FeedsFragment.KEY_TOKEN, "").orEmpty()
-        if (url.isNotBlank() && token.isNotBlank()) {
+        // Synthetic entries (id=0) aren't on the server — nothing to mark read.
+        if (url.isNotBlank() && token.isNotBlank() && e.id != 0L) {
             lifecycleScope.launch(Dispatchers.IO) { miniflux.markRead(url, token, e.id) }
         }
     }
@@ -316,7 +317,12 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         val token = p.getString(FeedsFragment.KEY_TOKEN, "").orEmpty()
         showMessage(R.string.feeds_article_parsing)
         lifecycleScope.launch {
-            val res = withContext(Dispatchers.IO) { miniflux.fetchContent(url, token, e.id) }
+            // A synthetic entry (id=0, opened from a Stars & Events row) isn't on the server —
+            // Miniflux would 400 on its id. Fetch + readability-strip the page directly instead.
+            val res = withContext(Dispatchers.IO) {
+                if (e.id == 0L) miniflux.fetchPageReadable(e.url)
+                else miniflux.fetchContent(url, token, e.id)
+            }
             when (res) {
                 is MinifluxClient.Result.Ok -> {
                     parsed = true

@@ -94,6 +94,32 @@ class MinifluxClient @Inject constructor() {
         Result.Err("Network error: ${e.message}")
     }
 
+    /** Direct page fetch + crude readability, for entries NOT on the server (id=0 star opens):
+     *  strip scripts/styles/nav/chrome, prefer <article>, fall back to <body>. Rough but readable. */
+    fun fetchPageReadable(pageUrl: String): Result<String> = try {
+        val req = Request.Builder().url(pageUrl)
+            .header("User-Agent", "Mozilla/5.0 (Linux; Android 11) LedgerReader/1.0")
+            .get().build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) return Result.Err("Page error ${resp.code}")
+            var html = resp.body?.string().orEmpty()
+            html = html
+                .replace(Regex("(?is)<script.*?</script>"), "")
+                .replace(Regex("(?is)<style.*?</style>"), "")
+                .replace(Regex("(?is)<nav\\b.*?</nav>"), "")
+                .replace(Regex("(?is)<header\\b.*?</header>"), "")
+                .replace(Regex("(?is)<footer\\b.*?</footer>"), "")
+                .replace(Regex("(?is)<aside\\b.*?</aside>"), "")
+            val article = Regex("(?is)<article[^>]*>(.*?)</article>").find(html)?.groupValues?.get(1)
+            val body = article
+                ?: Regex("(?is)<body[^>]*>(.*)</body>").find(html)?.groupValues?.get(1)
+                ?: html
+            Result.Ok(body)
+        }
+    } catch (e: Exception) {
+        Result.Err("Network error: ${e.message}")
+    }
+
     private fun put(url: String, token: String, payload: String): Result<Unit> = try {
         val req = Request.Builder().url(url).addHeader("X-Auth-Token", token)
             .put(payload.toRequestBody(json)).build()
