@@ -17,7 +17,9 @@ enum class LogOrigin(val label: String, val mark: String) {
     AV("AV", "◉"),
     TASK("Task", "☑"),
     NOTE("Note", "✒"),
-    CARD("Card", "▦")
+    CARD("Card", "▦"),
+    /** Feed articles pulled in by the Log's opt-in feed toggle (never shown by default). */
+    FEED("Feed", "📰")
 }
 
 /** One row in the Notes & Annotations log, flattened from a reading event or an AV gram. */
@@ -33,7 +35,9 @@ data class LogItem(
     /** Local voice-memo path; shows a ▶ chip and plays on tap. */
     val audioPath: String? = null,
     /** The day page this item lives on — the rhizome edge back to its home. */
-    val day: java.time.LocalDate? = null
+    val day: java.time.LocalDate? = null,
+    /** Starred — filterable via the Log's ★ toggle and shown as a ★ title prefix. */
+    val starred: Boolean = false
 )
 
 /**
@@ -69,7 +73,7 @@ class ReadingEventAdapter(
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val e = items[position]
         holder.mark.text = e.origin.mark
-        holder.title.text = e.title
+        holder.title.text = if (e.starred) "★ ${e.title}" else e.title
         // A voice memo advertises itself with a ▶ chip in the meta line.
         holder.meta.text = if (e.audioPath != null)
             listOf("▶ Voice memo", e.meta).filter { it.isNotBlank() }.joinToString("  ·  ")

@@ -40,7 +40,10 @@ data class ReadingEvent(
     /** A featured/lead image URL for the source (articles), shown on the card. */
     val image: String? = null,
     /** Starred by the user (e.g. a starred book passage) — surfaced in the Ledger Log. */
-    val starred: Boolean = false
+    val starred: Boolean = false,
+    /** The article's PUBLICATION date (articles) — lets the Log place a starred piece on
+     *  the day it was published as well as the day it was starred. */
+    val published: Date? = null
 ) {
     enum class Kind {
         @Json(name = "article") ARTICLE,

@@ -49,6 +49,17 @@ class MinifluxClient @Inject constructor() {
     fun search(baseUrl: String, token: String, query: String, limit: Int = 100): Result<List<FeedEntry>> =
         fetch(baseUrl, token, "search=${java.net.URLEncoder.encode(query, "UTF-8")}", limit)
 
+    /** Entries PUBLISHED inside [afterEpochSec, beforeEpochSec), optionally filtered by
+     *  status ("unread"/"read", null = all) — the Ledger Log's opt-in feed window. */
+    fun fetchPublishedWindow(
+        baseUrl: String, token: String, status: String?,
+        afterEpochSec: Long, beforeEpochSec: Long, limit: Int = 200
+    ): Result<List<FeedEntry>> {
+        val statusFilter = if (status != null) "status=$status" else "globally_visible=true"
+        return fetch(baseUrl, token,
+            "$statusFilter&published_after=$afterEpochSec&published_before=$beforeEpochSec", limit)
+    }
+
     private fun fetch(baseUrl: String, token: String, filter: String, limit: Int): Result<List<FeedEntry>> {
         if (baseUrl.isBlank() || token.isBlank()) return Result.Err("Add your Miniflux URL and token in Settings.")
         val url = "${normalize(baseUrl)}/v1/entries?$filter&order=published_at&direction=desc&limit=$limit"

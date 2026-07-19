@@ -51,6 +51,9 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     @Inject
     lateinit var chatService: com.toolsboox.plugin.chat.nw.LedgerChatService
 
+    @Inject
+    lateinit var miniflux: com.toolsboox.plugin.feeds.nw.MinifluxClient
+
     companion object {
         /** The synthesis basket — survives navigation within the session. */
         val basket = mutableListOf<LogItem>()
@@ -74,11 +77,40 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
 
     private val weekFields get() = WeekFields.of(java.util.Locale.getDefault())
 
-    /** Origin filter (null = All). The AV chip is the union of Watch/Listen/AV captures. */
-    private var origin: LogOrigin? = null
+    /** Multi-select origin filter (empty = All). */
+    private val origins = mutableSetOf<LogOrigin>()
+    /** ★ only. */
+    private var starredOnly = false
+    /** Opt-in feed window: "off" (default — the general feed would be noise) | "unread" | "read" | "all".
+     *  Feed articles enter the log AND search only when this is on. */
+    private var feedMode = "off"
+    /** "new" | "old" | "az" | "kind". */
+    private var sortMode = "new"
     private var allItems: List<LogItem> = emptyList()
     private var lastShown: List<LogItem> = emptyList()
     private var searchQuery: String = ""
+
+    private fun filterPrefs() = requireContext().getSharedPreferences("ledger_log_filters", android.content.Context.MODE_PRIVATE)
+
+    private fun loadFilterState() {
+        val p = filterPrefs()
+        origins.clear()
+        p.getStringSet("origins", emptySet())?.forEach { n ->
+            runCatching { origins.add(LogOrigin.valueOf(n)) }
+        }
+        starredOnly = p.getBoolean("starred_only", false)
+        feedMode = p.getString("feed_mode", "off") ?: "off"
+        sortMode = p.getString("sort_mode", "new") ?: "new"
+    }
+
+    private fun saveFilterState() {
+        filterPrefs().edit()
+            .putStringSet("origins", origins.map { it.name }.toSet())
+            .putBoolean("starred_only", starredOnly)
+            .putString("feed_mode", feedMode)
+            .putString("sort_mode", sortMode)
+            .apply()
+    }
 
     /** Inclusive-start / exclusive-end bounds of the current window (null = unbounded/All). */
     private fun windowStart(): LocalDate? = when (range) {
@@ -112,8 +144,9 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentReadingLogBinding.bind(view)
 
+        loadFilterState()
         // Honour a preset origin chosen from the History menu (one-shot).
-        ReadingLogSelection.origin?.let { origin = it; ReadingLogSelection.origin = null }
+        ReadingLogSelection.origin?.let { origins.clear(); origins.add(it); ReadingLogSelection.origin = null }
 
         adapter = ReadingEventAdapter(emptyList(), onOpen = ::openItem, onLong = ::showRhizome)
         binding.readingRecycler.layoutManager = LinearLayoutManager(requireContext())
@@ -137,13 +170,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         )
 
         binding.originButton.text = originLabel()
-        binding.originButton.setOnClickListener {
-            // Cycle: All → Book → Read → Watch → Listen → Picking → AV → All
-            val order = listOf<LogOrigin?>(null) + LogOrigin.values().toList()
-            origin = order[(order.indexOf(origin) + 1) % order.size]
-            binding.originButton.text = originLabel()
-            applyFilter()
-        }
+        binding.originButton.setOnClickListener { showFilterModal() }
 
         // Hamburger = the unified "jump to any section" menu.
         binding.gotoButton.setOnClickListener {
@@ -202,7 +229,81 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         load()
     }
 
-    private fun originLabel(): String = origin?.label ?: getString(R.string.reading_log_origin_all)
+    private fun originLabel(): String {
+        val base = when {
+            origins.isEmpty() -> getString(R.string.reading_log_origin_all)
+            origins.size <= 2 -> origins.joinToString("+") { it.label }
+            else -> "${origins.size} kinds"
+        }
+        val star = if (starredOnly) "★ " else ""
+        val feed = if (feedMode != "off") " +feed" else ""
+        return "$star$base$feed"
+    }
+
+    /**
+     * The filter modal: pick one or several kinds, ★ starred only, whether (and which) feed
+     * articles join the log, and the sort. E-ink friendly — plain rows, no animation; every
+     * tap redraws its own row in place. Filters persist across sessions.
+     */
+    private fun showFilterModal() {
+        val ctx = requireContext()
+        fun px(v: Int) = (v * resources.displayMetrics.density).toInt()
+        val box = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(px(20), px(8), px(20), px(8))
+        }
+        fun header(t: String) = android.widget.TextView(ctx).apply {
+            text = t; textSize = 13f; setTextColor(0xFF666666.toInt()); setPadding(0, px(12), 0, px(2))
+        }
+        fun row(label: () -> String, onTap: (android.widget.TextView) -> Unit) =
+            android.widget.TextView(ctx).apply {
+                text = label(); textSize = 17f; setPadding(px(6), px(9), px(6), px(9))
+                setOnClickListener { onTap(this); text = label() }
+            }
+
+        box.addView(header("Show"))
+        box.addView(row({ (if (starredOnly) "★" else "☆") + "  Starred only" }) { starredOnly = !starredOnly })
+        for (o in LogOrigin.values()) {
+            box.addView(row({ (if (o in origins) "☑" else "☐") + "  ${o.mark}  ${o.label}" }) {
+                if (o in origins) origins.remove(o) else origins.add(o)
+            })
+        }
+
+        box.addView(header("Feed articles (off keeps the log quiet)"))
+        val feedRows = mutableListOf<android.widget.TextView>()
+        for ((mode, label) in listOf("off" to "Off", "unread" to "Unread", "read" to "Read", "all" to "All")) {
+            val r = row({ (if (feedMode == mode) "◉" else "○") + "  $label" }) {
+                feedMode = mode
+                feedRows.forEach { fr -> fr.text = (fr.tag as () -> String)() }
+            }
+            r.tag = { (if (feedMode == mode) "◉" else "○") + "  $label" }
+            feedRows.add(r); box.addView(r)
+        }
+
+        box.addView(header("Sort"))
+        val sortRows = mutableListOf<android.widget.TextView>()
+        for ((mode, label) in listOf("new" to "Newest first", "old" to "Oldest first", "az" to "A–Z", "kind" to "By kind")) {
+            val r = row({ (if (sortMode == mode) "◉" else "○") + "  $label" }) {
+                sortMode = mode
+                sortRows.forEach { sr -> sr.text = (sr.tag as () -> String)() }
+            }
+            r.tag = { (if (sortMode == mode) "◉" else "○") + "  $label" }
+            sortRows.add(r); box.addView(r)
+        }
+
+        val scroll = android.widget.ScrollView(ctx).apply { addView(box) }
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Filter the Log")
+            .setView(scroll)
+            .setNegativeButton("Clear") { _, _ ->
+                origins.clear(); starredOnly = false; feedMode = "off"; sortMode = "new"
+                saveFilterState(); binding.originButton.text = originLabel(); load()
+            }
+            .setPositiveButton("Done") { _, _ ->
+                saveFilterState(); binding.originButton.text = originLabel(); load()
+            }
+            .show()
+    }
 
     private fun load() {
         binding.progress.visibility = View.VISIBLE
@@ -219,14 +320,20 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     }
 
     private fun applyFilter() {
-        val o = origin
         val q = searchQuery.trim().lowercase()
-        val shown = allItems.filter { item ->
-            (o == null || item.origin == o) &&
+        val filtered = allItems.filter { item ->
+            (origins.isEmpty() || item.origin in origins) &&
+                (!starredOnly || item.starred) &&
                 (q.isEmpty() ||
                     item.title.lowercase().contains(q) ||
                     item.meta.lowercase().contains(q) ||
                     item.body.lowercase().contains(q))
+        }
+        val shown = when (sortMode) {
+            "old" -> filtered.sortedBy { it.millis }
+            "az" -> filtered.sortedBy { it.title.lowercase().removePrefix("★ ") }
+            "kind" -> filtered.sortedWith(compareBy({ it.origin.ordinal }, { -it.millis }))
+            else -> filtered.sortedByDescending { it.millis }
         }
         adapter.submit(shown)
         lastShown = shown
@@ -278,14 +385,21 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
 
                 for (e in day.readingEvents) {
                     val o = if (e.kind == ReadingEvent.Kind.BOOK) LogOrigin.BOOK else LogOrigin.READ
-                    val meta = listOfNotNull(e.source?.takeIf { it.isNotBlank() }, stamp(e.date)).joinToString(" · ")
+                    // A star lives on two days (starred + published; see logStar). Each row
+                    // clarifies the OTHER date: the star-day row shows "published MMM d",
+                    // the published-day companion carries "★ starred MMM d" in its note.
+                    val pubLabel = e.published?.takeIf { !e.id.endsWith("-pub") }?.let {
+                        "published " + java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault()).format(it)
+                    }
+                    val meta = listOfNotNull(e.source?.takeIf { it.isNotBlank() }, stamp(e.date), pubLabel)
+                        .joinToString(" · ")
                     val body = (e.excerpt?.takeIf { it.isNotBlank() } ?: e.note).orEmpty().trim()
                     // Captured media rides on the event's attachments — show a photo thumb / play a memo.
                     val photo = e.attachments?.firstOrNull { it.kind == Attachment.Kind.PHOTO }
                     val audio = e.attachments?.firstOrNull { it.kind == Attachment.Kind.AUDIO }
-                    val evTitle = (if (e.starred) "⭐ " else "") + e.title.ifBlank { getString(R.string.reading_log_untitled) }
-                    put(LogItem(o, evTitle, meta, body,
-                        e.url, e.date.time, imagePath = photo?.let { attachmentPath(it) }, audioPath = audio?.let { attachmentPath(it) }))
+                    put(LogItem(o, e.title.ifBlank { getString(R.string.reading_log_untitled) }, meta, body,
+                        e.url, e.date.time, imagePath = photo?.let { attachmentPath(it) },
+                        audioPath = audio?.let { attachmentPath(it) }, starred = e.starred))
                 }
 
                 val fallback = dayDate?.atStartOfDay(ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L
@@ -340,8 +454,59 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                     }
                 }
             }
+        // Feed articles are OPT-IN (feedMode): the general feed inside the log — or its
+        // search — is noise by default, but the toggle folds the window's published
+        // articles in as 📰 rows (unread / read / all).
+        if (feedMode != "off") {
+            val creds = feedCreds()
+            if (creds != null) {
+                val (fUrl, fTok) = creds
+                val status = when (feedMode) { "unread" -> "unread"; "read" -> "read"; else -> null }
+                val zone = ZoneId.systemDefault()
+                val res = if (searchQuery.isNotBlank())
+                    miniflux.search(fUrl, fTok, searchQuery, 100)
+                else {
+                    val after = (start ?: LocalDate.now().minusYears(1)).atStartOfDay(zone).toEpochSecond()
+                    val before = (end ?: LocalDate.now().plusDays(1)).atStartOfDay(zone).toEpochSecond()
+                    miniflux.fetchPublishedWindow(fUrl, fTok, status, after, before)
+                }
+                if (res is com.toolsboox.plugin.feeds.nw.MinifluxClient.Result.Ok) {
+                    for (fe in res.value) {
+                        if (fe.id <= 0) continue   // synthetic rows never belong here
+                        // search= has no status filter — apply the unread/read choice here.
+                        if (searchQuery.isNotBlank() && status != null && (status == "read") != fe.read) continue
+                        val pubDay = runCatching { LocalDate.parse(fe.publishedAt.take(10)) }.getOrNull()
+                        val millis = pubDay?.atStartOfDay(zone)?.toInstant()?.toEpochMilli() ?: 0L
+                        out.add(LogItem(
+                            LogOrigin.FEED, fe.title,
+                            listOfNotNull(
+                                fe.feedTitle.takeIf { it.isNotBlank() },
+                                pubDay?.toString(),
+                                if (fe.read) "read" else "unread"
+                            ).joinToString(" · "),
+                            "", fe.url, millis, day = pubDay, starred = fe.starred
+                        ))
+                    }
+                }
+            }
+        }
         return out.sortedByDescending { it.millis }
     }
+
+    /** Miniflux URL+token from the feeds plugin's encrypted prefs; null when unconfigured. */
+    private fun feedCreds(): Pair<String, String>? = runCatching {
+        val ctx = requireContext()
+        val masterKey = androidx.security.crypto.MasterKey.Builder(ctx)
+            .setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build()
+        val p = androidx.security.crypto.EncryptedSharedPreferences.create(
+            ctx, com.toolsboox.plugin.feeds.ui.FeedsFragment.PREFS, masterKey,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+        val u = p.getString(com.toolsboox.plugin.feeds.ui.FeedsFragment.KEY_URL, "").orEmpty()
+        val t = p.getString(com.toolsboox.plugin.feeds.ui.FeedsFragment.KEY_TOKEN, "").orEmpty()
+        if (u.isBlank() || t.isBlank()) null else u to t
+    }.getOrNull()
 
     private fun mmss(seconds: Double): String {
         val s = seconds.toInt()

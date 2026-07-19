@@ -1265,6 +1265,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             // Idempotent by id: star → unstar → star used to append duplicate art-<id>
             // events that rode sync to every device.
             val id = "art-${entry.id}"
+            val pubDay = runCatching { LocalDate.parse(entry.publishedAt.take(10)) }.getOrNull()
+            val pubDate = pubDay?.atTime(12, 0)?.atZone(java.time.ZoneId.of("UTC"))
+                ?.toInstant()?.let { Date.from(it) }
             day.readingEvents.removeAll { it.id == id }
             day.readingEvents.add(
                 ReadingEvent(
@@ -1275,10 +1278,33 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     source = entry.feedTitle.ifBlank { null },
                     url = entry.url.ifBlank { null },
                     note = entry.blurb.ifBlank { null },
-                    starred = true
+                    starred = true,
+                    published = pubDate
                 )
             )
             calendarDayService.save(root, today, day)
+            // A star lives on TWO days: today (when you starred it) and the day the piece
+            // was published — the Log's windowed scan finds each in its own day file. The
+            // companion carries the star date in its note as the clarifying label.
+            if (pubDay != null && pubDay != today && pubDate != null) {
+                val pub = calendarDayService.load(root, pubDay, null, Locale.getDefault())
+                val pubId = "$id-pub"
+                pub.readingEvents.removeAll { it.id == pubId }
+                pub.readingEvents.add(
+                    ReadingEvent(
+                        id = pubId,
+                        kind = ReadingEvent.Kind.ARTICLE,
+                        date = pubDate,
+                        title = entry.title,
+                        source = entry.feedTitle.ifBlank { null },
+                        url = entry.url.ifBlank { null },
+                        note = "★ starred ${today.format(java.time.format.DateTimeFormatter.ofPattern("MMM d"))}",
+                        starred = true,
+                        published = pubDate
+                    )
+                )
+                calendarDayService.save(root, pubDay, pub)
+            }
         } catch (e: Exception) {
             Timber.w(e, "failed to log starred article")
         }
