@@ -58,7 +58,10 @@ object LedgerContextMenu {
      * @param title the mono-caps header label
      * @param groups the tappable rows, grouped
      */
-    fun show(anchor: View, pressX: Float, pressY: Float, title: String, groups: List<List<Item>>) {
+    fun show(
+        anchor: View, pressX: Float, pressY: Float, title: String, groups: List<List<Item>>,
+        onShow: (() -> Unit)? = null, onDismiss: (() -> Unit)? = null
+    ) {
         val ctx = anchor.context ?: return
         dismissCurrent()   // never stack menus — a fresh press replaces the last one
         val density = ctx.resources.displayMetrics.density
@@ -150,7 +153,7 @@ object LedgerContextMenu {
             elevation = 0f
             animationStyle = 0
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            setOnDismissListener { if (current === this) current = null }
+            setOnDismissListener { if (current === this) current = null; onDismiss?.invoke() }
         }
         current = popup
 
@@ -164,6 +167,7 @@ object LedgerContextMenu {
         val y = (location[1] + pressY.roundToInt() + dp(6f))
             .coerceIn(margin, (root.height - card.measuredHeight - margin).coerceAtLeast(margin))
         popup.showAtLocation(anchor, Gravity.NO_GRAVITY, x, y)
+        onShow?.invoke()   // pause the Onyx raw-drawing pipeline, or the pen freezes on the menu
     }
 
     /**

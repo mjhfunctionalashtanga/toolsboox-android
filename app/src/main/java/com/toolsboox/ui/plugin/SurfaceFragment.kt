@@ -2271,6 +2271,16 @@ abstract class SurfaceFragment : ScreenFragment() {
      * Long-press on a gram that carries a source: jump back to the origin (article / ledger page)
      * or drop into move/resize. Plain images skip this and go straight to manipulation.
      */
+    /** LedgerContextMenu over the surface, pausing the Onyx raw-drawing pipeline while it's up
+     *  (or a stylus tap gets grabbed by raw drawing and freezes the menu — the "pen on the
+     *  clip-art menu freezes" bug). Resumes on dismiss via the same hooks AlertDialogs use. */
+    private fun showLedgerMenu(pressX: Float, pressY: Float, title: String, groups: List<List<LedgerContextMenu.Item>>) {
+        LedgerContextMenu.show(
+            provideSurfaceView(), pressX, pressY, title, groups,
+            onShow = { onModalShown() }, onDismiss = { onModalDismissed() }
+        )
+    }
+
     private fun showImageMenu(element: ImageElement, pressX: Float, pressY: Float) {
         if (context == null) return
         val groups = mutableListOf<List<LedgerContextMenu.Item>>()
@@ -2327,7 +2337,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 }
             }
         ))
-        LedgerContextMenu.show(provideSurfaceView(), pressX, pressY, "IMAGE", groups)
+        showLedgerMenu(pressX, pressY, "IMAGE", groups)
     }
 
     /**
@@ -2335,8 +2345,8 @@ abstract class SurfaceFragment : ScreenFragment() {
      * one bakes into the PNG (syncs as pixels, free to render, grayscale-safe on e-ink).
      */
     private fun showShapeMenu(element: ImageElement, pressX: Float, pressY: Float) {
-        LedgerContextMenu.show(
-            provideSurfaceView(), pressX, pressY, "SHAPE & CUT", listOf(
+        showLedgerMenu(
+            pressX, pressY, "SHAPE & CUT", listOf(
                 listOf(
                     LedgerContextMenu.Item("● Circle") { transformImageElement(element) { circleCropBitmap(it) } },
                     LedgerContextMenu.Item("⬭ Oval") { transformImageElement(element) { ovalCropBitmap(it) } },
@@ -2458,8 +2468,8 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** The creation menu shown on a long-press over empty canvas. */
     private fun showCanvasCreationMenu(cx: Float, cy: Float, pressX: Float, pressY: Float) {
         if (context == null) return
-        LedgerContextMenu.show(
-            provideSurfaceView(), pressX, pressY, "ADD HERE",
+        showLedgerMenu(
+            pressX, pressY, "ADD HERE",
             listOf(
                 listOf(
                     LedgerContextMenu.Item("Text box") { showTextInputDialog(cx, cy) },
@@ -2598,8 +2608,8 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** Long-press on a text box: management menu (edit / move / clipboard ops / delete). */
     private fun showTextBoxMenu(element: TextElement, pressX: Float, pressY: Float) {
         val ctx = context ?: return
-        LedgerContextMenu.show(
-            provideSurfaceView(), pressX, pressY, "TEXT BOX",
+        showLedgerMenu(
+            pressX, pressY, "TEXT BOX",
             listOf(
                 listOf(
                     LedgerContextMenu.Item("Edit text") { showTextEditDialog(element) },
