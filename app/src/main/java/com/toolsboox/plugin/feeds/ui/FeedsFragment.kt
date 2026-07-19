@@ -1039,12 +1039,19 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val p = prefs()
         val url = p.getString(KEY_URL, "").orEmpty(); val token = p.getString(KEY_TOKEN, "").orEmpty()
         if (url.isBlank() || token.isBlank()) { showMessage(R.string.feeds_need_creds); return }
-        // Synthetic rows (negative ids: Later, Pickings, local feeds) have no server entry —
-        // sending their ids would mark unrelated real Miniflux entries read.
-        val ids = allEntries.map { it.id }.filter { it > 0 }
+        // Act on the list AS DISPLAYED — drilling into a feed/category/lens narrows the
+        // adapter, not allEntries, and clearing "everything loaded" from inside a category
+        // wiped articles the user never saw. Synthetic rows (negative ids: Later, Pickings,
+        // local feeds) have no server entry — sending their ids would mark unrelated real
+        // Miniflux entries read.
+        val ids = adapter.current().map { it.id }.filter { it > 0 }
         if (ids.isEmpty()) { showMessage(R.string.feeds_nothing_to_mark); return }
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) { miniflux.setStatus(url, token, ids, "read") }
+            val ok = withContext(Dispatchers.IO) { miniflux.setStatus(url, token, ids, "read") }
+            if (ok is MinifluxClient.Result.Err) {
+                android.widget.Toast.makeText(requireContext(), "⚠ Mark-read failed — ${ok.message}", android.widget.Toast.LENGTH_LONG).show()
+                return@launch
+            }
             refresh()
             // Undoable — one Snackbar action flips them all back to unread.
             com.google.android.material.snackbar.Snackbar.make(

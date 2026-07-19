@@ -1036,7 +1036,12 @@ abstract class SurfaceFragment : ScreenFragment() {
         // With the reader closed, force a full-screen EPD refresh so the stale hardware overlay is
         // wiped and only the baked software surface remains.
         if (touchHelper != null) forceFullEpdRefresh()
+        // Null after recycle: onPause without surfaceDestroyed (permission dialog, floating
+        // activity, multi-window focus loss) meant `canvas` still wrapped a recycled bitmap —
+        // the next applyStrokes/clearSurface/exportBitmap crashed drawing into it. The draw
+        // entry points lazily recreate via ensureShadowCanvas().
         bitmap?.recycle()
+        bitmap = null
 
         // Tear down Viwoods AutoDraw and return the panel to reading mode. No-op on Boox.
         viwoodsInk?.disable()
@@ -3385,6 +3390,7 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     fun exportBitmap() {
+        if (!ensureShadowCanvas()) return
         if (!checkPermission(Manifest.permission.READ_EXTERNAL_STORAGE)) {
             showError(null, R.string.main_read_external_storage_permission_missing, provideSurfaceView())
             return
@@ -3671,7 +3677,24 @@ abstract class SurfaceFragment : ScreenFragment() {
     /**
      * Clear the surface and the shadow canvas.
      */
+    /** Recreate the shadow bitmap+canvas if onPause recycled them while the surface stayed alive. */
+    private fun ensureShadowCanvas(): Boolean {
+        val b = bitmap
+        if (b != null && !b.isRecycled) return true
+        return try {
+            bitmap = Bitmap.createBitmap(CANVAS_WIDTH, CANVAS_HEIGHT, Bitmap.Config.ARGB_8888).also {
+                it.eraseColor(Color.TRANSPARENT)
+                canvas = Canvas(it)
+            }
+            true
+        } catch (e: Exception) {
+            Timber.w(e, "shadow canvas recreate failed")
+            false
+        }
+    }
+
     fun clearSurface() {
+        if (!ensureShadowCanvas()) return
         val lockerCanvas = provideSurfaceView().holder.lockCanvas() ?: return
         // EpdController is Onyx-only and relies on the SDK being initialized by
         // TouchHelper.create(). On Viwoods we never create the TouchHelper, so this would
@@ -3810,6 +3833,7 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     fun applyStrokes(strokes: List<Stroke>, clearPage: Boolean) {
         this.strokes = strokes.toMutableList()
+        if (!ensureShadowCanvas()) return
         val lockCanvas = provideSurfaceView().holder.lockCanvas() ?: return
 
         lockCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)

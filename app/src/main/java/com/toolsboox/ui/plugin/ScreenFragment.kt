@@ -312,9 +312,16 @@ abstract class ScreenFragment : Fragment() {
             val src = pendingCameraFile
             if (ok && src != null && src.exists()) {
                 val dest = File(attachmentsDir(), "photo-${UUID.randomUUID()}.jpg")
-                runCatching { src.copyTo(dest, overwrite = true) }
-                src.delete()
-                emitAttachment(Attachment(UUID.randomUUID().toString(), Attachment.Kind.PHOTO, dest.name, null, Date()))
+                // Only destroy the source and record the attachment when the copy actually
+                // landed — a disk-full copy failure used to delete the ONLY copy and persist
+                // an attachment pointing at a missing file (gallery import got this right).
+                if (runCatching { src.copyTo(dest, overwrite = true) }.isSuccess) {
+                    src.delete()
+                    emitAttachment(Attachment(UUID.randomUUID().toString(), Attachment.Kind.PHOTO, dest.name, null, Date()))
+                } else {
+                    showMessage(R.string.reader_capture_failed)
+                    captureSink = null; gramSink = null
+                }
             } else captureSink = null
             pendingCameraFile = null; pendingCameraUri = null
         }
@@ -330,8 +337,13 @@ abstract class ScreenFragment : Fragment() {
             val src = pendingVideoFile
             if (ok && src != null && src.exists()) {
                 val dest = File(attachmentsDir(), "video-${UUID.randomUUID()}.mp4")
-                runCatching { src.copyTo(dest, overwrite = true) }; src.delete()
-                emitAttachment(Attachment(UUID.randomUUID().toString(), Attachment.Kind.VIDEO, dest.name, null, Date()))
+                if (runCatching { src.copyTo(dest, overwrite = true) }.isSuccess) {
+                    src.delete()
+                    emitAttachment(Attachment(UUID.randomUUID().toString(), Attachment.Kind.VIDEO, dest.name, null, Date()))
+                } else {
+                    showMessage(R.string.reader_capture_failed)
+                    gramSink = null; captureSink = null
+                }
             } else { gramSink = null; captureSink = null }
             pendingVideoFile = null
         }
@@ -520,6 +532,15 @@ abstract class ScreenFragment : Fragment() {
             }
         }
         recordHandler.postDelayed(tick, 500)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Recording only ends via the dialog's buttons — navigation/backgrounding while
+        // recording leaked the MediaRecorder (mic held, file growing), leaked the dialog's
+        // window, and the tick runnable retained the dead fragment forever. Saving on the
+        // way out keeps the memo instead of discarding it.
+        if (recorder != null) stopVoiceRecording(save = true)
     }
 
     private fun stopVoiceRecording(save: Boolean) {

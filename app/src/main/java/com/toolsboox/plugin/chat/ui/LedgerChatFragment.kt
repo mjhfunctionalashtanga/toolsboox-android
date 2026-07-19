@@ -337,16 +337,17 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
                 "task", "event" -> {
                     val itemKind = if (kind == "event") com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT
                         else com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK
-                    // Stamp the item with the requested date + time (not "now") so it schedules
-                    // correctly and syncs the right due date/time to CalDAV.
-                    val hm = time?.split(":")?.mapNotNull { it.trim().toIntOrNull() }
-                    val cal = java.util.Calendar.getInstance().apply {
-                        clear()
-                        set(date.year, date.monthValue - 1, date.dayOfMonth, hm?.getOrNull(0) ?: 12, hm?.getOrNull(1) ?: 0, 0)
-                    }
+                    // Canonical item.date: the due DAY at 12:00 UTC — every other creation
+                    // path and every reader (itemLocalDate, buildVTodo's UTC formatter) uses
+                    // that convention. Building it in the DEVICE timezone at the clock time
+                    // shifted evening items onto the wrong day. The clock time lives only in
+                    // `time`, which the sync layers already apply in local time.
                     val item = com.toolsboox.plugin.calendar.da.v2.LedgerItem(
                         id = "ask-${java.util.UUID.randomUUID()}", kind = itemKind, text = text,
-                        date = cal.time, time = time, source = "ask"
+                        date = java.util.Date(
+                            date.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()
+                        ),
+                        time = time, source = "ask"
                     )
                     runCatching {
                         val day = calendarDayService.load(root, date, null, locale)
