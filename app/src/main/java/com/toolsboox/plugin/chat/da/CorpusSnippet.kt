@@ -28,6 +28,7 @@ data class CorpusSnippet(
 enum class Section(val label: String) {
     BOOKS("Book highlights"),
     ARTICLES("Feed annotations"),
+    FEED("Feed articles"),
     PLANNER("Planner text"),
     MEDIA("A/V grams"),
     SECTIONS("Page sections (OCR)"),

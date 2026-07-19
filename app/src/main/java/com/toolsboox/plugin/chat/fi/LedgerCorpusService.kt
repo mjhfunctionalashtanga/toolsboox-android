@@ -62,6 +62,37 @@ class LedgerCorpusService @Inject constructor(
                     }
                 }
         }
+        if (Section.FEED in scope) {
+            // FULL feed articles from the offline cache (list-*.json metadata + content-<id>.html
+            // parsed text) — Ask can now read what you read, not just what you annotated.
+            val cacheDir = File(context.filesDir, "feed-cache")
+            val seen = HashSet<Long>()
+            cacheDir.listFiles()
+                ?.filter { it.isFile && it.name.startsWith("list-") && it.name.endsWith(".json") }
+                ?.forEach { f ->
+                    val arr = runCatching { org.json.JSONArray(f.readText()) }.getOrNull() ?: return@forEach
+                    for (i in 0 until arr.length()) {
+                        val o = arr.optJSONObject(i) ?: continue
+                        val id = o.optLong("id", 0)
+                        if (id == 0L || !seen.add(id)) continue
+                        val title = o.optString("title").trim()
+                        if (title.isEmpty()) continue
+                        val html = File(cacheDir, "content-$id.html").takeIf { it.exists() }?.readText()
+                            ?: o.optString("content")
+                        val text = html.replace(Regex("(?is)<script.*?</script>|<style.*?</style>"), "")
+                            .replace(Regex("<[^>]+>"), " ")
+                            .replace(Regex("\\s+"), " ").trim()
+                        if (text.isEmpty()) continue
+                        val date = runCatching {
+                            java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                                .parse(o.optString("publishedAt").take(10))
+                        }.getOrNull() ?: Date()
+                        out += CorpusSnippet(
+                            Section.FEED, date, title, o.optString("feedTitle"),
+                            text.take(1500), cite(date, "feed", title))
+                    }
+                }
+        }
         if (Section.SECTIONS in scope) {
             File(context.filesDir, "page-sections").listFiles()
                 ?.filter { it.isFile && it.name.endsWith(".json") }

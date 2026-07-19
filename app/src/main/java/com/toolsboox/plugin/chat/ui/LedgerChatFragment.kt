@@ -142,6 +142,7 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
         val s = mutableSetOf<Section>()
         if (binding.scopeBooks.isChecked) s += Section.BOOKS
         if (binding.scopeArticles.isChecked) s += Section.ARTICLES
+        if (binding.scopeFeed.isChecked) s += Section.FEED
         if (binding.scopePlanner.isChecked) s += Section.PLANNER
         if (binding.scopeMedia.isChecked) s += Section.MEDIA
         // Your own captured text — OCR'd page sections, Text Notes, tasks & events — is always in
