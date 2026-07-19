@@ -1072,6 +1072,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         if (!::binding.isInitialized) return
         val container = binding.feedsDirectory
         container.removeAllViews()
+        // ONE directory style: the in-layout side panel was the old listing and sat behind the
+        // drawer — the accordion drawer (showFeedDirectory) is THE directory now. Keep the panel
+        // collapsed so the article list gets the full width.
+        container.visibility = View.GONE
+        if (true) return
         val ctx = requireContext()
         fun row(label: String, count: Int?, indent: Int, selected: Boolean, onClick: () -> Unit) {
             val tv = android.widget.TextView(ctx).apply {

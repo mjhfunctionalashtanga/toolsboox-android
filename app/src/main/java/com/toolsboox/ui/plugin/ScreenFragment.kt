@@ -808,59 +808,21 @@ abstract class ScreenFragment : Fragment() {
      * used for the hamburger menus on Bookshelf/Feed to list the actual books/feeds plus
      * the surfaces to jump to. Each row is (label, action).
      */
+    /**
+     * Grouped directory — now ONE visual language with the accordion: each named group becomes
+     * a collapsible Folder (▸/▾), headerless groups flatten to plain rows. Keeping a single
+     * renderer is what stops the app from growing two directory styles again.
+     */
     protected fun showDirectory(groups: List<Pair<String, List<Pair<String, () -> Unit>>>>) {
-        val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
-        val list = root.findViewById<LinearLayout>(R.id.go_to_list)
-        root.findViewById<TextView>(R.id.go_to_title).visibility = View.GONE
-        val dialog = AlertDialog.Builder(requireContext()).setView(root).create()
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-        val dirPrefs = requireContext().getSharedPreferences("ledger_directory_state", 0)
+        val folders = mutableListOf<Folder>()
         for ((header, items) in groups) {
-            // Headerless groups render flat; named groups COLLAPSE/EXPAND on tap (▸/▾),
-            // and the state persists so the directory stays how you left it.
-            val container: LinearLayout
-            if (header.isNotEmpty()) {
-                val key = "dir_$header"
-                var expanded = dirPrefs.getBoolean(key, true)
-                val tv = TextView(requireContext())
-                fun caret() = if (expanded) "▾  " else "▸  "
-                tv.text = caret() + header.uppercase()
-                tv.setTextColor(0xFF555555.toInt()); tv.textSize = 12f; tv.letterSpacing = 0.08f
-                tv.setPadding(dp(14), dp(12), dp(14), dp(6))
-                list.addView(tv)
-                container = LinearLayout(requireContext()).apply {
-                    orientation = LinearLayout.VERTICAL
-                    visibility = if (expanded) View.VISIBLE else View.GONE
-                }
-                list.addView(container)
-                tv.setOnClickListener {
-                    expanded = !expanded
-                    container.visibility = if (expanded) View.VISIBLE else View.GONE
-                    tv.text = caret() + header.uppercase()
-                    dirPrefs.edit().putBoolean(key, expanded).apply()
-                }
+            if (header.isEmpty()) {
+                items.forEach { (label, action) -> folders.add(Folder("", label, action = action)) }
             } else {
-                container = list
-            }
-            for ((label, action) in items) {
-                val r = layoutInflater.inflate(R.layout.item_go_to, container, false)
-                r.findViewById<TextView>(R.id.go_label).text = applyRowIcon(r, label)
-                r.setOnClickListener { dialog.dismiss(); action() }
-                container.addView(r)
+                folders.add(Folder("", header, items, expanded = true))
             }
         }
-        dialog.setOnShowListener { onModalShown() }
-        dialog.setOnDismissListener { onModalDismissed() }
-        dialog.show()
-        dialog.window?.let { w ->
-            val lp = w.attributes
-            lp.gravity = Gravity.START or Gravity.TOP
-            lp.x = dp(22); lp.y = dp(54)
-            lp.width = minOf(dp(200), (resources.displayMetrics.widthPixels * 0.44f).toInt())
-            lp.height = (resources.displayMetrics.heightPixels * 0.7f).toInt()
-            w.attributes = lp
-        }
+        showAccordion(folders)
     }
 
     /**
