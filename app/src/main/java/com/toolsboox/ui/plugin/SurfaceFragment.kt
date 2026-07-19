@@ -2271,8 +2271,22 @@ abstract class SurfaceFragment : ScreenFragment() {
                     LedgerContextMenu.Item("Paste") { pasteUnifiedAt(cx, cy) },
                     LedgerContextMenu.Item("Share page as image") { onSharePage() }
                 )
-            )
+            ) + extraCreationGroups(cx, cy)
         )
+    }
+
+    /** Page-specific creation actions (e.g. the Synthesize page's engines). Base: none. */
+    protected open fun extraCreationGroups(cx: Float, cy: Float): List<List<LedgerContextMenu.Item>> = emptyList()
+
+    /** "Synthesize…" on a single text box — the day page runs the engines on just that object. */
+    protected open fun onSynthesizeText(element: TextElement) {}
+
+    /** Drop generated text onto the page below the existing boxes, saved + re-rendered. */
+    protected fun placeGeneratedText(text: String) {
+        val y = ((textElements.maxOfOrNull { it.y } ?: 60f) + 140f).coerceAtMost(CANVAS_HEIGHT - 400f)
+        textElements.add(TextElement(x = 80f, y = y, text = text))
+        applyStrokes(strokes, true)
+        onTextElementsChanged(textElements)
     }
 
     /** Grid picker of the Clippings library — tap to place at [cx],[cy]; long-press to delete. */
@@ -2343,6 +2357,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 listOf(
                     LedgerContextMenu.Item("Edit text") { showTextEditDialog(element) },
                     LedgerContextMenu.Item("Move — drag it") { enterTextBoxManipulation(element) },
+                    LedgerContextMenu.Item("Synthesize…") { onSynthesizeText(element) },
                     LedgerContextMenu.Item(if (element.contactId.isNullOrBlank()) "Assign to contact…" else "Contact…") {
                         pickContact { id ->
                             element.contactId = id

@@ -86,6 +86,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     @Inject
     lateinit var miniflux: com.toolsboox.plugin.feeds.nw.MinifluxClient
 
+    @Inject
+    lateinit var chatService: com.toolsboox.plugin.chat.nw.LedgerChatService
+
     /**
      * The inflated layout.
      */
@@ -307,6 +310,79 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             }
             if (got > 0) withContext(Dispatchers.Main) {
                 runCatching { renderPage(calendarDay, calendarPattern, events) }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // The Synthesize engines — the pressure chamber of the Timeline.
+    // Page-level (long-press empty canvas on the Synthesize page): the day's gathered
+    // material runs through one of three transformations. Object-level ("Synthesize…"
+    // on any text box, any page): the same engines on just that one picking.
+    // ------------------------------------------------------------------
+
+    override fun extraCreationGroups(cx: Float, cy: Float): List<List<com.toolsboox.ot.LedgerContextMenu.Item>> {
+        if (notePage != "synthesize") return emptyList()
+        return listOf(listOf(
+            com.toolsboox.ot.LedgerContextMenu.Item("?  3 Questions") { runSynthesis("questions", pageMaterial()) },
+            com.toolsboox.ot.LedgerContextMenu.Item("✎  Writing Prompt") { runSynthesis("prompt", pageMaterial()) },
+            com.toolsboox.ot.LedgerContextMenu.Item("≡  Essay Outline") { runSynthesis("outline", pageMaterial()) }
+        ))
+    }
+
+    override fun onSynthesizeText(element: com.toolsboox.da.TextElement) {
+        val ctx = context ?: return
+        AlertDialog.Builder(ctx)
+            .setTitle("Synthesize this")
+            .setItems(arrayOf("?  3 Questions", "✎  Writing Prompt", "≡  Essay Outline")) { _, which ->
+                val kind = listOf("questions", "prompt", "outline")[which]
+                runSynthesis(kind, element.text)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** The day's gathered material: every text box on every page of today + starred excerpts. */
+    private fun pageMaterial(): String {
+        val parts = mutableListOf<String>()
+        calendarDay.textElements.filter { it.text.isNotBlank() }.forEach {
+            parts.add("• [${it.pageKey.ifBlank { "day" }}] ${it.text.trim()}")
+        }
+        calendarDay.readingEvents.forEach { e ->
+            val body = e.excerpt?.takeIf { it.isNotBlank() } ?: e.title
+            parts.add("• [star · ${e.source ?: "read"}] $body")
+        }
+        return parts.joinToString("\n").take(6000)
+    }
+
+    private fun runSynthesis(kind: String, material: String) {
+        val ctx = requireContext()
+        if (material.isBlank()) {
+            android.widget.Toast.makeText(ctx, "Nothing gathered yet — add some pickings or notes first", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        val creds = com.toolsboox.plugin.chat.nw.AiCreds.get(ctx)
+        if (creds == null) {
+            android.widget.Toast.makeText(ctx, "Add your AI key in Ask my Ledger settings", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        val (provider, key, model) = creds
+        val (heading, prompt) = when (kind) {
+            "questions" -> "? 3 Questions" to
+                "From the gathered material, pose the 3 most GENERATIVE questions it raises — questions that would push the author's own thinking further, not comprehension checks. Numbered, one line each. No preamble."
+            "prompt" -> "✎ Writing Prompt" to
+                "From the gathered material, write ONE vivid writing prompt (2–3 sentences) the author could start writing from immediately, in second person. No preamble."
+            else -> "≡ Essay Outline" to
+                "From the gathered material, draft an essay outline: a working title on the first line, then 4–6 section headers, each with one guiding sentence. Plain text, no markdown. No preamble."
+        }
+        android.widget.Toast.makeText(ctx, "Synthesizing…", android.widget.Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            val res = withContext(Dispatchers.IO) { chatService.run(provider, key, model, prompt, material) }
+            when (res) {
+                is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok ->
+                    placeGeneratedText("$heading\n\n${res.answer.trim()}")
+                is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Err ->
+                    android.widget.Toast.makeText(ctx, "⚠ ${res.message}", android.widget.Toast.LENGTH_LONG).show()
             }
         }
     }
