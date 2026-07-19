@@ -795,10 +795,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         """.trimIndent()
     }
 
-    /** Stepping/selecting shows all feeds from that window; today's day = the live view.
-     *  Past windows are mostly read, so pull the read timeline for filtering. */
+    /** Stepping/selecting keeps the chosen lens (The Watch stays The Watch across dates);
+     *  today = the live view, past windows pull the read timeline for filtering. */
     private fun onDateChanged() {
-        kindFilter = null
         val liveToday = navGranularity == "day" && navAnchor == java.time.LocalDate.now()
         mode = if (liveToday) "feed" else "read"
         refresh()
@@ -882,7 +881,12 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
 
     /** Set the current view/kind and reload (used by the dropdown rows). */
     private fun switchTo(newMode: String, kind: String?) {
-        mode = newMode; kindFilter = kind; refresh()
+        // Picking a lens while browsing a PAST window stays in that window (read timeline),
+        // instead of snapping to the live unread view — the date and the lens compose.
+        val liveToday = navGranularity == "day" && navAnchor == java.time.LocalDate.now()
+        mode = if (newMode == "feed" && !liveToday) "read" else newMode
+        kindFilter = kind
+        refresh()
     }
 
     private fun switchToSmart(feed: com.toolsboox.plugin.feeds.nw.SmartFeed) {
