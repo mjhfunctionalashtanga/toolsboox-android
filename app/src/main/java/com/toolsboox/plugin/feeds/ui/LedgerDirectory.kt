@@ -77,14 +77,14 @@ fun ledgerDirectoryFolders(
             (fragment as? com.toolsboox.ui.plugin.ReturnAnchorProvider)?.prepareReturnAnchor()
             nav.navigate(R.id.action_to_calendar_day)
         }),
-        ScreenFragment.Folder("❤️", "Daily Ledger", listOf(
+        ScreenFragment.Folder("❤️", "Daily", listOf(
             "❝  Pickings" to { showPickingsPicker(fragment) },
             "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") },
             "🔬  Synthesize" to { CalendarNavigator.toDayNote(fragment, today, "synthesize") },
             "✍️  Write" to { CalendarNavigator.toDayNote(fragment, today, "write") }
         )),
         // Desk Ledger — the working surfaces: notes, tasks, people, boards, correspondence.
-        ScreenFragment.Folder("🗒", "Desk Ledger", listOf(
+        ScreenFragment.Folder("🗒", "Desk", listOf(
             "✒  Notes" to { CalendarNavigator.toDayNote(fragment, today, "0") },
             "🗒  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
             "👤  Rolodex" to { nav.navigate(R.id.action_to_rolodex) },
@@ -93,7 +93,7 @@ fun ledgerDirectoryFolders(
             "📝  Text Notes" to { nav.navigate(R.id.action_to_text_notes) }
         )),
         // Feed Ledger — the RSS reader lenses.
-        ScreenFragment.Folder("📰", "Feed Ledger", listOf(
+        ScreenFragment.Folder("📰", "Feed", listOf(
             "📰  All" to { openFeed("feed", null) },
             "📖  The Read" to { openFeed("feed", "read") },
             "📺  The Watch" to { openFeed("feed", "watch") },
@@ -101,9 +101,9 @@ fun ledgerDirectoryFolders(
             "🔖  Later" to { openFeed("later", null) }
         ), expanded = expandFeedLedger),
         bookshelf,
-        ScreenFragment.Folder("💬", "Ask my Ledger", action = { nav.navigate(R.id.action_to_ledger_chat) }),
+        ScreenFragment.Folder("💬", "Ask", action = { nav.navigate(R.id.action_to_ledger_chat) }),
         // Ledger Log — everything consumed: stars, annotations, read/watched/listened, books.
-        ScreenFragment.Folder("🕘", "Ledger Log", listOf(
+        ScreenFragment.Folder("🕘", "Log", listOf(
             "🗂  All" to { openHistory(null) },
             "⭐  Stars" to { openFeed("stars", null) },
             "🖍️  Annotations" to { openHistory(null) },
