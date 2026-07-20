@@ -1,3 +1,5 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24" android:tint="#000000">
-  <path android:fillColor="#000000" android:pathData="M3,17.25V21h3.75L17.81,9.94l-3.75,-3.75L3,17.25zM20.71,7.04c0.39,-0.39 0.39,-1.02 0,-1.41l-2.34,-2.34c-0.39,-0.39 -1.02,-0.39 -1.41,0l-1.83,1.83 3.75,3.75 1.83,-1.83z"/>
+  <!-- Text Notes: a document with lines of typed text — distinct from the pencil (Write,
+       ic_edit) and the pen nib (Notes, ic_pencil). -->
+  <path android:fillColor="#000000" android:pathData="M6,2h9l5,5v13a2,2 0 0,1 -2,2H6a2,2 0 0,1 -2,-2V4a2,2 0 0,1 2,-2zM14,3.5V8h4.5L14,3.5zM8,12h8v1.6H8V12zM8,15.4h8V17H8V15.4zM8,8.6h4v1.6H8V8.6z"/>
 </vector>
