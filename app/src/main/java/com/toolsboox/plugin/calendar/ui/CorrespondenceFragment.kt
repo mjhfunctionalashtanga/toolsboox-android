@@ -1038,14 +1038,150 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         dialog.window?.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
-    /** Pick a Pickings page → rendered to an image, attached with its provenance. (Next pass.) */
+    private data class PickPage(val date: java.time.LocalDate, val key: String, val name: String)
+
+    private fun dayFileDate(name: String): java.time.LocalDate? =
+        runCatching { java.time.LocalDate.parse(name.removePrefix("day-").removeSuffix("-v2.json")) }.getOrNull()
+
+    /** Pick a Pickings page → render it (strokes + dropped grams + quotes) to one image, attach it
+     *  with provenance. Scroll-safe list, reuses the same widening window as the Log picker. */
     private fun pickPickingForReply(onPicked: (String, Bitmap?, String) -> Unit) {
-        android.widget.Toast.makeText(requireContext(), "Reply with Picking — coming next", android.widget.Toast.LENGTH_SHORT).show()
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        val listCol = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = android.widget.ScrollView(ctx).apply {
+            addView(listCol)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (440 * dp).toInt())
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Reply with Picking").setView(scroll).setNegativeButton("Cancel", null).create()
+
+        listCol.addView(TextView(ctx).apply { text = "Loading pickings…"; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0) })
+        lifecycleScope.launch {
+            val pages = withContext(Dispatchers.IO) {
+                val out = mutableListOf<PickPage>()
+                val cal = java.io.File(documentsRoot(), "calendar")
+                if (cal.exists()) cal.walkTopDown()
+                    .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
+                    .sortedByDescending { it.name }.take(120)
+                    .forEach { f ->
+                        val d = dayFileDate(f.name) ?: return@forEach
+                        val day = runCatching { calendarDayService.load(f) }.getOrNull() ?: return@forEach
+                        val names = runCatching { com.toolsboox.plugin.calendar.ot.PickingsStore.list(ctx, d).associate { it.key to it.name } }.getOrNull() ?: emptyMap()
+                        val keys = (day.noteStrokes.keys + day.imageElements.map { it.page } + day.textElements.map { it.pageKey })
+                            .filter { com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(it) }.toSet()
+                        for (k in keys) {
+                            val hasContent = (day.noteStrokes[k]?.isNotEmpty() == true) ||
+                                day.imageElements.any { it.page == k } || day.textElements.any { it.pageKey == k && it.text.isNotBlank() }
+                            if (hasContent) out.add(PickPage(d, k, names[k] ?: "Pickings"))
+                        }
+                    }
+                out
+            }
+            if (!isAdded) return@launch
+            listCol.removeAllViews()
+            if (pages.isEmpty()) { listCol.addView(TextView(ctx).apply { text = "No pickings with content yet."; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0) }); return@launch }
+            for (p in pages) listCol.addView(TextView(ctx).apply {
+                text = "❝  ${p.name}      · ${p.date}"
+                textSize = 15f; setTextColor(0xFF000000.toInt()); setPadding(px(6), px(12), px(6), px(12))
+                setBackgroundResource(android.R.drawable.list_selector_background)
+                setOnClickListener {
+                    dialog.dismiss()
+                    lifecycleScope.launch {
+                        val bmp = withContext(Dispatchers.IO) {
+                            val day = runCatching { calendarDayService.load(documentsRoot(), p.date, null, java.util.Locale.getDefault()) }.getOrNull() ?: return@withContext null
+                            com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderPageToBitmap(
+                                day.noteStrokes[p.key] ?: emptyList(),
+                                day.imageElements.filter { it.page == p.key },
+                                day.textElements.filter { it.pageKey == p.key },
+                                targetWidth = 1000
+                            )
+                        }
+                        if (!isAdded) return@launch
+                        if (bmp == null) { android.widget.Toast.makeText(ctx, "That picking is empty", android.widget.Toast.LENGTH_SHORT).show(); return@launch }
+                        val cap = "❝ from your Picking “${p.name}” · ${p.date}"
+                        onPicked("Picking · ${p.name}", bmp, cap)
+                    }
+                }
+            })
+        }
+        dialog.show()
+        dialog.window?.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
-    /** Pick an existing Gram → attached with its provenance. (Next pass.) */
+    private data class GramPick(val date: java.time.LocalDate, val data: String, val label: String, val link: String)
+
+    /** Pick an existing Gram (a dropped image element, carrying its own provenance) → attach it
+     *  with that provenance. Scroll-safe thumbnail list over the recent window. */
     private fun pickGramForReply(onPicked: (String, Bitmap?, String) -> Unit) {
-        android.widget.Toast.makeText(requireContext(), "Reply with Gram — coming next", android.widget.Toast.LENGTH_SHORT).show()
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        val listCol = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = android.widget.ScrollView(ctx).apply {
+            addView(listCol)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (440 * dp).toInt())
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Reply with Gram").setView(scroll).setNegativeButton("Cancel", null).create()
+
+        listCol.addView(TextView(ctx).apply { text = "Loading grams…"; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0) })
+        lifecycleScope.launch {
+            val grams = withContext(Dispatchers.IO) {
+                val out = mutableListOf<GramPick>()
+                val cal = java.io.File(documentsRoot(), "calendar")
+                if (cal.exists()) cal.walkTopDown()
+                    .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
+                    .sortedByDescending { it.name }.take(120)
+                    .forEach { f ->
+                        val d = dayFileDate(f.name) ?: return@forEach
+                        val day = runCatching { calendarDayService.load(f) }.getOrNull() ?: return@forEach
+                        for (e in day.imageElements) {
+                            if (e.data.isBlank()) continue
+                            val label = e.sourceLabel.ifBlank { "Gram" }
+                            out.add(GramPick(d, e.data, label, e.sourceLink))
+                            if (out.size >= 200) return@withContext out
+                        }
+                    }
+                out
+            }
+            if (!isAdded) return@launch
+            listCol.removeAllViews()
+            if (grams.isEmpty()) { listCol.addView(TextView(ctx).apply { text = "No grams yet."; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0) }); return@launch }
+            for (g in grams) {
+                val thumb = runCatching {
+                    val bytes = android.util.Base64.decode(g.data, android.util.Base64.DEFAULT)
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                }.getOrNull() ?: continue
+                val row = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
+                    setPadding(px(6), px(8), px(6), px(8)); setBackgroundResource(android.R.drawable.list_selector_background)
+                }
+                row.addView(android.widget.ImageView(ctx).apply {
+                    setImageBitmap(thumb); adjustViewBounds = true
+                    layoutParams = LinearLayout.LayoutParams(px(72), px(72)).apply { marginEnd = px(10) }
+                    scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                })
+                row.addView(TextView(ctx).apply {
+                    text = "${g.label}\n· ${g.date}"; textSize = 14f; setTextColor(0xFF000000.toInt())
+                })
+                row.setOnClickListener {
+                    dialog.dismiss()
+                    val bmp = runCatching {
+                        val bytes = android.util.Base64.decode(g.data, android.util.Base64.DEFAULT)
+                        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    }.getOrNull()
+                    val cap = if (g.link.startsWith("http")) "🎴 gram · [${g.label}](${g.link})" else "🎴 gram · ${g.label}"
+                    onPicked("Gram · ${g.label.take(24)}", bmp, cap)
+                }
+                listCol.addView(row)
+            }
+        }
+        dialog.show()
+        dialog.window?.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
     override fun showLoading() {}

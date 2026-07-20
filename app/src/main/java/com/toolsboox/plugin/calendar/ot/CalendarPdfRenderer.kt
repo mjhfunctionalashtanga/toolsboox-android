@@ -231,6 +231,46 @@ object CalendarPdfRenderer {
     }
 
     /** Draw inserted images (inline base64 PNG) into their canvas-space rects. */
+    /**
+     * Render a whole page — its note strokes, dropped grams (image elements), and text — to a
+     * bitmap cropped to the content's bounds. Null when the page is empty. Same z-order as the
+     * live canvas (images under, strokes over, text on top). Used to attach a Picking/Note to a
+     * reply as one faithful image.
+     */
+    fun renderPageToBitmap(
+        noteStrokes: List<Stroke>,
+        imageElements: List<ImageElement> = emptyList(),
+        textElements: List<TextElement> = emptyList(),
+        targetWidth: Int = 1000
+    ): Bitmap? {
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        fun grow(x: Float, y: Float) { if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y }
+        for (s in noteStrokes) for (p in s.strokePoints) grow(p.x, p.y)
+        for (e in imageElements) { grow(e.x, e.y); grow(e.x + e.width, e.y + e.height) }
+        for (t in textElements) { grow(t.x, t.y); grow(t.x + 300f, t.y + 40f) }
+        if (minX > maxX || minY > maxY) return null   // empty page
+
+        val pad = 30f
+        val rect = RectF(minX - pad, minY - pad, maxX + pad, maxY + pad)
+        val rw = rect.width().coerceAtLeast(1f)
+        val scale = targetWidth / rw
+        val w = targetWidth.coerceIn(1, 2000)
+        val h = (rect.height() * scale).toInt().coerceIn(1, 3000)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        canvas.drawColor(Color.WHITE)
+        canvas.save()
+        canvas.scale(scale, scale)
+        canvas.translate(-rect.left, -rect.top)
+        drawImageElements(canvas, imageElements)
+        val paint = createStrokePaint()
+        for (s in noteStrokes) drawStroke(canvas, paint, s)
+        drawTextElements(canvas, textElements)
+        canvas.restore()
+        return bmp
+    }
+
     private fun drawImageElements(canvas: Canvas, imageElements: List<ImageElement>) {
         if (imageElements.isEmpty()) return
         val imgPaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }
