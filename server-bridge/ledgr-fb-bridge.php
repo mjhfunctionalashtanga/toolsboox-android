@@ -1633,17 +1633,11 @@ class Ledgr_FB_Bridge
             }
         }
 
-        $imageHtml = '';
-        $files     = $request->get_file_params();
-        if (isset($files['png'])) {
-            $err = $this->validateUpload($files['png'], ['image/png', 'image/jpeg', 'image/webp'], self::MAX_PNG_BYTES);
-            if (!is_wp_error($err)) {
-                $url = $this->sideloadToMedia($files['png']);
-                if ($url) {
-                    $imageHtml = '<p><img src="' . esc_url($url) . '" alt="Handwritten annotation" style="max-width:100%" /></p>';
-                }
-            }
-        }
+        // A reply carries the same media a gram can — ink, voice, video — but mounted small and
+        // taped, the way a clipping gets stuck into a notebook beside the words.
+        $files = $request->get_file_params();
+        $media = $this->ledgerMediaHtml($request, $files, 'Handwritten annotation', true);
+        $imageHtml = is_wp_error($media) ? '' : $media['html'];
 
         $message = trim($text);
         // Markdown replies (format=markdown) render a safe HTML subset; plain replies keep the
@@ -1672,7 +1666,12 @@ class Ledgr_FB_Bridge
             $attrs = [
                 'post_id'          => $feed->id,
                 'user_id'          => get_current_user_id(),
-                'message'          => $message ?: '[handwritten annotation]',
+                // The plain-text stand-in is what notification mail and previews show, so it
+                // should say which kind of wordless reply this was.
+                'message'          => $message ?: (
+                    !is_wp_error($media) && $media['video'] ? '[video gram]'
+                        : (!is_wp_error($media) && $media['audio'] ? '[audio gram]' : '[handwritten annotation]')
+                ),
                 'message_rendered' => $html,
                 'type'             => 'comment',
                 'status'           => 'published',
@@ -1924,6 +1923,19 @@ class Ledgr_FB_Bridge
             return null;
         };
 
+        // A reply can also be a voice or video gram. The client needs to know which, so it can
+        // draw a soundbox or a taped frame instead of trying to render the media as a picture.
+        $firstMedia = function ($html) {
+            foreach ([['video', '/<video[^>]+src=["\']([^"\']+)["\']/i'],
+                      ['video', '/<iframe[^>]+src=["\']([^"\']+)["\']/i'],
+                      ['audio', '/<audio[^>]+src=["\']([^"\']+)["\']/i']] as $probe) {
+                if (preg_match($probe[1], (string) $html, $m)) {
+                    return ['kind' => $probe[0], 'url' => $m[1]];
+                }
+            }
+            return null;
+        };
+
         $out = [];
         $post = null;   // the ORIGINAL post/card that was replied to (shown atop the in-app reader)
         try {
@@ -1952,6 +1964,7 @@ class Ledgr_FB_Bridge
                     $author = get_user_by('id', $c->created_by);
                     $body   = (string) ($c->description ?? '');
                     $img    = $firstImage($body);
+                    $av     = $firstMedia($body);
                     $out[]  = [
                         'id'         => (int) $c->id,
                         'author'     => $c->author_name ?: ($author ? $author->display_name : 'Unknown'),
@@ -1961,6 +1974,8 @@ class Ledgr_FB_Bridge
                         'mine'       => ((int) $c->created_by === $uid),
                         'has_image'  => $img !== null,
                         'image_url'  => $img,
+                        'media_kind' => $av ? $av['kind'] : '',
+                        'media_url'  => $av ? $av['url'] : '',
                     ];
                 }
             } else {
@@ -1987,6 +2002,7 @@ class Ledgr_FB_Bridge
                     $author = get_user_by('id', $c->user_id);
                     $body   = (string) ($c->message_rendered ?: $c->message);
                     $img    = $firstImage($body);
+                    $av     = $firstMedia($body);
                     $out[]  = [
                         'id'         => (int) $c->id,
                         'parent_id'  => (int) ($c->parent_id ?? 0),
@@ -1997,6 +2013,8 @@ class Ledgr_FB_Bridge
                         'mine'       => ((int) $c->user_id === $uid),
                         'has_image'  => $img !== null,
                         'image_url'  => $img,
+                        'media_kind' => $av ? $av['kind'] : '',
+                        'media_url'  => $av ? $av['url'] : '',
                     ];
                 }
             }
@@ -2227,45 +2245,14 @@ class Ledgr_FB_Bridge
         $imageUrl  = null;
         $audioUrl  = null;
 
-        if (isset($files['png'])) {
-            $err = $this->validateUpload($files['png'], ['image/png', 'image/jpeg', 'image/webp'], self::MAX_PNG_BYTES);
-            if (is_wp_error($err)) {
-                return $err;
-            }
-            $imageUrl = $this->sideloadToMedia($files['png']);
-            if ($imageUrl) {
-                $mediaHtml .= '<p><img src="' . esc_url($imageUrl) . '" alt="' . esc_attr($title ?: 'Handwritten post') . '" style="max-width:100%" /></p>';
-            }
+        $media = $this->ledgerMediaHtml($request, $files, $title);
+        if (is_wp_error($media)) {
+            return $media;
         }
-
-        if (isset($files['audio'])) {
-            $err = $this->validateUpload($files['audio'], ['audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/ogg', 'audio/wav', 'audio/webm'], self::MAX_AUDIO_BYTES);
-            if (!is_wp_error($err)) {
-                $audioUrl = $this->sideloadToMedia($files['audio']);
-                if ($audioUrl) {
-                    $mediaHtml .= '<p><audio controls src="' . esc_url($audioUrl) . '"></audio></p>';
-                }
-            }
-        }
-
-        // Video: short clips upload directly; real video passes video_url
-        // (Bunny Stream play/iframe URL) and embeds without touching WP media.
-        $videoUrl = esc_url_raw((string) $request->get_param('video_url'));
-
-        if (!$videoUrl && isset($files['video'])) {
-            $err = $this->validateUpload($files['video'], ['video/mp4', 'video/webm', 'video/quicktime'], self::MAX_VIDEO_BYTES);
-            if (!is_wp_error($err)) {
-                $videoUrl = $this->sideloadToMedia($files['video']);
-            }
-        }
-
-        if ($videoUrl) {
-            if (strpos($videoUrl, 'iframe') !== false || strpos($videoUrl, 'mediadelivery.net/embed') !== false) {
-                $mediaHtml .= '<p><iframe src="' . esc_url($videoUrl) . '" loading="lazy" style="width:100%;aspect-ratio:16/9;border:0" allow="autoplay;fullscreen" allowfullscreen></iframe></p>';
-            } else {
-                $mediaHtml .= '<p><video controls playsinline style="max-width:100%" src="' . esc_url($videoUrl) . '"></video></p>';
-            }
-        }
+        $mediaHtml .= $media['html'];
+        $imageUrl = $media['image'];
+        $audioUrl = $media['audio'];
+        $videoUrl = $media['video'];
 
         if (!$mediaHtml && !$text) {
             return new \WP_Error('ledgr_empty', 'A gram needs ink, voice, or text', ['status' => 400]);
@@ -2890,6 +2877,124 @@ class Ledgr_FB_Bridge
         }
 
         return $applied;
+    }
+
+    /**
+     * The media block for a Ledger post or comment — ink, voice, video — in one place, so a
+     * gram and a reply carry media the same way and there is a single thing to change.
+     *
+     * $mounted renders the small, taped treatment a reply wants: audio becomes a soundbox with
+     * a play mark rather than a bare browser bar, and video sits in a taped frame. Both are
+     * preload="none" and poster-backed, so a thread of replies costs nothing to scroll past —
+     * nothing loads, plays, or moves until a reader asks it to.
+     *
+     * Returns ['html' => string, 'image' => ?string, 'audio' => ?string, 'video' => ?string],
+     * or a WP_Error when a supplied still image is unusable (matching the gram route's
+     * strictness — a post whose picture silently vanished is worse than a refusal).
+     */
+    private function ledgerMediaHtml(\WP_REST_Request $request, array $files, $alt = '', $mounted = false)
+    {
+        $out = ['html' => '', 'image' => null, 'audio' => null, 'video' => null];
+
+        if (isset($files['png'])) {
+            $err = $this->validateUpload($files['png'], ['image/png', 'image/jpeg', 'image/webp'], self::MAX_PNG_BYTES);
+            if (is_wp_error($err)) {
+                return $err;
+            }
+            $out['image'] = $this->sideloadToMedia($files['png']);
+            if ($out['image']) {
+                $out['html'] .= '<p><img src="' . esc_url($out['image']) . '" alt="' . esc_attr($alt ?: 'Handwritten post')
+                    . '" style="max-width:100%" /></p>';
+            }
+        }
+
+        // The still face of an A/V gram, made on the device. Used as the video's poster so the
+        // clip shows its own first frame without fetching a byte of the clip itself.
+        $posterUrl = null;
+        if (isset($files['poster'])) {
+            $err = $this->validateUpload($files['poster'], ['image/png', 'image/jpeg', 'image/webp'], self::MAX_PNG_BYTES);
+            if (!is_wp_error($err)) {
+                $posterUrl = $this->sideloadToMedia($files['poster']);
+            }
+        }
+
+        if (isset($files['audio'])) {
+            $err = $this->validateUpload($files['audio'], ['audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/ogg', 'audio/wav', 'audio/webm'], self::MAX_AUDIO_BYTES);
+            if (!is_wp_error($err)) {
+                $out['audio'] = $this->sideloadToMedia($files['audio']);
+                if ($out['audio']) {
+                    $out['html'] .= $mounted
+                        ? $this->soundboxHtml($out['audio'], (string) $request->get_param('media_title'))
+                        : '<p><audio controls preload="none" src="' . esc_url($out['audio']) . '"></audio></p>';
+                }
+            }
+        }
+
+        // Short clips upload directly; real video passes video_url (a Bunny Stream play/iframe
+        // URL) and embeds without touching storage at all.
+        $videoUrl = esc_url_raw((string) $request->get_param('video_url'));
+
+        if (!$videoUrl && isset($files['video'])) {
+            $err = $this->validateUpload($files['video'], ['video/mp4', 'video/webm', 'video/quicktime'], self::MAX_VIDEO_BYTES);
+            if (!is_wp_error($err)) {
+                $videoUrl = $this->sideloadToMedia($files['video']);
+            }
+        }
+
+        if ($videoUrl) {
+            $out['video'] = $videoUrl;
+            $isEmbed = strpos($videoUrl, 'iframe') !== false || strpos($videoUrl, 'mediadelivery.net/embed') !== false;
+
+            if ($isEmbed) {
+                $frame = '<iframe src="' . esc_url($videoUrl) . '" loading="lazy" style="width:100%;aspect-ratio:16/9;border:0"'
+                    . ' allow="autoplay;fullscreen" allowfullscreen></iframe>';
+            } else {
+                $frame = '<video controls preload="none" playsinline style="display:block;width:100%'
+                    . ($mounted ? ';border:1px solid #111' : '') . '"'
+                    . ($posterUrl ? ' poster="' . esc_url($posterUrl) . '"' : '')
+                    . ' src="' . esc_url($videoUrl) . '"></video>';
+            }
+
+            $out['html'] .= $mounted ? $this->tapedHtml($frame) : '<p>' . $frame . '</p>';
+        }
+
+        return $out;
+    }
+
+    /**
+     * Audio in a reply: a small box with a play mark on it, rather than a bare browser bar
+     * sitting in the middle of a conversation.
+     */
+    private function soundboxHtml($url, $title = '')
+    {
+        $name = trim((string) $title);
+
+        return '<div class="ledgr-soundbox" style="display:inline-block;border:2px solid #111;background:#fff;'
+            . 'border-radius:12px;padding:8px 12px;margin:4px 0;max-width:100%">'
+            . '<div style="display:flex;align-items:center;gap:10px">'
+            . '<span aria-hidden="true" style="flex:0 0 auto;width:28px;height:28px;border:2px solid #111;'
+            . 'border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;'
+            . 'line-height:1">&#9654;</span>'
+            . '<audio controls preload="none" style="max-width:100%" src="' . esc_url($url) . '"></audio>'
+            . '</div>'
+            . ($name !== '' ? '<div style="font-size:12px;color:#555;margin-top:4px">' . esc_html($name) . '</div>' : '')
+            . '</div>';
+    }
+
+    /**
+     * The same photo-taped-into-a-scrapbook mount the device uses for shared ink (InkMount):
+     * a white mat, a hard rule, and two bits of tape at the top corners.
+     */
+    private function tapedHtml($inner)
+    {
+        $tape = 'position:absolute;top:-7px;width:44px;height:16px;background:#fff;border:1px solid #111';
+
+        return '<div class="ledgr-tape" style="position:relative;display:inline-block;margin:10px 0;'
+            . 'max-width:min(100%,420px);background:#fff;border:2px solid #111;padding:12px 10px 10px">'
+            . $inner
+            . '<span aria-hidden="true" style="' . $tape . ';left:6px;transform:rotate(-20deg)"></span>'
+            . '<span aria-hidden="true" style="' . $tape . ';right:6px;transform:rotate(20deg)"></span>'
+            . '</div>';
     }
 
     /**

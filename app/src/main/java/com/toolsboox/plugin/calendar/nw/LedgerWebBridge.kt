@@ -13,6 +13,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import timber.log.Timber
@@ -349,6 +350,11 @@ data class ThreadComment(
     val imageUrl: String?,
     val content: String = "",   // full message text (bridge ≥ this pass); excerpt fallback
     val parentId: Long = 0,     // >0 → this is a reply nested under comment parentId
+    // A reply can be a voice or video gram rather than a picture: "audio" / "video" / "" for
+    // neither. Kept separate from [hasImage] so the reader draws a soundbox or a taped frame
+    // instead of trying to render the media as an image. Older bridges omit both → "".
+    val mediaKind: String = "",
+    val mediaUrl: String = "",
 )
 
 /** The original post/card a thread hangs off — shown atop the in-app reader. */
@@ -527,7 +533,8 @@ object LedgerCorrespondence {
                             it.optString("created_at", ""), it.optBoolean("mine", false),
                             it.optBoolean("has_image", false),
                             it.optString("image_url", "").takeIf { s -> s.isNotBlank() && s != "null" },
-                            it.optString("content", ""), it.optLong("parent_id", 0)
+                            it.optString("content", ""), it.optLong("parent_id", 0),
+                            it.optString("media_kind", ""), it.optString("media_url", "")
                         )
                     }
                 ThreadBundle(post, comments)
@@ -575,17 +582,39 @@ object LedgerCorrespondence {
         } catch (e: Exception) { null }
     }
 
-    /** Post handwriting as your comment on a community thread. Call from Dispatchers.IO. */
-    fun postInkReply(context: Context, feedId: Long, png: ByteArray, parentId: Long = 0, caption: String = ""): String {
+    /**
+     * Post handwriting as your comment on a community thread. Call from Dispatchers.IO.
+     *
+     * [avFile] attaches a voice or video gram to the same reply: the server mounts it as a
+     * soundbox or a taped frame, and [posterPng] becomes the clip's poster so the reply shows the
+     * gram's own still face without fetching a byte of the clip. Handwriting and a recording can
+     * ride together — [png] is still the ink, so "here's a note, and here's me saying it" is one
+     * reply rather than two.
+     */
+    fun postInkReply(
+        context: Context, feedId: Long, png: ByteArray?, parentId: Long = 0, caption: String = "",
+        avFile: java.io.File? = null, avKind: String = "", avTitle: String = "",
+        posterPng: ByteArray? = null
+    ): String {
         val c = LedgerCommunityBridge.config(context)
         if (!c.ready) return "Community bridge not configured"
+        val isAv = avFile != null && avFile.exists() && (avKind == "audio" || avKind == "video")
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("feed_id", feedId.toString())
             .addFormDataPart("note_uuid", "inkreply-" + java.util.UUID.randomUUID().toString().lowercase())
             .apply { if (parentId > 0) addFormDataPart("parent_id", parentId.toString()) }
             // A provenance caption (markdown) rides alongside the image — "Reply with Log/Picking/Gram".
             .apply { if (caption.isNotBlank()) { addFormDataPart("text", caption); addFormDataPart("format", "markdown") } }
-            .addFormDataPart("png", "reply.png", png.toRequestBody("image/png".toMediaType()))
+            .apply { png?.let { addFormDataPart("png", "reply.png", it.toRequestBody("image/png".toMediaType())) } }
+            .apply {
+                if (isAv) {
+                    // The still is the clip's poster, not a second picture in the reply.
+                    posterPng?.let { addFormDataPart("poster", "poster.png", it.toRequestBody("image/png".toMediaType())) }
+                    if (avTitle.isNotBlank()) addFormDataPart("media_title", avTitle)
+                    val mime = avMime(avFile!!.name, avKind)
+                    addFormDataPart(avKind, avFile.name, avFile.asRequestBody(mime.toMediaType()))
+                }
+            }
             .build()
         return try {
             val req = Request.Builder()
@@ -606,6 +635,18 @@ object LedgerCorrespondence {
             "Network error"
         }
     }
+
+    /** Mime for an A/V gram, matching what the bridge's comment route will accept. */
+    private fun avMime(filename: String, kind: String): String =
+        when (filename.substringAfterLast('.', "").lowercase()) {
+            "m4a", "mp4" -> if (kind == "video") "video/mp4" else "audio/mp4"
+            "mp3" -> "audio/mpeg"
+            "ogg" -> "audio/ogg"
+            "wav" -> "audio/wav"
+            "webm" -> if (kind == "video") "video/webm" else "audio/webm"
+            "mov" -> "video/quicktime"
+            else -> if (kind == "video") "video/mp4" else "audio/mp4"
+        }
 
     /** Post a TEXT reply to a community post (optionally nested under [parentId]). Dispatchers.IO.
      *  [markdown] true → the bridge renders a safe markdown subset to HTML. */

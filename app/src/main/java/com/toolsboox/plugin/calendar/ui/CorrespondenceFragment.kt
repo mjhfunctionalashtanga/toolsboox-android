@@ -448,11 +448,51 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             }
 
             // Render one comment (indented when it's a nested reply), with its own actions.
+            /**
+             * A voice/video reply, mounted the way the web side mounts it: a bordered box with a
+             * play mark on it. Pressing it streams from the same URL the browser would use, so
+             * nothing is downloaded by merely scrolling a thread.
+             */
+            fun soundbox(c: com.toolsboox.plugin.calendar.nw.ThreadComment, leftPad: Int): View {
+                val isVideo = c.mediaKind == "video"
+                val box = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    setPadding(px(10), px(8), px(14), px(8))
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        setColor(0xFFFFFFFF.toInt()); setStroke(px(2), 0xFF111111.toInt()); cornerRadius = px(10).toFloat()
+                    }
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { topMargin = px(6); bottomMargin = px(2); leftMargin = leftPad }
+                }
+                box.addView(TextView(ctx).apply {
+                    text = "▶"; textSize = 16f; setTextColor(0xFF000000.toInt())
+                    setPadding(0, 0, px(10), 0)
+                })
+                box.addView(TextView(ctx).apply {
+                    text = if (isVideo) "Video gram" else "Voice gram"
+                    textSize = 14f; setTextColor(0xFF000000.toInt())
+                })
+                box.setOnClickListener {
+                    if (c.mediaUrl.isBlank()) {
+                        android.widget.Toast.makeText(ctx, "No media on this reply", android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        com.toolsboox.plugin.calendar.ot.AvPlayback.play(
+                            ctx, c.mediaKind, null, c.mediaUrl,
+                            (if (isVideo) "🎥 " else "🎤 ") + c.author, 0
+                        )
+                    }
+                }
+                return box
+            }
+
             fun renderComment(c: com.toolsboox.plugin.calendar.nw.ThreadComment, indent: Boolean) {
                 val leftPad = if (indent) px(22) else 0
                 col.addView(TextView(ctx).apply {
+                    val clip = when (c.mediaKind) { "audio" -> "   🎤"; "video" -> "   🎥"; else -> if (c.hasImage) "   📎" else "" }
                     text = (if (indent) "↳ " else "") + c.author + (if (c.mine) "  · you" else "") +
-                        "   ·   " + c.createdAt.take(16) + (if (c.hasImage) "   📎" else "")
+                        "   ·   " + c.createdAt.take(16) + clip
                     textSize = 12f; setTextColor(0xFF666666.toInt()); setPadding(leftPad, px(12), 0, px(1))
                 })
                 val body = c.content.ifBlank { c.excerpt }
@@ -460,7 +500,11 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     text = deHtml(body); textSize = 14f; setTextColor(0xFF000000.toInt())
                     setTextIsSelectable(true); setPadding(leftPad, 0, 0, 0)
                 })
-                c.imageUrl?.let { url ->
+                // A voice or video reply reads as a small box you press, not a media player
+                // sitting open in the middle of a conversation. Nothing loads until it's pressed.
+                if (c.mediaKind == "audio" || c.mediaKind == "video") {
+                    col.addView(soundbox(c, leftPad))
+                } else c.imageUrl?.let { url ->
                     val img = android.widget.ImageView(ctx).apply {
                         adjustViewBounds = true; setBackgroundColor(0xFFFFFFFF.toInt())
                         layoutParams = LinearLayout.LayoutParams(px(180), LinearLayout.LayoutParams.WRAP_CONTENT)
@@ -612,6 +656,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         // "Reply with Gram / Picking / Log": an existing object attached to this reply, KEEPING its
         // provenance, combined with the small handwriting box as one reply.
         var attachedBitmap: Bitmap? = null   // picking/gram image, stacked above the ink
+        // An attached voice/video gram: the bitmap above is its poster, this is the clip itself.
+        var attachedAvFile: java.io.File? = null
+        var attachedAvKind: String = ""
+        var attachedAvTitle: String = ""
         var attachedCaption = ""             // markdown provenance/quote that rides with the reply
         // Rhizome loop: also save this reply into your Ledger (a Pickings gram whose provenance
         // points BACK at this thread), so a comment becomes a Ledger object you can rework.
@@ -702,6 +750,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             // recycled bitmap is a hard crash.
             attachPreview.removeAllViews(); attachPreview.visibility = View.GONE
             attachedBitmap?.recycle(); attachedBitmap = null; attachedCaption = ""
+            attachedAvFile = null; attachedAvKind = ""; attachedAvTitle = ""
         }
         fun setAttachment(label: String, bmp: Bitmap?, caption: String) {
             attachPreview.removeAllViews()
@@ -733,6 +782,12 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         withRow.addView(withBtn("🎴 with Gram") { pickGramForReply { l, b, c -> setAttachment(l, b, c) } })
         withRow.addView(withBtn("❝ with Picking") { pickPickingForReply { l, b, c -> setAttachment(l, b, c) } })
         withRow.addView(withBtn("🕘 with Log") { pickLogForReply { l, c -> setAttachment(l, null, c) } })
+        withRow.addView(withBtn("🎤 with Voice") {
+            pickAvGramForReply { label, poster, file, kind, title ->
+                setAttachment(label, poster, "")
+                attachedAvFile = file; attachedAvKind = kind; attachedAvTitle = title
+            }
+        })
 
         // Save-to-Ledger toggle: the reply also lands as a Pickings gram citing this thread.
         val saveToggle = TextView(ctx).apply {
@@ -806,7 +861,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 }
                 lifecycleScope.launch {
                     val status = withContext(Dispatchers.IO) {
-                        if (png != null) LedgerCorrespondence.postInkReply(ctx, feedId, png, parentId, text)
+                        if (attachedAvFile != null) LedgerCorrespondence.postInkReply(
+                            ctx, feedId, null, parentId, text,
+                            attachedAvFile, attachedAvKind, attachedAvTitle, png)
+                        else if (png != null) LedgerCorrespondence.postInkReply(ctx, feedId, png, parentId, text)
                         else LedgerCorrespondence.postTextReply(ctx, feedId, text, parentId)
                     }
                     android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
@@ -826,11 +884,24 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     val baos = ByteArrayOutputStream(); it.compress(Bitmap.CompressFormat.PNG, 100, baos); baos.toByteArray()
                 }
                 val cap = attachedCaption
+                // With a clip attached, the ink stands on its own as the picture and the poster
+                // stays the clip's own face — stacking them would make a poster of your notes.
+                val avFile = attachedAvFile
+                val avKind = attachedAvKind
+                val avTitle = attachedAvTitle
+                val inkOnlyPng = if (avFile == null) null else inkBmp?.let {
+                    val baos = ByteArrayOutputStream(); it.compress(Bitmap.CompressFormat.PNG, 100, baos); baos.toByteArray()
+                }
+                val posterPng = if (avFile == null) null else attachedBitmap?.let {
+                    val baos = ByteArrayOutputStream(); it.compress(Bitmap.CompressFormat.PNG, 100, baos); baos.toByteArray()
+                }
                 val alsoSave = saveToLedger && combined != null
                 val saveBmp = if (alsoSave) combined!!.copy(combined.config ?: Bitmap.Config.ARGB_8888, false) else null
                 lifecycleScope.launch {
                     val status = withContext(Dispatchers.IO) {
-                        if (png != null) LedgerCorrespondence.postInkReply(ctx, feedId, png, parentId, cap)
+                        if (avFile != null) LedgerCorrespondence.postInkReply(
+                            ctx, feedId, inkOnlyPng, parentId, cap, avFile, avKind, avTitle, posterPng)
+                        else if (png != null) LedgerCorrespondence.postInkReply(ctx, feedId, png, parentId, cap)
                         else LedgerCorrespondence.postTextReply(ctx, feedId, cap, parentId)
                     }
                     // Rhizome: the reply also becomes a Pickings gram whose provenance points back here.
@@ -1315,6 +1386,121 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 listCol.addView(row)
             }
         }
+        dialog.show()
+        dialog.window?.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    /** One recording available to attach to a reply. */
+    private data class AvPick(
+        val date: java.time.LocalDate,
+        val file: java.io.File,
+        val kind: String,
+        val title: String,
+        val durationMs: Int
+    )
+
+    /**
+     * Attach a voice or video gram you've already made to a reply.
+     *
+     * Reads the recordings off recent days rather than offering to record a new one here: the
+     * capture surfaces already exist, and a reply is for sending something, not making it. The
+     * poster comes back with it so the composer can show what's attached, and so the posted reply
+     * carries the clip's own still face.
+     */
+    private fun pickAvGramForReply(
+        onPicked: (String, Bitmap?, java.io.File, String, String) -> Unit
+    ) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        val listCol = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = android.widget.ScrollView(ctx).apply {
+            addView(listCol)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (440 * dp).toInt())
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Reply with Voice or Video").setView(scroll).setNegativeButton("Cancel", null).create()
+
+        listCol.addView(TextView(ctx).apply {
+            text = "Looking for recordings…"; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0)
+        })
+
+        lifecycleScope.launch {
+            val picks = withContext(Dispatchers.IO) {
+                val out = mutableListOf<AvPick>()
+                val dir = attachmentsDir()
+                val cal = java.io.File(documentsRoot(), "calendar")
+                if (cal.exists()) cal.walkTopDown()
+                    .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
+                    .sortedByDescending { it.name }.take(120)
+                    .forEach { f ->
+                        val d = dayFileDate(f.name) ?: return@forEach
+                        val day = runCatching { calendarDayService.load(f) }.getOrNull() ?: return@forEach
+                        for (a in day.avGrams) {
+                            val kind = when (a.kind) {
+                                com.toolsboox.da.Attachment.Kind.AUDIO -> "audio"
+                                com.toolsboox.da.Attachment.Kind.VIDEO -> "video"
+                                else -> continue
+                            }
+                            val file = java.io.File(dir, a.filename)
+                            if (!file.exists()) continue
+                            // Prefer the title the gram was given on its picking card.
+                            val titled = day.imageElements.firstOrNull { it.attachmentId == a.id }
+                            out.add(AvPick(
+                                d, file, kind,
+                                titled?.mediaTitle?.ifBlank { null } ?: a.filename,
+                                titled?.durationMs?.takeIf { it > 0 }
+                                    ?: a.duration?.let { (it * 1000).toInt() } ?: 0
+                            ))
+                            if (out.size >= 80) return@withContext out
+                        }
+                    }
+                out
+            }
+
+            if (!isAdded) return@launch
+            listCol.removeAllViews()
+            if (picks.isEmpty()) {
+                listCol.addView(TextView(ctx).apply {
+                    text = "No recordings yet.\nMake one from the day page, then it'll show up here."
+                    setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0)
+                })
+                return@launch
+            }
+
+            for (p in picks) {
+                val row = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
+                    setPadding(px(6), px(10), px(6), px(10))
+                    setBackgroundResource(android.R.drawable.list_selector_background)
+                }
+                row.addView(TextView(ctx).apply {
+                    text = if (p.kind == "video") "🎥" else "🎤"; textSize = 22f
+                    setPadding(0, 0, px(12), 0)
+                })
+                val clock = com.toolsboox.plugin.calendar.ot.AvPoster.clock(p.durationMs)
+                row.addView(TextView(ctx).apply {
+                    text = p.title.take(40) + "\n· " + p.date + (if (clock.isNotBlank()) "   ·   $clock" else "")
+                    textSize = 14f; setTextColor(0xFF000000.toInt())
+                })
+                row.setOnClickListener {
+                    dialog.dismiss()
+                    lifecycleScope.launch {
+                        val poster = withContext(Dispatchers.IO) {
+                            val kind = if (p.kind == "video") com.toolsboox.da.Attachment.Kind.VIDEO
+                                else com.toolsboox.da.Attachment.Kind.AUDIO
+                            com.toolsboox.plugin.calendar.ot.AvPoster.poster(p.file, kind, p.durationMs, p.title)
+                        }
+                        if (!isAdded) { poster?.recycle(); return@launch }
+                        val label = (if (p.kind == "video") "Video · " else "Voice · ") + p.title.take(24)
+                        onPicked(label, poster, p.file, p.kind, p.title)
+                    }
+                }
+                listCol.addView(row)
+            }
+        }
+
         dialog.show()
         dialog.window?.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
     }
