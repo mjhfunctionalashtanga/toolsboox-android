@@ -105,6 +105,13 @@ class Ledgr_FB_Bridge
             'permission_callback' => [$this, 'canWrite'],
         ]);
 
+        // Due-dated cards across ALL boards, filtered + bucketed server-side (the timeline feed).
+        register_rest_route(self::NS, '/due-cards', [
+            'methods'             => 'GET',
+            'callback'            => [$this, 'dueCards'],
+            'permission_callback' => [$this, 'canWrite'],
+        ]);
+
         // Tactile move: drag a card to a stage and it lands on the real board.
         register_rest_route(self::NS, '/board/(?P<board_id>\d+)/task/(?P<task_id>\d+)/move', [
             'methods'             => 'POST',
@@ -491,6 +498,69 @@ class Ledgr_FB_Bridge
         }
 
         return rest_ensure_response($out);
+    }
+
+    /**
+     * GET /ledgr/v1/due-cards?limit=200
+     * Every card with a due date, across all boards, filtered + bucketed (todo|doing|done)
+     * server-side — so a client can surface dated cards in its timeline without pulling each
+     * board's whole compact. Bucket = the card's stage position within its board (first→todo,
+     * last→done, else→doing).
+     */
+    public function dueCards(\WP_REST_Request $request)
+    {
+        if (!class_exists('\FluentBoards\App\Models\Task')) {
+            return new \WP_Error('ledgr_no_boards', 'FluentBoards is not active', ['status' => 501]);
+        }
+        $limit = min(500, max(1, (int) ($request->get_param('limit') ?: 200)));
+
+        $tasks = \FluentBoards\App\Models\Task::whereNotNull('due_at')
+            ->whereNull('archived_at')
+            ->whereNull('parent_id')
+            ->orderBy('due_at', 'asc')
+            ->limit($limit)
+            ->get(['id', 'title', 'board_id', 'stage_id', 'due_at', 'settings', 'source', 'comments_count']);
+
+        if ($tasks->isEmpty()) {
+            return rest_ensure_response(['cards' => []]);
+        }
+
+        $boardIds = $tasks->pluck('board_id')->unique()->values()->all();
+
+        // Board titles (id → title).
+        $boardTitles = [];
+        foreach (\FluentBoards\App\Models\Board::whereIn('id', $boardIds)->get(['id', 'title']) as $b) {
+            $boardTitles[(int) $b->id] = $b->title;
+        }
+
+        // Per-board ordered stages → (stage_id → bucket) map.
+        $bucketOf = [];   // stage_id → 'todo'|'doing'|'done'
+        foreach ($boardIds as $bid) {
+            $stages = \FluentBoards\App\Models\Stage::where('board_id', $bid)
+                ->whereNull('archived_at')->orderBy('position', 'asc')->get(['id']);
+            $n = $stages->count();
+            foreach ($stages as $i => $s) {
+                $bucketOf[(int) $s->id] = ($i === 0) ? 'todo' : (($i === $n - 1) ? 'done' : 'doing');
+            }
+        }
+
+        $cards = [];
+        foreach ($tasks as $t) {
+            $settings = $t->settings;
+            $cards[] = [
+                'id'             => (int) $t->id,
+                'title'          => $t->title,
+                'board_id'       => (int) $t->board_id,
+                'board'          => $boardTitles[(int) $t->board_id] ?? '',
+                'bucket'         => $bucketOf[(int) $t->stage_id] ?? 'doing',
+                'due_at'         => $t->due_at,
+                'cover_url'      => isset($settings['cover']['backgroundImage']) ? $settings['cover']['backgroundImage'] : null,
+                'comments_count' => (int) ($t->comments_count ?? 0),
+                'is_ledgr'       => $t->source === self::SOURCE,
+            ];
+        }
+
+        return rest_ensure_response(['cards' => $cards]);
     }
 
     /* ---------------------------------------------------------------

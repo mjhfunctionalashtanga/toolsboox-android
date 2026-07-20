@@ -662,6 +662,19 @@ data class SiteTask(
 /** A whole board: its columns and its cards. */
 data class SiteBoardCompact(val stages: List<SiteStage>, val tasks: List<SiteTask>)
 
+/** A due-dated card from any board, bucketed to todo|doing|done — the timeline feed row. */
+data class DueCard(
+    val id: Long,
+    val title: String,
+    val boardId: Int,
+    val board: String,
+    val bucket: String,
+    val dueAt: String?,
+    val coverUrl: String?,
+    val commentCount: Int,
+    val isLedgr: Boolean,
+)
+
 /** Where a card came from (the rhizome edge home). */
 data class Provenance(val label: String, val url: String?)
 
@@ -741,6 +754,36 @@ object LedgerBoards {
             }
         } catch (e: Exception) {
             Timber.w(e, "boards list fetch failed")
+            emptyList()
+        }
+    }
+
+    /** Every due-dated card across all boards, bucketed server-side — the timeline feed.
+     *  One call, server-filtered (won't pull big boards' full compacts). Dispatchers.IO. */
+    fun dueCards(context: Context, limit: Int = 200): List<DueCard> {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank() || c.user.isBlank() || c.pass.isBlank()) return emptyList()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/due-cards?limit=$limit")
+                .header("Authorization", auth(c))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val arr = JSONObject(resp.body?.string() ?: return emptyList()).optJSONArray("cards") ?: return emptyList()
+                (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+                    DueCard(
+                        it.optLong("id", 0), it.optString("title", ""),
+                        it.optInt("board_id", 0), it.optString("board", ""),
+                        it.optString("bucket", "doing"),
+                        it.optString("due_at", "").takeIf { s -> s.isNotBlank() && s != "null" },
+                        it.optString("cover_url", "").takeIf { s -> s.isNotBlank() && s != "null" },
+                        it.optInt("comments_count", 0), it.optBoolean("is_ledgr", false)
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "due-cards fetch failed")
             emptyList()
         }
     }

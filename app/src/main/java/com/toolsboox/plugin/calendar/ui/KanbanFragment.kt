@@ -277,30 +277,14 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
         val ctx = requireContext()
         lifecycleScope.launch {
             val cards = withContext(Dispatchers.IO) {
-                if (!com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).ready) return@withContext emptyList()
-                val out = mutableListOf<Triple<String, com.toolsboox.plugin.calendar.nw.SiteTask, String>>()  // column, card, boardTitle
-                runCatching {
-                    for (b in com.toolsboox.plugin.calendar.nw.LedgerBoards.boards(ctx)) {
-                        if (out.size >= 60) break
-                        val compact = com.toolsboox.plugin.calendar.nw.LedgerBoards.compactBoard(ctx, b.id) ?: continue
-                        val ordered = compact.stages.sortedBy { it.position }
-                        val lastId = ordered.lastOrNull()?.id
-                        val firstId = ordered.firstOrNull()?.id
-                        for (t in compact.tasks) {
-                            if (t.dueAt.isNullOrBlank()) continue   // only DATED cards belong in the timeline
-                            val col = when (t.stageId) { lastId -> "done"; firstId -> "todo"; else -> "doing" }
-                            out += Triple(col, t, b.title)
-                            if (out.size >= 60) break
-                        }
-                    }
-                }
-                out
+                if (!com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).ready) emptyList()
+                else com.toolsboox.plugin.calendar.nw.LedgerBoards.dueCards(ctx)   // server-filtered + bucketed
             }
             if (!isAdded || cards.isEmpty()) return@launch
-            fun place(col: String, container: LinearLayout, head: TextView, title: String) {
-                val mine = cards.filter { it.first == col }
+            fun place(bucket: String, container: LinearLayout, head: TextView, title: String) {
+                val mine = cards.filter { it.bucket == bucket }
                 if (mine.isEmpty()) return
-                for ((_, t, boardTitle) in mine) container.addView(siteCardView(t, boardTitle))
+                for (c in mine) container.addView(siteCardView(c))
                 head.text = "$title · ${(head.text.toString().substringAfterLast("· ").trim().toIntOrNull() ?: 0) + mine.size}"
             }
             place("todo", binding.colTodoCards, binding.colTodoHead, "TO DO")
@@ -310,7 +294,7 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
     }
 
     /** A read-only Site card in a Local column: 🌐 tag + due chip; tap opens Site Boards. */
-    private fun siteCardView(t: com.toolsboox.plugin.calendar.nw.SiteTask, boardTitle: String): View {
+    private fun siteCardView(c: com.toolsboox.plugin.calendar.nw.DueCard): View {
         val ctx = requireContext()
         val dp = resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
@@ -320,11 +304,14 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 .apply { setMargins(0, 0, 0, px(8)) }
             addView(TextView(ctx).apply {
-                text = "🌐  ${t.title}"; textSize = 13f; setTextColor(0xFF000000.toInt())
+                text = "🌐  ${c.title}"; textSize = 13f; setTextColor(0xFF000000.toInt())
             })
             addView(TextView(ctx).apply {
-                text = listOfNotNull(t.dueAt?.take(10)?.let { "📅 $it" }, boardTitle.ifBlank { null })
-                    .joinToString("   ·   ")
+                text = listOfNotNull(
+                    c.dueAt?.take(10)?.let { "📅 $it" },
+                    c.board.ifBlank { null },
+                    c.commentCount.takeIf { it > 0 }?.let { "💬 $it" }
+                ).joinToString("   ·   ")
                 textSize = 11f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(3), 0, 0)
             })
             setOnClickListener { NavHostFragment.findNavController(this@KanbanFragment).navigate(com.toolsboox.R.id.action_to_site_boards) }
