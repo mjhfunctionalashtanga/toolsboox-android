@@ -118,8 +118,12 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                                 a: androidx.recyclerview.widget.RecyclerView.ViewHolder,
                                 b: androidx.recyclerview.widget.RecyclerView.ViewHolder) = false
             override fun getSwipeDirs(rv: androidx.recyclerview.widget.RecyclerView,
-                                      vh: androidx.recyclerview.widget.RecyclerView.ViewHolder): Int =
-                if (adapter.selecting) 0 else super.getSwipeDirs(rv, vh)
+                                      vh: androidx.recyclerview.widget.RecyclerView.ViewHolder): Int {
+                if (adapter.selecting) return 0
+                val item = adapter.currentItems().getOrNull(vh.adapterPosition)
+                if (item != null && adapter.isReadOnly(item.id)) return 0   // read-only site cards aren't deletable
+                return super.getSwipeDirs(rv, vh)
+            }
             override fun onSwiped(vh: androidx.recyclerview.widget.RecyclerView.ViewHolder, dir: Int) {
                 val pos = vh.adapterPosition
                 val item = adapter.currentItems().getOrNull(pos) ?: return
@@ -248,11 +252,44 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 compareBy({ it.kind != LedgerItem.Kind.TASK }, { it.kind == LedgerItem.Kind.TASK && it.done }, { it.top })
             )
             adapter = LedgerItemAdapter(
-                items, strokes, ::persist, ::onEnterSelection, ::updateSelectionBar, ::assign
-            ) { id -> contactsById[id] }
+                items, strokes, ::persist, ::onEnterSelection, ::updateSelectionBar, ::assign,
+                { id -> contactsById[id] },
+                onReadOnlyTap = { findNavController().navigate(R.id.action_to_site_boards) }
+            )
             binding.itemsRecycler.adapter = adapter
             attachSwipeToDelete()
             binding.emptyText.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
+            mergeSiteDueCards(items)
+        }
+    }
+
+    /** Fold DUE-DATED Site cards whose due date lands in the viewed period into the list, read-only
+     *  (same opt-in as the kanban: pref ledger_kanban/include_site). Local shows first; this
+     *  streams in and fails silently when the bridge is off. */
+    private fun mergeSiteDueCards(localItems: List<LedgerItem>) {
+        val ctx = requireContext()
+        if (!ctx.getSharedPreferences("ledger_kanban", android.content.Context.MODE_PRIVATE)
+                .getBoolean("include_site", false)) return
+        val (start, end) = periodRange(navPeriod, anchor)
+        lifecycleScope.launch {
+            val cards = withContext(Dispatchers.IO) {
+                if (!com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).ready) emptyList()
+                else com.toolsboox.plugin.calendar.nw.LedgerBoards.dueCards(ctx)
+            }.filter { c ->
+                val d = c.dueAt?.take(10)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+                d != null && !d.isBefore(start) && !d.isAfter(end)
+            }
+            if (!isAdded || cards.isEmpty()) return@launch
+            val synthetic = cards.map { c ->
+                LedgerItem(
+                    id = "sitecard-${c.id}", kind = LedgerItem.Kind.TASK,
+                    text = "${c.title}   ·   ${c.board}" + (c.dueAt?.take(10)?.let { "   ·   📅 $it" } ?: ""),
+                    date = java.util.Date(), stage = c.bucket, top = Float.MAX_VALUE
+                )
+            }
+            adapter.readOnlyIds = synthetic.map { it.id }.toSet()
+            adapter.submit(localItems + synthetic)
+            binding.emptyText.visibility = View.GONE
         }
     }
 

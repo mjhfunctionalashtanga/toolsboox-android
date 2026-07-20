@@ -29,8 +29,14 @@ class LedgerItemAdapter(
     private val onEnterSelection: () -> Unit,
     private val onSelectionChanged: () -> Unit,
     private val onAssign: (LedgerItem) -> Unit = {},
-    private val resolveContact: (String) -> Contact? = { null }
+    private val resolveContact: (String) -> Contact? = { null },
+    private val onReadOnlyTap: (LedgerItem) -> Unit = {}
 ) : RecyclerView.Adapter<LedgerItemAdapter.Holder>() {
+
+    /** Ids of read-only rows (dated Site cards folded into the timeline): inert to
+     *  edit/select/swipe/delete; tapping one opens Site Boards. */
+    var readOnlyIds: Set<String> = emptySet()
+    fun isReadOnly(id: String) = id in readOnlyIds
 
     /** Bulk-select state: long-press a row to enter, tap rows to toggle, then Delete. */
     var selecting = false
@@ -51,8 +57,9 @@ class LedgerItemAdapter(
     /** Select (or, if already all-selected, clear) every shown item — the "Select all" toggle. */
     fun selectAll() {
         if (!selecting) { selecting = true; onEnterSelection() }
-        if (selectedIds.size == items.size) selectedIds.clear()
-        else { selectedIds.clear(); items.forEach { selectedIds.add(it.id) } }
+        val selectable = items.filterNot { it.id in readOnlyIds }   // read-only site cards never select
+        if (selectedIds.size == selectable.size) selectedIds.clear()
+        else { selectedIds.clear(); selectable.forEach { selectedIds.add(it.id) } }
         notifyDataSetChanged(); onSelectionChanged()
     }
     fun clearSelection() {
@@ -81,6 +88,24 @@ class LedgerItemAdapter(
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val e = items[position]
         val isTask = e.kind == LedgerItem.Kind.TASK
+
+        // Read-only Site card folded into the timeline: no checkbox mutation, no edit/assign
+        // buttons, no selection — a faint-blue row whose tap opens Site Boards.
+        if (e.id in readOnlyIds) {
+            holder.lead.textSize = 16f
+            holder.lead.text = "🌐"
+            holder.lead.setOnClickListener(null)
+            holder.toggle.visibility = View.GONE
+            holder.assignee.visibility = View.GONE
+            holder.ink.visibility = View.GONE
+            holder.text.visibility = View.VISIBLE
+            holder.text.text = e.text
+            holder.text.paintFlags = holder.text.paintFlags and Paint.STRIKE_THRU_TEXT_FLAG.inv()
+            holder.itemView.setBackgroundColor(0xFFEFF4F7.toInt())
+            holder.itemView.setOnClickListener { onReadOnlyTap(e) }
+            holder.itemView.setOnLongClickListener(null)
+            return
+        }
 
         // In selection mode the WHOLE row is one big checkbox: a tap anywhere toggles it. The
         // lead glyph is enlarged so the checkbox is easy to see and hit (not a tiny square).
