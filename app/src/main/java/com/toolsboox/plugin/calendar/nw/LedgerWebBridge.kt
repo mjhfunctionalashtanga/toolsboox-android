@@ -301,6 +301,12 @@ object LedgerCommunityBridge {
     }
 }
 
+/** One of your neighbouring posts in a space (the gram rhizome). */
+data class RelatedPost(val id: Long, val title: String, val url: String?, val reason: String)
+
+/** A gram/post's provenance + neighbours. */
+data class CommunityRelated(val provenance: Provenance?, val related: List<RelatedPost>)
+
 /** One reply in the correspondence inbox (community comment / board-card comment). */
 data class LedgerReply(
     val id: String,
@@ -311,6 +317,7 @@ data class LedgerReply(
     val excerpt: String,
     val createdAt: String,
     val threadUrl: String = "",
+    val public: Boolean = true,
 )
 
 /** One post ("cute card") in a community space — repliable in the Correspondence view. */
@@ -324,6 +331,18 @@ data class LedgerPost(
     val url: String,
     val reactionsCount: Int = 0,
     val liked: Boolean = false,
+    val public: Boolean = true,
+)
+
+/** One comment in a thread — for reading the whole exchange in-app. */
+data class ThreadComment(
+    val id: Long,
+    val author: String,
+    val excerpt: String,
+    val createdAt: String,
+    val mine: Boolean,
+    val hasImage: Boolean,
+    val imageUrl: String?,
 )
 
 /** Correspondence fetch + ink reply — the Boox half of the Correspondence page. */
@@ -356,7 +375,7 @@ object LedgerCorrespondence {
                         it.optString("id", ""), it.optString("source", "community"),
                         it.optString("thread", ""), it.optLong("thread_id", 0),
                         it.optString("author", "?"), excerpt, it.optString("created_at", ""),
-                        it.optString("thread_url", "")
+                        it.optString("thread_url", ""), it.optBoolean("public", true)
                     )
                 }
             }
@@ -389,6 +408,7 @@ object LedgerCorrespondence {
                         it.optString("url", ""),
                         it.optInt("reactions_count", 0),
                         it.optBoolean("liked", false),
+                        it.optBoolean("public", true),
                     )
                 }
             }
@@ -420,6 +440,99 @@ object LedgerCorrespondence {
             Timber.w(e, "react failed")
             null
         }
+    }
+
+    /** A gram/post's provenance + your neighbouring posts (the "▸ related" strip). Null on failure. */
+    fun communityRelated(context: Context, feedId: Long): CommunityRelated? {
+        val c = LedgerCommunityBridge.config(context)
+        if (!c.ready) return null
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/community/related?feed_id=$feedId")
+                .header("Authorization", Credentials.basic(c.user, c.pass))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val o = JSONObject(resp.body?.string() ?: return null)
+                val prov = o.optJSONObject("provenance")?.let {
+                    Provenance(it.optString("label", ""), it.optString("url", "").takeIf { s -> s.isNotBlank() && s != "null" })
+                }
+                val arr = o.optJSONArray("related")
+                val related = if (arr == null) emptyList() else
+                    (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+                        RelatedPost(it.optLong("id", 0), it.optString("title", ""),
+                            it.optString("url", "").takeIf { s -> s.isNotBlank() && s != "null" }, it.optString("reason", ""))
+                    }
+                CommunityRelated(prov, related)
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "community related failed")
+            null
+        }
+    }
+
+    /** Every comment on a post/card, oldest-first — to read the exchange in-app. Dispatchers.IO. */
+    fun threadComments(context: Context, source: String, threadId: Long): List<ThreadComment> {
+        val c = LedgerCommunityBridge.config(context)
+        if (!c.ready) return emptyList()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/thread?source=$source&id=$threadId")
+                .header("Authorization", Credentials.basic(c.user, c.pass))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val arr = JSONObject(resp.body?.string() ?: return emptyList()).optJSONArray("items") ?: return emptyList()
+                (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+                    ThreadComment(
+                        it.optLong("id", 0), it.optString("author", "?"), it.optString("excerpt", ""),
+                        it.optString("created_at", ""), it.optBoolean("mine", false),
+                        it.optBoolean("has_image", false),
+                        it.optString("image_url", "").takeIf { s -> s.isNotBlank() && s != "null" }
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "thread fetch failed")
+            emptyList()
+        }
+    }
+
+    /** Delete a comment/upload from a thread — your own only (server-enforced). True on success. */
+    fun deleteThreadComment(context: Context, source: String, commentId: Long): Boolean {
+        val c = LedgerCommunityBridge.config(context)
+        if (!c.ready) return false
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("source", source)
+            .addFormDataPart("comment_id", commentId.toString())
+            .build()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/thread/delete")
+                .post(body)
+                .header("Authorization", Credentials.basic(c.user, c.pass))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                resp.isSuccessful && (resp.body?.string() ?: "").contains("deleted")
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "thread comment delete failed")
+            false
+        }
+    }
+
+    /** Fetch a thread image (a handwritten reply) to a bitmap. Null on failure. Dispatchers.IO. */
+    fun loadImage(context: Context, url: String): android.graphics.Bitmap? {
+        val c = LedgerCommunityBridge.config(context)
+        return try {
+            val req = Request.Builder().url(url)
+                .apply { if (c.ready) header("Authorization", Credentials.basic(c.user, c.pass)) }.build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val bytes = resp.body?.bytes() ?: return null
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }
+        } catch (e: Exception) { null }
     }
 
     /** Post handwriting as your comment on a community thread. Call from Dispatchers.IO. */
@@ -475,10 +588,20 @@ data class SiteTask(
     val dueAt: String?,
     val coverUrl: String?,
     val isLedgr: Boolean,
+    val commentCount: Int = 0,
 )
 
 /** A whole board: its columns and its cards. */
 data class SiteBoardCompact(val stages: List<SiteStage>, val tasks: List<SiteTask>)
+
+/** Where a card came from (the rhizome edge home). */
+data class Provenance(val label: String, val url: String?)
+
+/** Another card tied to this one (currently: same contact). */
+data class RelatedCard(val boardId: Int, val board: String, val taskId: Long, val title: String, val reason: String)
+
+/** A card's provenance + its neighbours — the "▸ related" strip. */
+data class RelatedResult(val provenance: Provenance?, val related: List<RelatedCard>)
 
 /** A person on a card. */
 data class SiteAssignee(val id: Int, val name: String, val email: String, val avatar: String?)
@@ -583,6 +706,7 @@ object LedgerBoards {
                             it.optString("due_at", "").takeIf { s -> s.isNotBlank() && s != "null" },
                             it.optString("cover_url", "").takeIf { s -> s.isNotBlank() && s != "null" },
                             it.optBoolean("is_ledgr", false),
+                            it.optInt("comments_count", 0),
                         )
                     }.sortedBy { it.position }
                 SiteBoardCompact(stages, tasks)
@@ -696,6 +820,35 @@ object LedgerBoards {
             }
         } catch (e: Exception) {
             Timber.w(e, "inbox sync failed")
+            null
+        }
+    }
+
+    /** A card's provenance + related cards (the "▸ related" strip). Null on failure. */
+    fun related(context: Context, boardId: Int, taskId: Long): RelatedResult? {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank()) return null
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/board/$boardId/task/$taskId/related")
+                .header("Authorization", auth(c))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val o = JSONObject(resp.body?.string() ?: return null)
+                val prov = o.optJSONObject("provenance")?.let {
+                    Provenance(it.optString("label", ""), it.optString("url", "").takeIf { s -> s.isNotBlank() && s != "null" })
+                }
+                val relArr = o.optJSONArray("related")
+                val related = if (relArr == null) emptyList() else
+                    (0 until relArr.length()).map { relArr.getJSONObject(it) }.map {
+                        RelatedCard(it.optInt("board_id", 0), it.optString("board", ""), it.optLong("task_id", 0),
+                            it.optString("title", ""), it.optString("reason", ""))
+                    }
+                RelatedResult(prov, related)
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "related fetch failed")
             null
         }
     }

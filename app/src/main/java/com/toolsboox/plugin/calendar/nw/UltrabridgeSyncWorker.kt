@@ -52,6 +52,16 @@ class UltrabridgeSyncWorker(
         private const val MAIN_PREFS_NAME = "MAIN"
         private const val PREF_LAST_SYNC_MS = "ultrabridgeLastSyncMs"
 
+        /**
+         * True while an ink surface is in the foreground. The sync renders every calendar group to
+         * PDF (17+ documents) and uploads them — CPU-heavy work that, run alongside active drawing,
+         * pegged the SoC and starved the UI thread into a 5s input-timeout ANR ("crashes on rotation
+         * while drawing" — really the sync colliding with the pen). While this is set, doWork() bows
+         * out with Result.retry(), so the heavy pass only runs once the pen is put down.
+         */
+        @Volatile
+        var inkSurfaceActive: Boolean = false
+
         fun syncNow(context: Context) {
             val request = androidx.work.OneTimeWorkRequestBuilder<UltrabridgeSyncWorker>()
                 .setConstraints(
@@ -102,6 +112,11 @@ class UltrabridgeSyncWorker(
     }
 
     override suspend fun doWork(): Result {
+        // Never run the heavy PDF pass while the pen is live — defer until the surface is idle.
+        if (inkSurfaceActive) {
+            Timber.i("$TAG: Ink surface active — deferring sync so drawing stays smooth")
+            return Result.retry()
+        }
         Timber.i("$TAG: Starting Ultrabridge PDF sync")
 
         try {
@@ -199,6 +214,12 @@ class UltrabridgeSyncWorker(
 
             try {
                 for ((groupKey, files) in groupedFiles) {
+                    // If the pen goes live mid-run, abandon and reschedule — a half-done sync is
+                    // fine (it's idempotent), a frozen page is not.
+                    if (inkSurfaceActive) {
+                        Timber.i("$TAG: Ink surface went active mid-render — yielding, will retry")
+                        return Result.retry()
+                    }
                     try {
                         val pdfFile = renderGroupToPdf(groupKey, files, moshi, tempDir, calendarDir)
                             ?: continue

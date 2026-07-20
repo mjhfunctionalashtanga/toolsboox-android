@@ -658,6 +658,18 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 load()
             }
         })
+        // The categorical KIN edge (the notes analog of a card's contact / a gram's space): every
+        // item of this kind across all time — computed over the whole synced day-JSON corpus.
+        rows.add("▸  Kin — same kind (${item.origin.label})" to {
+            origins.clear(); origins.add(item.origin)
+            range = Range.ALL
+            searchQuery = ""
+            binding.searchField.setText("")
+            binding.originButton.text = originLabel()
+            saveFilterState()
+            renderNav()
+            load()
+        })
         // The synthesis BASKET — gather a few items from anywhere in history, then press them
         // together through an engine. The result lands on today's Synthesize page.
         val inBasket = basket.any { it.millis == item.millis && it.title == item.title }

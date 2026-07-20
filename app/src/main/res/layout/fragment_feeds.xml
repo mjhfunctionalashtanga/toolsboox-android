@@ -5,40 +5,13 @@
     android:background="#FFFFFF">
 
 <LinearLayout
-    android:orientation="horizontal"
+    android:orientation="vertical"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#FFFFFF">
 
-    <!-- Persistent left directory pane (two-pane feed): feeds + unread counts + read/unread
-         filter. Populated in code by renderDirectory(). Replaces the floating dropdown. -->
-    <ScrollView
-        android:id="@+id/directory_scroll"
-        android:layout_width="0dp"
-        android:layout_weight="0.24"
-        android:layout_height="match_parent"
-        android:background="#F4F2ED"
-        android:scrollbars="none">
-        <LinearLayout
-            android:id="@+id/feeds_directory"
-            android:orientation="vertical"
-            android:paddingVertical="8dp"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"/>
-    </ScrollView>
-
-    <View android:id="@+id/directory_divider"
-        android:layout_width="1dp" android:layout_height="match_parent" android:background="#D8D5CE"/>
-
-    <LinearLayout
-    android:orientation="vertical"
-    android:layout_width="0dp"
-    android:layout_weight="0.76"
-    android:layout_height="match_parent"
-    android:background="#FFFFFF">
-
-    <!-- Nav line: the RSS drawer-toggle button, then the Almanac navigator. No title —
-         refresh + settings(wrench) moved to the floating pill. -->
+    <!-- Full-width timeline filter across the very top: the date navigator scopes the feed
+         (a finite feed to clear day to day), above BOTH the directory drawer and the list. -->
     <LinearLayout
         android:orientation="horizontal"
         android:gravity="center_vertical"
@@ -57,12 +30,46 @@
             android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="56dp"
             android:contentDescription="@null"/>
-        <!-- Retained (hidden) so code refs survive; the Stars view lives in the ☰ dropdown. -->
         <Button
             android:id="@+id/view_toggle_button"
             android:visibility="gone"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
     </LinearLayout>
+
+    <!-- Row below the timeline: directory drawer | list -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#FFFFFF">
+
+    <!-- Persistent left directory pane (two-pane feed): feeds + unread counts + read/unread
+         filter. Populated in code by renderDirectory(). Replaces the floating dropdown. -->
+    <ScrollView
+        android:id="@+id/directory_scroll"
+        android:layout_width="0dp"
+        android:layout_weight="0.24"
+        android:layout_height="match_parent"
+        android:background="#FFFFFF"
+        android:scrollbars="none">
+        <LinearLayout
+            android:id="@+id/feeds_directory"
+            android:orientation="vertical"
+            android:paddingVertical="8dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+    </ScrollView>
+
+    <View android:id="@+id/directory_divider"
+        android:layout_width="1dp" android:layout_height="match_parent" android:background="#D8D5CE"/>
+
+    <LinearLayout
+    android:orientation="vertical"
+    android:layout_width="0dp"
+    android:layout_weight="0.76"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
 
     <ProgressBar
         android:id="@+id/progress"
@@ -159,6 +166,7 @@
                     android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"/>
             </LinearLayout>
         </FrameLayout>
+    </LinearLayout>
     </LinearLayout>
     </LinearLayout>
 </LinearLayout>

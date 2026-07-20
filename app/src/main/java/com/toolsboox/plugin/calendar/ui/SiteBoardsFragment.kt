@@ -65,6 +65,39 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
     /** The card being dragged and its view, so a drop can reparent + move it. */
     private var dragging: Pair<SiteTask, View>? = null
 
+    /** Show the card's featured image on the card face (toggle, persisted). */
+    private var showCovers: Boolean = true
+    private fun boardPrefs() = requireContext().getSharedPreferences("ledger_site_boards", android.content.Context.MODE_PRIVATE)
+
+    /** Which card an image-pick will attach to (boardId, taskId), set when Upload… is tapped. */
+    private var pendingUpload: Pair<Int, Long>? = null
+    private val imagePicker = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        val target = pendingUpload; pendingUpload = null
+        if (uri == null || target == null) return@registerForActivityResult
+        lifecycleScope.launch {
+            val png = withContext(Dispatchers.IO) {
+                runCatching {
+                    requireContext().contentResolver.openInputStream(uri)?.use { input ->
+                        val bmp = android.graphics.BitmapFactory.decodeStream(input)
+                        java.io.ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+                    }
+                }.getOrNull()
+            }
+            if (png == null) { toast("Couldn't read image"); return@launch }
+            val status = withContext(Dispatchers.IO) {
+                LedgerBoards.commentTask(requireContext(), target.first, target.second, null, png)
+            }
+            toast(if (status == "Reply posted") "Uploaded to card" else status)
+        }
+    }
+
+    /** Fetch a public image (card cover / attachment) to a bitmap. Null on failure. */
+    private fun loadRemoteBitmap(url: String): Bitmap? = try {
+        java.net.URL(url).openStream().use { android.graphics.BitmapFactory.decodeStream(it) }
+    } catch (e: Exception) { null }
+
     private val density get() = resources.displayMetrics.density
     private fun px(v: Int): Int = (v * density).toInt()
     private fun toast(msg: String) {
@@ -83,6 +116,13 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         view.findViewById<Button>(R.id.site_boards_refresh).setOnClickListener {
             val b = openBoard
             if (b == null) loadBoards() else loadBoard(b)
+        }
+        showCovers = boardPrefs().getBoolean("showCovers", true)
+        view.findViewById<Button>(R.id.site_boards_covers).setOnClickListener {
+            showCovers = !showCovers
+            boardPrefs().edit().putBoolean("showCovers", showCovers).apply()
+            toast(if (showCovers) "Card images on" else "Card images off")
+            openBoard?.let { loadBoard(it) }
         }
         upButton.setOnClickListener { showList() }
         loadBoards()
@@ -257,7 +297,22 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             )
             minimumHeight = px(120)   // a droppable target even when empty
         }
-        for (t in tasks) cardsContainer.addView(cardView(board, t))
+        // Big boards (the Support board carries 600+ cards) froze here: every card view was built
+        // synchronously on the main thread. Render a capped first batch; the rest load on tap. A
+        // "＋ N more" footer at the very bottom is not a card (no tag), so drops still land among cards.
+        val maxCards = 45
+        tasks.take(maxCards).forEach { cardsContainer.addView(cardView(board, it)) }
+        if (tasks.size > maxCards) {
+            cardsContainer.addView(TextView(ctx).apply {
+                text = "＋ ${tasks.size - maxCards} more"
+                setTextColor(Color.parseColor("#2F6F96")); textSize = 13f
+                setPadding(px(8), px(12), px(8), px(12))
+                setOnClickListener {
+                    (parent as? ViewGroup)?.removeView(this)   // drop the footer, append the rest
+                    tasks.drop(maxCards).forEach { t -> cardsContainer.addView(cardView(board, t)) }
+                }
+            })
+        }
         cardsContainer.setOnDragListener(columnDropListener(board, stage, cardsContainer))
         cardsScroll.addView(cardsContainer)
         column.addView(cardsScroll)
@@ -281,9 +336,25 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             text = (if (task.isLedgr) "✦ " else "") + task.title
             setTextColor(Color.BLACK); textSize = 15f
         })
+        // The card's featured image on its face (toggleable via the 🖼 header button).
+        if (showCovers && task.coverUrl != null) {
+            val img = android.widget.ImageView(ctx).apply {
+                adjustViewBounds = true; setBackgroundColor(Color.WHITE)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = px(6) }
+            }
+            card.addView(img)
+            val url = task.coverUrl
+            lifecycleScope.launch {
+                val bmp = withContext(Dispatchers.IO) { loadRemoteBitmap(url) }
+                if (bmp != null && isAdded) img.setImageBitmap(bmp)
+            }
+        }
         val meta = buildList {
             task.priority?.takeIf { it.isNotBlank() && it != "normal" }?.let { add(it) }
             task.dueAt?.take(10)?.let { add("due $it") }
+            if (task.commentCount > 0) add("${task.commentCount}💬")
             if (task.status == "closed") add("✓ done")
         }
         if (meta.isNotEmpty()) card.addView(TextView(ctx).apply {
@@ -372,15 +443,23 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
 
     private fun openDetail(board: SiteBoard, task: SiteTask) {
         val ctx = requireContext()
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
-            .setView(TextView(ctx).apply { text = "Loading…"; setPadding(px(24), px(24), px(24), px(24)) })
-            .create()
+        // A container we swap the content INTO — AlertDialog.setView() after show() doesn't reliably
+        // replace the view (the card "stuck on Loading…"), but updating this container's children does.
+        val container = FrameLayout(ctx)
+        container.addView(TextView(ctx).apply { text = "Loading…"; setPadding(px(24), px(24), px(24), px(24)) })
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx).setView(container).create()
         dialog.show()
         lifecycleScope.launch {
             val detail = withContext(Dispatchers.IO) { LedgerBoards.taskDetail(requireContext(), board.id, task.id) }
             if (!isAdded) return@launch
-            if (detail == null) { dialog.dismiss(); toast("Couldn't load the card"); return@launch }
-            dialog.setView(detailView(board, detail, dialog))
+            container.removeAllViews()
+            if (detail == null) {
+                container.addView(TextView(ctx).apply {
+                    text = "Couldn't load the card."; setPadding(px(24), px(24), px(24), px(24))
+                })
+            } else {
+                container.addView(detailView(board, detail, dialog))
+            }
         }
     }
 
@@ -411,9 +490,67 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             setPadding(0, px(4), 0, 0)
         })
 
+        // ▸ RELATED (rhizome): where this card came from + its neighbours (same contact). Async so
+        // it never blocks the card opening; the section appears only if there's an edge to show.
+        val relatedBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(relatedBox)
+        lifecycleScope.launch {
+            val r = withContext(Dispatchers.IO) { LedgerBoards.related(requireContext(), board.id, d.id) }
+            if (r == null || !isAdded) return@launch
+            if (r.provenance == null && r.related.isEmpty()) return@launch
+            relatedBox.addView(label("▸ RELATED"))
+            r.provenance?.let { p ->
+                relatedBox.addView(TextView(ctx).apply {
+                    text = p.label + (if (p.url != null) "   ↗" else "")
+                    setTextColor(if (p.url != null) Color.parseColor("#2F6F96") else Color.parseColor("#333333"))
+                    textSize = 14f; setPadding(0, px(2), 0, px(2))
+                    if (p.url != null) setOnClickListener {
+                        startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(p.url)))
+                    }
+                })
+            }
+            r.related.forEach { rc ->
+                relatedBox.addView(TextView(ctx).apply {
+                    text = "•  ${rc.title}   ·   ${rc.board}"
+                    setTextColor(Color.parseColor("#2F6F96")); textSize = 14f; setPadding(0, px(3), 0, px(1))
+                    setOnClickListener {
+                        dialog.dismiss()
+                        openDetail(
+                            SiteBoard(rc.boardId, rc.board, null, 0, 0),
+                            SiteTask(rc.taskId, rc.title, 0, 0.0, null, null, null, null, false)
+                        )
+                    }
+                })
+            }
+        }
+
+        // The card's uploaded image (the handwriting face / cover), if any.
+        d.coverUrl?.let { url ->
+            val img = android.widget.ImageView(ctx).apply {
+                adjustViewBounds = true; setBackgroundColor(Color.WHITE)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = px(12) }
+            }
+            col.addView(img)
+            lifecycleScope.launch {
+                val bmp = withContext(Dispatchers.IO) { loadRemoteBitmap(url) }
+                if (bmp != null && isAdded) img.setImageBitmap(bmp)
+            }
+        }
+
         if (d.description.isNotBlank()) {
             col.addView(label("NOTES"))
-            col.addView(body(android.text.Html.fromHtml(d.description, android.text.Html.FROM_HTML_MODE_COMPACT).toString().trim()))
+            // Keep links LIVE (HTML spans + movement method), but strip the old inbox "Open the …
+            // thread ↗" anchor — the ▸ RELATED provenance now owns that link, so it's not doubled.
+            val cleanDesc = d.description.replace(
+                Regex("<p>\\s*<a\\b[^>]*>\\s*Open the[^<]*thread[^<]*</a>\\s*</p>", RegexOption.IGNORE_CASE), ""
+            )
+            col.addView(TextView(ctx).apply {
+                text = android.text.Html.fromHtml(cleanDesc, android.text.Html.FROM_HTML_MODE_COMPACT).trim()
+                movementMethod = android.text.method.LinkMovementMethod.getInstance()
+                setTextColor(Color.BLACK); textSize = 15f
+            })
         }
         if (d.assignees.isNotEmpty()) {
             col.addView(label("PEOPLE"))
@@ -451,6 +588,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         edits.addView(editButton("Assign…") { promptAssign(board, d, dialog) })
         edits.addView(editButton("Due…") { promptDue(board, d, dialog) })
         edits.addView(editButton("Priority…") { promptPriority(board, d, dialog) })
+        edits.addView(editButton("Upload…") { pendingUpload = board.id to d.id; imagePicker.launch("image/*") })
         col.addView(edits)
 
         val actions = LinearLayout(ctx).apply {

@@ -93,6 +93,49 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
      *
      * @param savedInstanceState the saved state of the instance
      */
+    /**
+     * Make the floating pen-note button draggable: a tap still opens Notes, but a drag repositions
+     * it and persists where you put it — so it can move off whatever it's covering (e.g. the feed
+     * drawer's lower-left). Clamped on-screen; restored on next launch.
+     */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun makeFloatButtonDraggable(view: android.view.View) {
+        val prefs = getSharedPreferences("MAIN", MODE_PRIVATE)
+        view.post {
+            view.translationX = prefs.getFloat("floatNoteTx", 0f)
+            view.translationY = prefs.getFloat("floatNoteTy", 0f)
+        }
+        var downX = 0f; var downY = 0f; var startTx = 0f; var startTy = 0f; var dragging = false
+        val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+        view.setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX; downY = e.rawY; startTx = v.translationX; startTy = v.translationY; dragging = false
+                    true
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val dx = e.rawX - downX; val dy = e.rawY - downY
+                    if (!dragging && Math.hypot(dx.toDouble(), dy.toDouble()) > slop) dragging = true
+                    if (dragging) {
+                        val parent = v.parent as android.view.View
+                        v.translationX = (startTx + dx).coerceIn(-v.left.toFloat(), (parent.width - v.right).toFloat())
+                        v.translationY = (startTy + dy).coerceIn(-v.top.toFloat(), (parent.height - v.bottom).toFloat())
+                    }
+                    true
+                }
+                android.view.MotionEvent.ACTION_UP -> {
+                    if (dragging) {
+                        prefs.edit().putFloat("floatNoteTx", v.translationX).putFloat("floatNoteTy", v.translationY).apply()
+                    } else {
+                        v.performClick()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -109,6 +152,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             )
             binding.fragmentContent.findNavController().navigate(R.id.action_to_scratch, bundle)
         }
+        makeFloatButtonDraggable(binding.floatNoteButton)
 
         firebaseAnalytics = Firebase.analytics
 

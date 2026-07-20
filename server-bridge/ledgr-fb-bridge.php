@@ -133,6 +133,13 @@ class Ledgr_FB_Bridge
             'permission_callback' => [$this, 'canReadBoard'],
         ]);
 
+        // Rhizome: a card's provenance (where it came from) + related cards (what else touches it).
+        register_rest_route(self::NS, '/board/(?P<board_id>\d+)/task/(?P<task_id>\d+)/related', [
+            'methods'             => 'GET',
+            'callback'            => [$this, 'relatedForTask'],
+            'permission_callback' => [$this, 'canReadBoard'],
+        ]);
+
         // Edit a card from the device: assignees, due date, priority.
         register_rest_route(self::NS, '/board/(?P<board_id>\d+)/task/(?P<task_id>\d+)/update', [
             'methods'             => 'POST',
@@ -183,6 +190,20 @@ class Ledgr_FB_Bridge
             'permission_callback' => [$this, 'canReadBoard'],
         ]);
 
+        // Read a whole thread in-app: every comment on a community post or a board card.
+        register_rest_route(self::NS, '/thread', [
+            'methods'             => 'GET',
+            'callback'            => [$this, 'threadComments'],
+            'permission_callback' => [$this, 'canCommunity'],
+        ]);
+
+        // Delete your own comment/upload from a thread.
+        register_rest_route(self::NS, '/thread/delete', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'deleteThreadComment'],
+            'permission_callback' => [$this, 'canCommunity'],
+        ]);
+
         register_rest_route(self::NS, '/person/compact', [
             'methods'             => 'GET',
             'callback'            => [$this, 'compactPerson'],
@@ -217,6 +238,13 @@ class Ledgr_FB_Bridge
         register_rest_route(self::NS, '/community/react', [
             'methods'             => 'POST',
             'callback'            => [$this, 'reactPost'],
+            'permission_callback' => [$this, 'canCommunity'],
+        ]);
+
+        // Rhizome for grams: a community post's provenance + your neighbouring posts in the space.
+        register_rest_route(self::NS, '/community/related', [
+            'methods'             => 'GET',
+            'callback'            => [$this, 'relatedForPost'],
             'permission_callback' => [$this, 'canCommunity'],
         ]);
 
@@ -422,7 +450,7 @@ class Ledgr_FB_Bridge
             ->whereNull('archived_at')
             ->whereNull('parent_id')
             ->orderBy('position', 'asc')
-            ->get(['id', 'title', 'stage_id', 'position', 'priority', 'status', 'due_at', 'crm_contact_id', 'settings', 'source', 'updated_at']);
+            ->get(['id', 'title', 'stage_id', 'position', 'priority', 'status', 'due_at', 'crm_contact_id', 'settings', 'source', 'comments_count', 'updated_at']);
 
         $maxUpdated = $tasks->max('updated_at');
 
@@ -457,6 +485,7 @@ class Ledgr_FB_Bridge
                 'due_at'         => $task->due_at,
                 'crm_contact_id' => $task->crm_contact_id ? (int) $task->crm_contact_id : null,
                 'cover_url'      => isset($settings['cover']['backgroundImage']) ? $settings['cover']['backgroundImage'] : null,
+                'comments_count' => (int) ($task->comments_count ?? 0),
                 'is_ledgr'       => $task->source === self::SOURCE,
             ];
         }
@@ -845,6 +874,87 @@ class Ledgr_FB_Bridge
             return new \WP_Error('ledgr_members_failed', $e->getMessage(), ['status' => 500]);
         }
         return rest_ensure_response(['members' => $out]);
+    }
+
+    /* ---------------------------------------------------------------
+     * GET /ledgr/v1/board/{board_id}/task/{task_id}/related
+     * The rhizome prototype: a card's PROVENANCE (where it came from — an
+     * inbox reply, a CRM contact, a handwritten card) and RELATED cards
+     * (the strongest edge: every other card tied to the same contact — the
+     * "contact as hub"). One node, its neighbours.
+     * ------------------------------------------------------------- */
+
+    public function relatedForTask(\WP_REST_Request $request)
+    {
+        $boardId = (int) $request['board_id'];
+        $taskId  = (int) $request['task_id'];
+
+        try {
+            $task = \FluentBoards\App\Models\Task::where('id', $taskId)
+                ->where('board_id', $boardId)->first();
+            if (!$task) {
+                return new \WP_Error('ledgr_not_found', 'Task not found on this board', ['status' => 404]);
+            }
+
+            // --- Provenance: where did this card come from? ---
+            $prov = null;
+            $sid  = (string) $task->source_id;
+            if ($task->source === 'ledgr-inbox' && preg_match('/^fcom-(\d+)$/', $sid, $m)
+                && class_exists('\FluentCommunity\App\Models\Comment')) {
+                $comment = \FluentCommunity\App\Models\Comment::find((int) $m[1]);
+                if ($comment) {
+                    $author = get_user_by('id', $comment->user_id);
+                    $feed   = \FluentCommunity\App\Models\Feed::find($comment->post_id);
+                    $space  = $feed ? \FluentCommunity\App\Models\Space::find($feed->space_id) : null;
+                    $public = $space && $space->privacy === 'public';
+                    $prov = [
+                        'label' => '↩ Reply by ' . ($author ? $author->display_name : 'someone')
+                            . ($feed && $feed->title ? ' · ' . wp_trim_words($feed->title, 8) : ''),
+                        'url'   => ($public && $feed && method_exists($feed, 'getPermalink')) ? $feed->getPermalink() : null,
+                    ];
+                }
+            } elseif ($task->source === 'ledgr-inbox' && strpos($sid, 'fbs-') === 0) {
+                $prov = ['label' => '↩ From a board-card reply', 'url' => null];
+            } elseif ($task->source === self::SOURCE) {
+                $prov = ['label' => '✍ Handwritten card', 'url' => null];
+            }
+
+            // --- Related: every other card tied to the same CRM contact (any board). ---
+            $related = [];
+            $contactName = null;
+            if ($task->crm_contact_id) {
+                if (function_exists('FluentCrmApi')) {
+                    $contact = FluentCrmApi('contacts')->getContact((int) $task->crm_contact_id);
+                    if ($contact) {
+                        $contactName = trim($contact->first_name . ' ' . $contact->last_name);
+                        if (!$prov) {
+                            $prov = ['label' => 'Contact · ' . $contactName, 'url' => null];
+                        }
+                    }
+                }
+                $others = \FluentBoards\App\Models\Task::where('crm_contact_id', $task->crm_contact_id)
+                    ->where('id', '!=', $taskId)->whereNull('archived_at')
+                    ->orderBy('updated_at', 'desc')->limit(12)->get(['id', 'title', 'board_id']);
+                $boardNames = [];
+                foreach ($others as $o) {
+                    if (!array_key_exists($o->board_id, $boardNames)) {
+                        $b = \FluentBoards\App\Models\Board::find($o->board_id);
+                        $boardNames[$o->board_id] = $b ? $b->title : '';
+                    }
+                    $related[] = [
+                        'board_id' => (int) $o->board_id,
+                        'board'    => $boardNames[$o->board_id],
+                        'task_id'  => (int) $o->id,
+                        'title'    => $o->title,
+                        'reason'   => $contactName ? ('with ' . $contactName) : 'same contact',
+                    ];
+                }
+            }
+
+            return rest_ensure_response(['provenance' => $prov, 'related' => $related]);
+        } catch (\Exception $e) {
+            return new \WP_Error('ledgr_related_failed', $e->getMessage(), ['status' => 500]);
+        }
     }
 
     /* ---------------------------------------------------------------
@@ -1387,9 +1497,14 @@ class Ledgr_FB_Bridge
                     foreach ($query->get() as $c) {
                         $author = get_user_by('id', $c->user_id);
                         $feed   = \FluentCommunity\App\Models\Feed::find($c->post_id);
+                        // Public-space posts open cleanly in a browser; secret ones wall (no portal
+                        // session), so the app hides "Open the thread" for them.
+                        $space  = $feed ? \FluentCommunity\App\Models\Space::find($feed->space_id) : null;
                         $out[]  = [
                             'source'     => 'community',
-                            'thread_url' => apply_filters('ledgr_fb/thread_url', home_url('/portal/post/' . $c->post_id), 'community', $c->post_id),
+                            'public'     => ($space ? $space->privacy === 'public' : true),
+                            'thread_url' => ($feed && method_exists($feed, 'getPermalink') ? $feed->getPermalink()
+                                                : apply_filters('ledgr_fb/thread_url', home_url('/portal/post/' . $c->post_id), 'community', $c->post_id)),
                             'id'         => 'fcom-' . $c->id,
                             'thread'     => $feed ? wp_trim_words($feed->title ?: wp_strip_all_tags($feed->message), 10) : null,
                             'thread_id'  => (int) $c->post_id,
@@ -1502,7 +1617,8 @@ class Ledgr_FB_Bridge
                 ], $boardId);
                 $task = \FluentBoards\App\Models\Task::find($task->id);
 
-                $link = !empty($r['thread_url'])
+                // Only link out for PUBLIC posts — a secret-space link just walls in a browser.
+                $link = (!empty($r['thread_url']) && !empty($r['public']))
                     ? '<p><a href="' . esc_url($r['thread_url']) . '">Open the ' . esc_html($r['source']) . ' thread ↗</a></p>'
                     : '';
                 $task->description = '<p><strong>' . esc_html($r['author']) . '</strong> on <em>'
@@ -1521,6 +1637,128 @@ class Ledgr_FB_Bridge
             'created'  => $created,
             'skipped'  => $skipped,
         ]);
+    }
+
+    /* ---------------------------------------------------------------
+     * GET /ledgr/v1/thread?source=community|boards&id=<threadId>
+     * Every comment on a community post / board card, oldest-first, so
+     * the whole exchange can be read in-app. Each carries `mine` (your
+     * own) and `has_image` + `image_url` (an uploaded/handwritten reply).
+     * ------------------------------------------------------------- */
+
+    public function threadComments(\WP_REST_Request $request)
+    {
+        $source = sanitize_text_field($request->get_param('source') ?: 'community');
+        $id     = (int) $request->get_param('id');
+        $uid    = get_current_user_id();
+        if (!$id) {
+            return new \WP_Error('ledgr_bad_request', 'id is required', ['status' => 400]);
+        }
+
+        $firstImage = function ($html) {
+            if (preg_match('/<img[^>]+src=["\']([^"\']+)["\']/i', (string) $html, $m)) {
+                return $m[1];
+            }
+            return null;
+        };
+
+        $out = [];
+        try {
+            if ($source === 'boards') {
+                if (!class_exists('\FluentBoards\App\Models\Comment')) {
+                    return new \WP_Error('ledgr_no_boards', 'FluentBoards is not active', ['status' => 501]);
+                }
+                $rows = \FluentBoards\App\Models\Comment::where('task_id', $id)
+                    ->orderBy('id', 'asc')->limit(200)->get();
+                foreach ($rows as $c) {
+                    $author = get_user_by('id', $c->created_by);
+                    $body   = (string) ($c->description ?? '');
+                    $img    = $firstImage($body);
+                    $out[]  = [
+                        'id'         => (int) $c->id,
+                        'author'     => $c->author_name ?: ($author ? $author->display_name : 'Unknown'),
+                        'excerpt'    => wp_trim_words(wp_strip_all_tags($body), 80),
+                        'created_at' => (string) $c->created_at,
+                        'mine'       => ((int) $c->created_by === $uid),
+                        'has_image'  => $img !== null,
+                        'image_url'  => $img,
+                    ];
+                }
+            } else {
+                if (!class_exists('\FluentCommunity\App\Models\Comment')) {
+                    return new \WP_Error('ledgr_no_community', 'FluentCommunity is not active', ['status' => 501]);
+                }
+                $rows = \FluentCommunity\App\Models\Comment::where('post_id', $id)
+                    ->orderBy('id', 'asc')->limit(200)->get();
+                foreach ($rows as $c) {
+                    $author = get_user_by('id', $c->user_id);
+                    $body   = (string) ($c->message_rendered ?: $c->message);
+                    $img    = $firstImage($body);
+                    $out[]  = [
+                        'id'         => (int) $c->id,
+                        'author'     => $author ? $author->display_name : ('User ' . $c->user_id),
+                        'excerpt'    => wp_trim_words(wp_strip_all_tags($body), 80),
+                        'created_at' => (string) $c->created_at,
+                        'mine'       => ((int) $c->user_id === $uid),
+                        'has_image'  => $img !== null,
+                        'image_url'  => $img,
+                    ];
+                }
+            }
+        } catch (\Exception $e) {
+            return new \WP_Error('ledgr_thread_failed', $e->getMessage(), ['status' => 500]);
+        }
+
+        return rest_ensure_response(['source' => $source, 'id' => $id, 'items' => $out]);
+    }
+
+    /* ---------------------------------------------------------------
+     * POST /ledgr/v1/thread/delete
+     * body: source=community|boards, comment_id
+     * Deletes a comment/upload — only your own (admins may delete any).
+     * ------------------------------------------------------------- */
+
+    public function deleteThreadComment(\WP_REST_Request $request)
+    {
+        $source = sanitize_text_field($request->get_param('source') ?: 'community');
+        $cid    = (int) $request->get_param('comment_id');
+        $uid    = get_current_user_id();
+        $isAdmin = current_user_can('manage_options');
+        if (!$cid) {
+            return new \WP_Error('ledgr_bad_request', 'comment_id is required', ['status' => 400]);
+        }
+
+        try {
+            if ($source === 'boards') {
+                if (!class_exists('\FluentBoards\App\Models\Comment')) {
+                    return new \WP_Error('ledgr_no_boards', 'FluentBoards is not active', ['status' => 501]);
+                }
+                $c = \FluentBoards\App\Models\Comment::find($cid);
+                if (!$c) {
+                    return new \WP_Error('ledgr_not_found', 'Comment not found', ['status' => 404]);
+                }
+                if ((int) $c->created_by !== $uid && !$isAdmin) {
+                    return new \WP_Error('ledgr_forbidden', 'Not your comment', ['status' => 403]);
+                }
+                $c->delete();
+            } else {
+                if (!class_exists('\FluentCommunity\App\Models\Comment')) {
+                    return new \WP_Error('ledgr_no_community', 'FluentCommunity is not active', ['status' => 501]);
+                }
+                $c = \FluentCommunity\App\Models\Comment::find($cid);
+                if (!$c) {
+                    return new \WP_Error('ledgr_not_found', 'Comment not found', ['status' => 404]);
+                }
+                if ((int) $c->user_id !== $uid && !$isAdmin) {
+                    return new \WP_Error('ledgr_forbidden', 'Not your comment', ['status' => 403]);
+                }
+                $c->delete();
+            }
+        } catch (\Exception $e) {
+            return new \WP_Error('ledgr_delete_failed', $e->getMessage(), ['status' => 400]);
+        }
+
+        return rest_ensure_response(['deleted' => true, 'comment_id' => $cid]);
     }
 
     /* ---------------------------------------------------------------
@@ -1934,6 +2172,9 @@ class Ledgr_FB_Bridge
         try {
             $feeds = \FluentCommunity\App\Models\Feed::where('space_id', $spaceId)
                 ->orderBy('id', 'desc')->limit($limit)->get();
+            // Secret-space posts wall in an unauthenticated browser → the app hides "Open" for them.
+            $space       = \FluentCommunity\App\Models\Space::find($spaceId);
+            $spacePublic = $space ? $space->privacy === 'public' : true;
             // Which of these the current user has already liked (one query, not per-post).
             $uid       = get_current_user_id();
             $feedIds   = $feeds->pluck('id')->all();
@@ -1956,6 +2197,7 @@ class Ledgr_FB_Bridge
                     'comments_count'  => (int) ($f->comments_count ?? 0),
                     'reactions_count' => (int) ($f->reactions_count ?? 0),
                     'liked'           => in_array((int) $f->id, $likedIds, true),
+                    'public'          => $spacePublic,
                     'url'             => (method_exists($f, 'getPermalink') ? $f->getPermalink()
                                              : apply_filters('ledgr_fb/thread_url', home_url('/portal/post/' . $f->id), 'community', $f->id)),
                 ];
@@ -2033,6 +2275,66 @@ class Ledgr_FB_Bridge
             ]);
         } catch (\Exception $e) {
             return new \WP_Error('ledgr_react_failed', $e->getMessage(), ['status' => 400]);
+        }
+    }
+
+    /* ---------------------------------------------------------------
+     * GET /ledgr/v1/community/related?feed_id=<id>
+     * A gram's rhizome: its PROVENANCE (the "↩ in reply to…" block it was
+     * shared with) and RELATED (your other posts in the same space).
+     * ------------------------------------------------------------- */
+
+    public function relatedForPost(\WP_REST_Request $request)
+    {
+        if (!class_exists('\FluentCommunity\App\Models\Feed')) {
+            return new \WP_Error('ledgr_no_community', 'FluentCommunity is not active', ['status' => 501]);
+        }
+        $fid = (int) $request->get_param('feed_id');
+        if (!$fid) {
+            return new \WP_Error('ledgr_bad_request', 'feed_id is required', ['status' => 400]);
+        }
+
+        try {
+            $feed = \FluentCommunity\App\Models\Feed::find($fid);
+            if (!$feed) {
+                return new \WP_Error('ledgr_not_found', 'Post not found', ['status' => 404]);
+            }
+            $body = (string) ($feed->message_rendered ?: $feed->message);
+
+            // Provenance: the leading ledgr-provenance block a shared gram carries.
+            $prov = null;
+            if (preg_match('/<div class="ledgr-provenance"[^>]*>(.*?)<\/div>/is', $body, $m)) {
+                $inner = $m[1];
+                $url   = null;
+                if (preg_match('/href="([^"]+)"/i', $inner, $hm)) {
+                    $url = html_entity_decode($hm[1]);
+                }
+                $label = trim(wp_strip_all_tags($inner));
+                if ($label !== '') {
+                    $prov = ['label' => $label, 'url' => $url];
+                }
+            }
+
+            // Related: your other posts in the same space (contact/space as the hub).
+            $related = [];
+            $space   = \FluentCommunity\App\Models\Space::find($feed->space_id);
+            $public  = $space && $space->privacy === 'public';
+            $others  = \FluentCommunity\App\Models\Feed::where('space_id', $feed->space_id)
+                ->where('user_id', $feed->user_id)->where('id', '!=', $fid)
+                ->orderBy('id', 'desc')->limit(8)->get();
+            foreach ($others as $o) {
+                $ob = (string) ($o->message_rendered ?: $o->message);
+                $related[] = [
+                    'id'     => (int) $o->id,
+                    'title'  => $o->title ?: wp_trim_words(wp_strip_all_tags($ob), 9),
+                    'url'    => ($public && method_exists($o, 'getPermalink')) ? $o->getPermalink() : null,
+                    'reason' => 'your post here',
+                ];
+            }
+
+            return rest_ensure_response(['provenance' => $prov, 'related' => $related]);
+        } catch (\Exception $e) {
+            return new \WP_Error('ledgr_related_failed', $e->getMessage(), ['status' => 500]);
         }
     }
 

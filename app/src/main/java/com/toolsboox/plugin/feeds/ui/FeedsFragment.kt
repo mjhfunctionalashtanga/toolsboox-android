@@ -430,20 +430,33 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         binding.progress.visibility = View.VISIBLE
         binding.emptyText.visibility = View.GONE
         lifecycleScope.launch {
-            val entries = withContext(Dispatchers.IO) {
-                // Pull recent days' intake from other devices first, so links filed elsewhere show up.
+            // Render what's on THIS device immediately — never block the list on network pulls
+            // (14 sequential cross-device fetches left the Later list blank/spinning "not loading").
+            val local = withContext(Dispatchers.IO) { gatherLaterList() }
+            binding.progress.visibility = View.INVISIBLE
+            allEntries = local
+            val shown = applyKind(local)
+            adapter.submit(shown)
+            if (shown.isEmpty()) showEmpty(getString(R.string.feeds_later_empty))
+            else binding.emptyText.visibility = View.GONE
+
+            // Then pull other devices' intake in the background and refresh if new links arrived.
+            withContext(Dispatchers.IO) {
                 val ctx = requireContext().applicationContext
                 for (d in 0L..14L) runCatching {
                     com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.pullLatest(ctx, java.time.LocalDate.now().minusDays(d))
                 }
-                gatherLaterList()
             }
-            binding.progress.visibility = View.INVISIBLE
-            allEntries = entries
-            val shown = applyKind(entries)
-            adapter.submit(shown)
-            if (shown.isEmpty()) showEmpty(getString(R.string.feeds_later_empty))
-            else binding.emptyText.visibility = View.GONE
+            if (mode == "later" && isAdded) {
+                val merged = withContext(Dispatchers.IO) { gatherLaterList() }
+                if (merged.size != local.size) {
+                    allEntries = merged
+                    val m = applyKind(merged)
+                    adapter.submit(m)
+                    if (m.isEmpty()) showEmpty(getString(R.string.feeds_later_empty))
+                    else binding.emptyText.visibility = View.GONE
+                }
+            }
         }
     }
 
@@ -668,6 +681,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             requireContext(), e.title, e.feedTitle.ifBlank { null }, e.imageUrl, src
         )
         com.toolsboox.ui.plugin.LedgerPlayer.showModal(requireContext())
+        renderDirectory()   // surface the "▶️ Now Playing" row in the drawer right away
     }
 
     /** Add an entry to today's Later List (no star needed). For media (a podcast/video enclosure) we
@@ -819,9 +833,28 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             </style></head><body>
             <h1>${esc(e.title)}</h1>
             <div class="meta">${esc(meta)}</div>
-            $content
+            ${rewriteYouTubeEmbeds(content)}
             </body></html>
         """.trimIndent()
+    }
+
+    /**
+     * YouTube blocks many embeds in a WebView (error 150/152 — owner disabled embedded playback),
+     * leaving a dead player. Rewrite every YouTube iframe into a tappable thumbnail that opens the
+     * watch page — same fix the standalone article view already uses, now in the in-pane reader too.
+     */
+    private fun rewriteYouTubeEmbeds(content: String): String {
+        val iframe = Regex(
+            """<iframe[^>]*src=["'][^"']*(?:youtube(?:-nocookie)?\.com/embed/|youtu\.be/)([A-Za-z0-9_\-]{6,})[^"']*["'][^>]*>\s*</iframe>""",
+            RegexOption.IGNORE_CASE
+        )
+        return iframe.replace(content) { m ->
+            val id = m.groupValues[1]
+            """<a href="https://www.youtube.com/watch?v=$id" style="display:block;text-decoration:none">
+               <img src="https://img.youtube.com/vi/$id/hqdefault.jpg" style="width:100%;display:block"/>
+               <span style="display:block;padding:8px 0;font-weight:bold;color:#000">▶ Watch on YouTube</span>
+               </a>"""
+        }
     }
 
     /** Stepping/selecting keeps the chosen lens (The Watch stays The Watch across dates);
@@ -1175,7 +1208,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 ellipsize = android.text.TextUtils.TruncateAt.END
                 isClickable = true
                 if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
-                if (selected) setBackgroundColor(0x22000000)
+                // Crisp selection with no monochrome shade: bold + underline, never a gray fill.
+                if (selected) {
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    paintFlags = paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
+                }
                 setOnClickListener {
                     // Selecting a feed while reading returns to the list.
                     if (binding.articlePane.visibility == View.VISIBLE) closeArticlePane()
@@ -1184,17 +1221,68 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             }
             container.addView(tv)
         }
+        // One directory, one style, no ladder: VIEWS (lenses) → SHOW (read state) → SOURCES, all in
+        // this single drawer. Replaces the old slim-pane ⇄ accordion split you had to climb between.
+        fun section(title: String) {
+            container.addView(android.widget.TextView(ctx).apply {
+                text = title
+                textSize = 11f
+                setTextColor(0xFF888888.toInt())
+                letterSpacing = 0.08f
+                setPadding(dpPx(11), dpPx(13), dpPx(8), dpPx(3))
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            })
+        }
+
         val pool = applyKind(allEntries)
-        // Status first (before the Directory rung): unread / read / everything, ◉ marks current.
-        row((if (mode == "feed") "◉" else "○") + "  Unread", true, mode == "feed") { mode = "feed"; slimFeedFilter = null; refresh() }
-        row((if (mode == "read") "◉" else "○") + "  Read", true, mode == "read") { mode = "read"; slimFeedFilter = null; refresh() }
-        row((if (mode == "both") "◉" else "○") + "  All", true, mode == "both") { mode = "both"; slimFeedFilter = null; refresh() }
-        // Ladder up: the slim pane's back row opens the full feeds directory.
-        row("‹  Directory", true, false) { showFeedDirectory() }
-        row("📰  All feeds", true, slimFeedFilter == null) { slimFeedFilter = null; adapter.submit(filterByNavDay(pool)) }
+        val onFeed = mode == "feed" || mode == "read" || mode == "both"
+
+        // Now Playing at the very top while a podcast/read-aloud is going — get back to the
+        // transport without leaving the feed. (Refreshed when playback starts, see playEntryAudio.)
+        if (com.toolsboox.ui.plugin.LedgerPlayer.isActive) {
+            row("▶️  Now Playing", true, false) { com.toolsboox.ui.plugin.LedgerPlayer.showModal(requireContext()) }
+        }
+
+        // ── VIEWS ── the whole feed taxonomy in one place (was split into the accordion drawer).
+        section("VIEWS")
+        row("📰  All", true, onFeed && kindFilter == null) { switchTo("feed", null) }
+        row("⭐  Starred", true, mode == "stars") { switchTo("stars", null) }
+        row("🔖  Later", true, mode == "later") { switchTo("later", null) }
+        row("📖  The Read", true, onFeed && kindFilter == "read") { switchTo("feed", "read") }
+        row("📺  The Watch", true, onFeed && kindFilter == "watch") { switchTo("feed", "watch") }
+        row("🎧  The Listen", true, onFeed && kindFilter == "listen") { switchTo("feed", "listen") }
+        row("💬  Asks & Answers", true, mode == "asklog") { switchTo("asklog", null) }
+        row("🔬  Search…", true, false) { showFeedSearch() }
+        com.toolsboox.plugin.feeds.nw.SmartFeedStore.all(ctx).forEach { sf ->
+            row("#  ${sf.name}", false, mode == "smart" && smartFeed?.name == sf.name) { switchToSmart(sf) }
+        }
+        row("➕  Add smart feed…", false, false) { promptAddSmartFeed() }
+
+        // ── MORE ── the rest of the iPad's set: Pickings, local (no-server) feeds, OPML.
+        section("MORE")
+        row("❝  Feed Pickings", true, mode == "pickings") { switchTo("pickings", null) }
+        row("📡  Local feeds", true, mode == "local" && localSub == null) { switchToLocal(null) }
+        com.toolsboox.plugin.feeds.nw.LocalFeedStore.subscriptions(ctx).forEach { sub ->
+            row("·  ${sub.title}", false, mode == "local" && localSub?.id == sub.id) { switchToLocal(sub) }
+        }
+        row("➕  Add feed by URL…", false, false) { showAddLocalFeed() }
+        row("⬆  Import OPML…", false, false) { opmlPicker.launch("*/*") }
+        row("⬇  Export OPML…", false, false) { exportOpml() }
+
+        // ── SHOW ── read state for the list (◉ marks current).
+        section("SHOW")
+        row((if (mode == "feed") "◉" else "○") + "  Unread", false, mode == "feed") { mode = "feed"; slimFeedFilter = null; refresh() }
+        row((if (mode == "read") "◉" else "○") + "  Read", false, mode == "read") { mode = "read"; slimFeedFilter = null; refresh() }
+        row((if (mode == "both") "◉" else "○") + "  All", false, mode == "both") { mode = "both"; slimFeedFilter = null; refresh() }
+
+        // ── SOURCES ── the individual feeds of the current view, with unread counts.
+        section("SOURCES")
+        row("🧹  Clear", false, false) { markAllRead() }
+        row("📰  All feeds", false, slimFeedFilter == null) { slimFeedFilter = null; adapter.submit(filterByNavDay(pool)) }
         pool.map { it.feedTitle }.filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }.forEach { f ->
             val unread = pool.count { it.feedTitle == f && !it.read }
-            row(if (unread > 0) "$f · $unread" else f, false, slimFeedFilter == f) {
+            // Count on the LEFT so a long title truncating on the right can't hide it.
+            row(if (unread > 0) "$unread · $f" else f, false, slimFeedFilter == f) {
                 slimFeedFilter = f
                 adapter.submit(filterByNavDay(pool.filter { it.feedTitle == f }))
             }
@@ -1202,56 +1290,13 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     }
 
     /**
-     * The Feed Ledger (RSS) hamburger — feeds only: All and Stars as standalone rows at the
-     * top, then Read / Watch / Listen folders (listing their 📖/📺/🎧 categories) and the
-     * Later List. The broader Ledger (almanac/history/personal) lives on its own button.
+     * Opening "the feed directory" now just opens the ONE unified drawer (VIEWS · SHOW · SOURCES) —
+     * there's no separate accordion to ladder into anymore. Kept as a named entry point because a
+     * few arrival paths (onResume, smart-feed-added) call it to pop the drawer open.
      */
     private fun showFeedDirectory() {
-        fun categoriesOf(k: String) =
-            allEntries.filter { it.kind == k }.mapNotNull { it.categoryLabel }.distinct().sortedBy { it.lowercase() }
-        // Each lens drills two levels deep inline: category → its individual feeds (indented).
-        // FOCUSED opening: only the folder matching where you came from (current mode/kind)
-        // starts expanded — the rest sit collapsed instead of sprawling.
-        val focusLens = if (mode == "feed") kindFilter else null
-        // Lenses stop at CATEGORIES here — the individual feeds live in the slim pane, so the
-        // directory doesn't duplicate the per-feed list one rung down.
-        fun lens(emoji: String, label: String, k: String) = Folder(emoji, label,
-            listOf<Pair<String, () -> Unit>>("$emoji  All $label" to { switchTo("feed", k) }) +
-            categoriesOf(k).map { c ->
-                "🗂  $c" to { adapter.submit(allEntries.filter { it.categoryLabel == c }); Unit }
-            },
-            expanded = focusLens == k
-        )
-        showAccordion(
-            listOf(
-                // Back rung of the ladder: today-page menu, Feed Ledger expanded.
-                Folder("‹", "Today menu", action = {
-                    FeedSelection.openTodayHubOnArrival = true
-                    androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.action_to_calendar_day)
-                }),
-                // Order per Michael: Later · The Read · The Watch · The Listen · Smart Feed · Ask · Search.
-                Folder("🔖", "Later", listOf(
-                    "🔖  All" to { switchTo("later", null) },
-                    "📖  The Read" to { switchTo("later", "read") },
-                    "📺  The Watch" to { switchTo("later", "watch") },
-                    "🎧  The Listen" to { switchTo("later", "listen") }
-                ), expanded = mode == "later"),
-                lens("📖", "The Read", "read"),
-                lens("📺", "The Watch", "watch"),
-                lens("🎧", "The Listen", "listen"),
-                Folder("#", "Smart Feed",
-                    com.toolsboox.plugin.feeds.nw.SmartFeedStore.all(requireContext()).map { sf ->
-                        ("#  ${sf.name}" to { switchToSmart(sf) })
-                    } + ("➕  Add smart feed…" to { promptAddSmartFeed() }),
-                    expanded = false),
-                Folder("💬", "Ask", action = { switchTo("asklog", null) }),
-                Folder("🔬", "Search", action = { showFeedSearch() }),
-                // Kept available below the requested set.
-                Folder("📰", "All", action = { switchTo("feed", null) }),
-                Folder("⭐", "Stars", action = { switchTo("stars", null) }),
-                Folder("❝", "Feed Pickings", action = { switchTo("pickings", null) })
-            )
-        )
+        applyDirectoryDrawer(true)
+        renderDirectory()
     }
 
     /**

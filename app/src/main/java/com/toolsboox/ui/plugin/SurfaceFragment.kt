@@ -654,6 +654,10 @@ abstract class SurfaceFragment : ScreenFragment() {
     override fun onResume() {
         super.onResume()
 
+        // The pen is (about to be) live: tell the Ultrabridge sync to hold its heavy PDF pass so it
+        // can't collide with drawing and freeze the page. Cleared in onPause, where the sync fires.
+        com.toolsboox.plugin.calendar.nw.UltrabridgeSyncWorker.inkSurfaceActive = true
+
         // Immersive fullscreen: hide system bars + action bar, draw into the display
         // cutout area, so the canvas truly fills the whole screen. System bars can
         // still be revealed by swiping from the edge for back/home access.
@@ -1008,6 +1012,10 @@ abstract class SurfaceFragment : ScreenFragment() {
     override fun onPause() {
         super.onPause()
 
+        // Pen is down / leaving the surface — release the sync so its deferred PDF pass can run
+        // (the syncNow() below re-triggers it) now that it won't fight active drawing.
+        com.toolsboox.plugin.calendar.nw.UltrabridgeSyncWorker.inkSurfaceActive = false
+
         // Restore system bars and action bar so other screens (settings, etc.) behave normally.
         (requireActivity() as? androidx.appcompat.app.AppCompatActivity)?.supportActionBar?.show()
         requireActivity().window.let { window ->
@@ -1250,6 +1258,16 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     private var rawInkPausedForMenu = false
     private val resumeRawInkRunnable = Runnable { resumeRawInkNow() }
+    /**
+     * Raw hardware ink must stay OFF whenever a lasso/selection/paste or a popover menu is up —
+     * otherwise the stylus paints strokes instead of drawing the lasso (or hits the menu). Several
+     * surface-refresh and limit-rect paths toggle raw drawing false→true; they must consult this
+     * before re-enabling, or they silently defeat the pause (the "lasso highlighted but still making
+     * strokes" bug). Only [resumeRawInkNow] (which clears the flag) may turn it back on when true.
+     */
+    private val inkSuppressed: Boolean
+        get() = rawInkPausedForMenu || selectionMode || hasSelection || pasteMode
+
     private fun syncRawInkToSelectionMenu() {
         val menuActive = hasSelection || pasteMode || selectionMode
         if (menuActive && !rawInkPausedForMenu) {
@@ -1723,8 +1741,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
         provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
-        touchHelper?.setRawDrawingEnabled(true)
-        touchHelper?.isRawDrawingRenderEnabled = true
+        if (!inkSuppressed) {   // don't wake the hardware pen while a lasso/selection/menu is up
+            touchHelper?.setRawDrawingEnabled(true)
+            touchHelper?.isRawDrawingRenderEnabled = true
+        }
     }
 
     /**
@@ -2681,7 +2701,17 @@ abstract class SurfaceFragment : ScreenFragment() {
             if (pasted.isNotEmpty()) {
                 pushUndo()
                 strokes.addAll(pasted)
+                onStrokesAdded(pasted)
                 applyStrokes(strokes, true)
+                // Leave the pasted ink as a LIVE selection so it can be dragged into place right
+                // away (mirrors the paste-mode tap path) — a lasso'd paste that drops un-selected
+                // can't be moved, which is the whole point of pasting a selection.
+                selectedStrokes = pasted.toMutableList()
+                hasSelection = true
+                selectionMode = false
+                selBox = computeSelBox(selectedStrokes)
+                syncRawInkToSelectionMenu()   // keep the hardware pen paused while the selection is live
+                drawWithSelection()
                 onStrokeChanged(strokes)
                 return
             }
@@ -3164,8 +3194,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
         provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
-        touchHelper?.setRawDrawingEnabled(true)
-        touchHelper?.isRawDrawingRenderEnabled = true
+        if (!inkSuppressed) {   // don't wake the hardware pen while a lasso/selection/menu is up
+            touchHelper?.setRawDrawingEnabled(true)
+            touchHelper?.isRawDrawingRenderEnabled = true
+        }
     }
 
     /**
@@ -3480,8 +3512,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         if (v.width <= 0 || v.height <= 0) return
         th.setRawDrawingEnabled(false)
         th.setLimitRect(Rect(0, 0, v.width, v.height), rawExcludeRects())
-        th.setRawDrawingEnabled(true)
-        th.isRawDrawingRenderEnabled = true
+        if (!inkSuppressed) {   // limit-rect re-apply must not re-arm the pen mid-lasso
+            th.setRawDrawingEnabled(true)
+            th.isRawDrawingRenderEnabled = true
+        }
     }
 
     /**
@@ -3692,8 +3726,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         if (w == appliedLimitWidth && h == appliedLimitHeight) return
         th.setRawDrawingEnabled(false)
         th.setLimitRect(Rect(0, 0, w, h), rawExcludeRects())
-        th.setRawDrawingEnabled(true)
-        th.isRawDrawingRenderEnabled = true
+        if (!inkSuppressed) {   // limit-rect re-apply must not re-arm the pen mid-lasso
+            th.setRawDrawingEnabled(true)
+            th.isRawDrawingRenderEnabled = true
+        }
         appliedLimitWidth = w
         appliedLimitHeight = h
         Timber.i("raw limit rect applied: ${w}x${h}")
