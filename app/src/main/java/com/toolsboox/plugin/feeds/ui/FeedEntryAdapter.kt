@@ -27,6 +27,12 @@ class FeedEntryAdapter(
     private val onStar: (FeedEntry) -> Unit
 ) : RecyclerView.Adapter<FeedEntryAdapter.Holder>() {
 
+    /** Accessibility: scale up row text + the featured thumbnail (drawer SHOW toggle). */
+    var largeRows: Boolean = false
+        set(value) {
+            if (field != value) { field = value; notifyDataSetChanged() }
+        }
+
     class Holder(view: View) : RecyclerView.ViewHolder(view) {
         val title: TextView = view.findViewById(R.id.entry_title)
         val meta: TextView = view.findViewById(R.id.entry_meta)
@@ -53,6 +59,17 @@ class FeedEntryAdapter(
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val e = items[position]
         val isRead = e.read || FeedReadState.isRead(e.id)
+
+        // Row scale: 1.3× text and a half-again thumbnail when Larger text is on.
+        val scale = if (largeRows) 1.3f else 1f
+        holder.title.textSize = 16f * scale
+        holder.meta.textSize = 12f * scale
+        holder.blurb.textSize = 14f * scale
+        holder.blurb.maxLines = if (largeRows) 3 else 2
+        val side = ((if (largeRows) 116 else 76) * holder.image.resources.displayMetrics.density).toInt()
+        if (holder.image.layoutParams.width != side) {
+            holder.image.layoutParams = holder.image.layoutParams.apply { width = side; height = side }
+        }
 
         holder.title.text = e.title
         // Unread stands out (bold, full weight); read is normal + dimmed.

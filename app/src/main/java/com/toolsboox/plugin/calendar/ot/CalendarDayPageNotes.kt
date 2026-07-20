@@ -141,9 +141,13 @@ class CalendarDayPageNotes : Creator {
             canvas.drawText("${page + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)
 
             if (template == 0) {
+                // Roomier rule than the 50px day-grid: real handwriting needs ~65px lines
+                // (the old spacing forced two rows per written line). Same frame, fewer rows.
+                val rows = 27
+                val rh = (35 * ceh) / rows
                 canvas.drawLine(lo, to + 0 * ceh, lo + cew, to + 0 * ceh, Creator.lineDefaultBlack)
-                for (i in 1..34) {
-                    canvas.drawLine(lo, to + i * ceh, lo + cew, to + i * ceh, Creator.lineDefaultGrey50)
+                for (i in 1 until rows) {
+                    canvas.drawLine(lo, to + i * rh, lo + cew, to + i * rh, Creator.lineDefaultGrey50)
                 }
                 canvas.drawLine(lo, to + 35 * ceh, lo + cew, to + 35 * ceh, Creator.lineDefaultBlack)
             } else if (template == 1) {

@@ -272,6 +272,8 @@ abstract class SurfaceFragment : ScreenFragment() {
     private var textBoxResize = false
     private var textBoxOrigX = 0f
     private var textBoxOrigY = 0f
+    private var textBoxOrigW = 0f
+    private var textBoxOrigFont = 0f
     private var imageOrigRect = RectF()
     private var cropMode = false
     private var cropDragging = false
@@ -4088,10 +4090,13 @@ abstract class SurfaceFragment : ScreenFragment() {
                 val selT = selectedTextBox
                 if (selT != null) {
                     if (actionDown) {
-                        // Resize handle (bottom-right) → drag the box wider/narrower; the
-                        // words reflow to the new width, the font size is left untouched.
+                        // Resize handle (bottom-right) → drag scales the whole box like an
+                        // image: the FONT grows/shrinks with it (the field-notes ask), and
+                        // the words reflow to the new width.
                         if (textResizeHandle(textElementBounds(selT)).contains(x, y)) {
                             textBoxResize = true
+                            textBoxOrigW = selT.width.coerceAtLeast(MIN_TEXTBOX_WIDTH)
+                            textBoxOrigFont = selT.fontSize
                             return true
                         }
                         if (textElementBounds(selT).contains(x, y)) {
@@ -4122,8 +4127,12 @@ abstract class SurfaceFragment : ScreenFragment() {
                         return true
                     }
                     if (actionMove && textBoxResize) {
-                        // Only the width changes; height is recomputed from the wrap on render.
+                        // Width follows the drag; the font scales with it (drag out = bigger
+                        // type, drag in = smaller). Height is recomputed from the wrap on render.
                         selT.width = (x - selT.x).coerceAtLeast(MIN_TEXTBOX_WIDTH)
+                        if (textBoxOrigW > 0f) {
+                            selT.fontSize = (textBoxOrigFont * (selT.width / textBoxOrigW)).coerceIn(10f, 120f)
+                        }
                         drawImageSelection()
                         return true
                     }

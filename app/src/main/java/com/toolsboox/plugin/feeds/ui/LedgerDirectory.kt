@@ -77,7 +77,9 @@ fun ledgerDirectoryFolders(
             (fragment as? com.toolsboox.ui.plugin.ReturnAnchorProvider)?.prepareReturnAnchor()
             nav.navigate(R.id.action_to_calendar_day)
         }),
+        // The daily flow in ritual order: Intake → Pickings → Gratitude → Synthesize → Write.
         ScreenFragment.Folder("❤️", "Daily", listOf(
+            "🔖  Intake" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
             "❝  Pickings" to { showPickingsPicker(fragment) },
             "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") },
             "🔬  Synthesize" to { CalendarNavigator.toDayNote(fragment, today, "synthesize") },
@@ -85,14 +87,16 @@ fun ledgerDirectoryFolders(
         )),
         // Desk Ledger — the working surfaces: notes, tasks, people, boards, correspondence.
         ScreenFragment.Folder("🗒", "Desk", listOf(
-            "✒  Notes" to { CalendarNavigator.toDayNote(fragment, today, "0") },
+            // Notes reopens where you last were; Text Notes rides right under it (the two
+            // notes surfaces belong together, not with Text Notes exiled to the bottom).
+            "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
+            "📝  Text Notes" to { nav.navigate(R.id.action_to_text_notes) },
             "🗒  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
             "👤  Rolodex" to { nav.navigate(R.id.action_to_rolodex) },
             "📋  Boards" to { nav.navigate(R.id.action_to_kanban) },
             "🌐  Site Boards" to { nav.navigate(R.id.action_to_site_boards) },
             "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
-            "💬  Messages" to { nav.navigate(R.id.action_to_messages) },
-            "📝  Text Notes" to { nav.navigate(R.id.action_to_text_notes) }
+            "💬  Messages" to { nav.navigate(R.id.action_to_messages) }
         )),
         // Feed Ledger — the RSS reader lenses.
         ScreenFragment.Folder("📰", "Feed", listOf(

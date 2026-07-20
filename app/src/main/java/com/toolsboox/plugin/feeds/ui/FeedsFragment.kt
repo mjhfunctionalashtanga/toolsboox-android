@@ -86,6 +86,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         binding = FragmentFeedsBinding.bind(view)
 
         adapter = FeedEntryAdapter(emptyList(), onOpen = ::openEntry, onStar = ::toggleStar)
+        adapter.largeRows = prefs().getBoolean("feeds_large_rows", false)
         binding.feedsRecycler.layoutManager = LinearLayoutManager(requireContext())
         binding.feedsRecycler.adapter = adapter
         binding.feedsRecycler.addItemDecoration(
@@ -1274,6 +1275,12 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         row((if (mode == "feed") "◉" else "○") + "  Unread", false, mode == "feed") { mode = "feed"; slimFeedFilter = null; refresh() }
         row((if (mode == "read") "◉" else "○") + "  Read", false, mode == "read") { mode = "read"; slimFeedFilter = null; refresh() }
         row((if (mode == "both") "◉" else "○") + "  All", false, mode == "both") { mode = "both"; slimFeedFilter = null; refresh() }
+        val largeRows = prefs().getBoolean("feeds_large_rows", false)
+        row((if (largeRows) "☑" else "☐") + "  Larger text & images", false, false) {
+            prefs().edit().putBoolean("feeds_large_rows", !largeRows).apply()
+            adapter.largeRows = !largeRows
+            renderDirectory()
+        }
 
         // ── SOURCES ── the individual feeds of the current view, with unread counts.
         section("SOURCES")

@@ -126,6 +126,8 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                 android.view.MotionEvent.ACTION_UP -> {
                     if (dragging) {
                         prefs.edit().putFloat("floatNoteTx", v.translationX).putFloat("floatNoteTy", v.translationY).apply()
+                    } else if (e.eventTime - e.downTime >= 550L) {
+                        v.performLongClick()   // hold-in-place → the alternate surface (Text Notes)
                     } else {
                         v.performClick()
                     }
@@ -141,16 +143,23 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Global "pull up the Notes surface" button — available on every screen. It opens the SAME
-        // note page ("0") that every menu's "✒ Notes" opens, so the float and the menus are one
-        // consistent surface (previously it opened a separate "scratch" page with different content).
+        // Global "pull up the Notes surface" button — available on every screen. It reopens the
+        // note page you last had open (same memory the menus' "✒ Notes" uses), falling back to
+        // today's first page. Hold it instead to switch over to Text Notes.
         binding.floatNoteButton.setOnClickListener {
-            val today = java.time.LocalDate.now()
+            val p = getSharedPreferences("ledger_notes", 0)
+            val date = runCatching {
+                java.time.LocalDate.parse(p.getString("last_note_date", "") ?: "")
+            }.getOrNull() ?: java.time.LocalDate.now()
             val bundle = bundleOf(
-                "year" to "${today.year}", "month" to "${today.monthValue}", "day" to "${today.dayOfMonth}",
-                "notePage" to "0"
+                "year" to "${date.year}", "month" to "${date.monthValue}", "day" to "${date.dayOfMonth}",
+                "notePage" to (p.getString("last_note_page", "0") ?: "0")
             )
             binding.fragmentContent.findNavController().navigate(R.id.action_to_scratch, bundle)
+        }
+        binding.floatNoteButton.setOnLongClickListener {
+            binding.fragmentContent.findNavController().navigate(R.id.action_to_text_notes)
+            true
         }
         makeFloatButtonDraggable(binding.floatNoteButton)
 

@@ -797,6 +797,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
         calendarStyle = arguments?.getString("calendarStyle") ?: CalendarDay.DEFAULT_STYLE
         notePage = arguments?.getString("notePage")
+        // "Notes" entries reopen this exact page later (numeric pages only).
+        notePage?.let { CalendarNavigator.rememberNoteLocation(requireContext(), currentDate, it) }
 
         // Share-to-Ledger: an image shared from another app arrives as a uri argument.
         // Consume it (so back-stack re-creation doesn't re-insert) and queue the insert;
@@ -1002,23 +1004,40 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     private fun showSectionSwitcher() = showGoModal(
         listOf(
-            getString(R.string.go_group_day) to listOf(
-                GoItem("☀︎", "Day") { CalendarNavigator.toDayPage(this, LocalDate.now(), CalendarDay.DEFAULT_STYLE) },
-                GoItem("🔖", "Intake") { CalendarNavigator.toDayNote(this, LocalDate.now(), "intake") },
-                GoItem("🙏", "Gratitude") { CalendarNavigator.toDayNote(this, LocalDate.now(), "gratitude") },
-                GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this, LocalDate.now(), "pickings") },
-                GoItem("✒️", "Notes") { CalendarNavigator.toDayNote(this, LocalDate.now(), "0") },
-                GoItem("📰", "Feed") { findNavController().navigate(R.id.action_to_feeds) },
-                GoItem("📚", "Bookshelf") { findNavController().navigate(R.id.action_to_reader) },
-                GoItem("💬", "Ask") { findNavController().navigate(R.id.action_to_ledger_chat) },
-                GoItem("🕘", "Log") {
+            getString(R.string.go_group_day) to buildList {
+                // The daily flow in ritual order: Intake → Pickings → Gratitude → Synthesize
+                // → Write. Mid-flow, a ⚡ fast-lane to the next step rides on top.
+                ritualNextStep()?.let { (page, glyph, label) ->
+                    add(GoItem("⚡", "Next · $label") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), page) })
+                }
+                add(GoItem("☀︎", "Day") { CalendarNavigator.toDayPage(this@CalendarDayFragment, LocalDate.now(), CalendarDay.DEFAULT_STYLE) })
+                add(GoItem("🔖", "Intake") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
+                add(GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "pickings") })
+                add(GoItem("🙏", "Gratitude") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "gratitude") })
+                add(GoItem("🔬", "Synthesize") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "synthesize") })
+                add(GoItem("✍️", "Write") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "write") })
+                // Notes lives on the floating pen button (tap = last location, hold = Text
+                // Notes) — off this modal per the field notes, one entry point not two.
+                add(GoItem("📰", "Feed") { findNavController().navigate(R.id.action_to_feeds) })
+                add(GoItem("📚", "Bookshelf") { findNavController().navigate(R.id.action_to_reader) })
+                add(GoItem("💬", "Ask") { findNavController().navigate(R.id.action_to_ledger_chat) })
+                add(GoItem("🕘", "Log") {
                     ReadingLogSelection.origin = null
                     findNavController().navigate(R.id.action_to_reading_log)
-                }
-            )
+                })
+            }
         ),
         anchorTop = false
     )
+
+    /** The next station of the daily ritual after the page we're on, or null off-flow. */
+    private fun ritualNextStep(): Triple<String, String, String>? = when (currentNotePage()) {
+        "intake" -> Triple("pickings", "❝", "Pickings")
+        "pickings" -> Triple("gratitude", "🙏", "Gratitude")
+        "gratitude" -> Triple("synthesize", "🔬", "Synthesize")
+        "synthesize" -> Triple("write", "✍️", "Write")
+        else -> null
+    }
 
     /** Mark which tool is active on the floating pill (mirrors the hidden toolbar's tint). */
     private fun markActiveTool(active: View) {
