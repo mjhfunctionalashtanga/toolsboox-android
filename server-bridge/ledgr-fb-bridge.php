@@ -178,6 +178,12 @@ class Ledgr_FB_Bridge
             'permission_callback' => [$this, 'canWrite'],
         ]);
 
+        register_rest_route(self::NS, '/crm/message', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'sendCrmMessage'],
+            'permission_callback' => [$this, 'canWrite'],
+        ]);
+
         register_rest_route(self::NS, '/crm/audiences', [
             'methods'             => 'GET',
             'callback'            => [$this, 'crmAudiences'],
@@ -3167,6 +3173,86 @@ class Ledgr_FB_Bridge
             ];
         }
         return rest_ensure_response(['contacts' => $items]);
+    }
+
+    /**
+     * A message OUT to specific correspondents — one person, or a few. Not a campaign:
+     * no list, no segment, no unsubscribe semantics, just a letter you wrote.
+     *
+     * multipart: contact_ids (comma) and/or emails (comma), subject, body (markdown),
+     *            png (optional — a gram or your handwriting, appended to the message).
+     * Each send is written onto that contact's CRM timeline, so the exchange is on
+     * record next to everything else you know about them.
+     */
+    public function sendCrmMessage(\WP_REST_Request $request)
+    {
+        $subject = sanitize_text_field((string) $request->get_param('subject'));
+        if (!$subject) {
+            return new \WP_Error('ledgr_bad_request', 'subject is required', ['status' => 400]);
+        }
+
+        $ids    = array_filter(array_map('intval', explode(',', (string) $request->get_param('contact_ids'))));
+        $emails = array_filter(array_map('sanitize_email', explode(',', (string) $request->get_param('emails'))));
+
+        // email => contact|null (an address with no CRM record still gets the letter).
+        $recipients = [];
+        if (function_exists('FluentCrmApi')) {
+            $api = FluentCrmApi('contacts');
+            foreach ($ids as $id) {
+                $c = $api->getContact($id);
+                if ($c && $c->email) { $recipients[$c->email] = $c; }
+            }
+            foreach ($emails as $e) {
+                if (!isset($recipients[$e])) { $recipients[$e] = $api->getContact($e); }
+            }
+        } else {
+            foreach ($emails as $e) { $recipients[$e] = null; }
+        }
+        if (!$recipients) {
+            return new \WP_Error('ledgr_bad_request', 'No recipients', ['status' => 400]);
+        }
+
+        $html  = wp_kses_post($this->markdownToHtml((string) $request->get_param('body')));
+        $files = $request->get_file_params();
+        $imageUrl = null;
+        if (!empty($files['png'])) {
+            $imageUrl = $this->sideloadToMedia($files['png']);
+            if ($imageUrl) {
+                $html .= '<p style="margin:22px 0;"><img src="' . esc_url($imageUrl)
+                       . '" alt="" style="max-width:100%;height:auto;" /></p>';
+            }
+        }
+        if (trim(strip_tags($html)) === '' && !$imageUrl) {
+            return new \WP_Error('ledgr_bad_request', 'Nothing to send', ['status' => 400]);
+        }
+
+        $headers = ['Content-Type: text/html; charset=UTF-8'];
+        $sent = 0;
+        $failed = [];
+        foreach ($recipients as $email => $contact) {
+            if (wp_mail($email, $subject, $html, $headers)) {
+                $sent++;
+                if ($contact && class_exists('\FluentCrm\App\Models\SubscriberNote')) {
+                    \FluentCrm\App\Models\SubscriberNote::create([
+                        'subscriber_id' => $contact->id,
+                        'type'          => 'email',
+                        'title'         => $subject,
+                        'description'   => $html,
+                        'created_by'    => get_current_user_id(),
+                    ]);
+                }
+            } else {
+                $failed[] = $email;
+            }
+        }
+
+        do_action('ledgr_fb/crm_message_sent', array_keys($recipients), $subject, $imageUrl);
+
+        return rest_ensure_response([
+            'sent'      => $sent,
+            'failed'    => $failed,
+            'image_url' => $imageUrl,
+        ]);
     }
 
     /**
