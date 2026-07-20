@@ -599,8 +599,9 @@ object LedgerCorrespondence {
         }
     }
 
-    /** Post a TEXT reply to a community post (optionally nested under [parentId]). Dispatchers.IO. */
-    fun postTextReply(context: Context, feedId: Long, text: String, parentId: Long = 0): String {
+    /** Post a TEXT reply to a community post (optionally nested under [parentId]). Dispatchers.IO.
+     *  [markdown] true → the bridge renders a safe markdown subset to HTML. */
+    fun postTextReply(context: Context, feedId: Long, text: String, parentId: Long = 0, markdown: Boolean = true): String {
         val c = LedgerCommunityBridge.config(context)
         if (!c.ready) return "Community bridge not configured"
         if (text.isBlank()) return "Nothing to send"
@@ -608,6 +609,7 @@ object LedgerCorrespondence {
             .addFormDataPart("feed_id", feedId.toString())
             .addFormDataPart("note_uuid", "textreply-" + java.util.UUID.randomUUID().toString().lowercase())
             .addFormDataPart("text", text)
+            .apply { if (markdown) addFormDataPart("format", "markdown") }
             .apply { if (parentId > 0) addFormDataPart("parent_id", parentId.toString()) }
             .build()
         return try {

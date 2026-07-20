@@ -209,17 +209,12 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 post.excerpt.trim().take(90).let { if (it.isNotBlank()) ": “$it”" else "" }
             val quotedPost = post.author.ifBlank { "Post" } + ":  " + post.excerpt
             actions.addView(TextView(ctx).apply {
-                text = "⌨  Reply in text"
-                textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(6), px(18), 0)
-                setOnClickListener { showTextReplyDialog(post.id, post.title.ifBlank { spaceTitle }, replyingTo = quotedPost) }
-            })
-            actions.addView(TextView(ctx).apply {
-                text = "✍  Reply in ink"
+                text = "↩  Reply"
                 textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(6), px(18), 0)
                 setOnClickListener {
-                    showInkReplyDialog(
-                        post.id, post.title.ifBlank { spaceTitle }, provDefault, post.url,
-                        replyingTo = quotedPost
+                    showReplyDialog(
+                        post.id, post.title.ifBlank { spaceTitle },
+                        replyingTo = quotedPost, provenanceDefault = provDefault, provUrl = post.url
                     )
                 }
             })
@@ -319,16 +314,11 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             }
             if (head.source == "community") {
                 val quoted = head.author + ":  " + head.content.ifBlank { head.excerpt }
-                val replyBar = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; setPadding(px(10), px(2), px(10), px(10)) }
-                replyBar.addView(TextView(ctx).apply {
-                    text = "⌨  Reply in text"; textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, 0, px(22), 0)
-                    setOnClickListener { showTextReplyDialog(head.threadId, head.thread, replyingTo = quoted) }
+                container.addView(TextView(ctx).apply {
+                    text = "↩  Reply"; textSize = 15f; setTextColor(0xFF2F6F96.toInt())
+                    setPadding(px(10), px(2), px(10), px(10))
+                    setOnClickListener { showReplyDialog(head.threadId, head.thread, replyingTo = quoted) }
                 })
-                replyBar.addView(TextView(ctx).apply {
-                    text = "✍  Reply in ink"; textSize = 15f; setTextColor(0xFF2F6F96.toInt())
-                    setOnClickListener { showInkReplyDialog(head.threadId, head.thread, replyingTo = quoted) }
-                })
-                container.addView(replyBar)
             }
         }
     }
@@ -473,16 +463,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, px(1))
                         .apply { topMargin = px(12); bottomMargin = px(6) }
                 })
-                val bar = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
-                bar.addView(TextView(ctx).apply {
-                    text = "⌨  Reply in text"; textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(4), px(24), px(4))
-                    setOnClickListener { showTextReplyDialog(threadId, title) }
+                col.addView(TextView(ctx).apply {
+                    text = "↩  Reply"; textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(4), 0, px(4))
+                    setOnClickListener { showReplyDialog(threadId, title) }
                 })
-                bar.addView(TextView(ctx).apply {
-                    text = "✍  Reply in ink"; textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(4), 0, px(4))
-                    setOnClickListener { showInkReplyDialog(threadId, title) }
-                })
-                col.addView(bar)
             }
         }
     }
@@ -534,57 +518,107 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    /** A white card you write on with the stylus; Done posts the ink as your comment. */
+    // Thin wrappers so every call site keeps working — both open the ONE unified reply surface.
     @SuppressLint("ClickableViewAccessibility")
     private fun showInkReplyDialog(
         feedId: Long, thread: String, provenanceDefault: String? = null, provUrl: String? = null,
         replyingTo: String? = null, parentId: Long = 0
+    ) = showReplyDialog(feedId, thread, replyingTo, parentId, provenanceDefault, provUrl, startText = false)
+
+    private fun showTextReplyDialog(
+        feedId: Long, thread: String, replyingTo: String? = null, parentId: Long = 0
+    ) = showReplyDialog(feedId, thread, replyingTo, parentId, null, null, startText = true)
+
+    /**
+     * The ONE reply surface (the "merging surface"): a ⅓-page canvas with a Draw / Type
+     * toggle. Draw = stylus ink (post as annotation, or Share as gram with provenance);
+     * Type = markdown text (bridge renders a safe subset), with a basics cheat-sheet.
+     * Nests under [parentId] when replying to a specific comment.
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun showReplyDialog(
+        feedId: Long, thread: String, replyingTo: String? = null, parentId: Long = 0,
+        provenanceDefault: String? = null, provUrl: String? = null, startText: Boolean = false
     ) {
         val ctx = requireContext()
-        val ink = InkPadView(ctx)
         val dp = resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
-
+        val ink = InkPadView(ctx)
+        var textMode = startText
         var shareAsGram: (() -> Unit)? = null
-        // Actions at the TOP, not the bottom — so your writing hand never rests on them mid-stroke.
+
         val actionRow = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.END; setPadding(0, 0, 0, px(6))
+            orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.END; setPadding(0, 0, 0, px(4))
         }
-        // A bold frame around the pen area: on e-ink the white pad melted into the white
-        // dialog, so it wasn't clear where writing would land.
+        // Mode toggle — Draw vs Type; the active one is bold+underlined.
+        val drawTab = TextView(ctx).apply { text = "✍ Draw"; textSize = 15f; setPadding(0, px(2), px(20), px(6)) }
+        val typeTab = TextView(ctx).apply { text = "⌨ Type"; textSize = 15f; setPadding(0, px(2), 0, px(6)) }
+        val tabRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; addView(drawTab); addView(typeTab) }
+
+        // Draw surface: bold-framed ⅓-page pad.
         val inkFrame = android.widget.FrameLayout(ctx).apply {
-            setBackgroundColor(0xFF000000.toInt())
-            setPadding(px(2), px(2), px(2), px(2))
+            setBackgroundColor(0xFF000000.toInt()); setPadding(px(2), px(2), px(2), px(2))
             addView(ink, android.widget.FrameLayout.LayoutParams(
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT, (420 * dp).toInt()
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT, (340 * dp).toInt()
             ))
         }
-        val box = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(px(12), px(8), px(12), 0)
-            addView(actionRow)
-            // What you're answering, right above where you answer it. Capped height so the
-            // pad keeps its room; long messages scroll inside the quote.
-            if (!replyingTo.isNullOrBlank()) {
-                addView(TextView(ctx).apply {
-                    text = deHtml(replyingTo); textSize = 13f; setTextColor(0xFF333333.toInt())
-                    setPadding(px(8), px(4), px(8), px(6))
-                    maxHeight = (140 * dp).toInt()
-                    isVerticalScrollBarEnabled = true
-                    movementMethod = android.text.method.ScrollingMovementMethod()
-                })
-            }
-            addView(inkFrame, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ))
+        // Type surface: markdown editor + collapsible basics.
+        val input = android.widget.EditText(ctx).apply {
+            hint = "Write a reply… (markdown)"; setSingleLine(false); minLines = 6; gravity = android.view.Gravity.TOP
+            setPadding(px(10), px(10), px(10), px(10))
         }
-        if (provenanceDefault != null) box.addView(TextView(ctx).apply {
+        val cheatToggle = TextView(ctx).apply {
+            text = "ⓘ  Markdown basics"; textSize = 13f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(6), 0, px(2))
+        }
+        val cheat = TextView(ctx).apply {
+            text = "**bold**   *italic*   `code`\n[text](https://link)\n- bullet    1. number\n# Heading    > quote"
+            textSize = 12f; setTextColor(0xFF666666.toInt()); typeface = android.graphics.Typeface.MONOSPACE
+            setPadding(px(8), px(4), px(8), px(6)); visibility = View.GONE
+        }
+        cheatToggle.setOnClickListener {
+            cheat.visibility = if (cheat.visibility == View.GONE) View.VISIBLE else View.GONE
+        }
+        val textPane = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; addView(input); addView(cheatToggle); addView(cheat)
+        }
+
+        val contentFrame = android.widget.FrameLayout(ctx).apply { addView(inkFrame); addView(textPane) }
+        val gramRow = TextView(ctx).apply {
             text = "↗  Share as gram instead…"
             textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(px(2), px(10), 0, px(4))
             setOnClickListener { shareAsGram?.invoke() }
-        })
+        }
+
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(px(12), px(8), px(12), 0)
+            addView(actionRow)
+            addView(tabRow)
+            if (!replyingTo.isNullOrBlank()) addView(TextView(ctx).apply {
+                text = deHtml(replyingTo); textSize = 13f; setTextColor(0xFF333333.toInt())
+                setPadding(px(8), px(4), px(8), px(6)); maxHeight = (120 * dp).toInt()
+                movementMethod = android.text.method.ScrollingMovementMethod()
+            })
+            addView(contentFrame, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+            if (provenanceDefault != null) addView(gramRow)
+        }
+
+        fun applyMode() {
+            inkFrame.visibility = if (textMode) View.GONE else View.VISIBLE
+            textPane.visibility = if (textMode) View.VISIBLE else View.GONE
+            gramRow.visibility = if (!textMode && provenanceDefault != null) View.VISIBLE else View.GONE
+            drawTab.setTypeface(null, if (textMode) android.graphics.Typeface.NORMAL else android.graphics.Typeface.BOLD)
+            drawTab.paintFlags = if (textMode) 0 else android.graphics.Paint.UNDERLINE_TEXT_FLAG
+            typeTab.setTypeface(null, if (textMode) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+            typeTab.paintFlags = if (textMode) android.graphics.Paint.UNDERLINE_TEXT_FLAG else 0
+        }
+        drawTab.setOnClickListener { textMode = false; applyMode() }
+        typeTab.setOnClickListener { textMode = true; applyMode() }
+        applyMode()
 
         val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
-            .setTitle("Reply in ink · ${deHtml(thread).ifBlank { "thread" }}")
+            .setTitle((if (parentId > 0) "Reply · " else "Reply · ") + deHtml(thread).ifBlank { "thread" }.take(28))
             .setView(box)
             .create()
 
@@ -593,77 +627,40 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setPadding(px(16), px(4), px(16), px(4)); setOnClickListener { onTap() }
         }
-        actionRow.addView(actionBtn("Clear") { ink.clear() })
+        actionRow.addView(actionBtn("Clear") { if (textMode) input.setText("") else ink.clear() })
         actionRow.addView(actionBtn("Cancel") { dialog.dismiss() })
         actionRow.addView(actionBtn("Send") {
-            val bmp = ink.render() ?: run {
-                android.widget.Toast.makeText(ctx, "Nothing written", android.widget.Toast.LENGTH_SHORT).show()
-                return@actionBtn
-            }
-            val baos = ByteArrayOutputStream()
-            bmp.compress(Bitmap.CompressFormat.PNG, 100, baos); bmp.recycle()
-            lifecycleScope.launch {
-                val status = withContext(Dispatchers.IO) {
-                    LedgerCorrespondence.postInkReply(ctx, feedId, baos.toByteArray(), parentId)
+            if (textMode) {
+                val text = input.text.toString().trim()
+                if (text.isBlank()) { android.widget.Toast.makeText(ctx, "Nothing to send", android.widget.Toast.LENGTH_SHORT).show(); return@actionBtn }
+                lifecycleScope.launch {
+                    val status = withContext(Dispatchers.IO) { LedgerCorrespondence.postTextReply(ctx, feedId, text, parentId) }
+                    android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
+                    if (status == "Reply posted") { markReplied("community", feedId); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
                 }
-                android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
-                if (status == "Reply posted") { markReplied("community", feedId); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
+            } else {
+                val bmp = ink.render() ?: run {
+                    android.widget.Toast.makeText(ctx, "Nothing written", android.widget.Toast.LENGTH_SHORT).show()
+                    return@actionBtn
+                }
+                val baos = ByteArrayOutputStream()
+                bmp.compress(Bitmap.CompressFormat.PNG, 100, baos); bmp.recycle()
+                lifecycleScope.launch {
+                    val status = withContext(Dispatchers.IO) { LedgerCorrespondence.postInkReply(ctx, feedId, baos.toByteArray(), parentId) }
+                    android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
+                    if (status == "Reply posted") { markReplied("community", feedId); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
+                }
             }
         })
         shareAsGram = {
             val bmp = ink.render()
-            if (bmp == null) {
-                android.widget.Toast.makeText(ctx, "Nothing written", android.widget.Toast.LENGTH_SHORT).show()
-            } else {
-                dialog.dismiss()
-                showGramProvenanceEditor(bmp, provenanceDefault ?: "", provUrl)
-            }
+            if (bmp == null) android.widget.Toast.makeText(ctx, "Nothing written", android.widget.Toast.LENGTH_SHORT).show()
+            else { dialog.dismiss(); showGramProvenanceEditor(bmp, provenanceDefault ?: "", provUrl) }
         }
-        dialog.show()
-        // Full width: the writing surface is the point of this dialog.
-        dialog.window?.setLayout(
-            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-    }
-
-    /** Type a reply (keyboard) to a community post, optionally nested under [parentId]. */
-    private fun showTextReplyDialog(
-        feedId: Long, thread: String, replyingTo: String? = null, parentId: Long = 0
-    ) {
-        val ctx = requireContext()
-        val dp = resources.displayMetrics.density
-        fun px(v: Int) = (v * dp).toInt()
-        val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(px(18), px(6), px(18), 0) }
-        if (!replyingTo.isNullOrBlank()) col.addView(TextView(ctx).apply {
-            text = deHtml(replyingTo); textSize = 13f; setTextColor(0xFF555555.toInt())
-            setPadding(0, 0, 0, px(6)); maxHeight = (120 * dp).toInt()
-            movementMethod = android.text.method.ScrollingMovementMethod()
-        })
-        val input = android.widget.EditText(ctx).apply {
-            hint = "Write a reply…"; setSingleLine(false); minLines = 3; gravity = android.view.Gravity.TOP
-            setPadding(px(10), px(10), px(10), px(10))
-        }
-        col.addView(input)
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
-            .setTitle((if (parentId > 0) "Reply · " else "Reply in text · ") + deHtml(thread).ifBlank { "thread" }.take(28))
-            .setView(col)
-            .setPositiveButton("Send") { _, _ ->
-                val text = input.text.toString().trim()
-                if (text.isBlank()) { android.widget.Toast.makeText(ctx, "Nothing to send", android.widget.Toast.LENGTH_SHORT).show(); return@setPositiveButton }
-                lifecycleScope.launch {
-                    val status = withContext(Dispatchers.IO) { LedgerCorrespondence.postTextReply(ctx, feedId, text, parentId) }
-                    android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
-                    if (status == "Reply posted") { markReplied("community", feedId); afterReplyPosted("community", feedId, thread) }
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .create()
         dialog.show()
         dialog.window?.setLayout(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT
         )
-        input.requestFocus()
     }
 
     /** After any reply/delete: refresh the inbox, and if the thread reader is open, reopen it

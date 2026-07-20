@@ -1361,6 +1361,71 @@ class Ledgr_FB_Bridge
         }
     }
 
+    /**
+     * Minimal, safe Markdown → HTML for text-note replies. Deliberately a SUBSET
+     * (headings, bold, italic, inline code, links, bullet/numbered lists, blockquote,
+     * paragraphs) so nothing exotic reaches the feed; the result is wp_kses_post'd.
+     * Everything is escaped BEFORE markup is applied, so raw HTML in the input is inert.
+     */
+    private function markdownToHtml($md)
+    {
+        $lines = preg_split('/\r\n|\r|\n/', (string) $md);
+        $out = '';
+        $listType = null;   // 'ul' | 'ol' | null
+        $para = [];
+
+        $inline = function ($text) {
+            $t = esc_html($text);
+            // links [label](http…) — URL validated by esc_url
+            $t = preg_replace_callback('/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/', function ($m) {
+                return '<a href="' . esc_url($m[2]) . '" rel="noopener">' . $m[1] . '</a>';
+            }, $t);
+            $t = preg_replace('/\*\*([^*]+)\*\*/', '<strong>$1</strong>', $t);
+            $t = preg_replace('/(?<!\*)\*([^*]+)\*(?!\*)/', '<em>$1</em>', $t);
+            $t = preg_replace('/`([^`]+)`/', '<code>$1</code>', $t);
+            return $t;
+        };
+        $flushPara = function () use (&$para, &$out, $inline) {
+            if ($para) { $out .= '<p>' . implode('<br />', array_map($inline, $para)) . '</p>'; $para = []; }
+        };
+        $closeList = function () use (&$listType, &$out) {
+            if ($listType) { $out .= "</$listType>"; $listType = null; }
+        };
+
+        foreach ($lines as $line) {
+            $trim = trim($line);
+            if ($trim === '') { $flushPara(); $closeList(); continue; }
+            if (preg_match('/^(#{1,4})\s+(.*)$/', $trim, $m)) {
+                $flushPara(); $closeList();
+                $lvl = min(4, strlen($m[1])) + 1;   // #→h2 … so it doesn't collide with post title h1
+                $out .= "<h$lvl>" . $inline($m[2]) . "</h$lvl>";
+                continue;
+            }
+            if (preg_match('/^>\s?(.*)$/', $trim, $m)) {
+                $flushPara(); $closeList();
+                $out .= '<blockquote><p>' . $inline($m[1]) . '</p></blockquote>';
+                continue;
+            }
+            if (preg_match('/^[-*]\s+(.*)$/', $trim, $m)) {
+                $flushPara();
+                if ($listType !== 'ul') { $closeList(); $out .= '<ul>'; $listType = 'ul'; }
+                $out .= '<li>' . $inline($m[1]) . '</li>';
+                continue;
+            }
+            if (preg_match('/^\d+\.\s+(.*)$/', $trim, $m)) {
+                $flushPara();
+                if ($listType !== 'ol') { $closeList(); $out .= '<ol>'; $listType = 'ol'; }
+                $out .= '<li>' . $inline($m[1]) . '</li>';
+                continue;
+            }
+            $closeList();
+            $para[] = $trim;
+        }
+        $flushPara(); $closeList();
+
+        return wp_kses_post($out);
+    }
+
     /* ---------------------------------------------------------------
      * POST /ledgr/v1/community/comment — handwritten annotation
      * multipart: png (optional), note_uuid, feed_id, text (OCR)
@@ -1412,7 +1477,17 @@ class Ledgr_FB_Bridge
         }
 
         $message = trim($text);
-        $html    = $imageHtml . ($message ? '<p>' . nl2br(esc_html($message)) . '</p>' : '');
+        // Markdown replies (format=markdown) render a safe HTML subset; plain replies keep the
+        // old escaped-nl2br behaviour. The Ledger authors text-note replies in markdown.
+        $format = sanitize_text_field((string) $request->get_param('format'));
+        if ($message === '') {
+            $bodyHtml = '';
+        } elseif ($format === 'markdown') {
+            $bodyHtml = $this->markdownToHtml($message);
+        } else {
+            $bodyHtml = '<p>' . nl2br(esc_html($message)) . '</p>';
+        }
+        $html = $imageHtml . $bodyHtml;
 
         // Optional: nest this under an existing comment (reply-to-a-reply). Must belong to
         // the same post, or we ignore it and post at top level.
