@@ -242,31 +242,10 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                     }
                     bmp.recycle()
                     if (result == null) { toast("Couldn't read it clearly — kept just the image"); return@launch }
-                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        runCatching {
-                            val root = documentsRoot(); val today = java.time.LocalDate.now()
-                            when (result.kind) {
-                                "task", "event" -> {
-                                    val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
-                                    day.ledgerItems.add(com.toolsboox.plugin.calendar.da.v2.LedgerItem(
-                                        id = "photo-" + java.util.UUID.randomUUID().toString().lowercase(),
-                                        kind = if (result.kind == "event") com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT
-                                               else com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
-                                        text = result.text, date = java.util.Date(), stage = "todo"))
-                                    calendarDayService.save(root, today, day)
-                                }
-                                else -> {   // note | prose → a searchable Text Note, not a task
-                                    com.toolsboox.plugin.textnotes.TextNotesStore.addNote(
-                                        this@MainActivity, today, "📷 Photo · $today", result.text)
-                                }
-                            }
-                        }
-                    }
-                    toast(when (result.kind) {
-                        "task" -> "Filed as a task on today"
-                        "event" -> "Filed as an event on today"
-                        else -> "Saved as a note"
-                    })
+                    // PREVIEW-AND-CONFIRM (converged with iOS): nothing files without a glance.
+                    // The model's kind is only the SUGGESTION (the lead button); the human is
+                    // the final classifier — this is what makes bunk tasks structurally impossible.
+                    confirmOcrFiling(result)
                 }
             }
             .setNegativeButton("Just the image") { _, _ -> bmp.recycle() }
@@ -274,6 +253,45 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             // Only fires on cancel, not on a button tap, so the extract path keeps its bitmap.
             .setOnCancelListener { if (!bmp.isRecycled) bmp.recycle() }
             .show()
+    }
+
+    /** Show what was read; the user confirms where it files (suggested kind leads). */
+    private fun confirmOcrFiling(result: com.toolsboox.plugin.calendar.nw.VisionOcr.OcrResult) {
+        val suggestTask = result.kind == "task" || result.kind == "event"
+        val suggested = when (result.kind) {
+            "task" -> "Save as a task"; "event" -> "Save as an event"; else -> "Save as a note"
+        }
+        val alternate = if (suggestTask) "Save as a note" else "Save as a task"
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Reads:")
+            .setMessage(result.text.take(400))
+            .setPositiveButton(suggested) { _, _ -> fileOcrText(result.text, asTask = suggestTask, asEvent = result.kind == "event") }
+            .setNeutralButton(alternate) { _, _ -> fileOcrText(result.text, asTask = !suggestTask, asEvent = false) }
+            .setNegativeButton("Just the image", null)
+            .show()
+    }
+
+    private fun fileOcrText(text: String, asTask: Boolean, asEvent: Boolean) {
+        lifecycleScope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val root = documentsRoot(); val today = java.time.LocalDate.now()
+                    if (asTask) {
+                        val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
+                        day.ledgerItems.add(com.toolsboox.plugin.calendar.da.v2.LedgerItem(
+                            id = "photo-" + java.util.UUID.randomUUID().toString().lowercase(),
+                            kind = if (asEvent) com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT
+                                   else com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
+                            text = text, date = java.util.Date(), stage = "todo"))
+                        calendarDayService.save(root, today, day)
+                    } else {
+                        com.toolsboox.plugin.textnotes.TextNotesStore.addNote(
+                            this@MainActivity, today, "📷 Photo · $today", text)
+                    }
+                }
+            }
+            toast(if (asEvent) "Filed as an event on today" else if (asTask) "Filed as a task on today" else "Saved as a note")
+        }
     }
 
     private fun aiCreds(): Triple<String, String, String>? = try {
@@ -294,6 +312,9 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Bound the re-creatable caches (article copies, later media, temp shots) —
+        // daily, off-main, never touching user media or day JSONs.
+        com.toolsboox.ot.CacheJanitor.runDaily(this)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 

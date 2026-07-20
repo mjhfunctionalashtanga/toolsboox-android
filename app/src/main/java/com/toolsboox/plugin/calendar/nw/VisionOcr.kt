@@ -56,10 +56,12 @@ object VisionOcr {
             "If the image has no legible handwriting, reply {\"text\": \"\", \"legible\": false, " +
             "\"confidence\": 0.0, \"kind\": \"note\"}."
 
-    /** Refusal/apology-shaped output — the model narrating instead of transcribing. */
+    /** Refusal/apology-shaped output — the model NARRATING instead of transcribing. Only
+     *  unambiguous AI-refusal openers: real handwriting can legitimately start with
+     *  "unable to…" / "appears to be…" (the reviewer's catch), so those stay OUT. */
     private val REFUSAL_MARKERS = listOf(
-        "i cannot", "i can't", "i'm sorry", "i am sorry", "unable to", "appears to be",
-        "the image shows", "no legible", "cannot make out", "as an ai")
+        "as an ai", "i'm sorry", "i am sorry", "i cannot read", "i can't read",
+        "unable to read", "no legible", "cannot make out", "the image shows")
 
     /**
      * Recognize with the quality gate: null when there's no key, the request fails, the model
@@ -74,11 +76,13 @@ object VisionOcr {
         val obj = runCatching { JSONObject(cleaned) }.getOrNull()
         val text: String
         if (obj != null) {
+            // Structured mode: a refusal arrives as legible:false — TRUST the structure and
+            // do NOT head-scan the transcription (a real note reading "Unable to make it
+            // Tuesday" must survive; the refusal brake is for the legacy prose path only).
             if (!obj.optBoolean("legible", false)) return null
             if (obj.optDouble("confidence", 0.0) < CONFIDENCE_THRESHOLD) return null
             text = obj.optString("text", "").trim()
             if (text.isBlank()) return null
-            if (looksLikeRefusal(text)) return null
             return OcrResult(text, obj.optString("kind", "note").lowercase().ifBlank { "note" })
         }
         // Legacy-shaped reply (plain text): keep it, but the refusal brake still applies.
