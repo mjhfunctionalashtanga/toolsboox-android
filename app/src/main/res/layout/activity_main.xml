@@ -44,9 +44,11 @@
                     android:layout_height="54dp"
                     android:layout_gravity="bottom|start"
                     android:layout_margin="22dp"
-                    android:src="@android:drawable/ic_menu_edit"
+                    android:src="@drawable/ic_pencil"
+                    android:padding="13dp"
+                    android:scaleType="fitCenter"
                     android:background="@drawable/dialog_rounded_bg"
-                    android:contentDescription="Scratch note"
+                    android:contentDescription="Notes"
                     android:elevation="10dp"/>
 
         </FrameLayout>
