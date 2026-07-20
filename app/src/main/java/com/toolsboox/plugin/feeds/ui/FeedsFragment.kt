@@ -442,7 +442,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             val local = withContext(Dispatchers.IO) { gatherLaterList() }
             binding.progress.visibility = View.INVISIBLE
             allEntries = local
-            val shown = filterByNavDay(applyKind(local))
+            // The Later list is the WHOLE backlog ("a finite feed to clear"), NOT filtered by
+            // the timeline nav — nav-filtering it hid every item saved on a day other than the
+            // one the navigator happened to sit on.
+            val shown = applyKind(local)
             adapter.submit(shown)
             if (shown.isEmpty()) showEmpty(getString(R.string.feeds_later_empty))
             else binding.emptyText.visibility = View.GONE
@@ -462,7 +465,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     local.map { it.url + "·" + it.title }.toSet()
                 if (changed) {
                     allEntries = merged
-                    val m = filterByNavDay(applyKind(merged))
+                    val m = applyKind(merged)
                     adapter.submit(m)
                     if (m.isEmpty()) showEmpty(getString(R.string.feeds_later_empty))
                     else binding.emptyText.visibility = View.GONE
