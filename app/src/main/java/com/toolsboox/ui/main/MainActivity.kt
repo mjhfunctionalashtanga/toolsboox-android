@@ -223,32 +223,50 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         }
     }
 
-    /** If AI creds are set, offer to extract the handwriting's text and file it as a note. */
+    /** If AI creds are set, offer to extract the handwriting's text and file it where it belongs. */
     private fun offerOcr(bmp: android.graphics.Bitmap) {
         val creds = aiCreds()
         if (creds == null) { bmp.recycle(); return }
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Extract the text too?")
-            .setMessage("Read the handwriting and add it as a searchable note.")
+            .setMessage("Read the handwriting and file it — a to-do becomes a task, longer writing becomes a note.")
             .setPositiveButton("Extract text") { _, _ ->
                 lifecycleScope.launch {
-                    val text = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        runCatching { com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third) }.getOrNull()
+                    // The QUALITY GATE: structured recognition discards illegible / low-confidence /
+                    // confabulated output, and classifies what's left (task | event | note | prose)
+                    // so a recipe stays a recipe instead of becoming a bunk task.
+                    val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching {
+                            com.toolsboox.plugin.calendar.nw.VisionOcr.recognizeStructured(bmp, creds.first, creds.second, creds.third)
+                        }.getOrNull()
                     }
                     bmp.recycle()
-                    if (text.isNullOrBlank()) { toast("Couldn't read the text"); return@launch }
+                    if (result == null) { toast("Couldn't read it clearly — kept just the image"); return@launch }
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                         runCatching {
                             val root = documentsRoot(); val today = java.time.LocalDate.now()
-                            val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
-                            day.ledgerItems.add(com.toolsboox.plugin.calendar.da.v2.LedgerItem(
-                                id = "photo-" + java.util.UUID.randomUUID().toString().lowercase(),
-                                kind = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
-                                text = text.trim(), date = java.util.Date(), stage = "todo"))
-                            calendarDayService.save(root, today, day)
+                            when (result.kind) {
+                                "task", "event" -> {
+                                    val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
+                                    day.ledgerItems.add(com.toolsboox.plugin.calendar.da.v2.LedgerItem(
+                                        id = "photo-" + java.util.UUID.randomUUID().toString().lowercase(),
+                                        kind = if (result.kind == "event") com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT
+                                               else com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
+                                        text = result.text, date = java.util.Date(), stage = "todo"))
+                                    calendarDayService.save(root, today, day)
+                                }
+                                else -> {   // note | prose → a searchable Text Note, not a task
+                                    com.toolsboox.plugin.textnotes.TextNotesStore.addNote(
+                                        this@MainActivity, today, "📷 Photo · $today", result.text)
+                                }
+                            }
                         }
                     }
-                    toast("Text filed to today")
+                    toast(when (result.kind) {
+                        "task" -> "Filed as a task on today"
+                        "event" -> "Filed as an event on today"
+                        else -> "Saved as a note"
+                    })
                 }
             }
             .setNegativeButton("Just the image") { _, _ -> bmp.recycle() }
