@@ -38,6 +38,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
+import com.toolsboox.ot.InkPadView
 
 /**
  * Site Boards — a tactile browser for every FluentBoards board on the site. The board list opens a
@@ -645,6 +646,8 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; setPadding(px(12), px(6), px(12), 0)
             addView(actionRow)
+            // The same pen toolbar the reply pad has — undo, three inks, fine↔bold.
+            addView(InkPadView.penBar(ctx, ink))
             addView(inkFrame, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ))
@@ -766,35 +769,6 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
     }
 
     /** Minimal stylus pad — plain touch, no Onyx pipeline (fine for a short handwritten reply). */
-    private class InkPadView(context: Context) : View(context) {
-        private val paths = mutableListOf<Path>()
-        private var current: Path? = null
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.BLACK; style = Paint.Style.STROKE
-            strokeWidth = 4f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
-        }
-        init { setBackgroundColor(Color.WHITE) }
-        override fun onTouchEvent(event: MotionEvent): Boolean {
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> current = Path().also { it.moveTo(event.x, event.y); paths.add(it) }
-                MotionEvent.ACTION_MOVE -> current?.lineTo(event.x, event.y)
-                MotionEvent.ACTION_UP -> current = null
-            }
-            invalidate(); return true
-        }
-        override fun onDraw(canvas: Canvas) {
-            super.onDraw(canvas)
-            for (p in paths) canvas.drawPath(p, paint)
-        }
-        fun clear() { paths.clear(); current = null; invalidate() }
-        fun render(): Bitmap? {
-            if (paths.isEmpty() || width == 0 || height == 0) return null
-            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            val c = Canvas(bmp); c.drawColor(Color.WHITE)
-            for (p in paths) c.drawPath(p, paint)
-            return bmp
-        }
-    }
 
     /** Save an edit through updateTask, then reopen the card so it shows the new state. */
     private fun saveEdit(

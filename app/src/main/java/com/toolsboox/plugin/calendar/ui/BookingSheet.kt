@@ -30,6 +30,7 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import com.toolsboox.ot.InkPadView
 
 /**
  * One booking, opened from wherever it was surfaced — the timeline, the day page, the almanac.
@@ -325,6 +326,8 @@ object BookingSheet {
             orientation = LinearLayout.VERTICAL
             setPadding(px(ctx, 12), px(ctx, 6), px(ctx, 12), 0)
             addView(actionRow)
+            // The same pen toolbar the reply pad has — undo, three inks, fine↔bold.
+            addView(InkPadView.penBar(ctx, ink))
             addView(inkFrame, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ))
@@ -385,38 +388,4 @@ object BookingSheet {
      * MessagesFragment each carry a private copy of this — they could collapse onto this one
      * later; not doing it here to keep this change off those three files.)
      */
-    private class InkPadView(context: Context) : View(context) {
-        private val paths = mutableListOf<Path>()
-        private var current: Path? = null
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.BLACK; style = Paint.Style.STROKE
-            strokeWidth = 4f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
-        }
-
-        init { setBackgroundColor(Color.WHITE) }
-
-        override fun onTouchEvent(event: MotionEvent): Boolean {
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> current = Path().also { it.moveTo(event.x, event.y); paths.add(it) }
-                MotionEvent.ACTION_MOVE -> current?.lineTo(event.x, event.y)
-                MotionEvent.ACTION_UP -> current = null
-            }
-            invalidate(); return true
-        }
-
-        override fun onDraw(canvas: Canvas) {
-            super.onDraw(canvas)
-            for (p in paths) canvas.drawPath(p, paint)
-        }
-
-        fun clear() { paths.clear(); current = null; invalidate() }
-
-        fun render(): Bitmap? {
-            if (paths.isEmpty() || width == 0 || height == 0) return null
-            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            val c = Canvas(bmp); c.drawColor(Color.WHITE)
-            for (p in paths) c.drawPath(p, paint)
-            return bmp
-        }
-    }
 }

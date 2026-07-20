@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import javax.inject.Inject
+import com.toolsboox.ot.InkPadView
 
 /**
  * The Correspondence page — what passed between you and other people. Replies to your community
@@ -673,42 +674,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         val typeTab = TextView(ctx).apply { text = "⌨ Type"; textSize = 15f; setPadding(0, px(2), 0, px(6)) }
         val tabRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; addView(drawTab); addView(typeTab) }
 
-        // Draw surface: a small pen toolbar (undo · colours · width) over a bold-framed ⅓-page pad —
-        // the creation-page niceties that don't need the Onyx engine.
-        val penBar = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
-            setPadding(px(2), px(2), px(2), px(4))
-        }
-        fun swatch(color: Int): TextView {
-            lateinit var tv: TextView
-            tv = TextView(ctx).apply {
-                text = "●"; textSize = 22f; setTextColor(color); setPadding(px(6), 0, px(6), 0)
-                setOnClickListener {
-                    ink.penColor = color
-                    // Mark the active swatch with a ring.
-                    (parent as? LinearLayout)?.let { row ->
-                        for (i in 0 until row.childCount) (row.getChildAt(i) as? TextView)?.paintFlags = 0
-                    }
-                    tv.paintFlags = android.graphics.Paint.UNDERLINE_TEXT_FLAG
-                }
-            }
-            return tv
-        }
-        penBar.addView(TextView(ctx).apply {
-            text = "↶"; textSize = 20f; setTextColor(0xFF2F6F96.toInt()); setPadding(px(4), 0, px(14), 0)
-            setOnClickListener { ink.undo() }
-        })
-        penBar.addView(swatch(Color.BLACK).also { it.paintFlags = android.graphics.Paint.UNDERLINE_TEXT_FLAG })
-        penBar.addView(swatch(Color.parseColor("#B00020")))
-        penBar.addView(swatch(Color.parseColor("#1A4E8A")))
-        penBar.addView(android.widget.Space(ctx).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })
-        // Width: fine ↔ bold cycle.
-        val widths = floatArrayOf(2.5f, 4f, 7f)
-        var widthIdx = 1
-        penBar.addView(TextView(ctx).apply {
-            text = "✒ width"; textSize = 14f; setTextColor(0xFF2F6F96.toInt()); setPadding(px(8), 0, px(4), 0)
-            setOnClickListener { widthIdx = (widthIdx + 1) % widths.size; ink.penWidth = widths[widthIdx] }
-        })
+        // Draw surface: the shared pen toolbar (undo · colours · width) over a bold-framed
+        // ⅓-page pad — the creation-page niceties that don't need the Onyx engine.
+        val penBar = InkPadView.penBar(ctx, ink)
+
         val inkFrame = android.widget.FrameLayout(ctx).apply {
             setBackgroundColor(0xFF000000.toInt()); setPadding(px(2), px(2), px(2), px(2))
             addView(ink, android.widget.FrameLayout.LayoutParams(
@@ -994,53 +963,6 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     }
 
     /** Minimal stylus pad: white background, black ink, no Onyx pipeline needed for a short reply. */
-    private class InkPadView(context: Context) : View(context) {
-        // Each stroke carries its own colour+width, so undo/colours work like a creation page.
-        private class Stroke(val path: Path, val color: Int, val strokeWidth: Float)
-        private val strokes = mutableListOf<Stroke>()
-        private var current: Path? = null
-
-        var penColor: Int = Color.BLACK
-        var penWidth: Float = 4f
-
-        private fun paintFor(color: Int, w: Float) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            this.color = color; style = Paint.Style.STROKE
-            strokeWidth = w; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
-        }
-
-        init { setBackgroundColor(Color.WHITE) }
-
-        override fun onTouchEvent(event: MotionEvent): Boolean {
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    current = Path().also { it.moveTo(event.x, event.y); strokes.add(Stroke(it, penColor, penWidth)) }
-                }
-                MotionEvent.ACTION_MOVE -> current?.lineTo(event.x, event.y)
-                MotionEvent.ACTION_UP -> current = null
-            }
-            invalidate()
-            return true
-        }
-
-        override fun onDraw(canvas: Canvas) {
-            super.onDraw(canvas)
-            for (s in strokes) canvas.drawPath(s.path, paintFor(s.color, s.strokeWidth))
-        }
-
-        fun clear() { strokes.clear(); current = null; invalidate() }
-        fun undo() { if (strokes.isNotEmpty()) { strokes.removeAt(strokes.size - 1); current = null; invalidate() } }
-        fun isBlank() = strokes.isEmpty()
-
-        /** The written card as a bitmap, or null when blank. */
-        fun render(): Bitmap? {
-            if (strokes.isEmpty() || width == 0 || height == 0) return null
-            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            val c = Canvas(bmp)
-            c.drawColor(Color.WHITE)
-            for (s in strokes) c.drawPath(s.path, paintFor(s.color, s.strokeWidth))
-            return bmp
-        }
-    }
 
     private data class LogPick(val kind: String, val title: String, val excerpt: String, val source: String?, val url: String?)
 
