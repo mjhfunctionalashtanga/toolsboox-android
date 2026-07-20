@@ -1322,6 +1322,45 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     )
 
     /**
+     * A recording made from inside a reply.
+     *
+     * It is saved to today's day first, so the clip is a Ledger object you can find again on the
+     * board rather than something that exists only as an attachment on someone else's thread.
+     * Then it comes back as the reply's attachment. Bidirectional, same as "Reply with…".
+     */
+    private fun attachFreshAvGram(
+        att: com.toolsboox.da.Attachment,
+        onPicked: (String, Bitmap?, java.io.File, String, String) -> Unit
+    ) {
+        val kind = when (att.kind) {
+            com.toolsboox.da.Attachment.Kind.AUDIO -> "audio"
+            com.toolsboox.da.Attachment.Kind.VIDEO -> "video"
+            else -> return   // a photo isn't an A/V gram; the ink pad already takes pictures
+        }
+        val file = java.io.File(attachmentsDir(), att.filename)
+        if (!file.exists()) return
+
+        lifecycleScope.launch {
+            val today = java.time.LocalDate.now()
+            val durationMs = att.duration?.let { (it * 1000).toInt() }?.takeIf { it > 0 }
+                ?: withContext(Dispatchers.IO) { com.toolsboox.plugin.calendar.ot.AvPoster.durationMs(file) }
+            val title = (if (kind == "video") "🎥 Video gram · " else "🎤 Audio gram · ") + today
+
+            val poster = withContext(Dispatchers.IO) {
+                runCatching {
+                    val day = calendarDayService.load(documentsRoot(), today, null, java.util.Locale.getDefault())
+                    day.avGrams.add(att)
+                    calendarDayService.save(documentsRoot(), today, day)
+                }
+                com.toolsboox.plugin.calendar.ot.AvPoster.poster(file, att.kind, durationMs, title)
+            }
+
+            if (!isAdded) { poster?.recycle(); return@launch }
+            onPicked((if (kind == "video") "Video · " else "Voice · ") + today, poster, file, kind, title)
+        }
+    }
+
+    /**
      * Attach a voice or video gram you've already made to a reply.
      *
      * Reads the recordings off recent days rather than offering to record a new one here: the
@@ -1339,10 +1378,29 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         val listCol = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         val scroll = android.widget.ScrollView(ctx).apply {
             addView(listCol)
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (440 * dp).toInt())
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (400 * dp).toInt())
+        }
+        // "Record one now" sits ABOVE the list rather than in it, so reloading the list can't
+        // take it away with the placeholder.
+        val recordRow = TextView(ctx).apply {
+            text = "＋  Record one now…"
+            textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(px(6), px(12), px(6), px(12))
+            setBackgroundResource(android.R.drawable.list_selector_background)
+        }
+        val holder = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(recordRow)
+            addView(scroll)
         }
         val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
-            .setTitle("Reply with Voice or Video").setView(scroll).setNegativeButton("Cancel", null).create()
+            .setTitle("Reply with Voice or Video").setView(holder).setNegativeButton("Cancel", null).create()
+
+        // Make one right here. The recording still lands in today's Ledger on the way past —
+        // a reply is backed by a real object, not a blob that exists only inside a comment.
+        recordRow.setOnClickListener {
+            dialog.dismiss()
+            captureAvGram { att -> attachFreshAvGram(att, onPicked) }
+        }
 
         listCol.addView(TextView(ctx).apply {
             text = "Looking for recordings…"; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0)

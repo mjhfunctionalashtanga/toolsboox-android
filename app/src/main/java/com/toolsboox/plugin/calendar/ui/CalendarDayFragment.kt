@@ -340,7 +340,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     override fun extraCreationGroups(cx: Float, cy: Float): List<List<com.toolsboox.ot.LedgerContextMenu.Item>> {
         val ctx = context ?: return emptyList()
-        return when (notePage) {
+        // Recording is a way of writing something down, so it belongs on the same hold-to-add
+        // menu as a text box or a photo — on the day page and on every board. It used to be
+        // reachable only by lassoing ink first, which meant drawing something before you could
+        // speak.
+        val record = listOf(
+            com.toolsboox.ot.LedgerContextMenu.Item("🎬  A/V gram — record…") { recordAvGram() }
+        )
+        return listOf(record) + when (notePage) {
             // Synthesize page: the engine LIBRARY (built-ins + your own prompts) on the day's gathering.
             "synthesize" -> listOf(listOf(
                 com.toolsboox.ot.LedgerContextMenu.Item("⚗  Synthesize the day…") {
