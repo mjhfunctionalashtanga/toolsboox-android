@@ -149,9 +149,22 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private var longPressDownX: Float = 0f
     private var longPressDownY: Float = 0f
     private var longPressPending: Boolean = false
+    private var longPressArmed: Boolean = false
     private var longPressFired: Boolean = false
+    // The timer only ARMS the long-press; the menu opens on the NEXT finger event that
+    // proves the finger is still down (MOVE, or an UP whose own hold time qualifies).
+    // Opening directly from the timer raced queued input during main-thread stalls: a
+    // quick double-tap's UP sat unprocessed while the 550ms runnable fired, so the menu
+    // opened over what should have been a double-tap zoom.
     private val longPressRunnable = Runnable {
-        longPressPending = false
+        if (longPressPending) {
+            longPressPending = false
+            longPressArmed = true
+        }
+    }
+
+    private fun fireCanvasLongPress() {
+        longPressArmed = false
         longPressFired = true
         val canvasPts = screenToCanvas(longPressDownX, longPressDownY)
         handleCanvasLongPress(canvasPts[0], canvasPts[1], longPressDownX, longPressDownY)
@@ -2466,9 +2479,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         // The pen cancels any pending long-press and is never affected itself.
         if (!isFinger) {
-            if (longPressPending) {
+            if (longPressPending || longPressArmed) {
                 longPressHandler.removeCallbacks(longPressRunnable)
                 longPressPending = false
+                longPressArmed = false
             }
             return false
         }
@@ -2487,6 +2501,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         when (motionEvent.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 longPressFired = false
+                longPressArmed = false
                 com.toolsboox.ot.LedgerContextMenu.dismissCurrent()   // clear any lingering menu
                 // Not while manipulating an element (finger drags move/resize there)
                 // and only for a single finger.
@@ -2501,9 +2516,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             MotionEvent.ACTION_POINTER_DOWN -> {
                 longPressHandler.removeCallbacks(longPressRunnable)
                 longPressPending = false
+                longPressArmed = false
             }
 
             MotionEvent.ACTION_MOVE -> {
+                if (longPressArmed) {
+                    // The finger is provably still down past the hold threshold — open the menu.
+                    fireCanvasLongPress()
+                    return true
+                }
                 if (longPressPending &&
                     (abs(motionEvent.x - longPressDownX) > 30f || abs(motionEvent.y - longPressDownY) > 30f)
                 ) {
@@ -2515,6 +2536,19 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 longPressHandler.removeCallbacks(longPressRunnable)
                 longPressPending = false
+                if (longPressArmed) {
+                    longPressArmed = false
+                    // A held finger releasing still opens the menu; a quick tap whose UP was
+                    // merely DELIVERED late (main-thread stall) does not — judge by the
+                    // gesture's own timestamps, not by when we got around to processing it.
+                    if (motionEvent.actionMasked == MotionEvent.ACTION_UP &&
+                        motionEvent.eventTime - motionEvent.downTime >= 550L
+                    ) {
+                        fireCanvasLongPress()
+                        longPressFired = false   // gesture is over; nothing further to swallow
+                        return true
+                    }
+                }
             }
         }
 

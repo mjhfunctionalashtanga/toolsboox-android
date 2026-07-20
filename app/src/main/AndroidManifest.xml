@@ -52,7 +52,7 @@
                 tools:ignore="LockedOrientationActivity"
                 android:name=".ui.main.MainActivity"
                 android:screenOrientation="sensorPortrait"
-                android:configChanges="orientation"
+                android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
                 android:enableOnBackInvokedCallback="true"
         android:exported="true">
             <intent-filter>

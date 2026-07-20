@@ -1,9 +1,6 @@
 package com.toolsboox.da
 
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
 import com.squareup.moshi.JsonClass
-import java.lang.reflect.Type
 import java.util.*
 
 /**
@@ -32,14 +29,15 @@ data class Stroke(
         /**
          * Deep copy of strokes.
          *
+         * Structural copy, NOT a Gson round-trip: this runs on the main thread on every
+         * pen-up (undo snapshot + onStrokeChanged), and serializing a 1000-stroke page to
+         * JSON and back took seconds on e-ink hardware — the source of the input-timeout
+         * ANRs while writing on a full page.
+         *
          * @param strokes the source list
          * @return the destination list
          */
-        fun listDeepCopy(strokes: List<Stroke>): List<Stroke> {
-            val listType: Type = object : TypeToken<List<Stroke>>() {}.type
-            val gson = Gson()
-            val json: String = gson.toJson(strokes, listType)
-            return gson.fromJson(json, listType)
-        }
+        fun listDeepCopy(strokes: List<Stroke>): List<Stroke> =
+            strokes.map { s -> s.copy(strokePoints = s.strokePoints.map { it.copy() }) }
     }
 }

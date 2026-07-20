@@ -79,6 +79,7 @@ import javax.inject.Inject
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -4699,11 +4700,31 @@ abstract class SurfaceFragment : ScreenFragment() {
     private fun enclosesOtherInk(points: List<StrokePoint>): Boolean {
         val polygon = points.map { PointF(it.x, it.y) }
         if (polygon.size < 3) return false
+        // The ring's bounding box: any point outside it can't be inside the polygon, so the
+        // crossing test only runs for points that could plausibly be enclosed.
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        for (p in polygon) {
+            if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x
+            if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y
+        }
+        val scratch = PointF()
         return strokes.any { stroke ->
             val pts = stroke.strokePoints
             if (pts.isEmpty()) return@any false
-            val inside = pts.count { StrokeClipboard.isPointInPolygon(PointF(it.x, it.y), polygon) }
-            inside.toFloat() / pts.size >= GESTURE_ENCLOSE_MAJORITY
+            val needed = ceil(pts.size * GESTURE_ENCLOSE_MAJORITY).toInt().coerceAtLeast(1)
+            var inside = 0
+            for ((i, tp) in pts.withIndex()) {
+                if (tp.x in minX..maxX && tp.y in minY..maxY) {
+                    scratch.set(tp.x, tp.y)
+                    if (StrokeClipboard.isPointInPolygon(scratch, polygon)) {
+                        inside++
+                        if (inside >= needed) return@any true
+                    }
+                }
+                if (inside + (pts.size - i - 1) < needed) return@any false   // majority no longer reachable
+            }
+            false
         }
     }
 
@@ -4720,17 +4741,29 @@ abstract class SurfaceFragment : ScreenFragment() {
 
     /** Erase every committed stroke the scribble passed over. Returns false (→ commit as ink) if it hit nothing. */
     private fun performScribbleErase(points: List<StrokePoint>): Boolean {
-        val toRemove: MutableSet<UUID> = mutableSetOf()
+        // Scribble bbox (inflated by the hit radius): strokes entirely outside it can't be
+        // hit, so the epsilon scan only runs near the scribble — not across the whole page.
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
         for (ep in points) {
-            for (stroke in strokes) {
-                if (stroke.strokeId in toRemove) continue
-                for (tp in stroke.strokePoints) {
+            if (ep.x < minX) minX = ep.x; if (ep.x > maxX) maxX = ep.x
+            if (ep.y < minY) minY = ep.y; if (ep.y > maxY) maxY = ep.y
+        }
+        minX -= 25f; minY -= 25f; maxX += 25f; maxY += 25f
+        val toRemove: MutableSet<UUID> = mutableSetOf()
+        for (stroke in strokes) {
+            var hit = false
+            for (tp in stroke.strokePoints) {
+                if (tp.x < minX || tp.x > maxX || tp.y < minY || tp.y > maxY) continue
+                for (ep in points) {
                     if (epsilon(ep.x, ep.y, tp.x, tp.y, 25.0f)) {
-                        toRemove.add(stroke.strokeId)
+                        hit = true
                         break
                     }
                 }
+                if (hit) break
             }
+            if (hit) toRemove.add(stroke.strokeId)
         }
         if (toRemove.isEmpty()) return false
         strokes.removeIf { it.strokeId in toRemove }
@@ -4942,14 +4975,21 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         if (!penState || erasing) {
             val strokesToRemove: MutableSet<UUID> = mutableSetOf()
-            for (ep in stylusPointList) {
-                for (stroke in strokes) {
-                    for (tp in stroke.strokePoints) {
+            // Stroke-outer with early break: once a stroke is hit there's no reason to keep
+            // testing its remaining points (the old point-outer form kept scanning the whole
+            // page per eraser point — quadratic on a full page).
+            for (stroke in strokes) {
+                var hit = false
+                for (tp in stroke.strokePoints) {
+                    for (ep in stylusPointList) {
                         if (epsilon(ep.x, ep.y, tp.x, tp.y, 25.0f)) {
-                            strokesToRemove.add(stroke.strokeId)
+                            hit = true
+                            break
                         }
                     }
+                    if (hit) break
                 }
+                if (hit) strokesToRemove.add(stroke.strokeId)
             }
             if (procrastinator) {
                 onStrokesProcrastinated(strokes.filter { it.strokeId in strokesToRemove }.toList())
@@ -4971,8 +5011,10 @@ abstract class SurfaceFragment : ScreenFragment() {
                     return
                 }
                 val fit = classifyCircle(gesturePoints)
-                val enclosesOther = enclosesOtherInk(gesturePoints)   // the real lasso safeguard
-                val accepted = fit.shapeOk && enclosesOther
+                // Only pay for the enclosure scan (every point on the page) when the mark
+                // actually classifies as a ring — normal handwriting never should.
+                val enclosesOther = fit.shapeOk && enclosesOtherInk(gesturePoints)   // the real lasso safeguard
+                val accepted = enclosesOther
                 if (accepted && performCircleSelect(gesturePoints)) {
                     gestureHaptic()
                     lastPoint = null
@@ -4987,7 +5029,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                     val msg = "circle? in-band=${(fit.bandFrac * 100).roundToInt()}% " +
                         "coverage=${fit.coverageDeg.roundToInt()}° " +
                         "closure=${((fit.closureOverR * 10).roundToInt() / 10f)}r " +
-                        "diam=${fit.diameterPx.roundToInt()}px enclosesOtherInk=${if (enclosesOther) "yes" else "no"}"
+                        "diam=${fit.diameterPx.roundToInt()}px enclosesOtherInk=${if (enclosesOtherInk(gesturePoints)) "yes" else "no"}"
                     Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
                 }
             }
