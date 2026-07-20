@@ -27,7 +27,8 @@ object InkMount {
         fun px(v: Int) = (v * dp).toInt()
 
         val mat = FrameLayout(context).apply {
-            setPadding(px(6), px(6), px(6), px(6))
+            // A generous mat so the tape never sits on the words underneath it.
+            setPadding(px(12), px(14), px(12), px(12))
             background = GradientDrawable().apply {
                 setColor(Color.WHITE)
                 setStroke(px(2), Color.BLACK)
@@ -38,7 +39,7 @@ object InkMount {
 
         // The tape needs room to overhang the mat's top corners.
         val holder = FrameLayout(context).apply {
-            setPadding(px(10), px(9), px(10), 0)
+            setPadding(px(12), px(11), px(12), 0)
             addView(mat)
         }
         holder.addView(tape(context, -20f), tapeParams(context, start = true))
