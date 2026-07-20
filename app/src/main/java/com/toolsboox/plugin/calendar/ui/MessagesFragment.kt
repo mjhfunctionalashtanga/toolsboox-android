@@ -304,40 +304,59 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    /** Handwrite a message — the pad's PNG (plus any typed text) posts as one chat message. */
+    /** Handwrite a message — the pad's PNG (plus any typed text) posts as one chat message.
+     *  Action buttons live at the TOP (a writing hand rests where bottom buttons would be),
+     *  and the pad wears a bold frame so the pen area reads clearly on e-ink. */
     private fun showInkComposer(thread: ChatThread, input: EditText) {
         val ctx = requireContext()
         val ink = InkPadView(ctx)
-        val box = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(px(12), px(6), px(12), 0)
-            addView(TextView(ctx).apply {
-                text = "Write your message:"; setTextColor(Color.parseColor("#888888")); textSize = 12f
-            })
-            addView(ink, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, px(320)))
+        val actionRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.END; setPadding(0, 0, 0, px(6))
         }
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        val inkFrame = android.widget.FrameLayout(ctx).apply {
+            setBackgroundColor(Color.BLACK)
+            setPadding(px(2), px(2), px(2), px(2))
+            addView(ink, android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT, px(320)
+            ))
+        }
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(px(12), px(6), px(12), px(10))
+            addView(actionRow)
+            addView(inkFrame, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
             .setTitle("Handwrite · ${thread.title.take(32)}")
             .setView(box)
-            .setPositiveButton("Send") { _, _ ->
-                val bmp = ink.render() ?: run { toast("Nothing written"); return@setPositiveButton }
-                val baos = java.io.ByteArrayOutputStream()
-                bmp.compress(Bitmap.CompressFormat.PNG, 100, baos); bmp.recycle()
-                val typed = input.text.toString().trim().ifBlank { null }
-                lifecycleScope.launch {
-                    val ok = withContext(Dispatchers.IO) {
-                        LedgerChat.sendInk(requireContext(), thread.id, typed, baos.toByteArray())
-                    }
-                    if (!ok) { toast("Couldn't send"); return@launch }
-                    input.text.clear()
-                    pollOnce(thread)
+            .create()
+        fun actionBtn(label: String, onTap: () -> Unit) = TextView(ctx).apply {
+            text = label; textSize = 16f; setTextColor(Color.parseColor("#2F6F96"))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(px(16), px(4), px(16), px(4)); setOnClickListener { onTap() }
+        }
+        actionRow.addView(actionBtn("Clear") { ink.clear() })
+        actionRow.addView(actionBtn("Cancel") { dialog.dismiss() })
+        actionRow.addView(actionBtn("Send") {
+            val bmp = ink.render() ?: run { toast("Nothing written"); return@actionBtn }
+            val baos = java.io.ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.PNG, 100, baos); bmp.recycle()
+            val typed = input.text.toString().trim().ifBlank { null }
+            lifecycleScope.launch {
+                val ok = withContext(Dispatchers.IO) {
+                    LedgerChat.sendInk(requireContext(), thread.id, typed, baos.toByteArray())
                 }
+                if (!ok) { toast("Couldn't send"); return@launch }
+                input.text.clear()
+                dialog.dismiss()
+                pollOnce(thread)
             }
-            .setNeutralButton("Clear", null)
-            .setNegativeButton("Cancel", null)
-            .show()
-            .also { dlg ->
-                dlg.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { ink.clear() }
-            }
+        })
+        dialog.show()
+        dialog.window?.setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        )
     }
 
     /** Minimal stylus pad — plain touch, no Onyx pipeline (fine for a short handwritten message). */

@@ -617,12 +617,24 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             hint = "…or type a reply"; setPadding(px(14), px(12), px(14), px(12)); minLines = 1
         }
         var shareAsGram: (() -> Unit)? = null
+        // Actions at the TOP (a writing hand covers bottom buttons) + a bold frame around
+        // the pen area so it reads clearly against the white dialog on e-ink.
+        val actionRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.END; setPadding(0, 0, 0, px(6))
+        }
+        val inkFrame = android.widget.FrameLayout(ctx).apply {
+            setBackgroundColor(Color.BLACK)
+            setPadding(px(2), px(2), px(2), px(2))
+            addView(ink, android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT, px(300)
+            ))
+        }
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; setPadding(px(12), px(6), px(12), 0)
-            addView(TextView(ctx).apply {
-                text = "Write here:"; setTextColor(Color.parseColor("#888888")); textSize = 12f
-            })
-            addView(ink, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, px(300)))
+            addView(actionRow)
+            addView(inkFrame, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ))
             addView(input, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = px(8) })
@@ -637,33 +649,39 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
             .setTitle("Reply · ${d.title.take(36)}")
             .setView(box)
-            .setPositiveButton("Send") { _, _ ->
-                val text = input.text.toString().trim().ifBlank { null }
-                val png = ink.render()?.let { bmp ->
-                    val baos = java.io.ByteArrayOutputStream()
-                    bmp.compress(Bitmap.CompressFormat.PNG, 100, baos); bmp.recycle()
-                    baos.toByteArray()
-                }
-                if (text == null && png == null) { toast("Nothing to send"); return@setPositiveButton }
-                lifecycleScope.launch {
-                    val status = withContext(Dispatchers.IO) {
-                        LedgerBoards.commentTask(requireContext(), board.id, d.id, text, png)
-                    }
-                    toast(status)
-                    if (status == "Reply posted") { parent.dismiss(); openDetail(board, taskStub(d)) }
-                }
-            }
-            .setNeutralButton("Clear", null)
-            .setNegativeButton("Cancel", null)
             .create()
+        fun actionBtn(label: String, onTap: () -> Unit) = TextView(ctx).apply {
+            text = label; textSize = 16f; setTextColor(Color.parseColor("#2F6F96"))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(px(16), px(4), px(16), px(4)); setOnClickListener { onTap() }
+        }
+        actionRow.addView(actionBtn("Clear") { ink.clear(); input.text?.clear() })
+        actionRow.addView(actionBtn("Cancel") { dialog.dismiss() })
+        actionRow.addView(actionBtn("Send") {
+            val text = input.text.toString().trim().ifBlank { null }
+            val png = ink.render()?.let { bmp ->
+                val baos = java.io.ByteArrayOutputStream()
+                bmp.compress(Bitmap.CompressFormat.PNG, 100, baos); bmp.recycle()
+                baos.toByteArray()
+            }
+            if (text == null && png == null) { toast("Nothing to send"); return@actionBtn }
+            lifecycleScope.launch {
+                val status = withContext(Dispatchers.IO) {
+                    LedgerBoards.commentTask(requireContext(), board.id, d.id, text, png)
+                }
+                toast(status)
+                if (status == "Reply posted") { dialog.dismiss(); parent.dismiss(); openDetail(board, taskStub(d)) }
+            }
+        })
         shareAsGram = {
             val bmp = ink.render()
             if (bmp == null) toast("Nothing written")
             else { dialog.dismiss(); shareCardAsGram(bmp, board, d) }
         }
         dialog.show()
-        dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)
-            ?.setOnClickListener { ink.clear(); input.text?.clear() }
+        dialog.window?.setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        )
     }
 
     /**

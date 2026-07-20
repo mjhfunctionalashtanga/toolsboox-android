@@ -1510,6 +1510,7 @@ class Ledgr_FB_Bridge
                             'thread_id'  => (int) $c->post_id,
                             'author'     => $author ? $author->display_name : ('User ' . $c->user_id),
                             'excerpt'    => wp_trim_words(wp_strip_all_tags($c->message_rendered ?: $c->message), 40),
+                            'content'    => mb_substr(wp_strip_all_tags($c->message_rendered ?: $c->message), 0, 20000),
                             'created_at' => (string) $c->created_at,
                         ];
                     }
@@ -1544,6 +1545,7 @@ class Ledgr_FB_Bridge
                         'thread_id'  => (int) $c->task_id,
                         'author'     => $c->author_name ?: (($u = get_user_by('id', $c->created_by)) ? $u->display_name : 'Unknown'),
                         'excerpt'    => wp_trim_words(wp_strip_all_tags($c->description), 40),
+                        'content'    => mb_substr(wp_strip_all_tags((string) $c->description), 0, 20000),
                         'created_at' => (string) $c->created_at,
                     ];
                 }
@@ -1678,6 +1680,7 @@ class Ledgr_FB_Bridge
                         'id'         => (int) $c->id,
                         'author'     => $c->author_name ?: ($author ? $author->display_name : 'Unknown'),
                         'excerpt'    => wp_trim_words(wp_strip_all_tags($body), 80),
+                        'content'    => mb_substr(wp_strip_all_tags($body), 0, 20000),
                         'created_at' => (string) $c->created_at,
                         'mine'       => ((int) $c->created_by === $uid),
                         'has_image'  => $img !== null,
@@ -1698,6 +1701,7 @@ class Ledgr_FB_Bridge
                         'id'         => (int) $c->id,
                         'author'     => $author ? $author->display_name : ('User ' . $c->user_id),
                         'excerpt'    => wp_trim_words(wp_strip_all_tags($body), 80),
+                        'content'    => mb_substr(wp_strip_all_tags($body), 0, 20000),
                         'created_at' => (string) $c->created_at,
                         'mine'       => ((int) $c->user_id === $uid),
                         'has_image'  => $img !== null,

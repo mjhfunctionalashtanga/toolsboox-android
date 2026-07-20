@@ -203,7 +203,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 val provDefault = "↩ In reply to ${post.author}" +
                     post.excerpt.trim().take(90).let { if (it.isNotBlank()) ": “$it”" else "" }
                 setOnClickListener {
-                    showInkReplyDialog(post.id, post.title.ifBlank { spaceTitle }, provDefault, post.url)
+                    showInkReplyDialog(
+                        post.id, post.title.ifBlank { spaceTitle }, provDefault, post.url,
+                        replyingTo = post.author.ifBlank { "Post" } + ":  " + post.excerpt
+                    )
                 }
             })
             if (post.commentsCount > 0) actions.addView(TextView(ctx).apply {
@@ -277,7 +280,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     textSize = 12f; setTextColor(0xFF666666.toInt())
                 })
                 card.addView(TextView(ctx).apply {
-                    text = deHtml(r.excerpt); textSize = 14f; setTextColor(0xFF000000.toInt())
+                    // The whole message, not the trimmed excerpt — reading it here is the point.
+                    text = deHtml(r.content.ifBlank { r.excerpt }); textSize = 14f; setTextColor(0xFF000000.toInt())
                 })
                 container.addView(card)
             }
@@ -302,7 +306,12 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     text = "✍  Reply in ink"
                     textSize = 15f; setTextColor(0xFF2F6F96.toInt())
                     setPadding(px(10), px(2), px(10), px(10))
-                    setOnClickListener { showInkReplyDialog(head.threadId, head.thread) }
+                    setOnClickListener {
+                        showInkReplyDialog(
+                            head.threadId, head.thread,
+                            replyingTo = head.author + ":  " + head.content.ifBlank { head.excerpt }
+                        )
+                    }
                 })
             }
         }
@@ -322,6 +331,12 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             .setPositiveButton("Close", null)
             .create()
         dialog.show()
+        // The reader earns the whole screen width — long messages were cramped in the
+        // stock dialog's narrow column.
+        dialog.window?.setLayout(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        )
         lifecycleScope.launch {
             val items = withContext(Dispatchers.IO) { LedgerCorrespondence.threadComments(ctx, source, threadId) }
             if (!isAdded) return@launch
@@ -336,8 +351,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                         (if (c.hasImage) "   📎" else "")
                     textSize = 12f; setTextColor(0xFF666666.toInt()); setPadding(0, px(12), 0, px(1))
                 })
-                if (c.excerpt.isNotBlank()) col.addView(TextView(ctx).apply {
-                    text = deHtml(c.excerpt); textSize = 14f; setTextColor(0xFF000000.toInt())
+                val body = c.content.ifBlank { c.excerpt }
+                if (body.isNotBlank()) col.addView(TextView(ctx).apply {
+                    text = deHtml(body); textSize = 14f; setTextColor(0xFF000000.toInt())
+                    setTextIsSelectable(true)
                 })
                 c.imageUrl?.let { url ->
                     val img = android.widget.ImageView(ctx).apply {
@@ -425,7 +442,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     /** A white card you write on with the stylus; Done posts the ink as your comment. */
     @SuppressLint("ClickableViewAccessibility")
     private fun showInkReplyDialog(
-        feedId: Long, thread: String, provenanceDefault: String? = null, provUrl: String? = null
+        feedId: Long, thread: String, provenanceDefault: String? = null, provUrl: String? = null,
+        replyingTo: String? = null
     ) {
         val ctx = requireContext()
         val ink = InkPadView(ctx)
@@ -437,10 +455,32 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         val actionRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.END; setPadding(0, 0, 0, px(6))
         }
+        // A bold frame around the pen area: on e-ink the white pad melted into the white
+        // dialog, so it wasn't clear where writing would land.
+        val inkFrame = android.widget.FrameLayout(ctx).apply {
+            setBackgroundColor(0xFF000000.toInt())
+            setPadding(px(2), px(2), px(2), px(2))
+            addView(ink, android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT, (420 * dp).toInt()
+            ))
+        }
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; setPadding(px(12), px(8), px(12), 0)
             addView(actionRow)
-            addView(ink, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (420 * dp).toInt()))
+            // What you're answering, right above where you answer it. Capped height so the
+            // pad keeps its room; long messages scroll inside the quote.
+            if (!replyingTo.isNullOrBlank()) {
+                addView(TextView(ctx).apply {
+                    text = deHtml(replyingTo); textSize = 13f; setTextColor(0xFF333333.toInt())
+                    setPadding(px(8), px(4), px(8), px(6))
+                    maxHeight = (140 * dp).toInt()
+                    isVerticalScrollBarEnabled = true
+                    movementMethod = android.text.method.ScrollingMovementMethod()
+                })
+            }
+            addView(inkFrame, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
         }
         if (provenanceDefault != null) box.addView(TextView(ctx).apply {
             text = "↗  Share as gram instead…"
@@ -485,6 +525,11 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             }
         }
         dialog.show()
+        // Full width: the writing surface is the point of this dialog.
+        dialog.window?.setLayout(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        )
     }
 
     /**

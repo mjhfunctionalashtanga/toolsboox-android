@@ -318,6 +318,7 @@ data class LedgerReply(
     val createdAt: String,
     val threadUrl: String = "",
     val public: Boolean = true,
+    val content: String = "",   // full message text (bridge ≥ this pass); excerpt fallback
 )
 
 /** One post ("cute card") in a community space — repliable in the Correspondence view. */
@@ -343,6 +344,7 @@ data class ThreadComment(
     val mine: Boolean,
     val hasImage: Boolean,
     val imageUrl: String?,
+    val content: String = "",   // full message text (bridge ≥ this pass); excerpt fallback
 )
 
 /** Correspondence fetch + ink reply — the Boox half of the Correspondence page. */
@@ -375,7 +377,8 @@ object LedgerCorrespondence {
                         it.optString("id", ""), it.optString("source", "community"),
                         it.optString("thread", ""), it.optLong("thread_id", 0),
                         it.optString("author", "?"), excerpt, it.optString("created_at", ""),
-                        it.optString("thread_url", ""), it.optBoolean("public", true)
+                        it.optString("thread_url", ""), it.optBoolean("public", true),
+                        it.optString("content", "")
                     )
                 }
             }
@@ -488,7 +491,8 @@ object LedgerCorrespondence {
                         it.optLong("id", 0), it.optString("author", "?"), it.optString("excerpt", ""),
                         it.optString("created_at", ""), it.optBoolean("mine", false),
                         it.optBoolean("has_image", false),
-                        it.optString("image_url", "").takeIf { s -> s.isNotBlank() && s != "null" }
+                        it.optString("image_url", "").takeIf { s -> s.isNotBlank() && s != "null" },
+                        it.optString("content", "")
                     )
                 }
             }
