@@ -2317,9 +2317,26 @@ abstract class SurfaceFragment : ScreenFragment() {
         )
     }
 
+    /**
+     * Where the blob for an A/V gram lives on this device, or null when it isn't here (in which
+     * case playback falls back to [ImageElement.mediaUrl]). Overridden by the surfaces that hold
+     * the day, since the filename lives on the day's `avGrams`, keyed by `attachmentId`.
+     */
+    protected open fun resolveAvGramFile(element: ImageElement): java.io.File? = null
+
     private fun showImageMenu(element: ImageElement, pressX: Float, pressY: Float) {
         if (context == null) return
         val groups = mutableListOf<List<LedgerContextMenu.Item>>()
+        // An A/V gram is a picture until you ask it to play — so playing is the first thing offered.
+        if (element.mediaKind == "audio" || element.mediaKind == "video") {
+            val clock = com.toolsboox.plugin.calendar.ot.AvPoster.clock(element.durationMs)
+            val label = (if (element.mediaKind == "video") "▶ Play video" else "▶ Play audio") +
+                (if (clock.isNotBlank()) " · $clock" else "")
+            groups.add(listOf(
+                LedgerContextMenu.Item(label) { playAvGram(element) },
+                LedgerContextMenu.Item("✎ Rename…") { renameAvGram(element) }
+            ))
+        }
         if (element.sourceLink.isNotBlank()) {
             val jumpLabel = "↩ Go to source" + (if (element.sourceLabel.isNotBlank()) " · ${element.sourceLabel}" else "")
             groups.add(listOf(LedgerContextMenu.Item(jumpLabel) { onImageSource(element) }))
@@ -2962,6 +2979,44 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** Apply a bitmap transform to an image: re-encode PNG inline, refresh cache, persist, repaint. */
     /** Discrete gram sizes (long-press menu): width in page units, aspect kept.
      *  Default placement is ~590 wide (M); S tucks in a corner, L dominates the page. */
+    /** Play an A/V gram: the local blob if this device has it, else the remote copy. */
+    private fun playAvGram(element: ImageElement) {
+        val ctx = context ?: return
+        com.toolsboox.plugin.calendar.ot.AvPlayback.play(
+            ctx, element.mediaKind, resolveAvGramFile(element), element.mediaUrl,
+            element.mediaTitle, element.durationMs
+        )
+    }
+
+    /** The creator's choice of title — renames the card, not the file. */
+    private fun renameAvGram(element: ImageElement) {
+        val ctx = context ?: return
+        val input = android.widget.EditText(ctx).apply {
+            setText(element.mediaTitle)
+            setSelection(text.length)
+            hint = "Title"
+            setSingleLine()
+        }
+        val pad = (16 * ctx.resources.displayMetrics.density).toInt()
+        val box = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(input)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Name this gram")
+            .setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                pushUndo()
+                element.mediaTitle = input.text.toString().trim()
+                element.timestamp = System.currentTimeMillis()
+                onImageElementsChanged(imageElements)
+                applyStrokes(strokes, true)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
     private fun setGramWidth(element: ImageElement, width: Float) {
         val aspect = if (element.width > 0f) element.height / element.width else 1f
         pushUndo()

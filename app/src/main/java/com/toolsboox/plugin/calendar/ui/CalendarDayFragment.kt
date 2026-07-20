@@ -1464,14 +1464,86 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         if (kind == com.toolsboox.da.Attachment.Kind.AUDIO || kind == com.toolsboox.da.Attachment.Kind.VIDEO) {
             showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
             lifecycleScope.launch {
+                val file = java.io.File(attachmentsDir(), att.filename)
                 val text = withContext(Dispatchers.IO) {
-                    com.toolsboox.plugin.calendar.nw.Transcribe.audio(requireContext(), java.io.File(attachmentsDir(), att.filename))
+                    com.toolsboox.plugin.calendar.nw.Transcribe.audio(requireContext(), file)
                 }
+                // File it where it can be seen: a card on today's board carrying its own poster
+                // frame, so the recording is an object in the ledger rather than a loose blob.
+                val placed = withContext(Dispatchers.IO) { placeAvGramOnPickings(att, file, text) }
                 val head = if (kind == com.toolsboox.da.Attachment.Kind.VIDEO) "🎥 Video gram" else "🎤 Audio gram"
+                if (placed) showMessage("$head → today's Pickings", binding.root)
                 showGramStudio(listOf(head, text ?: "").filter { it.isNotBlank() }.joinToString("\n\n").ifBlank { head })
             }
         } else {
             showMessage(getString(R.string.gram_capture_saved), binding.root)
+        }
+    }
+
+    /** The day holds the filenames, keyed by attachment id — so this is where the blob is found. */
+    override fun resolveAvGramFile(element: com.toolsboox.da.ImageElement): java.io.File? {
+        if (element.attachmentId.isBlank() || !::calendarDay.isInitialized) return null
+        val att = calendarDay.avGrams.firstOrNull { it.id == element.attachmentId } ?: return null
+        return java.io.File(attachmentsDir(), att.filename).takeIf { it.exists() }
+    }
+
+    /**
+     * Put a just-recorded A/V gram on today's board as a picking.
+     *
+     * The card's image is the clip's poster frame, and it carries the pointer back to the blob,
+     * so every surface that already draws grams shows it and a tap can play it. The title is the
+     * opening of the transcription when there is one — a recording ends up named by its own first
+     * words — and otherwise just the kind and the day.
+     *
+     * Runs on IO. Returns whether a card was actually placed.
+     */
+    private fun placeAvGramOnPickings(
+        att: com.toolsboox.da.Attachment, file: java.io.File, transcript: String?
+    ): Boolean {
+        if (!file.exists()) return false
+
+        val durationMs = att.duration?.let { (it * 1000).toInt() }
+            ?.takeIf { it > 0 }
+            ?: com.toolsboox.plugin.calendar.ot.AvPoster.durationMs(file)
+
+        val isVideo = att.kind == com.toolsboox.da.Attachment.Kind.VIDEO
+        val fallback = (if (isVideo) "🎥 Video gram · " else "🎤 Audio gram · ") + currentDate
+
+        // Name it by its own opening words when we have them.
+        val title = transcript?.trim().orEmpty()
+            .lineSequence().firstOrNull { it.isNotBlank() }
+            ?.trim()
+            ?.let { if (it.length > 48) it.take(47).trimEnd() + "…" else it }
+            ?: fallback
+
+        val poster = com.toolsboox.plugin.calendar.ot.AvPoster.poster(
+            file, att.kind, durationMs, title
+        ) ?: return false
+
+        val root = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+            requireContext().getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)!!
+        else java.io.File(
+            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS),
+            "toolsBoox"
+        )
+
+        return try {
+            com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                calendarDayService, root, poster, currentDate,
+                com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY,
+                sourceLabel = fallback,
+                media = com.toolsboox.plugin.calendar.ot.PickingsPlacement.MediaRef(
+                    kind = if (isVideo) "video" else "audio",
+                    attachmentId = att.id,
+                    durationMs = durationMs,
+                    title = title
+                )
+            )
+            true
+        } catch (e: Exception) {
+            false
+        } finally {
+            runCatching { poster.recycle() }
         }
     }
 
