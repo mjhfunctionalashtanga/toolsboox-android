@@ -314,7 +314,12 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
                 ).joinToString("   ·   ")
                 textSize = 11f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(3), 0, 0)
             })
-            setOnClickListener { NavHostFragment.findNavController(this@KanbanFragment).navigate(com.toolsboox.R.id.action_to_site_boards) }
+            setOnClickListener {
+                NavHostFragment.findNavController(this@KanbanFragment).navigate(
+                    com.toolsboox.R.id.action_to_site_boards,
+                    androidx.core.os.bundleOf("site_board_id" to c.boardId)
+                )
+            }
         }
     }
 

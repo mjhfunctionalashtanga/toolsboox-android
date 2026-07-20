@@ -254,7 +254,13 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             adapter = LedgerItemAdapter(
                 items, strokes, ::persist, ::onEnterSelection, ::updateSelectionBar, ::assign,
                 { id -> contactsById[id] },
-                onReadOnlyTap = { findNavController().navigate(R.id.action_to_site_boards) }
+                onReadOnlyTap = { item ->
+                    val bid = item.board.toIntOrNull() ?: 0
+                    findNavController().navigate(
+                        R.id.action_to_site_boards,
+                        if (bid > 0) androidx.core.os.bundleOf("site_board_id" to bid) else null
+                    )
+                }
             )
             binding.itemsRecycler.adapter = adapter
             attachSwipeToDelete()
@@ -284,7 +290,8 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 LedgerItem(
                     id = "sitecard-${c.id}", kind = LedgerItem.Kind.TASK,
                     text = "${c.title}   ·   ${c.board}" + (c.dueAt?.take(10)?.let { "   ·   📅 $it" } ?: ""),
-                    date = java.util.Date(), stage = c.bucket, top = Float.MAX_VALUE
+                    date = java.util.Date(), stage = c.bucket, top = Float.MAX_VALUE,
+                    board = c.boardId.toString()   // carried so the tap can deep-link to that board
                 )
             }
             adapter.readOnlyIds = synthetic.map { it.id }.toSet()

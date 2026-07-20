@@ -60,6 +60,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
 
     private var boards: List<SiteBoard> = emptyList()
     private var openBoard: SiteBoard? = null
+    private var pendingBoardId: Int = 0   // deep-link target from the timeline; opened once on load
     private var compact: SiteBoardCompact? = null
 
     /** The card being dragged and its view, so a drop can reparent + move it. */
@@ -129,6 +130,8 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         titleView.setOnClickListener {
             if (openBoard == null) NavHostFragment.findNavController(this).navigate(com.toolsboox.R.id.action_to_kanban)
         }
+        // Deep link: a dated Site card tapped in the timeline (kanban / Tasks) passes its board id.
+        pendingBoardId = arguments?.getInt("site_board_id", 0) ?: 0
         loadBoards()
     }
 
@@ -144,6 +147,12 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         lifecycleScope.launch {
             val list = withContext(Dispatchers.IO) { LedgerBoards.boards(requireContext()) }
             boards = list
+            val target = pendingBoardId
+            if (target > 0) {
+                pendingBoardId = 0   // consume — a later "up" returns to the list, not back here
+                val b = boards.firstOrNull { it.id == target }
+                if (b != null) { loadBoard(b); return@launch }
+            }
             if (openBoard == null) showList()
         }
     }
