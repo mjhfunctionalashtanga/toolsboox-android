@@ -540,9 +540,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         if (cx < 670f || cx > 1270f || cy < to + 21 * ceh || cy > to + 35 * ceh) return false
         val stars = calendarDay.readingEvents.filter { !it.url.isNullOrBlank() }
         if (stars.isEmpty()) return false
-        // One at a time, with a beat after dismissal — e-ink ghost taps were re-opening
-        // this dialog over and over ("star menu continues to pop up").
-        if (starsDialogShowing || System.currentTimeMillis() - starsDialogDismissedAt < 800L) return true
+        // One at a time, with a LONG beat after dismissal — e-ink ghost taps were re-opening
+        // this dialog over and over ("star menu continues to pop up"). The stale-event gate
+        // in SurfaceFragment.onSingleTapConfirmed is the real fix; this is the backstop.
+        if (starsDialogShowing || System.currentTimeMillis() - starsDialogDismissedAt < 1500L) return true
         // Compact custom list (tight rows) — the stock dialog rows sprawl once there are many stars.
         val ctx = requireContext()
         val dp = resources.displayMetrics.density

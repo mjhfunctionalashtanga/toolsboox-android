@@ -1430,6 +1430,12 @@ abstract class SurfaceFragment : ScreenFragment() {
         if (doubleTapDetector == null) {
             doubleTapDetector = GestureDetector(requireContext(), object : GestureDetector.SimpleOnGestureListener() {
                 override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                    // Genuine-tap gate (the double-tap-zoom race lens): e-ink stalls replay
+                    // QUEUED events after a modal dismiss, and those ghosts carry old
+                    // timestamps. Only a fresh, short press may act — a stale eventTime or a
+                    // long press-to-release is not a tap someone just made.
+                    if (android.os.SystemClock.uptimeMillis() - e.eventTime > 400L) return false
+                    if (e.eventTime - e.downTime > 350L) return false
                     val pts = floatArrayOf(e.x, e.y)
                     inverseViewMatrix.mapPoints(pts)
                     return onCanvasSingleTap(pts[0], pts[1])

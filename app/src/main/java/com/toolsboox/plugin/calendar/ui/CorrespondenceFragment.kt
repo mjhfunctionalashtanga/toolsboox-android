@@ -10,6 +10,7 @@ import android.graphics.Path
 import android.os.Bundle
 import android.view.MotionEvent
 import android.view.View
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.lifecycle.lifecycleScope
@@ -96,7 +97,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             ).apply { topMargin = (6 * dp).toInt(); bottomMargin = (4 * dp).toInt() }
             maxHeight = (heightDp * dp).toInt()
         }
-        container.addView(img)
+        container.addView(com.toolsboox.ot.InkMount.wrapInColumn(ctx, img))
         lifecycleScope.launch {
             val bmp = withContext(Dispatchers.IO) { LedgerCorrespondence.loadImage(ctx, url) }
             if (bmp != null && isAdded) img.setImageBitmap(bmp)
@@ -710,13 +711,12 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 text = "📎  $label     ✕ remove"; textSize = 12f; setTextColor(0xFF2F6F96.toInt())
                 setOnClickListener { clearAttachment() }
             })
-            if (bmp != null) attachPreview.addView(android.widget.ImageView(ctx).apply {
-                setImageBitmap(bmp); adjustViewBounds = true; setBackgroundColor(0xFFFFFFFF.toInt())
-                scaleType = android.widget.ImageView.ScaleType.FIT_START
-                maxHeight = (140 * dp).toInt()
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                    .apply { topMargin = px(4) }
-            })
+            if (bmp != null) attachPreview.addView(com.toolsboox.ot.InkMount.wrapInColumn(ctx,
+                android.widget.ImageView(ctx).apply {
+                    setImageBitmap(bmp); adjustViewBounds = true; setBackgroundColor(0xFFFFFFFF.toInt())
+                    scaleType = android.widget.ImageView.ScaleType.FIT_START
+                    maxHeight = (140 * dp).toInt()
+                }, taped = false))
             if (caption.isNotBlank()) attachPreview.addView(TextView(ctx).apply {
                 text = richHtml(caption.replace("\n", "<br>")); textSize = 12f; setTextColor(0xFF444444.toInt())
                 setPadding(0, px(4), 0, 0)
@@ -881,11 +881,11 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         val dp = resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
 
-        val preview = android.widget.ImageView(ctx).apply {
+        val preview = com.toolsboox.ot.InkMount.wrapInColumn(ctx, android.widget.ImageView(ctx).apply {
             setImageBitmap(bmp); adjustViewBounds = true; setBackgroundColor(0xFFFFFFFF.toInt())
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, px(150))
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, px(150))
             scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-        }
+        })
         val input = android.widget.EditText(ctx).apply {
             setText(provenanceDefault); setSelection(text.length)
             textSize = 14f; setPadding(px(12), px(10), px(12), px(10)); minLines = 2
@@ -1085,8 +1085,35 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     private fun dayFileDate(name: String): java.time.LocalDate? =
         runCatching { java.time.LocalDate.parse(name.removePrefix("day-").removeSuffix("-v2.json")) }.getOrNull()
 
-    /** Pick a Pickings page → render it (strokes + dropped grams + quotes) to one image, attach it
-     *  with provenance. Scroll-safe list, reuses the same widening window as the Log picker. */
+    /** Fullscreen lightbox: inspect the image BIG before committing — [label] on top,
+     *  Attach / Close on the action row. The inspect step both visual pickers share. */
+    private fun showAttachLightbox(bmp: Bitmap, label: String, onAttach: () -> Unit) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val img = android.widget.ImageView(ctx).apply {
+            setImageBitmap(bmp); adjustViewBounds = true
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            setBackgroundColor(Color.WHITE)
+        }
+        val scroll = android.widget.ScrollView(ctx).apply {
+            addView(com.toolsboox.ot.InkMount.wrapInColumn(ctx, img))
+            setPadding(px(8), px(4), px(8), px(4))
+        }
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle(label.take(40))
+            .setView(scroll)
+            .setPositiveButton("Attach") { _, _ -> onAttach() }
+            .setNegativeButton("Close", null)
+            .show()
+            .window?.setLayout(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            )
+    }
+
+    /** Pick a Pickings page — VISUALLY: thumbnail rows (rendered lazily, batched) and a
+     *  tap-to-zoom lightbox before committing ("it's all titles — who can remember"). */
     private fun pickPickingForReply(onPicked: (String, Bitmap?, String) -> Unit) {
         val ctx = requireContext()
         val dp = resources.displayMetrics.density
@@ -1099,6 +1126,27 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         }
         val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
             .setTitle("Reply with Picking").setView(scroll).setNegativeButton("Cancel", null).create()
+
+        // Render the chosen page fresh at full width and hand it to the lightbox → attach.
+        fun inspect(p: PickPage) {
+            lifecycleScope.launch {
+                val bmp = withContext(Dispatchers.IO) {
+                    val day = runCatching { calendarDayService.load(documentsRoot(), p.date, null, java.util.Locale.getDefault()) }.getOrNull() ?: return@withContext null
+                    com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderPageToBitmap(
+                        day.noteStrokes[p.key] ?: emptyList(),
+                        day.imageElements.filter { it.page == p.key },
+                        day.textElements.filter { it.pageKey == p.key },
+                        targetWidth = 1000
+                    )
+                }
+                if (!isAdded) return@launch
+                if (bmp == null) { android.widget.Toast.makeText(ctx, "That picking is empty", android.widget.Toast.LENGTH_SHORT).show(); return@launch }
+                showAttachLightbox(bmp, "❝ ${p.name} · ${p.date}") {
+                    dialog.dismiss()
+                    onPicked("Picking · ${p.name}", bmp, "❝ from your Picking “${p.name}” · ${p.date}")
+                }
+            }
+        }
 
         listCol.addView(TextView(ctx).apply { text = "Loading pickings…"; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0) })
         lifecycleScope.launch {
@@ -1125,29 +1173,62 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             if (!isAdded) return@launch
             listCol.removeAllViews()
             if (pages.isEmpty()) { listCol.addView(TextView(ctx).apply { text = "No pickings with content yet."; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0) }); return@launch }
-            for (p in pages) listCol.addView(TextView(ctx).apply {
-                text = "❝  ${p.name}      · ${p.date}"
-                textSize = 15f; setTextColor(0xFF000000.toInt()); setPadding(px(6), px(12), px(6), px(12))
-                setBackgroundResource(android.R.drawable.list_selector_background)
-                setOnClickListener {
-                    dialog.dismiss()
+
+            // Thumbnail rows in lazy batches: placeholder first, small renders fill in as they
+            // finish (all 120 up-front would stall the dialog for many seconds on e-ink).
+            val batch = 20
+            var shown = 0
+            lateinit var appendBatch: () -> Unit
+            appendBatch = {
+                val slice = pages.drop(shown).take(batch)
+                shown += slice.size
+                val moreBtn: TextView? = if (shown < pages.size) TextView(ctx).apply {
+                    text = "＋ ${pages.size - shown} more"
+                    textSize = 13f; setTextColor(0xFF2F6F96.toInt()); setPadding(px(8), px(12), px(8), px(12))
+                } else null
+                for (p in slice) {
+                    val row = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
+                        setPadding(px(6), px(8), px(6), px(8)); setBackgroundResource(android.R.drawable.list_selector_background)
+                    }
+                    val thumbView = android.widget.ImageView(ctx).apply {
+                        adjustViewBounds = true; setBackgroundColor(0xFFFFFFFF.toInt())
+                        layoutParams = FrameLayout.LayoutParams(px(110), px(80))
+                        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                    }
+                    row.addView(com.toolsboox.ot.InkMount.wrap(ctx, thumbView, taped = false).apply {
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { marginEnd = px(10) }
+                    })
+                    row.addView(TextView(ctx).apply {
+                        text = "❝ ${p.name}\n· ${p.date}"; textSize = 14f; setTextColor(0xFF000000.toInt())
+                    })
+                    row.setOnClickListener { inspect(p) }
+                    if (moreBtn != null) listCol.addView(row, listCol.childCount)
+                    else listCol.addView(row)
+                    // Lazy thumb: small render off-main, fills in when ready.
                     lifecycleScope.launch {
-                        val bmp = withContext(Dispatchers.IO) {
-                            val day = runCatching { calendarDayService.load(documentsRoot(), p.date, null, java.util.Locale.getDefault()) }.getOrNull() ?: return@withContext null
-                            com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderPageToBitmap(
-                                day.noteStrokes[p.key] ?: emptyList(),
-                                day.imageElements.filter { it.page == p.key },
-                                day.textElements.filter { it.pageKey == p.key },
-                                targetWidth = 1000
-                            )
+                        val thumb = withContext(Dispatchers.IO) {
+                            runCatching {
+                                val day = calendarDayService.load(documentsRoot(), p.date, null, java.util.Locale.getDefault())
+                                com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderPageToBitmap(
+                                    day.noteStrokes[p.key] ?: emptyList(),
+                                    day.imageElements.filter { it.page == p.key },
+                                    day.textElements.filter { it.pageKey == p.key },
+                                    targetWidth = 320
+                                )
+                            }.getOrNull()
                         }
-                        if (!isAdded) return@launch
-                        if (bmp == null) { android.widget.Toast.makeText(ctx, "That picking is empty", android.widget.Toast.LENGTH_SHORT).show(); return@launch }
-                        val cap = "❝ from your Picking “${p.name}” · ${p.date}"
-                        onPicked("Picking · ${p.name}", bmp, cap)
+                        if (isAdded && thumb != null) thumbView.setImageBitmap(thumb)
                     }
                 }
-            })
+                moreBtn?.let { btn ->
+                    btn.setOnClickListener { listCol.removeView(btn); appendBatch() }
+                    listCol.addView(btn)
+                }
+            }
+            appendBatch()
         }
         dialog.show()
         dialog.window?.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -1209,10 +1290,15 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
                     setPadding(px(6), px(8), px(6), px(8)); setBackgroundResource(android.R.drawable.list_selector_background)
                 }
-                row.addView(android.widget.ImageView(ctx).apply {
-                    setImageBitmap(thumb); adjustViewBounds = true
-                    layoutParams = LinearLayout.LayoutParams(px(72), px(72)).apply { marginEnd = px(10) }
-                    scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                row.addView(com.toolsboox.ot.InkMount.wrap(ctx,
+                    android.widget.ImageView(ctx).apply {
+                        setImageBitmap(thumb); adjustViewBounds = true
+                        layoutParams = FrameLayout.LayoutParams(px(72), px(72))
+                        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                    }, taped = false).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { marginEnd = px(10) }
                 })
                 row.addView(TextView(ctx).apply {
                     text = "${g.label}\n· ${g.date}"; textSize = 14f; setTextColor(0xFF000000.toInt())
