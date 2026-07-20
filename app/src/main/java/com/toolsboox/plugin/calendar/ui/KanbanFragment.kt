@@ -47,6 +47,11 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
     private var selectedBoard: String? = null
     private var boards: List<com.toolsboox.plugin.calendar.da.v2.Board> = emptyList()
 
+    // Opt-in: fold DUE-DATED Site board cards into these same columns (read-only), so the Local
+    // kanban becomes one board over both sources. Default off — zero change until turned on.
+    private fun kanbanPrefs() = requireContext().getSharedPreferences("ledger_kanban", android.content.Context.MODE_PRIVATE)
+    private var includeSite: Boolean = false
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentKanbanBinding.bind(view)
@@ -65,6 +70,7 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
     private fun showBoardPicker() {
         val ctx = requireContext()
         val labels = mutableListOf("🌐  Switch to Site boards")   // Local ⇄ Site, like the RSS split
+        labels += (if (includeSite) "☑" else "☐") + "  Include dated Site cards"
         labels += "▦  All boards"
         labels += boards.map { "▤  ${it.name.ifBlank { "Untitled" }}" }
         labels += "＋  New board…"
@@ -72,12 +78,13 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
         labels += "🌐  Web bridge…"
         val hasSel = selectedBoard != null
         if (hasSel) labels += "🗑  Delete this board"
-        val base = 1   // rows after the Site-switch entry
+        val base = 2   // rows after the Site-switch entry + the include-site toggle
         androidx.appcompat.app.AlertDialog.Builder(ctx)
             .setTitle("Boards · Local")
             .setItems(labels.toTypedArray()) { _, which ->
                 when {
                     which == 0 -> NavHostFragment.findNavController(this).navigate(com.toolsboox.R.id.action_to_site_boards)
+                    which == 1 -> { includeSite = !includeSite; kanbanPrefs().edit().putBoolean("include_site", includeSite).apply(); load() }
                     which == base -> { selectedBoard = null; load() }
                     which <= base + boards.size -> { selectedBoard = boards[which - base - 1].id; load() }
                     which == base + boards.size + 1 -> promptNewBoard()
@@ -249,6 +256,7 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
     }
 
     private fun load() {
+        includeSite = kanbanPrefs().getBoolean("include_site", false)
         lifecycleScope.launch {
             boards = withContext(Dispatchers.IO) { BoardsStore.list(requireContext()) }
             updateBoardLabel()
@@ -257,6 +265,69 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
             renderColumn(binding.colTodoCards, binding.colTodoHead, "TO DO", tasks.filter { colOf(it) == "todo" }, "todo")
             renderColumn(binding.colDoingCards, binding.colDoingHead, "DOING", tasks.filter { colOf(it) == "doing" }, "doing")
             renderColumn(binding.colDoneCards, binding.colDoneHead, "DONE", tasks.filter { colOf(it) == "done" }.take(40), "done")
+            // Local is on screen; now fold in dated Site cards (background, read-only, opt-in).
+            if (includeSite && selectedBoard == null) mergeSiteCards()
+        }
+    }
+
+    /** Fetch DUE-DATED Site board cards and append them (read-only) into the same columns, so the
+     *  Local kanban reads as one board over both sources. Local always renders first; this never
+     *  blocks it and fails silently (empty) when the bridge is off or unreachable. */
+    private fun mergeSiteCards() {
+        val ctx = requireContext()
+        lifecycleScope.launch {
+            val cards = withContext(Dispatchers.IO) {
+                if (!com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).ready) return@withContext emptyList()
+                val out = mutableListOf<Triple<String, com.toolsboox.plugin.calendar.nw.SiteTask, String>>()  // column, card, boardTitle
+                runCatching {
+                    for (b in com.toolsboox.plugin.calendar.nw.LedgerBoards.boards(ctx)) {
+                        if (out.size >= 60) break
+                        val compact = com.toolsboox.plugin.calendar.nw.LedgerBoards.compactBoard(ctx, b.id) ?: continue
+                        val ordered = compact.stages.sortedBy { it.position }
+                        val lastId = ordered.lastOrNull()?.id
+                        val firstId = ordered.firstOrNull()?.id
+                        for (t in compact.tasks) {
+                            if (t.dueAt.isNullOrBlank()) continue   // only DATED cards belong in the timeline
+                            val col = when (t.stageId) { lastId -> "done"; firstId -> "todo"; else -> "doing" }
+                            out += Triple(col, t, b.title)
+                            if (out.size >= 60) break
+                        }
+                    }
+                }
+                out
+            }
+            if (!isAdded || cards.isEmpty()) return@launch
+            fun place(col: String, container: LinearLayout, head: TextView, title: String) {
+                val mine = cards.filter { it.first == col }
+                if (mine.isEmpty()) return
+                for ((_, t, boardTitle) in mine) container.addView(siteCardView(t, boardTitle))
+                head.text = "$title · ${(head.text.toString().substringAfterLast("· ").trim().toIntOrNull() ?: 0) + mine.size}"
+            }
+            place("todo", binding.colTodoCards, binding.colTodoHead, "TO DO")
+            place("doing", binding.colDoingCards, binding.colDoingHead, "DOING")
+            place("done", binding.colDoneCards, binding.colDoneHead, "DONE")
+        }
+    }
+
+    /** A read-only Site card in a Local column: 🌐 tag + due chip; tap opens Site Boards. */
+    private fun siteCardView(t: com.toolsboox.plugin.calendar.nw.SiteTask, boardTitle: String): View {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        return LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(px(8), px(8), px(8), px(8))
+            setBackgroundColor(0xFFEFF4F7.toInt())   // faint blue tint = "from the site, read-only"
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .apply { setMargins(0, 0, 0, px(8)) }
+            addView(TextView(ctx).apply {
+                text = "🌐  ${t.title}"; textSize = 13f; setTextColor(0xFF000000.toInt())
+            })
+            addView(TextView(ctx).apply {
+                text = listOfNotNull(t.dueAt?.take(10)?.let { "📅 $it" }, boardTitle.ifBlank { null })
+                    .joinToString("   ·   ")
+                textSize = 11f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(3), 0, 0)
+            })
+            setOnClickListener { NavHostFragment.findNavController(this@KanbanFragment).navigate(com.toolsboox.R.id.action_to_site_boards) }
         }
     }
 
