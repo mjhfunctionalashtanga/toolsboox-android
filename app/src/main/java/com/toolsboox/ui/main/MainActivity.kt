@@ -252,6 +252,9 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                 }
             }
             .setNegativeButton("Just the image") { _, _ -> bmp.recycle() }
+            // Dismissed without choosing (back / tap-outside) → still free the bitmap (no leak).
+            // Only fires on cancel, not on a button tap, so the extract path keeps its bitmap.
+            .setOnCancelListener { if (!bmp.isRecycled) bmp.recycle() }
             .show()
     }
 
