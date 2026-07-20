@@ -697,13 +697,15 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             setPadding(px(6), px(6), px(6), px(6)); setBackgroundColor(0xFFEFF4F7.toInt())
         }
         fun clearAttachment() {
-            attachedBitmap?.recycle(); attachedBitmap = null; attachedCaption = ""
+            // Detach the preview BEFORE recycling — an attached ImageView drawing a
+            // recycled bitmap is a hard crash.
             attachPreview.removeAllViews(); attachPreview.visibility = View.GONE
+            attachedBitmap?.recycle(); attachedBitmap = null; attachedCaption = ""
         }
         fun setAttachment(label: String, bmp: Bitmap?, caption: String) {
+            attachPreview.removeAllViews()
             attachedBitmap?.recycle()
             attachedBitmap = bmp; attachedCaption = caption
-            attachPreview.removeAllViews()
             attachPreview.addView(TextView(ctx).apply {
                 text = "📎  $label     ✕ remove"; textSize = 12f; setTextColor(0xFF2F6F96.toInt())
                 setOnClickListener { clearAttachment() }
@@ -792,11 +794,21 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         actionRow.addView(actionBtn("Send") {
             if (textMode) {
                 // Type mode: the typed body, plus any attached item's provenance caption.
+                // An attached IMAGE (gram/picking) rides too — switching Draw→Type must not
+                // silently drop what you picked.
                 val typed = input.text.toString().trim()
                 val text = listOf(typed, attachedCaption).filter { it.isNotBlank() }.joinToString("\n\n")
-                if (text.isBlank()) { android.widget.Toast.makeText(ctx, "Nothing to send", android.widget.Toast.LENGTH_SHORT).show(); return@actionBtn }
+                if (text.isBlank() && attachedBitmap == null) {
+                    android.widget.Toast.makeText(ctx, "Nothing to send", android.widget.Toast.LENGTH_SHORT).show(); return@actionBtn
+                }
+                val png = attachedBitmap?.let {
+                    val baos = ByteArrayOutputStream(); it.compress(Bitmap.CompressFormat.PNG, 100, baos); baos.toByteArray()
+                }
                 lifecycleScope.launch {
-                    val status = withContext(Dispatchers.IO) { LedgerCorrespondence.postTextReply(ctx, feedId, text, parentId) }
+                    val status = withContext(Dispatchers.IO) {
+                        if (png != null) LedgerCorrespondence.postInkReply(ctx, feedId, png, parentId, text)
+                        else LedgerCorrespondence.postTextReply(ctx, feedId, text, parentId)
+                    }
                     android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
                     if (status == "Reply posted") { markReplied("community", feedId); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
                 }
@@ -832,7 +844,11 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                         }
                         saveBmp.recycle()
                     }
-                    inkBmp?.recycle(); combined?.recycle()
+                    // NEVER recycle the attachment here — stackVertically ALIASES it when there's
+                    // no ink, and the still-open dialog's preview (failed post) or the dismiss
+                    // animation would then draw a recycled bitmap → crash. clearAttachment owns it.
+                    if (inkBmp !== combined) inkBmp?.recycle()
+                    if (combined !== attachedBitmap && combined !== inkBmp) combined?.recycle()
                     android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
                     if (status == "Reply posted") { markReplied("community", feedId); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
                 }
@@ -967,7 +983,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             .sortedByDescending { it.name }
             .take(days)
             .forEach { f ->
-                val day = runCatching { calendarDayService.load(f) }.getOrNull() ?: return@forEach
+                // Slim decode — the log never needs the stroke arrays, and "All" walks ~1000 files.
+                val day = runCatching { calendarDayService.loadLogSlice(f) }.getOrNull() ?: return@forEach
                 val seenUrl = HashSet<String>()
                 for (e in day.readingEvents) {
                     val u = e.url
@@ -1177,9 +1194,16 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             listCol.removeAllViews()
             if (grams.isEmpty()) { listCol.addView(TextView(ctx).apply { text = "No grams yet."; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0) }); return@launch }
             for (g in grams) {
+                // Downsampled decode — 200 full-res bitmaps in one list is an OOM on e-ink RAM.
                 val thumb = runCatching {
                     val bytes = android.util.Base64.decode(g.data, android.util.Base64.DEFAULT)
-                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                    val target = px(72)
+                    var sample = 1
+                    while (bounds.outWidth / (sample * 2) >= target && bounds.outHeight / (sample * 2) >= target) sample *= 2
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size,
+                        android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
                 }.getOrNull() ?: continue
                 val row = LinearLayout(ctx).apply {
                     orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL

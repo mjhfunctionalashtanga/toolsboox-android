@@ -168,6 +168,31 @@ class CalendarDayService @Inject constructor() {
     }
 
     /**
+     * A slim decode for the LOG gather (Reply-with-Log picker, Ask corpus walks): reading
+     * events + text elements + ledger items, WITHOUT the stroke arrays that dominate a day
+     * file's bytes. The "All" range walks up to ~1000 files — full decodes there churn
+     * memory for data the caller never reads.
+     */
+    @com.squareup.moshi.JsonClass(generateAdapter = true)
+    data class DayLiteLog(
+        val readingEvents: List<com.toolsboox.plugin.calendar.da.v2.ReadingEvent> = emptyList(),
+        val textElements: List<com.toolsboox.da.TextElement> = emptyList(),
+        val ledgerItems: List<com.toolsboox.plugin.calendar.da.v2.LedgerItem> = emptyList(),
+    )
+
+    fun loadLogSlice(item: File): DayLiteLog? {
+        if (!item.exists() || !item.name.startsWith("day-") || !item.absolutePath.endsWith("-v2.json")) return null
+        val json = try { item.readText(Charsets.UTF_8) } catch (e: Exception) { return null }
+        if (json.isBlank()) return null
+        return try {
+            moshi.adapter(DayLiteLog::class.java).fromJson(json)
+        } catch (e: Exception) {
+            Timber.w(e, "Corrupt day file ${item.name} (log-lite); skipping")
+            null
+        }
+    }
+
+    /**
      * Convert the data class to JSON.
      *
      * @param calendarDay the calendar day

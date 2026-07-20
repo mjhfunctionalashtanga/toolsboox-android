@@ -254,9 +254,12 @@ object CalendarPdfRenderer {
         val pad = 30f
         val rect = RectF(minX - pad, minY - pad, maxX + pad, maxY + pad)
         val rw = rect.width().coerceAtLeast(1f)
-        val scale = targetWidth / rw
-        val w = targetWidth.coerceIn(1, 2000)
-        val h = (rect.height() * scale).toInt().coerceIn(1, 3000)
+        val rh = rect.height().coerceAtLeast(1f)
+        // Fit BOTH axes: scaling by width alone and clamping height cut the bottom off
+        // tall/narrow content (a column of quotes lost everything past 3000px).
+        val scale = minOf(targetWidth / rw, 3000f / rh)
+        val w = (rw * scale).toInt().coerceIn(1, 2000)
+        val h = (rh * scale).toInt().coerceIn(1, 3000)
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
         canvas.drawColor(Color.WHITE)
