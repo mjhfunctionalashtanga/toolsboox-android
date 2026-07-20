@@ -172,6 +172,12 @@ class Ledgr_FB_Bridge
             'permission_callback' => [$this, 'canWrite'],
         ]);
 
+        register_rest_route(self::NS, '/crm/contacts', [
+            'methods'             => 'GET',
+            'callback'            => [$this, 'crmContacts'],
+            'permission_callback' => [$this, 'canWrite'],
+        ]);
+
         register_rest_route(self::NS, '/crm/audiences', [
             'methods'             => 'GET',
             'callback'            => [$this, 'crmAudiences'],
@@ -3115,12 +3121,117 @@ class Ledgr_FB_Bridge
             'tag_ids'   => $tagIds,
         ]);
 
+        // dest=send puts it on the wire now (send to a list or a tag, straight from the
+        // device); anything else leaves a draft you review in FluentCRM.
+        $dispatch = ['sent' => false, 'recipients' => 0, 'message' => 'Draft saved.'];
+        if (sanitize_text_field((string) $request->get_param('dest')) === 'send') {
+            $dispatch = $this->dispatchCampaign($campaign, $listIds, $tagIds);
+        }
+
         return rest_ensure_response([
             'campaign_id' => (int) $campaign->id,
             'existing'    => false,
-            'status'      => 'draft',
+            'status'      => $dispatch['sent'] ? 'processing' : 'draft',
+            'recipients'  => $dispatch['recipients'],
+            'message'     => $dispatch['message'],
             'edit_url'    => admin_url('admin.php?page=fluentcrm-admin#/email/campaigns/' . $campaign->id . '/edit'),
         ]);
+    }
+
+    /** Search your contacts — the picker behind "write to a correspondent". */
+    public function crmContacts(\WP_REST_Request $request)
+    {
+        if (!class_exists('\FluentCrm\App\Models\Subscriber')) {
+            return new \WP_Error('ledgr_no_crm', 'FluentCRM is not active on this site', ['status' => 501]);
+        }
+        $search = sanitize_text_field((string) $request->get_param('search'));
+        $limit  = min(200, max(1, (int) ($request->get_param('limit') ?: 50)));
+
+        $q = \FluentCrm\App\Models\Subscriber::where('status', 'subscribed')
+            ->orderBy('last_name', 'ASC')
+            ->limit($limit);
+        if ($search) {
+            $q->where(function ($sub) use ($search) {
+                $sub->where('email', 'LIKE', '%' . $search . '%')
+                    ->orWhere('first_name', 'LIKE', '%' . $search . '%')
+                    ->orWhere('last_name', 'LIKE', '%' . $search . '%');
+            });
+        }
+
+        $items = [];
+        foreach ($q->get() as $c) {
+            $items[] = [
+                'id'    => (int) $c->id,
+                'email' => $c->email,
+                'name'  => trim($c->first_name . ' ' . $c->last_name),
+            ];
+        }
+        return rest_ensure_response(['contacts' => $items]);
+    }
+
+    /**
+     * Put a draft campaign on the wire, mirroring what the FluentCRM admin does when
+     * you press Send: count the audience (a list, a tag, or both), flip draft →
+     * processing, then kick FluentCRM's own non-blocking processor so its mailer,
+     * footer, tracking and unsubscribe handling all apply exactly as usual.
+     */
+    private function dispatchCampaign($campaign, $listIds, $tagIds)
+    {
+        $count = 0;
+        try {
+            $q = \FluentCrm\App\Models\Subscriber::where('status', 'subscribed');
+            if ($listIds || $tagIds) {
+                $q->where(function ($sub) use ($listIds, $tagIds) {
+                    if ($listIds) {
+                        $sub->whereHas('lists', function ($l) use ($listIds) {
+                            $l->whereIn('fc_lists.id', $listIds);
+                        });
+                    }
+                    if ($tagIds) {
+                        $sub->orWhereHas('tags', function ($t) use ($tagIds) {
+                            $t->whereIn('fc_tags.id', $tagIds);
+                        });
+                    }
+                });
+            }
+            $count = (int) $q->count();
+        } catch (\Exception $e) {
+            $count = 0;
+        }
+
+        if (!$count) {
+            return ['sent' => false, 'recipients' => 0,
+                    'message' => 'No subscribed contacts matched that audience — the draft is saved.'];
+        }
+
+        $settings = (array) $campaign->settings;
+        $settings['sending_type']  = 'instant';
+        $settings['click_tracker'] = function_exists('fluentcrmTrackClicking') ? fluentcrmTrackClicking() : false;
+        $settings['open_tracker']  = function_exists('fluentcrmTrackEmailOpen') ? fluentcrmTrackEmailOpen() : false;
+
+        $updated = \FluentCrm\App\Models\Campaign::where('id', $campaign->id)
+            ->where('status', 'draft')
+            ->update([
+                'status'           => 'processing',
+                'scheduled_at'     => current_time('mysql'),
+                'recipients_count' => $count,
+                'settings'         => maybe_serialize($settings),
+            ]);
+        if (!$updated) {
+            return ['sent' => false, 'recipients' => 0, 'message' => 'Campaign was no longer a draft.'];
+        }
+
+        $url = add_query_arg([
+            'action'      => 'fluentcrm-post-campaigns-emails-processing',
+            'campaign_id' => $campaign->id,
+            'time'        => time(),
+        ], admin_url('admin-ajax.php'));
+        if (class_exists('\FluentCrm\App\Services\Libs\Mailer\Handler')) {
+            \FluentCrm\App\Services\Libs\Mailer\Handler::fireNonBlockingRequest($url, ['retry' => 1]);
+        }
+        do_action('fluent_crm/campaign_set_send_now', \FluentCrm\App\Models\Campaign::find($campaign->id));
+
+        return ['sent' => true, 'recipients' => $count, 'message' => 'Sending started.'];
     }
 }
 
