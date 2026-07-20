@@ -166,6 +166,18 @@ class Ledgr_FB_Bridge
             'permission_callback' => [$this, 'canWrite'],
         ]);
 
+        register_rest_route(self::NS, '/crm/campaign', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'createCrmCampaign'],
+            'permission_callback' => [$this, 'canWrite'],
+        ]);
+
+        register_rest_route(self::NS, '/crm/audiences', [
+            'methods'             => 'GET',
+            'callback'            => [$this, 'crmAudiences'],
+            'permission_callback' => [$this, 'canWrite'],
+        ]);
+
         register_rest_route(self::NS, '/crm/contact/(?P<contact_id>\d+)/compact', [
             'methods'             => 'GET',
             'callback'            => [$this, 'compactContact'],
@@ -2973,6 +2985,142 @@ class Ledgr_FB_Bridge
     {
         $settings = $task->settings;
         return isset($settings['cover']['backgroundImage']) ? $settings['cover']['backgroundImage'] : null;
+    }
+
+    /* -------------------------------------------------------------
+     * FluentCRM campaigns — build one out of what you MADE.
+     *
+     * The Ledger's objects (a picking board, a gram, a written page, a run of
+     * quotes) become an email campaign: images are sideloaded, the body is
+     * assembled in order, and the campaign is created as a DRAFT against a list
+     * or tag. It is deliberately never sent from the device — you review and
+     * press send in FluentCRM, where the unsubscribe/footer/mailer settings live.
+     * ------------------------------------------------------------- */
+
+    /** Lists + tags you can aim a campaign at (for the app's picker). */
+    public function crmAudiences(\WP_REST_Request $request)
+    {
+        if (!function_exists('FluentCrmApi')) {
+            return new \WP_Error('ledgr_no_crm', 'FluentCRM is not active on this site', ['status' => 501]);
+        }
+        $lists = $tags = [];
+        foreach (FluentCrmApi('lists')->all() as $l) {
+            $lists[] = ['id' => (int) $l->id, 'title' => $l->title, 'count' => (int) ($l->subscribers_count ?? 0)];
+        }
+        foreach (FluentCrmApi('tags')->all() as $t) {
+            $tags[] = ['id' => (int) $t->id, 'title' => $t->title, 'count' => (int) ($t->subscribers_count ?? 0)];
+        }
+        return rest_ensure_response(['lists' => $lists, 'tags' => $tags]);
+    }
+
+    /**
+     * multipart: title, subject, (optional) intro / outro markdown,
+     *            blocks — JSON array of {type: image|text, text?, caption?} in order,
+     *            image_0..image_N — the PNGs referenced by the image blocks,
+     *            list_ids / tag_ids — comma lists (at least one),
+     *            note_uuid — idempotency key.
+     * Creates a DRAFT campaign and attaches the audience. Returns its edit URL.
+     */
+    public function createCrmCampaign(\WP_REST_Request $request)
+    {
+        if (!class_exists('\FluentCrm\App\Models\Campaign')) {
+            return new \WP_Error('ledgr_no_crm', 'FluentCRM is not active on this site', ['status' => 501]);
+        }
+
+        $noteUuid = sanitize_text_field((string) $request->get_param('note_uuid'));
+        $title    = sanitize_text_field((string) $request->get_param('title'));
+        $subject  = sanitize_text_field((string) $request->get_param('subject'));
+        if (!$title) {
+            return new \WP_Error('ledgr_bad_request', 'title is required', ['status' => 400]);
+        }
+        $subject = $subject ?: $title;
+
+        // Idempotent on note_uuid — a retry must not make a second draft.
+        if ($noteUuid) {
+            $existing = \FluentCrm\App\Models\Campaign::where('slug', 'ledgr-' . sanitize_title($noteUuid))->first();
+            if ($existing) {
+                return rest_ensure_response([
+                    'campaign_id' => (int) $existing->id,
+                    'existing'    => true,
+                    'edit_url'    => admin_url('admin.php?page=fluentcrm-admin#/email/campaigns/' . $existing->id . '/edit'),
+                ]);
+            }
+        }
+
+        $files  = $request->get_file_params();
+        $blocks = json_decode((string) $request->get_param('blocks'), true);
+        $blocks = is_array($blocks) ? $blocks : [];
+
+        $html = '';
+        $intro = wp_kses_post($this->markdownToHtml((string) $request->get_param('intro')));
+        if ($intro) { $html .= $intro; }
+
+        foreach ($blocks as $i => $block) {
+            $type = isset($block['type']) ? $block['type'] : 'text';
+            if ($type === 'image') {
+                $key = 'image_' . $i;
+                if (empty($files[$key])) { continue; }
+                $url = $this->sideloadToMedia($files[$key]);
+                if (!$url) { continue; }
+                $html .= '<p style="text-align:center;margin:22px 0;">'
+                       . '<img src="' . esc_url($url) . '" alt="" style="max-width:100%;height:auto;" />'
+                       . '</p>';
+                if (!empty($block['caption'])) {
+                    $html .= '<p style="text-align:center;font-size:13px;color:#666;margin:-10px 0 22px;">'
+                           . esc_html($block['caption']) . '</p>';
+                }
+            } else {
+                $text = isset($block['text']) ? (string) $block['text'] : '';
+                if (trim($text) === '') { continue; }
+                $html .= wp_kses_post($this->markdownToHtml($text));
+            }
+        }
+
+        $outro = wp_kses_post($this->markdownToHtml((string) $request->get_param('outro')));
+        if ($outro) { $html .= $outro; }
+
+        if (trim(strip_tags($html)) === '' && strpos($html, '<img') === false) {
+            return new \WP_Error('ledgr_bad_request', 'Nothing to send — add at least one block', ['status' => 400]);
+        }
+
+        $campaign = \FluentCrm\App\Models\Campaign::create([
+            'title'      => $title,
+            'slug'       => $noteUuid ? 'ledgr-' . sanitize_title($noteUuid) : sanitize_title($title . '-' . time()),
+            'email_subject' => $subject,
+            'email_body' => $html,
+            'status'     => 'draft',
+        ]);
+
+        // Aim it: lists and/or tags become the campaign's audience.
+        $listIds = array_filter(array_map('intval', explode(',', (string) $request->get_param('list_ids'))));
+        $tagIds  = array_filter(array_map('intval', explode(',', (string) $request->get_param('tag_ids'))));
+        $audience = [];
+        foreach ($listIds as $id) { $audience[] = ['list' => $id]; }
+        foreach ($tagIds as $id)  { $audience[] = ['tag' => $id]; }
+        if ($audience && method_exists($campaign, 'attachSubscribers')) {
+            try {
+                $campaign->settings = array_merge((array) $campaign->settings, [
+                    'subscribers'        => $audience,
+                    'sending_filter'     => 'list_tag',
+                    'dynamic_segment'    => [],
+                    'excludedSubscribers'=> [],
+                ]);
+                $campaign->save();
+            } catch (\Exception $e) { /* audience is editable in the UI either way */ }
+        }
+
+        do_action('ledgr_fb/crm_campaign_created', $campaign, [
+            'note_uuid' => $noteUuid,
+            'list_ids'  => $listIds,
+            'tag_ids'   => $tagIds,
+        ]);
+
+        return rest_ensure_response([
+            'campaign_id' => (int) $campaign->id,
+            'existing'    => false,
+            'status'      => 'draft',
+            'edit_url'    => admin_url('admin.php?page=fluentcrm-admin#/email/campaigns/' . $campaign->id . '/edit'),
+        ]);
     }
 }
 
