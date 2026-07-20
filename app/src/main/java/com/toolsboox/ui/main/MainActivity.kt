@@ -24,6 +24,8 @@ import com.toolsboox.nw.CredentialService
 import com.toolsboox.ui.BaseActivity
 import com.toolsboox.utils.ReleaseTree
 import dagger.hilt.android.AndroidEntryPoint
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import timber.log.Timber
 import java.time.Instant
@@ -82,6 +84,19 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
      */
     @Inject
     lateinit var credentialService: CredentialService
+
+    /** For placing a captured photo into the Ledger (today's Pickings). */
+    @Inject
+    lateinit var calendarDayService: com.toolsboox.plugin.calendar.fi.CalendarDayService
+
+    // 📷 Capture — photograph handwritten content and ingest it as a Ledger object.
+    private var pendingCameraFile: java.io.File? = null
+    private val captureCameraLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.TakePicture()
+    ) { ok -> if (ok) pendingCameraFile?.let { ingestPhotoFile(it) } }
+    private val capturePickLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri -> uri?.let { ingestPhotoUri(it) } }
 
     /**
      * The view binding.
@@ -144,6 +159,118 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         }
     }
 
+    private fun documentsRoot(): java.io.File =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+            getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)!!
+        else
+            java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
+
+    private fun toast(m: String) = android.widget.Toast.makeText(this, m, android.widget.Toast.LENGTH_SHORT).show()
+
+    /** Chooser: take a photo, or pick one — then ingest it as a Ledger object. */
+    private fun startCapture() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Capture to Ledger")
+            .setItems(arrayOf("📷  Take a photo", "🖼  Choose from gallery")) { _, which ->
+                when (which) {
+                    0 -> try {
+                        val dir = java.io.File(cacheDir, "camera").apply { mkdirs() }
+                        val photo = java.io.File(dir, "capture-${System.currentTimeMillis()}.jpg")
+                        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.fileprovider", photo)
+                        pendingCameraFile = photo
+                        captureCameraLauncher.launch(uri)
+                    } catch (e: Exception) { toast("No camera available") }
+                    1 -> capturePickLauncher.launch("image/*")
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun ingestPhotoFile(f: java.io.File) {
+        val bmp = runCatching { decodeSampled(android.net.Uri.fromFile(f)) }.getOrNull()
+        f.delete()
+        ingestBitmap(bmp)
+    }
+    private fun ingestPhotoUri(uri: android.net.Uri) = ingestBitmap(runCatching { decodeSampled(uri) }.getOrNull())
+
+    /** Decode a photo downsampled to a sane size for a page object (avoids OOM on 12MP shots). */
+    private fun decodeSampled(uri: android.net.Uri): android.graphics.Bitmap? {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+        var sample = 1
+        val longest = maxOf(bounds.outWidth, bounds.outHeight)
+        while (longest / sample > 2200) sample *= 2
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        return contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) }
+    }
+
+    /** Place the photo as a Ledger object (today's Pickings gram) and offer OCR. */
+    private fun ingestBitmap(bmp: android.graphics.Bitmap?) {
+        if (bmp == null) { toast("Couldn't read that image"); return }
+        lifecycleScope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                        calendarDayService, documentsRoot(), bmp, java.time.LocalDate.now(),
+                        com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY,
+                        sourceLabel = "📷 Photo · ${java.time.LocalDate.now()}"
+                    )
+                }
+            }
+            toast("Added to today's Pickings")
+            offerOcr(bmp)   // recycles bmp when done
+        }
+    }
+
+    /** If AI creds are set, offer to extract the handwriting's text and file it as a note. */
+    private fun offerOcr(bmp: android.graphics.Bitmap) {
+        val creds = aiCreds()
+        if (creds == null) { bmp.recycle(); return }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Extract the text too?")
+            .setMessage("Read the handwriting and add it as a searchable note.")
+            .setPositiveButton("Extract text") { _, _ ->
+                lifecycleScope.launch {
+                    val text = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching { com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third) }.getOrNull()
+                    }
+                    bmp.recycle()
+                    if (text.isNullOrBlank()) { toast("Couldn't read the text"); return@launch }
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching {
+                            val root = documentsRoot(); val today = java.time.LocalDate.now()
+                            val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
+                            day.ledgerItems.add(com.toolsboox.plugin.calendar.da.v2.LedgerItem(
+                                id = "photo-" + java.util.UUID.randomUUID().toString().lowercase(),
+                                kind = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
+                                text = text.trim(), date = java.util.Date(), stage = "todo"))
+                            calendarDayService.save(root, today, day)
+                        }
+                    }
+                    toast("Text filed to today")
+                }
+            }
+            .setNegativeButton("Just the image") { _, _ -> bmp.recycle() }
+            .show()
+    }
+
+    private fun aiCreds(): Triple<String, String, String>? = try {
+        val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
+            this, "ledger_chat_encrypted_prefs",
+            androidx.security.crypto.MasterKey.Builder(this).setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build(),
+            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+        val provider = prefs.getString("ledger_chat_provider", "anthropic") ?: "anthropic"
+        val key = prefs.getString("ledger_chat_api_key_$provider", "")?.trim().orEmpty()
+        if (key.isBlank()) null else {
+            val default = if (provider == "openai") "gpt-4o" else "claude-sonnet-5"
+            val model = prefs.getString("ledger_chat_model_$provider", default) ?: default
+            Triple(provider, key, model)
+        }
+    } catch (e: Exception) { null }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -164,7 +291,16 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             binding.fragmentContent.findNavController().navigate(R.id.action_to_scratch, bundle)
         }
         binding.floatNoteButton.setOnLongClickListener {
-            binding.fragmentContent.findNavController().navigate(R.id.action_to_text_notes)
+            // Hold the pen button → a small menu: Text Notes, or capture a photo into the Ledger.
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setItems(arrayOf("✎  Text Notes", "📷  Capture a photo")) { _, which ->
+                    when (which) {
+                        0 -> binding.fragmentContent.findNavController().navigate(R.id.action_to_text_notes)
+                        1 -> startCapture()
+                    }
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
             true
         }
         makeFloatButtonDraggable(binding.floatNoteButton)
