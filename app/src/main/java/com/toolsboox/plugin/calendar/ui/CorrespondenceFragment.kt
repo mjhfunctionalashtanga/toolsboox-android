@@ -929,28 +929,38 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         val loading = androidx.appcompat.app.AlertDialog.Builder(ctx).setMessage("Loading your log…").create()
         loading.show()
         lifecycleScope.launch {
-            data class LogPick(val title: String, val excerpt: String, val source: String?, val url: String?)
+            data class LogPick(val kind: String, val title: String, val excerpt: String, val source: String?, val url: String?)
             val items = withContext(Dispatchers.IO) {
                 val out = mutableListOf<LogPick>()
                 val cal = java.io.File(documentsRoot(), "calendar")
                 if (cal.exists()) cal.walkTopDown()
                     .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
                     .sortedByDescending { it.name }
-                    .take(45)
+                    .take(120)   // ~4 months of days; picker is a recent-first window
                     .forEach { f ->
                         val day = runCatching { calendarDayService.load(f) }.getOrNull() ?: return@forEach
+                        // Reading events (feeds / books / correspondence), de-duped by URL like the Log.
+                        val seenUrl = HashSet<String>()
                         for (e in day.readingEvents) {
+                            val u = e.url
+                            if (!u.isNullOrBlank() && !seenUrl.add(u)) continue   // one per url per day
                             val t = (e.excerpt?.takeIf { it.isNotBlank() } ?: e.title).trim()
-                            if (t.isNotBlank()) out.add(LogPick(e.title, t, e.source, e.url))
-                            if (out.size >= 120) return@withContext out
+                            if (t.isNotBlank()) out.add(LogPick("📰", e.title, t, e.source, e.url))
                         }
+                        // Pickings — the typed quotes on the day's Pickings page.
+                        for (t in day.textElements.filter { it.pageKey == "pickings" && it.text.isNotBlank() })
+                            out.add(LogPick("❝", "Picking", t.text.trim(), null, null))
+                        // Everything else you logged — tasks, notes, placed items.
+                        for (li in day.ledgerItems.filter { it.text.isNotBlank() })
+                            out.add(LogPick("🗒", li.text.trim().take(40), li.text.trim(), null, null))
+                        if (out.size >= 300) return@withContext out
                     }
                 out
             }
             loading.dismiss()
             if (!isAdded) return@launch
             if (items.isEmpty()) { android.widget.Toast.makeText(ctx, "No log items yet", android.widget.Toast.LENGTH_SHORT).show(); return@launch }
-            val labels = items.map { (it.excerpt.take(70)) + (it.source?.let { s -> "  · $s" } ?: "") }.toTypedArray()
+            val labels = items.map { "${it.kind}  ${it.excerpt.take(66)}" + (it.source?.let { s -> "  · $s" } ?: "") }.toTypedArray()
             androidx.appcompat.app.AlertDialog.Builder(ctx)
                 .setTitle("Reply with Log")
                 .setItems(labels) { _, i ->
