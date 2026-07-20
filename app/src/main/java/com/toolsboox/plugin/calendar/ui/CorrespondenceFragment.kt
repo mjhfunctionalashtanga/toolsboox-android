@@ -922,62 +922,112 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    /** Pick a recent Log item (starred article / reading event) → its quote + source ride the
-     *  reply as a markdown provenance caption. */
+    private data class LogPick(val kind: String, val title: String, val excerpt: String, val source: String?, val url: String?)
+
+    /** Walk the most recent [days] day-files and gather log items (feeds deduped, pickings, items). */
+    private fun gatherLog(days: Int): List<LogPick> {
+        val out = mutableListOf<LogPick>()
+        val cal = java.io.File(documentsRoot(), "calendar")
+        if (!cal.exists()) return out
+        cal.walkTopDown()
+            .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
+            .sortedByDescending { it.name }
+            .take(days)
+            .forEach { f ->
+                val day = runCatching { calendarDayService.load(f) }.getOrNull() ?: return@forEach
+                val seenUrl = HashSet<String>()
+                for (e in day.readingEvents) {
+                    val u = e.url
+                    if (!u.isNullOrBlank() && !seenUrl.add(u)) continue
+                    val t = (e.excerpt?.takeIf { it.isNotBlank() } ?: e.title).trim()
+                    if (t.isNotBlank()) out.add(LogPick("📰", e.title, t, e.source, e.url))
+                }
+                for (t in day.textElements.filter { it.pageKey == "pickings" && it.text.isNotBlank() })
+                    out.add(LogPick("❝", "Picking", t.text.trim(), null, null))
+                for (li in day.ledgerItems.filter { it.text.isNotBlank() })
+                    out.add(LogPick("🗒", li.text.trim().take(40), li.text.trim(), null, null))
+            }
+        return out
+    }
+
+    /** Pick a Log item → its quote + source ride the reply as a markdown provenance caption.
+     *  Scroll-safe (tappable rows, not an AlertDialog list), searchable, with a widening window
+     *  so it loads a small recent slice fast and you can reach back. */
     private fun pickLogForReply(onPicked: (String, String) -> Unit) {
         val ctx = requireContext()
-        val loading = androidx.appcompat.app.AlertDialog.Builder(ctx).setMessage("Loading your log…").create()
-        loading.show()
-        lifecycleScope.launch {
-            data class LogPick(val kind: String, val title: String, val excerpt: String, val source: String?, val url: String?)
-            val items = withContext(Dispatchers.IO) {
-                val out = mutableListOf<LogPick>()
-                val cal = java.io.File(documentsRoot(), "calendar")
-                if (cal.exists()) cal.walkTopDown()
-                    .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
-                    .sortedByDescending { it.name }
-                    .take(120)   // ~4 months of days; picker is a recent-first window
-                    .forEach { f ->
-                        val day = runCatching { calendarDayService.load(f) }.getOrNull() ?: return@forEach
-                        // Reading events (feeds / books / correspondence), de-duped by URL like the Log.
-                        val seenUrl = HashSet<String>()
-                        for (e in day.readingEvents) {
-                            val u = e.url
-                            if (!u.isNullOrBlank() && !seenUrl.add(u)) continue   // one per url per day
-                            val t = (e.excerpt?.takeIf { it.isNotBlank() } ?: e.title).trim()
-                            if (t.isNotBlank()) out.add(LogPick("📰", e.title, t, e.source, e.url))
-                        }
-                        // Pickings — the typed quotes on the day's Pickings page.
-                        for (t in day.textElements.filter { it.pageKey == "pickings" && it.text.isNotBlank() })
-                            out.add(LogPick("❝", "Picking", t.text.trim(), null, null))
-                        // Everything else you logged — tasks, notes, placed items.
-                        for (li in day.ledgerItems.filter { it.text.isNotBlank() })
-                            out.add(LogPick("🗒", li.text.trim().take(40), li.text.trim(), null, null))
-                        if (out.size >= 300) return@withContext out
-                    }
-                out
-            }
-            loading.dismiss()
-            if (!isAdded) return@launch
-            if (items.isEmpty()) { android.widget.Toast.makeText(ctx, "No log items yet", android.widget.Toast.LENGTH_SHORT).show(); return@launch }
-            val labels = items.map { "${it.kind}  ${it.excerpt.take(66)}" + (it.source?.let { s -> "  · $s" } ?: "") }.toTypedArray()
-            androidx.appcompat.app.AlertDialog.Builder(ctx)
-                .setTitle("Reply with Log")
-                .setItems(labels) { _, i ->
-                    val p = items[i]
-                    // Provenance caption: the quote + a link back to its source.
-                    val cap = buildString {
-                        append("> ").append(p.excerpt.take(400))
-                        val src = p.source?.takeIf { it.isNotBlank() }
-                        val url = p.url?.takeIf { it.isNotBlank() }
-                        if (url != null) append("\n\n↩ from [").append(src ?: "source").append("](").append(url).append(")")
-                        else if (src != null) append("\n\n↩ from ").append(src)
-                    }
-                    onPicked("Log · ${p.title.take(30)}", cap)
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        val ranges = intArrayOf(14, 60, 180, 1000)   // ~2wk · 2mo · 6mo · all
+        val rangeNames = arrayOf("2 wk", "2 mo", "6 mo", "All")
+        var rangeIdx = 0
+        var all: List<LogPick> = emptyList()
+
+        val search = android.widget.EditText(ctx).apply {
+            hint = "Search log…"; setSingleLine(true); textSize = 15f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
+        val rangeBtn = TextView(ctx).apply {
+            text = "▸ ${rangeNames[rangeIdx]}"; textSize = 14f; setTextColor(0xFF2F6F96.toInt())
+            setPadding(px(10), px(6), px(6), px(6))
+        }
+        val topRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
+            addView(search); addView(rangeBtn)
+        }
+        val listCol = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = android.widget.ScrollView(ctx).apply {
+            addView(listCol)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (440 * dp).toInt())
+        }
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(px(12), px(8), px(12), 0)
+            addView(topRow); addView(scroll)
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Reply with Log")
+            .setView(box)
+            .setNegativeButton("Cancel", null)
+            .create()
+
+        fun captionFor(p: LogPick) = buildString {
+            append("> ").append(p.excerpt.take(400))
+            val src = p.source?.takeIf { it.isNotBlank() }; val url = p.url?.takeIf { it.isNotBlank() }
+            if (url != null) append("\n\n↩ from [").append(src ?: "source").append("](").append(url).append(")")
+            else if (src != null) append("\n\n↩ from ").append(src)
+        }
+        fun render() {
+            val q = search.text.toString().trim().lowercase()
+            val shown = (if (q.isBlank()) all else all.filter { it.excerpt.lowercase().contains(q) || (it.source ?: "").lowercase().contains(q) }).take(400)
+            listCol.removeAllViews()
+            if (shown.isEmpty()) listCol.addView(TextView(ctx).apply {
+                text = "No matching log items."; setTextColor(0xFF888888.toInt()); setPadding(px(4), px(12), px(4), 0)
+            })
+            for (p in shown) listCol.addView(TextView(ctx).apply {
+                text = "${p.kind}  ${p.excerpt.take(90)}" + (p.source?.let { "\n      · $it" } ?: "")
+                textSize = 14f; setTextColor(0xFF000000.toInt()); setPadding(px(6), px(10), px(6), px(10))
+                setBackgroundResource(android.R.drawable.list_selector_background)
+                setOnClickListener { onPicked("Log · ${p.title.take(30)}", captionFor(p)); dialog.dismiss() }
+            })
+        }
+        fun reload() {
+            listCol.removeAllViews()
+            listCol.addView(TextView(ctx).apply { text = "Loading…"; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0) })
+            lifecycleScope.launch {
+                val loaded = withContext(Dispatchers.IO) { gatherLog(ranges[rangeIdx]) }
+                if (!isAdded) return@launch
+                all = loaded; render()
+            }
+        }
+        rangeBtn.setOnClickListener { rangeIdx = (rangeIdx + 1) % ranges.size; rangeBtn.text = "▸ ${rangeNames[rangeIdx]}"; reload() }
+        search.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) { render() }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        reload()
+        dialog.show()
+        dialog.window?.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
     /** Pick a Pickings page → rendered to an image, attached with its provenance. (Next pass.) */
