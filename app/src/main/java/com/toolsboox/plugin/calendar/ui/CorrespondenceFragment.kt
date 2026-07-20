@@ -550,10 +550,18 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             r.provenance?.let { p ->
                 col.addView(sectionLabel("FROM"))
                 col.addView(TextView(ctx).apply {
-                    text = deHtml(p.label) + (if (p.url != null) "   ↗" else "")
-                    textSize = 14f; setTextColor(if (p.url != null) 0xFF2F6F96.toInt() else 0xFF333333.toInt())
-                    setPadding(0, px(2), 0, px(2))
-                    if (p.url != null) setOnClickListener { open(p.url) }
+                    // A real, easy-to-hit button (not a tiny ↩) when there's a source to jump to.
+                    text = (if (p.url != null) "↩  Go to source" else "") + (if (p.url != null) "\n" else "") + deHtml(p.label)
+                    textSize = 15f
+                    setTextColor(if (p.url != null) 0xFF2F6F96.toInt() else 0xFF333333.toInt())
+                    setPadding(px(12), px(10), px(12), px(10))
+                    if (p.url != null) {
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        background = android.graphics.drawable.GradientDrawable().apply {
+                            setStroke(px(1), 0xFF2F6F96.toInt()); cornerRadius = px(8).toFloat()
+                        }
+                        setOnClickListener { open(p.url) }
+                    }
                 })
             }
             col.addView(sectionLabel("YOUR POSTS IN THIS SPACE"))
