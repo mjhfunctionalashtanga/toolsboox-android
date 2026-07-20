@@ -49,6 +49,7 @@ class Ledgr_FB_Bridge
     const META_OCR = 'ledgr_ocr';
     const MAX_PNG_BYTES = 8388608;      // 8 MB
     const MAX_STROKE_BYTES = 16777216;  // 16 MB gzipped JSON
+    const MAX_AUDIO_BYTES = 33554432;   // 32 MB — a long voice gram is still small
     const MAX_VIDEO_BYTES = 134217728;  // 128 MB direct clip; use video_url (Bunny) beyond
 
     public function __construct()
@@ -2238,7 +2239,7 @@ class Ledgr_FB_Bridge
         }
 
         if (isset($files['audio'])) {
-            $err = $this->validateUpload($files['audio'], ['audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/ogg', 'audio/wav', 'audio/webm'], self::MAX_PNG_BYTES);
+            $err = $this->validateUpload($files['audio'], ['audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/ogg', 'audio/wav', 'audio/webm'], self::MAX_AUDIO_BYTES);
             if (!is_wp_error($err)) {
                 $audioUrl = $this->sideloadToMedia($files['audio']);
                 if ($audioUrl) {
@@ -2891,8 +2892,107 @@ class Ledgr_FB_Bridge
         return $applied;
     }
 
+    /**
+     * FluentCommunity Pro's cloud-storage driver, or null when the site has no
+     * remote bucket configured (e.g. theyoga.club, where FluentCommunity is off).
+     */
+    private function cloudDriver()
+    {
+        static $driver = false;
+
+        if ($driver !== false) {
+            return $driver;
+        }
+
+        $driver = null;
+
+        if (class_exists('\FluentCommunityPro\App\Modules\CloudStorage\CloudStorageModule')) {
+            try {
+                $resolved = (new \FluentCommunityPro\App\Modules\CloudStorage\CloudStorageModule())->getDriver();
+                $driver = is_wp_error($resolved) ? null : $resolved;
+            } catch (\Exception $e) {
+                $driver = null;
+            }
+        }
+
+        return $driver;
+    }
+
+    /**
+     * Put an upload straight into the bucket under a content-addressed name.
+     *
+     * Content addressing means the same gram sent twice is one object, and it
+     * gives the device a stable key to hang a media ref on later. Nothing is
+     * written to the WP media library — these are Ledger objects, not posts.
+     *
+     * Returns the public URL, or null to fall through to the local sideload.
+     */
+    private function uploadToCloud(array $file)
+    {
+        $driver = $this->cloudDriver();
+
+        if (!$driver || empty($file['tmp_name']) || !is_readable($file['tmp_name'])) {
+            return null;
+        }
+
+        $hash = @hash_file('sha256', $file['tmp_name']);
+
+        if (!$hash) {
+            return null;
+        }
+
+        $ext = strtolower(pathinfo(isset($file['name']) ? $file['name'] : '', PATHINFO_EXTENSION));
+        $ext = preg_replace('/[^a-z0-9]/', '', (string) $ext);
+
+        if (!$ext) {
+            $byMime = [
+                'image/png'       => 'png',
+                'image/jpeg'      => 'jpg',
+                'image/webp'      => 'webp',
+                'audio/mpeg'      => 'mp3',
+                'audio/mp4'       => 'm4a',
+                'audio/x-m4a'     => 'm4a',
+                'audio/ogg'       => 'ogg',
+                'audio/wav'       => 'wav',
+                'audio/webm'      => 'weba',
+                'video/mp4'       => 'mp4',
+                'video/webm'      => 'webm',
+                'video/quicktime' => 'mov',
+            ];
+            $ext = isset($byMime[$file['type']]) ? $byMime[$file['type']] : 'bin';
+        }
+
+        // basename() is what the driver turns into the object key, so the whole
+        // name has to carry the namespace.
+        $staged = trailingslashit(get_temp_dir()) . 'ledgr-' . substr($hash, 0, 32) . '.' . $ext;
+
+        if (!@copy($file['tmp_name'], $staged)) {
+            return null;
+        }
+
+        try {
+            $result = $driver->putObject($staged, 'public-read');
+        } catch (\Exception $e) {
+            $result = null;
+        }
+
+        @unlink($staged);
+
+        if (!$result || is_wp_error($result) || empty($result['public_url'])) {
+            return null;
+        }
+
+        return $result['public_url'];
+    }
+
     private function sideloadToMedia(array $file)
     {
+        $remoteUrl = $this->uploadToCloud($file);
+
+        if ($remoteUrl) {
+            return $remoteUrl;
+        }
+
         if (!function_exists('media_handle_sideload')) {
             require_once ABSPATH . 'wp-admin/includes/media.php';
             require_once ABSPATH . 'wp-admin/includes/file.php';

@@ -86,4 +86,74 @@ class CalendarDaySyncRoundTripTest {
         assertEquals(2, day2.readingEvents.size)
         assertEquals(1, day2.avGrams.size)
     }
+
+    /**
+     * A/V gram elements: a day written by a build that predates the media fields must still
+     * open (they default to a plain image gram), and a day carrying them must survive a
+     * load→save unchanged. This is the read-both half of the lockstep contract — neither
+     * platform may drop the other's media refs on re-serialize.
+     */
+    @Test
+    fun av_gram_image_elements_round_trip_and_old_files_still_open() {
+        val adapter = moshi.adapter(CalendarDay::class.java)
+
+        val json = """
+            {
+              "year": 2026, "month": 7, "day": 20, "locale": "en-US",
+              "events": [], "readingProgress": [], "hasLanes": true, "startHour": null,
+              "calendarStrokes": {}, "calendarValues": {}, "noteStrokes": {},
+              "textElements": [], "readingEvents": [], "avGrams": [],
+              "imageElements": [
+                {
+                  "elementId": "11111111-1111-1111-1111-111111111111", "timestamp": 1720900000000,
+                  "x": 10.0, "y": 20.0, "width": 300.0, "height": 200.0,
+                  "data": "AAAA", "page": "pickings"
+                },
+                {
+                  "elementId": "22222222-2222-2222-2222-222222222222", "timestamp": 1720900000001,
+                  "x": 40.0, "y": 50.0, "width": 300.0, "height": 200.0,
+                  "data": "POSTER", "page": "pickings",
+                  "mediaKind": "video", "attachmentId": "av-9", "durationMs": 41000,
+                  "mediaUrl": "https://pub-x.r2.dev/ledgr-abc.mp4",
+                  "mediaTitle": "Backbend, Tuesday", "mediaDate": "2026-07-18"
+                }
+              ],
+              "deletedStrokeIds": [], "deletedElementIds": [],
+              "created": 1720800000000, "updated": 1720999999999
+            }
+        """.trimIndent()
+
+        val day = adapter.fromJson(json)
+        requireNotNull(day)
+        assertEquals(2, day.imageElements.size)
+
+        // An element written before the media fields existed opens as a plain image gram.
+        val plain = day.imageElements[0]
+        assertEquals("", plain.mediaKind)
+        assertEquals("", plain.attachmentId)
+        assertEquals(0, plain.durationMs)
+
+        // A video gram keeps its poster frame in `data` — so every surface that already draws
+        // grams renders it — plus the pointer to the sounding part.
+        val video = day.imageElements[1]
+        assertEquals("video", video.mediaKind)
+        assertEquals("POSTER", video.data)
+        assertEquals("av-9", video.attachmentId)
+        assertEquals(41000, video.durationMs)
+        assertEquals("https://pub-x.r2.dev/ledgr-abc.mp4", video.mediaUrl)
+        assertEquals("Backbend, Tuesday", video.mediaTitle)
+        assertEquals("2026-07-18", video.mediaDate)
+
+        // Re-serialize: the media refs must not be dropped (the sync regression we guard).
+        val out = adapter.toJson(day)
+        assertTrue("mediaKind preserved", out.contains("\"mediaKind\":\"video\""))
+        assertTrue("attachment ref preserved", out.contains("av-9"))
+        assertTrue("remote url preserved", out.contains("ledgr-abc.mp4"))
+        assertTrue("title preserved", out.contains("Backbend, Tuesday"))
+
+        val day2 = adapter.fromJson(out)
+        requireNotNull(day2)
+        assertEquals("video", day2.imageElements[1].mediaKind)
+        assertEquals(41000, day2.imageElements[1].durationMs)
+    }
 }

@@ -1,5 +1,6 @@
 package com.toolsboox
 
+import android.content.ContextWrapper
 import com.squareup.moshi.Moshi
 import com.toolsboox.ot.DateJsonAdapter
 import com.toolsboox.ot.LocaleJsonAdapter
@@ -19,11 +20,20 @@ import java.nio.file.Files
  */
 class LedgerCorpusServiceTest {
 
-    private fun service(): LedgerCorpusService {
+    /**
+     * The corpus service reads its non-calendar sections (text notes, feed cache, page sections)
+     * out of `context.filesDir`. A JVM unit test has no Android Context, so we hand it a wrapper
+     * that answers the one method the gather path actually calls and stubs nothing else.
+     */
+    private class FilesDirContext(private val dir: File) : ContextWrapper(null) {
+        override fun getFilesDir(): File = dir
+    }
+
+    private fun service(filesDir: File = Files.createTempDirectory("corpus-files").toFile()): LedgerCorpusService {
         val moshi = Moshi.Builder()
             .add(LocaleJsonAdapter()).add(DateJsonAdapter()).add(UUIDJsonAdapter()).build()
         val cds = CalendarDayService().apply { this.moshi = moshi }
-        return LedgerCorpusService(cds)
+        return LedgerCorpusService(cds, FilesDirContext(filesDir))
     }
 
     private fun writeDay(root: File) {

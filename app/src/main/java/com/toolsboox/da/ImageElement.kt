@@ -45,5 +45,25 @@ data class ImageElement(
     // Content-addressed lineage id for "where used" (null/"" = derive from data). Seeded from the
     // pre-edit content hash on the first crop/transform and preserved after, so an edited variant
     // still groups with its original. Match key = gramId if set, else md5(data). Mirrors iOS.
-    var gramId: String? = null
+    var gramId: String? = null,
+    // ---- A/V grams -----------------------------------------------------------------------------
+    // An audio or video gram is an ImageElement whose [data] is its POSTER FRAME (video still /
+    // audio waveform), plus a pointer to the sounding part below. That way every surface that
+    // already draws grams — pickings, timeline, kanban, PDF export — keeps working unchanged, and a
+    // client that predates these fields renders the still instead of breaking. Nothing to migrate.
+    //
+    // "" or "image" = a plain image gram (the default). "audio" / "video" otherwise. Deliberately a
+    // String and not an enum: an older build reading a newer day file gets a value it can ignore
+    // rather than a decode failure, which is what keeps the two platforms free to land out of step.
+    var mediaKind: String = "",
+    // Id of the [Attachment] in CalendarDay.avGrams holding the local blob ("" = none on this device).
+    var attachmentId: String = "",
+    // Remote copy (R2), so a device that never held the blob can still play it ("" = local only).
+    var mediaUrl: String = "",
+    // Length in milliseconds, so the player chrome can show 0:23 without opening the file (0 = unknown).
+    var durationMs: Int = 0,
+    // Creator's choice, both optional: a title, and a date to show instead of the page's own day
+    // (yyyy-MM-dd; "" = just use the day it sits on).
+    var mediaTitle: String = "",
+    var mediaDate: String = ""
 )
