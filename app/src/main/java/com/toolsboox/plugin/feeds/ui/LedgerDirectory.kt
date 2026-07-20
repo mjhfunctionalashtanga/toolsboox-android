@@ -89,14 +89,16 @@ fun ledgerDirectoryFolders(
         ScreenFragment.Folder("🗒", "Desk", listOf(
             // Notes reopens where you last were; Text Notes rides right under it (the two
             // notes surfaces belong together, not with Text Notes exiled to the bottom).
+            // Desk order (Michael): the two note surfaces, then your people and work,
+            // then the three that need the internet — Fluent-backed — last.
             "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
             "📝  Text Notes" to { nav.navigate(R.id.action_to_text_notes) },
+            "👤  Rolodex" to { nav.navigate(R.id.action_to_rolodex) },
             // Boards = one system, two sources (Local on-device tasks · Site FluentBoards),
             // framed like the RSS Local/Site split. Tasks & Events is the list view of Local.
             "🗒  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
             "📋  Boards · Local" to { nav.navigate(R.id.action_to_kanban) },
             "🌐  Boards · Site" to { nav.navigate(R.id.action_to_site_boards) },
-            "👤  Rolodex" to { nav.navigate(R.id.action_to_rolodex) },
             "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
             "💬  Messages" to { nav.navigate(R.id.action_to_messages) }
         )),
