@@ -91,10 +91,12 @@ fun ledgerDirectoryFolders(
             // notes surfaces belong together, not with Text Notes exiled to the bottom).
             "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
             "📝  Text Notes" to { nav.navigate(R.id.action_to_text_notes) },
+            // Boards = one system, two sources (Local on-device tasks · Site FluentBoards),
+            // framed like the RSS Local/Site split. Tasks & Events is the list view of Local.
             "🗒  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
+            "📋  Boards · Local" to { nav.navigate(R.id.action_to_kanban) },
+            "🌐  Boards · Site" to { nav.navigate(R.id.action_to_site_boards) },
             "👤  Rolodex" to { nav.navigate(R.id.action_to_rolodex) },
-            "📋  Boards" to { nav.navigate(R.id.action_to_kanban) },
-            "🌐  Site Boards" to { nav.navigate(R.id.action_to_site_boards) },
             "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
             "💬  Messages" to { nav.navigate(R.id.action_to_messages) }
         )),

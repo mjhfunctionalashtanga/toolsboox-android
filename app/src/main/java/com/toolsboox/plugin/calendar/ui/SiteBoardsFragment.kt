@@ -125,6 +125,10 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             openBoard?.let { loadBoard(it) }
         }
         upButton.setOnClickListener { showList() }
+        // Tap the title at the board-list level to flip to the Local board (Local ⇄ Site).
+        titleView.setOnClickListener {
+            if (openBoard == null) NavHostFragment.findNavController(this).navigate(com.toolsboox.R.id.action_to_kanban)
+        }
         loadBoards()
     }
 
@@ -133,7 +137,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
      * ------------------------------------------------------------- */
 
     private fun loadBoards() {
-        titleView.text = "Site Boards"
+        titleView.text = "Boards · Site  ⇄"
         upButton.visibility = View.GONE
         openBoard = null
         renderMessage("Loading boards…")
@@ -145,7 +149,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
     }
 
     private fun showList() {
-        titleView.text = "Site Boards"
+        titleView.text = "Boards · Site  ⇄"
         upButton.visibility = View.GONE
         openBoard = null
         compact = null

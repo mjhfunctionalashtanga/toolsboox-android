@@ -64,22 +64,25 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
     /** All boards / each board / ＋ New board / web bridge / Delete — the board switcher. */
     private fun showBoardPicker() {
         val ctx = requireContext()
-        val labels = mutableListOf("▦  All boards")
+        val labels = mutableListOf("🌐  Switch to Site boards")   // Local ⇄ Site, like the RSS split
+        labels += "▦  All boards"
         labels += boards.map { "▤  ${it.name.ifBlank { "Untitled" }}" }
         labels += "＋  New board…"
         labels += "⬆  Send board to web"
         labels += "🌐  Web bridge…"
         val hasSel = selectedBoard != null
         if (hasSel) labels += "🗑  Delete this board"
+        val base = 1   // rows after the Site-switch entry
         androidx.appcompat.app.AlertDialog.Builder(ctx)
-            .setTitle("Boards")
+            .setTitle("Boards · Local")
             .setItems(labels.toTypedArray()) { _, which ->
                 when {
-                    which == 0 -> { selectedBoard = null; load() }
-                    which <= boards.size -> { selectedBoard = boards[which - 1].id; load() }
-                    which == boards.size + 1 -> promptNewBoard()
-                    which == boards.size + 2 -> sendBoardToWeb()
-                    which == boards.size + 3 -> promptBridgeSettings()
+                    which == 0 -> NavHostFragment.findNavController(this).navigate(com.toolsboox.R.id.action_to_site_boards)
+                    which == base -> { selectedBoard = null; load() }
+                    which <= base + boards.size -> { selectedBoard = boards[which - base - 1].id; load() }
+                    which == base + boards.size + 1 -> promptNewBoard()
+                    which == base + boards.size + 2 -> sendBoardToWeb()
+                    which == base + boards.size + 3 -> promptBridgeSettings()
                     else -> { selectedBoard?.let { BoardsStore.delete(ctx, it) }; selectedBoard = null; load() }
                 }
             }
