@@ -612,6 +612,9 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         // provenance, combined with the small handwriting box as one reply.
         var attachedBitmap: Bitmap? = null   // picking/gram image, stacked above the ink
         var attachedCaption = ""             // markdown provenance/quote that rides with the reply
+        // Rhizome loop: also save this reply into your Ledger (a Pickings gram whose provenance
+        // points BACK at this thread), so a comment becomes a Ledger object you can rework.
+        var saveToLedger = false
 
         val actionRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.END; setPadding(0, 0, 0, px(4))
@@ -729,6 +732,14 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         withRow.addView(withBtn("❝ with Picking") { pickPickingForReply { l, b, c -> setAttachment(l, b, c) } })
         withRow.addView(withBtn("🕘 with Log") { pickLogForReply { l, c -> setAttachment(l, null, c) } })
 
+        // Save-to-Ledger toggle: the reply also lands as a Pickings gram citing this thread.
+        val saveToggle = TextView(ctx).apply {
+            textSize = 13f; setTextColor(0xFF2F6F96.toInt()); setPadding(px(2), px(4), px(2), px(2))
+            fun label() = (if (saveToLedger) "☑" else "☐") + "  Save this reply to my Ledger"
+            text = label()
+            setOnClickListener { saveToLedger = !saveToLedger; text = label() }
+        }
+
         val gramRow = TextView(ctx).apply {
             text = "↗  Share as gram instead…"
             textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(px(2), px(10), 0, px(4))
@@ -749,6 +760,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ))
             addView(withRow)
+            addView(saveToggle)
             if (provenanceDefault != null) addView(gramRow)
         }
 
@@ -802,10 +814,23 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     val baos = ByteArrayOutputStream(); it.compress(Bitmap.CompressFormat.PNG, 100, baos); baos.toByteArray()
                 }
                 val cap = attachedCaption
+                val alsoSave = saveToLedger && combined != null
+                val saveBmp = if (alsoSave) combined!!.copy(combined.config ?: Bitmap.Config.ARGB_8888, false) else null
                 lifecycleScope.launch {
                     val status = withContext(Dispatchers.IO) {
                         if (png != null) LedgerCorrespondence.postInkReply(ctx, feedId, png, parentId, cap)
                         else LedgerCorrespondence.postTextReply(ctx, feedId, cap, parentId)
+                    }
+                    // Rhizome: the reply also becomes a Pickings gram whose provenance points back here.
+                    if (status == "Reply posted" && saveBmp != null) withContext(Dispatchers.IO) {
+                        runCatching {
+                            com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                                calendarDayService, documentsRoot(), saveBmp, java.time.LocalDate.now(),
+                                com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY,
+                                sourceLink = provUrl ?: "", sourceLabel = "↩ Reply · ${deHtml(thread).take(40)}"
+                            )
+                        }
+                        saveBmp.recycle()
                     }
                     inkBmp?.recycle(); combined?.recycle()
                     android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
