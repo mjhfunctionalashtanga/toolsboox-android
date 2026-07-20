@@ -1414,15 +1414,29 @@ class Ledgr_FB_Bridge
         $message = trim($text);
         $html    = $imageHtml . ($message ? '<p>' . nl2br(esc_html($message)) . '</p>' : '');
 
+        // Optional: nest this under an existing comment (reply-to-a-reply). Must belong to
+        // the same post, or we ignore it and post at top level.
+        $parentId = (int) $request->get_param('parent_id');
+        if ($parentId) {
+            $parent = \FluentCommunity\App\Models\Comment::find($parentId);
+            if (!$parent || (int) $parent->post_id !== (int) $feed->id) {
+                $parentId = 0;
+            }
+        }
+
         try {
-            $comment = \FluentCommunity\App\Models\Comment::create([
+            $attrs = [
                 'post_id'          => $feed->id,
                 'user_id'          => get_current_user_id(),
                 'message'          => $message ?: '[handwritten annotation]',
                 'message_rendered' => $html,
                 'type'             => 'comment',
                 'status'           => 'published',
-            ]);
+            ];
+            if ($parentId) {
+                $attrs['parent_id'] = $parentId;
+            }
+            $comment = \FluentCommunity\App\Models\Comment::create($attrs);
 
             \FluentCommunity\App\Models\Feed::where('id', $feed->id)->increment('comments_count');
 
@@ -1665,10 +1679,26 @@ class Ledgr_FB_Bridge
         };
 
         $out = [];
+        $post = null;   // the ORIGINAL post/card that was replied to (shown atop the in-app reader)
         try {
             if ($source === 'boards') {
                 if (!class_exists('\FluentBoards\App\Models\Comment')) {
                     return new \WP_Error('ledgr_no_boards', 'FluentBoards is not active', ['status' => 501]);
+                }
+                if (class_exists('\FluentBoards\App\Models\Task')) {
+                    $task = \FluentBoards\App\Models\Task::find($id);
+                    if ($task) {
+                        $tauthor  = get_user_by('id', $task->created_by);
+                        $tbody    = (string) ($task->description ?? '');
+                        $settings = is_array($task->settings) ? $task->settings : (array) $task->settings;
+                        $post = [
+                            'title'      => (string) $task->title,
+                            'author'     => $tauthor ? $tauthor->display_name : 'Unknown',
+                            'content'    => mb_substr(wp_strip_all_tags($tbody), 0, 20000),
+                            'created_at' => (string) $task->created_at,
+                            'image_url'  => isset($settings['cover']['backgroundImage']) ? $settings['cover']['backgroundImage'] : $firstImage($tbody),
+                        ];
+                    }
                 }
                 $rows = \FluentBoards\App\Models\Comment::where('task_id', $id)
                     ->orderBy('id', 'asc')->limit(200)->get();
@@ -1691,6 +1721,20 @@ class Ledgr_FB_Bridge
                 if (!class_exists('\FluentCommunity\App\Models\Comment')) {
                     return new \WP_Error('ledgr_no_community', 'FluentCommunity is not active', ['status' => 501]);
                 }
+                if (class_exists('\FluentCommunity\App\Models\Feed')) {
+                    $feed = \FluentCommunity\App\Models\Feed::find($id);
+                    if ($feed) {
+                        $fauthor = get_user_by('id', $feed->user_id);
+                        $fbody   = (string) ($feed->message_rendered ?: $feed->message);
+                        $post = [
+                            'title'      => (string) ($feed->title ?: ''),
+                            'author'     => $fauthor ? $fauthor->display_name : ('User ' . $feed->user_id),
+                            'content'    => mb_substr(wp_strip_all_tags($fbody), 0, 20000),
+                            'created_at' => (string) $feed->created_at,
+                            'image_url'  => $firstImage($fbody),
+                        ];
+                    }
+                }
                 $rows = \FluentCommunity\App\Models\Comment::where('post_id', $id)
                     ->orderBy('id', 'asc')->limit(200)->get();
                 foreach ($rows as $c) {
@@ -1699,6 +1743,7 @@ class Ledgr_FB_Bridge
                     $img    = $firstImage($body);
                     $out[]  = [
                         'id'         => (int) $c->id,
+                        'parent_id'  => (int) ($c->parent_id ?? 0),
                         'author'     => $author ? $author->display_name : ('User ' . $c->user_id),
                         'excerpt'    => wp_trim_words(wp_strip_all_tags($body), 80),
                         'content'    => mb_substr(wp_strip_all_tags($body), 0, 20000),
@@ -1713,7 +1758,7 @@ class Ledgr_FB_Bridge
             return new \WP_Error('ledgr_thread_failed', $e->getMessage(), ['status' => 500]);
         }
 
-        return rest_ensure_response(['source' => $source, 'id' => $id, 'items' => $out]);
+        return rest_ensure_response(['source' => $source, 'id' => $id, 'post' => $post, 'items' => $out]);
     }
 
     /* ---------------------------------------------------------------

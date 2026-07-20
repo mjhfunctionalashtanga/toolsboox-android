@@ -46,6 +46,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     private var spaceId = 25L                 // MichaelFilter — the first space
     private var spaceTitle = "MichaelFilter"
 
+    // Thread reader state — so a reply posted from inside it can reopen it fresh.
+    private var threadReaderOpen = false
+    private var threadReaderDialog: androidx.appcompat.app.AlertDialog? = null
+
     private fun prefs() = requireContext().getSharedPreferences("ledger_correspondence", Context.MODE_PRIVATE)
 
     /** Decode HTML entities (&hellip; &#039; &amp; …) so excerpts read cleanly. */
@@ -172,13 +176,17 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 textSize = 12f; setTextColor(0xFF666666.toInt())
             })
             if (post.title.isNotBlank()) card.addView(TextView(ctx).apply {
-                text = post.title; textSize = 15f; setTextColor(0xFF000000.toInt())
+                text = deHtml(post.title); textSize = 15f; setTextColor(0xFF000000.toInt())
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
             })
             card.addView(TextView(ctx).apply {
                 text = deHtml(post.excerpt); textSize = 14f; setTextColor(0xFF000000.toInt())
             })
+            // Horizontal-scrollable so the extra reply actions never push buttons off-screen.
             val actions = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+            val actionsScroll = android.widget.HorizontalScrollView(ctx).apply {
+                isHorizontalScrollBarEnabled = false; addView(actions)
+            }
             // Like — the FluentCommunity reaction, toggled straight from the Ledger.
             var liked = post.liked
             var likeCount = post.reactionsCount
@@ -197,20 +205,26 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     }
                 }
             })
+            val provDefault = "↩ In reply to ${post.author}" +
+                post.excerpt.trim().take(90).let { if (it.isNotBlank()) ": “$it”" else "" }
+            val quotedPost = post.author.ifBlank { "Post" } + ":  " + post.excerpt
+            actions.addView(TextView(ctx).apply {
+                text = "⌨  Reply in text"
+                textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(6), px(18), 0)
+                setOnClickListener { showTextReplyDialog(post.id, post.title.ifBlank { spaceTitle }, replyingTo = quotedPost) }
+            })
             actions.addView(TextView(ctx).apply {
                 text = "✍  Reply in ink"
                 textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(6), px(18), 0)
-                val provDefault = "↩ In reply to ${post.author}" +
-                    post.excerpt.trim().take(90).let { if (it.isNotBlank()) ": “$it”" else "" }
                 setOnClickListener {
                     showInkReplyDialog(
                         post.id, post.title.ifBlank { spaceTitle }, provDefault, post.url,
-                        replyingTo = post.author.ifBlank { "Post" } + ":  " + post.excerpt
+                        replyingTo = quotedPost
                     )
                 }
             })
-            if (post.commentsCount > 0) actions.addView(TextView(ctx).apply {
-                text = "💬  See replies"
+            actions.addView(TextView(ctx).apply {
+                text = "📄  Post & replies"
                 textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(6), px(18), 0)
                 setOnClickListener { showThread("community", post.id, post.title.ifBlank { spaceTitle }) }
             })
@@ -224,7 +238,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(6), 0, 0)
                 setOnClickListener { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(post.url))) }
             })
-            card.addView(actions)
+            card.addView(actionsScroll)
             container.addView(card)
         }
     }
@@ -261,10 +275,12 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             val replied = hasReplied(head.source, head.threadId)
             container.addView(TextView(ctx).apply {
                 text = (if (head.source == "boards") "📋  " else "👥  ") +
-                    head.thread.ifBlank { "Untitled thread" } + (if (replied) "   ✓ replied" else "")
+                    deHtml(head.thread).ifBlank { "Untitled thread" } + (if (replied) "   ✓ replied" else "")
                 textSize = 16f; setTextColor(0xFF000000.toInt())
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
                 setPadding(px(4), px(14), px(4), px(6))
+                // Tap the thread title → open the original post (and its replies) in-app.
+                setOnClickListener { showThread(head.source, head.threadId, head.thread) }
             })
             for (r in thread) {
                 val card = LinearLayout(ctx).apply {
@@ -286,7 +302,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 container.addView(card)
             }
             container.addView(TextView(ctx).apply {
-                text = "💬  See replies"
+                text = "📄  Open post & replies"
                 textSize = 15f; setTextColor(0xFF2F6F96.toInt())
                 setPadding(px(10), px(2), px(10), px(4))
                 setOnClickListener { showThread(head.source, head.threadId, head.thread) }
@@ -302,17 +318,17 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 })
             }
             if (head.source == "community") {
-                container.addView(TextView(ctx).apply {
-                    text = "✍  Reply in ink"
-                    textSize = 15f; setTextColor(0xFF2F6F96.toInt())
-                    setPadding(px(10), px(2), px(10), px(10))
-                    setOnClickListener {
-                        showInkReplyDialog(
-                            head.threadId, head.thread,
-                            replyingTo = head.author + ":  " + head.content.ifBlank { head.excerpt }
-                        )
-                    }
+                val quoted = head.author + ":  " + head.content.ifBlank { head.excerpt }
+                val replyBar = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; setPadding(px(10), px(2), px(10), px(10)) }
+                replyBar.addView(TextView(ctx).apply {
+                    text = "⌨  Reply in text"; textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, 0, px(22), 0)
+                    setOnClickListener { showTextReplyDialog(head.threadId, head.thread, replyingTo = quoted) }
                 })
+                replyBar.addView(TextView(ctx).apply {
+                    text = "✍  Reply in ink"; textSize = 15f; setTextColor(0xFF2F6F96.toInt())
+                    setOnClickListener { showInkReplyDialog(head.threadId, head.thread, replyingTo = quoted) }
+                })
+                container.addView(replyBar)
             }
         }
     }
@@ -326,10 +342,13 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         val scroll = android.widget.ScrollView(ctx).apply { addView(col) }
         col.addView(TextView(ctx).apply { text = "Loading…"; setTextColor(0xFF888888.toInt()); setPadding(0, px(12), 0, 0) })
         val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
-            .setTitle(title.ifBlank { "Thread" })
+            .setTitle(deHtml(title).ifBlank { "Thread" })
             .setView(scroll)
             .setPositiveButton("Close", null)
             .create()
+        threadReaderDialog = dialog
+        threadReaderOpen = true
+        dialog.setOnDismissListener { if (threadReaderDialog === dialog) { threadReaderOpen = false; threadReaderDialog = null } }
         dialog.show()
         // The reader earns the whole screen width — long messages were cramped in the
         // stock dialog's narrow column.
@@ -338,28 +357,29 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT
         )
         lifecycleScope.launch {
-            val items = withContext(Dispatchers.IO) { LedgerCorrespondence.threadComments(ctx, source, threadId) }
+            val bundle = withContext(Dispatchers.IO) { LedgerCorrespondence.threadBundle(ctx, source, threadId) }
             if (!isAdded) return@launch
+            val items = bundle.comments
             col.removeAllViews()
-            if (items.isEmpty()) {
-                col.addView(TextView(ctx).apply { text = "No replies yet."; setTextColor(0xFF888888.toInt()) })
-                return@launch
-            }
-            for (c in items) {
+
+            // The ORIGINAL post/card first — this is the "bring up the post in-app" the row opens.
+            bundle.post?.let { p ->
                 col.addView(TextView(ctx).apply {
-                    text = c.author + (if (c.mine) "  · you" else "") + "   ·   " + c.createdAt.take(16) +
-                        (if (c.hasImage) "   📎" else "")
-                    textSize = 12f; setTextColor(0xFF666666.toInt()); setPadding(0, px(12), 0, px(1))
+                    text = p.author + "   ·   " + p.createdAt.take(16)
+                    textSize = 12f; setTextColor(0xFF666666.toInt()); setPadding(0, px(2), 0, px(1))
                 })
-                val body = c.content.ifBlank { c.excerpt }
-                if (body.isNotBlank()) col.addView(TextView(ctx).apply {
-                    text = deHtml(body); textSize = 14f; setTextColor(0xFF000000.toInt())
-                    setTextIsSelectable(true)
+                if (p.title.isNotBlank()) col.addView(TextView(ctx).apply {
+                    text = deHtml(p.title); textSize = 17f; setTextColor(0xFF000000.toInt())
+                    setTypeface(typeface, android.graphics.Typeface.BOLD); setPadding(0, px(2), 0, px(2))
                 })
-                c.imageUrl?.let { url ->
+                if (p.content.isNotBlank()) col.addView(TextView(ctx).apply {
+                    text = deHtml(p.content); textSize = 15f; setTextColor(0xFF000000.toInt())
+                    setTextIsSelectable(true); setPadding(0, px(2), 0, px(4))
+                })
+                p.imageUrl?.let { url ->
                     val img = android.widget.ImageView(ctx).apply {
                         adjustViewBounds = true; setBackgroundColor(0xFFFFFFFF.toInt())
-                        layoutParams = LinearLayout.LayoutParams(px(180), LinearLayout.LayoutParams.WRAP_CONTENT)
+                        layoutParams = LinearLayout.LayoutParams(px(240), LinearLayout.LayoutParams.WRAP_CONTENT)
                             .apply { topMargin = px(4) }
                     }
                     col.addView(img)
@@ -368,30 +388,105 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                         if (bmp != null && isAdded) img.setImageBitmap(bmp)
                     }
                 }
-                // Your own comments/uploads are deletable (server enforces ownership).
-                if (c.mine) col.addView(TextView(ctx).apply {
-                    text = "✕  Delete"
-                    textSize = 13f; setTextColor(0xFFB00020.toInt()); setPadding(0, px(3), 0, px(2))
+                // Divider before the replies.
+                col.addView(View(ctx).apply {
+                    setBackgroundColor(0xFFDDDDDD.toInt())
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, px(1))
+                        .apply { topMargin = px(10); bottomMargin = px(2) }
+                })
+                col.addView(TextView(ctx).apply {
+                    text = if (items.isEmpty()) "No replies yet." else "${items.size} " + (if (items.size == 1) "reply" else "replies")
+                    textSize = 11f; setTextColor(0xFF888888.toInt()); setPadding(0, px(4), 0, px(2))
+                })
+            }
+            if (bundle.post == null && items.isEmpty()) {
+                col.addView(TextView(ctx).apply { text = "No replies yet."; setTextColor(0xFF888888.toInt()) })
+            }
+
+            // Render one comment (indented when it's a nested reply), with its own actions.
+            fun renderComment(c: com.toolsboox.plugin.calendar.nw.ThreadComment, indent: Boolean) {
+                val leftPad = if (indent) px(22) else 0
+                col.addView(TextView(ctx).apply {
+                    text = (if (indent) "↳ " else "") + c.author + (if (c.mine) "  · you" else "") +
+                        "   ·   " + c.createdAt.take(16) + (if (c.hasImage) "   📎" else "")
+                    textSize = 12f; setTextColor(0xFF666666.toInt()); setPadding(leftPad, px(12), 0, px(1))
+                })
+                val body = c.content.ifBlank { c.excerpt }
+                if (body.isNotBlank()) col.addView(TextView(ctx).apply {
+                    text = deHtml(body); textSize = 14f; setTextColor(0xFF000000.toInt())
+                    setTextIsSelectable(true); setPadding(leftPad, 0, 0, 0)
+                })
+                c.imageUrl?.let { url ->
+                    val img = android.widget.ImageView(ctx).apply {
+                        adjustViewBounds = true; setBackgroundColor(0xFFFFFFFF.toInt())
+                        layoutParams = LinearLayout.LayoutParams(px(180), LinearLayout.LayoutParams.WRAP_CONTENT)
+                            .apply { topMargin = px(4); leftMargin = leftPad }
+                    }
+                    col.addView(img)
+                    lifecycleScope.launch {
+                        val bmp = withContext(Dispatchers.IO) { LedgerCorrespondence.loadImage(ctx, url) }
+                        if (bmp != null && isAdded) img.setImageBitmap(bmp)
+                    }
+                }
+                // Per-comment actions row: Reply (community, nests under this comment) + Delete (own).
+                val actions = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL; setPadding(leftPad, px(2), 0, px(2)) }
+                if (source == "community") actions.addView(TextView(ctx).apply {
+                    text = "↩ Reply"; textSize = 13f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(2), px(20), px(2))
+                    setOnClickListener {
+                        showTextReplyDialog(threadId, title, replyingTo = c.author + ":  " + c.content.ifBlank { c.excerpt }, parentId = c.id)
+                    }
+                })
+                if (c.mine) actions.addView(TextView(ctx).apply {
+                    text = "✕ Delete"; textSize = 13f; setTextColor(0xFFB00020.toInt()); setPadding(0, px(2), 0, px(2))
                     setOnClickListener {
                         androidx.appcompat.app.AlertDialog.Builder(ctx)
                             .setMessage("Delete this reply?")
                             .setPositiveButton("Delete") { _, _ ->
                                 lifecycleScope.launch {
-                                    val ok = withContext(Dispatchers.IO) {
-                                        LedgerCorrespondence.deleteThreadComment(ctx, source, c.id)
-                                    }
-                                    android.widget.Toast.makeText(ctx, if (ok) "Deleted" else "Couldn't delete",
-                                        android.widget.Toast.LENGTH_SHORT).show()
-                                    if (ok) { dialog.dismiss(); showThread(source, threadId, title); load() }
+                                    val ok = withContext(Dispatchers.IO) { LedgerCorrespondence.deleteThreadComment(ctx, source, c.id) }
+                                    android.widget.Toast.makeText(ctx, if (ok) "Deleted" else "Couldn't delete", android.widget.Toast.LENGTH_SHORT).show()
+                                    if (ok) { afterReplyPosted(source, threadId, title) }
                                 }
                             }
                             .setNegativeButton("Cancel", null)
                             .show()
                     }
                 })
+                if (actions.childCount > 0) col.addView(actions)
+            }
+
+            // Top-level comments in order; each followed by its nested replies (one level).
+            val topLevel = items.filter { it.parentId == 0L }
+            val childrenOf = items.filter { it.parentId != 0L }.groupBy { it.parentId }
+            for (c in topLevel) {
+                renderComment(c, indent = false)
+                childrenOf[c.id]?.forEach { renderComment(it, indent = true) }
+            }
+            // Orphaned nested replies (parent not in this page) still show, indented.
+            items.filter { it.parentId != 0L && topLevel.none { t -> t.id == it.parentId } }
+                .forEach { renderComment(it, indent = true) }
+
+            // Bottom reply bar — reply to the POST from inside the reader (community only).
+            if (source == "community") {
+                col.addView(View(ctx).apply {
+                    setBackgroundColor(0xFFDDDDDD.toInt())
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, px(1))
+                        .apply { topMargin = px(12); bottomMargin = px(6) }
+                })
+                val bar = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+                bar.addView(TextView(ctx).apply {
+                    text = "⌨  Reply in text"; textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(4), px(24), px(4))
+                    setOnClickListener { showTextReplyDialog(threadId, title) }
+                })
+                bar.addView(TextView(ctx).apply {
+                    text = "✍  Reply in ink"; textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(4), 0, px(4))
+                    setOnClickListener { showInkReplyDialog(threadId, title) }
+                })
+                col.addView(bar)
             }
         }
     }
+
 
     /** ▸ Related for a gram/post: its provenance (what it answered) + your neighbouring posts. */
     private fun showPostRelated(post: LedgerPost) {
@@ -402,7 +497,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(px(18), px(8), px(18), px(8)) }
         col.addView(TextView(ctx).apply { text = "Loading…"; setTextColor(0xFF888888.toInt()); setPadding(0, px(12), 0, 0) })
         androidx.appcompat.app.AlertDialog.Builder(ctx)
-            .setTitle("▸ Related · ${post.title.ifBlank { spaceTitle }.take(32)}")
+            .setTitle("▸ Related · ${deHtml(post.title).ifBlank { spaceTitle }.take(32)}")
             .setView(android.widget.ScrollView(ctx).apply { addView(col) })
             .setPositiveButton("Close", null)
             .show()
@@ -418,7 +513,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             r.provenance?.let { p ->
                 col.addView(sectionLabel("FROM"))
                 col.addView(TextView(ctx).apply {
-                    text = p.label + (if (p.url != null) "   ↗" else "")
+                    text = deHtml(p.label) + (if (p.url != null) "   ↗" else "")
                     textSize = 14f; setTextColor(if (p.url != null) 0xFF2F6F96.toInt() else 0xFF333333.toInt())
                     setPadding(0, px(2), 0, px(2))
                     if (p.url != null) setOnClickListener { open(p.url) }
@@ -430,7 +525,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             })
             r.related.forEach { rc ->
                 col.addView(TextView(ctx).apply {
-                    text = "•  ${rc.title}"
+                    text = "•  ${deHtml(rc.title)}"
                     textSize = 14f; setTextColor(if (rc.url != null) 0xFF2F6F96.toInt() else 0xFF000000.toInt())
                     setPadding(0, px(3), 0, px(1))
                     if (rc.url != null) setOnClickListener { open(rc.url) }
@@ -443,7 +538,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     @SuppressLint("ClickableViewAccessibility")
     private fun showInkReplyDialog(
         feedId: Long, thread: String, provenanceDefault: String? = null, provUrl: String? = null,
-        replyingTo: String? = null
+        replyingTo: String? = null, parentId: Long = 0
     ) {
         val ctx = requireContext()
         val ink = InkPadView(ctx)
@@ -489,7 +584,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         })
 
         val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
-            .setTitle("Reply in ink · ${thread.ifBlank { "thread" }}")
+            .setTitle("Reply in ink · ${deHtml(thread).ifBlank { "thread" }}")
             .setView(box)
             .create()
 
@@ -509,10 +604,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             bmp.compress(Bitmap.CompressFormat.PNG, 100, baos); bmp.recycle()
             lifecycleScope.launch {
                 val status = withContext(Dispatchers.IO) {
-                    LedgerCorrespondence.postInkReply(ctx, feedId, baos.toByteArray())
+                    LedgerCorrespondence.postInkReply(ctx, feedId, baos.toByteArray(), parentId)
                 }
                 android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
-                if (status == "Reply posted") { markReplied("community", feedId); dialog.dismiss(); load() }
+                if (status == "Reply posted") { markReplied("community", feedId); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
             }
         })
         shareAsGram = {
@@ -530,6 +625,52 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT
         )
+    }
+
+    /** Type a reply (keyboard) to a community post, optionally nested under [parentId]. */
+    private fun showTextReplyDialog(
+        feedId: Long, thread: String, replyingTo: String? = null, parentId: Long = 0
+    ) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(px(18), px(6), px(18), 0) }
+        if (!replyingTo.isNullOrBlank()) col.addView(TextView(ctx).apply {
+            text = deHtml(replyingTo); textSize = 13f; setTextColor(0xFF555555.toInt())
+            setPadding(0, 0, 0, px(6)); maxHeight = (120 * dp).toInt()
+            movementMethod = android.text.method.ScrollingMovementMethod()
+        })
+        val input = android.widget.EditText(ctx).apply {
+            hint = "Write a reply…"; setSingleLine(false); minLines = 3; gravity = android.view.Gravity.TOP
+            setPadding(px(10), px(10), px(10), px(10))
+        }
+        col.addView(input)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle((if (parentId > 0) "Reply · " else "Reply in text · ") + deHtml(thread).ifBlank { "thread" }.take(28))
+            .setView(col)
+            .setPositiveButton("Send") { _, _ ->
+                val text = input.text.toString().trim()
+                if (text.isBlank()) { android.widget.Toast.makeText(ctx, "Nothing to send", android.widget.Toast.LENGTH_SHORT).show(); return@setPositiveButton }
+                lifecycleScope.launch {
+                    val status = withContext(Dispatchers.IO) { LedgerCorrespondence.postTextReply(ctx, feedId, text, parentId) }
+                    android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
+                    if (status == "Reply posted") { markReplied("community", feedId); afterReplyPosted("community", feedId, thread) }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .create()
+        dialog.show()
+        dialog.window?.setLayout(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        input.requestFocus()
+    }
+
+    /** After any reply/delete: refresh the inbox, and if the thread reader is open, reopen it
+     *  so the change (new reply, nesting, removal) shows immediately. */
+    private fun afterReplyPosted(source: String, id: Long, thread: String) {
+        load()
+        if (threadReaderOpen) { threadReaderDialog?.dismiss(); showThread(source, id, thread) }
     }
 
     /**

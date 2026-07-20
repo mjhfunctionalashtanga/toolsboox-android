@@ -345,6 +345,22 @@ data class ThreadComment(
     val hasImage: Boolean,
     val imageUrl: String?,
     val content: String = "",   // full message text (bridge ≥ this pass); excerpt fallback
+    val parentId: Long = 0,     // >0 → this is a reply nested under comment parentId
+)
+
+/** The original post/card a thread hangs off — shown atop the in-app reader. */
+data class ThreadPost(
+    val title: String,
+    val author: String,
+    val content: String,
+    val createdAt: String,
+    val imageUrl: String?,
+)
+
+/** A thread's original post plus its comments (one round trip). */
+data class ThreadBundle(
+    val post: ThreadPost?,
+    val comments: List<ThreadComment>,
 )
 
 /** Correspondence fetch + ink reply — the Boox half of the Correspondence page. */
@@ -475,30 +491,44 @@ object LedgerCorrespondence {
     }
 
     /** Every comment on a post/card, oldest-first — to read the exchange in-app. Dispatchers.IO. */
-    fun threadComments(context: Context, source: String, threadId: Long): List<ThreadComment> {
+    fun threadComments(context: Context, source: String, threadId: Long): List<ThreadComment> =
+        threadBundle(context, source, threadId).comments
+
+    /** The original post + its comments in one call — for the in-app thread reader. Dispatchers.IO. */
+    fun threadBundle(context: Context, source: String, threadId: Long): ThreadBundle {
         val c = LedgerCommunityBridge.config(context)
-        if (!c.ready) return emptyList()
+        if (!c.ready) return ThreadBundle(null, emptyList())
         return try {
             val req = Request.Builder()
                 .url("${c.site}/wp-json/ledgr/v1/thread?source=$source&id=$threadId")
                 .header("Authorization", Credentials.basic(c.user, c.pass))
                 .build()
             client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return emptyList()
-                val arr = JSONObject(resp.body?.string() ?: return emptyList()).optJSONArray("items") ?: return emptyList()
-                (0 until arr.length()).map { arr.getJSONObject(it) }.map {
-                    ThreadComment(
-                        it.optLong("id", 0), it.optString("author", "?"), it.optString("excerpt", ""),
-                        it.optString("created_at", ""), it.optBoolean("mine", false),
-                        it.optBoolean("has_image", false),
-                        it.optString("image_url", "").takeIf { s -> s.isNotBlank() && s != "null" },
-                        it.optString("content", "")
+                if (!resp.isSuccessful) return ThreadBundle(null, emptyList())
+                val root = JSONObject(resp.body?.string() ?: return ThreadBundle(null, emptyList()))
+                val post = root.optJSONObject("post")?.let { p ->
+                    ThreadPost(
+                        p.optString("title", ""), p.optString("author", "?"),
+                        p.optString("content", ""), p.optString("created_at", ""),
+                        p.optString("image_url", "").takeIf { s -> s.isNotBlank() && s != "null" }
                     )
                 }
+                val arr = root.optJSONArray("items")
+                val comments = if (arr == null) emptyList() else
+                    (0 until arr.length()).map { arr.getJSONObject(it) }.map {
+                        ThreadComment(
+                            it.optLong("id", 0), it.optString("author", "?"), it.optString("excerpt", ""),
+                            it.optString("created_at", ""), it.optBoolean("mine", false),
+                            it.optBoolean("has_image", false),
+                            it.optString("image_url", "").takeIf { s -> s.isNotBlank() && s != "null" },
+                            it.optString("content", ""), it.optLong("parent_id", 0)
+                        )
+                    }
+                ThreadBundle(post, comments)
             }
         } catch (e: Exception) {
             Timber.w(e, "thread fetch failed")
-            emptyList()
+            ThreadBundle(null, emptyList())
         }
     }
 
@@ -540,12 +570,13 @@ object LedgerCorrespondence {
     }
 
     /** Post handwriting as your comment on a community thread. Call from Dispatchers.IO. */
-    fun postInkReply(context: Context, feedId: Long, png: ByteArray): String {
+    fun postInkReply(context: Context, feedId: Long, png: ByteArray, parentId: Long = 0): String {
         val c = LedgerCommunityBridge.config(context)
         if (!c.ready) return "Community bridge not configured"
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("feed_id", feedId.toString())
             .addFormDataPart("note_uuid", "inkreply-" + java.util.UUID.randomUUID().toString().lowercase())
+            .apply { if (parentId > 0) addFormDataPart("parent_id", parentId.toString()) }
             .addFormDataPart("png", "reply.png", png.toRequestBody("image/png".toMediaType()))
             .build()
         return try {
@@ -564,6 +595,37 @@ object LedgerCorrespondence {
             }
         } catch (e: Exception) {
             Timber.w(e, "ink reply failed")
+            "Network error"
+        }
+    }
+
+    /** Post a TEXT reply to a community post (optionally nested under [parentId]). Dispatchers.IO. */
+    fun postTextReply(context: Context, feedId: Long, text: String, parentId: Long = 0): String {
+        val c = LedgerCommunityBridge.config(context)
+        if (!c.ready) return "Community bridge not configured"
+        if (text.isBlank()) return "Nothing to send"
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("feed_id", feedId.toString())
+            .addFormDataPart("note_uuid", "textreply-" + java.util.UUID.randomUUID().toString().lowercase())
+            .addFormDataPart("text", text)
+            .apply { if (parentId > 0) addFormDataPart("parent_id", parentId.toString()) }
+            .build()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/community/comment")
+                .post(body)
+                .header("Authorization", Credentials.basic(c.user, c.pass))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val t = resp.body?.string() ?: ""
+                if (resp.isSuccessful && t.contains("comment_id")) "Reply posted"
+                else {
+                    val msg = try { JSONObject(t).optString("message") } catch (e: Exception) { "" }
+                    if (msg.isNotBlank()) msg else "Reply failed (${resp.code})"
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "text reply failed")
             "Network error"
         }
     }
