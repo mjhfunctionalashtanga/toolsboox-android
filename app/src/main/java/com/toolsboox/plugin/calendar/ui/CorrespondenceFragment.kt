@@ -41,6 +41,29 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     override val view = R.layout.fragment_correspondence
     private lateinit var binding: FragmentCorrespondenceBinding
 
+    @Inject
+    lateinit var calendarDayService: com.toolsboox.plugin.calendar.fi.CalendarDayService
+
+    private fun documentsRoot(): java.io.File =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+            requireContext().getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)!!
+        else
+            java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
+
+    /** Stack two bitmaps vertically (either may be null) — the attached item above your ink. */
+    private fun stackVertically(top: Bitmap?, bottom: Bitmap?): Bitmap? {
+        if (top == null) return bottom
+        if (bottom == null) return top
+        val w = maxOf(top.width, bottom.width)
+        val gap = (8 * resources.displayMetrics.density).toInt()
+        val h = top.height + gap + bottom.height
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(out); c.drawColor(Color.WHITE)
+        c.drawBitmap(top, ((w - top.width) / 2f), 0f, null)
+        c.drawBitmap(bottom, ((w - bottom.width) / 2f), (top.height + gap).toFloat(), null)
+        return out
+    }
+
     /** "replies" = the exchange inbox · "community" = a space's posts you can reply to. */
     private var mode = "replies"
     private var spaceId = 25L                 // MichaelFilter — the first space
@@ -577,6 +600,11 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         var textMode = startText
         var shareAsGram: (() -> Unit)? = null
 
+        // "Reply with Gram / Picking / Log": an existing object attached to this reply, KEEPING its
+        // provenance, combined with the small handwriting box as one reply.
+        var attachedBitmap: Bitmap? = null   // picking/gram image, stacked above the ink
+        var attachedCaption = ""             // markdown provenance/quote that rides with the reply
+
         val actionRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.END; setPadding(0, 0, 0, px(4))
         }
@@ -651,6 +679,48 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         }
 
         val contentFrame = android.widget.FrameLayout(ctx).apply { addView(inkPane); addView(textPane) }
+
+        // Attachment preview (shown once you attach a Gram/Picking/Log) + the "Reply with…" row.
+        val attachPreview = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; visibility = View.GONE
+            setPadding(px(6), px(6), px(6), px(6)); setBackgroundColor(0xFFEFF4F7.toInt())
+        }
+        fun clearAttachment() {
+            attachedBitmap?.recycle(); attachedBitmap = null; attachedCaption = ""
+            attachPreview.removeAllViews(); attachPreview.visibility = View.GONE
+        }
+        fun setAttachment(label: String, bmp: Bitmap?, caption: String) {
+            attachedBitmap?.recycle()
+            attachedBitmap = bmp; attachedCaption = caption
+            attachPreview.removeAllViews()
+            attachPreview.addView(TextView(ctx).apply {
+                text = "📎  $label     ✕ remove"; textSize = 12f; setTextColor(0xFF2F6F96.toInt())
+                setOnClickListener { clearAttachment() }
+            })
+            if (bmp != null) attachPreview.addView(android.widget.ImageView(ctx).apply {
+                setImageBitmap(bmp); adjustViewBounds = true; setBackgroundColor(0xFFFFFFFF.toInt())
+                scaleType = android.widget.ImageView.ScaleType.FIT_START
+                maxHeight = (140 * dp).toInt()
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    .apply { topMargin = px(4) }
+            })
+            if (caption.isNotBlank()) attachPreview.addView(TextView(ctx).apply {
+                text = richHtml(caption.replace("\n", "<br>")); textSize = 12f; setTextColor(0xFF444444.toInt())
+                setPadding(0, px(4), 0, 0)
+            })
+            attachPreview.visibility = View.VISIBLE
+        }
+        val withRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL; setPadding(px(2), px(8), px(2), px(2))
+        }
+        fun withBtn(label: String, onTap: () -> Unit) = TextView(ctx).apply {
+            text = label; textSize = 14f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(2), px(16), px(2))
+            setOnClickListener { onTap() }
+        }
+        withRow.addView(withBtn("🎴 with Gram") { pickGramForReply { l, b, c -> setAttachment(l, b, c) } })
+        withRow.addView(withBtn("❝ with Picking") { pickPickingForReply { l, b, c -> setAttachment(l, b, c) } })
+        withRow.addView(withBtn("🕘 with Log") { pickLogForReply { l, c -> setAttachment(l, null, c) } })
+
         val gramRow = TextView(ctx).apply {
             text = "↗  Share as gram instead…"
             textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(px(2), px(10), 0, px(4))
@@ -666,9 +736,11 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 setPadding(px(8), px(4), px(8), px(6)); maxHeight = (120 * dp).toInt()
                 movementMethod = android.text.method.ScrollingMovementMethod()
             })
+            addView(attachPreview)
             addView(contentFrame, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ))
+            addView(withRow)
             if (provenanceDefault != null) addView(gramRow)
         }
 
@@ -699,7 +771,9 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         actionRow.addView(actionBtn("Cancel") { dialog.dismiss() })
         actionRow.addView(actionBtn("Send") {
             if (textMode) {
-                val text = input.text.toString().trim()
+                // Type mode: the typed body, plus any attached item's provenance caption.
+                val typed = input.text.toString().trim()
+                val text = listOf(typed, attachedCaption).filter { it.isNotBlank() }.joinToString("\n\n")
                 if (text.isBlank()) { android.widget.Toast.makeText(ctx, "Nothing to send", android.widget.Toast.LENGTH_SHORT).show(); return@actionBtn }
                 lifecycleScope.launch {
                     val status = withContext(Dispatchers.IO) { LedgerCorrespondence.postTextReply(ctx, feedId, text, parentId) }
@@ -707,14 +781,25 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     if (status == "Reply posted") { markReplied("community", feedId); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
                 }
             } else {
-                val bmp = ink.render() ?: run {
+                // Draw mode: [attached image] stacked above [your ink], one combined PNG, with the
+                // attachment's provenance as the caption. If nothing is drawn AND only a Log (text)
+                // is attached, post it as a text reply instead.
+                val inkBmp = ink.render()
+                val combined = stackVertically(attachedBitmap, inkBmp)
+                if (combined == null && attachedCaption.isBlank()) {
                     android.widget.Toast.makeText(ctx, "Nothing written", android.widget.Toast.LENGTH_SHORT).show()
                     return@actionBtn
                 }
-                val baos = ByteArrayOutputStream()
-                bmp.compress(Bitmap.CompressFormat.PNG, 100, baos); bmp.recycle()
+                val png = combined?.let {
+                    val baos = ByteArrayOutputStream(); it.compress(Bitmap.CompressFormat.PNG, 100, baos); baos.toByteArray()
+                }
+                val cap = attachedCaption
                 lifecycleScope.launch {
-                    val status = withContext(Dispatchers.IO) { LedgerCorrespondence.postInkReply(ctx, feedId, baos.toByteArray(), parentId) }
+                    val status = withContext(Dispatchers.IO) {
+                        if (png != null) LedgerCorrespondence.postInkReply(ctx, feedId, png, parentId, cap)
+                        else LedgerCorrespondence.postTextReply(ctx, feedId, cap, parentId)
+                    }
+                    inkBmp?.recycle(); combined?.recycle()
                     android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
                     if (status == "Reply posted") { markReplied("community", feedId); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
                 }
@@ -835,6 +920,64 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             for (s in strokes) c.drawPath(s.path, paintFor(s.color, s.strokeWidth))
             return bmp
         }
+    }
+
+    /** Pick a recent Log item (starred article / reading event) → its quote + source ride the
+     *  reply as a markdown provenance caption. */
+    private fun pickLogForReply(onPicked: (String, String) -> Unit) {
+        val ctx = requireContext()
+        val loading = androidx.appcompat.app.AlertDialog.Builder(ctx).setMessage("Loading your log…").create()
+        loading.show()
+        lifecycleScope.launch {
+            data class LogPick(val title: String, val excerpt: String, val source: String?, val url: String?)
+            val items = withContext(Dispatchers.IO) {
+                val out = mutableListOf<LogPick>()
+                val cal = java.io.File(documentsRoot(), "calendar")
+                if (cal.exists()) cal.walkTopDown()
+                    .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
+                    .sortedByDescending { it.name }
+                    .take(45)
+                    .forEach { f ->
+                        val day = runCatching { calendarDayService.load(f) }.getOrNull() ?: return@forEach
+                        for (e in day.readingEvents) {
+                            val t = (e.excerpt?.takeIf { it.isNotBlank() } ?: e.title).trim()
+                            if (t.isNotBlank()) out.add(LogPick(e.title, t, e.source, e.url))
+                            if (out.size >= 120) return@withContext out
+                        }
+                    }
+                out
+            }
+            loading.dismiss()
+            if (!isAdded) return@launch
+            if (items.isEmpty()) { android.widget.Toast.makeText(ctx, "No log items yet", android.widget.Toast.LENGTH_SHORT).show(); return@launch }
+            val labels = items.map { (it.excerpt.take(70)) + (it.source?.let { s -> "  · $s" } ?: "") }.toTypedArray()
+            androidx.appcompat.app.AlertDialog.Builder(ctx)
+                .setTitle("Reply with Log")
+                .setItems(labels) { _, i ->
+                    val p = items[i]
+                    // Provenance caption: the quote + a link back to its source.
+                    val cap = buildString {
+                        append("> ").append(p.excerpt.take(400))
+                        val src = p.source?.takeIf { it.isNotBlank() }
+                        val url = p.url?.takeIf { it.isNotBlank() }
+                        if (url != null) append("\n\n↩ from [").append(src ?: "source").append("](").append(url).append(")")
+                        else if (src != null) append("\n\n↩ from ").append(src)
+                    }
+                    onPicked("Log · ${p.title.take(30)}", cap)
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
+    /** Pick a Pickings page → rendered to an image, attached with its provenance. (Next pass.) */
+    private fun pickPickingForReply(onPicked: (String, Bitmap?, String) -> Unit) {
+        android.widget.Toast.makeText(requireContext(), "Reply with Picking — coming next", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    /** Pick an existing Gram → attached with its provenance. (Next pass.) */
+    private fun pickGramForReply(onPicked: (String, Bitmap?, String) -> Unit) {
+        android.widget.Toast.makeText(requireContext(), "Reply with Gram — coming next", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     override fun showLoading() {}

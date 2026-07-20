@@ -576,13 +576,15 @@ object LedgerCorrespondence {
     }
 
     /** Post handwriting as your comment on a community thread. Call from Dispatchers.IO. */
-    fun postInkReply(context: Context, feedId: Long, png: ByteArray, parentId: Long = 0): String {
+    fun postInkReply(context: Context, feedId: Long, png: ByteArray, parentId: Long = 0, caption: String = ""): String {
         val c = LedgerCommunityBridge.config(context)
         if (!c.ready) return "Community bridge not configured"
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("feed_id", feedId.toString())
             .addFormDataPart("note_uuid", "inkreply-" + java.util.UUID.randomUUID().toString().lowercase())
             .apply { if (parentId > 0) addFormDataPart("parent_id", parentId.toString()) }
+            // A provenance caption (markdown) rides alongside the image — "Reply with Log/Picking/Gram".
+            .apply { if (caption.isNotBlank()) { addFormDataPart("text", caption); addFormDataPart("format", "markdown") } }
             .addFormDataPart("png", "reply.png", png.toRequestBody("image/png".toMediaType()))
             .build()
         return try {
