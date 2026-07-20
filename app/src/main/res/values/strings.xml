@@ -1,7 +1,7 @@
 <resources>
     <string name="drawer_title">%1$s &#8211; %2$s</string>
     <string name="fab_add_item">Add item</string>
-    <string name="something_happened_error">Something happened&#8230; please check your network status. :(</string>
+    <string name="something_happened_error">Something happened&#8230; couldn\'t load or save just now. It\'ll retry.</string>
     <string name="something_happened_action">Okay</string>
 
     <string name="widget_description">Today\'s full planner page with strokes and events</string>

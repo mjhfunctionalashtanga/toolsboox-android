@@ -144,6 +144,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private var intakeTapDownY: Float = 0f
     private var intakeTapDownAt: Long = 0L
 
+    // Stars dialog guard: block stacking + ghost-tap reopen (see onCanvasSingleTap).
+    private var starsDialogShowing = false
+    private var starsDialogDismissedAt = 0L
+
     // Finger long-press tracking ("pen writes, finger manages" element menu).
     private val longPressHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var longPressDownX: Float = 0f
@@ -536,6 +540,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         if (cx < 670f || cx > 1270f || cy < to + 21 * ceh || cy > to + 35 * ceh) return false
         val stars = calendarDay.readingEvents.filter { !it.url.isNullOrBlank() }
         if (stars.isEmpty()) return false
+        // One at a time, with a beat after dismissal — e-ink ghost taps were re-opening
+        // this dialog over and over ("star menu continues to pop up").
+        if (starsDialogShowing || System.currentTimeMillis() - starsDialogDismissedAt < 800L) return true
         // Compact custom list (tight rows) — the stock dialog rows sprawl once there are many stars.
         val ctx = requireContext()
         val dp = resources.displayMetrics.density
@@ -547,6 +554,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val scroll = android.widget.ScrollView(ctx).apply { addView(list) }
         val dialog = AlertDialog.Builder(ctx).setTitle("Stars · open").setView(scroll)
             .setNegativeButton("Close", null).create()
+        starsDialogShowing = true
+        dialog.setOnDismissListener {
+            starsDialogShowing = false
+            starsDialogDismissedAt = System.currentTimeMillis()
+        }
         for (ev in stars) {
             val row = android.widget.LinearLayout(ctx).apply {
                 orientation = android.widget.LinearLayout.VERTICAL
@@ -1015,7 +1027,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 add(GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "pickings") })
                 add(GoItem("🙏", "Gratitude") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "gratitude") })
                 add(GoItem("🔬", "Synthesize") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "synthesize") })
-                add(GoItem("✍️", "Write") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "write") })
+                add(GoItem("✍", "Write") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "write") })
                 // Notes lives on the floating pen button (tap = last location, hold = Text
                 // Notes) — off this modal per the field notes, one entry point not two.
                 add(GoItem("📰", "Feed") { findNavController().navigate(R.id.action_to_feeds) })
@@ -1035,7 +1047,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         "intake" -> Triple("pickings", "❝", "Pickings")
         "pickings" -> Triple("gratitude", "🙏", "Gratitude")
         "gratitude" -> Triple("synthesize", "🔬", "Synthesize")
-        "synthesize" -> Triple("write", "✍️", "Write")
+        "synthesize" -> Triple("write", "✍", "Write")
         else -> null
     }
 
@@ -1123,7 +1135,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             add(GoItem("📄", "Whole page → text") { wholePageToText() })
             add(GoItem("🗂", "Capture sections") { captureSections() })   // auto-capture toggle now lives in Settings
             if (onSynth) add(GoItem("🔬", "Synthesize · 3 questions") { synthesizeQuestions() })
-            if (onSynth || onWrite) add(GoItem("✍️", "Writing prompt → Write") { writingPrompts() })
+            if (onSynth || onWrite) add(GoItem("✍", "Writing prompt → Write") { writingPrompts() })
             if (onSynth) add(GoItem("🗒", "Essay outline → Write") { essayOutline() })
             if (onSynth) add(GoItem("🃏", "Ideas → grid") { showSynthesisIdeas() })
             add(GoItem("👆", "Finger / hand") { binding.toolbarDrawing.toolbarHandTouch.performClick() })
@@ -2309,17 +2321,22 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         "pickings" -> R.drawable.ic_quote
         "gratitude" -> R.drawable.ic_heart
         "intake" -> R.drawable.ic_bookmark
+        "write" -> R.drawable.ic_edit
+        "synthesize" -> R.drawable.ic_swap
         else -> R.drawable.ic_pencil
     }
 
     private fun sectionEmoji(): String = when (currentNotePage()) {
         // Text-presentation sun (VS15) renders as a solid black glyph — high contrast on e-ink,
-        // unlike the washed-out yellow colour emoji.
+        // unlike the washed-out yellow colour emoji. Base glyphs (no VS16) throughout, so the
+        // pill's glyph matches the monochrome icons the modals render for the same sections.
         null, "default", CalendarDay.DEFAULT_STYLE -> "☀︎"
         "pickings" -> "❝"
         "gratitude" -> "🙏"
         "intake" -> "🔖"
-        else -> "✒️"
+        "write" -> "✍"
+        "synthesize" -> "🔬"
+        else -> "✒"
     }
 
     /**

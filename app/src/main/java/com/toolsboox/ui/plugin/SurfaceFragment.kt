@@ -272,8 +272,9 @@ abstract class SurfaceFragment : ScreenFragment() {
     private var textBoxResize = false
     private var textBoxOrigX = 0f
     private var textBoxOrigY = 0f
-    private var textBoxOrigW = 0f
+    private var textBoxOrigH = 0f
     private var textBoxOrigFont = 0f
+    private var textBoxFontResize = false
     private var imageOrigRect = RectF()
     private var cropMode = false
     private var cropDragging = false
@@ -2261,6 +2262,12 @@ abstract class SurfaceFragment : ScreenFragment() {
         return RectF(box.right - h / 2f, box.bottom - h / 2f, box.right + h / 2f, box.bottom + h / 2f)
     }
 
+    /** Bottom-left "A" handle: drag to scale the FONT (the right handle stays spatial). */
+    private fun fontResizeHandle(box: RectF): RectF {
+        val h = IMAGE_HANDLE_SIZE
+        return RectF(box.left - h / 2f, box.bottom - h / 2f, box.left + h / 2f, box.bottom + h / 2f)
+    }
+
     /** Topmost text box under a canvas point, or null. */
     private fun textElementAt(cx: Float, cy: Float): TextElement? =
         textElements.lastOrNull { textElementBounds(it).contains(cx, cy) }
@@ -3178,9 +3185,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                 lockCanvas.drawRect(cr, cropPaint)
             }
         }
-        // Selected text box: dashed outline + a bottom-right resize handle. Dragging the
-        // body moves it; dragging the handle reflows the words to a new width. Edit /
-        // duplicate / delete stay on the long-press menu.
+        // Selected text box: dashed outline + two handles. Bottom-right reflows the words
+        // to a new width (spatial); bottom-left ("A") scales the font. Dragging the body
+        // moves it; edit / duplicate / delete stay on the long-press menu.
         selectedTextBox?.let {
             val box = textElementBounds(it)
             lockCanvas.drawRect(box, lassoPaint)
@@ -3189,6 +3196,16 @@ abstract class SurfaceFragment : ScreenFragment() {
             val rh = textResizeHandle(box)
             lockCanvas.drawRect(rh, fill)
             lockCanvas.drawRect(rh, border)
+            val fh = fontResizeHandle(box)
+            lockCanvas.drawRect(fh, fill)
+            lockCanvas.drawRect(fh, border)
+            val aPaint = Paint().apply {
+                color = Color.BLACK; isAntiAlias = true
+                textSize = fh.height() * 0.7f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                textAlign = Paint.Align.CENTER
+            }
+            lockCanvas.drawText("A", fh.centerX(), fh.bottom - fh.height() * 0.24f, aPaint)
         }
         lockCanvas.restore()
 
@@ -3780,7 +3797,7 @@ abstract class SurfaceFragment : ScreenFragment() {
      * Force a full-screen (GC) EPD refresh. Onyx-only: wipes the hardware raw-drawing overlay so a
      * just-finished stroke can't linger on the panel across a page turn. No-op / guarded elsewhere.
      */
-    protected fun forceFullEpdRefresh() {
+    fun forceFullEpdRefresh() {
         if (viwoodsInk != null) return
         try {
             EpdController.repaintEveryThing(com.onyx.android.sdk.api.device.epd.UpdateMode.GC)
@@ -4090,13 +4107,18 @@ abstract class SurfaceFragment : ScreenFragment() {
                 val selT = selectedTextBox
                 if (selT != null) {
                     if (actionDown) {
-                        // Resize handle (bottom-right) → drag scales the whole box like an
-                        // image: the FONT grows/shrinks with it (the field-notes ask), and
-                        // the words reflow to the new width.
+                        // Bottom-left "A" handle → drag down/up scales the FONT; bottom-right
+                        // handle → spatial: reflow the words to a new width, font untouched.
+                        // (Field notes: both adjustments, independently, by handle choice.)
+                        if (fontResizeHandle(textElementBounds(selT)).contains(x, y)) {
+                            textBoxFontResize = true
+                            textBoxOrigFont = selT.fontSize
+                            textBoxOrigY = selT.y
+                            textBoxOrigH = textElementBounds(selT).height().coerceAtLeast(1f)
+                            return true
+                        }
                         if (textResizeHandle(textElementBounds(selT)).contains(x, y)) {
                             textBoxResize = true
-                            textBoxOrigW = selT.width.coerceAtLeast(MIN_TEXTBOX_WIDTH)
-                            textBoxOrigFont = selT.fontSize
                             return true
                         }
                         if (textElementBounds(selT).contains(x, y)) {
@@ -4126,13 +4148,17 @@ abstract class SurfaceFragment : ScreenFragment() {
                         applyStrokes(strokes, true)
                         return true
                     }
+                    if (actionMove && textBoxFontResize) {
+                        // Drag below the box bottom → grow the type; above → shrink. Scale is
+                        // the drag's height over the box's original height, so it tracks 1:1.
+                        val scale = ((y - textBoxOrigY) / textBoxOrigH).coerceIn(0.3f, 5f)
+                        selT.fontSize = (textBoxOrigFont * scale).coerceIn(10f, 120f)
+                        drawImageSelection()
+                        return true
+                    }
                     if (actionMove && textBoxResize) {
-                        // Width follows the drag; the font scales with it (drag out = bigger
-                        // type, drag in = smaller). Height is recomputed from the wrap on render.
+                        // Only the width changes; height is recomputed from the wrap on render.
                         selT.width = (x - selT.x).coerceAtLeast(MIN_TEXTBOX_WIDTH)
-                        if (textBoxOrigW > 0f) {
-                            selT.fontSize = (textBoxOrigFont * (selT.width / textBoxOrigW)).coerceIn(10f, 120f)
-                        }
                         drawImageSelection()
                         return true
                     }
@@ -4142,9 +4168,10 @@ abstract class SurfaceFragment : ScreenFragment() {
                         drawImageSelection()
                         return true
                     }
-                    if (actionUp && (textBoxDrag || textBoxResize)) {
+                    if (actionUp && (textBoxDrag || textBoxResize || textBoxFontResize)) {
                         textBoxDrag = false
                         textBoxResize = false
+                        textBoxFontResize = false
                         onTextElementsChanged(textElements)
                         onTextBoxDropped(selT)
                         applyStrokes(strokes, true)

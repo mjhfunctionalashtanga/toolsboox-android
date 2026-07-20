@@ -27,8 +27,8 @@ class FeedEntryAdapter(
     private val onStar: (FeedEntry) -> Unit
 ) : RecyclerView.Adapter<FeedEntryAdapter.Holder>() {
 
-    /** Accessibility: scale up row text + the featured thumbnail (drawer SHOW toggle). */
-    var largeRows: Boolean = false
+    /** Accessibility: row text + thumbnail size tier — "small" | "medium" | "large" (wrench). */
+    var textTier: String = "medium"
         set(value) {
             if (field != value) { field = value; notifyDataSetChanged() }
         }
@@ -60,13 +60,14 @@ class FeedEntryAdapter(
         val e = items[position]
         val isRead = e.read || FeedReadState.isRead(e.id)
 
-        // Row scale: 1.3× text and a half-again thumbnail when Larger text is on.
-        val scale = if (largeRows) 1.3f else 1f
+        // Row tier: Small / Medium / Large scales the text and the featured thumbnail together.
+        val scale = when (textTier) { "small" -> 0.85f; "large" -> 1.3f; else -> 1f }
         holder.title.textSize = 16f * scale
         holder.meta.textSize = 12f * scale
         holder.blurb.textSize = 14f * scale
-        holder.blurb.maxLines = if (largeRows) 3 else 2
-        val side = ((if (largeRows) 116 else 76) * holder.image.resources.displayMetrics.density).toInt()
+        holder.blurb.maxLines = if (textTier == "large") 3 else 2
+        val side = ((when (textTier) { "small" -> 60; "large" -> 116; else -> 76 }) *
+            holder.image.resources.displayMetrics.density).toInt()
         if (holder.image.layoutParams.width != side) {
             holder.image.layoutParams = holder.image.layoutParams.apply { width = side; height = side }
         }

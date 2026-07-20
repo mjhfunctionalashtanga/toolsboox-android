@@ -126,6 +126,12 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                 android.view.MotionEvent.ACTION_UP -> {
                     if (dragging) {
                         prefs.edit().putFloat("floatNoteTx", v.translationX).putFloat("floatNoteTy", v.translationY).apply()
+                        // Clean the drag's ghost trail off the e-ink panel.
+                        try {
+                            com.onyx.android.sdk.api.device.epd.EpdController.repaintEveryThing(
+                                com.onyx.android.sdk.api.device.epd.UpdateMode.GC
+                            )
+                        } catch (t: Throwable) { /* non-Onyx device — no panel to clean */ }
                     } else if (e.eventTime - e.downTime >= 550L) {
                         v.performLongClick()   // hold-in-place → the alternate surface (Text Notes)
                     } else {

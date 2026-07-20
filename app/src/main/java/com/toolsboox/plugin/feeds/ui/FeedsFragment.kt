@@ -86,7 +86,13 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         binding = FragmentFeedsBinding.bind(view)
 
         adapter = FeedEntryAdapter(emptyList(), onOpen = ::openEntry, onStar = ::toggleStar)
-        adapter.largeRows = prefs().getBoolean("feeds_large_rows", false)
+        // Text-size tier lives in the shared a11y prefs (set from the wrench). Migrate the
+        // short-lived boolean toggle if it was flipped on.
+        val a11y = requireContext().getSharedPreferences("ledger_a11y", 0)
+        if (prefs().getBoolean("feeds_large_rows", false) && a11y.getString("feed_text_size", null) == null) {
+            a11y.edit().putString("feed_text_size", "large").apply()
+        }
+        adapter.textTier = a11y.getString("feed_text_size", "medium") ?: "medium"
         binding.feedsRecycler.layoutManager = LinearLayoutManager(requireContext())
         binding.feedsRecycler.adapter = adapter
         binding.feedsRecycler.addItemDecoration(
@@ -436,7 +442,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             val local = withContext(Dispatchers.IO) { gatherLaterList() }
             binding.progress.visibility = View.INVISIBLE
             allEntries = local
-            val shown = applyKind(local)
+            val shown = filterByNavDay(applyKind(local))
             adapter.submit(shown)
             if (shown.isEmpty()) showEmpty(getString(R.string.feeds_later_empty))
             else binding.emptyText.visibility = View.GONE
@@ -450,9 +456,13 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             }
             if (mode == "later" && isAdded) {
                 val merged = withContext(Dispatchers.IO) { gatherLaterList() }
-                if (merged.size != local.size) {
+                // Content comparison, not a size check — a same-count swap (one added, one
+                // deduped) used to leave today's additions invisible until re-entry.
+                val changed = merged.map { it.url + "·" + it.title }.toSet() !=
+                    local.map { it.url + "·" + it.title }.toSet()
+                if (changed) {
                     allEntries = merged
-                    val m = applyKind(merged)
+                    val m = filterByNavDay(applyKind(merged))
                     adapter.submit(m)
                     if (m.isEmpty()) showEmpty(getString(R.string.feeds_later_empty))
                     else binding.emptyText.visibility = View.GONE
@@ -906,6 +916,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     private fun publishedDate(e: FeedEntry): java.time.LocalDate? = runCatching {
         java.time.OffsetDateTime.parse(e.publishedAt)
             .atZoneSameInstant(java.time.ZoneId.systemDefault()).toLocalDate()
+    }.getOrNull() ?: runCatching {
+        // Later-list rows carry a bare date — the day the link was ADDED (that's the day
+        // they should file under in the timeline, not their publication date).
+        java.time.LocalDate.parse(e.publishedAt)
     }.getOrNull()
 
     /** Redraw the Almanac navigator strip for the current anchor date. */
@@ -1042,6 +1056,17 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val vertical = prefs().getBoolean("feeds_pill_vertical", false)
         val mode = markReadMode()
         fun tick(m: String) = if (mode == m) "◉" else "○"
+        // Accessibility: Small / Medium / Large for the feed rows and for every modal.
+        val a11y = requireContext().getSharedPreferences("ledger_a11y", 0)
+        val feedTier = a11y.getString("feed_text_size", "medium")
+        val modalTier = a11y.getString("modal_text_size", "medium")
+        fun ft(m: String) = if (feedTier == m) "◉" else "○"
+        fun mt(m: String) = if (modalTier == m) "◉" else "○"
+        fun setFeedTier(m: String) {
+            a11y.edit().putString("feed_text_size", m).apply()
+            adapter.textTier = m
+        }
+        fun setModalTier(m: String) = a11y.edit().putString("modal_text_size", m).apply()
         showDirectory(listOf(
             "Feed" to listOf(
                 "✓  Mark all read" to { markAllRead() },
@@ -1058,6 +1083,16 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     prefs().edit().putBoolean("feeds_tap_zones", !on).apply()
                     binding.articleTapZones.visibility = if (!on) View.VISIBLE else View.GONE
                 }
+            ),
+            "Feed text size" to listOf(
+                "${ft("small")}  Small" to { setFeedTier("small") },
+                "${ft("medium")}  Medium" to { setFeedTier("medium") },
+                "${ft("large")}  Large" to { setFeedTier("large") }
+            ),
+            "Modal text size" to listOf(
+                "${mt("small")}  Small" to { setModalTier("small") },
+                "${mt("medium")}  Medium" to { setModalTier("medium") },
+                "${mt("large")}  Large" to { setModalTier("large") }
             ),
             "Screen" to listOf(
                 "🔄  Rotate screen" to { cycleScreenOrientation() }
@@ -1275,12 +1310,6 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         row((if (mode == "feed") "◉" else "○") + "  Unread", false, mode == "feed") { mode = "feed"; slimFeedFilter = null; refresh() }
         row((if (mode == "read") "◉" else "○") + "  Read", false, mode == "read") { mode = "read"; slimFeedFilter = null; refresh() }
         row((if (mode == "both") "◉" else "○") + "  All", false, mode == "both") { mode = "both"; slimFeedFilter = null; refresh() }
-        val largeRows = prefs().getBoolean("feeds_large_rows", false)
-        row((if (largeRows) "☑" else "☐") + "  Larger text & images", false, false) {
-            prefs().edit().putBoolean("feeds_large_rows", !largeRows).apply()
-            adapter.largeRows = !largeRows
-            renderDirectory()
-        }
 
         // ── SOURCES ── the individual feeds of the current view, with unread counts.
         section("SOURCES")

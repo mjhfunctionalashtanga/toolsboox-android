@@ -79,11 +79,13 @@ object LedgerContextMenu {
             }
         }
 
+        val textScale = com.toolsboox.ui.plugin.ScreenFragment.modalTextScale(ctx)
+
         // Header: mono caps over a solid rule, echoing the page panel titles.
         card.addView(TextView(ctx).apply {
             text = title
             typeface = monoBold
-            textSize = 13f
+            textSize = 13f * textScale
             letterSpacing = 0.18f
             setTextColor(Color.BLACK)
             setPadding(dp(18f), dp(13f), dp(18f), dp(9f))
@@ -117,7 +119,7 @@ object LedgerContextMenu {
                 card.addView(TextView(ctx).apply {
                     text = item.label
                     typeface = hyperlegible
-                    textSize = 17f
+                    textSize = 17f * textScale
                     gravity = Gravity.CENTER_VERTICAL
                     minHeight = dp(54f)
                     setPadding(dp(18f), dp(8f), dp(18f), dp(8f))

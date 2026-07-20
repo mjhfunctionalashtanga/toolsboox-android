@@ -51,6 +51,21 @@ abstract class ScreenFragment : Fragment() {
     companion object {
 
         /**
+         * Accessibility: the modal text scale (Small / Medium / Large, set from the feed
+         * wrench, applied to every Go modal / directory / accordion / context menu).
+         */
+        fun modalTextScale(context: android.content.Context): Float =
+            when (context.getSharedPreferences("ledger_a11y", 0).getString("modal_text_size", "medium")) {
+                "small" -> 0.85f
+                "large" -> 1.25f
+                else -> 1f
+            }
+
+        // Error-bar debounce (see showError): same message within 30s stays quiet.
+        private var lastErrorResId = 0
+        private var lastErrorShownAt = 0L
+
+        /**
          * Result code of ask permissions.
          */
         const val REQUEST_PERMISSIONS = 12345
@@ -117,8 +132,15 @@ abstract class ScreenFragment : Fragment() {
         t?.let { Timber.e(it, getString(errorResId)) }
         if (silent) return
 
+        // Auto-dismiss + debounce: the old LENGTH_INDEFINITE bar re-appeared on every retry of
+        // a periodic load ("recurring network status menu") and had to be Okay'd each time.
+        val now = System.currentTimeMillis()
+        if (errorResId == lastErrorResId && now - lastErrorShownAt < 30_000L) return
+        lastErrorResId = errorResId
+        lastErrorShownAt = now
+
         val snackbar = Snackbar.make(
-            parentView?.let { parentView } ?: toolbar.root, errorResId, Snackbar.LENGTH_INDEFINITE
+            parentView?.let { parentView } ?: toolbar.root, errorResId, Snackbar.LENGTH_LONG
         )
         snackbar.setAction(R.string.something_happened_action) {}
         snackbar.show()
@@ -210,6 +232,8 @@ abstract class ScreenFragment : Fragment() {
                     }
                     // The pill moved/collapsed → re-feed its bounds as a stylus exclude rect.
                     pill.post { (this@ScreenFragment as? SurfaceFragment)?.refreshRawExcludeRects() }
+                    // A drag smears ghost trails across e-ink — clean the panel once it lands.
+                    if (moved) pill.post { (this@ScreenFragment as? SurfaceFragment)?.forceFullEpdRefresh() }
                     true
                 }
                 else -> false
@@ -597,6 +621,13 @@ abstract class ScreenFragment : Fragment() {
     data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
 
     /**
+     * Accessibility: the modal text scale (Small / Medium / Large, set from the feed wrench,
+     * applied to every Go modal / directory / accordion / context menu app-wide).
+     */
+    protected fun modalTextScale(): Float =
+        modalTextScale(requireContext())
+
+    /**
      * The compact "Go to…" modal (grouped rows), anchored top-left (directories) or up from the
      * bottom pill (sections). Lifted from the day page so the almanac pages use the SAME modal
      * instead of the old accordion drawer.
@@ -609,15 +640,19 @@ abstract class ScreenFragment : Fragment() {
         dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
 
         fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+        val textScale = modalTextScale()
         for ((header, items) in groups) {
             val tv = TextView(requireContext())
             tv.text = header.uppercase()
-            tv.setTextColor(0xFF8A8A8A.toInt()); tv.textSize = 11f; tv.letterSpacing = 0.08f
+            tv.setTextColor(0xFF8A8A8A.toInt()); tv.textSize = 11f * textScale; tv.letterSpacing = 0.08f
             tv.setPadding(dp(14), dp(10), dp(14), dp(2))
             list.addView(tv)
             for (item in items) {
                 val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
-                r.findViewById<TextView>(R.id.go_label).text = applyRowIcon(r, "${item.emoji}  ${item.label}")
+                r.findViewById<TextView>(R.id.go_label).apply {
+                    text = applyRowIcon(r, "${item.emoji}  ${item.label}")
+                    textSize = 18f * textScale
+                }
                 r.setOnClickListener { dialog.dismiss(); item.action() }
                 list.addView(r)
             }
@@ -792,11 +827,13 @@ abstract class ScreenFragment : Fragment() {
             return s
         }
 
+        val textScale = modalTextScale()
         for (folder in folders) {
             val header = layoutInflater.inflate(R.layout.item_go_to, list, false)
             val hasIcon = setRowEmojiIcon(header, folder.emoji)
             val glyph = if (!hasIcon && folder.emoji.isNotBlank()) folder.emoji else ""
             val headerLabel = header.findViewById<TextView>(R.id.go_label)
+            headerLabel.textSize = 18f * textScale
 
             // A leaf entry (has [action]) is a plain tappable row — no caret, no children.
             if (folder.action != null) {
@@ -833,7 +870,10 @@ abstract class ScreenFragment : Fragment() {
             for ((label, action) in folder.items) {
                 val r = layoutInflater.inflate(R.layout.item_go_to, children, false)
                 val text = applyRowIcon(r, label)
-                r.findViewById<TextView>(R.id.go_label).apply { this.text = text; setPadding(dp(24), paddingTop, paddingRight, paddingBottom) }
+                r.findViewById<TextView>(R.id.go_label).apply {
+                    this.text = text; textSize = 18f * textScale
+                    setPadding(dp(24), paddingTop, paddingRight, paddingBottom)
+                }
                 r.setOnClickListener { dialog.dismiss(); action() }
                 children.addView(r)
             }
@@ -871,12 +911,15 @@ abstract class ScreenFragment : Fragment() {
         fun go(action: Int) = androidx.navigation.Navigation.findNavController(requireView()).navigate(action)
         showGoModal(
             listOf(
+                // Same set, same ritual order as the day page's switcher (Intake → Pickings →
+                // Gratitude → Synthesize → Write); Notes lives on the floating pen button.
                 "" to listOf(
                     GoItem("☀︎", "Day") { nav.toDayPage(this, today, com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE) },
                     GoItem("🔖", "Intake") { nav.toDayNote(this, today, "intake") },
-                    GoItem("🙏", "Gratitude") { nav.toDayNote(this, today, "gratitude") },
                     GoItem("❝", "Pickings") { nav.toDayNote(this, today, "pickings") },
-                    GoItem("✒️", "Notes") { nav.toDayNote(this, today, "0") },
+                    GoItem("🙏", "Gratitude") { nav.toDayNote(this, today, "gratitude") },
+                    GoItem("🔬", "Synthesize") { nav.toDayNote(this, today, "synthesize") },
+                    GoItem("✍", "Write") { nav.toDayNote(this, today, "write") },
                     GoItem("📰", "Feed") { go(com.toolsboox.R.id.action_to_feeds) },
                     GoItem("🎬", "AV") { go(com.toolsboox.R.id.action_to_reading_log) },
                     GoItem("📆", "Almanac") { nav.toWeekPage(this, today, locale) }
