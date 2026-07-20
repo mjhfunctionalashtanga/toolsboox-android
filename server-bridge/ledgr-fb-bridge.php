@@ -1431,6 +1431,15 @@ class Ledgr_FB_Bridge
         }
     }
 
+    /** First <img> src in a body of HTML, or null — the message's featured image. */
+    private function firstImageUrl($html)
+    {
+        if (preg_match('/<img[^>]+src=["\']([^"\']+)["\']/i', (string) $html, $m)) {
+            return $m[1];
+        }
+        return null;
+    }
+
     /**
      * Minimal, safe Markdown → HTML for text-note replies. Deliberately a SUBSET
      * (headings, bold, italic, inline code, links, bullet/numbered lists, blockquote,
@@ -1670,6 +1679,7 @@ class Ledgr_FB_Bridge
                             'author'     => $author ? $author->display_name : ('User ' . $c->user_id),
                             'excerpt'    => wp_trim_words(wp_strip_all_tags($c->message_rendered ?: $c->message), 40),
                             'content'    => mb_substr(wp_strip_all_tags($c->message_rendered ?: $c->message), 0, 20000),
+                            'image_url'  => $this->firstImageUrl($c->message_rendered ?: $c->message),
                             'created_at' => (string) $c->created_at,
                         ];
                     }
@@ -1705,6 +1715,7 @@ class Ledgr_FB_Bridge
                         'author'     => $c->author_name ?: (($u = get_user_by('id', $c->created_by)) ? $u->display_name : 'Unknown'),
                         'excerpt'    => wp_trim_words(wp_strip_all_tags($c->description), 40),
                         'content'    => mb_substr(wp_strip_all_tags((string) $c->description), 0, 20000),
+                        'image_url'  => $this->firstImageUrl($c->description),
                         'created_at' => (string) $c->created_at,
                     ];
                 }
@@ -2386,6 +2397,7 @@ class Ledgr_FB_Bridge
                     'title'           => $f->title ?: null,
                     'excerpt'         => wp_trim_words(wp_strip_all_tags($body), 60),
                     'html'            => $body,
+                    'image_url'       => $this->firstImageUrl($body),
                     'author'          => $author ? $author->display_name : ('User ' . $f->user_id),
                     'created_at'      => (string) $f->created_at,
                     'comments_count'  => (int) ($f->comments_count ?? 0),

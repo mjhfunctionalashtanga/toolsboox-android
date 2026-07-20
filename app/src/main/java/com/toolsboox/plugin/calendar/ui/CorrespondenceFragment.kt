@@ -56,6 +56,30 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     private fun deHtml(s: String): String =
         android.text.Html.fromHtml(s, android.text.Html.FROM_HTML_MODE_COMPACT).toString().trim()
 
+    /** Rendered HTML with formatting KEPT (bold/italic/links/paragraphs) — for post bodies.
+     *  (img tags render as nothing here; the featured image is shown separately.) */
+    private fun richHtml(s: String): CharSequence =
+        android.text.Html.fromHtml(s, android.text.Html.FROM_HTML_MODE_COMPACT).trim()
+
+    /** Add an inline image view to [container] and load [url] into it off-thread. */
+    private fun addImage(container: LinearLayout, url: String, heightDp: Int = 160) {
+        val ctx = container.context
+        val dp = resources.displayMetrics.density
+        val img = android.widget.ImageView(ctx).apply {
+            adjustViewBounds = true; setBackgroundColor(0xFFFFFFFF.toInt())
+            scaleType = android.widget.ImageView.ScaleType.FIT_START
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = (6 * dp).toInt(); bottomMargin = (4 * dp).toInt() }
+            maxHeight = (heightDp * dp).toInt()
+        }
+        container.addView(img)
+        lifecycleScope.launch {
+            val bmp = withContext(Dispatchers.IO) { LedgerCorrespondence.loadImage(ctx, url) }
+            if (bmp != null && isAdded) img.setImageBitmap(bmp)
+        }
+    }
+
     /** Locally-tracked "you replied to this thread" set — a ✓ marker without a server round-trip. */
     private fun markReplied(source: String, id: Long) {
         val set = prefs().getStringSet("repliedThreads", emptySet())!!.toMutableSet()
@@ -179,9 +203,14 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 text = deHtml(post.title); textSize = 15f; setTextColor(0xFF000000.toInt())
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
             })
+            // Body with formatting kept (falls back to the plain excerpt).
             card.addView(TextView(ctx).apply {
-                text = deHtml(post.excerpt); textSize = 14f; setTextColor(0xFF000000.toInt())
+                text = if (post.html.isNotBlank()) richHtml(post.html) else deHtml(post.excerpt)
+                textSize = 14f; setTextColor(0xFF000000.toInt())
+                movementMethod = android.text.method.LinkMovementMethod.getInstance()
             })
+            // The message's featured / embedded image.
+            post.imageUrl?.let { addImage(card, it, heightDp = 200) }
             // Horizontal-scrollable so the extra reply actions never push buttons off-screen.
             val actions = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
             val actionsScroll = android.widget.HorizontalScrollView(ctx).apply {
@@ -294,6 +323,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     // The whole message, not the trimmed excerpt — reading it here is the point.
                     text = deHtml(r.content.ifBlank { r.excerpt }); textSize = 14f; setTextColor(0xFF000000.toInt())
                 })
+                r.imageUrl?.let { addImage(card, it, heightDp = 180) }
                 container.addView(card)
             }
             container.addView(TextView(ctx).apply {

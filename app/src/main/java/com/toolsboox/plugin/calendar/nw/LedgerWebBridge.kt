@@ -319,6 +319,7 @@ data class LedgerReply(
     val threadUrl: String = "",
     val public: Boolean = true,
     val content: String = "",   // full message text (bridge ≥ this pass); excerpt fallback
+    val imageUrl: String? = null,   // featured/embedded image in the reply
 )
 
 /** One post ("cute card") in a community space — repliable in the Correspondence view. */
@@ -333,6 +334,8 @@ data class LedgerPost(
     val reactionsCount: Int = 0,
     val liked: Boolean = false,
     val public: Boolean = true,
+    val html: String = "",          // the post's rendered HTML (formatting)
+    val imageUrl: String? = null,   // featured/embedded image
 )
 
 /** One comment in a thread — for reading the whole exchange in-app. */
@@ -394,7 +397,8 @@ object LedgerCorrespondence {
                         it.optString("thread", ""), it.optLong("thread_id", 0),
                         it.optString("author", "?"), excerpt, it.optString("created_at", ""),
                         it.optString("thread_url", ""), it.optBoolean("public", true),
-                        it.optString("content", "")
+                        it.optString("content", ""),
+                        it.optString("image_url", "").takeIf { s -> s.isNotBlank() && s != "null" }
                     )
                 }
             }
@@ -428,6 +432,8 @@ object LedgerCorrespondence {
                         it.optInt("reactions_count", 0),
                         it.optBoolean("liked", false),
                         it.optBoolean("public", true),
+                        it.optString("html", ""),
+                        it.optString("image_url", "").takeIf { s -> s.isNotBlank() && s != "null" },
                     )
                 }
             }
