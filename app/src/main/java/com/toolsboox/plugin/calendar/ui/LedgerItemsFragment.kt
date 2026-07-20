@@ -32,6 +32,9 @@ import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 
+/** Marks a synthetic row as a site booking (the rest of the id is the booking id). */
+private const val BOOKING_PREFIX = "booking-"
+
 /**
  * Tasks & Events — the structured items extracted from a day's handwriting, listed per day.
  * Each row shows text or ink per the item's own toggle; tasks check off, events show their time.
@@ -255,11 +258,19 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 items, strokes, ::persist, ::onEnterSelection, ::updateSelectionBar, ::assign,
                 { id -> contactsById[id] },
                 onReadOnlyTap = { item ->
-                    val bid = item.board.toIntOrNull() ?: 0
-                    findNavController().navigate(
-                        R.id.action_to_site_boards,
-                        if (bid > 0) androidx.core.os.bundleOf("site_board_id" to bid) else null
-                    )
+                    // Two kinds of read-only row land here now: a Site card (deep-link to its
+                    // board) and a booking (open the sheet). Same rail, different destination.
+                    val bookingId = item.id.removePrefix(BOOKING_PREFIX).toLongOrNull()
+                        ?.takeIf { item.id.startsWith(BOOKING_PREFIX) }
+                    if (bookingId != null) {
+                        BookingSheet.open(this@LedgerItemsFragment, bookingId)
+                    } else {
+                        val bid = item.board.toIntOrNull() ?: 0
+                        findNavController().navigate(
+                            R.id.action_to_site_boards,
+                            if (bid > 0) androidx.core.os.bundleOf("site_board_id" to bid) else null
+                        )
+                    }
                 }
             )
             binding.itemsRecycler.adapter = adapter
@@ -269,24 +280,45 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    /** Fold DUE-DATED Site cards whose due date lands in the viewed period into the list, read-only
-     *  (same opt-in as the kanban: pref ledger_kanban/include_site). Local shows first; this
-     *  streams in and fails silently when the bridge is off. */
+    /** Fold DUE-DATED Site cards AND site bookings whose date lands in the viewed period into the
+     *  list, read-only (same opt-in as the kanban: pref ledger_kanban/include_site). Local shows
+     *  first; these stream in and fail silently when the bridge is off.
+     *
+     *  Both are dated objects, so both become synthetic rows on the one rail — a card carries its
+     *  board for the deep-link, a booking carries [BOOKING_PREFIX] in its id for the sheet. Adding
+     *  a third origin later (a Google Calendar event, say) means another block here, not another
+     *  surface. */
     private fun mergeSiteDueCards(localItems: List<LedgerItem>) {
         val ctx = requireContext()
         if (!ctx.getSharedPreferences("ledger_kanban", android.content.Context.MODE_PRIVATE)
                 .getBoolean("include_site", false)) return
         val (start, end) = periodRange(navPeriod, anchor)
         lifecycleScope.launch {
+            val ready = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).ready
+            }
+            if (!ready) return@launch
+
             val cards = withContext(Dispatchers.IO) {
-                if (!com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).ready) emptyList()
-                else com.toolsboox.plugin.calendar.nw.LedgerBoards.dueCards(ctx)
+                com.toolsboox.plugin.calendar.nw.LedgerBoards.dueCards(ctx)
             }.filter { c ->
                 val d = c.dueAt?.take(10)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
                 d != null && !d.isBefore(start) && !d.isAfter(end)
             }
-            if (!isAdded || cards.isEmpty()) return@launch
-            val synthetic = cards.map { c ->
+
+            // The server windows by UTC, the timeline thinks in local days — so ask a day wide on
+            // either side and settle the boundary here. Without the slack, an early-morning or
+            // late-evening booking lands on the wrong day for anyone far enough from UTC.
+            val bookings = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.nw.LedgerBooking.bookings(
+                    ctx, from = start.minusDays(1).toString(), to = end.plusDays(1).toString()
+                )
+            }.mapNotNull { b -> bookingLocalTime(b.startTime)?.let { b to it } }
+                .filter { (_, at) -> !at.first.isBefore(start) && !at.first.isAfter(end) }
+
+            if (!isAdded || (cards.isEmpty() && bookings.isEmpty())) return@launch
+
+            val syntheticCards = cards.map { c ->
                 LedgerItem(
                     id = "sitecard-${c.id}", kind = LedgerItem.Kind.TASK,
                     text = "${c.title}   ·   ${c.board}" + (c.dueAt?.take(10)?.let { "   ·   📅 $it" } ?: ""),
@@ -294,10 +326,34 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                     board = c.boardId.toString()   // carried so the tap can deep-link to that board
                 )
             }
+
+            val syntheticBookings = bookings.map { (b, at) ->
+                LedgerItem(
+                    id = "$BOOKING_PREFIX${b.id}", kind = LedgerItem.Kind.EVENT,
+                    text = "${b.title}   ·   ${b.person}   ·   🕘 ${at.second}" +
+                        (if (b.status == "cancelled" || b.status == "rejected") "   ·   cancelled" else ""),
+                    date = java.util.Date(), stage = b.bucket, top = Float.MAX_VALUE,
+                    time = at.second
+                )
+            }
+
+            val synthetic = syntheticCards + syntheticBookings
             adapter.readOnlyIds = synthetic.map { it.id }.toSet()
             adapter.submit(localItems + synthetic)
             binding.emptyText.visibility = View.GONE
         }
+    }
+
+    /** UTC wire time → (local date, "HH:mm"). Null when the server sent nothing usable. */
+    private fun bookingLocalTime(utc: String?): Pair<LocalDate, String>? = utc?.let {
+        runCatching {
+            val local = java.time.LocalDateTime
+                .parse(it.trim(), java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                .atOffset(java.time.ZoneOffset.UTC)
+                .atZoneSameInstant(java.time.ZoneId.systemDefault())
+                .toLocalDateTime()
+            local.toLocalDate() to java.time.format.DateTimeFormatter.ofPattern("HH:mm").format(local)
+        }.getOrNull()
     }
 
     /** Inclusive day range for a filter period around [date]. */

@@ -1092,6 +1092,256 @@ object LedgerBoards {
     }
 }
 
+/**
+ * One booking from the site's calendar. Carries [bucket] for the same reason a [DueCard] does:
+ * the timeline draws dated objects by bucket and doesn't care where they came from.
+ * [startTime]/[endTime] are UTC 'yyyy-MM-dd HH:mm:ss', exactly as FluentBooking stores them.
+ */
+data class SiteBooking(
+    val id: Long,
+    val hash: String?,
+    val title: String,
+    val person: String,
+    val email: String?,
+    val eventId: Long,
+    val calendarId: Long,
+    val startTime: String?,
+    val endTime: String?,
+    val slotMinutes: Int,
+    val timeZone: String?,
+    val status: String,
+    val bucket: String,
+    val ongoing: String?,
+    /** False for group and round-robin bookings, whose seat/host bookkeeping the web flow owns.
+     *  On a studio calendar that's most of them — the sheet hides "Move…" rather than offering
+     *  a button that always fails. */
+    val canMove: Boolean,
+    val isLedgr: Boolean,
+)
+
+/** A line in a booking's trail — what has already happened to it. */
+data class BookingActivity(val title: String, val description: String, val createdAt: String)
+
+/** One answer from the booking form. */
+data class BookingField(val label: String, val value: String)
+
+/** The whole booking behind a timeline row — the deep-detail view. */
+data class SiteBookingDetail(
+    val booking: SiteBooking,
+    val phone: String?,
+    val message: String?,
+    val internalNote: String?,
+    val location: String?,
+    val statusLabel: String,
+    val guestCount: Int,
+    val cancelReason: String?,
+    val calendar: String,
+    val fields: List<BookingField>,
+    val activities: List<BookingActivity>,
+    val crmContactId: Int?,
+)
+
+/**
+ * The bookings client: reads the site's FluentBooking calendar through the ledgr-fb-bridge
+ * plugin and writes back the four things you'd do with a pen in hand — cancel, move, note,
+ * and look up an open time to move to. Authoring availability and event types stays on the web.
+ * Reuses [LedgerWebBridge]'s stored site/user/pass creds (the same "Community & Boards" settings).
+ * All calls run on Dispatchers.IO and swallow failures to an empty/null result, e-ink-quietly.
+ */
+object LedgerBooking {
+
+    private val client by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .build()
+    }
+
+    private fun auth(c: LedgerWebBridge.Config) = Credentials.basic(c.user, c.pass)
+
+    private fun JSONObject.nullableString(key: String): String? =
+        optString(key, "").takeIf { it.isNotBlank() && it != "null" }
+
+    private fun parseBooking(o: JSONObject) = SiteBooking(
+        o.optLong("id", 0),
+        o.nullableString("hash"),
+        o.optString("title", "Booking"),
+        o.optString("person", ""),
+        o.nullableString("email"),
+        o.optLong("event_id", 0),
+        o.optLong("calendar_id", 0),
+        o.nullableString("start_time"),
+        o.nullableString("end_time"),
+        o.optInt("slot_minutes", 0),
+        o.nullableString("time_zone"),
+        o.optString("status", "scheduled"),
+        o.optString("bucket", "todo"),
+        o.nullableString("ongoing"),
+        o.optBoolean("can_move", false),
+        o.optBoolean("is_ledgr", false),
+    )
+
+    /**
+     * Bookings in a date window (plain yyyy-MM-dd, inclusive), host-scoped server-side.
+     * Passing no window asks for everything still upcoming. Empty on any failure.
+     */
+    fun bookings(context: Context, from: String? = null, to: String? = null, limit: Int = 200): List<SiteBooking> {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank() || c.user.isBlank() || c.pass.isBlank()) return emptyList()
+        val window = if (from != null && to != null) "&from=$from&to=$to" else ""
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/bookings?limit=$limit$window")
+                .header("Authorization", auth(c))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val arr = JSONObject(resp.body?.string() ?: return emptyList()).optJSONArray("bookings")
+                    ?: return emptyList()
+                (0 until arr.length()).map { parseBooking(arr.getJSONObject(it)) }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "bookings fetch failed")
+            emptyList()
+        }
+    }
+
+    /** The whole booking behind a row. Null on any failure. */
+    fun booking(context: Context, bookingId: Long): SiteBookingDetail? {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank()) return null
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/booking/$bookingId")
+                .header("Authorization", auth(c))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val o = JSONObject(resp.body?.string() ?: return null)
+
+                val fieldsArr = o.optJSONArray("fields")
+                val fields = if (fieldsArr == null) emptyList() else
+                    (0 until fieldsArr.length()).map { fieldsArr.getJSONObject(it) }.map {
+                        BookingField(it.optString("label", ""), it.optString("value", ""))
+                    }
+
+                val actsArr = o.optJSONArray("activities")
+                val activities = if (actsArr == null) emptyList() else
+                    (0 until actsArr.length()).map { actsArr.getJSONObject(it) }.map {
+                        BookingActivity(
+                            it.optString("title", ""),
+                            it.optString("description", ""),
+                            it.optString("created_at", ""),
+                        )
+                    }
+
+                SiteBookingDetail(
+                    booking = parseBooking(o),
+                    phone = o.nullableString("phone"),
+                    message = o.nullableString("message"),
+                    internalNote = o.nullableString("internal_note"),
+                    location = o.nullableString("location"),
+                    statusLabel = o.optString("status_label", ""),
+                    guestCount = o.optInt("guest_count", 0),
+                    cancelReason = o.nullableString("cancel_reason"),
+                    calendar = o.optString("calendar", ""),
+                    fields = fields,
+                    activities = activities,
+                    crmContactId = o.optInt("crm_contact_id", 0).takeIf { it > 0 },
+                )
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "booking detail fetch failed")
+            null
+        }
+    }
+
+    /** Cancel a booking. FluentBooking sends the attendee's email itself. Returns toast status. */
+    fun cancel(context: Context, bookingId: Long, reason: String?): String {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank()) return "Bridge not configured"
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .apply { if (!reason.isNullOrBlank()) addFormDataPart("reason", reason) }
+            .addFormDataPart("_ledgr", "1")
+            .build()
+        return post(c, "booking/$bookingId/cancel", body, "status", "Cancelled", "Cancel failed")
+    }
+
+    /** Move a booking to [startTime] (UTC 'yyyy-MM-dd HH:mm:ss'). Duration is preserved. */
+    fun reschedule(context: Context, bookingId: Long, startTime: String, reason: String?): String {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank()) return "Bridge not configured"
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("start_time", startTime)
+            .apply { if (!reason.isNullOrBlank()) addFormDataPart("reason", reason) }
+            .build()
+        return post(c, "booking/$bookingId/reschedule", body, "start_time", "Moved", "Move failed")
+    }
+
+    /** Write a note on a booking — typed and/or handwritten. Mirrors onto the contact in the CRM. */
+    fun note(context: Context, bookingId: Long, text: String?, png: ByteArray?): String {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank()) return "Bridge not configured"
+        if (text.isNullOrBlank() && png == null) return "Nothing to send"
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .apply {
+                if (!text.isNullOrBlank()) addFormDataPart("text", text)
+                if (png != null) addFormDataPart("png", "note.png", png.toRequestBody("image/png".toMediaType()))
+            }
+            .build()
+        return post(c, "booking/$bookingId/note", body, "booking_id", "Noted", "Note failed")
+    }
+
+    /** Open start times on an event, UTC, ascending — the times a booking can be moved to. */
+    fun slots(context: Context, eventId: Long, fromDate: String, days: Int = 14): List<String> {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank()) return emptyList()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/booking/event/$eventId/slots?date=$fromDate&days=$days")
+                .header("Authorization", auth(c))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val arr = JSONObject(resp.body?.string() ?: return emptyList()).optJSONArray("slots")
+                    ?: return emptyList()
+                (0 until arr.length()).mapNotNull { arr.optString(it, "").takeIf { s -> s.isNotBlank() } }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "booking slots fetch failed")
+            emptyList()
+        }
+    }
+
+    /** Shared POST → toast-status shape, matching the boards bridge's convention. */
+    private fun post(
+        c: LedgerWebBridge.Config,
+        path: String,
+        body: MultipartBody,
+        successKey: String,
+        okMessage: String,
+        failMessage: String,
+    ): String = try {
+        val req = Request.Builder()
+            .url("${c.site}/wp-json/ledgr/v1/$path")
+            .post(body)
+            .header("Authorization", auth(c))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            val t = resp.body?.string() ?: ""
+            if (resp.isSuccessful && t.contains(successKey)) okMessage
+            else {
+                val msg = try { JSONObject(t).optString("message") } catch (e: Exception) { "" }
+                if (msg.isNotBlank()) msg else "$failMessage (${resp.code})"
+            }
+        }
+    } catch (e: Exception) {
+        Timber.w(e, "booking $path failed")
+        "Network error"
+    }
+}
+
 /** One chat thread — a group (space) chat or a 1:1 DM. */
 data class ChatThread(
     val id: Long,

@@ -297,6 +297,54 @@ class Ledgr_FB_Bridge
             'callback'            => [$this, 'courseLessons'],
             'permission_callback' => [$this, 'canCommunity'],
         ]);
+
+        /* -----------------------------------------------------------
+         * FluentBooking. Bookings are dated objects, so they ride the
+         * same timeline rail as due-dated cards: /bookings answers in
+         * the /due-cards dialect (title + date + bucket) and the client
+         * folds both into one list. The writes are deliberately the
+         * four you'd do with a pen in hand — keep, cancel, move, note.
+         * Authoring availability and event types stays on the web.
+         * --------------------------------------------------------- */
+
+        register_rest_route(self::NS, '/bookings', [
+            'methods'             => 'GET',
+            'callback'            => [$this, 'bookings'],
+            'permission_callback' => [$this, 'canBooking'],
+        ]);
+
+        register_rest_route(self::NS, '/booking/(?P<booking_id>\d+)', [
+            'methods'             => 'GET',
+            'callback'            => [$this, 'bookingDetail'],
+            'permission_callback' => [$this, 'canBooking'],
+        ]);
+
+        register_rest_route(self::NS, '/booking/(?P<booking_id>\d+)/cancel', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'cancelBooking'],
+            'permission_callback' => [$this, 'canBooking'],
+        ]);
+
+        register_rest_route(self::NS, '/booking/(?P<booking_id>\d+)/reschedule', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'rescheduleBooking'],
+            'permission_callback' => [$this, 'canBooking'],
+        ]);
+
+        // A note in your own hand: OCR text lands on the booking, ink lands as a CRM note
+        // against the attendee when they're a known contact.
+        register_rest_route(self::NS, '/booking/(?P<booking_id>\d+)/note', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'bookingNote'],
+            'permission_callback' => [$this, 'canBooking'],
+        ]);
+
+        // Open times on an event, so a booking can be moved without leaving the device.
+        register_rest_route(self::NS, '/booking/event/(?P<event_id>\d+)/slots', [
+            'methods'             => 'GET',
+            'callback'            => [$this, 'bookingSlots'],
+            'permission_callback' => [$this, 'canBooking'],
+        ]);
     }
 
     /* ---------------------------------------------------------------
@@ -326,6 +374,23 @@ class Ledgr_FB_Bridge
         $boardId = (int) $request['board_id'];
         return \FluentBoards\App\Services\PermissionManager::isAdmin()
             || \FluentBoards\App\Services\PermissionManager::userHasBoardAccess($boardId, get_current_user_id());
+    }
+
+    /** Bookings carry other people's names, emails and phone numbers, so the gate is
+     *  "are you a host here at all" — and every query is then narrowed to the bookings
+     *  you actually host (see scopeBookings). Never the whole site's book. */
+    public function canBooking()
+    {
+        if (!is_user_logged_in() || !$this->bookingActive()) {
+            return false;
+        }
+        return \FluentBooking\App\Services\PermissionManager::currentUserHasAnyPermission();
+    }
+
+    private function bookingActive()
+    {
+        return class_exists('\FluentBooking\App\Models\Booking')
+            && class_exists('\FluentBooking\App\Services\PermissionManager');
     }
 
     /* ---------------------------------------------------------------
@@ -3318,6 +3383,471 @@ class Ledgr_FB_Bridge
         do_action('fluent_crm/campaign_set_send_now', \FluentCrm\App\Models\Campaign::find($campaign->id));
 
         return ['sent' => true, 'recipients' => $count, 'message' => 'Sending started.'];
+    }
+
+    /* ===============================================================
+     * FluentBooking
+     * =============================================================== */
+
+    /** Every booking query starts here: yours to host, unless you're allowed to see them all. */
+    private function scopeBookings()
+    {
+        $query = \FluentBooking\App\Models\Booking::query();
+        if (!\FluentBooking\App\Services\PermissionManager::userCanSeeAllBookings()) {
+            $query = $query->whereHostAccess(get_current_user_id());
+        }
+        return $query;
+    }
+
+    /**
+     * The same three buckets the timeline already speaks, read off a booking's own
+     * lifecycle rather than a stage position: still ahead of you → todo, under way
+     * right now → doing, settled one way or another → done.
+     */
+    private function bookingBucket($booking)
+    {
+        if (in_array($booking->status, ['cancelled', 'rejected', 'completed', 'no-show'], true)) {
+            return 'done';
+        }
+        $now = time();
+        if (strtotime($booking->start_time) <= $now && strtotime($booking->end_time) >= $now) {
+            return 'doing';
+        }
+        return 'todo';
+    }
+
+    /**
+     * Can this booking be moved from the device? Group and round-robin bookings carry seat and
+     * host bookkeeping that the web flow owns, so we say so up front rather than offering a
+     * button that always fails. On a studio calendar that's most of the book — every class
+     * booking is a group booking — so the client leans on this to keep the sheet honest.
+     */
+    private function bookingCanMove($booking)
+    {
+        if (in_array($booking->status, ['cancelled', 'rejected'], true)) {
+            return false;
+        }
+        if (method_exists($booking, 'isMultiGuestBooking') && $booking->isMultiGuestBooking()) {
+            return false;
+        }
+        if (method_exists($booking, 'isRoundRobinBooking') && $booking->isRoundRobinBooking()) {
+            return false;
+        }
+        return true;
+    }
+
+    /** One booking in the timeline dialect — deliberately the shape /due-cards returns. */
+    private function bookingRow($booking)
+    {
+        $person = trim($booking->first_name . ' ' . $booking->last_name);
+        $event  = $booking->calendar_event;
+        $ongoing = $booking->getOngoingStatus();
+
+        return [
+            'id'           => (int) $booking->id,
+            'hash'         => $booking->hash,
+            'title'        => $event ? $event->title : ($booking->getBookingTitle() ?: 'Booking'),
+            'person'       => $person !== '' ? $person : ($booking->email ?: 'Someone'),
+            'email'        => $booking->email,
+            'event_id'     => (int) $booking->event_id,
+            'calendar_id'  => (int) $booking->calendar_id,
+            'start_time'   => $booking->start_time,   // UTC, as stored
+            'end_time'     => $booking->end_time,
+            'slot_minutes' => (int) $booking->slot_minutes,
+            'time_zone'    => $booking->person_time_zone,
+            'status'       => $booking->status,
+            'bucket'       => $this->bookingBucket($booking),
+            'ongoing'      => $ongoing ? array_key_first($ongoing) : null,
+            'can_move'     => $this->bookingCanMove($booking),
+            'is_ledgr'     => $booking->source === self::SOURCE,
+        ];
+    }
+
+    /** FluentBooking answers '--' for "no location set"; that's a placeholder, not a place. */
+    private function bookingLocation($booking)
+    {
+        $text = trim((string) $booking->getLocationAsText());
+        return ($text === '' || $text === '--') ? null : $text;
+    }
+
+    /**
+     * GET /ledgr/v1/bookings?from=YYYY-MM-DD&to=YYYY-MM-DD&limit=200&status=
+     * Bookings in a window, host-scoped, in the /due-cards dialect so the client can
+     * merge them into one dated list without a second code path. No window = upcoming.
+     */
+    public function bookings(\WP_REST_Request $request)
+    {
+        if (!$this->bookingActive()) {
+            return new \WP_Error('ledgr_no_booking', 'FluentBooking is not active', ['status' => 501]);
+        }
+
+        $limit  = min(500, max(1, (int) ($request->get_param('limit') ?: 200)));
+        $from   = $request->get_param('from');
+        $to     = $request->get_param('to');
+        $status = $request->get_param('status');
+
+        try {
+            $query = $this->scopeBookings();
+
+            if ($from && $to) {
+                // Inclusive of the whole end day — the client sends plain dates.
+                $query = $query->whereBetween('start_time', [
+                    gmdate('Y-m-d 00:00:00', strtotime($from)),
+                    gmdate('Y-m-d 23:59:59', strtotime($to)),
+                ]);
+            } else {
+                $query = $query->upcoming();
+            }
+
+            if ($status) {
+                $query = $query->where('status', sanitize_text_field($status));
+            }
+
+            $bookings = $query->with(['calendar_event'])
+                ->orderBy('start_time', 'asc')
+                ->limit($limit)
+                ->get();
+
+            $out = [];
+            foreach ($bookings as $booking) {
+                $out[] = $this->bookingRow($booking);
+            }
+        } catch (\Exception $e) {
+            return new \WP_Error('ledgr_bookings_failed', $e->getMessage(), ['status' => 500]);
+        }
+
+        return rest_ensure_response(['bookings' => $out]);
+    }
+
+    /** Fetch a booking and confirm it's one this user hosts. WP_Error otherwise. */
+    private function findBooking($bookingId)
+    {
+        $booking = $this->scopeBookings()->where('id', (int) $bookingId)->first();
+        if (!$booking) {
+            return new \WP_Error('ledgr_booking_missing', 'Booking not found, or not yours to see.', ['status' => 404]);
+        }
+        return $booking;
+    }
+
+    /**
+     * GET /ledgr/v1/booking/{id}
+     * The whole booking behind a timeline row: who, where, what they said on the way in,
+     * your own running notes, and the activity trail.
+     */
+    public function bookingDetail(\WP_REST_Request $request)
+    {
+        if (!$this->bookingActive()) {
+            return new \WP_Error('ledgr_no_booking', 'FluentBooking is not active', ['status' => 501]);
+        }
+
+        $booking = $this->findBooking($request['booking_id']);
+        if (is_wp_error($booking)) {
+            return $booking;
+        }
+
+        try {
+            $row = $this->bookingRow($booking);
+
+            $row['phone']         = $booking->phone;
+            $row['message']       = $booking->getMessage();
+            $row['internal_note'] = $booking->internal_note;
+            $row['location']      = $this->bookingLocation($booking);
+            $row['status_label']  = $booking->getBookingStatus();
+            $row['guest_count']   = (int) $booking->getTotalGuestCount();
+            $row['cancel_reason'] = $booking->getCancelReason(true);
+            $row['calendar']      = $booking->calendar ? $booking->calendar->title : '';
+
+            // Custom booking-form answers, flattened to label/value for a small screen.
+            $fields = [];
+            foreach ((array) $booking->getCustomFormData(true) as $key => $value) {
+                if (is_array($value)) {
+                    $value = implode(', ', array_filter($value, 'is_scalar'));
+                }
+                if (is_scalar($value) && trim((string) $value) !== '') {
+                    $fields[] = ['label' => (string) $key, 'value' => (string) $value];
+                }
+            }
+            $row['fields'] = $fields;
+
+            // The trail: what has already happened to this booking.
+            $activities = [];
+            foreach ($booking->booking_activities()->orderBy('id', 'desc')->limit(20)->get() as $a) {
+                $activities[] = [
+                    'title'       => $a->title,
+                    'description' => wp_strip_all_tags((string) $a->description),
+                    'created_at'  => $a->created_at,
+                ];
+            }
+            $row['activities'] = $activities;
+
+            // The attendee's CRM record, when they have one — the edge into the rolodex.
+            $row['crm_contact_id'] = null;
+            if ($booking->email && function_exists('FluentCrmApi')) {
+                $contact = FluentCrmApi('contacts')->getContact($booking->email);
+                if ($contact) {
+                    $row['crm_contact_id'] = (int) $contact->id;
+                }
+            }
+        } catch (\Exception $e) {
+            return new \WP_Error('ledgr_booking_detail_failed', $e->getMessage(), ['status' => 500]);
+        }
+
+        return rest_ensure_response($row);
+    }
+
+    /**
+     * POST /ledgr/v1/booking/{id}/cancel
+     * body: reason (optional)
+     * Delegates to the model's own cancelMeeting() so the attendee's email, the CRM
+     * trigger and the remote-calendar removal all run exactly as they do on the web.
+     */
+    public function cancelBooking(\WP_REST_Request $request)
+    {
+        if (!$this->bookingActive()) {
+            return new \WP_Error('ledgr_no_booking', 'FluentBooking is not active', ['status' => 501]);
+        }
+
+        $booking = $this->findBooking($request['booking_id']);
+        if (is_wp_error($booking)) {
+            return $booking;
+        }
+        if (in_array($booking->status, ['cancelled', 'rejected'], true)) {
+            return rest_ensure_response(['booking_id' => (int) $booking->id, 'status' => $booking->status, 'message' => 'Already cancelled.']);
+        }
+
+        $reason = sanitize_textarea_field((string) $request->get_param('reason'));
+
+        try {
+            $booking->cancelMeeting($reason, 'host', get_current_user_id());
+        } catch (\Exception $e) {
+            return new \WP_Error('ledgr_cancel_failed', $e->getMessage(), ['status' => 500]);
+        }
+
+        return rest_ensure_response([
+            'booking_id' => (int) $booking->id,
+            'status'     => 'cancelled',
+            'message'    => 'Booking cancelled.',
+        ]);
+    }
+
+    /**
+     * POST /ledgr/v1/booking/{id}/reschedule
+     * body: start_time (UTC 'Y-m-d H:i:s', required), reason (optional)
+     * Mirrors FluentBooking's own reschedule sequence (FrontEndHandler): move the window,
+     * record the previous time, then fire log_booking_activity + after_booking_rescheduled
+     * so notifications, CRM triggers and calendar sync all follow. Duration is preserved —
+     * this moves a booking, it doesn't resize it.
+     */
+    public function rescheduleBooking(\WP_REST_Request $request)
+    {
+        if (!$this->bookingActive()) {
+            return new \WP_Error('ledgr_no_booking', 'FluentBooking is not active', ['status' => 501]);
+        }
+
+        $booking = $this->findBooking($request['booking_id']);
+        if (is_wp_error($booking)) {
+            return $booking;
+        }
+
+        $startTime = sanitize_text_field((string) $request->get_param('start_time'));
+        $stamp = $startTime ? strtotime($startTime) : false;
+        if (!$stamp) {
+            return new \WP_Error('ledgr_bad_time', 'A start_time of Y-m-d H:i:s (UTC) is required.', ['status' => 422]);
+        }
+        $startTime = gmdate('Y-m-d H:i:s', $stamp);
+
+        if ($startTime === $booking->start_time) {
+            return new \WP_Error('ledgr_same_time', 'That is already when it is.', ['status' => 422]);
+        }
+        if (in_array($booking->status, ['cancelled', 'rejected'], true)) {
+            return new \WP_Error('ledgr_cancelled', 'A cancelled booking cannot be moved.', ['status' => 422]);
+        }
+
+        // Group and round-robin bookings carry seat/host bookkeeping that the web flow owns.
+        // Rather than half-do it here, we send those back to the web with their own link.
+        if (method_exists($booking, 'isMultiGuestBooking') && $booking->isMultiGuestBooking()) {
+            return new \WP_Error('ledgr_group_booking', 'Group bookings are rescheduled on the web.', ['status' => 409]);
+        }
+        if (method_exists($booking, 'isRoundRobinBooking') && $booking->isRoundRobinBooking()) {
+            return new \WP_Error('ledgr_round_robin', 'Round-robin bookings are rescheduled on the web.', ['status' => 409]);
+        }
+
+        try {
+            $previous = clone $booking;
+
+            $booking->start_time = $startTime;
+            $booking->end_time   = gmdate('Y-m-d H:i:s', $stamp + ((int) $booking->slot_minutes * 60));
+            $booking->save();
+
+            $booking->updateMeta('previous_meeting_time', $previous->start_time);
+            $booking->updateMeta('rescheduled_by_type', 'host');
+
+            $reason = sanitize_textarea_field((string) $request->get_param('reason'));
+            if ($reason) {
+                $booking->updateMeta('reschedule_reason', $reason);
+            }
+
+            do_action('fluent_booking/log_booking_activity', [
+                'booking_id'  => $booking->id,
+                'type'        => 'info',
+                'status'      => 'closed',
+                'title'       => 'Meeting Rescheduled',
+                'description' => sprintf('Meeting has been rescheduled by host from Ledger. Previous date time: %s (UTC)', $previous->start_time),
+            ]);
+
+            do_action('fluent_booking/after_booking_rescheduled', $booking, $previous, $booking->calendar_event);
+        } catch (\Exception $e) {
+            return new \WP_Error('ledgr_reschedule_failed', $e->getMessage(), ['status' => 500]);
+        }
+
+        return rest_ensure_response([
+            'booking_id' => (int) $booking->id,
+            'start_time' => $booking->start_time,
+            'end_time'   => $booking->end_time,
+            'message'    => 'Booking moved.',
+        ]);
+    }
+
+    /**
+     * POST /ledgr/v1/booking/{id}/note
+     * multipart: text (optional), png (optional handwriting)
+     * The note lands on the booking's internal note (host-only, never emailed) and, when the
+     * attendee is a known contact, also as a CRM note — so what you wrote about a session
+     * shows up on the person, not just the appointment. Ink uploads and is linked from both.
+     */
+    public function bookingNote(\WP_REST_Request $request)
+    {
+        if (!$this->bookingActive()) {
+            return new \WP_Error('ledgr_no_booking', 'FluentBooking is not active', ['status' => 501]);
+        }
+
+        $booking = $this->findBooking($request['booking_id']);
+        if (is_wp_error($booking)) {
+            return $booking;
+        }
+
+        $text  = sanitize_textarea_field((string) $request->get_param('text'));
+        $files = $request->get_file_params();
+        $png   = isset($files['png']) ? $files['png'] : null;
+
+        if ($text === '' && !$png) {
+            return new \WP_Error('ledgr_empty_note', 'Nothing to write down.', ['status' => 422]);
+        }
+
+        $inkUrl = null;
+        if ($png) {
+            $valid = $this->validateUpload($png, ['image/png'], self::MAX_PNG_BYTES);
+            if (is_wp_error($valid)) {
+                return $valid;
+            }
+            $inkUrl = $this->sideloadToMedia($png);
+            if (!$inkUrl) {
+                return new \WP_Error('ledgr_ink_upload_failed', 'Could not store the handwriting.', ['status' => 500]);
+            }
+        }
+
+        try {
+            $stamp = gmdate('Y-m-d H:i');
+            $entry = trim($text !== '' ? $text : '(handwritten)');
+            if ($inkUrl) {
+                $entry .= ' ' . $inkUrl;
+            }
+
+            $existing = (string) $booking->internal_note;
+            $booking->internal_note = trim($existing . "\n\n" . '[' . $stamp . ' UTC · Ledger] ' . $entry);
+            $booking->save();
+
+            do_action('fluent_booking/log_booking_activity', [
+                'booking_id'  => $booking->id,
+                'type'        => 'info',
+                'status'      => 'closed',
+                'title'       => 'Note added',
+                'description' => 'A note was written from Ledger.',
+            ]);
+
+            // Mirror onto the person when we know them — the booking→rolodex edge.
+            $crmNoteId = null;
+            if ($booking->email && function_exists('FluentCrmApi') && class_exists('\FluentCrm\App\Models\SubscriberNote')) {
+                $contact = FluentCrmApi('contacts')->getContact($booking->email);
+                if ($contact) {
+                    $eventTitle = $booking->calendar_event ? $booking->calendar_event->title : 'Booking';
+                    $note = \FluentCrm\App\Models\SubscriberNote::create([
+                        'subscriber_id' => $contact->id,
+                        'created_by'    => get_current_user_id(),
+                        'type'          => 'note',
+                        'title'         => $eventTitle . ' — ' . gmdate('M j', strtotime($booking->start_time)),
+                        'description'   => $entry,
+                    ]);
+                    $crmNoteId = (int) $note->id;
+                    do_action('ledgr_fb/crm_note_created', $note, $contact);
+                }
+            }
+        } catch (\Exception $e) {
+            return new \WP_Error('ledgr_note_failed', $e->getMessage(), ['status' => 500]);
+        }
+
+        return rest_ensure_response([
+            'booking_id'  => (int) $booking->id,
+            'ink_url'     => $inkUrl,
+            'crm_note_id' => $crmNoteId,
+            'message'     => 'Noted.',
+        ]);
+    }
+
+    /**
+     * GET /ledgr/v1/booking/event/{event_id}/slots?date=YYYY-MM-DD&days=14
+     * Open times on an event, so a booking can be moved without leaving the device.
+     * Answers a flat list of UTC start times — the client draws them, we don't.
+     */
+    public function bookingSlots(\WP_REST_Request $request)
+    {
+        if (!$this->bookingActive() || !class_exists('\FluentBooking\App\Services\TimeSlotService')) {
+            return new \WP_Error('ledgr_no_booking', 'FluentBooking is not active', ['status' => 501]);
+        }
+
+        $eventId = (int) $request['event_id'];
+        $event = \FluentBooking\App\Models\CalendarSlot::find($eventId);
+        if (!$event) {
+            return new \WP_Error('ledgr_event_missing', 'Event not found.', ['status' => 404]);
+        }
+        if (!\FluentBooking\App\Services\PermissionManager::canReadCalendar($event->calendar_id)) {
+            return new \WP_Error('ledgr_forbidden', 'Not your calendar.', ['status' => 403]);
+        }
+
+        $from = $request->get_param('date') ?: gmdate('Y-m-d');
+        $days = min(60, max(1, (int) ($request->get_param('days') ?: 14)));
+        $to   = gmdate('Y-m-d', strtotime($from . ' +' . $days . ' days'));
+
+        $out = [];
+        try {
+            $service = new \FluentBooking\App\Services\TimeSlotService($event->calendar, $event);
+            $dates = $service->getDates($from, $to, null, false, 'UTC');
+
+            foreach ((array) $dates as $day => $slots) {
+                foreach ((array) $slots as $slot) {
+                    $start = is_array($slot) ? ($slot['start_time'] ?? ($slot['start'] ?? null)) : $slot;
+                    if (!$start) {
+                        continue;
+                    }
+                    $stamp = strtotime((string) $start);
+                    if (!$stamp) {
+                        continue;
+                    }
+                    $out[] = gmdate('Y-m-d H:i:s', $stamp);
+                }
+            }
+            $out = array_values(array_unique($out));
+            sort($out);
+        } catch (\Exception $e) {
+            return new \WP_Error('ledgr_slots_failed', $e->getMessage(), ['status' => 500]);
+        }
+
+        return rest_ensure_response([
+            'event_id' => $eventId,
+            'title'    => $event->title,
+            'duration' => (int) $event->duration,
+            'slots'    => $out,
+        ]);
     }
 }
 

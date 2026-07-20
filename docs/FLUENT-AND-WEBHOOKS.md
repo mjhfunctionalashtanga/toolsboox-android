@@ -16,7 +16,63 @@ WordPress **application password**. There is no middleman service.
 | Correspondence | `/correspondence`, `/correspondence/to-board`, `/thread`, `/thread/delete` | Gather replies to your posts and cards; read whole threads in-app; turn replies into board cards |
 | Chat | `/chat/{thread}/ink` (+ FluentCommunity's own `v2/chat/*`) | Group chat and DMs, including handwritten messages |
 | Essays | `/essay` | A finished page goes out as a WordPress draft (any post type), an email, or a community post |
+| Bookings | `/bookings`, `/booking/{id}`, `.../cancel`, `.../reschedule`, `.../note`, `/booking/event/{id}/slots` | See below |
 | **CRM** | `/crm/note`, `/crm/contact/{id}/compact` | See below |
+
+## FluentBooking: a booking is just a dated object
+
+The bookings routes deliberately answer in the **same dialect as `/due-cards`** — a title,
+a date, and a `bucket` of `todo` / `doing` / `done`. That's the whole trick. Your timeline
+and your kanban already know how to draw a dated object with a state, so a booking needs no
+surface of its own: it lands in the same columns and the same day list as a board card, with
+its own tint and a 🕘 instead of a 🌐.
+
+The bucket is read off the booking's own life rather than a stage position — **still ahead of
+you → todo, under way right now → doing, settled either way → done.**
+
+Everything is scoped server-side to bookings **you host**. Nobody sees the whole book.
+
+### The four gestures
+
+Tapping a booking opens a sheet offering exactly four things, because these are the four you'd
+do with a pen in your hand:
+
+| | |
+|---|---|
+| **Keep it** | do nothing — just read who's coming, what they said, and where |
+| **Cancel…** | with a reason. FluentBooking sends the attendee's mail itself |
+| **Move…** | pick from the event's *own* open times, so a move can't land somewhere the calendar wouldn't have offered |
+| **Note…** | in your own hand. Lands on the booking **and** on the person in FluentCRM |
+
+Authoring availability, building event types and editing booking forms stay on the web, where
+a keyboard already lives. Refusing that scope is the point — it's what keeps four Fluent
+integrations from turning Ledger into an admin console.
+
+### What "Move…" can and can't do
+
+**Group and round-robin bookings can't be moved from the device.** They carry seat and host
+bookkeeping that the web flow owns, and half-doing it here would corrupt the group. On a studio
+calendar that's *most* of the book — every class booking is a group booking — so the API says so
+up front via `can_move`, and the sheet hides the button rather than offering one that always
+fails. One-to-one sessions move fine.
+
+A move preserves duration: it relocates a booking, it doesn't resize it.
+
+### Hooks
+
+Writes go through FluentBooking's own paths, so its notifications, CRM triggers and remote
+calendar sync all follow: cancel delegates to the model's `cancelMeeting()`, and reschedule
+mirrors the plugin's own sequence, firing `fluent_booking/log_booking_activity` and
+`fluent_booking/after_booking_rescheduled`. Nothing is written behind the plugin's back.
+
+Bookings the device creates are tagged `source = ledgr`, which is also how a two-way sync
+avoids echoing its own writes back at itself.
+
+### No new setup
+
+Bookings reuse the site/user/password you already set under **Community & Boards (Fluent)**,
+and ride the same `include_site` opt-in as Site cards. There is no separate booking switch to
+find — turning on Site content turns on all of it.
 
 ## FluentCRM: what works now
 

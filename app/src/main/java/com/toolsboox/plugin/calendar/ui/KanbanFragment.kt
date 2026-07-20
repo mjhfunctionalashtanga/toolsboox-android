@@ -265,8 +265,12 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
             renderColumn(binding.colTodoCards, binding.colTodoHead, "TO DO", tasks.filter { colOf(it) == "todo" }, "todo")
             renderColumn(binding.colDoingCards, binding.colDoingHead, "DOING", tasks.filter { colOf(it) == "doing" }, "doing")
             renderColumn(binding.colDoneCards, binding.colDoneHead, "DONE", tasks.filter { colOf(it) == "done" }.take(40), "done")
-            // Local is on screen; now fold in dated Site cards (background, read-only, opt-in).
-            if (includeSite && selectedBoard == null) mergeSiteCards()
+            // Local is on screen; now fold in dated Site cards and site bookings
+            // (background, read-only, opt-in).
+            if (includeSite && selectedBoard == null) {
+                mergeSiteCards()
+                mergeSiteBookings()
+            }
         }
     }
 
@@ -290,6 +294,67 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
             place("todo", binding.colTodoCards, binding.colTodoHead, "TO DO")
             place("doing", binding.colDoingCards, binding.colDoingHead, "DOING")
             place("done", binding.colDoneCards, binding.colDoneHead, "DONE")
+        }
+    }
+
+    /** Fetch upcoming site bookings and drop them into the same three columns. A booking already
+     *  arrives bucketed (ahead of you → todo, under way → doing, settled → done), so it needs no
+     *  translation to sit beside a card: both are dated objects with a state. Read-only here —
+     *  the writes live in the booking sheet a tap away. */
+    private fun mergeSiteBookings() {
+        val ctx = requireContext()
+        lifecycleScope.launch {
+            val bookings = withContext(Dispatchers.IO) {
+                if (!com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).ready) emptyList()
+                else com.toolsboox.plugin.calendar.nw.LedgerBooking.bookings(ctx, limit = 60)
+            }
+            if (!isAdded || bookings.isEmpty()) return@launch
+            fun place(bucket: String, container: LinearLayout, head: TextView, title: String) {
+                val mine = bookings.filter { it.bucket == bucket }
+                if (mine.isEmpty()) return
+                for (b in mine) container.addView(siteBookingView(b))
+                head.text = "$title · ${(head.text.toString().substringAfterLast("· ").trim().toIntOrNull() ?: 0) + mine.size}"
+            }
+            place("todo", binding.colTodoCards, binding.colTodoHead, "TO DO")
+            place("doing", binding.colDoingCards, binding.colDoingHead, "DOING")
+            place("done", binding.colDoneCards, binding.colDoneHead, "DONE")
+        }
+    }
+
+    /** A read-only booking in a Local column: 🕘 tag + when/who; tap opens the booking sheet. */
+    private fun siteBookingView(b: com.toolsboox.plugin.calendar.nw.SiteBooking): View {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val at = runCatching {
+            java.time.LocalDateTime
+                .parse((b.startTime ?: "").trim(), java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                .atOffset(java.time.ZoneOffset.UTC)
+                .atZoneSameInstant(java.time.ZoneId.systemDefault())
+                .toLocalDateTime()
+        }.getOrNull()
+        return LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(px(8), px(8), px(8), px(8))
+            setBackgroundColor(0xFFF3F0EA.toInt())   // faint warm tint = "a booking, read-only"
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .apply { setMargins(0, 0, 0, px(8)) }
+            addView(TextView(ctx).apply {
+                text = "🕘  ${b.title}"; textSize = 13f; setTextColor(0xFF000000.toInt())
+            })
+            addView(TextView(ctx).apply {
+                text = listOfNotNull(
+                    at?.let { java.time.format.DateTimeFormatter.ofPattern("EEE d MMM  HH:mm").format(it) },
+                    b.person.ifBlank { null },
+                    when (b.ongoing) {
+                        "happening_now" -> "● now"
+                        "starting_soon" -> "● soon"
+                        else -> null
+                    },
+                    if (b.status == "cancelled" || b.status == "rejected") "cancelled" else null,
+                ).joinToString("   ·   ")
+                textSize = 11f; setTextColor(0xFF8A6D3B.toInt()); setPadding(0, px(3), 0, 0)
+            })
+            setOnClickListener { BookingSheet.open(this@KanbanFragment, b.id) }
         }
     }
 
