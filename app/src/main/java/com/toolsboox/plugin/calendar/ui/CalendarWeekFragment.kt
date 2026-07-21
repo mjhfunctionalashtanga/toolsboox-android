@@ -248,9 +248,13 @@ class CalendarWeekFragment @Inject constructor() : SurfaceFragment() {
         // Top-left hamburger → the shared Ledger directory (Ask, Bookshelf, Notes/Ledger Log, Write,
         // Text Notes, …). The week page reuses the day layout but never wired this, so its only "menu"
         // was the date-strip navigator — hence "the old menu pops out on weeks".
+        //
+        // It was then wired to `showSectionMenu()`, which is the OLD nine-row list, so the week page
+        // still opened last generation's drawer while every other surface opened the accordion. Same
+        // call the day page makes, so there is now one directory rather than two that drift apart.
         binding.goAppsButton.visibility = View.VISIBLE
         binding.goAppsButton.setOnClickListener {
-            showSectionMenu()
+            showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
         }
         binding.goAppsButton.bringToFront()
 

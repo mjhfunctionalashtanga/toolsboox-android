@@ -815,19 +815,35 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 stage = "todo"
             )
 
-            withContext(Dispatchers.IO) {
+            // Already there? Say so and stop. Tapping "make a task" twice on the same log item —
+            // or on something you'd already written by hand — used to mint a second item with a
+            // different id, which nothing downstream could tell from a real second task.
+            val already = withContext(Dispatchers.IO) {
                 runCatching {
                     val root = documentsRoot()
                     val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
-                    day.ledgerItems.add(task)
-                    calendarDayService.save(root, today, day)
+                    if (com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe.containsTask(day.ledgerItems, text)) {
+                        true
+                    } else {
+                        day.ledgerItems.add(task)
+                        calendarDayService.save(root, today, day)
+                        false
+                    }
+                }.getOrDefault(false)
+            }
+            if (!already) {
+                withContext(Dispatchers.IO) {
+                    runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(ctx, task) }
                 }
-                runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(ctx, task) }
             }
 
             android.widget.Toast.makeText(
                 ctx,
-                if (crop != null) "🗒 Task made — picture rode along" else "🗒 Task made on today",
+                when {
+                    already -> "🗒 Already on today"
+                    crop != null -> "🗒 Task made — picture rode along"
+                    else -> "🗒 Task made on today"
+                },
                 android.widget.Toast.LENGTH_SHORT
             ).show()
         }

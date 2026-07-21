@@ -258,9 +258,11 @@ abstract class ScreenFragment : Fragment() {
         navDown.setOnClickListener { swipeDown.performClick() }
         navGoto.setImageResource(iconRes)
         // First tap → jump to the present period; a second tap (already on the present
-        // period) brings down the Ledger section menu.
+        // period) brings down the Ledger directory. The accordion, not the old nine-row
+        // `showSectionMenu()` list — this pill is on every almanac page, so that one call was most
+        // of why last generation's drawer still appeared to be alive.
         navGoto.setOnClickListener {
-            if (isAtPresent()) showSectionMenu()
+            if (isAtPresent()) showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
             else onHome()
         }
         navWidget.bringToFront()

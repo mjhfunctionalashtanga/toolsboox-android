@@ -259,9 +259,15 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             val navDay = d ?: CalendarDay(anchor.year, anchor.monthValue, anchor.dayOfMonth, startHour = null)
             pattern?.let { navBar?.render(navDay, it) }
             // Tasks first, then events; done tasks sink to the bottom of the task group.
-            val items = (d?.ledgerItems ?: emptyList()).sortedWith(
-                compareBy({ it.kind != LedgerItem.Kind.TASK }, { it.kind == LedgerItem.Kind.TASK && it.done }, { it.top })
-            )
+            // Deduped on the words on the way in, so a task that got born twice under two ids
+            // reads as one row here even on days whose file already holds both. The file is left
+            // as it is — carry-over collapses the pair for good the next time it runs, and a list
+            // that hides a row is recoverable in a way that a save which deletes one is not.
+            val items = com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe
+                .dedupe(d?.ledgerItems ?: emptyList())
+                .sortedWith(
+                    compareBy({ it.kind != LedgerItem.Kind.TASK }, { it.kind == LedgerItem.Kind.TASK && it.done }, { it.top })
+                )
             adapter = LedgerItemAdapter(
                 items, strokes, ::persist, ::onEnterSelection, ::updateSelectionBar, ::assign,
                 { id -> contactsById[id] },

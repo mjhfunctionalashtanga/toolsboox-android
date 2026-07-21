@@ -2292,7 +2292,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         if (image != null) {
             // All images now get the long-press menu (move/resize, transforms, layer order);
             // grams also surface a jump-back. Move/resize is one tap in, as before.
-            showImageMenu(image, pressX, pressY)
+            showImageMenu(image, cx, cy, pressX, pressY)
             return
         }
         val textBox = textElementAt(cx, cy)
@@ -2324,7 +2324,16 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     protected open fun resolveAvGramFile(element: ImageElement): java.io.File? = null
 
-    private fun showImageMenu(element: ImageElement, pressX: Float, pressY: Float) {
+    /**
+     * [cx]/[cy] are the canvas point that was pressed, kept so that "add here" still means *here*
+     * even though the press landed on a picture.
+     *
+     * On a small screen a pasted image covers most of the page, so nearly every long press finds
+     * one and this menu was the only thing that ever appeared — capturing an A/V gram meant hunting
+     * for a patch of bare canvas, and on a full-bleed page there wasn't one. Making creation
+     * reachable from here as well means the long press does the same thing wherever it lands.
+     */
+    private fun showImageMenu(element: ImageElement, cx: Float, cy: Float, pressX: Float, pressY: Float) {
         if (context == null) return
         val groups = mutableListOf<List<LedgerContextMenu.Item>>()
         // An A/V gram is a picture until you ask it to play — so playing is the first thing offered.
@@ -2342,6 +2351,11 @@ abstract class SurfaceFragment : ScreenFragment() {
             groups.add(listOf(LedgerContextMenu.Item(jumpLabel) { onImageSource(element) }))
         }
         groups.add(listOf(LedgerContextMenu.Item("Move / resize") { enterImageManipulation(element) }))
+        // Creation, at the point pressed — the same doors "ADD HERE" offers on bare canvas.
+        groups.add(listOf(
+            LedgerContextMenu.Item("＋ Add media…") { showAddMediaMenu(cx, cy) },
+            LedgerContextMenu.Item("＋ Text box") { showTextInputDialog(cx, cy) }
+        ))
         groups.add(listOf(
             LedgerContextMenu.Item("✎ Edit in ink") { penEditImage(element) },
             LedgerContextMenu.Item("Flip horizontal") { transformImageElement(element) { flipBitmap(it, true) } },

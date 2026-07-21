@@ -46,7 +46,16 @@ object LedgerTaskCarryOver {
         // or it silently re-adds the deleted task every time the day reloads — the "won't delete /
         // keeps reappearing" bug, since a deleted id is no longer in `existing`.
         val tombstoned = today.deletedElementIds.toSet()
-        val toCarry = open.filter { it.id !in existing && it.id !in tombstoned }
+        // …and by its WORDS, because the id is exactly what two copies of one task don't share.
+        // A task typed on the day page and the same task made from the reading log have different
+        // ids, so the id check above waves both through — then carries both forward every day and
+        // paints each its own text box. Matching the words stops the pair at the first carry.
+        val saidAlready = HashSet<String>()
+        today.ledgerItems.filter { it.kind == LedgerItem.Kind.TASK }
+            .forEach { saidAlready.add(LedgerTaskDedupe.key(it.text)) }
+        val toCarry = open
+            .filter { it.id !in existing && it.id !in tombstoned }
+            .filter { saidAlready.add(LedgerTaskDedupe.key(it.text)) }
         if (toCarry.isEmpty()) return false
 
         val used = occupiedRows(today)

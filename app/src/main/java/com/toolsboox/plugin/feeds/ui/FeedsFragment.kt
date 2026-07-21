@@ -79,7 +79,31 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             FeedSelection.openDirectoryOnArrival = false
             showFeedDirectory()
         }
+        // Volume keys move the page here too. The book reader and the full-screen article both
+        // had this; the list you actually spend the time in did not, so putting the device down
+        // and picking it up meant reaching for the screen again. Whichever is in front gets the
+        // keys — the in-pane article when it's open, otherwise the list itself.
+        (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = handler@{ up ->
+            if (!volumeTurnOn()) return@handler false
+            if (binding.articlePane.visibility == View.VISIBLE) {
+                val step = (binding.articleWeb.height * 9 / 10).coerceAtLeast(1)
+                binding.articleWeb.scrollBy(0, if (up) -step else step)
+            } else {
+                val step = (binding.feedsRecycler.height * 9 / 10).coerceAtLeast(1)
+                binding.feedsRecycler.smoothScrollBy(0, if (up) -step else step)
+            }
+            true
+        }
     }
+
+    override fun onPause() {
+        super.onPause()
+        (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = null
+    }
+
+    /** Shared with the full-screen article and the book reader, so one setting covers reading. */
+    private fun volumeTurnOn() =
+        requireContext().getSharedPreferences("ledger_reader_nav", 0).getBoolean("volume_turn", true)
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -1098,7 +1122,12 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 "${mt("large")}  Large" to { setModalTier("large") }
             ),
             "Screen" to listOf(
-                "🔄  Rotate screen" to { cycleScreenOrientation() }
+                "🔄  Rotate screen" to { cycleScreenOrientation() },
+                ((if (volumeTurnOn()) "☑" else "☐") + "  Volume keys scroll") to {
+                    requireContext().getSharedPreferences("ledger_reader_nav", 0)
+                        .edit().putBoolean("volume_turn", !volumeTurnOn()).apply()
+                    Unit
+                }
             ),
             "Layout" to listOf(
                 ("🔀  Pill layout · " + (if (vertical) "horizontal" else "vertical")) to {

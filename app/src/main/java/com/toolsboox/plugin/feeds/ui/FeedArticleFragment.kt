@@ -119,7 +119,10 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
             else android.widget.LinearLayout.HORIZONTAL
     }
     private fun tapZonesOn() = navPrefs().getBoolean("tap_zones", false)
-    private fun volumeTurnOn() = navPrefs().getBoolean("volume_turn", false)
+    // Default ON, matching the book reader and the articles list. It was the only reading surface
+    // that defaulted off, so volume keys worked in a book, stopped in an article, and came back in
+    // the next book — which reads as a broken key rather than a setting.
+    private fun volumeTurnOn() = navPrefs().getBoolean("volume_turn", true)
 
     @SuppressLint("ClickableViewAccessibility")
     private fun setupTapZones() {
