@@ -1262,6 +1262,15 @@ abstract class SurfaceFragment : ScreenFragment() {
      * all keep working; legit ink resumes cleanly once the selection is dismissed.
      */
     private var rawInkPausedForMenu = false
+
+    /**
+     * A modal is on screen RIGHT NOW.
+     *
+     * Distinct from [rawInkPausedForMenu], which says the pen is currently parked and can be
+     * cleared by whoever parks it. This says "there is a dialog in front of the canvas", and
+     * while that is true nothing may re-arm the pen underneath it.
+     */
+    private var modalShowing = false
     private val resumeRawInkRunnable = Runnable { resumeRawInkNow() }
     /**
      * Raw hardware ink must stay OFF whenever a lasso/selection/paste or a popover menu is up —
@@ -1287,6 +1296,16 @@ abstract class SurfaceFragment : ScreenFragment() {
 
     /** A popover is showing over the canvas → pause the hardware pen so its taps register. */
     override fun onModalShown() {
+        modalShowing = true
+        // Cancel any resume already in flight.
+        //
+        // Tapping a lasso chip runs exitSelectionMode(deferRawResume = true), which clears the
+        // selection and posts a resume 250 ms later. The menu opens well inside that window, and
+        // the guard in resumeRawInkNow only checks the selection — which the same call just
+        // cleared. So the pen came back to life UNDER the open menu, and the next tap on a menu
+        // button was taken as ink and left a mark on the page.
+        provideSurfaceView().removeCallbacks(resumeRawInkRunnable)
+        provideSurfaceView().removeCallbacks(forcedResumeRunnable)
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
         // …and hand the WHOLE surface back to ordinary touch while the menu is up.
@@ -1309,6 +1328,7 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     override fun onModalDismissed() {
+        modalShowing = false
         // Deferred and forced: past the dismissing tap so its ACTION_UP can't land on a
         // re-enabled raw session and paint a stray dot (the same mechanism CUT documents below),
         // and past the selection guard so the pen never stays dead after a lasso menu.
@@ -1336,6 +1356,9 @@ abstract class SurfaceFragment : ScreenFragment() {
      * the same tap.
      */
     private fun resumeRawInkNow(force: Boolean = false) {
+        // Never under an open modal, not even forced: the forced path exists for AFTER a dismiss,
+        // and re-arming while a dialog is up is the one case that always paints on the page.
+        if (modalShowing) return
         if (!rawInkPausedForMenu) return
         if (!force && (hasSelection || pasteMode || selectionMode)) return
         touchHelper?.setRawDrawingEnabled(true)
