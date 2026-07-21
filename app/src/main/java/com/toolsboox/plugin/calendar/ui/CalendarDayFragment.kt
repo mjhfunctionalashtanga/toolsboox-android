@@ -369,15 +369,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     override fun extraCreationGroups(cx: Float, cy: Float): List<List<com.toolsboox.ot.LedgerContextMenu.Item>> {
         val ctx = context ?: return emptyList()
-        return when (notePage) {
-            // Synthesize page: the engine LIBRARY (built-ins + your own prompts) on the day's gathering.
-            "synthesize" -> listOf(listOf(
-                com.toolsboox.ot.LedgerContextMenu.Item("⚗  Synthesize the day…") {
-                    com.toolsboox.plugin.calendar.ot.SynthEngines.pick(ctx, "Synthesize the day") { e ->
-                        runEngine(e, pageMaterial())
-                    }
+        if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage)) return listOf(listOf(
+            com.toolsboox.ot.LedgerContextMenu.Item("⚗  Synthesize the day…") {
+                com.toolsboox.plugin.calendar.ot.SynthEngines.pick(ctx, "Synthesize the day") { e ->
+                    runEngine(e, pageMaterial())
                 }
-            ))
+            }
+        ))
+        return when (notePage) {
             "write" -> listOf(listOf(
                 com.toolsboox.ot.LedgerContextMenu.Item("→  Share essay…") { shareEssay() }
             ))
@@ -1421,7 +1420,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // The Synthesize→Write creative pipeline lives on the Synthesize page (Card / 3 questions /
         // outline) with the writing prompt also reachable from Write — so it doesn't clutter every
         // other page. "View tasks & events" left the wrench (it's in the ▦ hub).
-        val onSynth = notePage == "synthesize"
+        val onSynth = com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage)
         val onWrite = notePage == "write"
         val tools = buildList {
             add(GoItem("🖊️", "Add text") { binding.toolbarDrawing.toolbarText.performClick() })
@@ -2561,14 +2560,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             // Where these came from → the group's source gram back-link. From the empty grid we used
             // the pickings fallback, so point back at Pickings.
             val ps = com.toolsboox.plugin.calendar.ot.PickingsStore
-            val srcPage = notePage?.takeIf { it != "synthesize" } ?: "pickings"
+            val srcPage = notePage?.takeIf { !com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(it) } ?: "pickings"
             val srcLabel = if (ps.isPickings(srcPage)) ps.nameOf(requireContext(), currentDate, srcPage)
                 else srcPage.replaceFirstChar { it.uppercase() }
             com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.add(requireContext(), currentDate, lines, "question", srcLabel)
-            placeSourcedQuestions(lines, "synthesize", "ledger://$currentDate/$srcPage", srcLabel,
-                refresh = notePage == "synthesize")
+            // Land the questions on the synth page you are on if it is one, else the daily page.
+            val destSynth = notePage?.takeIf { com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(it) } ?: "synthesize"
+            placeSourcedQuestions(lines, destSynth, "ledger://$currentDate/$srcPage", srcLabel,
+                refresh = com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage))
             showMessage("Placed 3 questions on your Synthesize page — answer them, then head to Write.", binding.root)
-            if (notePage != "synthesize") CalendarNavigator.toDayNote(this@CalendarDayFragment, currentDate, "synthesize")
+            if (!com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage)) CalendarNavigator.toDayNote(this@CalendarDayFragment, currentDate, "synthesize")
         }
     }
 
@@ -2929,7 +2930,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         "intake" -> R.drawable.ic_bookmark
         "write" -> R.drawable.ic_edit
         "synthesize" -> R.drawable.ic_swap
-        else -> R.drawable.ic_pencil
+        else -> if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(currentNotePage())) R.drawable.ic_swap else R.drawable.ic_pencil
     }
 
     private fun sectionEmoji(): String = when (currentNotePage()) {
@@ -2942,7 +2943,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         "intake" -> "🔖"
         "write" -> "✍"
         "synthesize" -> "🔬"
-        else -> "✒"
+        else -> if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(currentNotePage())) "🔬" else "✒"
     }
 
     /**

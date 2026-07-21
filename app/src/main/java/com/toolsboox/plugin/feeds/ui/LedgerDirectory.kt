@@ -105,7 +105,7 @@ fun ledgerDirectoryFolders(
         // see it. They were scattered across the day-page switcher and the Desk.
         ScreenFragment.Folder("🌱", "Garden", listOf(
             "🌿  Roots" to { nav.navigate(R.id.action_to_ledger_roots) },
-            "🔬  Synthesize" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "synthesize") },
+            "🔬  Synthesize" to { showSynthPicker(fragment) },
             "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
             "✍  Write" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "write") }
         )),
@@ -157,6 +157,82 @@ fun showPickingsPicker(fragment: ScreenFragment) {
             }
         }
         .setNegativeButton("Close", null)
+        .show()
+}
+
+/**
+ * Synthesize pages: today's daily page, plus the named TOPIC pages that persist over time.
+ *
+ * The topic pages are the coarse boundary — one per subject, each holding only what you carried
+ * onto it — so a surrogacy synthesis and an Android one never bleed into each other's outlines.
+ */
+fun showSynthPicker(fragment: ScreenFragment) {
+    val ctx = fragment.requireContext()
+    val today = LocalDate.now()
+    val store = com.toolsboox.plugin.calendar.ot.SynthPageStore
+    store.sync(ctx)   // pull topic pages made on other devices
+    val topics = store.list(ctx)
+    val labels = (listOf("🔬  Today's synthesis") +
+        topics.map { "🔬  ${it.name}  ·  ${it.date}" } +
+        listOf("＋  New synthesis…", "✎  Rename a synthesis…")).toTypedArray()
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle("Synthesize")
+        .setItems(labels) { _, which ->
+            when {
+                which == 0 -> CalendarNavigator.toDayNote(fragment, today, store.DEFAULT_KEY)
+                which <= topics.size -> {
+                    val p = topics[which - 1]
+                    CalendarNavigator.toDayNote(fragment, p.date, p.key)
+                }
+                which == topics.size + 1 -> promptNewSynth(fragment)
+                else -> promptRenameSynth(fragment)
+            }
+        }
+        .setNegativeButton("Close", null)
+        .show()
+}
+
+private fun promptNewSynth(fragment: ScreenFragment) {
+    val ctx = fragment.requireContext()
+    val input = android.widget.EditText(ctx).apply { hint = "What's this synthesis about?"; setSingleLine() }
+    val pad = (16 * ctx.resources.displayMetrics.density).toInt()
+    val box = android.widget.LinearLayout(ctx).apply {
+        orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
+    }
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle("New synthesis")
+        .setView(box)
+        .setPositiveButton("Create") { _, _ ->
+            val page = com.toolsboox.plugin.calendar.ot.SynthPageStore.add(ctx, input.text.toString().trim())
+            CalendarNavigator.toDayNote(fragment, page.date, page.key)
+        }
+        .setNegativeButton(android.R.string.cancel, null)
+        .show()
+}
+
+private fun promptRenameSynth(fragment: ScreenFragment) {
+    val ctx = fragment.requireContext()
+    val pages = com.toolsboox.plugin.calendar.ot.SynthPageStore.list(ctx)
+    if (pages.isEmpty()) return
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle("Rename which synthesis?")
+        .setItems(pages.map { it.name }.toTypedArray()) { _, which ->
+            val page = pages[which]
+            val input = android.widget.EditText(ctx).apply { setText(page.name); setSingleLine() }
+            val pad = (16 * ctx.resources.displayMetrics.density).toInt()
+            val box = android.widget.LinearLayout(ctx).apply {
+                orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
+            }
+            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                .setTitle("Rename synthesis")
+                .setView(box)
+                .setPositiveButton("Save") { _, _ ->
+                    com.toolsboox.plugin.calendar.ot.SynthPageStore.rename(ctx, page.key, input.text.toString().trim())
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
+        .setNegativeButton(android.R.string.cancel, null)
         .show()
 }
 
