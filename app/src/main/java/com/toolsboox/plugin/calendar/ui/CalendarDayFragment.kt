@@ -3261,20 +3261,42 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
         // Where first, after when. An appointment you can't act on is a notification, and the
         // address is usually the only thing standing between the two.
-        val body = listOfNotNull(
-            when_,
-            event.location.ifBlank { null }?.let { "📍  " + it },
-            event.calendarName.ifBlank { null }?.let { "🗓  " + it },
-            event.organizer.ifBlank { null }
-                ?.takeIf { it.contains("@") || it.contains(" ") }
-                ?.let { "👤  " + it },
-            event.description.trim()
-                .takeIf { it.isNotBlank() && it != "-no-description-" }
-        ).joinToString("\n\n")
+        // Built as a view rather than setMessage(): one joined string gets the stock dialog's
+        // body style for everything, so the time, the address and a paragraph of description all
+        // arrive at the same weight in the system font. What it says was never the problem.
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val hyperlegible = androidx.core.content.res.ResourcesCompat.getFont(ctx, R.font.atkinson_hyperlegible)
+        val col = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(20), px(6), px(20), 0)
+        }
+        fun line(text: String, size: Float, colour: Int, top: Int, bold: Boolean = false) {
+            if (text.isBlank()) return
+            col.addView(android.widget.TextView(ctx).apply {
+                this.text = text
+                textSize = size
+                setTextColor(colour)
+                typeface = if (bold) android.graphics.Typeface.create(hyperlegible, android.graphics.Typeface.BOLD)
+                else hyperlegible
+                setPadding(0, px(top), 0, 0)
+            })
+        }
+        // When it is, first and loudest — it is the thing you opened this to find out.
+        line(when_, 17f, 0xFF000000.toInt(), 0, bold = true)
+        line(event.location.ifBlank { "" }.let { if (it.isBlank()) "" else "📍  $it" }, 15f, 0xFF333333.toInt(), 12)
+        line(event.calendarName.ifBlank { "" }.let { if (it.isBlank()) "" else "🗓  $it" }, 13f, 0xFF777777.toInt(), 10)
+        line(event.organizer.takeIf { it.contains("@") || it.contains(" ") }?.let { "👤  $it" } ?: "",
+            13f, 0xFF777777.toInt(), 6)
+        event.description.trim().takeIf { it.isNotBlank() && it != "-no-description-" }
+            ?.let { line(it, 14f, 0xFF222222.toInt(), 16) }
+
+        val scroll = android.widget.ScrollView(ctx).apply { addView(col) }
+        com.toolsboox.ot.ReadingSize.apply(scroll)
 
         AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(event.title.ifBlank { getString(R.string.calendar_day_untitled_event) })
-            .setMessage(body)
+            .setView(scroll)
             .setPositiveButton(android.R.string.ok, null)
             .setNeutralButton(R.string.calendar_day_event_to_task) { _, _ -> makeTaskFromEvent(event) }
             .show()

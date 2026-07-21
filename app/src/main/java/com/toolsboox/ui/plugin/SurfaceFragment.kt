@@ -2837,9 +2837,16 @@ abstract class SurfaceFragment : ScreenFragment() {
      *  LINEAGE PRESERVED: the placed gram carries the clipping's gramId + source pointers, so
      *  "Where used" groups it with every other placement and "Go to source" still jumps home. */
     private fun placeClippingAt(clip: com.toolsboox.plugin.calendar.da.v2.Clipping, cx: Float, cy: Float) {
-        val base64 = clip.data
-        val bytes = runCatching { Base64.decode(base64, Base64.DEFAULT) }.getOrNull() ?: return
-        val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
+        val bytes = runCatching { Base64.decode(clip.data, Base64.DEFAULT) }.getOrNull() ?: return
+        val raw = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
+        // A scrap gets its paper and its tape, the same as a card placed on a board. This door
+        // was missed when placement got its treatment: Add-to-Pickings ran it, Insert clipping
+        // dropped the pixels verbatim, and the two look like different apps on the same page.
+        // Change it afterwards from "Shapes & cute cuts" like any other gram.
+        val bmp = com.toolsboox.ot.CardTreatment.card(raw)
+        val baos = java.io.ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
+        val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
         val w = (CANVAS_WIDTH * IMAGE_PLACE_FRACTION).coerceAtMost(bmp.width.toFloat())
         val h = w * bmp.height / bmp.width
         val pxp = (cx - w / 2f).coerceIn(0f, (CANVAS_WIDTH - w).coerceAtLeast(0f))
