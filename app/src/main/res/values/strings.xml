@@ -460,6 +460,7 @@
     <string name="roots_close">Close</string>
     <string name="rhizome_title">🕸  Its rhizome</string>
     <string name="rhizome_menu">🕸  Its rhizome</string>
+    <string name="calendar_settings_button_text_size">Text size…</string>
     <string name="rhizome_cannot_open">Nothing here can open %1$s</string>
     <string name="rhizome_empty">Nothing joins this yet. Assign it to someone, put it on a board, or connect it to something — the connections you make show up here, from either end.</string>
     <string name="roots_loading">Reading the roots…</string>

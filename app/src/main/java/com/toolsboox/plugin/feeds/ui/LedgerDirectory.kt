@@ -97,7 +97,12 @@ fun ledgerDirectoryFolders(
             // Boards = one system, two sources (Local on-device tasks · Site FluentBoards),
             // framed like the RSS Local/Site split. Tasks & Events is the list view of Local.
             "🗒  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
-            "📋  Boards · Local" to { nav.navigate(R.id.action_to_kanban) },
+            "📋  Boards · Local" to { nav.navigate(R.id.action_to_kanban) }
+        )),
+        // Community: the three that are other PEOPLE rather than your own desk. They were mixed
+        // in with Notes and Boards, where the only thing they had in common was needing a
+        // network — which is a fact about plumbing, not about what they are for.
+        ScreenFragment.Folder("👥", "Community", listOf(
             "🌐  Boards · Site" to { nav.navigate(R.id.action_to_site_boards) },
             "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
             "💬  Messages" to { nav.navigate(R.id.action_to_messages) }

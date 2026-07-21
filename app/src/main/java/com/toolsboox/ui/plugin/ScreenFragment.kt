@@ -55,7 +55,20 @@ abstract class ScreenFragment : Fragment() {
          * wrench, applied to every Go modal / directory / accordion / context menu).
          */
         fun modalTextScale(context: android.content.Context): Float =
-            when (context.getSharedPreferences("ledger_a11y", 0).getString("modal_text_size", "medium")) {
+            tier(context, "modal_text_size")
+
+        /**
+         * The MENU text scale — directories, accordions, icon menus, context menus.
+         *
+         * Separate from the modal size because they are different things to read. A menu is a
+         * list of destinations you scan and hit; a dialog is a sentence you read and answer. One
+         * dial for both meant sizing a menu for your thumb and getting shouting dialogs with it.
+         */
+        fun menuTextScale(context: android.content.Context): Float =
+            tier(context, "menu_text_size")
+
+        private fun tier(context: android.content.Context, key: String): Float =
+            when (context.getSharedPreferences("ledger_a11y", 0).getString(key, "medium")) {
                 "small" -> 0.85f
                 "large" -> 1.25f
                 else -> 1f
@@ -67,8 +80,9 @@ abstract class ScreenFragment : Fragment() {
         private const val TITLE_SP = 24f        // dialog_go_to's go_to_title
         private const val ROW_SP = 18f          // item_go_to's go_label
         private const val ICON_DP = 26f         // item_go_to's go_icon, square
-        private const val ICON_MENU_DP = 300f   // showIconMenu's card
+        private const val ICON_MENU_DP = 340f   // showIconMenu's card
         private const val GO_MODAL_DP = 200f    // showGoModal's narrower card
+        private const val ACCORDION_DP = 380f   // showAccordion's left drawer
 
         // Error-bar debounce (see showError): same message within 30s stays quiet.
         private var lastErrorResId = 0
@@ -760,6 +774,10 @@ abstract class ScreenFragment : Fragment() {
     protected fun modalTextScale(): Float =
         modalTextScale(requireContext())
 
+    /** The menu dial — see [menuTextScale]. What the directories and icon menus size against. */
+    protected fun menuTextScale(): Float =
+        menuTextScale(requireContext())
+
     /**
      * The compact "Go to…" modal (grouped rows), anchored top-left (directories) or up from the
      * bottom pill (sections). Lifted from the day page so the almanac pages use the SAME modal
@@ -773,7 +791,7 @@ abstract class ScreenFragment : Fragment() {
         dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
 
         fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-        val textScale = modalTextScale()
+        val textScale = menuTextScale()
         for ((header, items) in groups) {
             val tv = TextView(requireContext())
             tv.text = header.uppercase()
@@ -899,7 +917,7 @@ abstract class ScreenFragment : Fragment() {
         val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
         val list = root.findViewById<LinearLayout>(R.id.go_to_list)
         val titleView = root.findViewById<TextView>(R.id.go_to_title)
-        val textScale = modalTextScale()
+        val textScale = menuTextScale()
         if (title.isNullOrEmpty()) titleView.visibility = View.GONE else {
             titleView.text = title; titleView.textSize = TITLE_SP * textScale
         }
@@ -984,7 +1002,7 @@ abstract class ScreenFragment : Fragment() {
             return s
         }
 
-        val textScale = modalTextScale()
+        val textScale = menuTextScale()
         for (folder in folders) {
             val header = layoutInflater.inflate(R.layout.item_go_to, list, false)
             val hasIcon = setRowEmojiIcon(header, folder.emoji)
@@ -1050,7 +1068,10 @@ abstract class ScreenFragment : Fragment() {
             val metrics = resources.displayMetrics
             // Flush left, but BELOW the date-nav strip across the top (it stays usable).
             lp.x = 0; lp.y = dp(64)
-            lp.width = minOf(dp(300), (metrics.widthPixels * 0.66f).toInt())
+            // Grows with the text, like the other two menus. Pinned, the labels simply clipped:
+            // item_go_to rows are single-line and ellipsized, so raising the size made the words
+            // shorter rather than bigger and the setting looked like it did nothing at all.
+            lp.width = minOf(dp((ACCORDION_DP * textScale).toInt()), (metrics.widthPixels * 0.66f).toInt())
             // As TALL as it needs to be, not as tall as the screen.
             //
             // This was `screenHeight - 64dp` regardless of contents, so a six-item directory came

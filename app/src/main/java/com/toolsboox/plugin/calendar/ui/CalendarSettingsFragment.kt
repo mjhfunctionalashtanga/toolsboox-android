@@ -533,6 +533,8 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         }
         binding.buttonImportSettings.setOnClickListener { importSettingsLauncher.launch("*/*") }
 
+        binding.buttonTextSize.setOnClickListener { showTextSizeDialog() }
+
         // FULL ledger backup/restore (data, not just settings): long-press Export = zip the whole
         // Documents tree (every day page, contact, board, clipping) to a file you pick; long-press
         // Import = restore a backup zip over it. Settings JSON is included in the zip.
@@ -788,4 +790,63 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
     override fun hideLoading() {
         binding.mainProgress.visibility = View.INVISIBLE
     }
+
+    /**
+     * Menu and modal text size, each on its own dial.
+     *
+     * They used to share one, and they are not the same thing to read: a menu is a list of
+     * destinations you scan and hit, a dialog is a sentence you read and answer. Sizing the menu
+     * for a fingertip meant dialogs that shouted.
+     *
+     * Here rather than only in the Feed wrench, which is where it lived and is not where anybody
+     * would look for it.
+     */
+    private fun showTextSizeDialog() {
+        val ctx = requireContext()
+        val prefs = ctx.getSharedPreferences("ledger_a11y", 0)
+        val tiers = listOf("small" to "Small", "medium" to "Medium", "large" to "Large")
+
+        fun row(key: String, title: String): android.widget.LinearLayout {
+            val dp = resources.displayMetrics.density
+            fun px(v: Int) = (v * dp).toInt()
+            val current = prefs.getString(key, "medium")
+            val box = android.widget.LinearLayout(ctx).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                setPadding(px(4), px(10), px(4), px(4))
+                addView(android.widget.TextView(ctx).apply {
+                    text = title; textSize = 12f; setTextColor(0xFF8A8A8A.toInt())
+                    letterSpacing = 0.08f
+                })
+            }
+            val group = android.widget.RadioGroup(ctx).apply {
+                orientation = android.widget.RadioGroup.HORIZONTAL
+            }
+            tiers.forEachIndexed { i, (value, label) ->
+                group.addView(android.widget.RadioButton(ctx).apply {
+                    id = View.generateViewId()
+                    text = label
+                    isChecked = value == current
+                    setPadding(0, 0, px(18), 0)
+                    setOnClickListener { prefs.edit().putString(key, value).apply() }
+                })
+            }
+            box.addView(group)
+            return box
+        }
+
+        val dp = resources.displayMetrics.density
+        val col = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding((20 * dp).toInt(), (8 * dp).toInt(), (20 * dp).toInt(), 0)
+            addView(row("menu_text_size", "MENUS — directories, context menus"))
+            addView(row("modal_text_size", "DIALOGS — questions and cards"))
+        }
+
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Text size")
+            .setView(col)
+            .setPositiveButton("Done", null)
+            .show()
+    }
+
 }

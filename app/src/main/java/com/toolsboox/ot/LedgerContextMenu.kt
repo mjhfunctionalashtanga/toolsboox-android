@@ -79,7 +79,7 @@ object LedgerContextMenu {
             }
         }
 
-        val textScale = com.toolsboox.ui.plugin.ScreenFragment.modalTextScale(ctx)
+        val textScale = com.toolsboox.ui.plugin.ScreenFragment.menuTextScale(ctx)
 
         // Header: mono caps over a solid rule, echoing the page panel titles.
         card.addView(TextView(ctx).apply {

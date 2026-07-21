@@ -929,6 +929,19 @@
                     app:layout_constraintTop_toBottomOf="@+id/button_restore"
                     android:layout_marginTop="16dp"/>
 
+
+            <Button
+                    android:id="@+id/button_text_size"
+                    android:text="@string/calendar_settings_button_text_size"
+
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/barrierVertical"
+                    app:layout_constraintTop_toBottomOf="@+id/button_export_settings"
+                    android:layout_marginTop="16dp"/>
+
         </androidx.constraintlayout.widget.ConstraintLayout>
     </ScrollView>
 
