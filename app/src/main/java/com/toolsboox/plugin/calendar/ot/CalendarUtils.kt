@@ -49,6 +49,9 @@ class CalendarUtils @Inject constructor() {
             constraintSet.connect(R.id.templateImageView, ConstraintSet.END, R.id.toolbarDrawing, ConstraintSet.START)
             constraintSet.connect(R.id.surfaceView, ConstraintSet.START, ConstraintSet.PARENT_ID, ConstraintSet.START)
             constraintSet.connect(R.id.surfaceView, ConstraintSet.END, R.id.toolbarDrawing, ConstraintSet.START)
+            // The spiral line spans the page, so it follows the page — not the toolbar's old side.
+            constraintSet.connect(R.id.spiralLine, ConstraintSet.START, ConstraintSet.PARENT_ID, ConstraintSet.START)
+            constraintSet.connect(R.id.spiralLine, ConstraintSet.END, R.id.toolbarDrawing, ConstraintSet.START)
         } else {
             if (switch) {
                 sharedPreferences.edit().putString("calendarToolbarSide", "LEFT").apply()
@@ -62,7 +65,16 @@ class CalendarUtils @Inject constructor() {
             constraintSet.connect(R.id.templateImageView, ConstraintSet.END, ConstraintSet.PARENT_ID, ConstraintSet.END)
             constraintSet.connect(R.id.surfaceView, ConstraintSet.START, R.id.toolbarDrawing, ConstraintSet.END)
             constraintSet.connect(R.id.surfaceView, ConstraintSet.END, ConstraintSet.PARENT_ID, ConstraintSet.END)
+            constraintSet.connect(R.id.spiralLine, ConstraintSet.START, R.id.toolbarDrawing, ConstraintSet.END)
+            constraintSet.connect(R.id.spiralLine, ConstraintSet.END, ConstraintSet.PARENT_ID, ConstraintSet.END)
         }
+
+        // Pinned to the foot of the page and sized to its own text. Without these the cloned set
+        // carried a zero-height, zero-width entry for it — laid out, visible, and 0×0 at the
+        // origin, which looks exactly like a feature that was never wired up.
+        constraintSet.connect(R.id.spiralLine, ConstraintSet.BOTTOM, ConstraintSet.PARENT_ID, ConstraintSet.BOTTOM)
+        constraintSet.constrainWidth(R.id.spiralLine, ConstraintSet.MATCH_CONSTRAINT)
+        constraintSet.constrainHeight(R.id.spiralLine, ConstraintSet.WRAP_CONTENT)
 
         constraintSet.applyTo(binding.drawingLayout)
     }

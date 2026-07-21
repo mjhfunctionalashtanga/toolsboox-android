@@ -89,6 +89,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     @Inject
     lateinit var chatService: com.toolsboox.plugin.chat.nw.LedgerChatService
 
+    /** Reads the whole ledger as citable snippets — what the spiral line draws from. */
+    @Inject
+    lateinit var corpusService: com.toolsboox.plugin.chat.fi.LedgerCorpusService
+
     /**
      * The inflated layout.
      */
@@ -983,6 +987,47 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     /** Flip the floating pills between a horizontal and vertical layout. Defaults to
      *  vertical on narrow (phone-size) screens so the two pills don't collide; the gear's
      *  "Flip layout" overrides and persists the choice. */
+    /**
+     * The spiral, as one line at the foot of the page.
+     *
+     * Something you made once, come back around — and, when it can say so, what you have been
+     * circling that brought it back. One line rather than a card because the day page is a
+     * writing surface first: the full-card version crowded it so badly the page stopped reading
+     * as a page. The whole breakdown lives on the Roots screen; this is only the door to it.
+     *
+     * It stays hidden when nothing qualifies, so a thin ledger shows an empty page rather than an
+     * apology.
+     */
+    private fun showSpiralLine() {
+        binding.spiralLine.visibility = View.GONE
+        val ctx = context ?: return
+        lifecycleScope.launch {
+            val chosen = withContext(Dispatchers.IO) {
+                runCatching {
+                    val all = corpusService.gather(
+                        documentsRoot(), com.toolsboox.plugin.calendar.ot.Spiral.SCOPE)
+                        .filter { com.toolsboox.plugin.calendar.ot.Spiral.isSubstantial(it.text) }
+                        .let { com.toolsboox.plugin.calendar.ot.Spiral.dedupe(it) { s -> s.text } }
+                    com.toolsboox.plugin.calendar.ot.Spiral.choose(
+                        ctx, all,
+                        textOf = { it.text + " " + it.title },
+                        dateOf = { it.date.time },
+                        keyOf = { com.toolsboox.plugin.calendar.ot.Spiral.keyOf(it.citation, it.text) },
+                        ownOf = { it.own }
+                    )
+                }.onFailure { Timber.w(it, "spiral: choose failed") }.getOrNull()
+            }
+            if (!isAdded || chosen == null) return@launch
+            val snippet = chosen.item.text.replace(Regex("\\s+"), " ").trim()
+            if (snippet.isEmpty()) return@launch
+            binding.spiralLine.text = "🌀  " + snippet.take(90) + (if (snippet.length > 90) "…" else "")
+            binding.spiralLine.setOnClickListener {
+                findNavController().navigate(R.id.action_to_ledger_roots)
+            }
+            binding.spiralLine.visibility = View.VISIBLE
+        }
+    }
+
     private fun applyWidgetOrientation() {
         val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
         val narrow = resources.configuration.screenWidthDp < 520
@@ -2419,6 +2464,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             }
         }
         maybeShowReturnChip()
+        showSpiralLine()
 
         // Hardware page-turn buttons (volume/page keycodes) paginate the day surface,
         // same as the nav pill's up/down.

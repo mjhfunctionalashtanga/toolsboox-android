@@ -99,6 +99,19 @@ abstract class SurfaceFragment : ScreenFragment() {
         const val MAX_ZOOM = 4.0f
 
         /**
+         * The zoom to carry onto the next page.
+         *
+         * Deliberately in-memory and process-wide rather than in prefs. Paging the day surface
+         * navigates, so the fragment is rebuilt and no instance field survives it — but a zoom
+         * level is a reading posture, not a preference, and it should not still be waiting for
+         * you a week later. Losing it when the app restarts is the correct behaviour, not a gap.
+         *
+         * Reset by [resetZoom], so a deliberate double-tap out really does end it.
+         */
+        @Volatile
+        var carriedZoom: Float = 1.0f
+
+        /**
          * Debounce window for re-applying the Onyx raw-drawing limit rect after a
          * surfaceChanged. On open the surface is resized more than once (toolbar/immersive
          * relayout), and each limit-rect re-apply toggles setRawDrawingEnabled false->true,
@@ -414,6 +427,7 @@ abstract class SurfaceFragment : ScreenFragment() {
     // --- Zoom and pan state ---
     protected var twoFingerGesture = false
     private var zoomScale = 1.0f
+        set(value) { field = value; carriedZoom = value }
     private var panX = 0.0f
     private var panY = 0.0f
     private var baseScale = 1.0f
@@ -1331,6 +1345,29 @@ abstract class SurfaceFragment : ScreenFragment() {
         zoomScale = 1.0f
         panX = 0.0f
         panY = 0.0f
+        carriedZoom = 1.0f
+        updateTransformMatrix()
+        applyStrokes(strokes, true)
+    }
+
+    /**
+     * Carry the zoom across a page change, refitted to the page.
+     *
+     * Zoom used to survive a page turn only by accident — nothing reset it, so it kept both the
+     * scale AND the pan offset, and the new page arrived scrolled to wherever the last one had
+     * been left. Which is rarely where its content is: you'd turn the page while reading and land
+     * in its margin.
+     *
+     * Keeping the scale and re-centring horizontally means the new page arrives filling the width
+     * at the magnification you chose, and starting at its top, which is where a page starts. It is
+     * still your zoom; it is just pointed at the new page rather than at the old one's coordinates.
+     */
+    fun refitZoomForPage() {
+        if (!isZoomed()) return
+        panX = 0f
+        // Top of the page. Positive panY pushes content down, revealing what's above; the clamp in
+        // updateTransformMatrix trims it to the exact edge, so overshooting deliberately is safe.
+        panY = Float.MAX_VALUE / 4f
         updateTransformMatrix()
         applyStrokes(strokes, true)
     }
@@ -3710,7 +3747,12 @@ abstract class SurfaceFragment : ScreenFragment() {
                 override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
                     Timber.i("surfaceChanged: ${width}x${height}")
                     surfaceSize = Rect(0, 0, width, height)
+                    // Take up the zoom the last page was left at. Paging the day surface NAVIGATES,
+                    // so the fragment is rebuilt and an instance field can't survive it — the zoom
+                    // was lost on every page turn no matter what the pan state did.
+                    if (carriedZoom > 1.01f && zoomScale <= 1.01f) zoomScale = carriedZoom
                     updateTransformMatrix()
+                    if (zoomScale > 1.01f) refitZoomForPage()
                     // Activate Viwoods T1000 AutoDraw for this surface. The hardware then
                     // renders pen strokes live; we draw nothing during the stroke. Uses
                     // full-screen metrics (not just the surface) to register the region.

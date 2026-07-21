@@ -67,6 +67,10 @@
             app:destination="@id/LedgerItemsFragment"/>
 
     <action
+            android:id="@+id/action_to_ledger_roots"
+            app:destination="@id/LedgerRootsFragment"/>
+
+    <action
             android:id="@+id/action_to_rolodex"
             app:destination="@id/RolodexFragment"/>
 
@@ -171,6 +175,12 @@
             android:name="com.toolsboox.plugin.calendar.ui.LedgerItemsFragment"
             android:label="LedgerItemsFragment"
             tools:layout="@layout/fragment_ledger_items"/>
+
+    <fragment
+            android:id="@+id/LedgerRootsFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.LedgerRootsFragment"
+            android:label="LedgerRootsFragment"
+            tools:layout="@layout/fragment_ledger_roots"/>
 
     <fragment
             android:id="@+id/RolodexFragment"

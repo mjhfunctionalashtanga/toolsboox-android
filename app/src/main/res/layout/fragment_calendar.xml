@@ -195,6 +195,39 @@
                 app:layout_constraintStart_toEndOf="@id/toolbarDrawing"
                 app:layout_constraintEnd_toEndOf="parent"/>
 
+        <!-- The spiral, one line.
+
+             Something out of your own ledger, come back around, at the very foot of the drawn
+             page. ONE LINE on purpose: the day page is a writing surface, and a card here crowds
+             it — the first time this was tried as a full card it surfaced so much that the page
+             stopped being a page. It says what came back; tapping opens the Roots, where the
+             whole breakdown lives.
+
+             DECLARED LAST, after the template and the surface, because a ConstraintLayout draws
+             its children in declaration order — placed earlier it was correctly laid out, made
+             visible, and then painted over by the page template every time.
+
+             Gone by default: it appears only once there is something worth handing back. -->
+        <TextView
+                android:id="@+id/spiralLine"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:visibility="gone"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textSize="12sp"
+                android:textColor="#333333"
+                android:fontFamily="@font/atkinson_hyperlegible"
+                android:background="@drawable/ledger_bar_bg"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="6dp"
+                android:layout_marginStart="14dp"
+                android:layout_marginEnd="76dp"
+                android:layout_marginBottom="4dp"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintStart_toEndOf="@id/toolbarDrawing"
+                app:layout_constraintEnd_toEndOf="parent"/>
+
     </androidx.constraintlayout.widget.ConstraintLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

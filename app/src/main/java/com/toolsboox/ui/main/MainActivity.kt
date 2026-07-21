@@ -144,6 +144,18 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                     }
                     true
                 }
+                // CANCEL arrives instead of UP when an ancestor takes the gesture — which the ink
+                // surfaces do. It fell through to `else -> false`, so on exactly the pages you
+                // most want the pen button on, neither the tap nor the hold ever fired.
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    if (dragging) {
+                        prefs.edit().putFloat("floatNoteTx", v.translationX)
+                            .putFloat("floatNoteTy", v.translationY).apply()
+                    } else if (e.eventTime - e.downTime >= 550L) {
+                        v.performLongClick()
+                    }
+                    true
+                }
                 android.view.MotionEvent.ACTION_UP -> {
                     if (dragging) {
                         prefs.edit().putFloat("floatNoteTx", v.translationX).putFloat("floatNoteTy", v.translationY).apply()
@@ -219,6 +231,52 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         val which = quickNoteAction()
         binding.floatNoteButton.setImageResource(quickNoteFaces.getOrElse(which) { R.drawable.ic_pencil })
         binding.floatNoteButton.contentDescription = QUICK_NOTE_LABELS.getOrElse(which) { "Notes" }
+    }
+
+    /**
+     * Hold the pen button → where do you want to go.
+     *
+     * It used to double as a mode switch: picking an entry also re-pointed the TAP at it and
+     * changed the button's face, so holding felt less like choosing a destination than like
+     * flipping the button between hand notes and text notes — which is exactly what it looked
+     * like from the outside, and why the selector seemed not to appear at all.
+     *
+     * Now the hold only ever chooses where to go THIS time. Tap keeps its one job, and the three
+     * places worth reaching are the three the ledger actually keeps writing in: the note page you
+     * were on, something caught as media, and the typed notes.
+     */
+    private fun showQuickNoteSelector() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.quick_note_selector_title)
+            .setItems(
+                arrayOf(
+                    getString(R.string.quick_note_notes),
+                    getString(R.string.quick_note_media),
+                    getString(R.string.quick_note_text_notes)
+                )
+            ) { _, which ->
+                when (which) {
+                    0 -> openLastNotePage()
+                    1 -> showQuickMediaSelector()
+                    else -> binding.fragmentContent.findNavController().navigate(R.id.action_to_text_notes)
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** Photo and voice are the same gesture — getting a thing down when there isn't time to write. */
+    private fun showQuickMediaSelector() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.quick_note_media)
+            .setItems(
+                arrayOf(
+                    getString(R.string.quick_note_photo),
+                    getString(R.string.quick_note_voice)
+                )
+            ) { _, which -> if (which == 0) startCapture() else requestVoiceGram() }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun runQuickNoteAction(which: Int) {
@@ -443,21 +501,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         // note page you last had open (same memory the menus' "✒ Notes" uses), falling back to
         // today's first page. Hold it instead to switch over to Text Notes.
         binding.floatNoteButton.setOnClickListener { runQuickNoteAction(quickNoteAction()) }
-        binding.floatNoteButton.setOnLongClickListener {
-            // Hold the pen button → a small menu: Text Notes, or catch something into the Ledger.
-            // Voice sits beside the photo because it's the same gesture — getting a thing down
-            // when there isn't time to write it.
-            androidx.appcompat.app.AlertDialog.Builder(this)
-                .setItems(QUICK_NOTE_LABELS) { _, which ->
-                    // The button keeps the face of whatever you picked, so the next one is a tap
-                    // rather than another hold.
-                    setQuickNoteAction(which)
-                    runQuickNoteAction(which)
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-            true
-        }
+        binding.floatNoteButton.setOnLongClickListener { showQuickNoteSelector(); true }
         makeFloatButtonDraggable(binding.floatNoteButton)
         applyQuickNoteFace()
         applyQuickNoteVisibility()
