@@ -374,7 +374,7 @@ abstract class ScreenFragment : Fragment() {
         navWidget.bringToFront()
 
         // Vertical on narrow (phone) screens so it can't collide with the tool pill.
-        cyclePillOnTap(navGrip, navWidget, "nav", "vertical", listOf(navUp, navDown))
+        cyclePillOnTap(navGrip, navWidget, "nav", collapsible = listOf(navUp, navDown))
     }
 
     /**
@@ -735,7 +735,7 @@ abstract class ScreenFragment : Fragment() {
      * there would be nothing left to tap.
      */
     protected fun cyclePillOnTap(
-        grip: View, pill: View, key: String, verticalKey: String,
+        grip: View, pill: View, key: String, verticalKey: String = "${key}_vertical",
         collapsible: List<View> = emptyList(),
         defaultVertical: Boolean = resources.configuration.screenWidthDp < 520,
         alsoOnTap: (() -> Boolean)? = null

@@ -1272,15 +1272,24 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         v.requestLayout()
     }
 
+    /**
+     * Each pill keeps its own orientation.
+     *
+     * They used to share one, so turning the tools turned the navigator with it — which is never
+     * what you meant, since the two sit in different places and get in each other's way in
+     * different directions.
+     */
     private fun applyWidgetOrientation() {
         val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
         val narrow = resources.configuration.screenWidthDp < 520
-        val vertical = prefs.getBoolean("vertical", narrow)
-        val o = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
-        binding.navWidget.orientation = o
-        binding.toolWidget.orientation = o
-        applyGripOrientation(binding.navGrip, vertical)
-        applyGripOrientation(binding.toolGrip, vertical)
+        for ((key, pair) in listOf(
+            "nav" to (binding.navWidget to binding.navGrip),
+            "tool" to (binding.toolWidget to binding.toolGrip)
+        )) {
+            val vertical = prefs.getBoolean("${key}_vertical", narrow)
+            pair.first.orientation = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            applyGripOrientation(pair.second, vertical)
+        }
     }
 
     /**
@@ -1378,20 +1387,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private fun togglePill(which: String) {
         val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
         val key = "${which}_collapsed"
-        val collapsed = prefs.getBoolean(key, false)
         val narrow = resources.configuration.screenWidthDp < 520
-        val vertical = prefs.getBoolean("vertical", narrow)
-
-        // Turn only after this orientation has been seen both open and folded, so each tap
-        // changes exactly one thing and the cycle stays predictable.
-        val nextCollapsed = !collapsed
-        val nextVertical = if (collapsed) !vertical else vertical
-
-        prefs.edit()
-            .putBoolean(key, nextCollapsed)
-            .putBoolean("vertical", nextVertical)
-            .apply()
-        if (nextVertical != vertical) applyWidgetOrientation()
+        val before = prefs.getBoolean("${which}_vertical", narrow)
+        // Shared with every other pill's handle — folds, then turns, one change per tap.
+        val (_, after) = advancePillState(key, "${which}_vertical", narrow)
+        if (after != before) applyWidgetOrientation()
         applyPillCollapse()
     }
 
