@@ -114,9 +114,10 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
 
     /** Horizontal ⇄ vertical pill, per the wrench toggle (persisted). */
     private fun applyArticlePillOrientation() {
+        val vertical = navPrefs().getBoolean("article_pill_vertical", false)
         (binding.artPill as? android.widget.LinearLayout)?.orientation =
-            if (navPrefs().getBoolean("article_pill_vertical", false)) android.widget.LinearLayout.VERTICAL
-            else android.widget.LinearLayout.HORIZONTAL
+            if (vertical) android.widget.LinearLayout.VERTICAL else android.widget.LinearLayout.HORIZONTAL
+        applyGripOrientation(binding.artGrip, vertical)
     }
     private fun tapZonesOn() = navPrefs().getBoolean("tap_zones", false)
     // Default ON, matching the book reader and the articles list. It was the only reading surface

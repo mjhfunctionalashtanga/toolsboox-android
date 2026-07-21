@@ -990,6 +990,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val o = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
         binding.navWidget.orientation = o
         binding.toolWidget.orientation = o
+        applyGripOrientation(binding.navGrip, vertical)
+        applyGripOrientation(binding.toolGrip, vertical)
     }
 
     /**

@@ -133,8 +133,14 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                     if (!dragging && Math.hypot(dx.toDouble(), dy.toDouble()) > slop) dragging = true
                     if (dragging) {
                         val parent = v.parent as android.view.View
-                        v.translationX = (startTx + dx).coerceIn(-v.left.toFloat(), (parent.width - v.right).toFloat())
-                        v.translationY = (startTy + dy).coerceIn(-v.top.toFloat(), (parent.height - v.bottom).toFloat())
+                        // Shared with the pills. This was its own inline copy of the same clamp,
+                        // and the copy was worse: with the limits reversed `coerceIn(min, max)`
+                        // throws rather than pinning, so a button laid out wider than its parent
+                        // took the app down mid-drag instead of merely refusing to move.
+                        v.translationX = (startTx + dx)
+                            .coerceIn(com.toolsboox.ot.PillBounds.range(v.left, v.right, parent.width))
+                        v.translationY = (startTy + dy)
+                            .coerceIn(com.toolsboox.ot.PillBounds.range(v.top, v.bottom, parent.height))
                     }
                     true
                 }

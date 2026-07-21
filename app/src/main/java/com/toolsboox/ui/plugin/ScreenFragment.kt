@@ -273,6 +273,7 @@ abstract class ScreenFragment : Fragment() {
             .getBoolean("vertical", narrow)
         (navWidget as? LinearLayout)?.orientation =
             if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+        applyGripOrientation(navGrip, vertical)
 
         makeDraggable(navGrip, navWidget, "nav") { toggleNavPill(navUp, navDown) }
         applyNavPillCollapse(navUp, navDown)
@@ -569,16 +570,40 @@ abstract class ScreenFragment : Fragment() {
         com.toolsboox.ot.VoiceRecorder.stop(save = true)
     }
 
-    /** Keep [pill] fully inside its parent — translation can never strand it off-screen. */
+    /**
+     * Turn the grip with the pill.
+     *
+     * The grip is drawn as a bar across the pill's short side — 22×44 on a horizontal pill, where
+     * it reads as "take hold here and slide". Flipping the pill to vertical left it at 22×44: a
+     * tall thin sliver at the top of a tall thin pill, no longer distinguishable from the buttons
+     * under it. Hence "missing handle" on a pill whose handle was there the whole time.
+     *
+     * Swapping the two dimensions is the whole fix; the drawable is symmetrical enough that it
+     * reads correctly either way once it is the right shape.
+     */
+    protected fun applyGripOrientation(grip: View, vertical: Boolean) {
+        val d = resources.displayMetrics.density
+        val short = (22 * d).toInt()
+        val long = (44 * d).toInt()
+        grip.layoutParams = grip.layoutParams.apply {
+            width = if (vertical) long else short
+            height = if (vertical) short else long
+        }
+        grip.requestLayout()
+    }
+
+    /**
+     * Keep [pill] within reach — translation can never strand it somewhere you can't get it back
+     * from, and a pill longer than the screen can still be slid to either of its ends.
+     * See [com.toolsboox.ot.PillBounds.range] for why that second half matters on a Palma.
+     */
     private fun clampInParent(pill: View) {
         val parent = pill.parent as? View ?: return
         if (pill.width == 0 || parent.width == 0) return
-        val minTx = -pill.left.toFloat()
-        val maxTx = (parent.width - pill.right).toFloat()
-        val minTy = -pill.top.toFloat()
-        val maxTy = (parent.height - pill.bottom).toFloat()
-        pill.translationX = pill.translationX.coerceIn(minTx, maxTx.coerceAtLeast(minTx))
-        pill.translationY = pill.translationY.coerceIn(minTy, maxTy.coerceAtLeast(minTy))
+        pill.translationX = pill.translationX
+            .coerceIn(com.toolsboox.ot.PillBounds.range(pill.left, pill.right, parent.width))
+        pill.translationY = pill.translationY
+            .coerceIn(com.toolsboox.ot.PillBounds.range(pill.top, pill.bottom, parent.height))
     }
 
     /**

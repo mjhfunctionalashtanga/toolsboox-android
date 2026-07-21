@@ -1189,9 +1189,36 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
 
     /** Apply the persisted pill orientation to the feeds pill (vertical on narrow screens by choice). */
     private fun applyFeedsPillOrientation() {
+        val vertical = prefs().getBoolean("feeds_pill_vertical", false)
         binding.feedsPill.orientation =
-            if (prefs().getBoolean("feeds_pill_vertical", false)) android.widget.LinearLayout.VERTICAL
-            else android.widget.LinearLayout.HORIZONTAL
+            if (vertical) android.widget.LinearLayout.VERTICAL else android.widget.LinearLayout.HORIZONTAL
+        applyGripOrientation(binding.feedsGrip, vertical)
+        keepListClearOfPill()
+    }
+
+    /**
+     * Leave the list room to get out from under the pill.
+     *
+     * The star sits at the right-hand end of every row, and a vertical pill parks over exactly
+     * that column — so the one control the list exists to offer was the one the pill covered. A
+     * horizontal pill does the same to the last row.
+     *
+     * Measured from the pill rather than hard-coded, so it stays right when the pill is flipped,
+     * collapsed or dragged, and `clipToPadding=false` keeps the scroll range whole: rows still
+     * travel the full height, they just come to rest somewhere you can reach them.
+     */
+    private fun keepListClearOfPill() {
+        binding.feedsPill.post {
+            if (!isAdded) return@post
+            val vertical = binding.feedsPill.orientation == android.widget.LinearLayout.VERTICAL
+            val gap = (8 * resources.displayMetrics.density).toInt()
+            val end = if (vertical) binding.feedsPill.width + gap else 0
+            val bottom = if (vertical) 0 else binding.feedsPill.height + gap
+            binding.feedsRecycler.clipToPadding = false
+            binding.feedsRecycler.setPaddingRelative(
+                binding.feedsRecycler.paddingStart, binding.feedsRecycler.paddingTop, end, bottom
+            )
+        }
     }
 
     private fun showFeedSettings() {
