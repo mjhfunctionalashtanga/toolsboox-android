@@ -2021,6 +2021,86 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private fun strokesSignature(strokes: List<Stroke>): String =
         "${strokes.size}:${strokes.sumOf { it.strokePoints.size }}"
 
+    /**
+     * Lift whatever was written in the task strip and file it as a task.
+     *
+     * Runs as the page is left, like the section capture, and for the same reason: the moment you
+     * turn away is the moment you have finished writing, and asking for a button press to confirm
+     * something you have already clearly done is a tax.
+     *
+     * The strokes are DELETED once the item exists — with a tombstone, so the deletion syncs
+     * rather than being resurrected by the next merge. That is the whole point of a write-in
+     * strip: it empties, so the next task has somewhere to go. It is also the risky part, so the
+     * order matters — the item is saved first and the ink removed only if that succeeded, because
+     * ink lost with nothing to show for it is the one outcome there is no way back from.
+     */
+    @kotlin.OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    private fun captureTaskEntry() {
+        if (!::calendarDay.isInitialized) return
+        if (currentNotePage() != null) return               // the strip only exists on the day page
+        val creds = aiCreds() ?: return
+        val all = calendarDay.calendarStrokes[calendarStyle] ?: return
+        fun inside(rect: android.graphics.RectF) = all.filter { s ->
+            val b = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(listOf(s))
+            rect.contains(b.centerX(), b.centerY())
+        }
+        val wordStrokes = inside(com.toolsboox.plugin.calendar.ot.TaskEntry.words)
+        if (wordStrokes.isEmpty()) return
+        val dueStrokes = inside(com.toolsboox.plugin.calendar.ot.TaskEntry.due)
+
+        val appCtx = requireContext().applicationContext
+        val date = currentDate
+        val root = documentsRoot()
+        val locale = this.locale
+
+        kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+            fun read(strokes: List<com.toolsboox.da.Stroke>): String? {
+                if (strokes.isEmpty()) return null
+                val bounds = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
+                    .apply { inset(-20f, -20f) }
+                val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, bounds, 1400)
+                return com.toolsboox.plugin.calendar.nw.VisionOcr
+                    .recognize(bmp, creds.first, creds.second, creds.third)?.trim()?.ifBlank { null }
+            }
+            val text = read(wordStrokes) ?: return@launch
+            val dueOn = com.toolsboox.plugin.calendar.ot.TaskEntry.parseDue(read(dueStrokes), date)
+
+            runCatching {
+                val day = calendarDayService.load(root, date, null, locale)
+                if (com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe.containsTask(day.ledgerItems, text)) {
+                    return@runCatching false
+                }
+                day.ledgerItems.add(
+                    com.toolsboox.plugin.calendar.da.v2.LedgerItem(
+                        id = "hand-" + java.util.UUID.randomUUID().toString().lowercase(),
+                        kind = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
+                        text = text,
+                        date = java.util.Date(
+                            dueOn.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()),
+                        source = "strip",
+                        stage = "todo"
+                    )
+                )
+                // Clear the strip, tombstoned so the deletion survives a merge.
+                val ids = wordStrokes.map { it.strokeId } + dueStrokes.map { it.strokeId }
+                day.calendarStrokes[CalendarDay.DEFAULT_STYLE] =
+                    (day.calendarStrokes[CalendarDay.DEFAULT_STYLE] ?: emptyList())
+                        .filterNot { it.strokeId in ids.toSet() }
+                ids.forEach { day.deletedStrokeIds.add(it.toString()) }
+                calendarDayService.save(root, date, day)
+                true
+            }.onSuccess { added ->
+                if (added != true) return@onSuccess
+                withContext(Dispatchers.Main) {
+                    if (!isAdded) return@withContext
+                    showMessage(getString(R.string.task_entry_filed, text.take(40)), binding.root)
+                    presenter.load(this@CalendarDayFragment, binding, currentDate,
+                        sharedPreferences.getInt("calendarStartHour", 5), locale)
+                }
+            }.onFailure { Timber.w(it, "task strip capture failed") }
+        }
+    }
+
     /** Auto-OCR every TEXT section of the current page in the background (no UI), so section text is
      *  always available without a manual "Capture sections". Skips when the ink is unchanged since
      *  the last capture (a persisted signature) to avoid needless vision calls. Fire-and-forget on
@@ -2653,6 +2733,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // Auto-OCR this page's sections in the background as we leave, so section text is always
         // fresh without a manual capture (skips when the ink is unchanged).
         runCatching { autoCaptureSections() }
+        runCatching { captureTaskEntry() }
         syncPresenter.backgroundSync(this@CalendarDayFragment, UUID.randomUUID())
     }
 

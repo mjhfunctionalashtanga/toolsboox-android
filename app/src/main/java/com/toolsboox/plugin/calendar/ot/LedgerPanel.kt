@@ -42,7 +42,7 @@ data class LedgerPanel(
             }
             null, "default", "0" -> listOf(
                 LedgerPanel("schedule", "Schedules", Kind.TEXT, RectF(20f, 60f, 620f, 1810f)),
-                LedgerPanel("tasks", "Tasks", Kind.TEXT, RectF(684f, 60f, 1384f, 711f)),
+                LedgerPanel("tasks", "Tasks", Kind.TEXT, RectF(684f, 60f, 1384f, 611f)),
                 LedgerPanel("notes", "Notes", Kind.TEXT, RectF(684f, 1040f, 1384f, 1810f))
             )
             else -> listOf(

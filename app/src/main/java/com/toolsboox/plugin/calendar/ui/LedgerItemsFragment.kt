@@ -266,7 +266,17 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             val items = com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe
                 .dedupe(d?.ledgerItems ?: emptyList())
                 .sortedWith(
-                    compareBy({ it.kind != LedgerItem.Kind.TASK }, { it.kind == LedgerItem.Kind.TASK && it.done }, { it.top })
+                    // Soonest first. It used to sort by `top` — where the item happens to sit on
+                    // the page — which is the order you wrote things in, not the order they
+                    // matter in. With the Tasks panel now smaller, what shows without scrolling
+                    // should be what is closest to due. Done still sinks, and events follow
+                    // tasks; ties fall back to position so the page and the list agree.
+                    compareBy(
+                        { it.kind != LedgerItem.Kind.TASK },
+                        { it.kind == LedgerItem.Kind.TASK && it.done },
+                        { it.date.time },
+                        { it.top }
+                    )
                 )
             adapter = LedgerItemAdapter(
                 items, strokes, ::persist, ::onEnterSelection, ::updateSelectionBar, ::assign,
