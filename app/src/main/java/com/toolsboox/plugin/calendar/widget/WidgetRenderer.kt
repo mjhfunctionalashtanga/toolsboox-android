@@ -327,15 +327,15 @@ object WidgetRenderer {
         canvas.drawText(context.getString(R.string.calendar_day_tasks), lo + cew + 60f, to + ceh - 10f, textDefaultWhite)
 
         canvas.drawLine(lo + cew + 50f, to + ceh, lo + 2 * cew + 50f, to + ceh, lineBlack)
-        for (i in 1..10) {   // rows given to the Roots band + write-in strip; see CalendarDayPage
+        for (i in 1..12) {   // four rows given to the Roots band; see CalendarDayPage
             canvas.drawLine(lo + cew + 50f, to + i * ceh, lo + 2 * cew + 50f, to + i * ceh, lineGrey50)
             if (i % 2 == 0) {
                 canvas.drawRect(lo + cew + 50f, to + i * ceh, lo + 2 * cew + 50f, to + i * ceh + ceh, fillGrey20)
             }
             canvas.drawRect(lo + cew + 60f, to + i * ceh + 10f, lo + cew + 90f, to + i * ceh + 40f, lineGrey50)
         }
-        canvas.drawLine(lo + cew + 50f, to + 11 * ceh, lo + 2 * cew + 50f, to + 11 * ceh, lineBlack)
-        canvas.drawLine(lo + cew + 100f, to + ceh, lo + cew + 100f, to + 11 * ceh, lineBlack)
+        canvas.drawLine(lo + cew + 50f, to + 13 * ceh, lo + 2 * cew + 50f, to + 13 * ceh, lineBlack)
+        canvas.drawLine(lo + cew + 100f, to + ceh, lo + cew + 100f, to + 13 * ceh, lineBlack)
 
         // --- Right column: Roots ---
         //

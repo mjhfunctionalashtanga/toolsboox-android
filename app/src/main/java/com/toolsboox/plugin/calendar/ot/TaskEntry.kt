@@ -1,56 +1,24 @@
 package com.toolsboox.plugin.calendar.ot
 
-import android.graphics.RectF
 import java.time.LocalDate
 import java.time.format.TextStyle
 import java.util.Locale
 
 /**
- * Write a task at the foot of the Tasks panel, and say when it's due.
+ * Reading a due date out of handwriting.
  *
- * The Tasks grid is a list of rows, which is a fine way to READ tasks and a poor way to add one:
- * you have to find a free row, and the row you find is wherever there happens to be space rather
- * than where the task belongs. So the last two rows of the panel stop being grid and become a
- * place to write — wide box for the words, narrow box for when — and what lands there is lifted
- * off, filed as a real item with a due date, and the ink cleared for the next one.
+ * This began as a write-in strip at the foot of the Tasks panel — a place to write a task and a
+ * date, lifted off and filed on page-leave. That is gone, and the reasoning is worth keeping:
+ * lassoing a written task and tapping "→ item" already did the same job better. It KEEPS the ink
+ * and links the item to it, rather than deleting handwriting on the strength of an OCR guess; it
+ * shows you the text before committing, so a bad read is caught by a person instead of filed
+ * silently; and it costs no rows. The strip cost two, and every data-loss risk found in the review
+ * lived inside it.
  *
- * Two lines rather than one because handwriting is bigger than type, and a single 50px row is
- * cramped enough that you write small and the recogniser suffers for it.
- *
- * Geometry mirrors [CalendarDayPage]. If the page moves these, this must move with it — they are
- * the same rectangles seen from two sides, and nothing in the type system says so.
+ * What survives is the useful half: the date. Write "call Dad fri" and the "fri" becomes the due
+ * date rather than part of the task's name.
  */
 object TaskEntry {
-
-    private const val CEW = 600f
-    private const val CEH = 50f
-    private const val LO = 20f
-    private val TO = (1872f - 35 * CEH) / 2f
-
-    /** Rows 1..[GRID_ROWS] are the readable grid; the two below are where you write. */
-    const val GRID_ROWS = 10
-
-    private val LEFT = LO + CEW + 50f
-    private val RIGHT = LO + 2 * CEW + 50f
-
-    /** Top of the write-in strip: straight after the last grid row. */
-    private val STRIP_TOP = TO + (GRID_ROWS + 1) * CEH
-    private val STRIP_BOTTOM = STRIP_TOP + 2 * CEH
-
-    /** Where the "due by" cell starts — the right quarter of the strip. */
-    private val DUE_LEFT = RIGHT - 190f
-
-    /** The whole write-in strip (words + due), for drawing its border. */
-    val strip: RectF get() = RectF(LEFT, STRIP_TOP, RIGHT, STRIP_BOTTOM)
-
-    /** Where the task's words go. */
-    val words: RectF get() = RectF(LEFT, STRIP_TOP, DUE_LEFT, STRIP_BOTTOM)
-
-    /** Where "tue", "3/8", "fri" goes. Optional — a task with no date is due today. */
-    val due: RectF get() = RectF(DUE_LEFT, STRIP_TOP, RIGHT, STRIP_BOTTOM)
-
-    /** True when a point in page design space falls inside the write-in strip. */
-    fun contains(x: Float, y: Float): Boolean = strip.contains(x, y)
 
     /**
      * Read a hand-written due date.
@@ -113,5 +81,38 @@ object TaskEntry {
         }
 
         return today
+    }
+
+    /**
+     * Split a trailing date off a task's words.
+     *
+     * "call Dad fri" is one gesture and two facts. Reading the last word or two as a date, when it
+     * IS one, means the date can be written where the task is written rather than in a separate
+     * box — which was the only thing the write-in strip did better than a lasso.
+     *
+     * Returns the text with the date removed and the date itself, or the text unchanged and null.
+     * Unchanged is the common case and must stay cheap and safe: `parseDue` answers "today" for
+     * anything it doesn't recognise, so a word only counts as a date when it resolves to some
+     * OTHER day. That keeps ordinary words — "call Dad", "email Bob" — entirely alone.
+     */
+    fun splitTrailingDue(text: String, today: LocalDate = LocalDate.now()): Pair<String, LocalDate?> {
+        val words = text.trim().split(Regex("\\s+"))
+        if (words.size < 2) return text to null
+        // Try the last two words, then the last one: "in 3 days" is a date, "days" alone is not.
+        for (take in 2 downTo 1) {
+            if (words.size <= take) continue
+            val tail = words.takeLast(take).joinToString(" ")
+            val parsed = parseDue(tail, today)
+            if (parsed != today) {
+                var head = words.dropLast(take)
+                // Drop a dangling preposition the date was hanging off: "meet Sam on tuesday".
+                // "in" too: "book flights in 3 days" reads its date as the last TWO words, which
+                // leaves the "in" behind on the task's name.
+                if (head.lastOrNull()?.lowercase() in setOf("on", "by", "due", "in")) head = head.dropLast(1)
+                if (head.isEmpty()) return text to null      // the whole thing was a date; keep it
+                return head.joinToString(" ") to parsed
+            }
+        }
+        return text to null
     }
 }

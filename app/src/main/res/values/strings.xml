@@ -428,9 +428,6 @@
     <string name="ledger_educate_looking_up">Looking it up…</string>
     <string name="ledger_ink_task_label">Write a task by hand — ＋ adds it</string>
     <string name="calendar_day_roots">🌿 Roots</string>
-    <string name="calendar_day_task_entry_hint">write a task…</string>
-    <string name="calendar_day_task_due_hint">due by</string>
-    <string name="task_entry_filed">🗒 Task filed: %1$s</string>
     <string name="spiral_lead_circling">you have been circling %1$s</string>
     <string name="spiral_lead_plain">come back around</string>
     <!-- Two states, so the row names the ACTION rather than opening a chooser. -->

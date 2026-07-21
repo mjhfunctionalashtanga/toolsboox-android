@@ -3,6 +3,7 @@ package com.toolsboox
 import com.toolsboox.plugin.calendar.ot.TaskEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -102,15 +103,52 @@ class TaskEntryTest {
         assertEquals(LocalDate.of(2026, 8, 3), due("3"))     // gone → next month
     }
 
-    // --- geometry -------------------------------------------------------------------------------
-    //
-    // Only the row count is asserted here. The rects are `android.graphics.RectF`, which is a
-    // stub under plain JUnit — asserting on it would test the stub returning zero, not the
-    // layout, and a test that passes for the wrong reason is worse than no test. The geometry is
-    // checked against the drawn page on the device instead.
+    // --- splitting a date off the words --------------------------------------------------------
 
     @Test
-    fun `the grid leaves room for a two-row strip`() {
-        assertTrue(TaskEntry.GRID_ROWS in 6..14)
+    fun `a trailing weekday becomes the due date`() {
+        val (text, due) = TaskEntry.splitTrailingDue("call Dad fri", today)
+        assertEquals("call Dad", text)
+        assertEquals(LocalDate.of(2026, 7, 24), due)
+    }
+
+    @Test
+    fun `a dangling preposition goes with the date`() {
+        val (text, due) = TaskEntry.splitTrailingDue("meet Sam on tuesday", today)
+        assertEquals("meet Sam", text)
+        assertEquals(LocalDate.of(2026, 7, 28), due)
+    }
+
+    @Test
+    fun `two words that are one date are read together`() {
+        val (text, due) = TaskEntry.splitTrailingDue("book flights in 3 days", today)
+        assertEquals("book flights", text)
+        assertEquals(today.plusDays(3), due)
+    }
+
+    @Test
+    fun `ordinary words are left entirely alone`() {
+        // The common case, and the one that must never misfire: `parseDue` answers "today" for
+        // anything it doesn't recognise, so only a word resolving to some OTHER day counts.
+        for (t in listOf("call Dad", "email Bob", "get bent", "fix the shoulder thing")) {
+            val (text, due) = TaskEntry.splitTrailingDue(t, today)
+            assertEquals(t, text)
+            assertNull(due)
+        }
+    }
+
+    @Test
+    fun `a task that is nothing but a date keeps its words`() {
+        // "friday" alone is a task called friday, not an empty task due Friday.
+        val (text, due) = TaskEntry.splitTrailingDue("friday", today)
+        assertEquals("friday", text)
+        assertNull(due)
+    }
+
+    @Test
+    fun `a single word is never split`() {
+        val (text, due) = TaskEntry.splitTrailingDue("dentist", today)
+        assertEquals("dentist", text)
+        assertNull(due)
     }
 }

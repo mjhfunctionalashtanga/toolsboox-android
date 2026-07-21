@@ -101,8 +101,6 @@ class CalendarDayPage {
             val schedulesText = context.getString(R.string.calendar_day_schedules)
             val tasksText = context.getString(R.string.calendar_day_tasks)
             val rootsText = context.getString(R.string.calendar_day_roots)
-            val taskEntryHint = context.getString(R.string.calendar_day_task_entry_hint)
-            val taskDueHint = context.getString(R.string.calendar_day_task_due_hint)
             val notesText = context.getString(R.string.calendar_day_notes)
             val allDayText = context.getString(R.string.calendar_day_all_day)
             val locale = calendarDay.locale
@@ -262,13 +260,14 @@ class CalendarDayPage {
 
             // Tasks grid.
             //
-            // Ten rows, not sixteen: four to the Roots band below, two to the write-in
-            // strip under the grid. See TaskEntry for the strip. — the
+            // Twelve rows, not sixteen: four go to the Roots band below. There was briefly a
+            // write-in strip taking two more — lassoing a written task and tapping "→ item" does
+            // the same job without deleting your ink, so the rows came back. — the
             // spiral's one line sits where you already look when you're deciding what to do,
             // between what you have to do and what you've been reading. At the foot of the page
             // it was out of the way in the sense of being ignorable.
             canvas.drawLine(lo + cew + 50.0f, to + ceh, lo + 2 * cew + 50.0f, to + ceh, Creator.lineDefaultBlack)
-            for (i in 1..10) {
+            for (i in 1..12) {
                 canvas.drawLine(
                     lo + cew + 50.0f, to + i * ceh, lo + 2 * cew + 50.0f, to + i * ceh,
                     Creator.lineDefaultGrey50
@@ -285,36 +284,17 @@ class CalendarDayPage {
                 )
             }
             canvas.drawLine(
-                lo + cew + 50.0f, to + 11 * ceh, lo + 2 * cew + 50.0f, to + 11 * ceh,
+                lo + cew + 50.0f, to + 13 * ceh, lo + 2 * cew + 50.0f, to + 13 * ceh,
                 Creator.lineDefaultBlack
             )
             canvas.drawLine(
-                lo + cew + 100.0f, to + ceh, lo + cew + 100.0f, to + 11 * ceh,
+                lo + cew + 100.0f, to + ceh, lo + cew + 100.0f, to + 13 * ceh,
                 Creator.lineDefaultBlack
             )
 
             // Roots band: title bar, then empty paper the live line is drawn over. The text
             // itself is a view, not template ink, because it changes with the ledger and the
             // template is baked per day.
-            // Write-in strip: two rows under the grid, dashed so it reads as a place to write
-            // rather than another row to tick. A narrow "due by" cell on the right.
-            val stripDash = android.graphics.Paint().apply {
-                style = android.graphics.Paint.Style.STROKE
-                color = 0x66000000
-                strokeWidth = 2.0f
-                isAntiAlias = true
-                pathEffect = android.graphics.DashPathEffect(floatArrayOf(12.0f, 8.0f), 0.0f)
-            }
-            val hintPaint = android.graphics.Paint().apply {
-                color = 0x77000000; textSize = 22.0f; isAntiAlias = true
-            }
-            val strip = com.toolsboox.plugin.calendar.ot.TaskEntry.strip
-            val dueCell = com.toolsboox.plugin.calendar.ot.TaskEntry.due
-            canvas.drawRoundRect(strip, 10.0f, 10.0f, stripDash)
-            canvas.drawLine(dueCell.left, strip.top + 6.0f, dueCell.left, strip.bottom - 6.0f, stripDash)
-            canvas.drawText(taskEntryHint, strip.left + 12.0f, strip.top + 26.0f, hintPaint)
-            canvas.drawText(taskDueHint, dueCell.left + 12.0f, strip.top + 26.0f, hintPaint)
-
             canvas.drawRect(lo + cew + 50.0f, to + 13 * ceh, lo + 2 * cew + 50.0f, to + 14 * ceh, Creator.fillGrey80)
             canvas.drawText(rootsText, lo + cew + 60.0f, to + 14 * ceh - 10.0f, Creator.textDefaultWhite)
             canvas.drawLine(

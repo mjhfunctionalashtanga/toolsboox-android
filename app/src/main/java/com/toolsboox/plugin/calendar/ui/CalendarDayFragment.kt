@@ -1137,9 +1137,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         return (if (space > limit / 2) window.take(space) else window).trimEnd(',', ';', ':', ' ') + "…"
     }
 
-    /** Guards the task-strip capture: it spans two network calls and must not overlap itself. */
-    private val taskEntryCapturing = java.util.concurrent.atomic.AtomicBoolean(false)
-
     /** What the spiral chose, and its text — kept so the line can be re-fitted on zoom. */
     private var spiralPick: Pair<
         com.toolsboox.plugin.calendar.ot.Spiral.Pick<com.toolsboox.plugin.chat.da.CorpusSnippet>,
@@ -1521,9 +1518,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     val rect = android.graphics.RectF(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
                     val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600)
                     val t = com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third)
-                    if (!t.isNullOrBlank())
-                        com.toolsboox.plugin.calendar.ot.LedgerExtractor.itemWithText(strokes, kind, t, "lasso-ai", dueDate())
-                    else null
+                    if (!t.isNullOrBlank()) {
+                        // "call Dad fri" is one gesture and two facts. Reading a trailing date out
+                        // of the words is the one thing the write-in strip did better than a
+                        // lasso; doing it here means the strip isn't needed for it.
+                        val (words, due) = com.toolsboox.plugin.calendar.ot.TaskEntry
+                            .splitTrailingDue(t.trim(), currentDate)
+                        val on = due?.let {
+                            java.util.Date(it.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli())
+                        } ?: dueDate()
+                        com.toolsboox.plugin.calendar.ot.LedgerExtractor
+                            .itemWithText(strokes, kind, words, "lasso-ai", on)
+                    } else null
                 } else null
             } ?: com.toolsboox.plugin.calendar.ot.LedgerExtractor.extractStrokes(strokes, kind, "lasso", dueDate())
 
@@ -2109,121 +2115,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     /** A cheap signature of a page's ink so we only re-OCR when it actually changed. */
     private fun strokesSignature(strokes: List<Stroke>): String =
         "${strokes.size}:${strokes.sumOf { it.strokePoints.size }}"
-
-    /**
-     * Lift whatever was written in the task strip and file it as a task.
-     *
-     * Runs as the page is left, like the section capture, and for the same reason: the moment you
-     * turn away is the moment you have finished writing, and asking for a button press to confirm
-     * something you have already clearly done is a tax.
-     *
-     * The strokes are DELETED once the item exists — with a tombstone, so the deletion syncs
-     * rather than being resurrected by the next merge. That is the whole point of a write-in
-     * strip: it empties, so the next task has somewhere to go. It is also the risky part, so the
-     * order matters — the item is saved first and the ink removed only if that succeeded, because
-     * ink lost with nothing to show for it is the one outcome there is no way back from.
-     */
-    @kotlin.OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-    private fun captureTaskEntry() {
-        if (!::calendarDay.isInitialized) return
-        if (currentNotePage() != null) return               // the strip only exists on the day page
-        // TODAY only.
-        //
-        // The Tasks grid used to be sixteen rows and is now ten, so on any older day the ink that
-        // sits where the strip now is was written as an ordinary task in rows 11-13. Capturing on
-        // an old page would OCR that handwriting and delete it — a whole back-catalogue quietly
-        // rewritten by the act of opening a day and leaving it. The strip is a thing you write in
-        // now; there is no reason to read it on a page from March.
-        if (currentDate != LocalDate.now()) return
-        val creds = aiCreds() ?: return
-        // One at a time. This does two network round-trips between reading the day and writing it,
-        // and a second run overlapping the first would load the same file, then overwrite the
-        // first one's save — losing a task AND its tombstones.
-        if (!taskEntryCapturing.compareAndSet(false, true)) return
-        // The SAME stroke list that gets written back. Reading `calendarStyle` and writing
-        // DEFAULT_STYLE meant that on a non-default style the ids came from one list and the
-        // removal ran over another: the task filed, the ink tombstoned, and the strip never seen
-        // to clear.
-        val style = CalendarDay.DEFAULT_STYLE
-        val all = calendarDay.calendarStrokes[style]
-        if (all.isNullOrEmpty()) { taskEntryCapturing.set(false); return }
-        fun inside(rect: android.graphics.RectF) = all.filter { s ->
-            val b = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(listOf(s))
-            rect.contains(b.centerX(), b.centerY())
-        }
-        val wordStrokes = inside(com.toolsboox.plugin.calendar.ot.TaskEntry.words)
-        if (wordStrokes.isEmpty()) { taskEntryCapturing.set(false); return }
-        val dueStrokes = inside(com.toolsboox.plugin.calendar.ot.TaskEntry.due)
-
-        val date = currentDate
-        val root = documentsRoot()
-        val locale = this.locale
-
-        kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
-            try {
-                fun read(strokes: List<com.toolsboox.da.Stroke>): String? {
-                    if (strokes.isEmpty()) return null
-                    val bounds = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
-                        .apply { inset(-20f, -20f) }
-                    val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, bounds, 1400)
-                    return com.toolsboox.plugin.calendar.nw.VisionOcr
-                        .recognize(bmp, creds.first, creds.second, creds.third)?.trim()?.ifBlank { null }
-                }
-                val text = read(wordStrokes) ?: return@launch
-                // Only delete ink we actually READ. `?: return` let anything non-blank through —
-                // "~", "e", a row of dots — and the strokes were removed and tombstoned on the
-                // strength of it, permanently, on every synced device. `isSubstantial` is the
-                // same filter the corpus uses to tell a thought from OCR mud.
-                if (!com.toolsboox.plugin.calendar.ot.Spiral.isSubstantial(text) && text.length < 12) {
-                    Timber.i("task strip: not confident in %s — leaving the ink alone", text)
-                    return@launch
-                }
-                val dueOn = com.toolsboox.plugin.calendar.ot.TaskEntry.parseDue(read(dueStrokes), date)
-
-                runCatching {
-                    val day = calendarDayService.load(root, date, null, locale)
-                    val already = com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe
-                        .containsTask(day.ledgerItems, text)
-                    if (!already) {
-                        day.ledgerItems.add(
-                            com.toolsboox.plugin.calendar.da.v2.LedgerItem(
-                                id = "hand-" + java.util.UUID.randomUUID().toString().lowercase(),
-                                kind = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
-                                text = text,
-                                date = java.util.Date(
-                                    dueOn.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()),
-                                source = "strip",
-                                stage = "todo"
-                            )
-                        )
-                    }
-                    // Clear the strip either way. When the task was already there, returning early
-                    // left the ink in place — so every subsequent page-leave re-ran two paid vision
-                    // calls on it, forever, with nothing to show. The words are filed; the strip's
-                    // job is to be empty for the next one.
-                    val ids = (wordStrokes.map { it.strokeId } + dueStrokes.map { it.strokeId }).toSet()
-                    day.calendarStrokes[style] =
-                        (day.calendarStrokes[style] ?: emptyList()).filterNot { it.strokeId in ids }
-                    ids.forEach { day.deletedStrokeIds.add(it.toString()) }
-                    calendarDayService.save(root, date, day)
-                    !already
-                }.onSuccess { added ->
-                    withContext(Dispatchers.Main) {
-                        // isAdded stays true for a fragment on the back stack with its view gone —
-                        // and this fires from onPause, which is exactly then.
-                        if (!isResumed || !isAdded) return@withContext
-                        if (added == true) {
-                            showMessage(getString(R.string.task_entry_filed, text.take(40)), binding.root)
-                        }
-                        presenter.load(this@CalendarDayFragment, binding, currentDate,
-                            sharedPreferences.getInt("calendarStartHour", 5), locale)
-                    }
-                }.onFailure { Timber.w(it, "task strip capture failed") }
-            } finally {
-                taskEntryCapturing.set(false)
-            }
-        }
-    }
 
     /** Auto-OCR every TEXT section of the current page in the background (no UI), so section text is
      *  always available without a manual "Capture sections". Skips when the ink is unchanged since
@@ -2861,7 +2752,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // Auto-OCR this page's sections in the background as we leave, so section text is always
         // fresh without a manual capture (skips when the ink is unchanged).
         runCatching { autoCaptureSections() }
-        runCatching { captureTaskEntry() }
         syncPresenter.backgroundSync(this@CalendarDayFragment, UUID.randomUUID())
     }
 

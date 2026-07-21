@@ -48,10 +48,8 @@ data class LedgerPanel(
                 // never read, and running 114 past the right edge over blank paper. The schedule
                 // rect was right, which is why this went unnoticed.
                 LedgerPanel("schedule", "Schedules", Kind.TEXT, RectF(20f, 60f, 620f, 1810f)),
-                // Bottom is the GRID's last line (611), not the panel's. Below it is the write-in
-                // strip, and TaskEntry already lifts that on page-leave — an extractor that also
-                // covered it would file the same handwriting twice.
-                LedgerPanel("tasks", "Tasks", Kind.TEXT, RectF(670f, 60f, 1270f, 611f)),
+                // Bottom is the grid's last line (13*ceh), where the Roots band begins.
+                LedgerPanel("tasks", "Tasks", Kind.TEXT, RectF(670f, 60f, 1270f, 711f)),
                 LedgerPanel("notes", "Notes", Kind.TEXT, RectF(670f, 1011f, 1270f, 1811f))
             )
             else -> listOf(
