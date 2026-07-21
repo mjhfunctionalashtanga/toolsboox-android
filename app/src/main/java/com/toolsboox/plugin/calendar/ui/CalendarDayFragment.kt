@@ -1509,10 +1509,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val title = if (adding) getString(R.string.ledger_selection_add_to)
             else getString(R.string.ledger_selection_create)
 
+        // ADD TO always asks WHICH one — that is the entire difference from Create, and a
+        // half-built version of it that silently made a new card was worse than not having it.
         val actions: List<Pair<String, () -> Unit>> = if (adding) listOf(
-            "🗒  Task" to { addSelectionToTaskBoard(strokes) },
-            "📆  Event" to { createLedgerItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) },
-            "🃏  Gram" to { addSelectionToClippings(strokes) },
+            "🗒  Task" to { addSelectionToExistingItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK) },
+            "📆  Event" to { addSelectionToExistingItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) },
+            "🃏  Gram" to { addSelectionToPickings(strokes) },
             "🎬  A/V gram" to { recordAvGram() },
             "❝  Picking" to { addSelectionToPickings(strokes) }
         ) else listOf(
@@ -1520,7 +1522,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             "📆  Event" to { createLedgerItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) },
             "🃏  Gram" to { gramStudioFromSelection(strokes) },
             "🎬  A/V gram" to { recordAvGram() },
-            "❝  Picking" to { addSelectionToPickings(strokes) }
+            "❝  Picking" to { createPickingFromSelection(strokes) }
         )
 
         showIconMenu(title, listOf<Pair<String, () -> Unit>>(
@@ -1535,27 +1537,69 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         ))
     }
 
-    /** Add-to-task: the circled words onto an existing board, as a card carrying its own ink. */
-    private fun addSelectionToTaskBoard(strokes: List<com.toolsboox.da.Stroke>) {
-        val bmp = renderSelection(strokes) ?: return
-        val baos = java.io.ByteArrayOutputStream()
-        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
-        val item = com.toolsboox.plugin.calendar.da.v2.LedgerItem(
-            id = "hand-" + java.util.UUID.randomUUID().toString().lowercase(),
-            kind = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
-            text = "",
-            date = dueDate(),
-            crop = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP),
-            display = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Display.INK,
-            source = "lasso",
-            stage = "todo"
-        )
-        calendarDay.ledgerItems.add(item)
-        presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
-        lifecycleScope.launch(Dispatchers.IO) {
-            com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), item)
+    /**
+     * Add to an EXISTING task or event: pick which one, and the circled ink becomes its face.
+     *
+     * A task you wrote by hand and a task already on the list are the same task — this is how the
+     * handwriting gets attached to it, rather than making a second one that says the same thing.
+     */
+    private fun addSelectionToExistingItem(
+        strokes: List<com.toolsboox.da.Stroke>,
+        kind: com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind
+    ) {
+        val candidates = calendarDay.ledgerItems.filter { it.kind == kind && !it.done }
+        if (candidates.isEmpty()) {
+            showMessage(getString(R.string.ledger_selection_nothing_to_add_to), binding.root); return
         }
-        showMessage(getString(R.string.ledger_selection_added_task), binding.root)
+        val bmp = renderSelection(strokes) ?: return
+        val labels = candidates.map { it.text.ifBlank { getString(R.string.ledger_selection_handwritten) }.take(50) }
+        AlertDialog.Builder(requireContext())
+            .setTitle(getString(R.string.ledger_selection_add_to))
+            .setItems(labels.toTypedArray()) { _, which ->
+                val target = candidates[which]
+                val baos = java.io.ByteArrayOutputStream()
+                bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)   // ink: hard edges
+                val i = calendarDay.ledgerItems.indexOfFirst { it.id == target.id }
+                if (i < 0) return@setItems
+                calendarDay.ledgerItems[i] = target.copy(
+                    crop = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP),
+                    display = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Display.INK
+                )
+                presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+                showMessage(getString(R.string.ledger_selection_added_to, labels[which]), binding.root)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * CREATE a picking: a new sheet with this on it, rather than the "which board?" chooser.
+     *
+     * Create and Add to differ by exactly one question, and asking it in both made Create the
+     * longer of the two — the opposite of what the words promise.
+     */
+    private fun createPickingFromSelection(strokes: List<com.toolsboox.da.Stroke>) {
+        val bmp = renderSelection(strokes) ?: return
+        val ctx = requireContext()
+        val input = android.widget.EditText(ctx).apply {
+            hint = getString(R.string.ledger_selection_pickings_name); setSingleLine()
+        }
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val box = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
+        }
+        AlertDialog.Builder(ctx)
+            .setTitle(getString(R.string.ledger_selection_new_pickings))
+            .setView(box)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val page = com.toolsboox.plugin.calendar.ot.PickingsStore
+                    .add(ctx, currentDate, input.text.toString().trim())
+                com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                    calendarDayService, documentsRoot(), bmp, currentDate, page.key)
+                CalendarNavigator.toDayNote(this, currentDate, page.key)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     /** The circled ink, rendered as a card, onto a Pickings board of your choosing. */
@@ -3132,9 +3176,17 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 java.time.format.DateTimeFormatter.ofPattern(
                     if (start.toLocalDate() == end.toLocalDate()) "HH:mm" else "EEE d MMM · HH:mm"))
         }
+        // Where first, after when. An appointment you can't act on is a notification, and the
+        // address is usually the only thing standing between the two.
         val body = listOfNotNull(
             when_,
-            event.description.trim().ifBlank { null }
+            event.location.ifBlank { null }?.let { "📍  " + it },
+            event.calendarName.ifBlank { null }?.let { "🗓  " + it },
+            event.organizer.ifBlank { null }
+                ?.takeIf { it.contains("@") || it.contains(" ") }
+                ?.let { "👤  " + it },
+            event.description.trim()
+                .takeIf { it.isNotBlank() && it != "-no-description-" }
         ).joinToString("\n\n")
 
         AlertDialog.Builder(ctx)

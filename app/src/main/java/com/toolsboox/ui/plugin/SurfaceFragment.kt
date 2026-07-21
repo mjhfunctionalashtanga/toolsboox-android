@@ -1293,13 +1293,28 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     override fun onModalDismissed() {
-        resumeRawInkNow()
+        // Deferred and forced: past the dismissing tap so its ACTION_UP can't land on a
+        // re-enabled raw session and paint a stray dot (the same mechanism CUT documents below),
+        // and past the selection guard so the pen never stays dead after a lasso menu.
+        provideSurfaceView().removeCallbacks(forcedResumeRunnable)
+        provideSurfaceView().postDelayed(forcedResumeRunnable, 250L)
     }
 
-    /** Re-enable the hardware pen if it's paused and no menu is active. Idempotent. */
-    private fun resumeRawInkNow() {
+    private val forcedResumeRunnable = Runnable { resumeRawInkNow(force = true) }
+
+    /**
+     * Re-enable the hardware pen if it's paused and no menu is active. Idempotent.
+     *
+     * [force] ignores the selection guard. A menu opened OVER a live lasso selection has to resume
+     * on dismiss regardless: the guard exists so a selection interaction can hold the pen off
+     * mid-flight, but on the menu path it meant `rawInkPausedForMenu` stayed true and the pen went
+     * dead — the menu closed and the stylus simply stopped working, with nothing on screen to say
+     * why. Getting out of it meant tapping the page, which resumed the pen and painted a dot with
+     * the same tap.
+     */
+    private fun resumeRawInkNow(force: Boolean = false) {
         if (!rawInkPausedForMenu) return
-        if (hasSelection || pasteMode || selectionMode) return
+        if (!force && (hasSelection || pasteMode || selectionMode)) return
         touchHelper?.setRawDrawingEnabled(true)
         touchHelper?.isRawDrawingRenderEnabled = true
         rawInkPausedForMenu = false

@@ -432,7 +432,11 @@
     <string name="ledger_selection_do">Do…</string>
     <string name="ledger_selection_switch_add">⇄  Switch to: Add to…</string>
     <string name="ledger_selection_switch_create">⇄  Switch to: Create…</string>
-    <string name="ledger_selection_added_task">🗒 Added as a task card</string>
+    <string name="ledger_selection_nothing_to_add_to">Nothing on this day to add it to yet</string>
+    <string name="ledger_selection_handwritten">(handwritten)</string>
+    <string name="ledger_selection_added_to">🗒 Added to %1$s</string>
+    <string name="ledger_selection_pickings_name">Pickings name</string>
+    <string name="ledger_selection_new_pickings">New pickings</string>
     <string name="ledger_selection_clipped">📋 Saved to Clippings</string>
     <string name="calendar_day_untitled_event">Event</string>
     <string name="calendar_day_event_to_task">Make a task</string>
