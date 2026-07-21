@@ -1545,7 +1545,20 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             "❝  Picking" to { createPickingFromSelection(strokes) }
         )
 
-        showIconMenu(title, listOf<Pair<String, () -> Unit>>(
+        // If this handwriting ALREADY became something, say so first.
+        //
+        // The link was stored one way only: the item keeps the strokeIds, and the page keeps no
+        // idea that its ink now stands for a task. So circling the words you turned into a task
+        // offered to make a second one, and the only wired direction was the destructive one —
+        // erase the ink and the item goes with it, silently.
+        val already = itemsMadeFrom(strokes)
+        val existing: List<Pair<String, () -> Unit>> = already.take(3).map { item ->
+            val what = if (item.kind == com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) "event" else "task"
+            val words = item.text.ifBlank { getString(R.string.ledger_selection_handwritten) }.take(40)
+            "🕸  Already a $what · $words" to { showItemRhizome(item) }
+        }
+
+        showIconMenu(title, existing + listOf<Pair<String, () -> Unit>>(
             flip to {
                 selectionAddMode = !adding
                 showSelectionMenu(strokes, !adding)
@@ -1555,6 +1568,25 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             "🎓  Educate me" to { educateFromSelection(strokes) },
             "🔍  Find in Ledger" to { findInLedgerFromSelection(strokes) }
         ))
+    }
+
+    /** The tasks or events these strokes were turned into — the back-pointer nothing else reads. */
+    private fun itemsMadeFrom(strokes: List<com.toolsboox.da.Stroke>): List<com.toolsboox.plugin.calendar.da.v2.LedgerItem> {
+        if (!::calendarDay.isInitialized || strokes.isEmpty()) return emptyList()
+        val ids = strokes.map { it.strokeId.toString() }.toSet()
+        return calendarDay.ledgerItems.filter { item -> item.strokeIds.any { it in ids } }
+    }
+
+    /** Walk from the ink to what it became, and on to everything that joins it. */
+    private fun showItemRhizome(item: com.toolsboox.plugin.calendar.da.v2.LedgerItem) {
+        val uri = com.toolsboox.plugin.calendar.ot.LegacyEdges.adopt(requireContext(), item, currentDate)
+        findNavController().navigate(
+            R.id.action_to_ledger_rhizome,
+            androidx.core.os.bundleOf(
+                LedgerRhizomeFragment.ARG_URI to uri,
+                LedgerRhizomeFragment.ARG_LABEL to item.text.ifBlank { getString(R.string.ledger_selection_handwritten) }
+            )
+        )
     }
 
     /**
