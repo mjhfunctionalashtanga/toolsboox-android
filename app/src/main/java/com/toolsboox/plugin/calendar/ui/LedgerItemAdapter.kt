@@ -32,7 +32,9 @@ class LedgerItemAdapter(
     private val resolveContact: (String) -> Contact? = { null },
     private val onReadOnlyTap: (LedgerItem) -> Unit = {},
     /** Long-press → open the card behind the row, so a task isn't a dead end of text. */
-    private val onOpenCard: (LedgerItem) -> Unit = {}
+    private val onOpenCard: (LedgerItem) -> Unit = {},
+    /** Long-press → everything this task joins, asked from the task's own end. */
+    private val onShowRhizome: (LedgerItem) -> Unit = {}
 ) : RecyclerView.Adapter<LedgerItemAdapter.Holder>() {
 
     /** Ids of read-only rows (dated Site cards folded into the timeline): inert to
@@ -166,10 +168,11 @@ class LedgerItemAdapter(
         holder.itemView.setOnLongClickListener {
             val ctx = holder.itemView.context
             androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-                .setItems(arrayOf("🗂  Open card", "☑  Select rows…")) { _, which ->
+                .setItems(arrayOf("🗂  Open card", "🕸  Its rhizome", "☑  Select rows…")) { _, which ->
                     when (which) {
                         0 -> onOpenCard(e)
-                        1 -> startSelection(e)
+                        1 -> onShowRhizome(e)
+                        2 -> startSelection(e)
                     }
                 }
                 .setNegativeButton(android.R.string.cancel, null)

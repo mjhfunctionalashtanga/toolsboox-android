@@ -74,7 +74,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         binding = FragmentLedgerItemsBinding.bind(view)
 
         adapter = LedgerItemAdapter(emptyList(), emptyMap(), ::persist, ::onEnterSelection, ::updateSelectionBar,
-            onOpenCard = ::openCard)
+            onOpenCard = ::openCard, onShowRhizome = ::showRhizome)
         binding.itemsRecycler.layoutManager = LinearLayoutManager(requireContext())
         binding.itemsRecycler.adapter = adapter
         binding.itemsRecycler.addItemDecoration(DividerItemDecoration(requireContext(), DividerItemDecoration.VERTICAL))
@@ -890,6 +890,26 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    /**
+     * Everything this task joins.
+     *
+     * The pointers it already carries — who it's for, the page it came off, the board it sits on
+     * — are said as edges on the way in. Idempotent, and it leaves the original fields untouched,
+     * so this is the compatibility bridge rather than a migration.
+     */
+    private fun showRhizome(item: LedgerItem) {
+        val uri = com.toolsboox.plugin.calendar.ot.LegacyEdges.adopt(
+            requireContext(), item, itemSourceDay[item.id]
+        )
+        findNavController().navigate(
+            R.id.action_to_ledger_rhizome,
+            androidx.core.os.bundleOf(
+                LedgerRhizomeFragment.ARG_URI to uri,
+                LedgerRhizomeFragment.ARG_LABEL to item.text.ifBlank { "(handwritten)" }
+            )
+        )
     }
 
     private fun assign(item: LedgerItem) {
