@@ -4795,57 +4795,18 @@ abstract class SurfaceFragment : ScreenFragment() {
      * band) and its points sweep most of the way around (angular coverage) — neither of
      * which a shaky hand breaks, unlike the old turning-consistency ratio.
      */
+    /**
+     * Delegates to [com.toolsboox.ot.RingFit], which normalises by the bounding box before
+     * measuring — so a loop drawn round a short wide thing (a row of the Tasks panel) reads as a
+     * ring, which the old centroid-radius fit could never allow. See RingFit for why.
+     */
     private fun classifyCircle(points: List<StrokePoint>): CircleFit {
-        if (points.size < GESTURE_MIN_POINTS) return CircleFit(false, false, false, 0f, 0f, 0f, 0f)
-        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
-        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
-        var sumX = 0f; var sumY = 0f
-        for (p in points) {
-            if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x
-            if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y
-            sumX += p.x; sumY += p.y
-        }
-        val bboxDiag = hypot(maxX - minX, maxY - minY)
-        val sizeOk = bboxDiag >= GESTURE_MIN_CIRCLE_DIAG
-        val cx = sumX / points.size; val cy = sumY / points.size
-
-        var sumR = 0f
-        val radii = FloatArray(points.size)
-        for (i in points.indices) {
-            val r = hypot(points[i].x - cx, points[i].y - cy)
-            radii[i] = r; sumR += r
-        }
-        val rBar = sumR / points.size
-        if (rBar < 1f) return CircleFit(false, sizeOk, false, 0f, 0f, 0f, bboxDiag)
-
-        // (a) radial band: how many points sit at ~r̄.
-        val band = GESTURE_CIRCLE_BAND * rBar
-        val inBand = radii.count { abs(it - rBar) <= band }
-        val bandFrac = inBand.toFloat() / points.size
-
-        // (b) angular coverage: bin the points' bearings into 24×15° buckets.
-        val bins = BooleanArray(24)
-        for (p in points) {
-            var ang = atan2(p.y - cy, p.x - cx)                 // (−π, π]
-            if (ang < 0f) ang += (2f * PI.toFloat())
-            var b = (ang / (2f * PI.toFloat()) * 24f).toInt()
-            if (b < 0) b = 0; if (b > 23) b = 23
-            bins[b] = true
-        }
-        val coverageDeg = bins.count { it } * 15f
-
-        // (c) closure.
-        val closureDist = hypot(points.last().x - points.first().x, points.last().y - points.first().y)
-        val closureOverR = closureDist / rBar
-
-        val closedish = closureOverR <= GESTURE_CIRCLE_CLOSURE_R || coverageDeg >= GESTURE_CIRCLE_COVERAGE_DEG
-        // Shape alone — NOT size-gated as a safeguard (floor only). Enclosure of OTHER ink
-        // is applied at the call site and is what actually distinguishes a lasso from a letter.
-        val shapeOk = sizeOk &&
-            bandFrac >= GESTURE_CIRCLE_BAND_FRAC &&
-            coverageDeg >= GESTURE_CIRCLE_COVERAGE_DEG &&
-            closedish
-        return CircleFit(shapeOk, sizeOk, closedish, bandFrac, coverageDeg, closureOverR, bboxDiag)
+        val n = points.size
+        val xs = FloatArray(n); val ys = FloatArray(n)
+        for (i in 0 until n) { xs[i] = points[i].x; ys[i] = points[i].y }
+        val r = com.toolsboox.ot.RingFit.fit(xs, ys)
+        return CircleFit(r.isRing, r.sizeOk, r.closedish, r.bandFraction, r.coverageDegrees,
+            r.closureOverRadius, r.diagonal)
     }
 
     /** True if the ring described by [points] encircles any existing ink at all (≥1 point inside). */
