@@ -227,6 +227,51 @@ class SpiralTest {
     }
 
     @Test
+    fun ocr_noise_is_not_a_thought() {
+        // Verbatim from a real day page: the recogniser leaves fragments, and resurfacing them at
+        // you as if they meant something is worse than showing nothing.
+        assertFalse(Spiral.isSubstantial("..........................................."))
+        assertFalse(Spiral.isSubstantial("tore.................................."))
+        assertFalse(Spiral.isSubstantial("fulne"))
+        assertTrue(Spiral.isSubstantial("Write about ultima online sometime soon"))
+    }
+
+    @Test
+    fun the_same_line_read_twice_by_ocr_counts_once() {
+        // Also verbatim: one line of handwriting, two passes of the recogniser, two spellings.
+        // Comparing exact strings keeps both; what the readings AGREE on is the thought.
+        val items = listOf(
+            Snip("se be explore mile minded", "", 10, "pass-one"),
+            Snip("ge Explore mile minded", "", 10, "pass-two"),
+            Snip("Write about ultima online", "", 10, "different")
+        )
+
+        val deduped = Spiral.dedupe(items) { it.text }
+
+        assertEquals(2, deduped.size)
+        assertEquals("pass-one", deduped[0].id)
+    }
+
+    @Test
+    fun nothing_ever_rhymes_with_itself() {
+        // On a young ledger almost everything is inside the recent window, so the pick and the
+        // echo come from the same small pool — and the card used to say a thing rhymed with itself.
+        val items = listOf(
+            Snip("kapotasana and the shoulder opening slowly", "", 2, "a"),
+            Snip("kapotasana and the shoulder, opening slowly!", "", 1, "b")
+        )
+
+        val pick = choose(items)
+
+        if (pick != null) {
+            assertTrue(
+                "the echo must not be the pick, nor a copy of it",
+                pick.echo == null || pick.echo!!.id != pick.item.id
+            )
+        }
+    }
+
+    @Test
     fun dedupe_leaves_genuinely_different_things_alone() {
         val items = listOf(
             Snip("kapotasana felt closer today", "", 10, "a"),

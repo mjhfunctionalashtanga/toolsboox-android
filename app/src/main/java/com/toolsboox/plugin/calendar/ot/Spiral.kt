@@ -177,13 +177,32 @@ object Spiral {
         return items.filter { seen.add(fingerprint(textOf(it))) }
     }
 
-    /** Lowercased, punctuation-stripped, whitespace-collapsed, first 160 chars. */
+    /**
+     * The significant words, sorted and deduplicated.
+     *
+     * Not the text itself: handwriting OCR reads the same line differently on different passes, so
+     * "se be explore mile minded" and "ge Explore mile minded" are one thought that arrived twice.
+     * Comparing exact strings keeps both; comparing the set of real words collapses them, because
+     * what the two readings agree on IS the thought.
+     */
     private fun fingerprint(text: String): String =
+        significantWords(text).sorted().take(12).joinToString(" ")
+
+    private fun significantWords(text: String): Set<String> =
         text.lowercase()
-            .replace(Regex("[^\\p{L}\\p{Nd}\\s]"), "")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-            .take(160)
+            .split(Regex("[^\\p{L}\\p{Nd}]+"))
+            .filter { it.length >= 4 && it !in STOP }
+            .toSet()
+
+    /**
+     * Is there enough here to be worth handing back?
+     *
+     * A day page's OCR leaves fragments — a row of dots, half a word, a stray "tore....." — and
+     * they are not thoughts. Requiring a few real words is a cheap, honest filter: it costs the
+     * occasional terse note and removes an enormous amount of noise that would otherwise be
+     * resurfaced at you as if it meant something.
+     */
+    fun isSubstantial(text: String): Boolean = significantWords(text).size >= 3
 
     /**
      * Choose what comes back around.
@@ -271,7 +290,13 @@ object Spiral {
 
         // Which recent item it rhymes WITH — the one sharing most of those words.
         val bestTerms = terms(textOf(best)).toSet()
-        val echo = recent.maxByOrNull { r -> terms(textOf(r)).toSet().count { it in bestTerms } }
+        // …and it must not be the pick itself. On a young ledger almost everything falls inside the
+        // recent window, so the fallback puts recent items in the running — and without this the
+        // card cheerfully told you a thing rhymed with itself.
+        val bestFingerprint = fingerprint(textOf(best))
+        val echo = recent
+            .filter { fingerprint(textOf(it)) != bestFingerprint }
+            .maxByOrNull { r -> terms(textOf(r)).toSet().count { it in bestTerms } }
             ?.takeIf { r -> terms(textOf(r)).toSet().any { it in bestTerms } }
 
         return Pick(best, echo, bestShared)
