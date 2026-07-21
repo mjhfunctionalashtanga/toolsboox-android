@@ -11,6 +11,12 @@
     android:layout_height="match_parent"
     android:background="#FFFFFF">
 
+    <ImageView
+        android:id="@+id/navigatorImageView"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:contentDescription="@null"/>
+
     <LinearLayout
         android:orientation="horizontal"
         android:gravity="center_vertical"

@@ -36,9 +36,17 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
     @Inject
     lateinit var corpusService: com.toolsboox.plugin.chat.fi.LedgerCorpusService
 
+    @Inject
+    lateinit var calendarDayService: com.toolsboox.plugin.calendar.fi.CalendarDayService
+
+    @Inject
+    lateinit var calendarPatternService: com.toolsboox.plugin.calendar.fi.CalendarPatternService
+
     override val view = R.layout.fragment_ledger_roots
 
     private lateinit var binding: FragmentLedgerRootsBinding
+    private var navBar: CalendarNavBarHost? = null
+    private var anchor: java.time.LocalDate = java.time.LocalDate.now()
 
     /** Held so a thread row can list its members without re-reading the whole ledger. */
     private var corpus: List<CorpusSnippet> = emptyList()
@@ -47,7 +55,31 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentLedgerRootsBinding.bind(view)
         binding.rootsClose.setOnClickListener { requireActivity().onBackPressedDispatcher.onBackPressed() }
+
+        // The almanac strip, as on Write and Synthesize. The roots are the whole ledger at once,
+        // not one day — so here the date is a place to LEAVE from: step to a day and open it, or
+        // tap a period to jump into the calendar. What comes back and where it touches stays put.
+        navBar = CalendarNavBarHost(requireContext(), binding.navigatorImageView, this,
+            onStepDay = { d -> com.toolsboox.plugin.calendar.CalendarNavigator.toDayPage(
+                this, d, com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE) })
+        renderNav()
+
         load()
+    }
+
+    /** Draw the strip for the anchor day, dots and all. */
+    private fun renderNav() {
+        lifecycleScope.launch {
+            val root = documentsRoot()
+            val loc = java.util.Locale.getDefault()
+            val (day, pat) = withContext(Dispatchers.IO) {
+                val cd = runCatching { calendarDayService.load(root, anchor, null, loc) }.getOrNull()
+                    ?: com.toolsboox.plugin.calendar.da.v2.CalendarDay(
+                        anchor.year, anchor.monthValue, anchor.dayOfMonth, startHour = null)
+                cd to runCatching { calendarPatternService.load(root, anchor, loc) }.getOrNull()
+            }
+            if (isAdded) pat?.let { navBar?.render(day, it) }
+        }
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()

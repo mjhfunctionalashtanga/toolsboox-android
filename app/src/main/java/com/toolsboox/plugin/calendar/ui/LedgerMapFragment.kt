@@ -13,6 +13,7 @@ import com.toolsboox.ot.MindMap
 import com.toolsboox.ot.MapPersona
 import com.toolsboox.ot.Markmap
 import com.toolsboox.ot.MindMapView
+import com.toolsboox.plugin.calendar.CalendarNavigator
 import com.toolsboox.plugin.calendar.da.v2.Connection
 import com.toolsboox.plugin.calendar.ot.ConnectionStore
 import com.toolsboox.plugin.calendar.ot.ContactStore
@@ -43,10 +44,18 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         const val ARG_URI = "map_uri"
     }
 
+    @Inject
+    lateinit var calendarDayService: com.toolsboox.plugin.calendar.fi.CalendarDayService
+
+    @Inject
+    lateinit var calendarPatternService: com.toolsboox.plugin.calendar.fi.CalendarPatternService
+
     override val view = R.layout.fragment_ledger_map
 
     private lateinit var binding: FragmentLedgerMapBinding
     private lateinit var map: MindMapView
+    private var navBar: CalendarNavBarHost? = null
+    private var anchor: java.time.LocalDate = java.time.LocalDate.now()
 
     private var edges: List<Connection> = emptyList()
     private var adjacency: Map<String, List<String>> = emptyMap()
@@ -62,6 +71,14 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         binding = FragmentLedgerMapBinding.bind(view)
         binding.mapTitle.text = getString(R.string.map_title)
         binding.mapMenu.setOnClickListener { showDrawMenu() }
+
+        // The almanac strip, as on Write and Synthesize. The map is the whole graph, not one day,
+        // so the date is a place to leave from: step to a day and open it, or tap a period to
+        // jump into the calendar. The picture itself does not change with the anchor.
+        navBar = CalendarNavBarHost(requireContext(), binding.navigatorImageView, this,
+            onStepDay = { d -> CalendarNavigator.toDayPage(
+                this, d, com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE) })
+        renderNav()
         binding.mapClose.setOnClickListener {
             if (trail.isEmpty()) findNavController().popBackStack()
             else { focus = trail.removeLast(); render() }
@@ -81,6 +98,21 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         loadGraph()
         focus = arguments?.getString(ARG_URI)?.takeIf { it.isNotBlank() } ?: busiest()
         render()
+    }
+
+    /** Draw the strip for the anchor day. */
+    private fun renderNav() {
+        lifecycleScope.launch {
+            val root = documentsRoot()
+            val loc = java.util.Locale.getDefault()
+            val (day, pat) = withContext(Dispatchers.IO) {
+                val cd = runCatching { calendarDayService.load(root, anchor, null, loc) }.getOrNull()
+                    ?: com.toolsboox.plugin.calendar.da.v2.CalendarDay(
+                        anchor.year, anchor.monthValue, anchor.dayOfMonth, startHour = null)
+                cd to runCatching { calendarPatternService.load(root, anchor, loc) }.getOrNull()
+            }
+            if (isAdded) pat?.let { navBar?.render(day, it) }
+        }
     }
 
     private fun loadGraph() {
