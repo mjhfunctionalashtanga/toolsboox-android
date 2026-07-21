@@ -1123,15 +1123,26 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         v.maxWidth = mapped.width().toInt()
         v.translationX = mapped.left
         v.translationY = mapped.top
-        // Sized so TWO lines and their leading fit inside the band with a little air, rather than
-        // by a guessed divisor: at height/3.1 the second line's descenders sat on the closing rule
-        // and read as clipped. Line height is roughly 1.2× the text size, so two lines plus
-        // padding want about 2.6× — leaving the rest as margin.
+        // Sized from YOUR font setting, not from the band.
+        //
+        // Deriving the size from the available height was backwards twice over: it ignored the
+        // reading scale entirely — so the one control that means "make text bigger" did nothing
+        // here — and it made the band's height decide the type size, which on a tall band gives
+        // enormous text for no reason. A day page is a reading surface like any other; it should
+        // take the same size as the rest of the app and then fit itself into the space.
+        //
+        // So: pick the size first, then work out how many lines of it fit, then refuse to be
+        // taller than the band. Without that last step the view is wrap_content and simply grows
+        // downwards, over the Stars & Events panel below.
+        val density = resources.displayMetrics.density
+        val size = 13f * density * com.toolsboox.ot.ReadingSize.scale(requireContext())
+        v.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, size)
+
         val padding = (v.paddingTop + v.paddingBottom).toFloat()
-        v.setTextSize(
-            android.util.TypedValue.COMPLEX_UNIT_PX,
-            ((mapped.height() - padding) / 2.6f).coerceAtLeast(8f)
-        )
+        val lineHeight = size * 1.25f                       // roughly what the font metrics give
+        val fits = ((mapped.height() - padding) / lineHeight).toInt().coerceIn(1, 5)
+        v.maxLines = fits
+        v.maxHeight = mapped.height().toInt()                // the band, and not a pixel more
         v.requestLayout()
     }
 
