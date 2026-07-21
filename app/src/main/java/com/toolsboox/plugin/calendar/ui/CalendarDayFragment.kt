@@ -1020,7 +1020,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             if (!isAdded || chosen == null) return@launch
             val snippet = chosen.item.text.replace(Regex("\\s+"), " ").trim()
             if (snippet.isEmpty()) return@launch
-            binding.spiralLine.text = spiralLineText(chosen, snippet)
+            // Held, because how much of it can be SHOWN depends on the band's size on screen,
+            // which changes with zoom — so the text has to be rebuilt, not merely re-clipped.
+            spiralPick = chosen to snippet
             binding.spiralLine.setOnClickListener {
                 findNavController().navigate(R.id.action_to_ledger_roots)
             }
@@ -1043,23 +1045,36 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     private fun spiralLineText(
         chosen: com.toolsboox.plugin.calendar.ot.Spiral.Pick<com.toolsboox.plugin.chat.da.CorpusSnippet>,
-        snippet: String
+        snippet: String,
+        lines: Int,
+        charsPerLine: Int
     ): CharSequence {
-        val lead = if (chosen.shared.isEmpty()) getString(R.string.spiral_lead_plain)
-            else getString(R.string.spiral_lead_circling, chosen.shared.joinToString(" · "))
-        val body = trimToWhole(snippet, 150)
         val cite = chosen.item.citation.substringAfter("· ", chosen.item.source).trim()
         val tail = if (cite.isBlank()) "" else "  — $cite"
+        // The lead-in is the first thing to go. Zoomed out there may be room for two lines, and
+        // two lines of the passage plus where it came from beats one line of each — "you have
+        // been circling internet · people" is the least of the three once space is short, because
+        // the Roots page says it too and the passage does not appear anywhere else on this screen.
+        val lead = if (lines < 3) "" else if (chosen.shared.isEmpty()) getString(R.string.spiral_lead_plain)
+            else getString(R.string.spiral_lead_circling, chosen.shared.joinToString(" · "))
+        // Budget the passage by what is actually left after the lead-in's line and the tail, so
+        // the provenance always lands instead of being the thing that falls off the bottom.
+        val bodyLines = (lines - if (lead.isEmpty()) 0 else 1).coerceAtLeast(1)
+        val budget = (bodyLines * charsPerLine - tail.length).coerceAtLeast(24)
+        val body = trimToWhole(snippet, budget)
 
         val text = android.text.SpannableStringBuilder()
-        val leadStart = text.length; text.append(lead); text.append("\n")
+        val leadStart = text.length
+        if (lead.isNotEmpty()) { text.append(lead); text.append("\n") }
         val bodyStart = text.length; text.append(body)
         val tailStart = text.length; text.append(tail)
 
         // The lead-in and the provenance are context; the passage is the thing. Size and weight
         // say so, rather than punctuation trying to.
-        text.setSpan(android.text.style.RelativeSizeSpan(0.82f), leadStart, bodyStart, 0)
-        text.setSpan(android.text.style.ForegroundColorSpan(0xFF666666.toInt()), leadStart, bodyStart, 0)
+        if (bodyStart > leadStart) {
+            text.setSpan(android.text.style.RelativeSizeSpan(0.82f), leadStart, bodyStart, 0)
+            text.setSpan(android.text.style.ForegroundColorSpan(0xFF666666.toInt()), leadStart, bodyStart, 0)
+        }
         if (tail.isNotEmpty()) {
             text.setSpan(android.text.style.RelativeSizeSpan(0.82f), tailStart, text.length, 0)
             text.setSpan(android.text.style.ForegroundColorSpan(0xFF888888.toInt()), tailStart, text.length, 0)
@@ -1082,6 +1097,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val space = window.lastIndexOf(' ')
         return (if (space > limit / 2) window.take(space) else window).trimEnd(',', ';', ':', ' ') + "…"
     }
+
+    /** What the spiral chose, and its text — kept so the line can be re-fitted on zoom. */
+    private var spiralPick: Pair<
+        com.toolsboox.plugin.calendar.ot.Spiral.Pick<com.toolsboox.plugin.chat.da.CorpusSnippet>,
+        String>? = null
 
     /**
      * The Roots band's paper, in design space (1404×1872).
@@ -1123,19 +1143,19 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         v.maxWidth = mapped.width().toInt()
         v.translationX = mapped.left
         v.translationY = mapped.top
-        // Sized from YOUR font setting, not from the band.
+        // Sized in PAGE space, like everything else drawn on this page.
         //
-        // Deriving the size from the available height was backwards twice over: it ignored the
-        // reading scale entirely — so the one control that means "make text bigger" did nothing
-        // here — and it made the band's height decide the type size, which on a tall band gives
-        // enormous text for no reason. A day page is a reading surface like any other; it should
-        // take the same size as the rest of the app and then fit itself into the space.
+        // 25 design units is `Creator.textSmallBlack` — the weather-and-moon line under Stars &
+        // Events. Matching it is the whole point: the spiral line is page furniture, so it should
+        // be the size the page's own small text is, and grow and shrink with the paper rather
+        // than to some independent rule. Scaled by ReadingSize on top, so "make text bigger"
+        // still means something here.
         //
-        // So: pick the size first, then work out how many lines of it fit, then refuse to be
-        // taller than the band. Without that last step the view is wrap_content and simply grows
-        // downwards, over the Stars & Events panel below.
-        val density = resources.displayMetrics.density
-        val size = 13f * density * com.toolsboox.ot.ReadingSize.scale(requireContext())
+        // Because the size scales with the band, the same amount of text fits at every zoom —
+        // which is duller than it sounds and much better: what you see doesn't depend on how far
+        // you happen to be zoomed in.
+        val pageScale = mapped.height() / rootsBand.height()
+        val size = 25f * pageScale * com.toolsboox.ot.ReadingSize.scale(requireContext())
         v.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, size)
 
         val padding = (v.paddingTop + v.paddingBottom).toFloat()
@@ -1143,6 +1163,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val fits = ((mapped.height() - padding) / lineHeight).toInt().coerceIn(1, 5)
         v.maxLines = fits
         v.maxHeight = mapped.height().toInt()                // the band, and not a pixel more
+
+        // Rebuild the text for the room there actually is.
+        //
+        // Clipping to `fits` lines meant that zoomed out, where only two lines fit, the passage
+        // used the whole budget and the provenance — the smaller grey tail — was simply the part
+        // that fell off the bottom. Telling the builder how many lines and how wide lets it spend
+        // what it has: drop the lead-in first, then shorten the passage, and always land the tail.
+        val perLine = ((mapped.width() - (v.paddingStart + v.paddingEnd)) / (size * 0.52f))
+            .toInt().coerceIn(8, 200)
+        spiralPick?.let { (pick, snippet) ->
+            v.text = spiralLineText(pick, snippet, fits, perLine)
+        }
         v.requestLayout()
     }
 
