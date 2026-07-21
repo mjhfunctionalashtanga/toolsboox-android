@@ -77,13 +77,13 @@ fun ledgerDirectoryFolders(
             (fragment as? com.toolsboox.ui.plugin.ReturnAnchorProvider)?.prepareReturnAnchor()
             nav.navigate(R.id.action_to_calendar_day)
         }),
-        // The daily flow in ritual order: Intake → Pickings → Gratitude → Synthesize → Write.
+        // Intake → Pickings → Gratitude. Synthesize and Write continue the ritual, but they now
+        // live in the Garden with Roots and Map — the making surfaces gathered in one place —
+        // rather than being listed here as well.
         ScreenFragment.Folder("❤️", "Daily", listOf(
             "🔖  Intake" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
             "❝  Pickings" to { showPickingsPicker(fragment) },
-            "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") },
-            "🔬  Synthesize" to { CalendarNavigator.toDayNote(fragment, today, "synthesize") },
-            "✍️  Write" to { CalendarNavigator.toDayNote(fragment, today, "write") }
+            "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") }
         )),
         // Desk Ledger — the working surfaces: notes, tasks, people, boards, correspondence.
         ScreenFragment.Folder("🗒", "Desk", listOf(
