@@ -151,6 +151,44 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
         return s
     }
 
+    /**
+     * Show an answer with its citations turned into doors.
+     *
+     * Every snippet the corpus hands the model is cited as `yyyy-MM-dd · kind · label`, so every
+     * claim in an answer already carries the date it came from — it was just sitting there as
+     * text. Making it tappable is the difference between "the machine says you wrote this" and
+     * being able to go and look.
+     *
+     * The destination is the day itself, since that is where every kind of object actually lives;
+     * a picking or a note page goes to its own page on that day rather than the day sheet.
+     */
+    private fun setAnswerWithLinks(text: String) {
+        val span = android.text.SpannableString(text)
+
+        for (link in com.toolsboox.plugin.calendar.ot.CitationLinks.find(text)) {
+            span.setSpan(object : android.text.style.ClickableSpan() {
+                override fun onClick(widget: View) {
+                    if (link.notePage != null) {
+                        com.toolsboox.plugin.calendar.CalendarNavigator.toDayNote(
+                            this@LedgerChatFragment, link.date, link.notePage)
+                    } else {
+                        com.toolsboox.plugin.calendar.CalendarNavigator.toDayPage(
+                            this@LedgerChatFragment, link.date)
+                    }
+                }
+
+                // Underline only: a coloured link on e-ink is a grey smudge.
+                override fun updateDrawState(ds: android.text.TextPaint) {
+                    ds.isUnderlineText = true
+                    ds.color = ds.linkColor
+                }
+            }, link.start, link.endExclusive, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+
+        binding.answerText.movementMethod = android.text.method.LinkMovementMethod.getInstance()
+        binding.answerText.text = span
+    }
+
     /** Launch system speech recognition. Result is appended to the question box. Falls back with a
      *  message on devices without a recognizer (some Boox units lack Google services). */
     private fun startDictation() {
@@ -185,7 +223,7 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
                 val t = turns[which]
                 lastQuestion = t.question; lastAnswer = t.answer
                 binding.questionEdit.setText(t.question)
-                binding.answerText.text = t.answer
+                setAnswerWithLinks(t.answer)
             }
             .setNegativeButton("Close", null)
             .show()
@@ -293,7 +331,7 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
                     }
                     lastQuestion = question; lastAnswer = shown
                     com.toolsboox.plugin.chat.nw.ChatHistoryStore.add(requireContext(), question, shown)
-                    binding.answerText.text = shown + "\n\n" + getString(R.string.ledger_chat_footer, hitCount, corpusCount)
+                    setAnswerWithLinks(shown + "\n\n" + getString(R.string.ledger_chat_footer, hitCount, corpusCount))
                 }
                 is LedgerChatService.Result.Err -> binding.answerText.text = "⚠️ " + answer.message
             }
