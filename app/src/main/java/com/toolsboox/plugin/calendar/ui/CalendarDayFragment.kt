@@ -1572,36 +1572,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .show()
     }
 
-    /**
-     * CREATE a picking: a new sheet with this on it, rather than the "which board?" chooser.
-     *
-     * Create and Add to differ by exactly one question, and asking it in both made Create the
-     * longer of the two — the opposite of what the words promise.
-     */
-    private fun createPickingFromSelection(strokes: List<com.toolsboox.da.Stroke>) {
-        val bmp = renderSelection(strokes) ?: return
-        val ctx = requireContext()
-        val input = android.widget.EditText(ctx).apply {
-            hint = getString(R.string.ledger_selection_pickings_name); setSingleLine()
-        }
-        val pad = (16 * resources.displayMetrics.density).toInt()
-        val box = android.widget.LinearLayout(ctx).apply {
-            orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
-        }
-        AlertDialog.Builder(ctx)
-            .setTitle(getString(R.string.ledger_selection_new_pickings))
-            .setView(box)
-            .setPositiveButton(android.R.string.ok) { _, _ ->
-                val page = com.toolsboox.plugin.calendar.ot.PickingsStore
-                    .add(ctx, currentDate, input.text.toString().trim())
-                com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
-                    calendarDayService, documentsRoot(), bmp, currentDate, page.key)
-                CalendarNavigator.toDayNote(this, currentDate, page.key)
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
-    }
-
     /** The circled ink, rendered as a card, onto a Pickings board of your choosing. */
     private fun addSelectionToPickings(strokes: List<com.toolsboox.da.Stroke>) {
         val bmp = renderSelection(strokes) ?: return
@@ -1620,15 +1590,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP),
             label = currentDate.toString())
         showMessage(getString(R.string.ledger_selection_clipped), binding.root)
-    }
-
-    /** The selection as a bitmap, with a little air so edge strokes aren't shaved off. */
-    private fun renderSelection(strokes: List<com.toolsboox.da.Stroke>): android.graphics.Bitmap? {
-        if (strokes.isEmpty()) return null
-        val b = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
-        val pad = 28f
-        val rect = android.graphics.RectF(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
-        return com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600)
     }
 
     /**
@@ -1656,6 +1617,68 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             java.util.Date(day.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli())
         }
         return item.copy(text = words.ifBlank { item.text }, date = at, time = time ?: item.time)
+    }
+
+    /** The selection as a bitmap, with a little air so edge strokes aren't shaved off. */
+    private fun renderSelection(strokes: List<com.toolsboox.da.Stroke>): android.graphics.Bitmap? {
+        if (strokes.isEmpty()) return null
+        val b = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
+        val pad = 28f
+        val rect = android.graphics.RectF(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
+        return com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600)
+    }
+
+    /**
+     * CREATE a picking: a new sheet named by what you circled, with that on it.
+     *
+     * The circled words are already the title — reading them and asking you to type them again is
+     * a question with the answer written on the page. So it names itself, and the ink goes on the
+     * sheet too, so the page carries the thing in your own hand as well as in a label.
+     *
+     * And it does NOT leave the page. You circled something on the day you are working on, and
+     * being teleported away mid-thought is the wrong default: the point of making a board is
+     * usually to put several things on it, and the next one is back here. It offers to go, and
+     * waits. The new board shows up in "Add to → Picking" straight away, so sending the next
+     * thing there is two taps without ever moving.
+     */
+    private fun createPickingFromSelection(strokes: List<com.toolsboox.da.Stroke>) {
+        val bmp = renderSelection(strokes) ?: return
+        val creds = aiCreds()
+        showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
+        lifecycleScope.launch {
+            val name = withContext(Dispatchers.IO) {
+                val read = if (creds != null) {
+                    val b = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
+                    val pad = 28f
+                    val rect = android.graphics.RectF(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
+                    val page = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600)
+                    com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(page, creds.first, creds.second, creds.third)
+                } else null
+                // Offline, or unreadable: the Boox's own ink OCR, then the date. A board with a
+                // dull name is still a board; refusing to make one because the recogniser had a
+                // bad moment is not a trade worth making.
+                (read ?: com.toolsboox.plugin.calendar.ot.LedgerExtractor
+                    .extractStrokes(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
+                        "lasso", dueDate())?.text)
+                    ?.replace(Regex("\\s+"), " ")?.trim()?.take(48)
+                    ?.ifBlank { null }
+            } ?: currentDate.toString()
+
+            if (!isAdded) return@launch
+            val page = com.toolsboox.plugin.calendar.ot.PickingsStore.add(requireContext(), currentDate, name)
+            withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                    calendarDayService, documentsRoot(), bmp, currentDate, page.key)
+            }
+            if (!isAdded) return@launch
+            com.google.android.material.snackbar.Snackbar
+                .make(binding.root, getString(R.string.ledger_picking_created, page.name),
+                    com.google.android.material.snackbar.Snackbar.LENGTH_LONG)
+                .setAction(R.string.ledger_picking_go) {
+                    CalendarNavigator.toDayNote(this@CalendarDayFragment, currentDate, page.key)
+                }
+                .show()
+        }
     }
 
     /** OCR the lassoed ink, then show it as selectable/editable text with a one-tap Copy — so a
