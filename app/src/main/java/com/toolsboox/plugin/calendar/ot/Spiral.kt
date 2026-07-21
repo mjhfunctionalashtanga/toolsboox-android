@@ -60,7 +60,10 @@ object Spiral {
     fun mark(context: Context, key: String, closer: Boolean = false) {
         val o = state(context)
         val entry = o.optJSONObject(key) ?: JSONObject()
-        val step = entry.optInt("step", 0)
+        // Absent means never shown, so the FIRST showing must store step 0 — the one-day wait.
+        // Defaulting to 0 here and storing step+1 skipped STEPS[0] entirely: a thing shown once
+        // waited three days, and the documented 1/3/7/16/35 was really 3/7/16/35/35.
+        val step = entry.optInt("step", -1)
         entry.put("seen", System.currentTimeMillis())
         entry.put("step", (if (closer) step - 1 else step + 1).coerceIn(0, STEPS.size - 1))
         o.put(key, entry)
@@ -99,8 +102,17 @@ object Spiral {
     private const val RECENT_DAYS = 21L
     private const val MIN_TERM = 4
 
-    /** How much more a word in your own annotation counts than one in the passage you marked. */
-    private const val OWN_WEIGHT = 3
+    /**
+     * How much more a word in your own annotation counts than one in the passage you marked.
+     *
+     * Four, so that ONE word of yours outweighs three of the source's. That ratio is the whole
+     * claim: when you highlight a long passage and write two words about it, the passage's
+     * vocabulary is the author's — incidental, what the book happened to be about — while the two
+     * words are what you were thinking. At 3.0 a six-word match on the author's prose tied with a
+     * two-word match on yours, and a tie goes to whichever was scanned first, which is no rule at
+     * all.
+     */
+    private const val OWN_WEIGHT = 4.0
 
     /**
      * What the spiral is allowed to draw on: things you MADE or MARKED.
@@ -187,9 +199,11 @@ object Spiral {
         // then does with it — and the Notes Bot is told the same: the annotation is the
         // commentary, the body is only source material.
         val warmth = HashMap<String, Int>()
+        val ownTerms = HashSet<String>()
         for (r in recent) {
-            for (t in terms(textOf(r)).toSet()) warmth[t] = (warmth[t] ?: 0) + 1
-            for (t in terms(ownOf(r)).toSet()) warmth[t] = (warmth[t] ?: 0) + OWN_WEIGHT
+            val own = terms(ownOf(r)).toSet()
+            ownTerms += own
+            for (t in terms(textOf(r)).toSet() + own) warmth[t] = (warmth[t] ?: 0) + 1
         }
 
         val due = items.filter { dateOf(it) < recentCut && isDue(context, keyOf(it), now) }
@@ -207,8 +221,13 @@ object Spiral {
             if (shared.isEmpty()) continue
             // Rarity matters more than volume: a word in ONE recent note is a thread, a word in
             // twenty is just how you write.
-            val score = shared.sumOf { 1.0 / (1.0 + (warmth[it] ?: 1)) } * shared.size *
-                (1.0 + bonusOf(candidate))
+            // Rare warm words are worth more than common ones, and a word of YOUR OWN is worth
+            // more than one from a passage you merely marked. The sum already grows with how many
+            // words match, so multiplying by the count again would let one long quotation of
+            // someone else's prose outvote the two words that said why it mattered.
+            val score = shared.sumOf {
+                (1.0 / (1.0 + (warmth[it] ?: 1))) * (if (it in ownTerms) OWN_WEIGHT else 1.0)
+            } * (1.0 + bonusOf(candidate))
             if (score > bestScore) {
                 best = candidate
                 bestScore = score
