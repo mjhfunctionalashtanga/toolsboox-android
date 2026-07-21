@@ -99,6 +99,9 @@ object Spiral {
     private const val RECENT_DAYS = 21L
     private const val MIN_TERM = 4
 
+    /** How much more a word in your own annotation counts than one in the passage you marked. */
+    private const val OWN_WEIGHT = 3
+
     /**
      * What the spiral is allowed to draw on: things you MADE or MARKED.
      *
@@ -160,6 +163,8 @@ object Spiral {
         textOf: (T) -> String,
         dateOf: (T) -> Long,
         keyOf: (T) -> String,
+        /** The reader's own words about the item, if any — weighted above the source's. */
+        ownOf: (T) -> String = { "" },
         now: Long = System.currentTimeMillis(),
         /**
          * Extra weight from the roots — see [Rhizome.bridgeScore]. An object that JOINS two
@@ -175,9 +180,16 @@ object Spiral {
 
         // What you've been circling: how many distinct recent items each word appears in. Counting
         // items rather than occurrences stops one long note from deciding the whole theme.
+        //
+        // Your OWN words count for more. A marked passage is someone else's writing that happened
+        // to be worth marking; the note you attached is why. The star pipeline on mjh.yoga makes
+        // the same call — it treats the reason you saved a thing as the lens for everything it
+        // then does with it — and the Notes Bot is told the same: the annotation is the
+        // commentary, the body is only source material.
         val warmth = HashMap<String, Int>()
         for (r in recent) {
             for (t in terms(textOf(r)).toSet()) warmth[t] = (warmth[t] ?: 0) + 1
+            for (t in terms(ownOf(r)).toSet()) warmth[t] = (warmth[t] ?: 0) + OWN_WEIGHT
         }
 
         val due = items.filter { dateOf(it) < recentCut && isDue(context, keyOf(it), now) }

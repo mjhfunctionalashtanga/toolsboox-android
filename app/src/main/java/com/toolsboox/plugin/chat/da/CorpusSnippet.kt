@@ -18,7 +18,15 @@ data class CorpusSnippet(
     /** The searchable/quotable content. */
     val text: String,
     /** Where it came from, for the citation line, e.g. "2026-07-13 · book". */
-    val citation: String
+    val citation: String,
+    /**
+     * The reader's OWN words about this — a highlight's note, not the passage.
+     *
+     * Kept apart from [text] because the two are not the same evidence. The passage is someone
+     * else's writing that happened to be worth marking; this is why it was marked. The star
+     * pipeline on mjh.yoga makes the same distinction and calls it the lens.
+     */
+    val own: String = ""
 )
 
 /**

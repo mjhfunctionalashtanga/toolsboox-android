@@ -139,7 +139,8 @@ class LedgerCorpusService @Inject constructor(
                 out += CorpusSnippet(
                     section = section, date = e.date, title = e.title,
                     source = e.source ?: "", text = body,
-                    citation = cite(e.date, if (isBook) "book" else "article", e.title)
+                    citation = cite(e.date, if (isBook) "book" else "article", e.title),
+                    own = e.note?.trim().orEmpty()
                 )
             }
         }

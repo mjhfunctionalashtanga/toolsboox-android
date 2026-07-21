@@ -649,6 +649,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                         textOf = { it.text + " " + it.title },
                         dateOf = { it.date.time },
                         keyOf = { com.toolsboox.plugin.calendar.ot.Spiral.keyOf(it.citation, it.text) },
+                        ownOf = { it.own },
                         bonusOf = { indexOf[it]?.let { i -> bonusByIndex[i] } ?: 0.0 }
                     )
                 }.getOrNull()
