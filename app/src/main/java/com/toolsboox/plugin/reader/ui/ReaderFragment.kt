@@ -80,6 +80,11 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
     private var engineReady = false
     private var bookTitle = ""
     private var bookAuthor = ""
+    /** Where the reader is standing, refreshed on every relocate. A mark can only learn its
+     *  chapter and its place in the book at the moment it is made — see [BookNote.chapter]. */
+    private var currentCfi = ""
+    private var currentChapter = ""
+    private var currentFraction = 0.0
     private var bookCover: android.graphics.Bitmap? = null
 
     private val openBook = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -160,7 +165,20 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         val chapterRows: List<Pair<String, () -> Unit>> = tocItems.map { e ->
             ("${"  ".repeat(e.depth)}${if (e.depth == 0) "◦ " else "· "}${e.label}") to { goToHref(e.href) }
         }
+        // Marks belong on ☰ rather than the pill: they are ways of moving *within* the book,
+        // which is what this menu is for, and the pill is already eight items wide on a panel
+        // that cannot afford a ninth. The bookmark row states what it will do, so the toggle
+        // reads as a toggle without needing a lit icon.
+        val book = bookNoteKey()
+        val bookmarked = book.isNotBlank() && currentCfi.isNotBlank() &&
+            BookNoteStore.bookmarkAt(requireContext(), book, currentCfi) != null
         val groups = mutableListOf(
+            "Marks" to listOf(
+                (if (bookmarked) "🔖  Bookmarked — remove it" else "🔖  Bookmark this page") to { toggleBookmark() },
+                "🖍  Annotations…" to { showBookNotes(BookNote.ANNOTATION) },
+                "🔖  Bookmarks…" to { showBookNotes(BookNote.BOOKMARK) },
+                "🗒  Notes on this book…" to { showBookNotes(BookNote.NOTE) }
+            ),
             "Synthesize" to listOf(
                 "🔬  3 questions → Synthesize" to { readerSynthesize() },
                 "✍  Writing prompt → Write" to { readerWritingPrompt() },
@@ -185,7 +203,9 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             books.map { f -> ("📖  " + f.nameWithoutExtension) to { loadBookFile(f) } } +
             ("＋  Import a book…" to {
                 openBook.launch(arrayOf("application/epub+zip", "application/pdf", "application/x-mobipocket-ebook", "*/*"))
-            })
+            }) +
+            // A note ABOUT the book belongs with the shelf, not with the page you happen to be on.
+            ("🖍  Note on this book…" to { composeBookNote() })
         val player = com.toolsboox.ui.plugin.LedgerPlayer
         val readingRows: List<Pair<String, () -> Unit>> = when {
             player.isSpeaking -> listOf(
@@ -203,13 +223,23 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             "Books" to bookRows,
             "Reading" to readingRows,
             "Screen" to listOf(
-                "🔄  Rotate screen" to { cycleScreenOrientation() }
+                "🔄  Rotate screen" to { cycleScreenOrientation() },
+                // A book wants a clean page; not everyone wants the floating pen on top of it.
+                ((if (quickNoteShown()) "🖉  Hide the quick-note button" else "🖉  Show the quick-note button")
+                    to { setQuickNoteShown(!quickNoteShown()) })
             ),
             "Page turn (finger)" to listOf(
                 ((if (tapOn) "☑" else "☐") + "  Tap sides to turn") to { toggleReaderNav("tap_zones", !tapOn); setupTapZones() },
                 ((if (volOn) "☑" else "☐") + "  Volume keys turn") to { toggleReaderNav("volume_turn", !volOn) }
             )
         ))
+    }
+
+    private fun quickNoteShown(): Boolean =
+        (activity as? com.toolsboox.ui.main.MainActivity)?.quickNoteVisible() ?: true
+
+    private fun setQuickNoteShown(visible: Boolean) {
+        (activity as? com.toolsboox.ui.main.MainActivity)?.setQuickNoteVisible(visible)
     }
 
     private fun goToHref(href: String) {
@@ -461,6 +491,11 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
                 }
             }
             "relocate" -> {
+                // Note the spot BEFORE the skip: a skipped relocate is still a true report of
+                // where the reader now stands, and a bookmark made right after a jump needs it.
+                currentCfi = msg.optString("cfi")
+                currentChapter = msg.optString("chapter")
+                currentFraction = msg.optDouble("fraction", 0.0).let { if (it.isNaN()) 0.0 else it }
                 // Foliate reports the current spot on every page turn — remember it per book (by NAME,
                 // so it's portable across devices) and round-trip it through WebDAV.
                 if (skipRelocates > 0) { skipRelocates--; return }
@@ -483,9 +518,14 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
                 // The JS has already drawn the visual highlight; persist its CFI so it survives a
                 // reopen. Then open the shared capture menu so the reader can add a note, photo,
                 // upload, or voice memo — with or without a text selection.
-                if (text.isNotEmpty() && cfi.isNotBlank()) rememberHighlight(cfi)
+                val mark = if (text.isNotEmpty() && cfi.isNotBlank()) rememberHighlight(cfi, text) else null
                 captureAnnotation(text, bookTitle.ifBlank { null }) { selection, note, attachment ->
                     logHighlight(selection, note, cfi, attachment)
+                    // The passage is already in the book's own list; the reader's words join it
+                    // there too, so the panel shows the pair the way the day timeline does.
+                    if (mark != null && !note.isNullOrBlank()) BookNoteStore.put(
+                        requireContext(), bookNoteKey(),
+                        mark.copy(note = note, updatedAt = System.currentTimeMillis()))
                 }
             }
             "tapAnnotation" -> {
@@ -535,36 +575,103 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         }
     }
 
-    /** Highlights are stored per-book (keyed by file name) so they survive a reopen —
-     *  foliate only draws annotations that are (re-)added to the current view. */
+    /** The legacy CFI-only highlight store — read once per book, to be adopted by [BookNoteStore]. */
     private fun highlightPrefs() = requireContext().getSharedPreferences(HL_PREFS, 0)
 
     private fun bookKey(): String? = currentBookFile?.name
 
-    /** Persist a highlight's CFI for the current book. */
-    private fun rememberHighlight(cfi: String) {
-        if (cfi.isBlank()) return
-        val key = bookKey() ?: return
-        val set = highlightPrefs().getStringSet(key, emptySet())!!.toMutableSet()
-        set.add(cfi)
-        highlightPrefs().edit().putStringSet(key, set).apply()
+    /** Marks are keyed by book NAME, like the reading position — the file path differs per device. */
+    private fun bookNoteKey(): String = currentBookFile?.nameWithoutExtension.orEmpty()
+
+    /** Record a highlight as a [BookNote] so it survives a reopen AND can be listed per book —
+     *  foliate only draws annotations that are (re-)added to the current view. */
+    private fun rememberHighlight(cfi: String, text: String): BookNote? {
+        if (cfi.isBlank()) return null
+        val book = bookNoteKey().ifBlank { return null }
+        val now = System.currentTimeMillis()
+        val mark = BookNote(
+            id = BookNote.newId(), type = BookNote.ANNOTATION, cfi = cfi,
+            chapter = currentChapter, fraction = currentFraction, text = text,
+            createdAt = now, updatedAt = now
+        )
+        BookNoteStore.put(requireContext(), book, mark)
+        return mark
     }
 
-    /** Drop a highlight's CFI from the current book's store. */
+    /** Drop a highlight from the current book's marks (by location — that's what the page knows). */
     private fun forgetHighlight(cfi: String) {
-        val key = bookKey() ?: return
-        val set = highlightPrefs().getStringSet(key, emptySet())!!.toMutableSet()
-        if (set.remove(cfi)) highlightPrefs().edit().putStringSet(key, set).apply()
+        val book = bookNoteKey().ifBlank { return }
+        BookNoteStore.list(requireContext(), book, BookNote.ANNOTATION)
+            .filter { it.cfi == cfi }
+            .forEach { BookNoteStore.delete(requireContext(), book, it.id) }
+        // Keep the legacy set in step too, so an un-adopted book can't resurrect the mark.
+        bookKey()?.let { key ->
+            val set = highlightPrefs().getStringSet(key, emptySet())!!.toMutableSet()
+            if (set.remove(cfi)) highlightPrefs().edit().putStringSet(key, set).apply()
+        }
     }
 
     /** On book load, re-apply every stored highlight so saved marks reappear. */
     private fun restoreHighlights() {
-        val key = bookKey() ?: return
-        val cfis = highlightPrefs().getStringSet(key, emptySet()) ?: return
-        for (cfi in cfis) {
-            val escaped = cfi.replace("\\", "\\\\").replace("'", "\\'")
-            binding.readerWeb.evaluateJavascript("window.addStoredHighlight && window.addStoredHighlight('$escaped')", null)
+        val book = bookNoteKey().ifBlank { return }
+        bookKey()?.let { key ->
+            BookNoteStore.adoptLegacyHighlights(requireContext(), book,
+                highlightPrefs().getStringSet(key, emptySet()).orEmpty())
         }
+        for (mark in BookNoteStore.list(requireContext(), book, BookNote.ANNOTATION)) {
+            val escaped = mark.cfi.replace("\\", "\\\\").replace("'", "\\'")
+            if (mark.cfi.isNotBlank()) binding.readerWeb.evaluateJavascript(
+                "window.addStoredHighlight && window.addStoredHighlight('$escaped')", null)
+        }
+    }
+
+    /** A bookmark for where the reader is standing — Readest's toggle: one per location, and
+     *  tapping it again takes it back. Labelled with the chapter, or the percentage when the
+     *  book has no table of contents to name it by. */
+    private fun toggleBookmark() {
+        val book = bookNoteKey().ifBlank { showMessage("Open a book first."); return }
+        if (currentCfi.isBlank()) { showMessage("Turn a page first — no location yet."); return }
+        val existing = BookNoteStore.bookmarkAt(requireContext(), book, currentCfi)
+        if (existing != null) {
+            BookNoteStore.delete(requireContext(), book, existing.id)
+            showMessage("Bookmark removed")
+            return
+        }
+        val now = System.currentTimeMillis()
+        BookNoteStore.put(requireContext(), book, BookNote(
+            id = BookNote.newId(), type = BookNote.BOOKMARK, cfi = currentCfi,
+            chapter = currentChapter, fraction = currentFraction,
+            text = currentChapter.ifBlank { "${(currentFraction * 100).toInt()}% through the book" },
+            createdAt = now, updatedAt = now
+        ))
+        showMessage("Bookmarked")
+    }
+
+    /** The book's marks — annotations, bookmarks, and notes about the book itself. */
+    private fun showBookNotes(startType: String) {
+        val book = bookNoteKey().ifBlank { showMessage("Open a book first."); return }
+        BookNotesPanel.bind(book)
+        BookNotesPanel.show(
+            requireContext(), book, tocItems.map { it.label }, startType,
+            onJump = { mark ->
+                skipRelocates++   // the jump's own relocate must not re-stamp the saved spot
+                val esc = mark.cfi.replace("\\", "\\\\").replace("'", "\\'")
+                binding.readerWeb.evaluateJavascript("window.goToCfi && window.goToCfi('$esc')", null)
+            },
+            onUnmark = { mark ->
+                if (mark.type == BookNote.ANNOTATION && mark.cfi.isNotBlank()) {
+                    val esc = mark.cfi.replace("\\", "\\\\").replace("'", "\\'")
+                    binding.readerWeb.evaluateJavascript("window.deleteHighlight && window.deleteHighlight('$esc')", null)
+                }
+            }
+        )
+    }
+
+    /** A note about the book rather than a passage in it — typed, or written by hand. */
+    private fun composeBookNote() {
+        val book = bookNoteKey().ifBlank { showMessage("Open a book first."); return }
+        BookNotesPanel.bind(book)
+        BookNotesPanel.editNote(requireContext(), null) { showMessage("Noted") }
     }
 
     /** Tapping an existing highlight opens its menu: copy the passage, add a note, or remove it —

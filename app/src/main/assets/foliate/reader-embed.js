@@ -203,9 +203,13 @@ async function openBook(file) {
             walk(book.toc, 0)
             post('toc', { items: toc })
         } catch (e) {}
+        // The chapter label rides along because the app groups marks by it: there is no CFI
+        // comparator on the Kotlin side, so where the reader IS at the moment of a mark is the
+        // only chance to record which section it belongs to.
         view.addEventListener('relocate', e => post('relocate', {
             fraction: e.detail.fraction ?? 0,
             cfi: e.detail.cfi || '',
+            chapter: String(e.detail.tocItem?.label || '').trim(),
         }))
     } catch (e) {
         showStatus('Open failed: ' + errText(e))
