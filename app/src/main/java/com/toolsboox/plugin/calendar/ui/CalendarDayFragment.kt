@@ -1411,23 +1411,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         for (v in toolHidden) v.visibility = if (toolCollapsed) View.GONE else View.VISIBLE
     }
 
-    /** Step the modal text size, so the control is where the modals are. */
-    private fun cycleModalSize() {
-        val p = requireContext().getSharedPreferences("ledger_a11y", 0)
-        val next = when (p.getString("modal_text_size", "medium")) {
-            "small" -> "medium"
-            "medium" -> "large"
-            else -> "small"
-        }
-        p.edit().putString("modal_text_size", next).apply()
-        showMessage(getString(R.string.ledger_modal_size_now, next), binding.root)
-    }
-
-    private fun modalSizeLabel(): String = getString(
-        R.string.ledger_modal_size,
-        requireContext().getSharedPreferences("ledger_a11y", 0)
-            .getString("modal_text_size", "medium") ?: "medium")
-
     /** Return both pills to their anchored home positions. */
     private fun resetPillPositions() {
         requireContext().getSharedPreferences("ledger_widgets", 0).edit()
@@ -1465,7 +1448,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 "Layout" to listOf(
                     // Modal text size lived ONLY on the feed wrench, which is why it couldn't be
                     // found from the page you spend the day on. Same setting, reachable here.
-                    GoItem("🔠", modalSizeLabel()) { cycleModalSize() },
                     GoItem("🎯", "Reset pill positions") { resetPillPositions() },
                     GoItem("⚙️", "Settings") { binding.toolbarDrawing.toolbarSettings.performClick() }
                 )
