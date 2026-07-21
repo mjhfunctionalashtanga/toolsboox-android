@@ -2626,7 +2626,8 @@ abstract class SurfaceFragment : ScreenFragment() {
                     // One door for everything you can catch: photo, upload, voice, video. It used
                     // to be two image entries here and recording hidden behind a lasso.
                     LedgerContextMenu.Item("Add media…") { showAddMediaMenu(cx, cy) },
-                    LedgerContextMenu.Item("Insert clipping…") { showClippingsPicker(cx, cy) }
+                    LedgerContextMenu.Item("Insert clipping…") { showClippingsPicker(cx, cy) },
+                    LedgerContextMenu.Item("Simple shapes…") { showShapesPicker(cx, cy) }
                 ),
                 listOf(
                     LedgerContextMenu.Item("Arrange as gallery") { arrangeGallery() },
@@ -2676,6 +2677,67 @@ abstract class SurfaceFragment : ScreenFragment() {
         textElements.add(TextElement(x = 80f, y = y, text = text))
         applyStrokes(strokes, true)
         onTextElementsChanged(textElements)
+    }
+
+    /**
+     * Grid picker of the built-in shapes — tap to drop one at [cx],[cy], ready to move and resize.
+     *
+     * Deliberately not seeded into the Clippings library: that library is yours, a record of
+     * things you cut out, and filling it with eighteen stock shapes would bury your own work in
+     * furniture. These are always available and never accumulate.
+     */
+    private fun showShapesPicker(cx: Float, cy: Float) {
+        val ctx = context ?: return
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val cols = (resources.configuration.screenWidthDp / 110).coerceIn(3, 6)
+        val grid = android.widget.GridLayout(ctx).apply {
+            columnCount = cols
+            setPadding(px(12), px(8), px(12), px(8))
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Simple shapes")
+            .setView(android.widget.ScrollView(ctx).apply { addView(grid) })
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        for (shape in com.toolsboox.ot.ShapeLibrary.ALL) {
+            val cell = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER
+                setPadding(px(6), px(6), px(6), px(6))
+                addView(android.widget.ImageView(ctx).apply {
+                    setImageBitmap(com.toolsboox.ot.ShapeLibrary.bitmap(shape.key, 160))
+                    layoutParams = LinearLayout.LayoutParams(px(52), px(52))
+                })
+                setOnClickListener { dialog.dismiss(); placeShapeAt(shape.key, cx, cy) }
+            }
+            grid.addView(cell)
+        }
+        showModal(dialog)
+    }
+
+    /** Drop a shape on the surface, selected so the very next thing you do is size it. */
+    private fun placeShapeAt(key: String, cx: Float, cy: Float) {
+        val bmp = com.toolsboox.ot.ShapeLibrary.bitmap(key) ?: return
+        val baos = java.io.ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
+        val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        // Smaller than a placed gram: a shape is a mark you put ON the page, not a card.
+        val w = (CANVAS_WIDTH * 0.22f)
+        val h = w * bmp.height / bmp.width
+        val element = ImageElement(
+            x = (cx - w / 2f).coerceIn(0f, (CANVAS_WIDTH - w).coerceAtLeast(0f)),
+            y = (cy - h / 2f).coerceIn(0f, (CANVAS_HEIGHT - h).coerceAtLeast(0f)),
+            width = w, height = h, data = base64,
+            sourceLabel = key
+        )
+        pushUndo()
+        imageElements.add(element)
+        onImageElementsChanged(imageElements)
+        imageMode = true
+        penState = false
+        selectedImage = element
+        applyStrokes(strokes, true)
     }
 
     /** Grid picker of the Clippings library — tap to place at [cx],[cy]; long-press to delete. */
