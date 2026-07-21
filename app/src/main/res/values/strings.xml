@@ -461,6 +461,8 @@
     <string name="rhizome_title">🕸  Its rhizome</string>
     <string name="map_title">🗺  Map</string>
     <string name="map_menu">Draw…</string>
+    <string name="calendar_settings_calendar_label">CALENDAR</string>
+    <string name="calendar_settings_data_label">BACKUP &amp; DATA</string>
     <string name="map_drawing">drawing…</string>
     <string name="map_needs_key">Add your AI key in Settings to ask for a map.</string>
     <string name="map_nothing_to_map">Nothing to map yet.</string>

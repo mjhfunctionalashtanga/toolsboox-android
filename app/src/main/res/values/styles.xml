@@ -7,6 +7,21 @@
         override lives in values-sw600dp, where a stock AlertDialog otherwise stretches across a
         13" page and a four-line menu becomes a wall.
     -->
+    <!--
+        Settings section heading. There were five of these, each with its own size and margins
+        typed out by hand, so the page read as a list of unrelated things rather than as sections.
+    -->
+    <style name="Settings.SectionHeading" parent="">
+        <item name="android:textSize">13sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">#7A7A7A</item>
+        <item name="android:letterSpacing">0.09</item>
+        <item name="android:layout_marginTop">26dp</item>
+        <item name="android:layout_marginBottom">2dp</item>
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+    </style>
+
     <style name="LedgerAlertDialog" parent="Theme.AppCompat.Light.Dialog.Alert"/>
 
     <style name="LedgerModalOverlay">
