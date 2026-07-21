@@ -1289,6 +1289,22 @@ abstract class SurfaceFragment : ScreenFragment() {
     override fun onModalShown() {
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
+        // …and hand the WHOLE surface back to ordinary touch while the menu is up.
+        //
+        // `setRawDrawingEnabled(false)` stops the hardware RENDERING the stroke; it does not stop
+        // the TouchHelper consuming the stylus inside its limit rect. So a pen tap on a menu over
+        // the page was swallowed before it reached the dialog — the menu simply didn't respond,
+        // which reads as a freeze — and a pen tap outside it was still taken as ink and left a
+        // mark you then had to erase.
+        //
+        // Excluding the full rect is the same call the pills use to keep the pen off themselves,
+        // just applied to everything: while a menu is open, nothing on this surface is a drawing
+        // target. Restored by refreshRawExcludeRects() on dismiss.
+        val v = provideSurfaceView()
+        if (v.width > 0 && v.height > 0) {
+            val whole = Rect(0, 0, v.width, v.height)
+            touchHelper?.setLimitRect(whole, mutableListOf(Rect(whole)))
+        }
         rawInkPausedForMenu = true
     }
 
@@ -1300,7 +1316,14 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideSurfaceView().postDelayed(forcedResumeRunnable, 250L)
     }
 
-    private val forcedResumeRunnable = Runnable { resumeRawInkNow(force = true) }
+    private val forcedResumeRunnable = Runnable {
+        // Put the real limit rect back before re-arming, or the pen returns with the whole
+        // surface still excluded and stays dead in a quieter way.
+        rawInkPausedForMenu = false
+        refreshRawExcludeRects()
+        rawInkPausedForMenu = true
+        resumeRawInkNow(force = true)
+    }
 
     /**
      * Re-enable the hardware pen if it's paused and no menu is active. Idempotent.

@@ -438,6 +438,8 @@
     <string name="ledger_selection_pickings_name">Pickings name</string>
     <string name="ledger_picking_created">❮  Pickings “%1$s” created</string>
     <string name="ledger_picking_go">Go to it</string>
+    <string name="ledger_modal_size">Menu text · %1$s</string>
+    <string name="ledger_modal_size_now">Menu text: %1$s</string>
     <string name="ledger_selection_clipped">📋 Saved to Clippings</string>
     <string name="calendar_day_untitled_event">Event</string>
     <string name="calendar_day_event_to_task">Make a task</string>

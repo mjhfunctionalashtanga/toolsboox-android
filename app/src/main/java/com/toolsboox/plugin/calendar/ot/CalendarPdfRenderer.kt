@@ -54,7 +54,16 @@ object CalendarPdfRenderer {
      * Render just [strokes] (no template) cropped to [rect], scaled to [targetWidth] — the ink
      * thumbnail for a structured item's "Ink" face in a list.
      */
-    fun renderInk(strokes: List<Stroke>, rect: RectF, targetWidth: Int = 520): Bitmap {
+    /**
+     * [strokeWidth] is in DESIGN units, so it scales with the render like the ink does.
+     *
+     * The default matches the page. A card that will be placed and then downscaled again wants
+     * more than that: 3 units through a 4x render and a 0.4x placement comes out as a pale
+     * hairline, and on e-ink a pale hairline is a grey smudge rather than a thinner black line.
+     */
+    fun renderInk(
+        strokes: List<Stroke>, rect: RectF, targetWidth: Int = 520, strokeWidth: Float = 3f
+    ): Bitmap {
         val rw = rect.width().coerceAtLeast(1f)
         val scale = targetWidth / rw
         val w = targetWidth.coerceIn(1, 2000)
@@ -65,7 +74,7 @@ object CalendarPdfRenderer {
         canvas.save()
         canvas.scale(scale, scale)
         canvas.translate(-rect.left, -rect.top)
-        val paint = createStrokePaint()
+        val paint = createStrokePaint().apply { this.strokeWidth = strokeWidth }
         for (s in strokes) drawStroke(canvas, paint, s)
         canvas.restore()
         return bmp

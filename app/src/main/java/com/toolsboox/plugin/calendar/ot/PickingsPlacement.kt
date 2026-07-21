@@ -114,7 +114,19 @@ object PickingsPlacement {
         Thread {
             for (b in bitmaps) runCatching { place(service, root, b, date, key, sourceLink, sourceLabel, media) }
             val what = if (bitmaps.size > 1) "${bitmaps.size} cards" else "Placed"
-            runCatching { fragment.requireActivity().runOnUiThread { fragment.showMessage("$what on $name.") } }
+            // Offer the trip rather than taking it. You were mid-something on the page you
+            // circled from, and the usual next move is to put another thing on the same board —
+            // so staying is the right default and going is one tap.
+            runCatching {
+                fragment.requireActivity().runOnUiThread {
+                    com.google.android.material.snackbar.Snackbar.make(
+                        fragment.requireView(), "$what on $name.",
+                        com.google.android.material.snackbar.Snackbar.LENGTH_LONG
+                    ).setAction("Go to it") {
+                        com.toolsboox.plugin.calendar.CalendarNavigator.toDayNote(fragment, date, key)
+                    }.show()
+                }
+            }
         }.apply { isDaemon = true }.start()
     }
 }

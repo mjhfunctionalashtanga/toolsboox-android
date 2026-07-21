@@ -1380,6 +1380,23 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         applyWidgetOrientation()
     }
 
+    /** Step the modal text size, so the control is where the modals are. */
+    private fun cycleModalSize() {
+        val p = requireContext().getSharedPreferences("ledger_a11y", 0)
+        val next = when (p.getString("modal_text_size", "medium")) {
+            "small" -> "medium"
+            "medium" -> "large"
+            else -> "small"
+        }
+        p.edit().putString("modal_text_size", next).apply()
+        showMessage(getString(R.string.ledger_modal_size_now, next), binding.root)
+    }
+
+    private fun modalSizeLabel(): String = getString(
+        R.string.ledger_modal_size,
+        requireContext().getSharedPreferences("ledger_a11y", 0)
+            .getString("modal_text_size", "medium") ?: "medium")
+
     /** What flipping the pills would do next — so the row can say it. */
     private fun pillFlipLabel(): String {
         val narrow = resources.configuration.screenWidthDp < 520
@@ -1424,6 +1441,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 "Tools" to tools,
                 "Layout" to listOf(
                     GoItem("🔀", pillFlipLabel()) { flipPillLayout() },
+                    // Modal text size lived ONLY on the feed wrench, which is why it couldn't be
+                    // found from the page you spend the day on. Same setting, reachable here.
+                    GoItem("🔠", modalSizeLabel()) { cycleModalSize() },
                     GoItem("🎯", "Reset pill positions") { resetPillPositions() },
                     GoItem("⚙️", "Settings") { binding.toolbarDrawing.toolbarSettings.performClick() }
                 )
@@ -1625,7 +1645,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val b = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
         val pad = 28f
         val rect = android.graphics.RectF(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
-        return com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600)
+        // Heavier than the page's own 3, because this render is downscaled twice more before it
+        // is seen: once into the card and once by the panel. See renderInk.
+        return com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600, 5f)
     }
 
     /**
