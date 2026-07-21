@@ -296,11 +296,70 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
         androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(terms.joinToString("  ✕  "))
             .setView(scroll)
-            .setPositiveButton(getString(R.string.roots_close), null)
+            .setPositiveButton("→  Synthesize") { _, _ -> sendCrossingToSynth(snip, terms) }
             .setNeutralButton("Go to the day") { _, _ ->
                 com.toolsboox.plugin.calendar.CalendarNavigator.toDayPage(this, day,
                     com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE)
             }
+            .setNegativeButton(getString(R.string.roots_close), null)
+            .show()
+    }
+
+    /**
+     * Move a root onto a Synthesize page as an object.
+     *
+     * A crossing is already a thing worth keeping — the moment two preoccupations met — so this
+     * carries it whole onto a synthesis: a card with its words and terms, and the provenance to
+     * jump back to the day it came from. On the synth page it is a real gram, so it can be moved,
+     * arranged next to the other pieces, mapped, and trimmed like anything else placed there.
+     */
+    private fun sendCrossingToSynth(snip: CorpusSnippet, terms: List<String>) {
+        val day = snip.date.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        chooseSynthPage { page ->
+            val bmp = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
+                snip.text.take(400), terms.joinToString("  ✕  "), snip.own.take(120).ifBlank { null },
+                1080, 1000)
+            lifecycleScope.launch {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                            calendarDayService, documentsRoot(), bmp, page.date, page.key,
+                            sourceLink = com.toolsboox.ot.LedgerUri.page(day.toString()),
+                            sourceLabel = terms.joinToString(" · "))
+                    }
+                }
+                showMessage("Sent to ${page.name}.", binding.root)
+            }
+        }
+    }
+
+    /** Pick where a root lands: today's synthesis, or one of the named topic pages. */
+    private fun chooseSynthPage(onPick: (com.toolsboox.plugin.calendar.ot.SynthPage) -> Unit) {
+        val ctx = context ?: return
+        val store = com.toolsboox.plugin.calendar.ot.SynthPageStore
+        val topics = store.list(ctx)
+        val today = com.toolsboox.plugin.calendar.ot.SynthPage(store.DEFAULT_KEY, "Today's synthesis", java.time.LocalDate.now())
+        val pages = listOf(today) + topics
+        val labels = (pages.map { "🔬  ${it.name}" } + listOf("＋  New synthesis…")).toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Send to which synthesis?")
+            .setItems(labels) { _, which ->
+                if (which < pages.size) onPick(pages[which])
+                else {
+                    val input = android.widget.EditText(ctx).apply { hint = "What's this synthesis about?"; setSingleLine() }
+                    val pad = (16 * resources.displayMetrics.density).toInt()
+                    val box = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
+                    }
+                    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                        .setTitle("New synthesis").setView(box)
+                        .setPositiveButton("Create") { _, _ ->
+                            onPick(store.add(ctx, input.text.toString().trim()))
+                        }
+                        .setNegativeButton(android.R.string.cancel, null).show()
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
