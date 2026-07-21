@@ -2599,15 +2599,21 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     /** Write: sketch a classic bulleted essay outline from this page → movable text boxes in Write. */
     private fun essayOutline() {
+        // Pick the shape first. It was one hardcoded five-paragraph prompt — right for some
+        // pieces, a straitjacket for others — so the outline you carry to Write now matches the
+        // thing you are actually trying to write. Sibling of the Map's Draw-it-as personas.
+        showIconMenu("Write it as…", com.toolsboox.ot.WritePersona.ALL.map { p ->
+            p.label to { runWritePersona(p) }
+        })
+    }
+
+    private fun runWritePersona(persona: com.toolsboox.ot.WritePersona.Persona) {
         val creds = aiCreds() ?: run { showMessage(getString(R.string.ledger_ai_key_needed), binding.root); return }
         showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
         lifecycleScope.launch {
             val lines = withContext(Dispatchers.IO) {
                 val text = pageOcrText(creds) ?: return@withContext emptyList<String>()
-                runLlm(creds,
-                    "Sketch a CLASSIC bullet-pointed essay outline from the reader's notes below: a one-line thesis, " +
-                        "then Intro, three Body points each with 1–2 sub-bullets, and a Conclusion. Keep each line short. " +
-                        "Output ONLY the outline, one bullet per line.", text)
+                runLlm(creds, persona.prompt, text)
             }
             if (lines.isEmpty()) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
             com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.add(
