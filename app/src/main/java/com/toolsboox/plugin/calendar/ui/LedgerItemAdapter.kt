@@ -30,7 +30,9 @@ class LedgerItemAdapter(
     private val onSelectionChanged: () -> Unit,
     private val onAssign: (LedgerItem) -> Unit = {},
     private val resolveContact: (String) -> Contact? = { null },
-    private val onReadOnlyTap: (LedgerItem) -> Unit = {}
+    private val onReadOnlyTap: (LedgerItem) -> Unit = {},
+    /** Long-press → open the card behind the row, so a task isn't a dead end of text. */
+    private val onOpenCard: (LedgerItem) -> Unit = {}
 ) : RecyclerView.Adapter<LedgerItemAdapter.Holder>() {
 
     /** Ids of read-only rows (dated Site cards folded into the timeline): inert to
@@ -159,8 +161,21 @@ class LedgerItemAdapter(
         holder.assignee.alpha = if (contact != null) 1f else 0.4f
         holder.assignee.setOnClickListener { onAssign(e) }
 
-        // Long-press enters bulk-select mode with this row selected. (Single delete = swipe the row.)
-        holder.itemView.setOnLongClickListener { startSelection(e); true }
+        // Long-press: open the card, or start a bulk selection. It used to go straight into
+        // selection, which left no way to reach the thing the row stands for.
+        holder.itemView.setOnLongClickListener {
+            val ctx = holder.itemView.context
+            androidx.appcompat.app.AlertDialog.Builder(ctx)
+                .setItems(arrayOf("🗂  Open card", "☑  Select rows…")) { _, which ->
+                    when (which) {
+                        0 -> onOpenCard(e)
+                        1 -> startSelection(e)
+                    }
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+            true
+        }
     }
 
     /** Render the row's text or ink face. */
@@ -178,7 +193,17 @@ class LedgerItemAdapter(
             if (strokes.isNotEmpty()) {
                 val rect = RectF(e.left, e.top, e.right, e.bottom)
                 holder.ink.setImageBitmap(runCatching { CalendarPdfRenderer.renderInk(strokes, rect) }.getOrNull())
-            } else holder.ink.setImageDrawable(null)
+            } else {
+                // No strokes to re-render: a pinned gram or a hand-written face carries its own
+                // PNG in `crop`. Without this the ink face of those rows was simply blank.
+                val bmp = e.crop?.takeIf { it.isNotBlank() }?.let {
+                    runCatching {
+                        val bytes = Base64.decode(it, Base64.DEFAULT)
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    }.getOrNull()
+                }
+                if (bmp != null) holder.ink.setImageBitmap(bmp) else holder.ink.setImageDrawable(null)
+            }
         }
     }
 }

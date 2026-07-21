@@ -180,6 +180,25 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         )
     }
 
+    /**
+     * Whether the quick-note button is shown at all.
+     *
+     * It floats over every screen, which is right for someone who writes constantly and wrong for
+     * someone who just wants to read — so it can be put away, from the reader's wrench.
+     */
+    fun quickNoteVisible(): Boolean =
+        getSharedPreferences("MAIN", MODE_PRIVATE).getBoolean("quick_note_visible", true)
+
+    fun setQuickNoteVisible(visible: Boolean) {
+        getSharedPreferences("MAIN", MODE_PRIVATE).edit().putBoolean("quick_note_visible", visible).apply()
+        applyQuickNoteVisibility()
+    }
+
+    private fun applyQuickNoteVisibility() {
+        binding.floatNoteButton.visibility =
+            if (quickNoteVisible()) android.view.View.VISIBLE else android.view.View.GONE
+    }
+
     private fun quickNoteAction(): Int =
         getSharedPreferences("MAIN", MODE_PRIVATE).getInt("quick_note_action", 0)
             .coerceIn(0, QUICK_NOTE_LABELS.size - 1)
@@ -435,6 +454,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         }
         makeFloatButtonDraggable(binding.floatNoteButton)
         applyQuickNoteFace()
+        applyQuickNoteVisibility()
 
         firebaseAnalytics = Firebase.analytics
 

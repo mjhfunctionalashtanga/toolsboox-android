@@ -746,6 +746,13 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         }
         col.addView(pickBtn)
 
+        // …or make it something to DO. An annotation you can only look at is a dead end; this
+        // turns it into a card on today with its picture riding along, assignable like any other.
+        val taskBtn = android.widget.Button(ctx).apply {
+            text = "🗒  Make it a task"; isAllCaps = false; setPadding(0, px(8), 0, 0)
+        }
+        col.addView(taskBtn)
+
         val scroll = android.widget.ScrollView(ctx).apply { addView(col) }
         val builder = AlertDialog.Builder(ctx).setView(scroll)
         // "Go to" takes you to the page/source the item came from.
@@ -756,6 +763,74 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         builder.setNegativeButton("Close", null)
         val dialog = builder.show()
         pickBtn.setOnClickListener { dialog.dismiss(); addLogItemToPickings(item) }
+        taskBtn.setOnClickListener { dialog.dismiss(); makeTaskFromLogItem(item) }
+    }
+
+    /**
+     * Turn a log item into a task card on today.
+     *
+     * The words become the task's text so it reads in a list, and the item's own picture — a
+     * panel card, a photo, an A/V gram's poster — rides along as the card's ink face, so opening
+     * it shows the thing itself rather than a summary of it. Its origin goes in `source`, which
+     * is the edge back to where it came from.
+     */
+    private fun makeTaskFromLogItem(item: LogItem) {
+        val ctx = requireContext()
+        lifecycleScope.launch {
+            val today = java.time.LocalDate.now()
+
+            val crop = withContext(Dispatchers.IO) {
+                // The item's own picture if it has one; otherwise nothing — a wordless card is
+                // worse than a plain one.
+                item.imagePath?.takeIf { java.io.File(it).exists() }?.let { path ->
+                    runCatching {
+                        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        android.graphics.BitmapFactory.decodeFile(path, bounds)
+                        var sample = 1
+                        while (bounds.outWidth / (sample * 2) >= 900) sample *= 2
+                        val bmp = android.graphics.BitmapFactory.decodeFile(
+                            path, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+                        ) ?: return@runCatching null
+                        val baos = java.io.ByteArrayOutputStream()
+                        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
+                        bmp.recycle()
+                        android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+                    }.getOrNull()
+                }
+            }
+
+            val text = listOf(item.title, item.body).firstOrNull { it.isNotBlank() }?.trim()
+                ?.let { if (it.length > 140) it.take(139).trimEnd() + "…" else it }
+                ?: "From the log"
+
+            val task = com.toolsboox.plugin.calendar.da.v2.LedgerItem(
+                id = "log-" + java.util.UUID.randomUUID().toString().lowercase(),
+                kind = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
+                text = text,
+                date = java.util.Date(),
+                crop = crop,
+                display = if (crop != null) com.toolsboox.plugin.calendar.da.v2.LedgerItem.Display.INK
+                    else com.toolsboox.plugin.calendar.da.v2.LedgerItem.Display.TEXT,
+                source = "log",
+                stage = "todo"
+            )
+
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val root = documentsRoot()
+                    val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
+                    day.ledgerItems.add(task)
+                    calendarDayService.save(root, today, day)
+                }
+                runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(ctx, task) }
+            }
+
+            android.widget.Toast.makeText(
+                ctx,
+                if (crop != null) "🗒 Task made — picture rode along" else "🗒 Task made on today",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
     }
 
     /** Render a card from a log item (A/V gram → its Whisper transcription; else its text) and place

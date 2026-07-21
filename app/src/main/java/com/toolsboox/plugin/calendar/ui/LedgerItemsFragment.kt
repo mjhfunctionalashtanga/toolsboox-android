@@ -5,6 +5,8 @@ import android.os.Bundle
 import android.os.Environment
 import android.text.format.DateFormat
 import android.view.View
+import android.graphics.Bitmap
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.lifecycle.lifecycleScope
 import androidx.appcompat.app.AlertDialog
@@ -67,7 +69,8 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentLedgerItemsBinding.bind(view)
 
-        adapter = LedgerItemAdapter(emptyList(), emptyMap(), ::persist, ::onEnterSelection, ::updateSelectionBar)
+        adapter = LedgerItemAdapter(emptyList(), emptyMap(), ::persist, ::onEnterSelection, ::updateSelectionBar,
+            onOpenCard = ::openCard)
         binding.itemsRecycler.layoutManager = LinearLayoutManager(requireContext())
         binding.itemsRecycler.adapter = adapter
         binding.itemsRecycler.addItemDecoration(DividerItemDecoration(requireContext(), DividerItemDecoration.VERTICAL))
@@ -271,7 +274,8 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                             if (bid > 0) androidx.core.os.bundleOf("site_board_id" to bid) else null
                         )
                     }
-                }
+                },
+                onOpenCard = ::openCard
             )
             binding.itemsRecycler.adapter = adapter
             attachSwipeToDelete()
@@ -536,6 +540,139 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     }
 
     /** Open a contact picker and link (or clear) the item's rolodex contact, then persist. */
+    /**
+     * The card behind a row.
+     *
+     * A task in a list is a line of text, which is a dead end — you can tick it and nothing else.
+     * This is the thing the line stands for: both its faces, who it's for, where it sits, and the
+     * way to give it a hand-written face it never had.
+     */
+    private fun openCard(item: LedgerItem) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        val col = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(18), px(10), px(18), px(4))
+        }
+
+        col.addView(TextView(ctx).apply {
+            text = item.text.ifBlank { "(no words — this one is in ink)" }
+            textSize = 17f
+            setTextColor(0xFF000000.toInt())
+            setTextIsSelectable(true)
+        })
+
+        // Its hand: the drawn or pinned face, mounted like anything else shown rather than drawn.
+        inkFaceOf(item)?.let { bmp ->
+            col.addView(com.toolsboox.ot.InkMount.wrapInColumn(ctx,
+                android.widget.ImageView(ctx).apply {
+                    setImageBitmap(bmp)
+                    adjustViewBounds = true
+                    setBackgroundColor(0xFFFFFFFF.toInt())
+                    scaleType = android.widget.ImageView.ScaleType.FIT_START
+                    maxHeight = px(260)
+                    com.toolsboox.ot.ImageZoom.makeTappable(this, item.text)
+                }, taped = false).apply {
+                (layoutParams as? LinearLayout.LayoutParams)?.topMargin = px(10)
+            })
+        }
+
+        val facts = buildString {
+            append(if (item.kind == LedgerItem.Kind.TASK) "Task" else "Event")
+            item.time?.takeIf { it.isNotBlank() }?.let { append("  ·  ").append(it) }
+            append("  ·  ").append(item.stage.ifBlank { "todo" })
+            if (item.kind == LedgerItem.Kind.TASK && item.done) append("  ·  done")
+            item.source?.takeIf { it.isNotBlank() }?.let { append("  ·  from ").append(it) }
+        }
+        col.addView(TextView(ctx).apply {
+            text = facts; textSize = 12f; setTextColor(0xFF666666.toInt()); setPadding(0, px(10), 0, 0)
+        })
+
+        val scroll = android.widget.ScrollView(ctx).apply { addView(col) }
+        com.toolsboox.ot.ReadingSize.apply(scroll)
+
+        val penLabel = if (inkFaceOf(item) != null) "✍  Redraw in pen…" else "✍  Write it in pen…"
+
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle(if (item.kind == LedgerItem.Kind.TASK) "Task card" else "Event card")
+            .setView(scroll)
+            .setPositiveButton(penLabel) { _, _ -> writeInPen(item) }
+            .setNeutralButton("Assign…") { _, _ -> assign(item) }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    /**
+     * The item's ink face: its own carried PNG.
+     *
+     * Re-rendering from strokeIds is the list's job (it holds the stroke map); the card only
+     * needs the face that travels WITH the item, which is what a drawn or pinned one has.
+     */
+    private fun inkFaceOf(item: LedgerItem): Bitmap? {
+        return item.crop?.takeIf { it.isNotBlank() }?.let {
+            runCatching {
+                val bytes = android.util.Base64.decode(it, android.util.Base64.DEFAULT)
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }.getOrNull()
+        }
+    }
+
+    /**
+     * Give a typed task a hand.
+     *
+     * A task caught by OCR or typed into a box has no ink of its own, so its ink face is blank
+     * and the text/ink toggle does nothing. Writing one here fills that face — the same shared
+     * pad the reply composer uses, so it has undo and colours without asking for them.
+     */
+    private fun writeInPen(item: LedgerItem) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        val pad = com.toolsboox.ot.InkPadView(ctx)
+        val frame = android.widget.FrameLayout(ctx).apply {
+            setBackgroundColor(0xFF000000.toInt())
+            setPadding(px(2), px(2), px(2), px(2))
+            addView(pad, android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT, px(300)
+            ))
+        }
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(12), px(6), px(12), 0)
+            addView(TextView(ctx).apply {
+                text = item.text.ifBlank { "Write this one out" }
+                textSize = 13f; setTextColor(0xFF666666.toInt()); setPadding(0, 0, 0, px(6))
+            })
+            addView(com.toolsboox.ot.InkPadView.penBar(ctx, pad))
+            addView(frame)
+        }
+
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("Write it in pen")
+            .setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                val bmp = pad.render()
+                if (bmp == null) {
+                    android.widget.Toast.makeText(ctx, "Nothing written", android.widget.Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                val baos = java.io.ByteArrayOutputStream()
+                bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
+                bmp.recycle()
+                // `crop` carries the PNG inline, the same way a pinned gram does.
+                val written = item.copy(
+                    crop = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+                ).also { it.display = LedgerItem.Display.INK; it.done = item.done; it.stage = item.stage }
+                persist(written)
+                load()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
     private fun assign(item: LedgerItem) {
         val contacts = contactsById.values.sortedBy { it.name.lowercase() }
         val labels = (listOf("— None —") + contacts.map { it.name.ifBlank { "Unnamed" } }).toTypedArray()
