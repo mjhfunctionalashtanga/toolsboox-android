@@ -202,9 +202,14 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         binding.feedsPill.bringToFront()
         // Grip tap: while reading, shrink the pill to a slim drawer (↑ ↓ · next · back); tapping
         // again drops the full set back out.
-        makeDraggable(binding.feedsGrip, binding.feedsPill, "feeds_pill") {
-            if (currentArticle != null) { pillShrunk = !pillShrunk; applyArticlePill() }
-        }
+        cyclePillOnTap(
+            binding.feedsGrip, binding.feedsPill, "feeds_pill", "feeds_pill_vertical",
+            alsoOnTap = {
+                // While an article is open the pill is a reading drawer, and shrinking it is the
+                // more useful answer to a tap than turning it.
+                if (currentArticle != null) { pillShrunk = !pillShrunk; applyArticlePill(); true } else false
+            }
+        )
 
         applyFeedsPillOrientation()
 
@@ -1128,11 +1133,6 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     requireContext().getSharedPreferences("ledger_reader_nav", 0)
                         .edit().putBoolean("volume_turn", !volumeTurnOn()).apply()
                     Unit
-                }
-            ),
-            "Layout" to listOf(
-                getString(if (vertical) R.string.pill_switch_horizontal else R.string.pill_switch_vertical) to {
-                    prefs().edit().putBoolean("feeds_pill_vertical", !vertical).apply(); applyFeedsPillOrientation()
                 }
             ),
             "Settings" to listOf(

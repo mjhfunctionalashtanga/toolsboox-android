@@ -200,7 +200,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             }
         }
         binding.readingPill.bringToFront()
-        makeDraggable(binding.readingGrip, binding.readingPill, "reading_pill")
+        cyclePillOnTap(binding.readingGrip, binding.readingPill, "reading_pill", "vertical")
 
         renderNav()
         load()

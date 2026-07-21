@@ -1363,10 +1363,35 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /** Minimize a floating pill to grip + one button + expander; toggle back on tap. */
+    /**
+     * The handle IS the control: tap it again and again and the pill walks its four states.
+     *
+     *   wide open → wide collapsed → tall open → tall collapsed → wide open …
+     *
+     * There are only four ways a pill can be, so a dedicated Horizontal/Vertical row in a menu
+     * was a button to reach a thing you are already touching. Collapsing and turning are the same
+     * gesture now, and one fewer row sits in the menu.
+     *
+     * Orientation is shared by both pills (they should never disagree); collapse is per-pill, so
+     * tapping the tools handle turns both and folds only the tools.
+     */
     private fun togglePill(which: String) {
         val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
         val key = "${which}_collapsed"
-        prefs.edit().putBoolean(key, !prefs.getBoolean(key, false)).apply()
+        val collapsed = prefs.getBoolean(key, false)
+        val narrow = resources.configuration.screenWidthDp < 520
+        val vertical = prefs.getBoolean("vertical", narrow)
+
+        // Turn only after this orientation has been seen both open and folded, so each tap
+        // changes exactly one thing and the cycle stays predictable.
+        val nextCollapsed = !collapsed
+        val nextVertical = if (collapsed) !vertical else vertical
+
+        prefs.edit()
+            .putBoolean(key, nextCollapsed)
+            .putBoolean("vertical", nextVertical)
+            .apply()
+        if (nextVertical != vertical) applyWidgetOrientation()
         applyPillCollapse()
     }
 
@@ -1386,22 +1411,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         for (v in toolHidden) v.visibility = if (toolCollapsed) View.GONE else View.VISIBLE
     }
 
-    /** Pick the floating-pill layout — an explicit Horizontal / Vertical choice, persisted. */
-    /**
-     * There are two states, so this is one switch, not a menu.
-     *
-     * It used to open a dialog with a radio list and a Cancel — three taps and a decision, to flip
-     * a thing you can see. The row that opens it already says which way it will go, so pressing it
-     * IS the answer.
-     */
-    private fun flipPillLayout() {
-        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
-        val narrow = resources.configuration.screenWidthDp < 520
-        val vertical = prefs.getBoolean("vertical", narrow)
-        prefs.edit().putBoolean("vertical", !vertical).apply()
-        applyWidgetOrientation()
-    }
-
     /** Step the modal text size, so the control is where the modals are. */
     private fun cycleModalSize() {
         val p = requireContext().getSharedPreferences("ledger_a11y", 0)
@@ -1418,14 +1427,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         R.string.ledger_modal_size,
         requireContext().getSharedPreferences("ledger_a11y", 0)
             .getString("modal_text_size", "medium") ?: "medium")
-
-    /** What flipping the pills would do next — so the row can say it. */
-    private fun pillFlipLabel(): String {
-        val narrow = resources.configuration.screenWidthDp < 520
-        val vertical = requireContext().getSharedPreferences("ledger_widgets", 0)
-            .getBoolean("vertical", narrow)
-        return getString(if (vertical) R.string.pill_switch_horizontal else R.string.pill_switch_vertical)
-    }
 
     /** Return both pills to their anchored home positions. */
     private fun resetPillPositions() {
@@ -1462,7 +1463,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             listOf(
                 "Tools" to tools,
                 "Layout" to listOf(
-                    GoItem("🔀", pillFlipLabel()) { flipPillLayout() },
                     // Modal text size lived ONLY on the feed wrench, which is why it couldn't be
                     // found from the page you spend the day on. Same setting, reachable here.
                     GoItem("🔠", modalSizeLabel()) { cycleModalSize() },

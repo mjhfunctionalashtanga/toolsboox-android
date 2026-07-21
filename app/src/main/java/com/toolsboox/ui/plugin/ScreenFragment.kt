@@ -374,15 +374,7 @@ abstract class ScreenFragment : Fragment() {
         navWidget.bringToFront()
 
         // Vertical on narrow (phone) screens so it can't collide with the tool pill.
-        val narrow = resources.configuration.screenWidthDp < 520
-        val vertical = requireContext().getSharedPreferences("ledger_widgets", 0)
-            .getBoolean("vertical", narrow)
-        (navWidget as? LinearLayout)?.orientation =
-            if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
-        applyGripOrientation(navGrip, vertical)
-
-        makeDraggable(navGrip, navWidget, "nav") { toggleNavPill(navUp, navDown) }
-        applyNavPillCollapse(navUp, navDown)
+        cyclePillOnTap(navGrip, navWidget, "nav", "vertical", listOf(navUp, navDown))
     }
 
     /**
@@ -437,20 +429,6 @@ abstract class ScreenFragment : Fragment() {
         else requireActivity().windowManager.defaultDisplay.rotation
 
     /** Collapse the almanac nav pill to grip + centre glyph (↑↓ hide); tap the grip to toggle. */
-    private fun toggleNavPill(navUp: View, navDown: View) {
-        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
-        prefs.edit().putBoolean("nav_collapsed", !prefs.getBoolean("nav_collapsed", false)).apply()
-        applyNavPillCollapse(navUp, navDown)
-    }
-
-    private fun applyNavPillCollapse(navUp: View, navDown: View) {
-        val collapsed = requireContext().getSharedPreferences("ledger_widgets", 0)
-            .getBoolean("nav_collapsed", false)
-        val vis = if (collapsed) View.GONE else View.VISIBLE
-        navUp.visibility = vis
-        navDown.visibility = vis
-    }
-
     // --- Shared annotation capture (highlight / photo / voice), used by book + feed readers ---
 
     /** Sink for a completed capture: (highlight excerpt, typed note, media attachment). */
@@ -719,6 +697,76 @@ abstract class ScreenFragment : Fragment() {
      * Swapping the two dimensions is the whole fix; the drawable is symmetrical enough that it
      * reads correctly either way once it is the right shape.
      */
+    /**
+     * The handle IS the control: tap it again and again and a pill walks its four states.
+     *
+     *   wide open → wide folded → tall open → tall folded → wide open …
+     *
+     * There are only four ways a pill can be, so a dedicated Horizontal/Vertical row in a menu —
+     * and a switch buried in Settings — were controls for reaching a thing you are already
+     * touching. Folding and turning became the same gesture, and three separate controls went
+     * away with it.
+     *
+     * Each tap changes exactly ONE thing: it folds, and only once folded does the next tap turn
+     * it. A cycle you can predict is worth more than a cycle that is quick to get round.
+     *
+     * Returns the new (collapsed, vertical) so the caller can apply whatever "folded" means on
+     * its own pill — the states are shared, the appearance is not.
+     */
+    protected fun advancePillState(
+        collapseKey: String, verticalKey: String, defaultVertical: Boolean
+    ): Pair<Boolean, Boolean> {
+        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
+        val collapsed = prefs.getBoolean(collapseKey, false)
+        val vertical = prefs.getBoolean(verticalKey, defaultVertical)
+        val nextCollapsed = !collapsed
+        val nextVertical = if (collapsed) !vertical else vertical
+        prefs.edit()
+            .putBoolean(collapseKey, nextCollapsed)
+            .putBoolean(verticalKey, nextVertical)
+            .apply()
+        return nextCollapsed to nextVertical
+    }
+
+    /**
+     * Wire a pill so its handle cycles all four states, and apply the stored one now.
+     *
+     * [collapsible] are the views that disappear when it folds — the grip itself never does, or
+     * there would be nothing left to tap.
+     */
+    protected fun cyclePillOnTap(
+        grip: View, pill: View, key: String, verticalKey: String,
+        collapsible: List<View> = emptyList(),
+        defaultVertical: Boolean = resources.configuration.screenWidthDp < 520,
+        alsoOnTap: (() -> Boolean)? = null
+    ) {
+        // Default: everything in the pill folds away except the handle. Naming the children at
+        // each call site meant every new button had to be remembered in a second place, and the
+        // one that was forgotten just stayed on screen looking broken.
+        fun folds(): List<View> = collapsible.ifEmpty {
+            (pill as? ViewGroup)?.let { g -> (0 until g.childCount).map { g.getChildAt(it) } }
+                .orEmpty().filter { it !== grip }
+        }
+        fun apply(collapsed: Boolean, vertical: Boolean) {
+            (pill as? LinearLayout)?.orientation =
+                if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            applyGripOrientation(grip, vertical)
+            for (v in folds()) v.visibility = if (collapsed) View.GONE else View.VISIBLE
+        }
+        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
+        apply(
+            prefs.getBoolean("${key}_collapsed", false),
+            prefs.getBoolean(verticalKey, defaultVertical)
+        )
+        makeDraggable(grip, pill, key) {
+            // A screen may claim the tap for something more urgent (the feed pill shrinks to a
+            // reading drawer); if it does, the cycle stays out of the way.
+            if (alsoOnTap?.invoke() == true) return@makeDraggable
+            val (c, v) = advancePillState("${key}_collapsed", verticalKey, defaultVertical)
+            apply(c, v)
+        }
+    }
+
     protected fun applyGripOrientation(grip: View, vertical: Boolean) {
         // From the dimens, not from hard-coded dp — otherwise this silently undoes the
         // large-screen sizing every time a pill is flipped, and the grip alone shrinks back to

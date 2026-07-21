@@ -89,7 +89,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         }
 
         // Floating nav pill: grip drags/collapses; ‹ › page, ⌃ ⌄ step articles, ✎ annotate.
-        makeDraggable(binding.artGrip, binding.artPill, "article")
+        cyclePillOnTap(binding.artGrip, binding.artPill, "article", "article_pill_vertical")
         applyArticlePillOrientation()
         binding.artMenu.setOnClickListener { openRssDirectory() }
         binding.artToday.setOnClickListener {
@@ -245,12 +245,6 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                     if (a.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE)
                         android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
                     else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            },
-            getString(if (navPrefs().getBoolean("article_pill_vertical", false))
-                R.string.pill_switch_horizontal else R.string.pill_switch_vertical) to {
-                val v = !navPrefs().getBoolean("article_pill_vertical", false)
-                navPrefs().edit().putBoolean("article_pill_vertical", v).apply()
-                applyArticlePillOrientation()
             }
         )
         val all = fixed.take(1) + readItems + fixed.drop(1)

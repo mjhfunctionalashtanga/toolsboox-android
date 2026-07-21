@@ -107,7 +107,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             }
         }
         binding.itemsPill.bringToFront()
-        makeDraggable(binding.itemsGrip, binding.itemsPill, "items_pill")
+        cyclePillOnTap(binding.itemsGrip, binding.itemsPill, "items_pill", "vertical")
 
         // Enter bulk-select without hunting for a long-press; the whole row then toggles.
         binding.selectButton.setOnClickListener { adapter.startEmptySelection() }

@@ -373,14 +373,6 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.rotationReversePortraitCheck.isChecked = (rotationMask and 0b0100) != 0
         binding.rotationLandscapeCcwCheck.isChecked = (rotationMask and 0b1000) != 0
 
-        // Floating-pill orientation (shared by every Ledger pill via the ledger_widgets pref).
-        val widgetPrefs = requireContext().getSharedPreferences("ledger_widgets", 0)
-        val narrow = resources.configuration.screenWidthDp < 520
-        binding.pillOrientationSwitch.isChecked = widgetPrefs.getBoolean("vertical", narrow)
-        binding.pillOrientationSwitch.setOnCheckedChangeListener { _, checked ->
-            widgetPrefs.edit().putBoolean("vertical", checked).apply()
-        }
-
         // Auto-rotate. The rotate button's hold gesture was meant to do this and proved neither
         // discoverable nor reliable on the Palma, so it lives here as a plain switch. Applied
         // immediately AND remembered, so it survives leaving the screen.
