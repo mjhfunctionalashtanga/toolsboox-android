@@ -460,6 +460,10 @@
     <string name="roots_close">Close</string>
     <string name="rhizome_title">🕸  Its rhizome</string>
     <string name="map_title">🗺  Map</string>
+    <string name="map_menu">Draw…</string>
+    <string name="map_drawing">drawing…</string>
+    <string name="map_needs_key">Add your AI key in Settings to ask for a map.</string>
+    <string name="map_nothing_to_map">Nothing to map yet.</string>
     <string name="map_empty">Nothing is connected yet. Connect a few things and the map draws itself.</string>
     <string name="rhizome_menu">🕸  Its rhizome</string>
     <string name="calendar_settings_button_text_size">Text size…</string>

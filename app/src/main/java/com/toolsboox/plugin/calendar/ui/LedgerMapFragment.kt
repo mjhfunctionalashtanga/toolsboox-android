@@ -3,18 +3,25 @@ package com.toolsboox.plugin.calendar.ui
 import android.os.Bundle
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.navigation.fragment.findNavController
 import com.toolsboox.R
 import com.toolsboox.databinding.FragmentLedgerMapBinding
 import com.toolsboox.ot.LedgerUri
 import com.toolsboox.ot.MindMap
+import com.toolsboox.ot.MapPersona
+import com.toolsboox.ot.Markmap
 import com.toolsboox.ot.MindMapView
 import com.toolsboox.plugin.calendar.da.v2.Connection
 import com.toolsboox.plugin.calendar.ot.ConnectionStore
 import com.toolsboox.plugin.calendar.ot.ContactStore
 import com.toolsboox.ui.plugin.ScreenFragment
+import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /**
@@ -47,11 +54,14 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
     private var focus: String = ""
     /** Where we have been, so Back walks the map rather than leaving it. */
     private val trail = ArrayDeque<String>()
+    /** The markdown behind the current picture, when it came from an outline rather than edges. */
+    private var outline: String = ""
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentLedgerMapBinding.bind(view)
         binding.mapTitle.text = getString(R.string.map_title)
+        binding.mapMenu.setOnClickListener { showDrawMenu() }
         binding.mapClose.setOnClickListener {
             if (trail.isEmpty()) findNavController().popBackStack()
             else { focus = trail.removeLast(); render() }
@@ -113,6 +123,118 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         }
         binding.mapSubject.text = labels[focus] ?: LedgerUri.describe(focus)
         map.setGraph(MindMap.layout(focus, adjacency) { labels[it] ?: LedgerUri.describe(it) })
+    }
+
+    /**
+     * Where the map comes from.
+     *
+     * Your own connections are the true map and the least surprising one. An outline is the map
+     * you already have in your head and just want to see. And Ask is for the map you cannot draw
+     * yet, which is the only one worth asking a machine for.
+     */
+    private fun showDrawMenu() {
+        showIconMenu(getString(R.string.map_title), listOf(
+            "🕸  My connections" to { loadGraph(); focus = busiest(); trail.clear(); render() },
+            "✎  Type an outline…" to { showOutlineDialog("") },
+            "🧠  Ask for a map…" to { showPersonaMenu() }
+        ))
+    }
+
+    private fun showPersonaMenu() {
+        showIconMenu("Draw it as…", MapPersona.ALL.map { p ->
+            p.label to { askFor(p) }
+        })
+    }
+
+    /** What the model should chew on: whatever you type, or your own material if you type nothing. */
+    private fun askFor(persona: MapPersona.Persona) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        val input = android.widget.EditText(ctx).apply {
+            hint = "What should it map? A topic, a question, or paste something in."
+            setLines(4)
+            gravity = android.view.Gravity.TOP
+        }
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0)
+            addView(android.widget.TextView(ctx).apply {
+                text = persona.blurb
+                textSize = 13f; setTextColor(0xFF666666.toInt())
+                setPadding(0, 0, 0, (10 * dp).toInt())
+            })
+            addView(input)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle(persona.label)
+            .setView(box)
+            .setPositiveButton("Draw it") { _, _ -> runPersona(persona, input.text.toString().trim()) }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun runPersona(persona: MapPersona.Persona, subject: String) {
+        val ctx = requireContext()
+        val creds = com.toolsboox.plugin.chat.nw.AiCreds.get(ctx)
+        if (creds == null) {
+            showMessage(getString(R.string.map_needs_key), binding.root); return
+        }
+        val material = subject.ifBlank {
+            // Nothing typed → map what is already connected, named rather than addressed.
+            labels.values.distinct().take(60).joinToString("\n")
+        }
+        if (material.isBlank()) { showMessage(getString(R.string.map_nothing_to_map), binding.root); return }
+
+        binding.mapSubject.text = getString(R.string.map_drawing)
+        val (provider, key, model) = creds
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.chat.nw.LedgerChatService().run(provider, key, model, persona.prompt, material)
+            }
+            when (result) {
+                is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok -> showOutline(result.answer)
+                is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Err -> {
+                    render()
+                    showMessage(result.message, binding.root)
+                }
+            }
+        }
+    }
+
+    /** Show the markdown before drawing it, so a map you did not mean can be edited, not just rejected. */
+    private fun showOutlineDialog(initial: String) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        val input = android.widget.EditText(ctx).apply {
+            setText(initial.ifBlank { "# My map\n## First branch\n- a thought\n- another\n## Second branch\n" })
+            setLines(10)
+            gravity = android.view.Gravity.TOP
+            textSize = 13f
+        }
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0)
+            addView(input)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Outline")
+            .setView(android.widget.ScrollView(ctx).apply { addView(box) })
+            .setPositiveButton("Draw it") { _, _ -> showOutline(input.text.toString()) }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** Draw a markdown outline instead of the connection graph. */
+    private fun showOutline(markdown: String) {
+        val nodes = Markmap.parse(markdown)
+        val root = Markmap.root(nodes)
+        if (root == null) { showMessage(getString(R.string.map_nothing_to_map), binding.root); return }
+        adjacency = Markmap.adjacency(nodes)
+        labels = Markmap.labels(nodes)
+        trail.clear()
+        focus = root
+        outline = markdown
+        render()
     }
 
     private fun openRhizome(uri: String) {

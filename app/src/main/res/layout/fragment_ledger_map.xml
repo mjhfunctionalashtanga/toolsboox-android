@@ -39,6 +39,17 @@
             android:layout_height="wrap_content"/>
 
         <TextView
+            android:id="@+id/map_menu"
+            android:text="@string/map_menu"
+            android:textSize="15sp"
+            android:textColor="#000000"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="6dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <TextView
             android:id="@+id/map_close"
             android:text="@string/roots_close"
             android:textSize="15sp"
