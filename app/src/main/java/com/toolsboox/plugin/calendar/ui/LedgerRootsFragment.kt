@@ -5,6 +5,7 @@ import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.lifecycle.lifecycleScope
+import androidx.navigation.fragment.findNavController
 import com.toolsboox.R
 import com.toolsboox.databinding.FragmentLedgerRootsBinding
 import com.toolsboox.plugin.calendar.ot.Rhizome
@@ -141,7 +142,17 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
                         android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
                 }
                 card.setOnClickListener {
-                    com.toolsboox.plugin.calendar.ot.RootsMute.toggle(ctx, t.term)
+                    // Answer the tap on the tapped thing, THEN do the slow part. Muting used to
+                    // reload the whole page before anything changed on screen, so a tap looked
+                    // like nothing had happened until the crossings finished recomputing off disk
+                    // — long enough that you couldn't tell mute from a missed tap. Flip this card
+                    // now; recompute after.
+                    val nowMuted = com.toolsboox.plugin.calendar.ot.RootsMute.toggle(ctx, t.term)
+                    val label = card.getChildAt(0) as? TextView
+                    card.alpha = if (nowMuted) 0.45f else 1f
+                    label?.paintFlags = if (nowMuted)
+                        label.paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
+                    else label.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG.inv()
                     load()
                 }
                 card.setOnLongClickListener { showThread(t); true }
@@ -199,6 +210,11 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
                         text = snip.citation
                         textSize = 12f; setTextColor(0xFF999999.toInt())
                     })
+                    // Tap a meeting-point to read the whole of it and step to where it lives — it
+                    // was inert, which is a strange thing for the one card on the page whose entire
+                    // job is to say "there is more here than fits". Hold to open its rhizome.
+                    row.setOnClickListener { openCrossing(snip, terms) }
+                    row.setOnLongClickListener { openCrossingRhizome(snip); true }
                     col.addView(row)
                 }
             }
@@ -211,6 +227,61 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
         this.text = text
         textSize = 12f; setTextColor(0xFF777777.toInt()); letterSpacing = 0.08f
         setPadding(0, dp(top), 0, dp(8))
+    }
+
+    /**
+     * Read a crossing whole, and go where it lives.
+     *
+     * The card shows 240 characters; the thing that made it worth surfacing is often past that.
+     * So the tap opens the full text with its own note beneath it, and — when it is a planner
+     * snippet — a way to step onto the day it sits on.
+     */
+    private fun openCrossing(snip: CorpusSnippet, terms: List<String>) {
+        val ctx = context ?: return
+        val col = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(10), dp(18), dp(8))
+        }
+        col.addView(TextView(ctx).apply {
+            text = snip.text.trim()
+            textSize = 17f; setTextColor(0xFF000000.toInt()); setLineSpacing(0f, 1.25f)
+        })
+        // The reader's own note is different evidence from the passage — why it was marked, not
+        // what was marked — so it gets its own line rather than being run together with the text.
+        if (snip.own.isNotBlank()) col.addView(TextView(ctx).apply {
+            text = "— " + snip.own.trim()
+            textSize = 15f; setTextColor(0xFF444444.toInt()); setLineSpacing(0f, 1.2f)
+            setPadding(0, dp(10), 0, 0)
+        })
+        col.addView(TextView(ctx).apply {
+            text = snip.citation
+            textSize = 12f; setTextColor(0xFF999999.toInt()); setPadding(0, dp(10), 0, 0)
+        })
+        val scroll = android.widget.ScrollView(ctx).apply { addView(col) }
+        com.toolsboox.ot.ReadingSize.apply(scroll)
+
+        val day = snip.date.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle(terms.joinToString("  ✕  "))
+            .setView(scroll)
+            .setPositiveButton(getString(R.string.roots_close), null)
+            .setNeutralButton("Go to the day") { _, _ ->
+                com.toolsboox.plugin.calendar.CalendarNavigator.toDayPage(this, day,
+                    com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE)
+            }
+            .show()
+    }
+
+    /** Open the day this crossing sits on as an object, and everything it joins. */
+    private fun openCrossingRhizome(snip: CorpusSnippet) {
+        val day = snip.date.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        findNavController().navigate(
+            R.id.action_to_ledger_rhizome,
+            androidx.core.os.bundleOf(
+                LedgerRhizomeFragment.ARG_URI to com.toolsboox.ot.LedgerUri.page(day.toString()),
+                LedgerRhizomeFragment.ARG_LABEL to snip.title.ifBlank { snip.citation }
+            )
+        )
     }
 
     /** Everywhere one thread runs, oldest first — the shape of a preoccupation over time. */
