@@ -439,11 +439,26 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
             row.addView(Space(ctx).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })
             if (col != "done") row.addView(glyph("›", 20f) { setStage(item, next(col)) })
             card.addView(row)
-            // Long-press a card for the extras (web push).
+            // Long-press a card for everything the list could do to it.
+            //
+            // A board you cannot delete from is a board that only fills up, and every card here
+            // had to be gone and found in Tasks & Events to be removed or corrected.
             card.setOnLongClickListener {
                 androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                     .setTitle(item.text.ifBlank { "Card" })
-                    .setItems(arrayOf("⬆  Send to web board")) { _, _ -> sendToWeb(item) }
+                    .setItems(arrayOf(
+                        "✎  Edit the words…",
+                        "🕸  Its rhizome",
+                        "⬆  Send to web board",
+                        "🗑  Delete"
+                    )) { _, which ->
+                        when (which) {
+                            0 -> editCardWords(item)
+                            1 -> showCardRhizome(item)
+                            2 -> sendToWeb(item)
+                            3 -> confirmDeleteCard(item)
+                        }
+                    }
                     .setNegativeButton("Close", null)
                     .show()
                 true
@@ -466,6 +481,89 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
                 if (j < 0) return@withContext null
                 day.ledgerItems[j].stage = stage
                 day.ledgerItems[j].done = (stage == "done")
+                calendarDayService.save(root, ld, day)
+                day.ledgerItems[j]
+            }
+            load()
+            if (updated != null) lifecycleScope.launch(Dispatchers.IO) {
+                runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), updated) }
+            }
+        }
+    }
+
+    /** Change a card's words in place — the same edit the list offers, where the card actually is. */
+    private fun editCardWords(item: LedgerItem) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        val input = android.widget.EditText(ctx).apply {
+            setText(item.text); setSelection(item.text.length); hint = "What it says"
+        }
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0)
+            addView(input)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Edit card")
+            .setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                val next = input.text.toString().trim()
+                if (next.isNotBlank() && next != item.text) mutateCard(item) { it.text = next }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun showCardRhizome(item: LedgerItem) {
+        val ld = item.date.toInstant().atZone(ZoneId.of("UTC")).toLocalDate()
+        val uri = com.toolsboox.plugin.calendar.ot.LegacyEdges.adopt(requireContext(), item, ld)
+        androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(
+            R.id.action_to_ledger_rhizome,
+            androidx.core.os.bundleOf(
+                LedgerRhizomeFragment.ARG_URI to uri,
+                LedgerRhizomeFragment.ARG_LABEL to item.text.ifBlank { "(handwritten)" }
+            )
+        )
+    }
+
+    /** Deleting a card is not undoable, so it asks — and says which one it means. */
+    private fun confirmDeleteCard(item: LedgerItem) {
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+            .setTitle("Delete this card?")
+            .setMessage(item.text.ifBlank { "(handwritten)" })
+            .setPositiveButton("Delete") { _, _ -> deleteCard(item) }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun deleteCard(item: LedgerItem) {
+        val ld = item.date.toInstant().atZone(ZoneId.of("UTC")).toLocalDate()
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                val root = documentsRoot()
+                val day = calendarDayService.load(root, ld, null, Locale.getDefault())
+                // The ink it was made from stays on the page. Deleting a card is saying you are
+                // done tracking the thing, not that the handwriting never happened.
+                day.ledgerItems.removeAll { it.id == item.id }
+                calendarDayService.save(root, ld, day)
+            }
+            load()
+            lifecycleScope.launch(Dispatchers.IO) {
+                runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.deleteTask(requireContext(), item) }
+            }
+        }
+    }
+
+    /** Load the card's own day, change it, save, re-render, re-push. */
+    private fun mutateCard(item: LedgerItem, change: (LedgerItem) -> Unit) {
+        val ld = item.date.toInstant().atZone(ZoneId.of("UTC")).toLocalDate()
+        lifecycleScope.launch {
+            val updated = withContext(Dispatchers.IO) {
+                val root = documentsRoot()
+                val day = calendarDayService.load(root, ld, null, Locale.getDefault())
+                val j = day.ledgerItems.indexOfFirst { it.id == item.id }
+                if (j < 0) return@withContext null
+                change(day.ledgerItems[j])
                 calendarDayService.save(root, ld, day)
                 day.ledgerItems[j]
             }
