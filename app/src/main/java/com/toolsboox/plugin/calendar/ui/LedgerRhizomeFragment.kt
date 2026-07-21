@@ -9,6 +9,7 @@ import com.toolsboox.R
 import com.toolsboox.databinding.FragmentLedgerRhizomeBinding
 import com.toolsboox.ot.LedgerUri
 import com.toolsboox.ot.ReadingSize
+import com.toolsboox.plugin.calendar.CalendarNavigator
 import com.toolsboox.plugin.calendar.da.v2.Connection
 import com.toolsboox.plugin.calendar.ot.ConnectionStore
 import com.toolsboox.plugin.calendar.ot.ContactStore
@@ -95,30 +96,24 @@ class LedgerRhizomeFragment @Inject constructor() : ScreenFragment() {
         }
 
         val contacts = runCatching { ContactStore.loadAll(ctx).associateBy { it.id } }.getOrNull().orEmpty()
-        val grouped = edges.groupBy { it.kind }
-        val kinds = KIND_ORDER.filter { grouped.containsKey(it) } + grouped.keys.filterNot { it in KIND_ORDER }
-
-        for (kind in kinds) {
-            val group = grouped[kind].orEmpty()
-            column.addView(TextView(ctx).apply {
-                text = "${heading(kind).uppercase()}  ·  ${group.size}"
-                textSize = 11f; letterSpacing = 0.08f
-                setTextColor(0xFF8A8A8A.toInt())
-                setPadding(0, px(16), 0, px(6))
-            })
-            for (edge in group) {
-                val other = edge.otherEnd(uri) ?: continue
-                column.addView(cardView(other, edge, contacts.keys, contacts, px = ::px))
-            }
+        // Four connections do not need four section headings and eight lines of card to say so.
+        // The relation is a few faint words at the end of the row it belongs to; the row itself
+        // is one line, because that is all a connection is.
+        val ordered = edges.sortedWith(
+            compareBy({ KIND_ORDER.indexOf(it.kind).let { i -> if (i < 0) KIND_ORDER.size else i } },
+                { -it.updated })
+        )
+        for (edge in ordered) {
+            val other = edge.otherEnd(uri) ?: continue
+            column.addView(rowView(other, edge, contacts, px = ::px))
         }
         ReadingSize.apply(binding.rhizomeScroll)
     }
 
-    /** A board card, borrowed for its look: compact, high contrast, one line of meaning below. */
-    private fun cardView(
+    /** One connection, one line: what it is, and in faint words how it is joined. */
+    private fun rowView(
         other: String,
         edge: Connection,
-        @Suppress("UNUSED_PARAMETER") contactIds: Set<String>,
         contacts: Map<String, com.toolsboox.plugin.calendar.da.v2.Contact>,
         px: (Int) -> Int
     ): View {
@@ -136,38 +131,82 @@ class LedgerRhizomeFragment @Inject constructor() : ScreenFragment() {
             LedgerUri.SCHEME_BOOK -> "📖"
             else -> if (ref?.isWeb == true) "🌐" else "↪"
         }
-        // Which way the edge points is a fact about the relation, so it is shown rather than
+        // Which way the edge points is a fact about the relation, so it is kept rather than
         // flattened away — "came from this" and "this came from me" are different things to know.
-        val direction = if (edge.from == uri) "→" else "←"
+        val relation = if (edge.from == uri) heading(edge.kind).lowercase()
+        else "${heading(edge.kind).lowercase()} this"
 
         return LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(px(8), px(8), px(8), px(8))
-            setBackgroundColor(0xFFFFFFFF.toInt())
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, px(9), 0, px(9))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(0, 0, 0, px(8)) }
+            )
             addView(TextView(ctx).apply {
                 text = "$glyph  $name"
-                textSize = 13f; setTextColor(0xFF000000.toInt())
+                textSize = 15f; setTextColor(0xFF000000.toInt())
+                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                layoutParams = LinearLayout.LayoutParams(0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             })
             addView(TextView(ctx).apply {
-                text = listOfNotNull(
-                    "$direction ${edge.kind}",
-                    edge.note.takeIf { it.isNotBlank() }
-                ).joinToString("   ·   ")
-                textSize = 11f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(3), 0, 0)
+                text = relation
+                textSize = 11f; setTextColor(0xFF8A8A8A.toInt())
+                setPadding(px(10), 0, 0, 0)
             })
-            setOnClickListener { walkTo(other, name) }
+            // Tap opens the thing; long-press walks to ITS rhizome. The same grammar as the rest
+            // of the app, where long-press has always meant "tell me more about this". Tapping
+            // "came from" and landing on another list of connections instead of the page itself
+            // is the wrong answer to an obvious question.
+            setOnClickListener { open(other, name) }
+            setOnLongClickListener { walkTo(other, name); true }
         }
     }
 
-    /** Walk to the neighbour's own rhizome — the same page, one step along. */
+    /**
+     * Walk to the neighbour's own rhizome — REPLACING this page, not stacking on it.
+     *
+     * Stacking meant every step deepened the pile and Close had to be pressed once per step to
+     * get back out, which turns a walk into a trap. There is one rhizome page and it moves.
+     */
     private fun walkTo(other: String, label: String) {
         findNavController().navigate(
             R.id.action_to_ledger_rhizome,
-            androidx.core.os.bundleOf(ARG_URI to other, ARG_LABEL to label)
+            androidx.core.os.bundleOf(ARG_URI to other, ARG_LABEL to label),
+            androidx.navigation.NavOptions.Builder()
+                .setPopUpTo(R.id.LedgerRhizomeFragment, true)
+                .build()
         )
+    }
+
+    /**
+     * Go to the thing itself.
+     *
+     * An address that cannot be resolved says so and stays put, rather than navigating nowhere —
+     * an edge is allowed to point at something this device can't open, or has never heard of.
+     */
+    private fun open(other: String, label: String) {
+        val ref = LedgerUri.parse(other)
+        if (ref == null) { showMessage(getString(R.string.rhizome_cannot_open, label), binding.root); return }
+        when {
+            ref.scheme == LedgerUri.SCHEME_LEDGER -> {
+                val date = runCatching { java.time.LocalDate.parse(ref.date) }.getOrNull()
+                if (date == null) { showMessage(getString(R.string.rhizome_cannot_open, label), binding.root); return }
+                val page = ref.pageKey ?: "default"
+                if (page == "default") CalendarNavigator.toDayPage(this, date)
+                else CalendarNavigator.toDayNote(this, date, page)
+            }
+            ref.scheme == LedgerUri.SCHEME_CONTACT ->
+                findNavController().navigate(R.id.action_to_rolodex)
+            ref.scheme == LedgerUri.SCHEME_TASK ->
+                findNavController().navigate(R.id.action_to_ledger_items)
+            ref.isWeb -> runCatching {
+                startActivity(android.content.Intent(
+                    android.content.Intent.ACTION_VIEW, android.net.Uri.parse(other)))
+            }.onFailure { showMessage(getString(R.string.rhizome_cannot_open, label), binding.root) }
+            else -> showMessage(getString(R.string.rhizome_cannot_open, label), binding.root)
+        }
     }
 
     override fun showLoading() {}
