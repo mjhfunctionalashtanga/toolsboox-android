@@ -161,6 +161,31 @@ object Spiral {
             .filter { it.length >= MIN_TERM && it !in STOP }
 
     /**
+     * Drop repeats before anything looks at the ledger.
+     *
+     * The same words can reach the corpus by more than one road — a picking that was also OCR'd
+     * into page sections, a note that is also a text box on the day — and the gatherer has no way
+     * to know they are the same thing. Left alone, one item shows up as three: three times in the
+     * roots, three chances of being picked, and a thread whose "size" is really one thought
+     * counted repeatedly.
+     *
+     * Matched on the words themselves, normalised, because that is the only thing the copies
+     * reliably share. The first of each set wins, so whichever section got there first keeps it.
+     */
+    fun <T> dedupe(items: List<T>, textOf: (T) -> String): List<T> {
+        val seen = HashSet<String>()
+        return items.filter { seen.add(fingerprint(textOf(it))) }
+    }
+
+    /** Lowercased, punctuation-stripped, whitespace-collapsed, first 160 chars. */
+    private fun fingerprint(text: String): String =
+        text.lowercase()
+            .replace(Regex("[^\\p{L}\\p{Nd}\\s]"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(160)
+
+    /**
      * Choose what comes back around.
      *
      * Builds a picture of what you have been circling in the last few weeks, then prefers a DUE

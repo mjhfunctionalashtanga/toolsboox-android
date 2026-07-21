@@ -209,6 +209,33 @@ class SpiralTest {
     }
 
     @Test
+    fun the_same_words_arriving_by_different_roads_count_once() {
+        // A picking that was also OCR'd into page sections, and again as a text note. The gatherer
+        // cannot tell they are the same thought; left alone it shows up three times.
+        val items = listOf(
+            Snip("The breath is the only instrument you have.", "", 100, "from-picking"),
+            Snip("the breath is the only instrument you have", "", 100, "from-ocr"),
+            Snip("The  breath   is the only instrument you have!!", "", 90, "from-note"),
+            Snip("Something else entirely different", "", 80, "distinct")
+        )
+
+        val deduped = Spiral.dedupe(items) { it.text }
+
+        assertEquals(2, deduped.size)
+        assertEquals("the first road in keeps it", "from-picking", deduped[0].id)
+        assertEquals("distinct", deduped[1].id)
+    }
+
+    @Test
+    fun dedupe_leaves_genuinely_different_things_alone() {
+        val items = listOf(
+            Snip("kapotasana felt closer today", "", 10, "a"),
+            Snip("kapotasana felt further today", "", 10, "b")
+        )
+        assertEquals(2, Spiral.dedupe(items) { it.text }.size)
+    }
+
+    @Test
     fun an_empty_ledger_returns_nothing_rather_than_throwing() {
         assertNull(choose(emptyList()))
     }

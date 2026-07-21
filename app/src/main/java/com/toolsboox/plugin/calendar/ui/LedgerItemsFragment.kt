@@ -627,6 +627,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 runCatching {
                     val all = corpusService.gather(documentsRoot(), com.toolsboox.plugin.calendar.ot.Spiral.SCOPE)
                         .filter { it.text.isNotBlank() && it.text.length > 24 }
+                        .let { com.toolsboox.plugin.calendar.ot.Spiral.dedupe(it) { s -> s.text } }
 
                     // The roots feed the spiral: an object that joins two threads — one you're in
                     // now and one you aren't — beats another member of a thread you're already
@@ -754,6 +755,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 runCatching {
                     val all = corpusService.gather(documentsRoot(), com.toolsboox.plugin.calendar.ot.Spiral.SCOPE)
                         .filter { it.text.isNotBlank() && it.text.length > 24 }
+                        .let { com.toolsboox.plugin.calendar.ot.Spiral.dedupe(it) { s -> s.text } }
                     val threads = com.toolsboox.plugin.calendar.ot.Rhizome.threads(
                         all.map { it.text + " " + it.title }, all.map { it.date.time }
                     )
