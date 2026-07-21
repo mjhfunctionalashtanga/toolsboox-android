@@ -105,8 +105,8 @@ fun ledgerDirectoryFolders(
         // see it. They were scattered across the day-page switcher and the Desk.
         ScreenFragment.Folder("🌱", "Garden", listOf(
             "🌿  Roots" to { nav.navigate(R.id.action_to_ledger_roots) },
-            "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
             "🔬  Synthesize" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "synthesize") },
+            "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
             "✍  Write" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "write") }
         )),
         // Community: the three that are other PEOPLE rather than your own desk. They were mixed
