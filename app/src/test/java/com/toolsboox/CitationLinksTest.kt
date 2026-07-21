@@ -2,6 +2,7 @@ package com.toolsboox
 
 import com.toolsboox.plugin.calendar.ot.CitationLinks
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -83,5 +84,18 @@ class CitationLinksTest {
     fun a_number_that_merely_looks_datelike_is_left_alone() {
         // Version strings and ranges shouldn't become doors.
         assertTrue(CitationLinks.find("build 1.06.05-02 shipped").isEmpty())
+    }
+
+    @Test
+    fun `the link stops at the citation and does not swallow the sentence`() {
+        // Found by the iOS port: the kind class contained a SPACE, so "book for that" matched as
+        // the kind and the tappable span ran on past the citation into the next few words. A
+        // tappable span that covers the wrong text is worse than no link — you stop trusting any
+        // of them.
+        val text = "see 2026-07-13 · book for that"
+        val link = CitationLinks.find(text).single()
+        val matched = text.substring(link.start, link.endExclusive)
+        assertTrue(matched.startsWith("2026-07-13"))
+        assertFalse(matched.contains("for that"))
     }
 }

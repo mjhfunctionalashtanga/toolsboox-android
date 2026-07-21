@@ -21,7 +21,11 @@ object CitationLinks {
     // yyyy-MM-dd, optionally followed by " · kind". The kind is matched loosely because the model
     // renders citations however it likes; insisting on our exact format would mean linking nothing
     // the moment it decided to reformat.
-    private val RE = Regex("""(\d{4}-\d{2}-\d{2})(\s*·\s*([\p{L}/ ]{1,16}))?""")
+    // NOTE the kind class has no SPACE in it. With one, "2026-07-13 · book for that" matched
+    // "book for that" as the kind — so the tappable span ran on past the citation and swallowed
+    // the next few words of the sentence. A kind is one word ("book", "article", "a/v"); letting
+    // it contain spaces meant it could never stop at the right place.
+    private val RE = Regex("""(\d{4}-\d{2}-\d{2})(\s*·\s*([\p{L}/]{1,16}))?""")
 
     fun find(text: String): List<Link> = RE.findAll(text).mapNotNull { m ->
         val date = runCatching { LocalDate.parse(m.groupValues[1]) }.getOrNull() ?: return@mapNotNull null
