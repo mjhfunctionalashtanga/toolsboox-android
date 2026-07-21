@@ -87,7 +87,11 @@ object LedgerTaskSync {
         try {
             val req = Request.Builder().url(tasksBase(url) + item.id + ".ics").delete()
                 .header("Authorization", Credentials.basic(user, pass)).build()
-            client.newCall(req).execute().use { }
+            // Log the code: a 401 and a 404 both used to look exactly like success here, so a
+            // credential that had quietly expired read as "deleted everywhere".
+            client.newCall(req).execute().use { r ->
+                if (!r.isSuccessful && r.code != 404) Timber.w("CalDAV task delete ${r.code} for ${item.id}")
+            }
         } catch (e: Exception) {
             Timber.w(e, "CalDAV task delete failed for ${item.id}")
         }
@@ -95,31 +99,62 @@ object LedgerTaskSync {
 
     private fun buildVTodo(item: LedgerItem): String {
         val stampFmt = SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
-        val dateFmt = SimpleDateFormat("yyyyMMdd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+        // The DUE date must be read in the zone the task was WRITTEN in. Formatting it as UTC
+        // pushed anything written after local-evening to the following day — "call Dad fri 9pm"
+        // in DC is 01:00 Saturday UTC, and went out as Saturday.
+        val dateFmt = SimpleDateFormat("yyyyMMdd", Locale.US).apply { timeZone = TimeZone.getDefault() }
         val now = stampFmt.format(Date())
-        val due = dateFmt.format(item.date)
         val status = if (item.done) "COMPLETED" else "NEEDS-ACTION"
         val sb = StringBuilder()
         sb.append("BEGIN:VCALENDAR\r\n")
         sb.append("VERSION:2.0\r\n")
         sb.append("PRODID:-//toolsboox//ledger//EN\r\n")
         sb.append("BEGIN:VTODO\r\n")
-        sb.append("UID:").append(item.id).append("\r\n")
-        sb.append("DTSTAMP:").append(now).append("\r\n")
-        sb.append("SUMMARY:").append(escape(item.text)).append("\r\n")
-        sb.append("DUE;VALUE=DATE:").append(due).append("\r\n")
-        sb.append("STATUS:").append(status).append("\r\n")
+        sb.append(fold("UID:" + item.id))
+        sb.append(fold("DTSTAMP:$now"))
+        sb.append(fold("SUMMARY:" + escape(item.text)))
+        // A time that was written down is a time that was meant. `item.date` already carries the
+        // whole instant when one was parsed, so it goes out as a UTC DATE-TIME (unambiguous
+        // without shipping a VTIMEZONE); date-only tasks stay a floating DATE, as they should.
+        if (!item.time.isNullOrBlank()) sb.append(fold("DUE:" + stampFmt.format(item.date)))
+        else sb.append(fold("DUE;VALUE=DATE:" + dateFmt.format(item.date)))
+        sb.append(fold("STATUS:$status"))
         if (item.done) {
-            sb.append("PERCENT-COMPLETE:100\r\n")
-            sb.append("COMPLETED:").append(now).append("\r\n")
+            sb.append(fold("PERCENT-COMPLETE:100"))
+            sb.append(fold("COMPLETED:$now"))
         }
         sb.append("END:VTODO\r\n")
         sb.append("END:VCALENDAR\r\n")
         return sb.toString()
     }
 
+    /**
+     * Wrap one content line to RFC 5545 §3.1: 75 OCTETS, not characters, with continuations
+     * starting with a single space. An OCR'd sentence runs past that easily, and an over-long
+     * line is rejected outright by strict parsers — so this is what keeps a long task valid.
+     *
+     * Counts UTF-8 bytes and never splits a multi-byte character across the fold.
+     */
+    internal fun fold(line: String): String {
+        val bytes = line.toByteArray(Charsets.UTF_8)
+        if (bytes.size <= 75) return line + "\r\n"
+        val out = StringBuilder()
+        var start = 0                    // byte index of the current chunk
+        var limit = 75                   // first line takes 75; continuations 74 (the space counts)
+        while (start < bytes.size) {
+            var end = minOf(start + limit, bytes.size)
+            // Back off to a character boundary — a continuation byte is 10xxxxxx.
+            while (end > start && end < bytes.size && (bytes[end].toInt() and 0xC0) == 0x80) end--
+            if (start > 0) out.append(' ')
+            out.append(String(bytes, start, end - start, Charsets.UTF_8)).append("\r\n")
+            start = end
+            limit = 74
+        }
+        return out.toString()
+    }
+
     /** iCal text escaping (RFC 5545): backslash, semicolon, comma, newline. */
     private fun escape(text: String): String = text
         .replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
-        .replace("\n", "\\n").replace("\r", "")
+        .replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n")
 }
