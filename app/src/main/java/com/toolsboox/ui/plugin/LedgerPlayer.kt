@@ -224,7 +224,7 @@ object LedgerPlayer {
             ).apply { topMargin = pad / 2 })
         }
 
-        val dialog = AlertDialog.Builder(context)
+        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
             .setView(container)
             .setNegativeButton("Close", null)
             .create()

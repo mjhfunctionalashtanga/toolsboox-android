@@ -83,7 +83,7 @@ object BookingSheet {
         container.addView(TextView(ctx).apply {
             text = "Loading…"; setPadding(px(ctx, 24), px(ctx, 24), px(ctx, 24), px(ctx, 24))
         })
-        val dialog = AlertDialog.Builder(ctx).setView(container).create()
+        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setView(container).create()
         dialog.show()
 
         fragment.lifecycleScope.launch {
@@ -233,7 +233,7 @@ object BookingSheet {
             setPadding(px(ctx, 14), px(ctx, 12), px(ctx, 14), px(ctx, 12))
             minLines = 2
         }
-        AlertDialog.Builder(ctx)
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Cancel · ${d.booking.title.take(32)}")
             .setMessage("${d.booking.person} will be emailed.")
             .setView(input)
@@ -281,7 +281,7 @@ object BookingSheet {
                 local(utc)?.let { DAY.format(it) + "   " + CLOCK.format(it) } ?: utc
             }.toTypedArray()
 
-            AlertDialog.Builder(ctx)
+            AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                 .setTitle("Move to…")
                 .setItems(labels) { _, which ->
                     val target = options[which]
@@ -340,7 +340,7 @@ object BookingSheet {
                 setPadding(px(ctx, 2), px(ctx, 10), 0, px(ctx, 2))
             })
         }
-        val dialog = AlertDialog.Builder(ctx)
+        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Note · ${d.booking.person.take(32)}")
             .setView(box)
             .create()

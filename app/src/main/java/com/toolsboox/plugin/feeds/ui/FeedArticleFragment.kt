@@ -153,7 +153,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
      */
     /** Link tapped in the article → Open / Add to Later / Copy (moved off long-press so holding can select). */
     private fun showLinkMenu(url: String) {
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(url)
             .setItems(arrayOf("🌐  Open", "🔖  Save to Later List", "📋  Copy link")) { _, which ->
                 when (which) {

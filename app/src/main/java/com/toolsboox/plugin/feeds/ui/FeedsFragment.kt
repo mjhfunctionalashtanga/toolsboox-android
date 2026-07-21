@@ -307,7 +307,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val input = android.widget.EditText(requireContext()).apply {
             hint = "https://example.com/feed.xml"; setSingleLine(); setText("https://")
         }
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle("Add local feed")
             .setView(input)
             .setPositiveButton("Add") { _, _ ->
@@ -341,7 +341,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     /** In-feed search: filter the loaded list by title/blurb (Miniflux + local). */
     private fun showFeedSearch() {
         val input = android.widget.EditText(requireContext()).apply { hint = "Search all feeds"; setSingleLine() }
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle("Search")
             .setView(input)
             .setPositiveButton("Search") { _, _ ->
@@ -794,7 +794,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 orientation = android.widget.LinearLayout.VERTICAL
                 setPadding(dpPx(20), dpPx(8), dpPx(20), 0); addView(input)
             }
-            androidx.appcompat.app.AlertDialog.Builder(ctx)
+            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                 .setTitle(if (sel.isNotBlank()) "Highlight + note" else "Note")
                 .setView(box)
                 .setPositiveButton("Save") { _, _ ->
@@ -1048,7 +1048,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             setPadding(dpPx(20), dpPx(8), dpPx(20), 0)
             addView(name); addView(query)
         }
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("New smart feed")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
@@ -1262,7 +1262,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             addView(label("Send to a webhook")); addView(hookUrlIn); addView(hookSecretIn)
             addView(autoSynth)
         }
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Feed settings")
             .setView(android.widget.ScrollView(ctx).apply { addView(box) })
             .setPositiveButton("Save") { _, _ ->

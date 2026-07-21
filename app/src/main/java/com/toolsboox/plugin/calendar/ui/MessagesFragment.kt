@@ -330,7 +330,7 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ))
         }
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Handwrite · ${thread.title.take(32)}")
             .setView(box)
             .create()

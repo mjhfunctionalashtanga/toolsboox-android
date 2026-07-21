@@ -219,7 +219,7 @@ class DashboardFragment @Inject constructor() : ScreenFragment() {
         val message = getString(R.string.dashboard_device_mismatch_message).format(Build.BRAND, Build.DEVICE)
 
         sharedPreferences.edit().putBoolean("notifiedAboutDeviceMismatch", true).apply()
-        val builder: AlertDialog.Builder = AlertDialog.Builder(this.requireContext())
+        val builder: AlertDialog.Builder = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this.requireContext()))
         builder.setTitle(R.string.dashboard_device_mismatch_title)
             .setMessage(message)
             .setPositiveButton(R.string.ok) { dialog, _ ->
@@ -262,7 +262,7 @@ class DashboardFragment @Inject constructor() : ScreenFragment() {
             val url = "https://github.com/gaborauth/toolsboox-android/releases/latest/download/$filename"
             Timber.i("The update URL is '$url'")
 
-            val builder: AlertDialog.Builder = AlertDialog.Builder(this.requireContext())
+            val builder: AlertDialog.Builder = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this.requireContext()))
             builder.setTitle(R.string.dashboard_new_version_title)
                 .setMessage(R.string.dashboard_new_version_message)
                 .setPositiveButton(R.string.main_update) { _, _ ->
@@ -272,7 +272,7 @@ class DashboardFragment @Inject constructor() : ScreenFragment() {
                 .setNegativeButton(R.string.main_update_not_now) { dialog, _ -> dialog.cancel() }
             builder.create().show()
         } else {
-            val builder: AlertDialog.Builder = AlertDialog.Builder(this.requireContext())
+            val builder: AlertDialog.Builder = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this.requireContext()))
             builder.setTitle(R.string.dashboard_new_version_title)
                 .setMessage(R.string.dashboard_new_version_message)
                 .setPositiveButton(R.string.ok) { dialog, _ -> dialog.cancel() }

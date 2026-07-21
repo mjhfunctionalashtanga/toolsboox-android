@@ -217,7 +217,7 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
             val date = t.at.take(10); val q = t.question.take(60)
             if (date.isNotBlank()) "$date · $q" else q
         }.toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Ask history")
             .setItems(labels) { _, which ->
                 val t = turns[which]
@@ -244,7 +244,7 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
         val labels = (listOf("🚫  None") + names).toTypedArray()
         val active = com.toolsboox.plugin.chat.nw.PersonaStore.activeName(ctx)
         val checked = if (active != null) (names.indexOf(active).takeIf { it >= 0 }?.plus(1) ?: 0) else 0
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Persona")
             .setSingleChoiceItems(labels, checked) { d, which ->
                 com.toolsboox.plugin.chat.nw.PersonaStore.setActive(ctx, if (which == 0) null else names[which - 1])
@@ -271,7 +271,7 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
             orientation = android.widget.LinearLayout.VERTICAL
             setPadding(pad, pad / 2, pad, 0); addView(nameEdit); addView(promptEdit)
         }
-        val b = androidx.appcompat.app.AlertDialog.Builder(ctx)
+        val b = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(if (existing == null) "New persona" else "Edit persona")
             .setView(android.widget.ScrollView(ctx).apply { addView(box) })
             .setPositiveButton("Save") { _, _ ->

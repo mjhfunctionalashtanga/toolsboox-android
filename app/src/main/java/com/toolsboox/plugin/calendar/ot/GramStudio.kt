@@ -132,7 +132,7 @@ object GramStudio {
             container.addView(it)
         } else null
 
-        val builder = androidx.appcompat.app.AlertDialog.Builder(ctx)
+        val builder = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Gram")
             .setView(android.widget.ScrollView(ctx).apply { addView(container) })
             .setPositiveButton("Share") { _, _ -> onShare(renderAll()) }

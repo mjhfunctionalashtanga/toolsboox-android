@@ -292,7 +292,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         }
 
         val scroll = android.widget.ScrollView(ctx).apply { addView(box) }
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Filter the Log")
             .setView(scroll)
             .setNegativeButton("Clear") { _, _ ->
@@ -344,7 +344,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     private fun promptExport() {
         val items = lastShown
         if (items.isEmpty()) { showMessage(getString(R.string.reading_log_empty)); return }
-        AlertDialog.Builder(requireContext())
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(R.string.reading_log_export)
             .setItems(arrayOf("Markdown (.md)", "CSV (.csv)")) { _, which ->
                 val ctx = requireContext().applicationContext
@@ -700,7 +700,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 }
             }
         })
-        AlertDialog.Builder(ctx)
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(item.title.take(60).ifBlank { "Item" })
             .setItems(rows.map { it.first }.toTypedArray()) { _, which -> rows[which].second() }
             .setNegativeButton("Close", null)
@@ -754,7 +754,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         col.addView(taskBtn)
 
         val scroll = android.widget.ScrollView(ctx).apply { addView(col) }
-        val builder = AlertDialog.Builder(ctx).setView(scroll)
+        val builder = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setView(scroll)
         // "Go to" takes you to the page/source the item came from.
         builder.setPositiveButton("Go to") { _, _ -> goToSource(item) }
         item.audioPath?.let { path ->

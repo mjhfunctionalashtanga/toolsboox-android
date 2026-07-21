@@ -75,7 +75,7 @@ object BookNotesPanel {
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         }
 
-        val dialog = AlertDialog.Builder(context).setView(root).create()
+        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context)).setView(root).create()
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.WHITE))
 
         var type = startType
@@ -248,7 +248,7 @@ object BookNotesPanel {
             onUnmark(note)
             onChanged()
         }
-        AlertDialog.Builder(context)
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
             .setItems(rows.map { it.first }.toTypedArray()) { _, which -> rows[which].second() }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
@@ -314,7 +314,7 @@ object BookNotesPanel {
             addView(tabRow); addView(pane)
         }
 
-        AlertDialog.Builder(context)
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
             .setView(root)
             .setPositiveButton("Save") { _, _ ->
                 val typed = input.text.toString().trim()

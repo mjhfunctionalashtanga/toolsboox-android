@@ -81,7 +81,7 @@ object VoiceRecorder {
             text = recordingLabel("0:00")
         }
 
-        dialog = AlertDialog.Builder(context)
+        dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
             .setView(label)
             .setPositiveButton(stopLabel) { _, _ -> stop(save = true) }
             .setNegativeButton(android.R.string.cancel) { _, _ -> stop(save = false, onDiscarded = onDiscarded) }

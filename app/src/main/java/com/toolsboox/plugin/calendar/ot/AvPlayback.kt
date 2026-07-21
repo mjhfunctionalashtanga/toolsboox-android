@@ -90,7 +90,7 @@ object AvPlayback {
             label.text = total + " / " + total
         }
 
-        dialog = AlertDialog.Builder(context)
+        dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
             .setTitle(title.ifBlank { "🎤 Audio gram" })
             .setView(box)
             .setPositiveButton("Done") { d, _ -> d.dismiss() }

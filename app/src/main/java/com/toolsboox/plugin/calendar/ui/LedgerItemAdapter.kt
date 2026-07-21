@@ -165,7 +165,7 @@ class LedgerItemAdapter(
         // selection, which left no way to reach the thing the row stands for.
         holder.itemView.setOnLongClickListener {
             val ctx = holder.itemView.context
-            androidx.appcompat.app.AlertDialog.Builder(ctx)
+            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                 .setItems(arrayOf("🗂  Open card", "☑  Select rows…")) { _, which ->
                     when (which) {
                         0 -> onOpenCard(e)

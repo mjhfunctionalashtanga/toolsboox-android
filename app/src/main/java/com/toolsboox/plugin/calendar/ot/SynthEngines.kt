@@ -87,7 +87,7 @@ object SynthEngines {
         seedDefaults(context)
         val engines = all(context)
         val labels = engines.map { it.name } + listOf("＋  New engine…", "✎  Manage engines…")
-        androidx.appcompat.app.AlertDialog.Builder(context)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
             .setTitle(title)
             .setItems(labels.toTypedArray()) { _, which ->
                 when {
@@ -115,7 +115,7 @@ object SynthEngines {
             orientation = android.widget.LinearLayout.VERTICAL
             setPadding(px(16), px(8), px(16), 0); addView(nameIn); addView(promptIn)
         }
-        androidx.appcompat.app.AlertDialog.Builder(context)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
             .setTitle(if (existing == null) "New engine" else "Edit engine")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
@@ -135,11 +135,11 @@ object SynthEngines {
     private fun manage(context: Context, onDone: () -> Unit) {
         val customs = customs(context)
         if (customs.isEmpty()) { promptEdit(context, null, onDone); return }
-        androidx.appcompat.app.AlertDialog.Builder(context)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
             .setTitle("Manage engines")
             .setItems(customs.map { it.name }.toTypedArray()) { _, which ->
                 val e = customs[which]
-                androidx.appcompat.app.AlertDialog.Builder(context)
+                androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
                     .setTitle(e.name)
                     .setItems(arrayOf("✎  Edit", "🗑  Delete")) { _, action ->
                         if (action == 0) promptEdit(context, e, onDone)

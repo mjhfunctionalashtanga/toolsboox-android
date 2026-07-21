@@ -117,7 +117,7 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
             val t = n.title.ifBlank { n.body.take(30).ifBlank { "Untitled" } }
             if (i == current) "• $t" else "  $t"
         }.toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle("Notes · $date")
             .setItems(labels) { _, which -> showNote(which) }
             .setNeutralButton("Delete current") { _, _ -> deleteCurrent() }

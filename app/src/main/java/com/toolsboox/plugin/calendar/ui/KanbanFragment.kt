@@ -79,7 +79,7 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
         val hasSel = selectedBoard != null
         if (hasSel) labels += "🗑  Delete this board"
         val base = 2   // rows after the Site-switch entry + the include-site toggle
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Boards · Local")
             .setItems(labels.toTypedArray()) { _, which ->
                 when {
@@ -126,7 +126,7 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
             addView(cSite); addView(cUser); addView(cPass)
         }
         val scroll = android.widget.ScrollView(ctx).apply { addView(box) }
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Web bridge")
             .setView(scroll)
             .setPositiveButton("Save") { _, _ ->
@@ -188,7 +188,7 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
         val input = android.widget.EditText(ctx).apply { hint = "Board name"; setSingleLine() }
         val pad = (16 * resources.displayMetrics.density).toInt()
         val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input) }
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("New board")
             .setView(box)
             .setPositiveButton("Create") { _, _ ->
@@ -223,7 +223,7 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
         val input = android.widget.EditText(ctx).apply { hint = "New task"; setSingleLine() }
         val pad = (16 * resources.displayMetrics.density).toInt()
         val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input) }
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("New card")
             .setView(box)
             .setPositiveButton("Add") { _, _ ->
@@ -441,7 +441,7 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
             card.addView(row)
             // Long-press a card for the extras (web push).
             card.setOnLongClickListener {
-                androidx.appcompat.app.AlertDialog.Builder(ctx)
+                androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                     .setTitle(item.text.ifBlank { "Card" })
                     .setItems(arrayOf("⬆  Send to web board")) { _, _ -> sendToWeb(item) }
                     .setNegativeButton("Close", null)

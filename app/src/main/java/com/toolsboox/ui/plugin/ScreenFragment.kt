@@ -61,6 +61,15 @@ abstract class ScreenFragment : Fragment() {
                 else -> 1f
             }
 
+        // The modal's own measurements, in the same units as the layouts they came from, so the
+        // scale above moves the BOX as well as the type. Text that grows inside a fixed box only
+        // ellipsizes, which reads as the setting doing nothing.
+        private const val TITLE_SP = 24f        // dialog_go_to's go_to_title
+        private const val ROW_SP = 18f          // item_go_to's go_label
+        private const val ICON_DP = 26f         // item_go_to's go_icon, square
+        private const val ICON_MENU_DP = 300f   // showIconMenu's card
+        private const val GO_MODAL_DP = 200f    // showGoModal's narrower card
+
         // Error-bar debounce (see showError): same message within 30s stays quiet.
         private var lastErrorResId = 0
         private var lastErrorShownAt = 0L
@@ -602,7 +611,7 @@ abstract class ScreenFragment : Fragment() {
         val input = EditText(requireContext()).apply {
             hint = getString(R.string.reader_capture_note_hint); setLines(3); gravity = Gravity.TOP
         }
-        val b = AlertDialog.Builder(requireContext())
+        val b = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(if (selection.isNotBlank()) R.string.reader_capture_highlight_note else R.string.reader_capture_note)
             .setView(input)
             .setPositiveButton(R.string.reader_capture_save) { _, _ ->
@@ -788,7 +797,9 @@ abstract class ScreenFragment : Fragment() {
         dialog.window?.let { w ->
             val lp = w.attributes
             // Narrow, with a clear edge margin — never more than ~46% of the screen width.
-            lp.width = minOf(dp(200), (resources.displayMetrics.widthPixels * 0.44f).toInt())
+            // Widens with the text scale, so Large doesn't just ellipsize the same box.
+            lp.width = minOf(dp((GO_MODAL_DP * textScale).toInt()),
+                (resources.displayMetrics.widthPixels * 0.44f).toInt())
             // Always top-left, matching showAccordion/showDirectory — so the menu appears in the
             // SAME position on every screen (day, feeds, reader) instead of jumping to the pill.
             lp.gravity = Gravity.START or Gravity.TOP
@@ -888,17 +899,39 @@ abstract class ScreenFragment : Fragment() {
         val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
         val list = root.findViewById<LinearLayout>(R.id.go_to_list)
         val titleView = root.findViewById<TextView>(R.id.go_to_title)
-        if (title.isNullOrEmpty()) titleView.visibility = View.GONE else titleView.text = title
+        val textScale = modalTextScale()
+        if (title.isNullOrEmpty()) titleView.visibility = View.GONE else {
+            titleView.text = title; titleView.textSize = TITLE_SP * textScale
+        }
         val dialog = AlertDialog.Builder(ctx).setView(root).create()
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         for ((label, action) in items) {
             val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
-            r.findViewById<TextView>(R.id.go_label).text = applyRowIcon(r, label)
+            r.findViewById<TextView>(R.id.go_label).apply {
+                text = applyRowIcon(r, label)
+                textSize = ROW_SP * textScale
+            }
+            scaleRowIcon(r, textScale)
             r.setOnClickListener { dialog.dismiss(); action() }
             list.addView(r)
         }
         showModal(dialog)
-        dialog.window?.let { w -> w.attributes = w.attributes.apply { width = dp(300) } }
+        // The box grows with the type. Rows are single-line and ellipsized, so a fixed width at
+        // Large just truncated the labels — the setting looked like it did nothing but crop.
+        // Capped against the screen so the widest step still leaves an edge margin.
+        dialog.window?.let { w ->
+            w.attributes = w.attributes.apply {
+                width = minOf(dp((ICON_MENU_DP * textScale).toInt()),
+                    (resources.displayMetrics.widthPixels * 0.92f).toInt())
+            }
+        }
+    }
+
+    /** Keep a row's leading icon in step with its text, so the row stays balanced at every step. */
+    private fun scaleRowIcon(row: View, scale: Float) {
+        val icon = row.findViewById<ImageView>(R.id.go_icon) ?: return
+        val side = (ICON_DP * scale * resources.displayMetrics.density).toInt()
+        icon.layoutParams = icon.layoutParams.apply { width = side; height = side }
     }
 
     /**
@@ -1147,7 +1180,8 @@ abstract class ScreenFragment : Fragment() {
             requestPermissions(permissionsList.toTypedArray(), REQUEST_PERMISSIONS)
         } else {
             val message = getString(R.string.main_ask_permissions_message, permissionsNeeded.joinToString { it })
-            val builder: AlertDialog.Builder = AlertDialog.Builder(this.requireContext())
+            val builder: AlertDialog.Builder =
+                AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this.requireContext()))
             builder.setTitle(R.string.main_ask_permissions_title)
                 .setMessage(message)
                 .setPositiveButton(android.R.string.ok) { _, _ ->

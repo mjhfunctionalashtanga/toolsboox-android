@@ -461,7 +461,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         // replace the view (the card "stuck on Loading…"), but updating this container's children does.
         val container = FrameLayout(ctx)
         container.addView(TextView(ctx).apply { text = "Loading…"; setPadding(px(24), px(24), px(24), px(24)) })
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx).setView(container).create()
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setView(container).create()
         dialog.show()
         lifecycleScope.launch {
             val detail = withContext(Dispatchers.IO) { LedgerBoards.taskDetail(requireContext(), board.id, task.id) }
@@ -662,7 +662,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
                 setOnClickListener { shareAsGram?.invoke() }
             })
         }
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Reply · ${d.title.take(36)}")
             .setView(box)
             .create()
@@ -724,7 +724,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
                 text = "Space: ${chosen.title}  ▾"; isAllCaps = false
                 setOnClickListener {
                     val names = spaces.map { it.title }.toTypedArray()
-                    androidx.appcompat.app.AlertDialog.Builder(ctx)
+                    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                         .setTitle("Share to…")
                         .setItems(names) { _, which -> chosen = spaces[which]; text = "Space: ${chosen.title}  ▾" }
                         .show()
@@ -744,7 +744,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
                 })
                 addView(provInput)
             }
-            androidx.appcompat.app.AlertDialog.Builder(ctx)
+            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                 .setTitle("Share as gram")
                 .setView(box)
                 .setPositiveButton("Share ↗") { _, _ ->
@@ -792,7 +792,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             val names = roster.map { it.name }.toTypedArray()
             val current = d.assignees.map { it.id }.toSet()
             val checked = BooleanArray(roster.size) { roster[it].id in current }
-            androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
                 .setTitle("Assign people")
                 .setMultiChoiceItems(names, checked) { _, which, isChecked -> checked[which] = isChecked }
                 .setPositiveButton("Save") { _, _ ->
@@ -824,7 +824,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
     private fun promptPriority(board: SiteBoard, d: SiteTaskDetail, parent: androidx.appcompat.app.AlertDialog) {
         val options = arrayOf("low", "normal", "high")
         val cur = options.indexOf(d.priority ?: "normal").coerceAtLeast(0)
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle("Priority")
             .setSingleChoiceItems(options, cur) { dlg, which ->
                 saveEdit(board, d, parent, priority = options[which])

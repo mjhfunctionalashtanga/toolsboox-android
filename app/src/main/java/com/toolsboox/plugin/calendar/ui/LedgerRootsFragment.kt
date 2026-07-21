@@ -234,7 +234,7 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
         }
         val scroll = android.widget.ScrollView(ctx).apply { addView(col) }
         com.toolsboox.ot.ReadingSize.apply(scroll)
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("🌿  " + thread.term)
             .setView(scroll)
             .setNegativeButton(getString(R.string.roots_close), null)

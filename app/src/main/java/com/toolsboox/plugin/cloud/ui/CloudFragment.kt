@@ -508,7 +508,7 @@ class CloudFragment @Inject constructor() : ScreenFragment() {
      * Displays the sign-up dialog.
      */
     private fun signUpDialog() {
-        val signUpDialog = AlertDialog.Builder(requireContext())
+        val signUpDialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
 
         val signUpView = requireActivity().layoutInflater.inflate(R.layout.fragment_cloud_sign_up_view, null)
         val usernameEditText = signUpView.findViewById<TextInputEditText>(R.id.username_edit_text)
@@ -550,7 +550,7 @@ class CloudFragment @Inject constructor() : ScreenFragment() {
      * Displays the log in dialog.
      */
     private fun loginDialog() {
-        val loginDialog = AlertDialog.Builder(requireContext())
+        val loginDialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
 
         val loginView = requireActivity().layoutInflater.inflate(R.layout.fragment_cloud_log_in_view, null)
         val usernameEditText = loginView.findViewById<TextInputEditText>(R.id.username_edit_text)
@@ -594,7 +594,7 @@ class CloudFragment @Inject constructor() : ScreenFragment() {
      * Displays the log-out dialog.
      */
     private fun logoutDialog() {
-        val logOutDialog = AlertDialog.Builder(requireContext())
+        val logOutDialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
 
         logOutDialog.setTitle(R.string.cloud_account_log_out_dialog_title)
         logOutDialog.setMessage(R.string.cloud_account_log_out_dialog_message)

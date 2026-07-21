@@ -38,7 +38,7 @@ object OcrModel {
         val labels = CHOICES.map { it.first }.toTypedArray()
         val curModel = current(context)
         val checked = CHOICES.indexOfFirst { it.second == curModel }.coerceAtLeast(0)
-        androidx.appcompat.app.AlertDialog.Builder(context)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
             .setTitle("OCR model")
             .setSingleChoiceItems(labels, checked) { d, which ->
                 set(context, CHOICES[which].second)

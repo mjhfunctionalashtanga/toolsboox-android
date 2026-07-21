@@ -134,7 +134,7 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
     private fun confirmPush() {
         lifecycleScope.launch {
             val (toUpdate, toCreate) = withContext(Dispatchers.IO) { DeviceContactImport.pushCounts(requireContext()) }
-            AlertDialog.Builder(requireContext())
+            AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
                 .setTitle("Push to device contacts?")
                 .setMessage(
                     "Updates $toUpdate and creates $toCreate in your device contacts. " +
@@ -239,7 +239,7 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
             }
         }
 
-        val dialog = AlertDialog.Builder(ctx)
+        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setView(ScrollView(ctx).apply { addView(root) })
             .setPositiveButton("Edit") { _, _ -> openEditor(contact) }
             .setNegativeButton("Close", null)
@@ -403,7 +403,7 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         val bdayE = field("Birthday (e.g. Mar 4)", contact.birthday, InputType.TYPE_CLASS_TEXT)
         val bioE = field("Notes", contact.bio, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE)
 
-        val builder = AlertDialog.Builder(ctx)
+        val builder = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(if (contact.name.isBlank()) "New Contact" else "Edit Contact")
             .setView(ScrollView(ctx).apply { addView(root) })
             .setPositiveButton("Save") { _, _ ->

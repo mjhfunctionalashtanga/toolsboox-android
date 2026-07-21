@@ -246,7 +246,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
      * were on, something caught as media, and the typed notes.
      */
     private fun showQuickNoteSelector() {
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
             .setTitle(R.string.quick_note_selector_title)
             .setItems(
                 arrayOf(
@@ -267,7 +267,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
     /** Photo and voice are the same gesture — getting a thing down when there isn't time to write. */
     private fun showQuickMediaSelector() {
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
             .setTitle(R.string.quick_note_media)
             .setItems(
                 arrayOf(
@@ -305,7 +305,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
     /** Chooser: take a photo, or pick one — then ingest it as a Ledger object. */
     private fun startCapture() {
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
             .setTitle("Capture to Ledger")
             .setItems(arrayOf("📷  Take a photo", "🖼  Choose from gallery")) { _, which ->
                 when (which) {
@@ -406,7 +406,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     private fun offerOcr(bmp: android.graphics.Bitmap) {
         val creds = aiCreds()
         if (creds == null) { bmp.recycle(); return }
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
             .setTitle("Extract the text too?")
             .setMessage("Read the handwriting and file it — a to-do becomes a task, longer writing becomes a note.")
             .setPositiveButton("Extract text") { _, _ ->
@@ -441,7 +441,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             "task" -> "Save as a task"; "event" -> "Save as an event"; else -> "Save as a note"
         }
         val alternate = if (suggestTask) "Save as a note" else "Save as a task"
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
             .setTitle("Reads:")
             .setMessage(result.text.take(400))
             .setPositiveButton(suggested) { _, _ -> fileOcrText(result.text, asTask = suggestTask, asEvent = result.kind == "event") }
@@ -594,7 +594,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         // cold-start can be swallowed before the window is ready.
         binding.fragmentContent.post {
             val list = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL }
-            val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
                 .setTitle(R.string.ledger_share_file_title)
                 .setView(androidx.core.widget.NestedScrollView(this).apply { addView(list) })
                 .create()

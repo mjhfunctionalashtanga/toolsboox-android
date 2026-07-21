@@ -286,7 +286,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
     private fun openShelf() {
         val books = booksDir().listFiles()?.filter { it.isFile }?.sortedBy { it.name.lowercase() } ?: emptyList()
         val labels = books.map { it.nameWithoutExtension } + listOf(getString(R.string.reader_import_new))
-        AlertDialog.Builder(requireContext())
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(R.string.reader_shelf_title)
             .setItems(labels.toTypedArray()) { _, which ->
                 if (which == books.size) {
@@ -317,7 +317,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
     /** Font size + theme for the reader, applied via foliate's applyReaderSettings. */
     private fun openSettings() {
         val prefs = requireContext().getSharedPreferences(PREFS, 0)
-        val builder = AlertDialog.Builder(requireContext()).setTitle(R.string.reader_settings_title)
+        val builder = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext())).setTitle(R.string.reader_settings_title)
         val current = prefs.getString(KEY_THEME, "default") ?: "default"
         val items = arrayOf(
             getString(R.string.reader_font_smaller),
@@ -696,7 +696,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         }
         if (text.isNotBlank()) rows += "❝  Add to Pickings" to { highlightToPickings(text) }
         rows += "🗑  Remove highlight" to { confirmDeleteHighlight(cfi) }
-        AlertDialog.Builder(ctx)
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(R.string.reader_highlight)
             .setItems(rows.map { it.first }.toTypedArray()) { _, which -> rows[which].second() }
             .setNegativeButton(R.string.cancel, null)
@@ -798,7 +798,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
                 if (prompts.isEmpty()) { showMessage("Couldn't draft prompts."); return@launch }
                 com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.add(
                     requireContext(), LocalDate.now(), prompts, "prompt", bookTitle.ifBlank { "book" })
-                AlertDialog.Builder(requireContext())
+                AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
                     .setTitle("Pick a writing prompt")
                     .setItems(prompts.toTypedArray()) { _, which ->
                         lifecycleScope.launch {
@@ -873,7 +873,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
 
     /** Tapping an existing highlight offers to remove it (mark + stored CFI). */
     private fun confirmDeleteHighlight(cfi: String) {
-        AlertDialog.Builder(requireContext())
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(R.string.reader_highlight)
             .setMessage(R.string.reader_highlight_delete_confirm)
             .setPositiveButton(R.string.reader_highlight_delete) { d, _ ->

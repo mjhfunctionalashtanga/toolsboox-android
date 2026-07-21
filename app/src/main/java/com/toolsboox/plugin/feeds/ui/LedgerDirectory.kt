@@ -132,7 +132,7 @@ fun showPickingsPicker(fragment: ScreenFragment) {
     com.toolsboox.plugin.calendar.ot.PickingsStore.sync(ctx, today)   // pull other devices' board names
     val pages = com.toolsboox.plugin.calendar.ot.PickingsStore.list(ctx, today)
     val labels = (pages.map { "❝  ${it.name}" } + listOf("＋  New pickings…", "✎  Rename a pickings…")).toTypedArray()
-    androidx.appcompat.app.AlertDialog.Builder(ctx)
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
         .setTitle("Pickings · $today")
         .setItems(labels) { _, which ->
             when {
@@ -153,7 +153,7 @@ private fun promptNewPicking(fragment: ScreenFragment) {
     val box = android.widget.LinearLayout(ctx).apply {
         orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
     }
-    androidx.appcompat.app.AlertDialog.Builder(ctx)
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
         .setTitle("New pickings")
         .setView(box)
         .setPositiveButton("Create") { _, _ ->
@@ -168,7 +168,7 @@ private fun promptRenamePicking(fragment: ScreenFragment) {
     val ctx = fragment.requireContext()
     val today = LocalDate.now()
     val pages = com.toolsboox.plugin.calendar.ot.PickingsStore.list(ctx, today)
-    androidx.appcompat.app.AlertDialog.Builder(ctx)
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
         .setTitle("Rename which pickings?")
         .setItems(pages.map { it.name }.toTypedArray()) { _, which ->
             val page = pages[which]
@@ -177,7 +177,7 @@ private fun promptRenamePicking(fragment: ScreenFragment) {
             val box = android.widget.LinearLayout(ctx).apply {
                 orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
             }
-            androidx.appcompat.app.AlertDialog.Builder(ctx)
+            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                 .setTitle("Rename pickings")
                 .setView(box)
                 .setPositiveButton("Save") { _, _ ->

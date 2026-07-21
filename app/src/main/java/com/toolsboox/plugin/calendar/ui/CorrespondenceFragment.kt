@@ -199,7 +199,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 return@launch
             }
             val labels = spaces.map { it.title }.toTypedArray()
-            androidx.appcompat.app.AlertDialog.Builder(ctx)
+            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                 .setTitle("Community space")
                 .setItems(labels) { _, i ->
                     spaceId = spaces[i].id; spaceTitle = spaces[i].title
@@ -414,7 +414,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(px(18), px(8), px(18), px(8)) }
         val scroll = android.widget.ScrollView(ctx).apply { addView(col) }
         col.addView(TextView(ctx).apply { text = "Loading…"; setTextColor(0xFF888888.toInt()); setPadding(0, px(12), 0, 0) })
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(deHtml(title).ifBlank { "Thread" })
             .setView(scroll)
             .setPositiveButton("Close", null)
@@ -562,7 +562,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 if (c.mine) actions.addView(TextView(ctx).apply {
                     text = "✕ Delete"; textSize = 13f; setTextColor(0xFFB00020.toInt()); setPadding(0, px(2), 0, px(2))
                     setOnClickListener {
-                        androidx.appcompat.app.AlertDialog.Builder(ctx)
+                        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                             .setMessage("Delete this reply?")
                             .setPositiveButton("Delete") { _, _ ->
                                 lifecycleScope.launch {
@@ -616,7 +616,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         fun open(url: String) = startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
         val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(px(18), px(8), px(18), px(8)) }
         col.addView(TextView(ctx).apply { text = "Loading…"; setTextColor(0xFF888888.toInt()); setPadding(0, px(12), 0, 0) })
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("▸ Related · ${deHtml(post.title).ifBlank { spaceTitle }.take(32)}")
             .setView(android.widget.ScrollView(ctx).apply { addView(col) })
             .setPositiveButton("Close", null)
@@ -840,7 +840,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         typeTab.setOnClickListener { textMode = true; applyMode() }
         applyMode()
 
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle((if (parentId > 0) "Reply · " else "Reply · ") + deHtml(thread).ifBlank { "thread" }.take(28))
             .setView(box)
             .create()
@@ -976,7 +976,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             })
             addView(input)
         }
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Share as gram")
             .setView(box)
             .setPositiveButton("Share ↗") { _, _ ->
@@ -1064,7 +1064,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             orientation = LinearLayout.VERTICAL; setPadding(px(12), px(8), px(12), 0)
             addView(topRow); addView(scroll)
         }
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Reply with Log")
             .setView(box)
             .setNegativeButton("Cancel", null)
@@ -1130,7 +1130,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             addView(com.toolsboox.ot.InkMount.wrapInColumn(ctx, img))
             setPadding(px(8), px(4), px(8), px(4))
         }
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(label.take(40))
             .setView(scroll)
             .setPositiveButton("Attach") { _, _ -> onAttach() }
@@ -1154,7 +1154,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             addView(listCol)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (440 * dp).toInt())
         }
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Reply with Picking").setView(scroll).setNegativeButton("Cancel", null).create()
 
         // Render the chosen page fresh at full width and hand it to the lightbox → attach.
@@ -1278,7 +1278,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             addView(listCol)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (440 * dp).toInt())
         }
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Reply with Gram").setView(scroll).setNegativeButton("Cancel", null).create()
 
         listCol.addView(TextView(ctx).apply { text = "Loading grams…"; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0) })
@@ -1429,7 +1429,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             addView(recordRow)
             addView(scroll)
         }
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Reply with Voice or Video").setView(holder).setNegativeButton("Cancel", null).create()
 
         // Make one right here. The recording still lands in today's Ledger on the way past —
