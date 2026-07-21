@@ -1046,49 +1046,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val inCat = allEntries.filter { it.categoryLabel == label }
         val feeds = inCat.map { it.feedTitle }.filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }
         if (feeds.size <= 1) { adapter.submit(inCat); return }
-        val ctx = requireContext()
         val rows = listOf<Pair<String, () -> Unit>>("📰  All — $label" to { adapter.submit(inCat) }) +
-            feeds.map { f ->
-                // A ✓ marks a feed that carries your OWN material home — the secret-gated RSS of
-                // your notes, say. Only those are admitted to the spiral and the roots; the rest
-                // of the reader is other people's writing arriving unbidden, which is exactly
-                // what shouldn't be resurfaced at you. Tapping ✓ toggles it.
-                val own = com.toolsboox.plugin.calendar.ot.OwnFeeds.isOwn(ctx, f)
-                ((if (own) "✓📰  $f" else "📰  $f") to { adapter.submit(inCat.filter { it.feedTitle == f }) })
-            } +
-            listOf<Pair<String, () -> Unit>>("⚙  Mark a feed as my own…" to { showOwnFeedPicker(feeds) })
+            feeds.map { f -> ("📰  $f" to { adapter.submit(inCat.filter { it.feedTitle == f }) }) }
         showDirectory(listOf(label to rows))
-    }
-
-    /**
-     * Declare which feeds carry your own material.
-     *
-     * The spiral refuses to draw on the reader, because a feed is other people's writing arriving
-     * unbidden and resurfacing that at you is the habit this is meant to break. But a feed OF YOUR
-     * OWN NOTES is the opposite — every item in it was admitted by a deliberate act. This is where
-     * you say which is which; it's a declaration made once, by hand, rather than a guess.
-     */
-    private fun showOwnFeedPicker(feeds: List<String>) {
-        val ctx = requireContext()
-        if (feeds.isEmpty()) return
-        val labels = feeds.map { f ->
-            (if (com.toolsboox.plugin.calendar.ot.OwnFeeds.isOwn(ctx, f)) "✓  " else "☐  ") + f
-        }.toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
-            .setTitle("Feeds that are my own")
-            .setItems(labels) { _, which ->
-                val feed = feeds[which]
-                val nowOwn = com.toolsboox.plugin.calendar.ot.OwnFeeds.toggle(ctx, feed)
-                android.widget.Toast.makeText(
-                    ctx,
-                    if (nowOwn) "\"$feed\" counts as your own — it can come back around"
-                    else "\"$feed\" is just reading again",
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
-                showOwnFeedPicker(feeds)
-            }
-            .setNegativeButton("Done", null)
-            .show()
     }
 
     private fun dpPx(v: Int) = (v * resources.displayMetrics.density).toInt()
