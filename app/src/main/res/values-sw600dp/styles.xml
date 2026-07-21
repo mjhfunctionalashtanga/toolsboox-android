@@ -1,0 +1,10 @@
+<resources>
+    <!--
+        A dialog on a big e-ink panel should still be the width of something you read, not the
+        width of the desk. 520dp is about a paragraph; the same figure the rhizome card uses.
+    -->
+    <style name="LedgerAlertDialog" parent="Theme.AppCompat.Light.Dialog.Alert">
+        <item name="windowFixedWidthMajor">520dp</item>
+        <item name="windowFixedWidthMinor">520dp</item>
+    </style>
+</resources>

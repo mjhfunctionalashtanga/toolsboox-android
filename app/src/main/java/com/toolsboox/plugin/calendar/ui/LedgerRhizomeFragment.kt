@@ -169,10 +169,13 @@ class LedgerRhizomeFragment @Inject constructor() : ScreenFragment() {
     ): View {
         val ctx = requireContext()
         val ref = LedgerUri.parse(other)
+        // The live object first, then whatever the edge recorded it was called, then the generic
+        // description. "a task" is true and useless; the words someone actually wrote are the
+        // whole reason to walk here.
         val name = when (ref?.scheme) {
-            LedgerUri.SCHEME_CONTACT -> contacts[ref.body]?.name?.ifBlank { null } ?: "Unnamed"
-            else -> LedgerUri.describe(other)
-        }
+            LedgerUri.SCHEME_CONTACT -> contacts[ref.body]?.name?.ifBlank { null }
+            else -> null
+        } ?: edge.otherLabel(uri).takeIf { it.isNotBlank() } ?: LedgerUri.describe(other)
         val glyph = when (ref?.scheme) {
             LedgerUri.SCHEME_LEDGER -> if (ref.isElement) "✒" else "📆"
             LedgerUri.SCHEME_TASK -> "🃏"

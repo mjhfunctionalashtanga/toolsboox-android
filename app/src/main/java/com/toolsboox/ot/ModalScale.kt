@@ -27,14 +27,20 @@ object ModalScale {
      * there is nothing to change and the extra wrapper would only cost an allocation.
      */
     fun wrap(context: Context): Context {
-        val scale = ScreenFragment.modalTextScale(context)
-        if (scale == 1f) return context
-        val cfg = Configuration().apply {
-            setTo(context.resources.configuration)
-            fontScale *= scale
-        }
         // themeResId 0 keeps the base context's theme — AppCompat dialogs need it, and losing it
         // is what makes a naively re-configured context throw at inflation time.
-        return ContextThemeWrapper(context, 0).apply { applyOverrideConfiguration(cfg) }
+        val wrapper = ContextThemeWrapper(context, 0)
+        val scale = ScreenFragment.modalTextScale(context)
+        if (scale != 1f) {
+            // Must land before anything reads a resource off this context, hence before the theme.
+            wrapper.applyOverrideConfiguration(Configuration().apply {
+                setTo(context.resources.configuration)
+                fontScale *= scale
+            })
+        }
+        // Applied at every size, including Medium: this is also where the dialog's WIDTH is
+        // capped on large panels, which has nothing to do with how big the text is.
+        wrapper.theme.applyStyle(com.toolsboox.R.style.LedgerModalOverlay, true)
+        return wrapper
     }
 }

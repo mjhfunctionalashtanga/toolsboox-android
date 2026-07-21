@@ -1,4 +1,19 @@
 <resources>
+    <!--
+        Modal sizing. Every dialog is built through ModalScale.wrap, which applies this overlay,
+        so capping the width here caps all ~137 of them without touching a call site.
+
+        No cap on a handset-sized panel: a Palma's screen IS the right width for a dialog. The
+        override lives in values-sw600dp, where a stock AlertDialog otherwise stretches across a
+        13" page and a four-line menu becomes a wall.
+    -->
+    <style name="LedgerAlertDialog" parent="Theme.AppCompat.Light.Dialog.Alert"/>
+
+    <style name="LedgerModalOverlay">
+        <item name="alertDialogTheme">@style/LedgerAlertDialog</item>
+        <item name="android:alertDialogTheme">@style/LedgerAlertDialog</item>
+    </style>
+
     <style name="App.Theme" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="colorPrimary">@color/colorPrimary</item>
         <item name="colorPrimaryDark">@color/colorPrimaryDark</item>

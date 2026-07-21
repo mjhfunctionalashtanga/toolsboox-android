@@ -1907,6 +1907,12 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** "Where used" for a gram — the day page subclass walks day files for the same content + navigates. */
     open fun onImageWhereUsed(element: ImageElement) {}
 
+    /** Everything this gram joins. The subclass knows the date, which is half of its address. */
+    open fun onImageRhizome(element: ImageElement) {}
+
+    /** Everything this text box joins — for a dropped link, the thing it points at. */
+    open fun onTextRhizome(element: TextElement) {}
+
     /** Share the current page as one image — the day-page subclass wires it to the share sheet. */
     open fun onSharePage() {}
 
@@ -2458,6 +2464,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 }
             },
             LedgerContextMenu.Item("Where used…") { onImageWhereUsed(element) },
+            LedgerContextMenu.Item("🕸 Its rhizome…") { onImageRhizome(element) },
             LedgerContextMenu.Item("Post to community…") { postGramToCommunity(element) },
             LedgerContextMenu.Item("Pin to Board…") { onImagePinToBoard(element) },
             LedgerContextMenu.Item("Save to Clippings") {
@@ -2777,6 +2784,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                     LedgerContextMenu.Item("Edit text") { showTextEditDialog(element) },
                     LedgerContextMenu.Item("Move — drag it") { enterTextBoxManipulation(element) },
                     LedgerContextMenu.Item("Synthesize…") { onSynthesizeText(element) },
+                    LedgerContextMenu.Item("🕸 Its rhizome…") { onTextRhizome(element) },
                     LedgerContextMenu.Item(if (element.contactId.isNullOrBlank()) "Assign to contact…" else "Contact…") {
                         pickContact { id ->
                             element.contactId = id

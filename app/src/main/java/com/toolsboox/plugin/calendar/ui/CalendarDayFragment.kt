@@ -286,6 +286,28 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /** "Where used": every day + page a gram with the same content is placed on — the rhizomatic web. */
+    /** Everything this gram joins, asked from the gram's own end. */
+    override fun onImageRhizome(element: ImageElement) {
+        val uri = com.toolsboox.plugin.calendar.ot.LegacyEdges.adopt(requireContext(), element, currentDate)
+        openRhizome(uri, element.sourceLabel.ifBlank { "This gram" })
+    }
+
+    /** Everything this text box joins — for a dropped link, the thing it points at. */
+    override fun onTextRhizome(element: com.toolsboox.da.TextElement) {
+        val uri = com.toolsboox.plugin.calendar.ot.LegacyEdges.adopt(requireContext(), element, currentDate)
+        openRhizome(uri, element.text.take(60).ifBlank { "This text" })
+    }
+
+    private fun openRhizome(uri: String, label: String) {
+        findNavController().navigate(
+            R.id.action_to_ledger_rhizome,
+            androidx.core.os.bundleOf(
+                LedgerRhizomeFragment.ARG_URI to uri,
+                LedgerRhizomeFragment.ARG_LABEL to label
+            )
+        )
+    }
+
     override fun onImageWhereUsed(element: ImageElement) {
         val key = contentKey(element.gramId, element.data)
         if (key.isBlank()) return

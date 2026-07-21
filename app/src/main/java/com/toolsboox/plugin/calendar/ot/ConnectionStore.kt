@@ -41,15 +41,19 @@ object ConnectionStore {
      */
     fun connect(
         context: Context, from: String, to: String,
-        kind: String = Connection.ABOUT, note: String = ""
+        kind: String = Connection.ABOUT, note: String = "",
+        fromLabel: String = "", toLabel: String = ""
     ): Connection? {
         if (from.isBlank() || to.isBlank() || from == to) return null
         val all = loadAll(context)
-        val edge = Connection.of(from, to, kind, note)
+        val edge = Connection.of(from, to, kind, note, fromLabel, toLabel)
         val existing = all.firstOrNull { it.id == edge.id }
         val result = if (existing != null) existing.apply {
             deletedAt = 0L
             if (note.isNotBlank()) this.note = note
+            // Labels are a snapshot, so a fresh one always beats the stored one.
+            if (fromLabel.isNotBlank()) this.fromLabel = fromLabel
+            if (toLabel.isNotBlank()) this.toLabel = toLabel
             updated = System.currentTimeMillis()
         } else edge.also { all.add(it) }
         saveAll(context, all)
