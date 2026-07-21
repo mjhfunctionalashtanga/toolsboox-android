@@ -283,20 +283,52 @@ abstract class ScreenFragment : Fragment() {
      * Cycle the screen orientation through the user's allowed set (rotationOrientationMask) — the
      * same rotate the day page's wrench does, shared so the feed/reader "quick controls" can rotate too.
      */
-    protected fun cycleScreenOrientation() {
+    protected fun cycleScreenOrientation() = stepScreenOrientation()
+
+    /**
+     * Step to the next allowed orientation.
+     *
+     * Advances from what is on SCREEN when the activity hasn't requested anything yet — see
+     * [com.toolsboox.ot.ScreenRotation.next]. Without that, the first press asked for portrait
+     * while portrait was already showing, and the button appeared dead until its second tap.
+     */
+    protected fun stepScreenOrientation() {
         val activity = requireActivity()
-        val current = activity.requestedOrientation
-        val prefs = requireContext().getSharedPreferences("MAIN", 0)
-        val mask = prefs.getInt("rotationOrientationMask", 0b1111)
-        val cycle = mutableListOf<Int>()
-        if (mask and 0b0001 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
-        if (mask and 0b0010 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE)
-        if (mask and 0b0100 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT)
-        if (mask and 0b1000 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
-        if (cycle.isEmpty()) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
-        val idx = cycle.indexOf(current).takeIf { it >= 0 } ?: -1
-        activity.requestedOrientation = cycle[(idx + 1) % cycle.size]
+        val mask = requireContext().getSharedPreferences("MAIN", 0)
+            .getInt("rotationOrientationMask", 0b1111)
+        activity.requestedOrientation = com.toolsboox.ot.ScreenRotation.next(
+            com.toolsboox.ot.ScreenRotation.cycleFor(mask),
+            activity.requestedOrientation,
+            com.toolsboox.ot.ScreenRotation.displayedBy(currentSurfaceRotation())
+        )
     }
+
+    /**
+     * Hand the screen to the gyro, or take it back.
+     *
+     * The stepper and the sensor are the same control because they answer the same question —
+     * "which way up is this" — and having them in two places meant setting one while the other
+     * quietly overrode it.
+     */
+    protected fun toggleAutoRotate() {
+        val activity = requireActivity()
+        val auto = activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
+        if (auto) {
+            // Leaving the sensor: hold whatever it had landed on, so the screen doesn't jump.
+            activity.requestedOrientation =
+                com.toolsboox.ot.ScreenRotation.displayedBy(currentSurfaceRotation())
+            showMessage(getString(R.string.rotate_locked), requireView())
+        } else {
+            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
+            showMessage(getString(R.string.rotate_auto), requireView())
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun currentSurfaceRotation(): Int =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+            requireContext().display?.rotation ?: 0
+        else requireActivity().windowManager.defaultDisplay.rotation
 
     /** Collapse the almanac nav pill to grip + centre glyph (↑↓ hide); tap the grip to toggle. */
     private fun toggleNavPill(navUp: View, navDown: View) {

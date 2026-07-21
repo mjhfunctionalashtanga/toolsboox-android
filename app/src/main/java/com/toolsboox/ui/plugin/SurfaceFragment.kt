@@ -938,24 +938,11 @@ abstract class SurfaceFragment : ScreenFragment() {
             CalendarNavigator.toCloudSync(this)
         }
 
-        provideToolbarDrawing().toolbarRotate.setOnClickListener {
-            val activity = requireActivity()
-            val current = activity.requestedOrientation
-
-            // Build the cycle order from the user's preference (bitmask).
-            // SCREEN_ORIENTATION_LANDSCAPE == landscape CCW (top tilts left in Android terms)
-            // SCREEN_ORIENTATION_REVERSE_LANDSCAPE == landscape CW (top tilts right)
-            val mask = sharedPreferences.getInt("rotationOrientationMask", 0b1111)
-            val cycle = mutableListOf<Int>()
-            if (mask and 0b0001 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
-            if (mask and 0b0010 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE)
-            if (mask and 0b0100 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT)
-            if (mask and 0b1000 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
-            if (cycle.isEmpty()) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
-
-            val idx = cycle.indexOf(current).takeIf { it >= 0 } ?: -1
-            activity.requestedOrientation = cycle[(idx + 1) % cycle.size]
-        }
+        // Tap steps the rotation; hold hands the screen back to the gyro.
+        // SCREEN_ORIENTATION_LANDSCAPE == landscape CCW (top tilts left in Android terms)
+        // SCREEN_ORIENTATION_REVERSE_LANDSCAPE == landscape CW (top tilts right)
+        provideToolbarDrawing().toolbarRotate.setOnClickListener { stepScreenOrientation() }
+        provideToolbarDrawing().toolbarRotate.setOnLongClickListener { toggleAutoRotate(); true }
 
         // Hide the cloud sync feature in case of regular users or enable it generally.
         val androidId = sharedPreferences.getString("androidId", "")

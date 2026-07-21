@@ -426,6 +426,8 @@
     <string name="ledger_ai_key_needed">Add your Ask-my-Ledger API key in Settings first.</string>
     <string name="ledger_educate_looking_up">Looking it up…</string>
     <string name="ledger_ink_task_label">Write a task by hand — ＋ adds it</string>
+    <string name="rotate_auto">Auto-rotate on — the gyro has it</string>
+    <string name="rotate_locked">Rotation locked here</string>
     <string name="ledger_ink_task_undo">Undo the last stroke</string>
     <string name="ledger_educate_filed">Filed to your Later List → Educate (and your feed).</string>
     <string name="ledger_educate_open">Open link</string>

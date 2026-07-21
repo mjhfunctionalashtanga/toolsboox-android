@@ -1123,6 +1123,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             ),
             "Screen" to listOf(
                 "🔄  Rotate screen" to { cycleScreenOrientation() },
+                "🧭  Auto-rotate (gyro)" to { toggleAutoRotate() },
                 ((if (volumeTurnOn()) "☑" else "☐") + "  Volume keys scroll") to {
                     requireContext().getSharedPreferences("ledger_reader_nav", 0)
                         .edit().putBoolean("volume_turn", !volumeTurnOn()).apply()
