@@ -627,11 +627,29 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 runCatching {
                     val all = corpusService.gather(documentsRoot())
                         .filter { it.text.isNotBlank() && it.text.length > 24 }
+
+                    // The roots feed the spiral: an object that joins two threads — one you're in
+                    // now and one you aren't — beats another member of a thread you're already
+                    // inside. That's the difference between being reminded and being connected.
+                    val threads = com.toolsboox.plugin.calendar.ot.Rhizome.threads(
+                        all.map { it.text + " " + it.title }, all.map { it.date.time })
+                    val crossings = com.toolsboox.plugin.calendar.ot.Rhizome.crossings(threads)
+                    val warmCut = System.currentTimeMillis() -
+                        java.util.concurrent.TimeUnit.DAYS.toMillis(21)
+                    val warmTerms = threads
+                        .filter { t -> t.members.any { (all.getOrNull(it)?.date?.time ?: 0L) >= warmCut } }
+                        .map { it.term }.toSet()
+                    val bonusByIndex = crossings.mapValues { (_, terms) ->
+                        com.toolsboox.plugin.calendar.ot.Rhizome.bridgeScore(terms, warmTerms)
+                    }
+                    val indexOf = all.withIndex().associate { (i, v) -> v to i }
+
                     com.toolsboox.plugin.calendar.ot.Spiral.choose(
                         ctx, all,
                         textOf = { it.text + " " + it.title },
                         dateOf = { it.date.time },
-                        keyOf = { com.toolsboox.plugin.calendar.ot.Spiral.keyOf(it.citation, it.text) }
+                        keyOf = { com.toolsboox.plugin.calendar.ot.Spiral.keyOf(it.citation, it.text) },
+                        bonusOf = { indexOf[it]?.let { i -> bonusByIndex[i] } ?: 0.0 }
                     )
                 }.getOrNull()
             }
@@ -646,11 +664,12 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 setColor(0xFFFFFFFF.toInt()); setStroke(px(2), 0xFF111111.toInt()); cornerRadius = px(12).toFloat()
             }
             // The header says WHY this one, which is the whole difference between a spiral and a
-            // queue. "Come back around" alone is just a slow list.
+            // queue. "Come back around" alone is just a slow list. Tapping it opens the roots.
             card.addView(TextView(ctx).apply {
-                text = if (chosen.shared.isEmpty()) "🌀  come back around"
-                    else "🌀  you've been circling " + chosen.shared.joinToString(" · ")
+                text = (if (chosen.shared.isEmpty()) "🌀  come back around"
+                    else "🌀  you've been circling " + chosen.shared.joinToString(" · ")) + "   ›"
                 textSize = 12f; setTextColor(0xFF666666.toInt())
+                setOnClickListener { showRoots() }
             })
             card.addView(TextView(ctx).apply {
                 text = pick.text.take(320).trim() + if (pick.text.length > 320) "…" else ""
@@ -700,6 +719,152 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             com.toolsboox.ot.ReadingSize.apply(card)
             card.visibility = View.VISIBLE
         }
+    }
+
+    /**
+     * The roots: what you keep coming back to, and where two of them touch.
+     *
+     * A thread here is just a word that recurs across things you made at different times — a
+     * modest claim you can check by eye. The crossings are the interesting part: an object sitting
+     * in two threads at once is where preoccupations meet, and nothing about it looks special in a
+     * list, so it is exactly what scrolling never finds.
+     */
+    private fun showRoots() {
+        val ctx = context ?: return
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        val col = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(18), px(10), px(18), px(8))
+        }
+        col.addView(TextView(ctx).apply {
+            text = "Reading the roots…"; textSize = 14f; setTextColor(0xFF888888.toInt())
+        })
+        val scroll = android.widget.ScrollView(ctx).apply { addView(col) }
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("🌿  Roots")
+            .setView(scroll)
+            .setNegativeButton("Close", null)
+            .show()
+
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val all = corpusService.gather(documentsRoot())
+                        .filter { it.text.isNotBlank() && it.text.length > 24 }
+                    val threads = com.toolsboox.plugin.calendar.ot.Rhizome.threads(
+                        all.map { it.text + " " + it.title }, all.map { it.date.time }
+                    )
+                    Triple(all, threads, com.toolsboox.plugin.calendar.ot.Rhizome.crossings(threads))
+                }.getOrNull()
+            }
+
+            if (!isAdded || result == null) return@launch
+            val (all, threads, crossings) = result
+            col.removeAllViews()
+
+            if (threads.isEmpty()) {
+                col.addView(TextView(ctx).apply {
+                    text = "Nothing has come back often enough yet to call it a thread.\n\n" +
+                        "This fills in as the ledger does — it needs the same word in a few things " +
+                        "made at different times."
+                    textSize = 14f; setTextColor(0xFF666666.toInt()); setLineSpacing(0f, 1.15f)
+                })
+                com.toolsboox.ot.ReadingSize.apply(col)
+                return@launch
+            }
+
+            val now = System.currentTimeMillis()
+
+            col.addView(TextView(ctx).apply {
+                text = "WHAT KEEPS COMING BACK"
+                textSize = 11f; setTextColor(0xFF888888.toInt()); setPadding(0, 0, 0, px(6))
+            })
+
+            for (t in threads.take(18)) {
+                val row = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(0, px(6), 0, px(6))
+                    setBackgroundResource(android.R.drawable.list_selector_background)
+                }
+                row.addView(TextView(ctx).apply {
+                    // A quiet thread is one worth picking back up, so it says so rather than
+                    // just sorting lower.
+                    text = t.term + (if (t.isQuiet(now)) "   · gone quiet" else "")
+                    textSize = 16f; setTextColor(0xFF000000.toInt())
+                })
+                row.addView(TextView(ctx).apply {
+                    text = "${t.size} times" + (if (t.spanDays > 0) "  ·  across ${t.spanDays} days" else "")
+                    textSize = 11f; setTextColor(0xFF888888.toInt())
+                })
+                row.setOnClickListener { showThread(t, all) }
+                col.addView(row)
+            }
+
+            if (crossings.isNotEmpty()) {
+                col.addView(TextView(ctx).apply {
+                    text = "WHERE THEY TOUCH"
+                    textSize = 11f; setTextColor(0xFF888888.toInt()); setPadding(0, px(16), 0, px(6))
+                })
+                // Most-connected first: the things holding the most threads together.
+                for ((idx, terms) in crossings.entries.sortedByDescending { it.value.size }.take(10)) {
+                    val snip = all.getOrNull(idx) ?: continue
+                    val row = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(0, px(6), 0, px(6))
+                        setBackgroundResource(android.R.drawable.list_selector_background)
+                    }
+                    row.addView(TextView(ctx).apply {
+                        text = terms.joinToString("  ✕  ")
+                        textSize = 13f; setTextColor(0xFF2F6F96.toInt())
+                    })
+                    row.addView(TextView(ctx).apply {
+                        text = snip.text.take(140).trim() + if (snip.text.length > 140) "…" else ""
+                        textSize = 14f; setTextColor(0xFF000000.toInt())
+                    })
+                    row.addView(TextView(ctx).apply {
+                        text = snip.citation; textSize = 11f; setTextColor(0xFF888888.toInt())
+                    })
+                    col.addView(row)
+                }
+            }
+
+            com.toolsboox.ot.ReadingSize.apply(col)
+        }
+    }
+
+    /** Everywhere one thread runs, oldest first — the shape of a preoccupation over time. */
+    private fun showThread(
+        thread: com.toolsboox.plugin.calendar.ot.Rhizome.Thread,
+        all: List<com.toolsboox.plugin.chat.da.CorpusSnippet>
+    ) {
+        val ctx = context ?: return
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        val col = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(18), px(10), px(18), px(8))
+        }
+        for (i in thread.members.sortedBy { all.getOrNull(it)?.date?.time ?: 0L }) {
+            val snip = all.getOrNull(i) ?: continue
+            col.addView(TextView(ctx).apply {
+                text = snip.citation
+                textSize = 11f; setTextColor(0xFF888888.toInt()); setPadding(0, px(10), 0, 0)
+            })
+            col.addView(TextView(ctx).apply {
+                text = snip.text.take(300).trim() + if (snip.text.length > 300) "…" else ""
+                textSize = 14f; setTextColor(0xFF000000.toInt()); setLineSpacing(0f, 1.15f)
+            })
+        }
+        val scroll = android.widget.ScrollView(ctx).apply { addView(col) }
+        com.toolsboox.ot.ReadingSize.apply(scroll)
+        androidx.appcompat.app.AlertDialog.Builder(ctx)
+            .setTitle("🌿  " + thread.term)
+            .setView(scroll)
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     /** Turn what came back around into something to do, keeping the words and where they're from. */

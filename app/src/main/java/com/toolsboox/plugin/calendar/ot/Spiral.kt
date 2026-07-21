@@ -135,7 +135,13 @@ object Spiral {
         textOf: (T) -> String,
         dateOf: (T) -> Long,
         keyOf: (T) -> String,
-        now: Long = System.currentTimeMillis()
+        now: Long = System.currentTimeMillis(),
+        /**
+         * Extra weight from the roots — see [Rhizome.bridgeScore]. An object that JOINS two
+         * threads teaches more than another member of a thread you're already inside, so the
+         * spiral prefers a connector when it can find one.
+         */
+        bonusOf: (T) -> Double = { 0.0 }
     ): Pick<T>? {
         if (items.isEmpty()) return null
 
@@ -164,7 +170,8 @@ object Spiral {
             if (shared.isEmpty()) continue
             // Rarity matters more than volume: a word in ONE recent note is a thread, a word in
             // twenty is just how you write.
-            val score = shared.sumOf { 1.0 / (1.0 + (warmth[it] ?: 1)) } * shared.size
+            val score = shared.sumOf { 1.0 / (1.0 + (warmth[it] ?: 1)) } * shared.size *
+                (1.0 + bonusOf(candidate))
             if (score > bestScore) {
                 best = candidate
                 bestScore = score
