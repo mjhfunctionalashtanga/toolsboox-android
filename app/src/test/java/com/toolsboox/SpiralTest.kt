@@ -194,6 +194,21 @@ class SpiralTest {
     }
 
     @Test
+    fun the_scope_is_what_you_made_or_marked_and_not_your_diary_admin() {
+        val scope = Spiral.SCOPE
+        assertFalse(
+            "the reader is other people's writing arriving unbidden",
+            com.toolsboox.plugin.chat.da.Section.FEED in scope
+        )
+        assertFalse(
+            "tasks and events are logistics, not thinking — a finished errand teaches nothing",
+            com.toolsboox.plugin.chat.da.Section.TASKS in scope
+        )
+        assertTrue("your annotations on articles are yours", com.toolsboox.plugin.chat.da.Section.ARTICLES in scope)
+        assertTrue("book highlights are yours", com.toolsboox.plugin.chat.da.Section.BOOKS in scope)
+    }
+
+    @Test
     fun an_empty_ledger_returns_nothing_rather_than_throwing() {
         assertNull(choose(emptyList()))
     }

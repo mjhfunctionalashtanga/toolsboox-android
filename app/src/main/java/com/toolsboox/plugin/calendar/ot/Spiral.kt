@@ -135,8 +135,11 @@ object Spiral {
         com.toolsboox.plugin.chat.da.Section.PLANNER,     // what you wrote on the pages
         com.toolsboox.plugin.chat.da.Section.MEDIA,       // A/V grams
         com.toolsboox.plugin.chat.da.Section.SECTIONS,    // OCR'd handwriting
-        com.toolsboox.plugin.chat.da.Section.NOTES,       // text notes
-        com.toolsboox.plugin.chat.da.Section.TASKS
+        com.toolsboox.plugin.chat.da.Section.NOTES        // text notes
+        // NOT Section.TASKS. Tasks and events are logistics — "dentist at three", "email Bob".
+        // They are things to DO, not things to reconsider: a finished errand coming back around
+        // teaches nothing, and their vocabulary swamps the roots with scheduling words, which
+        // recur constantly and mean nothing about what you are actually thinking about.
     )
 
     /**
