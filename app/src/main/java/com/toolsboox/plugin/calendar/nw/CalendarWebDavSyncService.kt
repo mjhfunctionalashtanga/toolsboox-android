@@ -286,8 +286,37 @@ class CalendarWebDavSyncService(
             val name = File(r.remotePath).name
             if (name.isBlank() || name in localNames) continue
             val bytes = runCatching { webdav.download(r.remotePath) }.getOrNull() ?: continue
-            runCatching { File(dir, name).writeBytes(bytes) }
+            // Same temp-then-move as everything else. This wrote straight to the final name, so a
+            // kill or a short read left a half-attachment under a name that says it's whole — and
+            // the `name in localNames` skip above then treats it as already downloaded, for good.
+            runCatching {
+                val temp = File(dir, "$name.tmp")
+                temp.writeBytes(bytes)
+                try {
+                    Files.move(temp.toPath(), File(dir, name).toPath(), StandardCopyOption.ATOMIC_MOVE)
+                } catch (e: Exception) {
+                    Files.move(temp.toPath(), File(dir, name).toPath(), StandardCopyOption.REPLACE_EXISTING)
+                }
+            }
         }
+    }
+
+    /**
+     * Does this look like a whole JSON document?
+     *
+     * Only checks that it starts and ends with matching brackets, ignoring trailing whitespace.
+     * That is deliberately shallow — it catches truncation, which is the failure that actually
+     * happens, and costs microseconds on a file too big to parse twice.
+     */
+    private fun closesCleanly(bytes: ByteArray): Boolean {
+        var end = bytes.size - 1
+        while (end >= 0 && bytes[end].toInt().toChar().isWhitespace()) end--
+        var start = 0
+        while (start < bytes.size && bytes[start].toInt().toChar().isWhitespace()) start++
+        if (start >= end) return false
+        val first = bytes[start].toInt().toChar()
+        val last = bytes[end].toInt().toChar()
+        return (first == '{' && last == '}') || (first == '[' && last == ']')
     }
 
     /**
@@ -411,6 +440,21 @@ class CalendarWebDavSyncService(
      */
     private fun writeLocal(remotePath: String, bytes: ByteArray): Boolean {
         return try {
+            // Refuse to install a JSON file that doesn't close.
+            //
+            // The atomic move is what makes this necessary rather than sufficient: it guarantees
+            // the file on disk is a COMPLETE copy of the bytes we were handed, which is no help at
+            // all when the bytes themselves are half a day. That is how
+            // `day-2026-09-11-v2.json` came to be 39 MB of unterminated string — one inline
+            // base64 image, cut off, written perfectly.
+            //
+            // Structural rather than a full parse: these files reach tens of megabytes and
+            // parsing one on a Boox to decide whether to save it would cost more than the sync.
+            // Truncation always shows up at the end, so the end is where to look.
+            if (remotePath.endsWith(".json") && !closesCleanly(bytes)) {
+                Timber.w("$TAG: Refusing truncated $remotePath (${bytes.size} bytes) — keeping the local copy")
+                return false
+            }
             val target = File(rootDir, remotePath)
             target.parentFile?.mkdirs()
             val temp = File(target.parentFile, target.name + ".tmp")

@@ -180,7 +180,18 @@ class UltrabridgeWebDavService(
         return try {
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
-                    response.body?.bytes()
+                    val body = response.body?.bytes()
+                    // A short read is the quiet way a good file becomes a corrupt one. The write
+                    // downstream is atomic, so truncated bytes get installed *completely* — a whole
+                    // file containing half a day. Content-Length is the only thing that can tell
+                    // us, and it costs nothing to check. (-1 means chunked/unknown: nothing to
+                    // compare against, so let it through and let the structural check catch it.)
+                    val declared = response.body?.contentLength() ?: -1L
+                    if (body != null && declared >= 0 && body.size.toLong() != declared) {
+                        Timber.w("$TAG: Short read for $remotePath: got ${body.size} of $declared bytes — discarding")
+                        return@use null
+                    }
+                    body
                 } else {
                     Timber.w("$TAG: Download failed for $remotePath: ${response.code} ${response.message}")
                     null

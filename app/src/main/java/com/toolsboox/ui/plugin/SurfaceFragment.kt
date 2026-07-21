@@ -2223,9 +2223,14 @@ abstract class SurfaceFragment : ScreenFragment() {
                 )
             } else original
 
-            val baos = ByteArrayOutputStream()
-            scaled.compress(Bitmap.CompressFormat.PNG, 100, baos)
-            val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+            // JPEG for a photograph, PNG for anything with hard edges or transparency. This is
+            // the path a camera capture and a gallery pick both take, and it was writing lossless
+            // PNG — tens of megabytes of sensor noise preserved exactly, then grown a third again
+            // by base64 to sit inside the day's JSON. See LedgerImageCodec.
+            val bytes = if (com.toolsboox.ot.LedgerImageCodec.looksPhotographic(scaled))
+                com.toolsboox.ot.LedgerImageCodec.photo(scaled)
+            else com.toolsboox.ot.LedgerImageCodec.ink(scaled)
+            val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
 
             // Place centered on the long-press point when one is pending, otherwise
             // centered on the page; sized to a fraction of the page width.
