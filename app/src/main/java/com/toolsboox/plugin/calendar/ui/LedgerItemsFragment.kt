@@ -51,6 +51,10 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     @Inject
     lateinit var calendarPatternService: com.toolsboox.plugin.calendar.fi.CalendarPatternService
 
+    /** Reads the whole ledger as citable snippets — what the learner card draws from. */
+    @Inject
+    lateinit var corpusService: com.toolsboox.plugin.chat.fi.LedgerCorpusService
+
     override val view = R.layout.fragment_ledger_items
 
     private lateinit var binding: FragmentLedgerItemsBinding
@@ -71,6 +75,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
 
         adapter = LedgerItemAdapter(emptyList(), emptyMap(), ::persist, ::onEnterSelection, ::updateSelectionBar,
             onOpenCard = ::openCard)
+        setupInkTaskBox()
         binding.itemsRecycler.layoutManager = LinearLayoutManager(requireContext())
         binding.itemsRecycler.adapter = adapter
         binding.itemsRecycler.addItemDecoration(DividerItemDecoration(requireContext(), DividerItemDecoration.VERTICAL))
@@ -281,6 +286,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             attachSwipeToDelete()
             binding.emptyText.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
             mergeSiteDueCards(items)
+            showLearnerCard()
         }
     }
 
@@ -540,6 +546,171 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     }
 
     /** Open a contact picker and link (or clear) the item's rolodex contact, then persist. */
+    // --- Writing a task by hand, and the learner card -----------------------------------------
+
+    private var inkTaskPad: com.toolsboox.ot.InkPadView? = null
+
+    /**
+     * The strip at the foot of the list you can write a task straight onto.
+     *
+     * Typing a task means picking up a keyboard in the middle of a page you were writing on; this
+     * keeps the whole thing in one hand. The writing IS the task — it lands with its ink face
+     * already filled, and OCR is offered rather than required, because a task you can read is a
+     * task, whether or not a machine can.
+     */
+    private fun setupInkTaskBox() {
+        val ctx = requireContext()
+        val pad = com.toolsboox.ot.InkPadView(ctx)
+        inkTaskPad = pad
+        binding.inkTaskFrame.addView(pad, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+        binding.inkTaskUndo.setOnClickListener { pad.undo() }
+        binding.inkTaskAdd.setOnClickListener { addHandwrittenTask() }
+    }
+
+    private fun addHandwrittenTask() {
+        val pad = inkTaskPad ?: return
+        val ctx = requireContext()
+        val bmp = pad.render()
+        if (bmp == null) {
+            android.widget.Toast.makeText(ctx, "Write a task first", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val baos = java.io.ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
+        bmp.recycle()
+        pad.clear()
+
+        val task = LedgerItem(
+            id = "hand-" + java.util.UUID.randomUUID().toString().lowercase(),
+            kind = LedgerItem.Kind.TASK,
+            text = "",
+            date = java.util.Date(),
+            crop = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP),
+            display = LedgerItem.Display.INK,
+            source = "hand",
+            stage = "todo"
+        )
+
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val root = documentsRoot()
+                    val day = calendarDayService.load(root, anchor, null, Locale.getDefault())
+                    day.ledgerItems.add(task)
+                    calendarDayService.save(root, anchor, day)
+                }
+            }
+            load()
+        }
+    }
+
+    /**
+     * The learner card: one thing out of your own ledger, come back around.
+     *
+     * Spiral learning — a note, a highlight, a recording you made once returns later so it can
+     * layer rather than be filed and forgotten. It sits at the foot of the tasks because that is
+     * where you already look, and it asks for nothing: no score, no streak, no penalty for
+     * ignoring it. "Again" pulls it closer, "Later" pushes it out, "Make a task" turns it into
+     * something to do. Then it's gone until its turn comes round.
+     */
+    private fun showLearnerCard() {
+        val ctx = context ?: return
+        val card = binding.learnerCard
+        card.removeAllViews()
+        card.visibility = View.GONE
+
+        lifecycleScope.launch {
+            val pick = withContext(Dispatchers.IO) {
+                runCatching {
+                    corpusService.gather(documentsRoot())
+                        .asSequence()
+                        .filter { it.text.isNotBlank() && it.text.length > 24 }
+                        .filter { com.toolsboox.plugin.calendar.ot.Spiral.isDue(
+                            ctx, com.toolsboox.plugin.calendar.ot.Spiral.keyOf(it.citation, it.text)) }
+                        // Oldest first: the spiral's whole point is reaching back, not skimming
+                        // what you wrote this morning.
+                        .sortedBy { it.date }
+                        .firstOrNull()
+                }.getOrNull()
+            }
+
+            if (!isAdded || pick == null) return@launch
+            val key = com.toolsboox.plugin.calendar.ot.Spiral.keyOf(pick.citation, pick.text)
+            val dp = resources.displayMetrics.density
+            fun px(v: Int) = (v * dp).toInt()
+
+            card.background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFFFFFFFF.toInt()); setStroke(px(2), 0xFF111111.toInt()); cornerRadius = px(12).toFloat()
+            }
+            card.addView(TextView(ctx).apply {
+                text = "🌀  come back around"
+                textSize = 12f; setTextColor(0xFF666666.toInt())
+            })
+            card.addView(TextView(ctx).apply {
+                text = pick.text.take(320).trim() + if (pick.text.length > 320) "…" else ""
+                textSize = 15f; setTextColor(0xFF000000.toInt()); setPadding(0, px(6), 0, px(6))
+                setLineSpacing(0f, 1.15f)
+            })
+            card.addView(TextView(ctx).apply {
+                text = pick.citation + (if (pick.title.isNotBlank()) "  ·  " + pick.title else "")
+                textSize = 11f; setTextColor(0xFF888888.toInt())
+            })
+
+            val actions = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, px(8), 0, 0)
+            }
+            fun act(label: String, onTap: () -> Unit) = TextView(ctx).apply {
+                text = label; textSize = 14f; setTextColor(0xFF2F6F96.toInt())
+                setPadding(0, px(4), px(18), px(4))
+                setOnClickListener { onTap() }
+            }
+            actions.addView(act("↺ Again") {
+                com.toolsboox.plugin.calendar.ot.Spiral.mark(ctx, key, closer = true); showLearnerCard()
+            })
+            actions.addView(act("→ Later") {
+                com.toolsboox.plugin.calendar.ot.Spiral.mark(ctx, key); showLearnerCard()
+            })
+            actions.addView(act("🗒 Make a task") {
+                com.toolsboox.plugin.calendar.ot.Spiral.mark(ctx, key)
+                makeTaskFromSnippet(pick)
+            })
+            actions.addView(act("✕") {
+                com.toolsboox.plugin.calendar.ot.Spiral.retire(ctx, key); showLearnerCard()
+            })
+            card.addView(actions)
+
+            com.toolsboox.ot.ReadingSize.apply(card)
+            card.visibility = View.VISIBLE
+        }
+    }
+
+    /** Turn what came back around into something to do, keeping the words and where they're from. */
+    private fun makeTaskFromSnippet(pick: com.toolsboox.plugin.chat.da.CorpusSnippet) {
+        val task = LedgerItem(
+            id = "spiral-" + java.util.UUID.randomUUID().toString().lowercase(),
+            kind = LedgerItem.Kind.TASK,
+            text = pick.text.take(140).trim(),
+            date = java.util.Date(),
+            source = "spiral",
+            stage = "todo"
+        )
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val root = documentsRoot()
+                    val day = calendarDayService.load(root, anchor, null, Locale.getDefault())
+                    day.ledgerItems.add(task)
+                    calendarDayService.save(root, anchor, day)
+                }
+            }
+            load()
+        }
+    }
+
     /**
      * The card behind a row.
      *

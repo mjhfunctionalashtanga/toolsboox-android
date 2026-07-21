@@ -126,6 +126,57 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"/>
+
+    <!-- Write a task by hand: a strip you can write straight onto, with ＋ to add it. Keeping it
+         at the foot of the list means a task can be written where the tasks already are, in the
+         same hand as the rest of the page. -->
+    <LinearLayout
+        android:id="@+id/ink_task_box"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="6dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <FrameLayout
+            android:id="@+id/ink_task_frame"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="74dp"
+            android:background="#000000"
+            android:padding="2dp"/>
+
+        <TextView
+            android:id="@+id/ink_task_undo"
+            android:text="↶"
+            android:textSize="20sp"
+            android:textColor="#2F6F96"
+            android:paddingHorizontal="10dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <TextView
+            android:id="@+id/ink_task_add"
+            android:text="＋"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            android:textColor="#000000"
+            android:paddingHorizontal="10dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <!-- The learner card: one thing from your own ledger, come back around. -->
+    <LinearLayout
+        android:id="@+id/learner_card"
+        android:orientation="vertical"
+        android:visibility="gone"
+        android:layout_marginHorizontal="14dp"
+        android:layout_marginBottom="8dp"
+        android:padding="12dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
 </LinearLayout>
 
     <!-- Floating nav pill (unified): ‹ page-up · ☀ today/menu · page-down ›. -->
