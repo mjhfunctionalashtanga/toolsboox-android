@@ -1,69 +1,81 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- One object's rhizome: everything it joins, reachable from the object itself.
 
-     A page rather than a dialog, for the same reason the roots are a page — this is something you
-     read and follow, and every card on it is a door to another object whose own rhizome you may
-     then want. A dialog stack cannot be walked; a page can be arrived at, lingered on and left,
-     and Back steps through where you have been. -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="vertical"
+     A card that is the size of what it holds, floating on a dimmed page — not a full-bleed
+     screen. Four connections filling a 13" panel reads as an error; the same four in a card the
+     width of a paragraph read as a list. The card is capped and centred, so it is a card on the
+     Tab X and simply the page on a Palma, without two layouts.
+
+     Still a destination rather than a dialog: every row is a door to another object, and the
+     walk needs Back to mean something. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#FFFFFF">
+    android:background="#66000000">
 
     <LinearLayout
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingHorizontal="14dp"
-        android:paddingTop="10dp"
-        android:paddingBottom="6dp"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content">
-
-        <TextView
-            android:id="@+id/rhizome_title"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:textColor="#000000"
-            android:fontFamily="@font/atkinson_hyperlegible"
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:layout_height="wrap_content"/>
-
-        <TextView
-            android:id="@+id/rhizome_close"
-            android:text="@string/roots_close"
-            android:textSize="15sp"
-            android:textColor="#000000"
-            android:paddingHorizontal="10dp"
-            android:paddingVertical="6dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"/>
-    </LinearLayout>
-
-    <TextView
-        android:id="@+id/rhizome_subject"
-        android:textSize="13sp"
-        android:textColor="#666666"
-        android:paddingHorizontal="14dp"
-        android:paddingBottom="8dp"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"/>
-
-    <ScrollView
-        android:id="@+id/rhizome_scroll"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:scrollbars="none">
+        android:id="@+id/rhizome_card"
+        android:orientation="vertical"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="@drawable/dialog_rounded_bg"
+        android:paddingBottom="6dp">
 
         <LinearLayout
-            android:id="@+id/rhizome_column"
-            android:orientation="vertical"
-            android:paddingHorizontal="14dp"
-            android:paddingBottom="24dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="16dp"
+            android:paddingTop="12dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <TextView
+                android:id="@+id/rhizome_title"
+                android:textSize="17sp"
+                android:textStyle="bold"
+                android:textColor="#000000"
+                android:fontFamily="@font/atkinson_hyperlegible"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"/>
+
+            <TextView
+                android:id="@+id/rhizome_close"
+                android:text="@string/roots_close"
+                android:textSize="15sp"
+                android:textColor="#000000"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"/>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/rhizome_subject"
+            android:textSize="12sp"
+            android:textColor="#666666"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:paddingHorizontal="16dp"
+            android:paddingBottom="4dp"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"/>
-    </ScrollView>
-</LinearLayout>
+
+        <ScrollView
+            android:id="@+id/rhizome_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/rhizome_column"
+                android:orientation="vertical"
+                android:paddingHorizontal="16dp"
+                android:paddingBottom="10dp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"/>
+        </ScrollView>
+    </LinearLayout>
+</FrameLayout>

@@ -20,13 +20,20 @@ import javax.inject.Inject
 /**
  * One object's rhizome: everything it joins, entered from the object itself.
  *
- * Columns are KINDS OF CONNECTION rather than stages. The card look is borrowed from the boards
- * because it reads well on e-ink, but the kanban grammar is not: these are heterogeneous things —
- * a contact next to a page next to a link — and they are not moving through anything. No group is
- * primary, which is what keeps this flat instead of a tree with the subject at the root.
+ * A card the size of what it holds, floating on a dimmed page. Four connections filling a 13"
+ * panel read as an error; the same four in a card the width of a paragraph read as a list. The
+ * width is capped rather than fixed, so one layout is a card on a Tab X and simply the screen on
+ * a Palma.
  *
- * Tapping a card walks to THAT object's rhizome rather than opening it. Every entry point leads
- * to every other; the walk is the point, and Back is the way home.
+ * One line per connection, ordered by how specific the relation is, with the relation itself in
+ * faint grey at the end of its own row. No section headings and no grouping: these are
+ * heterogeneous things — a contact beside a page beside a link — and nothing here is primary,
+ * which is what keeps the page flat rather than a tree with the subject sitting at the root.
+ * Direction is kept, since "came from this" and "this came from me" are different claims.
+ *
+ * Tap a row to go to the thing; hold it to walk to ITS rhizome, which is what holding means
+ * everywhere else in the app. A walk REPLACES this page rather than stacking on it — there is one
+ * rhizome page and it moves, so leaving is always one Close away.
  */
 @AndroidEntryPoint
 class LedgerRhizomeFragment @Inject constructor() : ScreenFragment() {
@@ -66,8 +73,49 @@ class LedgerRhizomeFragment @Inject constructor() : ScreenFragment() {
         binding.rhizomeTitle.text = getString(R.string.rhizome_title)
         binding.rhizomeSubject.text = label.ifBlank { LedgerUri.describe(uri) }
         binding.rhizomeClose.setOnClickListener { findNavController().popBackStack() }
+        // Tapping the dimmed surround is the other way out, the way any card behaves.
+        (view as? android.view.ViewGroup)?.setOnClickListener { findNavController().popBackStack() }
 
+        sizeCard()
         render()
+    }
+
+    /**
+     * A card the size of a paragraph, not the size of the panel.
+     *
+     * Capped rather than fixed, so the same layout is a card on a 13" Tab X and simply the width
+     * of the screen on a Palma. Height stays wrap-content and is bounded only so a long list
+     * scrolls inside the card instead of growing past the edges.
+     */
+    private fun sizeCard() {
+        val dm = resources.displayMetrics
+        val dp = dm.density
+        val w = minOf((560 * dp).toInt(), dm.widthPixels - (32 * dp).toInt())
+        binding.rhizomeCard.layoutParams =
+            (binding.rhizomeCard.layoutParams as android.widget.FrameLayout.LayoutParams)
+                .apply { width = w }
+    }
+
+    /**
+     * Keep the card inside the panel once it knows how tall it wants to be.
+     *
+     * A ScrollView has no max height, so this waits for a real measurement and then gives the
+     * list back only the room the card can spare — a long rhizome scrolls inside the card rather
+     * than growing off the top and bottom of the screen.
+     */
+    private fun capHeight() {
+        val card = binding.rhizomeCard
+        card.post {
+            if (!::binding.isInitialized || !isAdded) return@post
+            val max = (resources.displayMetrics.heightPixels * 0.7f).toInt()
+            val excess = card.height - max
+            if (excess > 0) {
+                binding.rhizomeScroll.layoutParams = binding.rhizomeScroll.layoutParams.apply {
+                    height = (binding.rhizomeScroll.height - excess).coerceAtLeast(1)
+                }
+                binding.rhizomeScroll.requestLayout()
+            }
+        }
     }
 
     override fun onResume() {
@@ -92,6 +140,7 @@ class LedgerRhizomeFragment @Inject constructor() : ScreenFragment() {
                 textSize = 14f; setTextColor(0xFF666666.toInt()); setPadding(0, px(18), 0, 0)
             })
             ReadingSize.apply(binding.rhizomeScroll)
+            capHeight()
             return
         }
 
@@ -108,6 +157,7 @@ class LedgerRhizomeFragment @Inject constructor() : ScreenFragment() {
             column.addView(rowView(other, edge, contacts, px = ::px))
         }
         ReadingSize.apply(binding.rhizomeScroll)
+        capHeight()
     }
 
     /** One connection, one line: what it is, and in faint words how it is joined. */
