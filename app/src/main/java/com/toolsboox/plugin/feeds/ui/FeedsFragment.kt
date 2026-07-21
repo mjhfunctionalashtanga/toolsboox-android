@@ -1091,14 +1091,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // Accessibility: Small / Medium / Large for the feed rows and for every modal.
         val a11y = requireContext().getSharedPreferences("ledger_a11y", 0)
         val feedTier = a11y.getString("feed_text_size", "medium")
-        val modalTier = a11y.getString("modal_text_size", "medium")
         fun ft(m: String) = if (feedTier == m) "◉" else "○"
-        fun mt(m: String) = if (modalTier == m) "◉" else "○"
         fun setFeedTier(m: String) {
             a11y.edit().putString("feed_text_size", m).apply()
             adapter.textTier = m
         }
-        fun setModalTier(m: String) = a11y.edit().putString("modal_text_size", m).apply()
         showDirectory(listOf(
             "Feed" to listOf(
                 "✓  Mark all read" to { markAllRead() },
@@ -1116,15 +1113,12 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     binding.articleTapZones.visibility = if (!on) View.VISIBLE else View.GONE
                 }
             ),
+            // Menu and dialog sizes moved to Settings → Text size…; this one stays because it
+            // sizes the feed's own rows, which is this screen's business and nobody else's.
             "Feed text size" to listOf(
                 "${ft("small")}  Small" to { setFeedTier("small") },
                 "${ft("medium")}  Medium" to { setFeedTier("medium") },
                 "${ft("large")}  Large" to { setFeedTier("large") }
-            ),
-            "Modal text size" to listOf(
-                "${mt("small")}  Small" to { setModalTier("small") },
-                "${mt("medium")}  Medium" to { setModalTier("medium") },
-                "${mt("large")}  Large" to { setModalTier("large") }
             ),
             "Screen" to listOf(
                 "🔄  Rotate screen" to { cycleScreenOrientation() },

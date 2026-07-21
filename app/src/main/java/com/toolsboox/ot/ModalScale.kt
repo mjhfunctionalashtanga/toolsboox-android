@@ -27,20 +27,23 @@ object ModalScale {
      * there is nothing to change and the extra wrapper would only cost an allocation.
      */
     fun wrap(context: Context): Context {
-        // themeResId 0 keeps the base context's theme — AppCompat dialogs need it, and losing it
-        // is what makes a naively re-configured context throw at inflation time.
-        val wrapper = ContextThemeWrapper(context, 0)
+        // The overlay goes in the CONSTRUCTOR, and passing 0 here was a real bug rather than a
+        // tidy way of saying "no change": with a zero theme id the framework substitutes a
+        // default SYSTEM theme and lays it over the app's, so every dialog came out restyled —
+        // bigger type, different metrics, nothing to do with the accessibility setting.
+        //
+        // A non-zero id takes the honest path instead: copy the base context's theme, then apply
+        // just this overlay on top of it.
+        val wrapper = ContextThemeWrapper(context, com.toolsboox.R.style.LedgerModalOverlay)
         val scale = ScreenFragment.modalTextScale(context)
         if (scale != 1f) {
-            // Must land before anything reads a resource off this context, hence before the theme.
+            // Must land before anything reads a resource off this context, hence before the theme
+            // is ever touched.
             wrapper.applyOverrideConfiguration(Configuration().apply {
                 setTo(context.resources.configuration)
                 fontScale *= scale
             })
         }
-        // Applied at every size, including Medium: this is also where the dialog's WIDTH is
-        // capped on large panels, which has nothing to do with how big the text is.
-        wrapper.theme.applyStyle(com.toolsboox.R.style.LedgerModalOverlay, true)
         return wrapper
     }
 }
