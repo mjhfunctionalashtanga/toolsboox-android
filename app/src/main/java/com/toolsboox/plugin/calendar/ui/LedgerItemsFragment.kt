@@ -75,7 +75,6 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
 
         adapter = LedgerItemAdapter(emptyList(), emptyMap(), ::persist, ::onEnterSelection, ::updateSelectionBar,
             onOpenCard = ::openCard)
-        setupInkTaskBox()
         binding.itemsRecycler.layoutManager = LinearLayoutManager(requireContext())
         binding.itemsRecycler.adapter = adapter
         binding.itemsRecycler.addItemDecoration(DividerItemDecoration(requireContext(), DividerItemDecoration.VERTICAL))
@@ -564,64 +563,6 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     /** Open a contact picker and link (or clear) the item's rolodex contact, then persist. */
     // --- Writing a task by hand, and the learner card -----------------------------------------
 
-    private var inkTaskPad: com.toolsboox.ot.InkPadView? = null
-
-    /**
-     * The strip at the foot of the list you can write a task straight onto.
-     *
-     * Typing a task means picking up a keyboard in the middle of a page you were writing on; this
-     * keeps the whole thing in one hand. The writing IS the task — it lands with its ink face
-     * already filled, and OCR is offered rather than required, because a task you can read is a
-     * task, whether or not a machine can.
-     */
-    private fun setupInkTaskBox() {
-        val ctx = requireContext()
-        val pad = com.toolsboox.ot.InkPadView(ctx)
-        inkTaskPad = pad
-        binding.inkTaskFrame.addView(pad, android.widget.FrameLayout.LayoutParams(
-            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-        ))
-        binding.inkTaskUndo.setOnClickListener { pad.undo() }
-        binding.inkTaskAdd.setOnClickListener { addHandwrittenTask() }
-    }
-
-    private fun addHandwrittenTask() {
-        val pad = inkTaskPad ?: return
-        val ctx = requireContext()
-        val bmp = pad.render()
-        if (bmp == null) {
-            android.widget.Toast.makeText(ctx, "Write a task first", android.widget.Toast.LENGTH_SHORT).show()
-            return
-        }
-        val baos = java.io.ByteArrayOutputStream()
-        bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
-        bmp.recycle()
-        pad.clear()
-
-        val task = LedgerItem(
-            id = "hand-" + java.util.UUID.randomUUID().toString().lowercase(),
-            kind = LedgerItem.Kind.TASK,
-            text = "",
-            date = java.util.Date(),
-            crop = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP),
-            display = LedgerItem.Display.INK,
-            source = "hand",
-            stage = "todo"
-        )
-
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    val root = documentsRoot()
-                    val day = calendarDayService.load(root, anchor, null, Locale.getDefault())
-                    day.ledgerItems.add(task)
-                    calendarDayService.save(root, anchor, day)
-                }
-            }
-            load()
-        }
-    }
 
     /**
      * The learner card: one thing out of your own ledger, come back around.

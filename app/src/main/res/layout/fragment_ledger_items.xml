@@ -127,63 +127,6 @@
         android:layout_height="0dp"
         android:layout_weight="1"/>
 
-    <!-- Write a task by hand: a strip you can write straight onto, with ＋ to add it. Keeping it
-         at the foot of the list means a task can be written where the tasks already are, in the
-         same hand as the rest of the page.
-
-         The caption below is the only thing that says so. Until it existed, the strip was a bare
-         black rectangle with two glyphs beside it: nothing on screen told you it was for writing,
-         and an undescribed box on an e-ink page reads as a rendering fault rather than an
-         invitation. -->
-    <TextView
-        android:id="@+id/ink_task_label"
-        android:text="@string/ledger_ink_task_label"
-        android:textSize="12sp"
-        android:textColor="#666666"
-        android:paddingHorizontal="16dp"
-        android:paddingTop="8dp"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"/>
-
-    <LinearLayout
-        android:id="@+id/ink_task_box"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingHorizontal="14dp"
-        android:paddingBottom="6dp"
-        android:paddingTop="2dp"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content">
-
-        <FrameLayout
-            android:id="@+id/ink_task_frame"
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:layout_height="74dp"
-            android:background="#000000"
-            android:padding="2dp"/>
-
-        <TextView
-            android:id="@+id/ink_task_undo"
-            android:text="↶"
-            android:textSize="20sp"
-            android:contentDescription="@string/ledger_ink_task_undo"
-            android:textColor="#555555"
-            android:paddingHorizontal="10dp"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"/>
-
-        <TextView
-            android:id="@+id/ink_task_add"
-            android:text="＋"
-            android:textSize="26sp"
-            android:textStyle="bold"
-            android:textColor="#000000"
-            android:paddingHorizontal="10dp"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"/>
-    </LinearLayout>
-
     <!-- The learner card: one thing from your own ledger, come back around. -->
     <LinearLayout
         android:id="@+id/learner_card"

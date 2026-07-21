@@ -426,8 +426,15 @@
     <string name="ledger_selection_title">Create from selection</string>
     <string name="ledger_ai_key_needed">Add your Ask-my-Ledger API key in Settings first.</string>
     <string name="ledger_educate_looking_up">Looking it up…</string>
-    <string name="ledger_ink_task_label">Write a task by hand — ＋ adds it</string>
     <string name="calendar_day_roots">🌿 Roots</string>
+    <string name="ledger_selection_create">Create…</string>
+    <string name="ledger_selection_add_to">Add to…</string>
+    <string name="ledger_selection_do">Do…</string>
+    <string name="ledger_selection_clipped">📋 Saved to Clippings</string>
+    <string name="calendar_day_untitled_event">Event</string>
+    <string name="calendar_day_event_to_task">Make a task</string>
+    <string name="calendar_day_event_already_task">Already a task on this day</string>
+    <string name="calendar_day_event_made_task">🗒 Task made: %1$s</string>
     <string name="spiral_lead_circling">you have been circling %1$s</string>
     <string name="spiral_lead_plain">come back around</string>
     <!-- Two states, so the row names the ACTION rather than opening a chooser. -->
@@ -447,7 +454,6 @@
     <string name="roots_where_they_touch">WHERE THEY TOUCH</string>
     <string name="rotate_auto">Auto-rotate on — the gyro has it</string>
     <string name="rotate_locked">Rotation locked here</string>
-    <string name="ledger_ink_task_undo">Undo the last stroke</string>
     <string name="ledger_educate_filed">Filed to your Later List → Educate (and your feed).</string>
     <string name="ledger_educate_open">Open link</string>
     <string name="ledger_selection_card">Selection</string>

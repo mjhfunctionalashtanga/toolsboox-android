@@ -89,35 +89,97 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
             val now = System.currentTimeMillis()
             col.addView(header(getString(R.string.roots_what_comes_back), top = 4))
 
-            for (t in threads.take(18)) {
-                val row = LinearLayout(ctx).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(0, dp(11), 0, dp(11))
-                    setBackgroundResource(android.R.drawable.list_selector_background)
+            // Threads as CARDS across the width, not a column of one-word rows.
+            //
+            // A thread is a short word — "internet", "july", "said" — so a vertical list of them
+            // is a thin ribbon down the left with the whole page empty beside it. That is wasteful
+            // on any screen and absurd on a Tab X. Laid out as tiles, the same eighteen threads
+            // occupy a few rows instead of eighteen, the crossings below get the space they
+            // actually need for sentences, and the whole thing reads as a board of subjects rather
+            // than a list of leftovers.
+            //
+            // Column count comes from the screen, so it stays sensible from a Palma to a Tab X.
+            val columns = (resources.configuration.screenWidthDp / 190).coerceIn(2, 6)
+            var rowBox: LinearLayout? = null
+            for ((i, t) in threads.take(18).withIndex()) {
+                if (i % columns == 0) {
+                    rowBox = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+                    col.addView(rowBox)
                 }
-                row.addView(TextView(ctx).apply {
+                val card = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        setColor(0xFFFFFFFF.toInt())
+                        setStroke(dp(1), 0xFFBBBBBB.toInt())
+                        cornerRadius = dp(8).toFloat()
+                    }
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        .apply { setMargins(dp(3), dp(3), dp(3), dp(3)) }
+                }
+                card.addView(TextView(ctx).apply {
                     // A quiet thread is one worth picking back up, so it says so rather than
                     // merely sorting lower.
-                    text = t.term + (if (t.isQuiet(now)) "   · gone quiet" else "")
-                    textSize = 22f; setTextColor(0xFF000000.toInt())
+                    text = t.term
+                    textSize = 19f; setTextColor(0xFF000000.toInt())
+                    maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                 })
-                row.addView(TextView(ctx).apply {
-                    text = "${t.size} times" + (if (t.spanDays > 0) "  ·  across ${t.spanDays} days" else "")
-                    textSize = 13f; setTextColor(0xFF777777.toInt())
+                card.addView(TextView(ctx).apply {
+                    text = "${t.size}×" + (if (t.spanDays > 0) " · ${t.spanDays}d" else "") +
+                        (if (t.isQuiet(now)) " · quiet" else "")
+                    textSize = 12f; setTextColor(0xFF777777.toInt())
+                    maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                 })
-                row.setOnClickListener { showThread(t) }
-                col.addView(row)
+                // Tap MUTES. That is the action worth putting first: the top of this list is
+                // mostly datelines and clipping plumbing, and the person reading it is the only
+                // one who can tell "practice" from "units" — so saying so should cost one tap.
+                // Hold to see where a thread actually runs.
+                val muted = com.toolsboox.plugin.calendar.ot.RootsMute.isMuted(ctx, t.term)
+                if (muted) {
+                    card.alpha = 0.45f
+                    (card.getChildAt(0) as? TextView)?.paintFlags =
+                        android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
+                }
+                card.setOnClickListener {
+                    com.toolsboox.plugin.calendar.ot.RootsMute.toggle(ctx, t.term)
+                    load()
+                }
+                card.setOnLongClickListener { showThread(t); true }
+                rowBox?.addView(card)
+            }
+            // Pad the last row so three cards among four columns don't stretch to fill it.
+            val remainder = threads.take(18).size % columns
+            if (remainder != 0) repeat(columns - remainder) {
+                rowBox?.addView(View(ctx).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+                })
             }
 
-            if (crossings.isNotEmpty()) {
+            // Crossings are recomputed from the threads you have NOT muted, so turning off
+            // "2026" and "pressreader" doesn't just tidy the list above — it changes what counts
+            // as a meeting-point below. That is the whole reason muting is worth having: the
+            // junk threads were manufacturing crossings between newspapers.
+            val liveThreads = threads.filterNot {
+                com.toolsboox.plugin.calendar.ot.RootsMute.isMuted(ctx, it.term)
+            }
+            val liveCrossings = Rhizome.crossings(liveThreads)
+            if (liveCrossings.isNotEmpty()) {
                 col.addView(header(getString(R.string.roots_where_they_touch), top = 18))
                 // Most-connected first: the things holding the most threads together.
-                for ((idx, terms) in crossings.entries.sortedByDescending { it.value.size }.take(10)) {
+                for ((idx, terms) in liveCrossings.entries.sortedByDescending { it.value.size }.take(10)) {
                     val snip = all.getOrNull(idx) ?: continue
                     val row = LinearLayout(ctx).apply {
                         orientation = LinearLayout.VERTICAL
-                        setPadding(0, dp(13), 0, dp(13))
-                        setBackgroundResource(android.R.drawable.list_selector_background)
+                        setPadding(dp(13), dp(12), dp(13), dp(12))
+                        background = android.graphics.drawable.GradientDrawable().apply {
+                            setColor(0xFFFFFFFF.toInt())
+                            setStroke(dp(1), 0xFFBBBBBB.toInt())
+                            cornerRadius = dp(8).toFloat()
+                        }
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { setMargins(dp(3), dp(3), dp(3), dp(5)) }
                     }
                     row.addView(TextView(ctx).apply {
                         // Black, not the old blue: on an e-ink panel a mid-blue renders as a grey

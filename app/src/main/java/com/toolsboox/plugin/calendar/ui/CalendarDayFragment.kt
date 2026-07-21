@@ -144,6 +144,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private var intakePageData: IntakePageData? = null
 
     // Finger-tap tracking on the intake page (tap-to-type strips).
+    private var eventTapDownX = 0f
+    private var eventTapDownY = 0f
+    private var eventTapDownAt = 0L
     private var intakeTapDownX: Float = 0f
     private var intakeTapDownY: Float = 0f
     private var intakeTapDownAt: Long = 0L
@@ -857,6 +860,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             if (notePage == "intake" && handleIntakeTap(motionEvent, gestureResult))
                 return@setOnTouchListener true
 
+            if (notePage == null && handleEventTap(motionEvent, gestureResult))
+                return@setOnTouchListener true
+
             if (notePage != null)
                 CalendarDayPageNotes.onTouchEvent(
                     view, motionEvent, gestureResult, this@CalendarDayFragment, calendarDay, notePage!!
@@ -1013,11 +1019,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // and looked like a stray caption. Same fragment draws both, which is how it got there.
         if (currentNotePage() != null) return
         val ctx = context ?: return
-        if (!fresh) {
-            // Already chosen for this day: show what the ring is holding rather than walking the
-            // ledger again. Same entry the widget shows, which is a feature — the page and the
-            // home screen agreeing is less confusing than each having its own idea.
-            val entry = com.toolsboox.plugin.calendar.ot.SpiralRing.next(ctxForCache) ?: return
+        // Already chosen for this day: show what the ring is holding rather than walking the ledger
+        // again. Same entry the widget shows, which is a feature — the page and the home screen
+        // agreeing is less confusing than each having its own idea.
+        //
+        // Falls THROUGH when the ring is empty. The stamp and the ring live in the same prefs but
+        // are not the same fact: a stamp saying "picked today" with nothing behind it drew an
+        // empty band all day, with no way out of it.
+        val cached = if (fresh) null else com.toolsboox.plugin.calendar.ot.SpiralRing.next(ctxForCache)
+        if (cached != null) {
+            val entry = cached
             val cite = entry.citation.substringAfter("· ", "").trim()
             binding.spiralLine.text = entry.text + if (cite.isBlank()) "" else "  — $cite"
             binding.spiralLine.setOnClickListener {
@@ -1446,18 +1457,66 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
     }
 
-    /** The lasso "card" chip: what should the circled strokes become? */
+    /**
+     * The lasso "card" chip: what should the circled strokes become?
+     *
+     * Grouped as CREATE and ADD TO, because those are two different questions. Create makes a new
+     * thing out of the ink; Add to files it into something that already exists. Flat, the list ran
+     * to seven unlabelled entries and you had to read all of them to find out which kind of act
+     * each one was.
+     *
+     * This is also now the only way handwriting becomes a task — the write-in strip is gone — so
+     * it had better be the good one. It keeps the ink and links to it, and shows you the text
+     * before committing.
+     */
     override fun onSelectionExtract(strokes: List<com.toolsboox.da.Stroke>) {
         if (!::calendarDay.isInitialized || strokes.isEmpty()) return
-        showIconMenu(getString(R.string.ledger_selection_title), listOf(
-            "🗒  Create task" to { createLedgerItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK) },
-            "📆  Create event" to { createLedgerItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) },
-            "🃏  Create gram" to { gramStudioFromSelection(strokes) },
-            "🎬  A/V gram" to { recordAvGram() },
-            "📋  Copy text" to { copyTextFromSelection(strokes) },
-            "🎓  Educate me" to { educateFromSelection(strokes) },
-            "🔍  Find in Ledger" to { findInLedgerFromSelection(strokes) }
+        showDirectory(listOf(
+            getString(R.string.ledger_selection_create) to listOf(
+                "🗒  Task" to { createLedgerItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK) },
+                "📆  Event" to { createLedgerItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) },
+                "🃏  Gram" to { gramStudioFromSelection(strokes) },
+                "🎬  A/V gram" to { recordAvGram() }
+            ),
+            getString(R.string.ledger_selection_add_to) to listOf(
+                "❝  Pickings…" to { addSelectionToPickings(strokes) },
+                "📋  Clippings" to { addSelectionToClippings(strokes) }
+            ),
+            getString(R.string.ledger_selection_do) to listOf(
+                "📋  Copy text" to { copyTextFromSelection(strokes) },
+                "🎓  Educate me" to { educateFromSelection(strokes) },
+                "🔍  Find in Ledger" to { findInLedgerFromSelection(strokes) }
+            )
         ))
+    }
+
+    /** The circled ink, rendered as a card, onto a Pickings board of your choosing. */
+    private fun addSelectionToPickings(strokes: List<com.toolsboox.da.Stroke>) {
+        val bmp = renderSelection(strokes) ?: return
+        com.toolsboox.plugin.calendar.ot.PickingsPlacement.chooseAndPlace(
+            this, calendarDayService, documentsRoot(), bmp, currentDate,
+            sourceLabel = currentDate.toString())
+    }
+
+    /** The circled ink into the Clippings library, to be placed anywhere later. */
+    private fun addSelectionToClippings(strokes: List<com.toolsboox.da.Stroke>) {
+        val bmp = renderSelection(strokes) ?: return
+        val baos = java.io.ByteArrayOutputStream()
+        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)   // ink: hard edges, so PNG
+        com.toolsboox.plugin.calendar.ot.ClippingsStore.add(
+            requireContext(),
+            android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP),
+            label = currentDate.toString())
+        showMessage(getString(R.string.ledger_selection_clipped), binding.root)
+    }
+
+    /** The selection as a bitmap, with a little air so edge strokes aren't shaved off. */
+    private fun renderSelection(strokes: List<com.toolsboox.da.Stroke>): android.graphics.Bitmap? {
+        if (strokes.isEmpty()) return null
+        val b = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
+        val pad = 28f
+        val rect = android.graphics.RectF(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
+        return com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600)
     }
 
     /** OCR the lassoed ink, then show it as selectable/editable text with a one-tap Copy — so a
@@ -2921,6 +2980,96 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * @param gestureResult the gesture result (taps must not be swipes)
      * @return true when the tap was consumed
      */
+    /**
+     * Touch an event on the day page — on the schedule grid or in Stars & Events — and open it.
+     *
+     * The page is a picture, so an event drawn on it has never been touchable: you could see the
+     * appointment and there was nothing to do about it. `DayEventHits` records the same rectangles
+     * the page paints into, so a tap resolves against the layout rather than a second guess at it.
+     *
+     * Same tap discipline as the intake panels: finger only, small movement, short press — a pen
+     * touch stays ink, and a drag stays a drag.
+     */
+    private fun handleEventTap(motionEvent: MotionEvent, gestureResult: Int): Boolean {
+        if (!::calendarDay.isInitialized) return false
+        val toolType = motionEvent.getToolType(0)
+        if (toolType != MotionEvent.TOOL_TYPE_FINGER && toolType != MotionEvent.TOOL_TYPE_UNKNOWN) return false
+
+        when (motionEvent.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                eventTapDownX = motionEvent.x
+                eventTapDownY = motionEvent.y
+                eventTapDownAt = System.currentTimeMillis()
+            }
+
+            MotionEvent.ACTION_UP -> {
+                val dx = abs(motionEvent.x - eventTapDownX)
+                val dy = abs(motionEvent.y - eventTapDownY)
+                val dt = System.currentTimeMillis() - eventTapDownAt
+                if (gestureResult != OnGestureListener.NONE || dx >= 30f || dy >= 30f || dt !in 1..600) return false
+                val p = screenToCanvas(motionEvent.x, motionEvent.y)
+                val event = com.toolsboox.plugin.calendar.ot.DayEventHits
+                    .at(calendarDay, calendarDay.events, p[0], p[1]) ?: return false
+                showEventDetail(event)
+                return true
+            }
+        }
+        return false
+    }
+
+    /** What an event actually is: when, where, and what it says. */
+    private fun showEventDetail(event: com.toolsboox.plugin.calendar.da.v1.CalendarEvent) {
+        val ctx = context ?: return
+        val zone = java.time.ZoneId.systemDefault()
+        val start = java.time.Instant.ofEpochMilli(event.startDate).atZone(zone)
+        val end = java.time.Instant.ofEpochMilli(event.endDate).atZone(zone)
+        val fmt = java.time.format.DateTimeFormatter.ofPattern("EEE d MMM · HH:mm")
+        val when_ = when {
+            event.allDay -> getString(R.string.calendar_day_all_day)
+            // An event running the whole day isn't flagged all-day but reads as one, and saying
+            // "00:00 – 23:59" is a worse answer than saying so. This is also exactly why it sits
+            // in Stars & Events rather than on the grid — see DayEventHits.
+            start.hour == 0 && start.minute == 0 && end.hour >= 23 && end.minute >= 59 ->
+                getString(R.string.calendar_day_all_day)
+            else -> start.format(fmt) + "  –  " + end.format(
+                java.time.format.DateTimeFormatter.ofPattern(
+                    if (start.toLocalDate() == end.toLocalDate()) "HH:mm" else "EEE d MMM · HH:mm"))
+        }
+        val body = listOfNotNull(
+            when_,
+            event.description.trim().ifBlank { null }
+        ).joinToString("\n\n")
+
+        AlertDialog.Builder(ctx)
+            .setTitle(event.title.ifBlank { getString(R.string.calendar_day_untitled_event) })
+            .setMessage(body)
+            .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton(R.string.calendar_day_event_to_task) { _, _ -> makeTaskFromEvent(event) }
+            .show()
+    }
+
+    /** Turn an event into a task on its own day — the thing you actually have to do about it. */
+    private fun makeTaskFromEvent(event: com.toolsboox.plugin.calendar.da.v1.CalendarEvent) {
+        val text = event.title.trim().ifBlank { return }
+        val item = com.toolsboox.plugin.calendar.da.v2.LedgerItem(
+            id = "evt-" + java.util.UUID.randomUUID().toString().lowercase(),
+            kind = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
+            text = text,
+            date = java.util.Date(event.startDate),
+            source = "event",
+            stage = "todo"
+        )
+        if (com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe.containsTask(calendarDay.ledgerItems, text)) {
+            showMessage(getString(R.string.calendar_day_event_already_task), binding.root); return
+        }
+        calendarDay.ledgerItems.add(item)
+        presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+        lifecycleScope.launch(Dispatchers.IO) {
+            com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), item)
+        }
+        showMessage(getString(R.string.calendar_day_event_made_task, text.take(40)), binding.root)
+    }
+
     private fun handleIntakeTap(motionEvent: MotionEvent, gestureResult: Int): Boolean {
         // Finger taps only. TOOL_TYPE_UNKNOWN is accepted because injected events
         // (adb input tap, accessibility) carry it; real pen taps are STYLUS and stay ink.
