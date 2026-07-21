@@ -2466,13 +2466,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val pk = notePage ?: "default"
         val typed = if (::calendarDay.isInitialized)
             calendarDay.textElements.filter { it.pageKey == pk }.joinToString("\n") { it.text }.trim() else ""
-        val strokes = currentPageStrokes()
-        val inked = if (strokes.isNotEmpty()) {
-            val rect = android.graphics.RectF(0f, 0f, 1404f, 1872f)
-            val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 2000)
-            com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third) ?: ""
-        } else ""
+        val inked = pageInkText(creds).orEmpty()
         return listOf(typed, inked).filter { it.isNotBlank() }.joinToString("\n\n").ifBlank { null }
+    }
+
+    /** OCR just the current page's handwriting, or null if there is none. */
+    private fun pageInkText(creds: Triple<String, String, String>): String? {
+        val strokes = currentPageStrokes()
+        if (strokes.isEmpty()) return null
+        val rect = android.graphics.RectF(0f, 0f, 1404f, 1872f)
+        val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 2000)
+        return com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(
+            bmp, creds.first, creds.second, creds.third)?.takeIf { it.isNotBlank() }
     }
 
     /** Drop each line onto [pageKey] as a movable text box, save, and (optionally) show it now. */
@@ -2609,11 +2614,49 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     private fun runWritePersona(persona: com.toolsboox.ot.WritePersona.Persona) {
+        // Trim the boundary before you skeleton. A synthesis page can pick up a stray line from
+        // the wrong world — the corpus holds both surrogacy notes and Android build notes, and a
+        // well-meant connection dragged one across — so before the outline is drawn you get to
+        // untick what does not belong to THIS piece. Kept lines only reach the model.
+        trimThenGenerate(persona.label) { kept -> generateOutline(persona, kept) }
+    }
+
+    /**
+     * Show the page's own material as a checklist, everything on by default, and hand back what
+     * survived. Grouped under the source it was synthesized from, so a whole off-topic batch can
+     * go with its heading. The handwriting is not listed — ink you wrote by hand is yours and on
+     * this page on purpose; this trims the placed text, which is where a foreign source rides in.
+     */
+    private fun trimThenGenerate(title: String, onKept: (List<String>) -> Unit) {
+        val pk = notePage ?: "default"
+        val lines = if (::calendarDay.isInitialized)
+            calendarDay.textElements.filter { it.pageKey == pk && it.text.isNotBlank() }
+                .map { it.text.trim() } else emptyList()
+        if (lines.isEmpty()) { onKept(emptyList()); return }
+        val ctx = requireContext()
+        val checked = BooleanArray(lines.size) { true }
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("What belongs in this piece?")
+            .setMultiChoiceItems(lines.map { it.take(80) }.toTypedArray(), checked) { _, which, isOn ->
+                checked[which] = isOn
+            }
+            .setPositiveButton(title) { _, _ ->
+                onKept(lines.filterIndexed { i, _ -> checked[i] })
+            }
+            .setNeutralButton("All") { _, _ -> onKept(lines) }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun generateOutline(persona: com.toolsboox.ot.WritePersona.Persona, kept: List<String>) {
         val creds = aiCreds() ?: run { showMessage(getString(R.string.ledger_ai_key_needed), binding.root); return }
         showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
         lifecycleScope.launch {
             val lines = withContext(Dispatchers.IO) {
-                val text = pageOcrText(creds) ?: return@withContext emptyList<String>()
+                // Kept text plus this page's ink; the ink is read whole, the text is the trimmed set.
+                val ink = pageInkText(creds)
+                val text = (kept + listOfNotNull(ink)).joinToString("\n").trim()
+                if (text.isBlank()) return@withContext emptyList<String>()
                 runLlm(creds, persona.prompt, text)
             }
             if (lines.isEmpty()) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
