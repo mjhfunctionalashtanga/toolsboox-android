@@ -374,11 +374,6 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         return out.sortedByDescending { it.date.time }
     }
 
-    private fun documentsRoot(): File =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
-            requireContext().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)!!
-        else
-            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
 
     private fun formatMillis(ms: Long): String =
         SimpleDateFormat("MMM d, yyyy · h:mm a", Locale.getDefault()).format(Date(ms))

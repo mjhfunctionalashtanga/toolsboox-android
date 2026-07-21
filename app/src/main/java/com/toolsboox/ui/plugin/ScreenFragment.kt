@@ -323,8 +323,10 @@ abstract class ScreenFragment : Fragment() {
     private var pendingVideoFile: File? = null
 
     /** Persistent per-app store for annotation media; referenced by filename in the day JSON. */
-    protected fun attachmentsDir(): File =
-        File(requireContext().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), "attachments").apply { mkdirs() }
+    protected fun attachmentsDir(): File = com.toolsboox.ot.LedgerPaths.attachmentsDir(requireContext())
+
+    /** Root of the day JSONs. Here so every screen shares one answer. */
+    protected fun documentsRoot(): File = com.toolsboox.ot.LedgerPaths.documentsRoot(requireContext())
 
     private val annGalleryLauncher =
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -387,6 +389,22 @@ abstract class ScreenFragment : Fragment() {
             getString(R.string.reader_capture_voice) to { requestVoiceRecording() },
             getString(R.string.gram_capture_video) to { launchAnnVideo() }
         ))
+    }
+
+    /**
+     * Straight to one kind of capture, with no chooser in front of it — for callers that already
+     * asked which kind (the page's "Add media…" menu), so you don't pick "voice" and then get
+     * asked again.
+     */
+    protected fun captureAvGramDirect(kind: Attachment.Kind, onGram: (Attachment) -> Unit) {
+        gramSink = onGram
+        captureSink = null
+        captureSelection = ""
+        when (kind) {
+            Attachment.Kind.AUDIO -> requestVoiceRecording()
+            Attachment.Kind.VIDEO -> launchAnnVideo()
+            Attachment.Kind.PHOTO -> launchAnnCamera()
+        }
     }
 
     private fun launchAnnVideo() {
@@ -516,12 +534,10 @@ abstract class ScreenFragment : Fragment() {
     }
 
     // --- Voice memo ---
-
-    private var recorder: MediaRecorder? = null
-    private var recordFile: File? = null
-    private var recordStartAt: Long = 0L
-    private var recordDialog: AlertDialog? = null
-    private val recordHandler = Handler(Looper.getMainLooper())
+    //
+    // The microphone, dialog and clock live in com.toolsboox.ot.VoiceRecorder, so the floating
+    // pen button can record without a second copy of it. What stays here is only the part that
+    // is this fragment's business: asking for the permission, and where the clip ends up.
 
     private fun requestVoiceRecording() {
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.RECORD_AUDIO)
@@ -531,66 +547,24 @@ abstract class ScreenFragment : Fragment() {
     }
 
     private fun startVoiceRecording() {
-        val out = File(attachmentsDir(), "voice-${UUID.randomUUID()}.m4a")
-        val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(requireContext())
-        else @Suppress("DEPRECATION") MediaRecorder()
-        try {
-            rec.setAudioSource(MediaRecorder.AudioSource.MIC)
-            rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            rec.setOutputFile(out.absolutePath)
-            rec.prepare(); rec.start()
-        } catch (e: Exception) {
-            Timber.w(e, "voice recording failed to start")
-            runCatching { rec.release() }
-            showMessage(R.string.reader_capture_failed); captureSink = null; return
-        }
-        recorder = rec; recordFile = out; recordStartAt = SystemClock.elapsedRealtime()
-
-        val label = TextView(requireContext()).apply {
-            textSize = 18f; gravity = Gravity.CENTER; setPadding(40, 48, 40, 24)
-            text = getString(R.string.reader_capture_recording, "0:00")
-        }
-        recordDialog = AlertDialog.Builder(requireContext())
-            .setView(label)
-            .setPositiveButton(R.string.reader_capture_stop) { _, _ -> stopVoiceRecording(save = true) }
-            .setNegativeButton(android.R.string.cancel) { _, _ -> stopVoiceRecording(save = false) }
-            .setCancelable(false)
-            .show()
-
-        val tick = object : Runnable {
-            override fun run() {
-                if (recorder == null) return
-                val s = ((SystemClock.elapsedRealtime() - recordStartAt) / 1000).toInt()
-                label.text = getString(R.string.reader_capture_recording, "%d:%02d".format(s / 60, s % 60))
-                recordHandler.postDelayed(this, 500)
-            }
-        }
-        recordHandler.postDelayed(tick, 500)
+        com.toolsboox.ot.VoiceRecorder.record(
+            context = requireContext(),
+            out = File(attachmentsDir(), "voice-${UUID.randomUUID()}.m4a"),
+            recordingLabel = { clock -> getString(R.string.reader_capture_recording, clock) },
+            stopLabel = getString(R.string.reader_capture_stop),
+            onSaved = { file, seconds ->
+                emitAttachment(Attachment(UUID.randomUUID().toString(), Attachment.Kind.AUDIO, file.name, seconds, Date()))
+            },
+            onDiscarded = { captureSink = null; gramSink = null }
+        )
     }
 
     override fun onStop() {
         super.onStop()
-        // Recording only ends via the dialog's buttons — navigation/backgrounding while
-        // recording leaked the MediaRecorder (mic held, file growing), leaked the dialog's
-        // window, and the tick runnable retained the dead fragment forever. Saving on the
-        // way out keeps the memo instead of discarding it.
-        if (recorder != null) stopVoiceRecording(save = true)
-    }
-
-    private fun stopVoiceRecording(save: Boolean) {
-        recordHandler.removeCallbacksAndMessages(null)
-        val secs = (SystemClock.elapsedRealtime() - recordStartAt) / 1000.0
-        val file = recordFile
-        runCatching { recorder?.stop() }
-        runCatching { recorder?.release() }
-        recorder = null; recordFile = null
-        recordDialog?.dismiss(); recordDialog = null
-        if (save && file != null && file.exists() && secs >= 0.5) {
-            emitAttachment(Attachment(UUID.randomUUID().toString(), Attachment.Kind.AUDIO, file.name, secs, Date()))
-        } else {
-            file?.delete(); captureSink = null
-        }
+        // Recording only ends via the dialog's buttons — navigating away or backgrounding while
+        // recording held the mic, kept the file growing, and leaked the dialog's window. Saving
+        // on the way out keeps the memo instead of discarding it.
+        com.toolsboox.ot.VoiceRecorder.stop(save = true)
     }
 
     /** Keep [pill] fully inside its parent — translation can never strand it off-screen. */

@@ -2526,14 +2526,9 @@ abstract class SurfaceFragment : ScreenFragment() {
             listOf(
                 listOf(
                     LedgerContextMenu.Item("Text box") { showTextInputDialog(cx, cy) },
-                    LedgerContextMenu.Item("Image — camera") {
-                        pendingPlacePoint = PointF(cx, cy)
-                        launchCameraCapture()
-                    },
-                    LedgerContextMenu.Item("Image — upload") {
-                        pendingPlacePoint = PointF(cx, cy)
-                        launchImagePicker()
-                    },
+                    // One door for everything you can catch: photo, upload, voice, video. It used
+                    // to be two image entries here and recording hidden behind a lasso.
+                    LedgerContextMenu.Item("Add media…") { showAddMediaMenu(cx, cy) },
                     LedgerContextMenu.Item("Insert clipping…") { showClippingsPicker(cx, cy) }
                 ),
                 listOf(
@@ -2544,6 +2539,30 @@ abstract class SurfaceFragment : ScreenFragment() {
             ) + extraCreationGroups(cx, cy)
         )
     }
+
+    /**
+     * Everything you can catch, behind one entry.
+     *
+     * A picture lands on the page where you pressed, because that's a thing you're placing. A
+     * recording becomes an A/V gram on the day's board instead, because it isn't something you
+     * put in a spot — it's something you file.
+     */
+    private fun showAddMediaMenu(cx: Float, cy: Float) {
+        if (context == null) return
+        showIconMenu(getString(R.string.gram_capture_title), listOf(
+            getString(R.string.reader_capture_photo) to {
+                pendingPlacePoint = PointF(cx, cy); launchCameraCapture()
+            },
+            getString(R.string.reader_capture_upload) to {
+                pendingPlacePoint = PointF(cx, cy); launchImagePicker()
+            },
+            getString(R.string.reader_capture_voice) to { onRecordAvGram(com.toolsboox.da.Attachment.Kind.AUDIO) },
+            getString(R.string.gram_capture_video) to { onRecordAvGram(com.toolsboox.da.Attachment.Kind.VIDEO) }
+        ))
+    }
+
+    /** Record an A/V gram of [kind] for this surface's day. Base: nothing to record onto. */
+    protected open fun onRecordAvGram(kind: com.toolsboox.da.Attachment.Kind) {}
 
     /** Page-specific creation actions (e.g. the Synthesize page's engines). Base: none. */
     protected open fun extraCreationGroups(cx: Float, cy: Float): List<List<LedgerContextMenu.Item>> = emptyList()

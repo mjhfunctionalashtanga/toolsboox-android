@@ -375,11 +375,6 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
         if (::binding.isInitialized) binding.progress.visibility = View.INVISIBLE
     }
 
-    private fun documentsRoot(): File =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
-            requireContext().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)!!
-        else
-            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
 
     private fun encryptedPrefs(): SharedPreferences {
         val masterKey = MasterKey.Builder(requireContext())

@@ -340,14 +340,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     override fun extraCreationGroups(cx: Float, cy: Float): List<List<com.toolsboox.ot.LedgerContextMenu.Item>> {
         val ctx = context ?: return emptyList()
-        // Recording is a way of writing something down, so it belongs on the same hold-to-add
-        // menu as a text box or a photo — on the day page and on every board. It used to be
-        // reachable only by lassoing ink first, which meant drawing something before you could
-        // speak.
-        val record = listOf(
-            com.toolsboox.ot.LedgerContextMenu.Item("🎬  A/V gram — record…") { recordAvGram() }
-        )
-        return listOf(record) + when (notePage) {
+        return when (notePage) {
             // Synthesize page: the engine LIBRARY (built-ins + your own prompts) on the day's gathering.
             "synthesize" -> listOf(listOf(
                 com.toolsboox.ot.LedgerContextMenu.Item("⚗  Synthesize the day…") {
@@ -1461,6 +1454,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         captureAvGram { onAvGramRecorded(it) }
     }
 
+    /**
+     * "Add media… → Voice / Video" on the page's hold-menu. Straight into the recorder: the
+     * kind was already chosen a tap ago.
+     */
+    override fun onRecordAvGram(kind: com.toolsboox.da.Attachment.Kind) {
+        captureAvGramDirect(kind) { onAvGramRecorded(it) }
+    }
+
     private fun onAvGramRecorded(att: com.toolsboox.da.Attachment) {
         if (::calendarDay.isInitialized) {
             calendarDay.avGrams.add(att)
@@ -1497,61 +1498,24 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     /**
      * Put a just-recorded A/V gram on today's board as a picking.
      *
-     * The card's image is the clip's poster frame, and it carries the pointer back to the blob,
-     * so every surface that already draws grams shows it and a tap can play it. The title is the
-     * opening of the transcription when there is one — a recording ends up named by its own first
-     * words — and otherwise just the kind and the day.
+     * The title is the opening of the transcription when there is one — a recording ends up named
+     * by its own first words — and otherwise just the kind and the day. Filing itself is
+     * [AvGrams.file], shared with the reply composer and the floating pen button.
      *
      * Runs on IO. Returns whether a card was actually placed.
      */
     private fun placeAvGramOnPickings(
         att: com.toolsboox.da.Attachment, file: java.io.File, transcript: String?
     ): Boolean {
-        if (!file.exists()) return false
-
-        val durationMs = att.duration?.let { (it * 1000).toInt() }
-            ?.takeIf { it > 0 }
-            ?: com.toolsboox.plugin.calendar.ot.AvPoster.durationMs(file)
-
-        val isVideo = att.kind == com.toolsboox.da.Attachment.Kind.VIDEO
-        val fallback = (if (isVideo) "🎥 Video gram · " else "🎤 Audio gram · ") + currentDate
-
-        // Name it by its own opening words when we have them.
         val title = transcript?.trim().orEmpty()
             .lineSequence().firstOrNull { it.isNotBlank() }
             ?.trim()
-            ?.let { if (it.length > 48) it.take(47).trimEnd() + "…" else it }
-            ?: fallback
+            ?.let { if (it.length > 48) it.take(47).trimEnd() + "\u2026" else it }
+            ?: ""
 
-        val poster = com.toolsboox.plugin.calendar.ot.AvPoster.poster(
-            file, att.kind, durationMs, title
-        ) ?: return false
-
-        val root = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
-            requireContext().getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)!!
-        else java.io.File(
-            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS),
-            "toolsBoox"
+        return com.toolsboox.plugin.calendar.ot.AvGrams.file(
+            calendarDayService, documentsRoot(), file, att, currentDate, title
         )
-
-        return try {
-            com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
-                calendarDayService, root, poster, currentDate,
-                com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY,
-                sourceLabel = fallback,
-                media = com.toolsboox.plugin.calendar.ot.PickingsPlacement.MediaRef(
-                    kind = if (isVideo) "video" else "audio",
-                    attachmentId = att.id,
-                    durationMs = durationMs,
-                    title = title
-                )
-            )
-            true
-        } catch (e: Exception) {
-            false
-        } finally {
-            runCatching { poster.recycle() }
-        }
     }
 
     /** Gram studio (Android parity): OCR the lassoed ink, then open the multi-format studio. */

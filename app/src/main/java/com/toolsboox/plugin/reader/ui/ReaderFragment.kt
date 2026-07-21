@@ -779,11 +779,6 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             .show()
     }
 
-    private fun documentsRoot(): File =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
-            requireContext().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)!!
-        else
-            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
 
     /** Hide/show the reader bar — collapsed leaves just the grip + ✎ highlight. */
     private fun toggleReaderBar() {

@@ -159,11 +159,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         }
     }
 
-    private fun documentsRoot(): java.io.File =
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
-            getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)!!
-        else
-            java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
+    private fun documentsRoot(): java.io.File = com.toolsboox.ot.LedgerPaths.documentsRoot(this)
 
     private fun toast(m: String) = android.widget.Toast.makeText(this, m, android.widget.Toast.LENGTH_SHORT).show()
 
@@ -185,6 +181,49 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    // 🎤 Record a voice gram from the floating pen button — reachable from anywhere in the app,
+    // not just a page you happen to be standing on.
+    private val micPermLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) startVoiceGram() else toast("Microphone permission is needed to record") }
+
+    private fun requestVoiceGram() {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO)
+            == android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) startVoiceGram()
+        else micPermLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+    }
+
+    private fun startVoiceGram() {
+        val dir = com.toolsboox.ot.LedgerPaths.attachmentsDir(this)
+        com.toolsboox.ot.VoiceRecorder.record(
+            context = this,
+            out = java.io.File(dir, "voice-${UUID.randomUUID()}.m4a"),
+            recordingLabel = { clock -> getString(R.string.reader_capture_recording, clock) },
+            stopLabel = getString(R.string.reader_capture_stop),
+            onSaved = { file, seconds ->
+                val att = com.toolsboox.da.Attachment(
+                    UUID.randomUUID().toString(), com.toolsboox.da.Attachment.Kind.AUDIO,
+                    file.name, seconds, Date()
+                )
+                lifecycleScope.launch {
+                    val placed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        com.toolsboox.plugin.calendar.ot.AvGrams.file(
+                            calendarDayService, documentsRoot(), file, att
+                        )
+                    }
+                    toast(if (placed) "🎤 Voice gram → today's Pickings" else "Voice gram saved")
+                }
+            }
+        )
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Never leave the microphone open behind a backgrounded app; keep the memo.
+        com.toolsboox.ot.VoiceRecorder.stop(save = true)
     }
 
     private fun ingestPhotoFile(f: java.io.File) {
@@ -333,12 +372,15 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             binding.fragmentContent.findNavController().navigate(R.id.action_to_scratch, bundle)
         }
         binding.floatNoteButton.setOnLongClickListener {
-            // Hold the pen button → a small menu: Text Notes, or capture a photo into the Ledger.
+            // Hold the pen button → a small menu: Text Notes, or catch something into the Ledger.
+            // Voice sits beside the photo because it's the same gesture — getting a thing down
+            // when there isn't time to write it.
             androidx.appcompat.app.AlertDialog.Builder(this)
-                .setItems(arrayOf("✎  Text Notes", "📷  Capture a photo")) { _, which ->
+                .setItems(arrayOf("✎  Text Notes", "📷  Capture a photo", "🎤  Record a voice gram")) { _, which ->
                     when (which) {
                         0 -> binding.fragmentContent.findNavController().navigate(R.id.action_to_text_notes)
                         1 -> startCapture()
+                        2 -> requestVoiceGram()
                     }
                 }
                 .setNegativeButton(android.R.string.cancel, null)

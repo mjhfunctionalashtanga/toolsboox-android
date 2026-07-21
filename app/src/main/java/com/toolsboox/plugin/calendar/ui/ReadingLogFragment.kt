@@ -843,11 +843,6 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         // The shared LedgerPlayer intentionally keeps playing after you leave the log.
     }
 
-    private fun documentsRoot(): File =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
-            requireContext().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)!!
-        else
-            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
 
     override fun showLoading() {}
     override fun hideLoading() {}

@@ -1473,11 +1473,6 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         }.onFailure { Timber.w(it, "failed to write correspondence") }
     }
 
-    private fun documentsRoot(): File =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
-            requireContext().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)!!
-        else
-            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
 
     private fun prefs(): SharedPreferences {
         val masterKey = MasterKey.Builder(requireContext())

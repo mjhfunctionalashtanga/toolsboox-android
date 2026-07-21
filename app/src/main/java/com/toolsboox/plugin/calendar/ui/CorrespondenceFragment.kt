@@ -46,11 +46,6 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     @Inject
     lateinit var calendarDayService: com.toolsboox.plugin.calendar.fi.CalendarDayService
 
-    private fun documentsRoot(): java.io.File =
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
-            requireContext().getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)!!
-        else
-            java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
 
     /** Stack two bitmaps vertically (either may be null) — the attached item above your ink. */
     private fun stackVertically(top: Bitmap?, bottom: Bitmap?): Bitmap? {
