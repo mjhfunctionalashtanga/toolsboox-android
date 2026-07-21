@@ -96,7 +96,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         container.addView(com.toolsboox.ot.InkMount.wrapInColumn(ctx, img))
         lifecycleScope.launch {
             val bmp = withContext(Dispatchers.IO) { LedgerCorrespondence.loadImage(ctx, url) }
-            if (bmp != null && isAdded) img.setImageBitmap(bmp)
+            if (bmp != null && isAdded) {
+                img.setImageBitmap(bmp)
+                com.toolsboox.ot.ImageZoom.makeTappable(img)
+            }
         }
     }
 
@@ -115,7 +118,33 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         spaceTitle = prefs().getString("space_title", "MichaelFilter") ?: "MichaelFilter"
         binding.correspondenceClose.setOnClickListener { NavHostFragment.findNavController(this).popBackStack() }
         binding.correspondenceRefresh.setOnClickListener { load() }
+        // Step the reading size. The page re-lays out at the new size rather than being
+        // magnified, so the text stays as sharp as the panel can draw it.
+        binding.correspondenceTextSize.setOnClickListener {
+            val next = com.toolsboox.ot.ReadingSize.cycle(requireContext())
+            com.toolsboox.ot.ReadingSize.apply(binding.correspondenceContainer, next)
+            android.widget.Toast.makeText(
+                requireContext(), com.toolsboox.ot.ReadingSize.label(requireContext()),
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
         load()
+    }
+
+    /**
+     * Finish a freshly-built page: size the text to the reader's choice, and let any picture on
+     * it be opened full-screen. Called after every render, so new rows get both.
+     */
+    private fun applyReadingAids(root: View) {
+        com.toolsboox.ot.ReadingSize.apply(root)
+        wireImageZoom(root)
+    }
+
+    private fun wireImageZoom(v: View) {
+        if (com.toolsboox.ot.ImageZoom.isZoomable(v)) {
+            com.toolsboox.ot.ImageZoom.makeTappable(v as android.widget.ImageView)
+        }
+        if (v is android.view.ViewGroup) for (i in 0 until v.childCount) wireImageZoom(v.getChildAt(i))
     }
 
     private fun load() {
@@ -285,6 +314,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             card.addView(actionsScroll)
             container.addView(card)
         }
+        // Size the freshly-built page to the reader's choice, and let its pictures open.
+        applyReadingAids(container)
     }
 
     private fun render(replies: List<LedgerReply>) {
@@ -371,6 +402,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 })
             }
         }
+        // Size the freshly-built page to the reader's choice, and let its pictures open.
+        applyReadingAids(container)
     }
 
     /** Read the whole exchange in-app: every comment, yours marked "· you", uploads shown (📎 + image). */
@@ -425,7 +458,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     col.addView(img)
                     lifecycleScope.launch {
                         val bmp = withContext(Dispatchers.IO) { LedgerCorrespondence.loadImage(ctx, url) }
-                        if (bmp != null && isAdded) img.setImageBitmap(bmp)
+                        if (bmp != null && isAdded) {
+                            img.setImageBitmap(bmp)
+                            com.toolsboox.ot.ImageZoom.makeTappable(img)
+                        }
                     }
                 }
                 // Divider before the replies.
@@ -509,7 +545,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     col.addView(img)
                     lifecycleScope.launch {
                         val bmp = withContext(Dispatchers.IO) { LedgerCorrespondence.loadImage(ctx, url) }
-                        if (bmp != null && isAdded) img.setImageBitmap(bmp)
+                        if (bmp != null && isAdded) {
+                            img.setImageBitmap(bmp)
+                            com.toolsboox.ot.ImageZoom.makeTappable(img)
+                        }
                     }
                 }
                 // Per-comment actions row: Reply (community, nests under this comment) + Delete (own).
@@ -562,6 +601,9 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     setOnClickListener { showReplyDialog(threadId, title) }
                 })
             }
+            // The thread fills in asynchronously, so this belongs at the end of the load —
+            // sizing an empty column would do nothing.
+            applyReadingAids(col)
         }
     }
 

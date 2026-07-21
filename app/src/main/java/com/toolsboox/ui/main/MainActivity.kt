@@ -161,6 +161,63 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
     private fun documentsRoot(): java.io.File = com.toolsboox.ot.LedgerPaths.documentsRoot(this)
 
+    // --- The quick-note button -------------------------------------------------------------
+    //
+    // Hold it to choose what it does; it then WEARS that choice, so going back to the same thing
+    // is a tap. The four faces are the four ways of getting something down in a hurry.
+
+    private val quickNoteFaces = intArrayOf(
+        R.drawable.ic_pencil, R.drawable.ic_toolbar_text, R.drawable.ic_camera, R.drawable.ic_mic
+    )
+
+    companion object {
+        /** Hold-menu entries; index is stored, so keep the order stable. */
+        val QUICK_NOTE_LABELS = arrayOf(
+            "✎  Note page (where you left off)",
+            "✎  Text Notes",
+            "📷  Capture a photo",
+            "🎤  Record a voice gram"
+        )
+    }
+
+    private fun quickNoteAction(): Int =
+        getSharedPreferences("MAIN", MODE_PRIVATE).getInt("quick_note_action", 0)
+            .coerceIn(0, QUICK_NOTE_LABELS.size - 1)
+
+    private fun setQuickNoteAction(which: Int) {
+        getSharedPreferences("MAIN", MODE_PRIVATE).edit().putInt("quick_note_action", which).apply()
+        applyQuickNoteFace()
+    }
+
+    /** Put the current choice on the button, so you can see what a tap will do. */
+    private fun applyQuickNoteFace() {
+        val which = quickNoteAction()
+        binding.floatNoteButton.setImageResource(quickNoteFaces.getOrElse(which) { R.drawable.ic_pencil })
+        binding.floatNoteButton.contentDescription = QUICK_NOTE_LABELS.getOrElse(which) { "Notes" }
+    }
+
+    private fun runQuickNoteAction(which: Int) {
+        when (which) {
+            0 -> openLastNotePage()
+            1 -> binding.fragmentContent.findNavController().navigate(R.id.action_to_text_notes)
+            2 -> startCapture()
+            3 -> requestVoiceGram()
+        }
+    }
+
+    /** The original behaviour: back to the page you were last writing on. */
+    private fun openLastNotePage() {
+        val p = getSharedPreferences("ledger_notes", 0)
+        val date = runCatching {
+            java.time.LocalDate.parse(p.getString("last_note_date", "") ?: "")
+        }.getOrNull() ?: java.time.LocalDate.now()
+        val bundle = bundleOf(
+            "year" to "${date.year}", "month" to "${date.monthValue}", "day" to "${date.dayOfMonth}",
+            "notePage" to (p.getString("last_note_page", "0") ?: "0")
+        )
+        binding.fragmentContent.findNavController().navigate(R.id.action_to_scratch, bundle)
+    }
+
     private fun toast(m: String) = android.widget.Toast.makeText(this, m, android.widget.Toast.LENGTH_SHORT).show()
 
     /** Chooser: take a photo, or pick one — then ingest it as a Ledger object. */
@@ -360,34 +417,24 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         // Global "pull up the Notes surface" button — available on every screen. It reopens the
         // note page you last had open (same memory the menus' "✒ Notes" uses), falling back to
         // today's first page. Hold it instead to switch over to Text Notes.
-        binding.floatNoteButton.setOnClickListener {
-            val p = getSharedPreferences("ledger_notes", 0)
-            val date = runCatching {
-                java.time.LocalDate.parse(p.getString("last_note_date", "") ?: "")
-            }.getOrNull() ?: java.time.LocalDate.now()
-            val bundle = bundleOf(
-                "year" to "${date.year}", "month" to "${date.monthValue}", "day" to "${date.dayOfMonth}",
-                "notePage" to (p.getString("last_note_page", "0") ?: "0")
-            )
-            binding.fragmentContent.findNavController().navigate(R.id.action_to_scratch, bundle)
-        }
+        binding.floatNoteButton.setOnClickListener { runQuickNoteAction(quickNoteAction()) }
         binding.floatNoteButton.setOnLongClickListener {
             // Hold the pen button → a small menu: Text Notes, or catch something into the Ledger.
             // Voice sits beside the photo because it's the same gesture — getting a thing down
             // when there isn't time to write it.
             androidx.appcompat.app.AlertDialog.Builder(this)
-                .setItems(arrayOf("✎  Text Notes", "📷  Capture a photo", "🎤  Record a voice gram")) { _, which ->
-                    when (which) {
-                        0 -> binding.fragmentContent.findNavController().navigate(R.id.action_to_text_notes)
-                        1 -> startCapture()
-                        2 -> requestVoiceGram()
-                    }
+                .setItems(QUICK_NOTE_LABELS) { _, which ->
+                    // The button keeps the face of whatever you picked, so the next one is a tap
+                    // rather than another hold.
+                    setQuickNoteAction(which)
+                    runQuickNoteAction(which)
                 }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
             true
         }
         makeFloatButtonDraggable(binding.floatNoteButton)
+        applyQuickNoteFace()
 
         firebaseAnalytics = Firebase.analytics
 

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Remembers a TextView's unscaled size so reading-size changes stay idempotent
+         rather than compounding each time they're applied. -->
+    <item name="tag_base_text_size" type="id" />
+</resources>

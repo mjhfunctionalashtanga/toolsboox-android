@@ -23,6 +23,18 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"/>
 
+        <!-- Reading size: re-lays the page out larger rather than magnifying it, so the text
+             stays sharp on the panel. Pictures zoom by tapping them. -->
+        <TextView
+            android:id="@+id/correspondence_text_size"
+            android:text="A"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:textColor="#000000"
+            android:padding="8dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
         <TextView
             android:id="@+id/correspondence_refresh"
             android:text="⟳"
