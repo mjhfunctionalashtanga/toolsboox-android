@@ -1000,6 +1000,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     private fun showSpiralLine() {
         binding.spiralLine.visibility = View.GONE
+        // The day page only. The band it sits in is drawn by CalendarDayPage between Tasks and
+        // Stars & Events; a note page is bare paper, so the line landed in the middle of nothing
+        // and looked like a stray caption. Same fragment draws both, which is how it got there.
+        if (currentNotePage() != null) return
         val ctx = context ?: return
         lifecycleScope.launch {
             val chosen = withContext(Dispatchers.IO) {
@@ -1133,6 +1137,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     private fun positionSpiralLine() {
         if (!isAdded) return
+        if (currentNotePage() != null) {
+            binding.spiralLine.visibility = View.GONE
+            return
+        }
         val v = binding.spiralLine
         if (v.visibility != View.VISIBLE) return
         val mapped = android.graphics.RectF(rootsBand)
