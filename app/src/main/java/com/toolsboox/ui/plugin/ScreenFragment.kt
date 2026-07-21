@@ -188,6 +188,69 @@ abstract class ScreenFragment : Fragment() {
     abstract fun hideLoading()
 
     /**
+     * Volume keys page whatever this screen is showing.
+     *
+     * Registered for EVERY screen rather than added one at a time. It had been wired on four —
+     * the book reader, the article, the feed list and the day page — which meant the keys worked,
+     * stopped, and worked again as you moved through the app. A hardware key that works on some
+     * screens doesn't read as a feature with gaps; it reads as a key that is broken.
+     *
+     * A surface with its own idea of what a page turn means overrides [onVolumeKey]; one that
+     * simply has a list or a web view needs to do nothing at all.
+     */
+    override fun onResume() {
+        super.onResume()
+        (activity as? MainActivity)?.volumeKeyHandler = handler@{ up -> onVolumeKey(up) }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        (activity as? MainActivity)?.volumeKeyHandler = null
+    }
+
+    /**
+     * Page this screen. Return false to let the keys do their normal thing (change the volume).
+     *
+     * The default finds whatever on this screen scrolls and moves it by most of its own height —
+     * most of, not all, so a line or two carries over and you can tell where you were.
+     */
+    protected open fun onVolumeKey(up: Boolean): Boolean {
+        if (!volumeKeysPage()) return false
+        // `view` on this class is the LAYOUT RESOURCE id, not the fragment's view — the name is
+        // taken. getView() is the real one.
+        val target = firstScrollable(getView() ?: return false) ?: return false
+        val step = (target.height * 9 / 10).coerceAtLeast(1)
+        when (target) {
+            is androidx.recyclerview.widget.RecyclerView -> target.smoothScrollBy(0, if (up) -step else step)
+            else -> target.scrollBy(0, if (up) -step else step)
+        }
+        return true
+    }
+
+    /** Shared with the readers, so one setting covers the whole app. */
+    protected fun volumeKeysPage(): Boolean =
+        requireContext().getSharedPreferences("ledger_reader_nav", 0).getBoolean("volume_turn", true)
+
+    /**
+     * The first thing under [root] that can actually scroll right now.
+     *
+     * "Can scroll" rather than "is a list": a RecyclerView with three rows in it has nothing to
+     * page, and paging it while a WebView below could have moved would feel like the key had
+     * failed. Asking each candidate whether it has anywhere to go picks the one the reader means.
+     */
+    private fun firstScrollable(root: View): View? {
+        if (root !is ViewGroup) return null
+        if (root.visibility != View.VISIBLE) return null
+        for (i in 0 until root.childCount) {
+            val child = root.getChildAt(i)
+            if (child.visibility != View.VISIBLE) continue
+            if (child.canScrollVertically(1) || child.canScrollVertically(-1)) return child
+            firstScrollable(child)?.let { return it }
+        }
+        return null
+    }
+
+    /**
      * Drag [handle] to move [pill] freely (via translation), persisted under [key].
      * A plain tap on the handle (no drag) fires [onTap] — used to collapse/expand the
      * pill, so the grip itself is the obvious affordance, not just the small caret.

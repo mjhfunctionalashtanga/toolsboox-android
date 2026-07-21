@@ -1023,6 +1023,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             // Held, because how much of it can be SHOWN depends on the band's size on screen,
             // which changes with zoom — so the text has to be rebuilt, not merely re-clipped.
             spiralPick = chosen to snippet
+            // Feed the widget's ring. It can't choose a pick itself — that means walking every day
+            // file — so the app hands over what it chose and the home screen rotates through them.
+            com.toolsboox.plugin.calendar.ot.SpiralRing.push(
+                requireContext().applicationContext, snippet, chosen.item.citation)
             binding.spiralLine.setOnClickListener {
                 findNavController().navigate(R.id.action_to_ledger_roots)
             }
