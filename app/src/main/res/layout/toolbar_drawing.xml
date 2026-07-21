@@ -32,8 +32,8 @@
 
     <ImageButton
             android:id="@+id/toolbarHandTouch"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_hand_touch"
 
@@ -45,8 +45,8 @@
 
     <ImageButton
             android:id="@+id/toolbarPen"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_pen"
 
@@ -58,8 +58,8 @@
 
     <ImageButton
             android:id="@+id/toolbarEraser"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_eraser"
 
@@ -82,8 +82,8 @@
 
     <ImageButton
             android:id="@+id/toolbarLasso"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_lasso"
 
@@ -95,8 +95,8 @@
     <ImageButton
             android:id="@+id/toolbarCopy"
             android:visibility="gone"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_copy"
 
@@ -108,8 +108,8 @@
     <ImageButton
             android:id="@+id/toolbarPaste"
             android:visibility="gone"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_paste"
 
@@ -148,8 +148,8 @@
 
     <ImageButton
             android:id="@+id/toolbarUndo"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_undo"
 
@@ -160,8 +160,8 @@
 
     <ImageButton
             android:id="@+id/toolbarRedo"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_redo"
 
@@ -173,8 +173,8 @@
     <ImageButton
             android:id="@+id/toolbarTrash"
             android:visibility="gone"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_trash"
 
@@ -185,8 +185,8 @@
 
     <ImageButton
             android:id="@+id/toolbarCalendarView"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:layout_marginTop="16dp"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_calendar_today"
@@ -198,8 +198,8 @@
 
     <ImageButton
             android:id="@+id/toolbarSwipeUp"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_swipe_up"
 
@@ -210,8 +210,8 @@
 
     <ImageButton
             android:id="@+id/toolbarSwipeDown"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_swipe_down"
 
@@ -222,8 +222,8 @@
 
     <ImageButton
             android:id="@+id/toolbarSwitchSide"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_switch_side"
 
@@ -235,8 +235,8 @@
     <ImageButton
             android:id="@+id/toolbarCloudSync"
             android:visibility="gone"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_cloud_sync"
 
@@ -247,8 +247,8 @@
 
     <ImageButton
             android:id="@+id/toolbarRotate"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_rotate"
 
@@ -259,8 +259,8 @@
 
     <ImageButton
             android:id="@+id/toolbarSettings"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:layout_width="@dimen/ledger_toolbar_button"
+            android:layout_height="@dimen/ledger_toolbar_button"
             android:scaleType="fitXY"
             app:srcCompat="@drawable/ic_toolbar_settings"
 

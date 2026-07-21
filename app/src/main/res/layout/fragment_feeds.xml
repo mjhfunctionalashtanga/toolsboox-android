@@ -184,60 +184,60 @@
         android:background="@drawable/ledger_bar_bg"
         android:padding="4dp">
 
-        <ImageView android:id="@+id/feeds_grip" android:layout_width="22dp" android:layout_height="44dp"
+        <ImageView android:id="@+id/feeds_grip" android:layout_width="@dimen/ledger_grip_short" android:layout_height="@dimen/ledger_pill_button"
             android:scaleType="fitCenter" android:src="@drawable/ic_grip" android:contentDescription="@null"/>
         <!-- Refresh + settings(wrench) sit left of the ↑ carrot. -->
-        <ImageButton android:id="@+id/refresh_button" android:layout_width="46dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/refresh_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_refresh"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_refresh"/>
-        <ImageButton android:id="@+id/settings_button" android:layout_width="46dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/settings_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_wrench"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_settings"/>
-        <ImageButton android:id="@+id/feeds_page_up" android:layout_width="46dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/feeds_page_up" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
-        <ImageButton android:id="@+id/feeds_goto" android:layout_width="46dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/feeds_goto" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_menu"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
-        <ImageButton android:id="@+id/feeds_page_down" android:layout_width="46dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/feeds_page_down" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
         <!-- Article actions (shown only while reading an article in-pane). -->
-        <ImageButton android:id="@+id/feeds_star" android:layout_width="46dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/feeds_star" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_star"
             android:visibility="gone"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_view_starred"/>
-        <ImageButton android:id="@+id/feeds_note" android:layout_width="46dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/feeds_note" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_go_notes"
             android:visibility="gone"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
-        <ImageButton android:id="@+id/feeds_parsed" android:layout_width="46dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/feeds_parsed" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_reader_view"
             android:visibility="gone"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
-        <ImageButton android:id="@+id/feeds_tts" android:layout_width="46dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/feeds_tts" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_speaker"
             android:visibility="gone"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
-        <ImageButton android:id="@+id/feeds_later" android:layout_width="46dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/feeds_later" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_go_later"
             android:visibility="gone"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_add_later"/>
         <!-- Shrunk article drawer (shown only when the pill is shrunk while reading):
              ⏫ last article · ‹ page up · › page down · ⏬ next article. -->
-        <ImageButton android:id="@+id/feeds_dw_prev" android:layout_width="46dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/feeds_dw_prev" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up2"
             android:visibility="gone"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_prev_article"/>
-        <ImageButton android:id="@+id/feeds_dw_pgup" android:layout_width="46dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/feeds_dw_pgup" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_left"
             android:visibility="gone"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
-        <ImageButton android:id="@+id/feeds_dw_pgdn" android:layout_width="46dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/feeds_dw_pgdn" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_right"
             android:visibility="gone"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
-        <ImageButton android:id="@+id/feeds_dw_next" android:layout_width="46dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/feeds_dw_next" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down2"
             android:visibility="gone"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_next_article"/>

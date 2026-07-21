@@ -38,33 +38,33 @@
         android:background="@drawable/ledger_bar_bg"
         android:padding="4dp">
 
-        <ImageView android:id="@+id/art_grip" android:layout_width="22dp" android:layout_height="44dp"
+        <ImageView android:id="@+id/art_grip" android:layout_width="@dimen/ledger_grip_short" android:layout_height="@dimen/ledger_pill_button"
             android:scaleType="fitCenter" android:src="@drawable/ic_grip" android:contentDescription="@null"/>
-        <ImageButton android:id="@+id/art_today" android:layout_width="42dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/art_today" android:layout_width="42dp" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_today"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
-        <ImageButton android:id="@+id/art_menu" android:layout_width="42dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/art_menu" android:layout_width="42dp" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_menu"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
-        <ImageButton android:id="@+id/art_star" android:layout_width="42dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/art_star" android:layout_width="42dp" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_star"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_star"/>
-        <ImageButton android:id="@+id/art_parse" android:layout_width="42dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/art_parse" android:layout_width="42dp" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_reader_view"
             android:background="@android:color/transparent" android:contentDescription="@string/feeds_article_parse"/>
-        <ImageButton android:id="@+id/art_page_up" android:layout_width="42dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/art_page_up" android:layout_width="42dp" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_left"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
-        <ImageButton android:id="@+id/art_prev" android:layout_width="42dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/art_prev" android:layout_width="42dp" android:layout_height="@dimen/ledger_pill_button"
             android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up2"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_article_first"/>
-        <ImageButton android:id="@+id/art_annotate" android:layout_width="44dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/art_annotate" android:layout_width="44dp" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_pencil"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_highlight"/>
-        <ImageButton android:id="@+id/art_next" android:layout_width="42dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/art_next" android:layout_width="42dp" android:layout_height="@dimen/ledger_pill_button"
             android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down2"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_article_last"/>
-        <ImageButton android:id="@+id/art_page_down" android:layout_width="42dp" android:layout_height="44dp"
+        <ImageButton android:id="@+id/art_page_down" android:layout_width="42dp" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_right"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
     </LinearLayout>

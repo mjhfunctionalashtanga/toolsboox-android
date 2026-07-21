@@ -692,9 +692,11 @@ abstract class ScreenFragment : Fragment() {
      * reads correctly either way once it is the right shape.
      */
     protected fun applyGripOrientation(grip: View, vertical: Boolean) {
-        val d = resources.displayMetrics.density
-        val short = (22 * d).toInt()
-        val long = (44 * d).toInt()
+        // From the dimens, not from hard-coded dp — otherwise this silently undoes the
+        // large-screen sizing every time a pill is flipped, and the grip alone shrinks back to
+        // phone size on a Tab X while the buttons beside it stay large.
+        val short = resources.getDimensionPixelSize(R.dimen.ledger_grip_short)
+        val long = resources.getDimensionPixelSize(R.dimen.ledger_grip_long)
         grip.layoutParams = grip.layoutParams.apply {
             width = if (vertical) long else short
             height = if (vertical) short else long
