@@ -84,4 +84,105 @@ object Spiral {
         o.put(key, JSONObject().put("seen", System.currentTimeMillis()).put("step", STEPS.size - 1))
         save(context, o)
     }
+
+    // --- Choosing what comes back ----------------------------------------------------------------
+
+    /**
+     * What surfaced, and the recent thing it rhymes with.
+     *
+     * [echo] is the point. A queue hands you an old note; a spiral hands you an old note *because
+     * of what you have been circling lately*, and says which. That connection is where the
+     * layering happens — without it this is just a list in a slow order.
+     */
+    data class Pick<T>(val item: T, val echo: T?, val shared: List<String>)
+
+    private const val RECENT_DAYS = 21L
+    private const val MIN_TERM = 4
+
+    /**
+     * Words too common to mean anything. Short list on purpose — an aggressive stop-list starts
+     * throwing away the vocabulary a person actually thinks in.
+     */
+    private val STOP = setOf(
+        "this", "that", "with", "from", "have", "what", "when", "were", "they", "them", "then",
+        "there", "here", "your", "yours", "about", "would", "could", "should", "been", "being",
+        "into", "over", "under", "just", "like", "than", "some", "more", "most", "much", "very",
+        "also", "only", "even", "still", "make", "made", "made", "does", "doing", "done", "each",
+        "which", "while", "after", "before", "because", "these", "those", "their", "will", "wont",
+        "cant", "dont", "didnt", "thing", "things", "really", "something", "anything", "everything"
+    )
+
+    private fun terms(text: String): List<String> =
+        text.lowercase()
+            .split(Regex("[^\\p{L}\\p{Nd}]+"))
+            .filter { it.length >= MIN_TERM && it !in STOP }
+
+    /**
+     * Choose what comes back around.
+     *
+     * Builds a picture of what you have been circling in the last few weeks, then prefers a DUE
+     * item that shares vocabulary with it — so the thing that returns is on a subject already
+     * warm, rather than merely old. Falls back to plain oldest-due when nothing rhymes, which is
+     * the honest answer for a ledger that hasn't found its themes yet.
+     *
+     * Deliberately arithmetic rather than a model call: it must work on a plane, on a Boox, with
+     * no key and no network. A persona can make it eloquent later; it should not need one to be
+     * useful.
+     */
+    fun <T> choose(
+        context: Context,
+        items: List<T>,
+        textOf: (T) -> String,
+        dateOf: (T) -> Long,
+        keyOf: (T) -> String,
+        now: Long = System.currentTimeMillis()
+    ): Pick<T>? {
+        if (items.isEmpty()) return null
+
+        val recentCut = now - TimeUnit.DAYS.toMillis(RECENT_DAYS)
+        val recent = items.filter { dateOf(it) >= recentCut }
+
+        // What you've been circling: how many distinct recent items each word appears in. Counting
+        // items rather than occurrences stops one long note from deciding the whole theme.
+        val warmth = HashMap<String, Int>()
+        for (r in recent) {
+            for (t in terms(textOf(r)).toSet()) warmth[t] = (warmth[t] ?: 0) + 1
+        }
+
+        val due = items.filter { dateOf(it) < recentCut && isDue(context, keyOf(it), now) }
+            .ifEmpty { items.filter { isDue(context, keyOf(it), now) } }
+        if (due.isEmpty()) return null
+
+        var best: T? = null
+        var bestScore = 0.0
+        var bestShared = emptyList<String>()
+
+        for (candidate in due) {
+            val ts = terms(textOf(candidate)).toSet()
+            if (ts.isEmpty()) continue
+            val shared = ts.filter { warmth.containsKey(it) }
+            if (shared.isEmpty()) continue
+            // Rarity matters more than volume: a word in ONE recent note is a thread, a word in
+            // twenty is just how you write.
+            val score = shared.sumOf { 1.0 / (1.0 + (warmth[it] ?: 1)) } * shared.size
+            if (score > bestScore) {
+                best = candidate
+                bestScore = score
+                bestShared = shared.sortedByDescending { warmth[it] ?: 0 }.take(3)
+            }
+        }
+
+        // Nothing rhymes — hand back the oldest thing that's due and say so by leaving echo null.
+        if (best == null) {
+            val oldest = due.minByOrNull { dateOf(it) } ?: return null
+            return Pick(oldest, null, emptyList())
+        }
+
+        // Which recent item it rhymes WITH — the one sharing most of those words.
+        val bestTerms = terms(textOf(best)).toSet()
+        val echo = recent.maxByOrNull { r -> terms(textOf(r)).toSet().count { it in bestTerms } }
+            ?.takeIf { r -> terms(textOf(r)).toSet().any { it in bestTerms } }
+
+        return Pick(best, echo, bestShared)
+    }
 }

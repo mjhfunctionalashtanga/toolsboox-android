@@ -199,6 +199,8 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
     /** Pick the active persona (or None), or open the editor to add/edit one. */
     private fun showPersonaDialog() {
         val ctx = requireContext()
+        // The built-ins arrive on first look rather than at install, so a fresh Ask isn't empty.
+        com.toolsboox.plugin.chat.nw.PersonaStore.seedDefaults(ctx)
         val personas = com.toolsboox.plugin.chat.nw.PersonaStore.all(ctx)
         val names = personas.map { it.name }
         val labels = (listOf("🚫  None") + names).toTypedArray()

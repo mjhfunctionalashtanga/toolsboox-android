@@ -623,21 +623,21 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         card.visibility = View.GONE
 
         lifecycleScope.launch {
-            val pick = withContext(Dispatchers.IO) {
+            val chosen = withContext(Dispatchers.IO) {
                 runCatching {
-                    corpusService.gather(documentsRoot())
-                        .asSequence()
+                    val all = corpusService.gather(documentsRoot())
                         .filter { it.text.isNotBlank() && it.text.length > 24 }
-                        .filter { com.toolsboox.plugin.calendar.ot.Spiral.isDue(
-                            ctx, com.toolsboox.plugin.calendar.ot.Spiral.keyOf(it.citation, it.text)) }
-                        // Oldest first: the spiral's whole point is reaching back, not skimming
-                        // what you wrote this morning.
-                        .sortedBy { it.date }
-                        .firstOrNull()
+                    com.toolsboox.plugin.calendar.ot.Spiral.choose(
+                        ctx, all,
+                        textOf = { it.text + " " + it.title },
+                        dateOf = { it.date.time },
+                        keyOf = { com.toolsboox.plugin.calendar.ot.Spiral.keyOf(it.citation, it.text) }
+                    )
                 }.getOrNull()
             }
 
-            if (!isAdded || pick == null) return@launch
+            if (!isAdded || chosen == null) return@launch
+            val pick = chosen.item
             val key = com.toolsboox.plugin.calendar.ot.Spiral.keyOf(pick.citation, pick.text)
             val dp = resources.displayMetrics.density
             fun px(v: Int) = (v * dp).toInt()
@@ -645,8 +645,11 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             card.background = android.graphics.drawable.GradientDrawable().apply {
                 setColor(0xFFFFFFFF.toInt()); setStroke(px(2), 0xFF111111.toInt()); cornerRadius = px(12).toFloat()
             }
+            // The header says WHY this one, which is the whole difference between a spiral and a
+            // queue. "Come back around" alone is just a slow list.
             card.addView(TextView(ctx).apply {
-                text = "🌀  come back around"
+                text = if (chosen.shared.isEmpty()) "🌀  come back around"
+                    else "🌀  you've been circling " + chosen.shared.joinToString(" · ")
                 textSize = 12f; setTextColor(0xFF666666.toInt())
             })
             card.addView(TextView(ctx).apply {
@@ -658,6 +661,17 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 text = pick.citation + (if (pick.title.isNotBlank()) "  ·  " + pick.title else "")
                 textSize = 11f; setTextColor(0xFF888888.toInt())
             })
+
+            // The rhyme: the recent thing that pulled this one back up. Showing both halves is
+            // what lets a subject LAYER instead of just recurring.
+            chosen.echo?.let { echo ->
+                card.addView(TextView(ctx).apply {
+                    text = "↳ rhymes with: " + echo.text.take(120).trim() +
+                        (if (echo.text.length > 120) "…" else "")
+                    textSize = 12f; setTextColor(0xFF444444.toInt())
+                    setPadding(px(10), px(8), 0, 0)
+                })
+            }
 
             val actions = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
