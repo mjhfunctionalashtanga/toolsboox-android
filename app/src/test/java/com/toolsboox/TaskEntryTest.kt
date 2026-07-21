@@ -151,4 +151,39 @@ class TaskEntryTest {
         assertEquals("dentist", text)
         assertNull(due)
     }
+
+    // --- splitting a time off the words ---------------------------------------------------------
+
+    @Test
+    fun `a trailing clock time is read`() {
+        assertEquals("call Dad" to "15:00", TaskEntry.splitTrailingTime("call Dad 3pm"))
+        assertEquals("standup" to "09:30", TaskEntry.splitTrailingTime("standup 09:30"))
+        assertEquals("yoga" to "18:45", TaskEntry.splitTrailingTime("yoga 6:45pm"))
+    }
+
+    @Test
+    fun `midnight and noon are not confused`() {
+        assertEquals("shift" to "00:00", TaskEntry.splitTrailingTime("shift 12am"))
+        assertEquals("lunch" to "12:00", TaskEntry.splitTrailingTime("lunch 12pm"))
+    }
+
+    @Test
+    fun `a dangling at goes with the time`() {
+        assertEquals("meet Sam" to "15:00", TaskEntry.splitTrailingTime("meet Sam at 3pm"))
+    }
+
+    @Test
+    fun `a bare number is a day of the month, not an hour`() {
+        // "call Dad 24" is the 24th. Only an explicit am/pm or a colon makes it a clock time —
+        // otherwise every task ending in a number would silently acquire one.
+        assertEquals("call Dad 24" to null, TaskEntry.splitTrailingTime("call Dad 24"))
+        assertEquals("run 5" to null, TaskEntry.splitTrailingTime("run 5"))
+    }
+
+    @Test
+    fun `nonsense is left in the name rather than guessed at`() {
+        assertEquals("call Dad" to null, TaskEntry.splitTrailingTime("call Dad"))
+        assertEquals("meet at 99pm" to null, TaskEntry.splitTrailingTime("meet at 99pm"))
+        assertEquals("3pm" to null, TaskEntry.splitTrailingTime("3pm"))
+    }
 }

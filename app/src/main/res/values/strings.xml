@@ -430,6 +430,9 @@
     <string name="ledger_selection_create">Create…</string>
     <string name="ledger_selection_add_to">Add to…</string>
     <string name="ledger_selection_do">Do…</string>
+    <string name="ledger_selection_switch_add">⇄  Switch to: Add to…</string>
+    <string name="ledger_selection_switch_create">⇄  Switch to: Create…</string>
+    <string name="ledger_selection_added_task">🗒 Added as a task card</string>
     <string name="ledger_selection_clipped">📋 Saved to Clippings</string>
     <string name="calendar_day_untitled_event">Event</string>
     <string name="calendar_day_event_to_task">Make a task</string>

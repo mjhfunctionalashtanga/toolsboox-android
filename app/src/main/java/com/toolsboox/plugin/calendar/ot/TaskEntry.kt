@@ -115,4 +115,34 @@ object TaskEntry {
         }
         return text to null
     }
+
+    /**
+     * Split a trailing time off a task's words: "call Dad 3pm", "standup 09:30".
+     *
+     * Programmatic first, deliberately. The whole point of reading the ink on-device is that it
+     * works on a plane with no key and no signal — and a clock face is the most regular thing a
+     * person writes, so it needs no model to read. What can't be parsed is simply left in the
+     * name, where it is visible and can be corrected, rather than guessed at.
+     *
+     * Returns the words with the time removed and "HH:mm", or the words unchanged and null.
+     */
+    fun splitTrailingTime(text: String): Pair<String, String?> {
+        val words = text.trim().split(Regex("\\s+"))
+        if (words.size < 2) return text to null
+        val last = words.last().lowercase().trim('.', ',', ';')
+        val m = Regex("^(\\d{1,2})(?::(\\d{2}))?(am|pm)?$").find(last) ?: return text to null
+        var hour = m.groupValues[1].toIntOrNull() ?: return text to null
+        val minute = m.groupValues[2].toIntOrNull() ?: 0
+        val suffix = m.groupValues[3]
+        // A bare number is a day of the month far more often than an hour — "call Dad 24" is the
+        // 24th. Only an explicit am/pm or a colon makes it a time.
+        if (suffix.isEmpty() && m.groupValues[2].isEmpty()) return text to null
+        if (suffix == "pm" && hour < 12) hour += 12
+        if (suffix == "am" && hour == 12) hour = 0
+        if (hour !in 0..23 || minute !in 0..59) return text to null
+        val head = words.dropLast(1)
+            .let { if (it.lastOrNull()?.lowercase() == "at") it.dropLast(1) else it }
+        if (head.isEmpty()) return text to null
+        return head.joinToString(" ") to String.format(Locale.US, "%02d:%02d", hour, minute)
+    }
 }

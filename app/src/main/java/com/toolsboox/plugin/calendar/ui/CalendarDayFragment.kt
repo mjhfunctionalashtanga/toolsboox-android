@@ -1028,9 +1028,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // empty band all day, with no way out of it.
         val cached = if (fresh) null else com.toolsboox.plugin.calendar.ot.SpiralRing.next(ctxForCache)
         if (cached != null) {
-            val entry = cached
-            val cite = entry.citation.substringAfter("· ", "").trim()
-            binding.spiralLine.text = entry.text + if (cite.isBlank()) "" else "  — $cite"
+            spiralPick = RootsLine(cached.text, emptyList(), cached.citation)
             binding.spiralLine.setOnClickListener {
                 findNavController().navigate(R.id.action_to_ledger_roots)
             }
@@ -1060,7 +1058,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             if (snippet.isEmpty()) return@launch
             // Held, because how much of it can be SHOWN depends on the band's size on screen,
             // which changes with zoom — so the text has to be rebuilt, not merely re-clipped.
-            spiralPick = chosen to snippet
+            spiralPick = RootsLine(snippet, chosen.shared, chosen.item.citation)
             // Feed the widget's ring. It can't choose a pick itself — that means walking every day
             // file — so the app hands over what it chose and the home screen rotates through them.
             com.toolsboox.plugin.calendar.ot.SpiralRing.push(
@@ -1085,20 +1083,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * something broken; the same passage ended at a full stop reads as a quotation, and the whole
      * thing is one tap from the page that holds all of it anyway.
      */
-    private fun spiralLineText(
-        chosen: com.toolsboox.plugin.calendar.ot.Spiral.Pick<com.toolsboox.plugin.chat.da.CorpusSnippet>,
-        snippet: String,
-        lines: Int,
-        charsPerLine: Int
-    ): CharSequence {
-        val cite = chosen.item.citation.substringAfter("· ", chosen.item.source).trim()
+    private fun spiralLineText(line: RootsLine, lines: Int, charsPerLine: Int): CharSequence {
+        val snippet = line.snippet
+        val cite = line.citation.substringAfter("· ", "").trim()
         val tail = if (cite.isBlank()) "" else "  — $cite"
         // The lead-in is the first thing to go. Zoomed out there may be room for two lines, and
         // two lines of the passage plus where it came from beats one line of each — "you have
         // been circling internet · people" is the least of the three once space is short, because
         // the Roots page says it too and the passage does not appear anywhere else on this screen.
-        val lead = if (lines < 3) "" else if (chosen.shared.isEmpty()) getString(R.string.spiral_lead_plain)
-            else getString(R.string.spiral_lead_circling, chosen.shared.joinToString(" · "))
+        val lead = if (lines < 3 || line.shared.isEmpty()) ""
+            else getString(R.string.spiral_lead_circling, line.shared.joinToString(" · "))
         // Budget the passage by what is actually left after the lead-in's line and the tail, so
         // the provenance always lands instead of being the thing that falls off the bottom.
         val bodyLines = (lines - if (lead.isEmpty()) 0 else 1).coerceAtLeast(1)
@@ -1148,10 +1142,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         return (if (space > limit / 2) window.take(space) else window).trimEnd(',', ';', ':', ' ') + "…"
     }
 
-    /** What the spiral chose, and its text — kept so the line can be re-fitted on zoom. */
-    private var spiralPick: Pair<
-        com.toolsboox.plugin.calendar.ot.Spiral.Pick<com.toolsboox.plugin.chat.da.CorpusSnippet>,
-        String>? = null
+    /**
+     * What the Roots band is showing.
+     *
+     * Deliberately NOT the Spiral's own Pick: the band is filled from two places — a fresh choice,
+     * and the cached ring — and when they carried different shapes the cached one bypassed the
+     * whole fitting pass, so its text kept the XML's line limit and was sliced by the panel below.
+     * One shape means one path through the measuring.
+     */
+    private data class RootsLine(val snippet: String, val shared: List<String>, val citation: String)
+    private var spiralPick: RootsLine? = null
 
     /**
      * The Roots band's paper, in design space (1404×1872).
@@ -1213,21 +1213,39 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         v.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, size)
 
         val padding = (v.paddingTop + v.paddingBottom).toFloat()
-        val lineHeight = size * 1.25f                       // roughly what the font metrics give
-        val fits = ((mapped.height() - padding) / lineHeight).toInt().coerceIn(1, 5)
-        v.maxLines = fits
+        val available = mapped.height() - padding
+        val innerWidth = (mapped.width() - v.paddingStart - v.paddingEnd).toInt().coerceAtLeast(1)
+
+        // MEASURE, don't estimate.
+        //
+        // Two guesses at this were both wrong — size × 1.25, then the font's own `fontSpacing` —
+        // and both left the last line sliced by the Stars & Events bar. The honest answer is to
+        // lay the text out and ask where each line actually ends: `getLineBottom` is the real
+        // number, and no arithmetic on font metrics reproduces it reliably once wrapping and
+        // spans are involved.
+        //
+        // Two passes, because the text depends on how many lines there are and the lines depend
+        // on the text: build it generously, measure what fits, then build it again for that.
+        fun linesThatFit(text: CharSequence): Int {
+            val layout = android.text.StaticLayout.Builder
+                .obtain(text, 0, text.length, v.paint, innerWidth).build()
+            var n = layout.lineCount
+            while (n > 1 && layout.getLineBottom(n - 1) > available) n--
+            return n
+        }
         v.maxHeight = mapped.height().toInt()                // the band, and not a pixel more
 
-        // Rebuild the text for the room there actually is.
-        //
-        // Clipping to `fits` lines meant that zoomed out, where only two lines fit, the passage
-        // used the whole budget and the provenance — the smaller grey tail — was simply the part
-        // that fell off the bottom. Telling the builder how many lines and how wide lets it spend
-        // what it has: drop the lead-in first, then shorten the passage, and always land the tail.
-        val perLine = ((mapped.width() - (v.paddingStart + v.paddingEnd)) / (size * 0.52f))
+        // Characters per line from the font's own average width, not a magic 0.52 multiplier.
+        val perLine = (innerWidth / v.paint.measureText("n").coerceAtLeast(1f))
             .toInt().coerceIn(8, 200)
-        spiralPick?.let { (pick, snippet) ->
-            v.text = spiralLineText(pick, snippet, fits, perLine)
+
+        spiralPick?.let { line ->
+            // Pass one: as much as could plausibly fit, so the measurement sees real wrapping.
+            val fits = linesThatFit(spiralLineText(line, 6, perLine))
+            // Pass two: built for the room there actually is, so the lead-in is dropped and the
+            // passage shortened rather than the citation falling off the bottom.
+            v.text = spiralLineText(line, fits, perLine)
+            v.maxLines = fits
         }
         v.requestLayout()
     }
@@ -1471,23 +1489,73 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     override fun onSelectionExtract(strokes: List<com.toolsboox.da.Stroke>) {
         if (!::calendarDay.isInitialized || strokes.isEmpty()) return
-        showDirectory(listOf(
-            getString(R.string.ledger_selection_create) to listOf(
-                "🗒  Task" to { createLedgerItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK) },
-                "📆  Event" to { createLedgerItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) },
-                "🃏  Gram" to { gramStudioFromSelection(strokes) },
-                "🎬  A/V gram" to { recordAvGram() }
-            ),
-            getString(R.string.ledger_selection_add_to) to listOf(
-                "❝  Pickings…" to { addSelectionToPickings(strokes) },
-                "📋  Clippings" to { addSelectionToClippings(strokes) }
-            ),
-            getString(R.string.ledger_selection_do) to listOf(
-                "📋  Copy text" to { copyTextFromSelection(strokes) },
-                "🎓  Educate me" to { educateFromSelection(strokes) },
-                "🔍  Find in Ledger" to { findInLedgerFromSelection(strokes) }
-            )
+        showSelectionMenu(strokes, adding = selectionAddMode)
+    }
+
+    /** Which half of the lasso menu you were last in — it usually stays the same for a while. */
+    private var selectionAddMode = false
+
+    /**
+     * One list, and a switch at the top saying what the list DOES.
+     *
+     * Task, event, gram, A/V gram and picking are the same five things whether you are making a
+     * new one or filing into an existing one — so the difference is a mode, not a different menu.
+     * Two labelled groups meant the same five words appeared twice and you had to read both to
+     * find out which was which.
+     */
+    private fun showSelectionMenu(strokes: List<com.toolsboox.da.Stroke>, adding: Boolean) {
+        val flip = if (adding) getString(R.string.ledger_selection_switch_create)
+            else getString(R.string.ledger_selection_switch_add)
+        val title = if (adding) getString(R.string.ledger_selection_add_to)
+            else getString(R.string.ledger_selection_create)
+
+        val actions: List<Pair<String, () -> Unit>> = if (adding) listOf(
+            "🗒  Task" to { addSelectionToTaskBoard(strokes) },
+            "📆  Event" to { createLedgerItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) },
+            "🃏  Gram" to { addSelectionToClippings(strokes) },
+            "🎬  A/V gram" to { recordAvGram() },
+            "❝  Picking" to { addSelectionToPickings(strokes) }
+        ) else listOf(
+            "🗒  Task" to { createLedgerItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK) },
+            "📆  Event" to { createLedgerItem(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) },
+            "🃏  Gram" to { gramStudioFromSelection(strokes) },
+            "🎬  A/V gram" to { recordAvGram() },
+            "❝  Picking" to { addSelectionToPickings(strokes) }
+        )
+
+        showIconMenu(title, listOf<Pair<String, () -> Unit>>(
+            flip to {
+                selectionAddMode = !adding
+                showSelectionMenu(strokes, !adding)
+            }
+        ) + actions + listOf(
+            "📋  Copy text" to { copyTextFromSelection(strokes) },
+            "🎓  Educate me" to { educateFromSelection(strokes) },
+            "🔍  Find in Ledger" to { findInLedgerFromSelection(strokes) }
         ))
+    }
+
+    /** Add-to-task: the circled words onto an existing board, as a card carrying its own ink. */
+    private fun addSelectionToTaskBoard(strokes: List<com.toolsboox.da.Stroke>) {
+        val bmp = renderSelection(strokes) ?: return
+        val baos = java.io.ByteArrayOutputStream()
+        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
+        val item = com.toolsboox.plugin.calendar.da.v2.LedgerItem(
+            id = "hand-" + java.util.UUID.randomUUID().toString().lowercase(),
+            kind = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
+            text = "",
+            date = dueDate(),
+            crop = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP),
+            display = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Display.INK,
+            source = "lasso",
+            stage = "todo"
+        )
+        calendarDay.ledgerItems.add(item)
+        presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+        lifecycleScope.launch(Dispatchers.IO) {
+            com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), item)
+        }
+        showMessage(getString(R.string.ledger_selection_added_task), binding.root)
     }
 
     /** The circled ink, rendered as a card, onto a Pickings board of your choosing. */
@@ -1517,6 +1585,33 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val pad = 28f
         val rect = android.graphics.RectF(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
         return com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600)
+    }
+
+    /**
+     * Lift a date and a time out of an item's OCR'd words, leaving the rest as its name.
+     *
+     * "meet Sam fri 3pm" is one gesture and three facts. Both readers are plain parsing rather
+     * than a model call, so they work with no key and no signal — which is the whole reason the
+     * on-device OCR fallback exists, and it would be odd for the step after it to need a network.
+     */
+    private fun withParsedWhen(
+        item: com.toolsboox.plugin.calendar.da.v2.LedgerItem
+    ): com.toolsboox.plugin.calendar.da.v2.LedgerItem {
+        if (item.text.isBlank()) return item
+        val (afterDate, due) = com.toolsboox.plugin.calendar.ot.TaskEntry
+            .splitTrailingDue(item.text, currentDate)
+        val (words, time) = com.toolsboox.plugin.calendar.ot.TaskEntry.splitTrailingTime(afterDate)
+        if (due == null && time == null) return item
+        val day = due ?: currentDate
+        // A time makes the item's own moment; without one, noon UTC — the ledger's convention for
+        // "this day" rather than an implied midnight.
+        val at = if (time != null) {
+            val (h, m) = time.split(":").map { it.toInt() }
+            java.util.Date(day.atTime(h, m).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli())
+        } else {
+            java.util.Date(day.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli())
+        }
+        return item.copy(text = words.ifBlank { item.text }, date = at, time = time ?: item.time)
     }
 
     /** OCR the lassoed ink, then show it as selectable/editable text with a one-tap Copy — so a
@@ -1577,31 +1672,33 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     val rect = android.graphics.RectF(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
                     val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600)
                     val t = com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third)
-                    if (!t.isNullOrBlank()) {
-                        // "call Dad fri" is one gesture and two facts. Reading a trailing date out
-                        // of the words is the one thing the write-in strip did better than a
-                        // lasso; doing it here means the strip isn't needed for it.
-                        val (words, due) = com.toolsboox.plugin.calendar.ot.TaskEntry
-                            .splitTrailingDue(t.trim(), currentDate)
-                        val on = due?.let {
-                            java.util.Date(it.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli())
-                        } ?: dueDate()
+                    if (!t.isNullOrBlank())
                         com.toolsboox.plugin.calendar.ot.LedgerExtractor
-                            .itemWithText(strokes, kind, words, "lasso-ai", on)
-                    } else null
+                            .itemWithText(strokes, kind, t.trim(), "lasso-ai", dueDate())
+                    else null
                 } else null
+            // No key, no signal, or the call failed: the Boox's own on-device ink OCR. The point
+            // of it is that it works on a plane, so everything after this must work there too.
             } ?: com.toolsboox.plugin.calendar.ot.LedgerExtractor.extractStrokes(strokes, kind, "lasso", dueDate())
 
             if (item == null) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
-            confirmLedgerItem(item, kind) {
-                calendarDay.ledgerItems.add(item)
+            // Read the WHEN out of the words, whichever OCR produced them.
+            //
+            // This used to sit inside the vision branch only, so the same handwriting gave a due
+            // date online and none offline — the sort of difference that reads as the app being
+            // unreliable rather than as a feature with a fallback. It is plain parsing, so it
+            // costs nothing and works with no signal; anything it can't read stays in the name,
+            // where you can see it and fix it, rather than being guessed at.
+            val whenParsed = withParsedWhen(item)
+            confirmLedgerItem(whenParsed, kind) {
+                calendarDay.ledgerItems.add(whenParsed)
                 calendarPattern.updateDay(calendarDay)
                 presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
                 // App-authoritative push: a confirmed task becomes a CalDAV VTODO, a confirmed event a
                 // Google Calendar entry (idempotent by id; each no-ops for the other kind).
                 lifecycleScope.launch(Dispatchers.IO) {
-                    com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), item)
-                    com.toolsboox.plugin.calendar.nw.LedgerEventSync.pushEvent(requireContext(), item)
+                    com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), whenParsed)
+                    com.toolsboox.plugin.calendar.nw.LedgerEventSync.pushEvent(requireContext(), whenParsed)
                 }
                 val label = if (kind == com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) "event" else "task"
                 showMessage(getString(R.string.ledger_extract_added, label, item.text), binding.root)

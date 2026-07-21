@@ -1018,7 +1018,14 @@ abstract class ScreenFragment : Fragment() {
             // Flush left, but BELOW the date-nav strip across the top (it stays usable).
             lp.x = 0; lp.y = dp(64)
             lp.width = minOf(dp(300), (metrics.widthPixels * 0.66f).toInt())
-            lp.height = metrics.heightPixels - dp(64)
+            // As TALL as it needs to be, not as tall as the screen.
+            //
+            // This was `screenHeight - 64dp` regardless of contents, so a six-item directory came
+            // up as a full-height sheet with most of it empty — fine on a phone, where the screen
+            // is short, and absurd on a Tab X. It still scrolls internally when there IS a lot,
+            // and it never grows past most of the panel.
+            lp.height = android.view.WindowManager.LayoutParams.WRAP_CONTENT
+            w.setLayout(lp.width, lp.height)
             w.attributes = lp
         }
     }
