@@ -25,7 +25,6 @@ object SpiralRing {
 
     private const val PREFS = "ledger_spiral_ring"
     private const val KEY = "items"
-    private const val CURSOR = "cursor"
 
     /** How many to keep. Enough that a glance rarely repeats, few enough to stay a cache. */
     const val CAPACITY = 8
@@ -60,25 +59,24 @@ object SpiralRing {
         }.filter { it.text.isNotBlank() }
     }
 
-    /**
-     * The next one to show, advancing the cursor.
-     *
-     * Advancing on READ is what makes the rotation happen — the widget redraws when you come back
-     * to the home screen, so each return brings the next one round. It also means the cursor
-     * tracks how often you actually look, rather than a clock.
-     */
-    fun next(context: Context): Entry? {
+    /** Which one to show right now. Pure — reading this changes nothing. */
+    fun next(context: Context, now: Long = System.currentTimeMillis()): Entry? {
         val items = load(context)
         if (items.isEmpty()) return null
-        val cursor = prefs(context).getInt(CURSOR, 0)
-        prefs(context).edit().putInt(CURSOR, (cursor + 1) % items.size).apply()
-        return items[cursor % items.size]
+        // Chosen by the CLOCK, not by advancing a stored cursor on every read.
+        //
+        // A widget's renderer runs once per widget instance per refresh, so two Schedule widgets
+        // on the home screen advanced the ring twice per glance and you never saw half of them —
+        // and any preview or re-render moved it too. Deriving the position from the hour means
+        // every widget agrees with every other, a redraw shows the same thing, and it still turns
+        // over as the day goes on. Rendering should not mutate anything.
+        val slot = ((now / TURN_MS) % items.size).toInt()
+        return items[slot]
     }
 
+    /** How long each entry stays up. Long enough to be read, short enough to change by teatime. */
+    private const val TURN_MS = 3 * 60 * 60 * 1000L
+
     /** What would be shown next, without advancing — for previews and tests. */
-    fun peek(context: Context): Entry? {
-        val items = load(context)
-        if (items.isEmpty()) return null
-        return items[prefs(context).getInt(CURSOR, 0) % items.size]
-    }
+    fun peek(context: Context, now: Long = System.currentTimeMillis()): Entry? = next(context, now)
 }

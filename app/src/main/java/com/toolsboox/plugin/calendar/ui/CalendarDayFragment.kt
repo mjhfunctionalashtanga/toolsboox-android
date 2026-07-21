@@ -1000,11 +1000,33 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     private fun showSpiralLine() {
         binding.spiralLine.visibility = View.GONE
+        // Once a day is enough. Choosing a pick walks EVERY day file — a hundred megabytes here —
+        // and this ran on every resume of the day page, which is every page turn, since paging
+        // navigates and builds a new fragment. The answer only changes when the ledger does, and
+        // the ring below keeps the last few, so re-deriving it on each turn was pure cost.
+        val ctxForCache = context ?: return
+        val cachePrefs = ctxForCache.getSharedPreferences("ledger_spiral_ring", 0)
+        val stamp = currentDate.toString()
+        val fresh = cachePrefs.getString("picked_on", "") != stamp
         // The day page only. The band it sits in is drawn by CalendarDayPage between Tasks and
         // Stars & Events; a note page is bare paper, so the line landed in the middle of nothing
         // and looked like a stray caption. Same fragment draws both, which is how it got there.
         if (currentNotePage() != null) return
         val ctx = context ?: return
+        if (!fresh) {
+            // Already chosen for this day: show what the ring is holding rather than walking the
+            // ledger again. Same entry the widget shows, which is a feature — the page and the
+            // home screen agreeing is less confusing than each having its own idea.
+            val entry = com.toolsboox.plugin.calendar.ot.SpiralRing.next(ctxForCache) ?: return
+            val cite = entry.citation.substringAfter("· ", "").trim()
+            binding.spiralLine.text = entry.text + if (cite.isBlank()) "" else "  — $cite"
+            binding.spiralLine.setOnClickListener {
+                findNavController().navigate(R.id.action_to_ledger_roots)
+            }
+            binding.spiralLine.visibility = View.VISIBLE
+            positionSpiralLine()
+            return
+        }
         lifecycleScope.launch {
             val chosen = withContext(Dispatchers.IO) {
                 runCatching {
@@ -1022,6 +1044,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 }.onFailure { Timber.w(it, "spiral: choose failed") }.getOrNull()
             }
             if (!isAdded || chosen == null) return@launch
+            cachePrefs.edit().putString("picked_on", stamp).apply()
             val snippet = chosen.item.text.replace(Regex("\\s+"), " ").trim()
             if (snippet.isEmpty()) return@launch
             // Held, because how much of it can be SHOWN depends on the band's size on screen,
@@ -1068,14 +1091,22 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // Budget the passage by what is actually left after the lead-in's line and the tail, so
         // the provenance always lands instead of being the thing that falls off the bottom.
         val bodyLines = (lines - if (lead.isEmpty()) 0 else 1).coerceAtLeast(1)
-        val budget = (bodyLines * charsPerLine - tail.length).coerceAtLeast(24)
-        val body = trimToWhole(snippet, budget)
+        // When there genuinely isn't room for both, the TAIL goes — not the passage.
+        //
+        // The floor of 24 defeated the budgeting it was part of: with one narrow line the budget
+        // clamped up to 24, the tail added ~60 more, and 84 characters went into a box that fits
+        // eight — so `maxLines` ellipsised, and the thing that fell off the end was the tail. The
+        // exact failure this was written to fix, reintroduced by the guard against it.
+        val room = bodyLines * charsPerLine
+        val keepTail = room - tail.length >= 24
+        val shownTail = if (keepTail) tail else ""
+        val body = trimToWhole(snippet, (room - shownTail.length).coerceAtLeast(12))
 
         val text = android.text.SpannableStringBuilder()
         val leadStart = text.length
         if (lead.isNotEmpty()) { text.append(lead); text.append("\n") }
         val bodyStart = text.length; text.append(body)
-        val tailStart = text.length; text.append(tail)
+        val tailStart = text.length; text.append(shownTail)
 
         // The lead-in and the provenance are context; the passage is the thing. Size and weight
         // say so, rather than punctuation trying to.
@@ -1083,7 +1114,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             text.setSpan(android.text.style.RelativeSizeSpan(0.82f), leadStart, bodyStart, 0)
             text.setSpan(android.text.style.ForegroundColorSpan(0xFF666666.toInt()), leadStart, bodyStart, 0)
         }
-        if (tail.isNotEmpty()) {
+        if (shownTail.isNotEmpty()) {
             text.setSpan(android.text.style.RelativeSizeSpan(0.82f), tailStart, text.length, 0)
             text.setSpan(android.text.style.ForegroundColorSpan(0xFF888888.toInt()), tailStart, text.length, 0)
         }
@@ -1105,6 +1136,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val space = window.lastIndexOf(' ')
         return (if (space > limit / 2) window.take(space) else window).trimEnd(',', ';', ':', ' ') + "…"
     }
+
+    /** Guards the task-strip capture: it spans two network calls and must not overlap itself. */
+    private val taskEntryCapturing = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /** What the spiral chose, and its text — kept so the line can be re-fitted on zoom. */
     private var spiralPick: Pair<
@@ -2093,66 +2127,101 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private fun captureTaskEntry() {
         if (!::calendarDay.isInitialized) return
         if (currentNotePage() != null) return               // the strip only exists on the day page
+        // TODAY only.
+        //
+        // The Tasks grid used to be sixteen rows and is now ten, so on any older day the ink that
+        // sits where the strip now is was written as an ordinary task in rows 11-13. Capturing on
+        // an old page would OCR that handwriting and delete it — a whole back-catalogue quietly
+        // rewritten by the act of opening a day and leaving it. The strip is a thing you write in
+        // now; there is no reason to read it on a page from March.
+        if (currentDate != LocalDate.now()) return
         val creds = aiCreds() ?: return
-        val all = calendarDay.calendarStrokes[calendarStyle] ?: return
+        // One at a time. This does two network round-trips between reading the day and writing it,
+        // and a second run overlapping the first would load the same file, then overwrite the
+        // first one's save — losing a task AND its tombstones.
+        if (!taskEntryCapturing.compareAndSet(false, true)) return
+        // The SAME stroke list that gets written back. Reading `calendarStyle` and writing
+        // DEFAULT_STYLE meant that on a non-default style the ids came from one list and the
+        // removal ran over another: the task filed, the ink tombstoned, and the strip never seen
+        // to clear.
+        val style = CalendarDay.DEFAULT_STYLE
+        val all = calendarDay.calendarStrokes[style]
+        if (all.isNullOrEmpty()) { taskEntryCapturing.set(false); return }
         fun inside(rect: android.graphics.RectF) = all.filter { s ->
             val b = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(listOf(s))
             rect.contains(b.centerX(), b.centerY())
         }
         val wordStrokes = inside(com.toolsboox.plugin.calendar.ot.TaskEntry.words)
-        if (wordStrokes.isEmpty()) return
+        if (wordStrokes.isEmpty()) { taskEntryCapturing.set(false); return }
         val dueStrokes = inside(com.toolsboox.plugin.calendar.ot.TaskEntry.due)
 
-        val appCtx = requireContext().applicationContext
         val date = currentDate
         val root = documentsRoot()
         val locale = this.locale
 
         kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
-            fun read(strokes: List<com.toolsboox.da.Stroke>): String? {
-                if (strokes.isEmpty()) return null
-                val bounds = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
-                    .apply { inset(-20f, -20f) }
-                val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, bounds, 1400)
-                return com.toolsboox.plugin.calendar.nw.VisionOcr
-                    .recognize(bmp, creds.first, creds.second, creds.third)?.trim()?.ifBlank { null }
-            }
-            val text = read(wordStrokes) ?: return@launch
-            val dueOn = com.toolsboox.plugin.calendar.ot.TaskEntry.parseDue(read(dueStrokes), date)
+            try {
+                fun read(strokes: List<com.toolsboox.da.Stroke>): String? {
+                    if (strokes.isEmpty()) return null
+                    val bounds = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
+                        .apply { inset(-20f, -20f) }
+                    val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, bounds, 1400)
+                    return com.toolsboox.plugin.calendar.nw.VisionOcr
+                        .recognize(bmp, creds.first, creds.second, creds.third)?.trim()?.ifBlank { null }
+                }
+                val text = read(wordStrokes) ?: return@launch
+                // Only delete ink we actually READ. `?: return` let anything non-blank through —
+                // "~", "e", a row of dots — and the strokes were removed and tombstoned on the
+                // strength of it, permanently, on every synced device. `isSubstantial` is the
+                // same filter the corpus uses to tell a thought from OCR mud.
+                if (!com.toolsboox.plugin.calendar.ot.Spiral.isSubstantial(text) && text.length < 12) {
+                    Timber.i("task strip: not confident in %s — leaving the ink alone", text)
+                    return@launch
+                }
+                val dueOn = com.toolsboox.plugin.calendar.ot.TaskEntry.parseDue(read(dueStrokes), date)
 
-            runCatching {
-                val day = calendarDayService.load(root, date, null, locale)
-                if (com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe.containsTask(day.ledgerItems, text)) {
-                    return@runCatching false
-                }
-                day.ledgerItems.add(
-                    com.toolsboox.plugin.calendar.da.v2.LedgerItem(
-                        id = "hand-" + java.util.UUID.randomUUID().toString().lowercase(),
-                        kind = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
-                        text = text,
-                        date = java.util.Date(
-                            dueOn.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()),
-                        source = "strip",
-                        stage = "todo"
-                    )
-                )
-                // Clear the strip, tombstoned so the deletion survives a merge.
-                val ids = wordStrokes.map { it.strokeId } + dueStrokes.map { it.strokeId }
-                day.calendarStrokes[CalendarDay.DEFAULT_STYLE] =
-                    (day.calendarStrokes[CalendarDay.DEFAULT_STYLE] ?: emptyList())
-                        .filterNot { it.strokeId in ids.toSet() }
-                ids.forEach { day.deletedStrokeIds.add(it.toString()) }
-                calendarDayService.save(root, date, day)
-                true
-            }.onSuccess { added ->
-                if (added != true) return@onSuccess
-                withContext(Dispatchers.Main) {
-                    if (!isAdded) return@withContext
-                    showMessage(getString(R.string.task_entry_filed, text.take(40)), binding.root)
-                    presenter.load(this@CalendarDayFragment, binding, currentDate,
-                        sharedPreferences.getInt("calendarStartHour", 5), locale)
-                }
-            }.onFailure { Timber.w(it, "task strip capture failed") }
+                runCatching {
+                    val day = calendarDayService.load(root, date, null, locale)
+                    val already = com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe
+                        .containsTask(day.ledgerItems, text)
+                    if (!already) {
+                        day.ledgerItems.add(
+                            com.toolsboox.plugin.calendar.da.v2.LedgerItem(
+                                id = "hand-" + java.util.UUID.randomUUID().toString().lowercase(),
+                                kind = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
+                                text = text,
+                                date = java.util.Date(
+                                    dueOn.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()),
+                                source = "strip",
+                                stage = "todo"
+                            )
+                        )
+                    }
+                    // Clear the strip either way. When the task was already there, returning early
+                    // left the ink in place — so every subsequent page-leave re-ran two paid vision
+                    // calls on it, forever, with nothing to show. The words are filed; the strip's
+                    // job is to be empty for the next one.
+                    val ids = (wordStrokes.map { it.strokeId } + dueStrokes.map { it.strokeId }).toSet()
+                    day.calendarStrokes[style] =
+                        (day.calendarStrokes[style] ?: emptyList()).filterNot { it.strokeId in ids }
+                    ids.forEach { day.deletedStrokeIds.add(it.toString()) }
+                    calendarDayService.save(root, date, day)
+                    !already
+                }.onSuccess { added ->
+                    withContext(Dispatchers.Main) {
+                        // isAdded stays true for a fragment on the back stack with its view gone —
+                        // and this fires from onPause, which is exactly then.
+                        if (!isResumed || !isAdded) return@withContext
+                        if (added == true) {
+                            showMessage(getString(R.string.task_entry_filed, text.take(40)), binding.root)
+                        }
+                        presenter.load(this@CalendarDayFragment, binding, currentDate,
+                            sharedPreferences.getInt("calendarStartHour", 5), locale)
+                    }
+                }.onFailure { Timber.w(it, "task strip capture failed") }
+            } finally {
+                taskEntryCapturing.set(false)
+            }
         }
     }
 
@@ -2190,8 +2259,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 // of a page tracked how often you returned to it rather than how much you wrote.
                 val zoneSig = strokesSignature(inZone)
                 if (values["__sig.${zone.id}"] == zoneSig) continue
-                values["__sig.${zone.id}"] = zoneSig
-                any = true
                 // Send the strokes' OWN bounds, not the band's rectangle: a band is a bucket, so
                 // a line written across a boundary belongs whole to one band and must be rendered
                 // whole, not clipped to the band's edge.
@@ -2199,8 +2266,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     .apply { inset(-24f, -24f) }
                 val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(inZone, bounds, 1600)
                 val text = com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third)
-                    ?: continue
+                    ?: continue          // network down / rate-limited: try again next time
                 if (text.isBlank()) continue
+                // The signature is stored only once the ink has actually been READ. Storing it
+                // before the call meant a flat battery of wifi — a plane, a rate limit, an expired
+                // key — marked the page as done forever: write thirty pages in the air, land, and
+                // none of it ever enters the corpus because nothing about it changed afterwards.
+                values["__sig.${zone.id}"] = zoneSig
+                any = true
                 values[zone.id] = text
                 val prompt = zone.aiPrompt
                 if (prompt != null) {

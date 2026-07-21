@@ -239,8 +239,13 @@ abstract class ScreenFragment : Fragment() {
      * failed. Asking each candidate whether it has anywhere to go picks the one the reader means.
      */
     private fun firstScrollable(root: View): View? {
-        if (root !is ViewGroup) return null
         if (root.visibility != View.VISIBLE) return null
+        // The root ITSELF may be the scroller — a fragment whose layout is a RecyclerView or a
+        // NestedScrollView at the top level. Only iterating children missed exactly those: a
+        // LinearLayout inside a ScrollView reports it cannot scroll, because the ScrollView is
+        // what scrolls, so the search returned nothing and the keys did nothing on those screens.
+        if (root.canScrollVertically(1) || root.canScrollVertically(-1)) return root
+        if (root !is ViewGroup) return null
         for (i in 0 until root.childCount) {
             val child = root.getChildAt(i)
             if (child.visibility != View.VISIBLE) continue
