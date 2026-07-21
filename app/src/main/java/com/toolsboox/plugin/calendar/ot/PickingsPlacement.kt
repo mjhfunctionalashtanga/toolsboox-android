@@ -3,6 +3,7 @@ package com.toolsboox.plugin.calendar.ot
 import android.graphics.Bitmap
 import android.util.Base64
 import com.toolsboox.da.ImageElement
+import com.toolsboox.ot.CardTreatment
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
 import com.toolsboox.ui.plugin.ScreenFragment
 import java.io.ByteArrayOutputStream
@@ -36,14 +37,21 @@ object PickingsPlacement {
 
     fun place(
         service: CalendarDayService, root: File, bitmap: Bitmap, date: LocalDate, pageKey: String,
-        sourceLink: String = "", sourceLabel: String = "", media: MediaRef? = null
+        sourceLink: String = "", sourceLabel: String = "", media: MediaRef? = null,
+        treatment: Boolean = true
     ) {
         val longest = maxOf(bitmap.width, bitmap.height)
-        val scaled = if (longest > MAX_DIM) {
+        val fitted = if (longest > MAX_DIM) {
             val r = MAX_DIM.toFloat() / longest
             Bitmap.createScaledBitmap(bitmap,
                 (bitmap.width * r).toInt().coerceAtLeast(1), (bitmap.height * r).toInt().coerceAtLeast(1), true)
         } else bitmap
+        // Give it a paper ground and tape it down. A crop arrives as bare ink on transparency,
+        // which reads as marks lying on the page rather than as a card someone placed; the
+        // margin and the edge are what make it an object. Baked after the fit so the tape is
+        // proportioned to the size it will actually be seen at, and before the measurement
+        // below so the frame is inside the card's own aspect ratio.
+        val scaled = if (treatment) CardTreatment.card(fitted) else fitted
         val baos = ByteArrayOutputStream(); scaled.compress(Bitmap.CompressFormat.PNG, 100, baos)
         val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
         val w = (CANVAS_W * 0.42f).coerceAtMost(scaled.width.toFloat())
@@ -81,7 +89,7 @@ object PickingsPlacement {
         val ctx = fragment.requireContext()
         val saved = PickingsStore.list(ctx, date).filter { it.key != PickingsStore.DEFAULT_KEY }
         val labels = (listOf("❝  Today's Pickings", "＋  New pickings…") + saved.map { "❝  ${it.name}" }).toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Add to Pickings")
             .setItems(labels) { _, which ->
                 when (which) {
@@ -92,7 +100,7 @@ object PickingsPlacement {
                         val box = android.widget.LinearLayout(ctx).apply {
                             orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
                         }
-                        androidx.appcompat.app.AlertDialog.Builder(ctx).setTitle("New pickings").setView(box)
+                        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle("New pickings").setView(box)
                             .setPositiveButton("Create") { _, _ ->
                                 val page = PickingsStore.add(ctx, date, input.text.toString().trim())
                                 placeAsync(fragment, service, root, bitmaps, date, page.key, page.name, sourceLink, sourceLabel, media)

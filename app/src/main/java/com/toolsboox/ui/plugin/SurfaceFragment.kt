@@ -912,7 +912,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
 
         provideToolbarDrawing().toolbarTrash.setOnClickListener {
-            val builder: AlertDialog.Builder = AlertDialog.Builder(this.requireContext())
+            val builder: AlertDialog.Builder = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this.requireContext()))
             builder.setTitle(R.string.calendar_drawing_toolbar_trash_dialog_title)
                 .setMessage(R.string.calendar_drawing_toolbar_trash_dialog_message)
                 .setPositiveButton(R.string.ok) { dialog, _ ->
@@ -2532,7 +2532,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 return@launch
             }
             val labels = spaces.map { (if (it.privacy == "public") "🌐  " else "🔒  ") + it.title }.toTypedArray()
-            androidx.appcompat.app.AlertDialog.Builder(ctx)
+            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                 .setTitle("Post to space")
                 .setItems(labels) { _, which ->
                     val space = spaces[which]
@@ -2563,7 +2563,7 @@ abstract class SurfaceFragment : ScreenFragment() {
     private fun pickContact(onPick: (String?) -> Unit) {
         val contacts = com.toolsboox.plugin.calendar.ot.ContactStore.list(requireContext())
         val names = (listOf("None") + contacts.map { it.name.ifBlank { "Unnamed" } }).toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle("Assign to contact")
             .setItems(names) { _, which -> onPick(if (which == 0) null else contacts[which - 1].id) }
             .setNegativeButton("Cancel", null)
@@ -2710,14 +2710,14 @@ abstract class SurfaceFragment : ScreenFragment() {
             cell.setOnClickListener { dialog.dismiss(); placeClippingAt(c, cx, cy) }
             // Long-press: manage — rename (label follows the clip everywhere) or delete.
             cell.setOnLongClickListener {
-                androidx.appcompat.app.AlertDialog.Builder(ctx)
+                androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                     .setTitle(c.label.ifBlank { "Clipping" })
                     .setItems(arrayOf("✎  Rename", "🗑  Delete")) { _, which ->
                         if (which == 0) {
                             val input = EditText(ctx).apply { hint = "Name"; setText(c.label); setSingleLine() }
                             val pad = px(16)
                             val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input) }
-                            androidx.appcompat.app.AlertDialog.Builder(ctx)
+                            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                                 .setTitle("Rename clipping").setView(box)
                                 .setPositiveButton("Save") { _, _ ->
                                     com.toolsboox.plugin.calendar.ot.ClippingsStore.rename(ctx, c.id, input.text.toString().trim())
@@ -2733,7 +2733,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             }
             grid.addView(cell)
         }
-        dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+        dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Insert clipping")
             .setView(android.widget.ScrollView(ctx).apply { addView(grid) })
             .setNegativeButton("Close", null)
@@ -2904,7 +2904,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         editText.layoutParams = params
         container.addView(editText)
 
-        AlertDialog.Builder(ctx)
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(R.string.calendar_text_dialog_title)
             .setView(container)
             .setPositiveButton(R.string.ok) { dialog, _ ->
@@ -3010,7 +3010,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             addView(pad, android.widget.LinearLayout.LayoutParams(
                 android.widget.LinearLayout.LayoutParams.MATCH_PARENT, padH))
         }
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Edit in ink")
             .setView(box)
             .setPositiveButton("Done") { _, _ ->
@@ -3112,7 +3112,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             setPadding(pad, pad / 2, pad, 0)
             addView(input)
         }
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Name this gram")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
@@ -3170,69 +3170,15 @@ abstract class SurfaceFragment : ScreenFragment() {
         return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
     }
 
-    /**
-     * Bake a classic polaroid frame around the photo — even white border, deep chin at the
-     * bottom, hairline outline — optionally with two translucent tape strips over the top
-     * corners. Baked into the pixels so it syncs to every device and costs nothing to render;
-     * grayscale-friendly for e-ink.
-     */
-    private fun polaroidBitmap(src: Bitmap, tape: Boolean): Bitmap {
-        val side = (src.width * 0.06f).coerceAtLeast(14f)
-        val chin = (src.width * 0.22f).coerceAtLeast(48f)
-        // Room for the tape to hang past the frame's top corners.
-        val overhang = if (tape) (src.width * 0.06f).coerceAtLeast(16f) else 0f
-        val w = (src.width + side * 2 + overhang * 2).toInt()
-        val h = (src.height + side + chin + overhang).toInt()
-        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val c = Canvas(out)
-        val frame = android.graphics.RectF(
-            overhang, overhang, overhang + src.width + side * 2, overhang + src.height + side + chin
-        )
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        paint.style = Paint.Style.FILL; paint.color = Color.WHITE
-        c.drawRect(frame, paint)
-        c.drawBitmap(src, frame.left + side, frame.top + side, null)
-        paint.style = Paint.Style.STROKE; paint.strokeWidth = 2f
-        paint.color = 0xFF9A9A9A.toInt()
-        c.drawRect(frame, paint)          // the print's edge
-        paint.color = 0xFFB8B8B8.toInt()
-        c.drawRect(frame.left + side, frame.top + side,
-            frame.left + side + src.width, frame.top + side + src.height, paint)  // photo well
-        if (tape) {
-            drawTape(c, frame.left, frame.top, -35f, src.width)
-            drawTape(c, frame.right, frame.top, 35f, src.width)
-        }
-        return out
-    }
+    // The frame and tape drawing now lives in com.toolsboox.ot.CardTreatment, so that placement
+    // can bake one on by default without reaching into a Fragment. These stay as the menu's
+    // names for them.
 
-    /** Just the tape, no frame — two strips across the photo's top corners. */
-    private fun tapeBitmap(src: Bitmap): Bitmap {
-        val overhang = (src.width * 0.06f).coerceAtLeast(16f)
-        val w = (src.width + overhang * 2).toInt()
-        val h = (src.height + overhang).toInt()
-        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val c = Canvas(out)
-        c.drawBitmap(src, overhang, overhang, null)
-        drawTape(c, overhang, overhang, -35f, src.width)
-        drawTape(c, overhang + src.width, overhang, 35f, src.width)
-        return out
-    }
+    private fun polaroidBitmap(src: Bitmap, tape: Boolean): Bitmap =
+        com.toolsboox.ot.CardTreatment.polaroid(src, tape)
 
-    /** One translucent tape strip centred on (x, y), rotated by [angle] degrees. */
-    private fun drawTape(c: Canvas, x: Float, y: Float, angle: Float, refWidth: Int) {
-        val tw = (refWidth * 0.26f).coerceAtLeast(60f)
-        val th = (refWidth * 0.085f).coerceAtLeast(22f)
-        c.save()
-        c.rotate(angle, x, y)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        paint.style = Paint.Style.FILL
-        paint.color = 0x59AFAFAF   // translucent gray — the photo ghosts through like real tape
-        c.drawRect(x - tw / 2, y - th / 2, x + tw / 2, y + th / 2, paint)
-        paint.style = Paint.Style.STROKE; paint.strokeWidth = 1.5f
-        paint.color = 0x66808080
-        c.drawRect(x - tw / 2, y - th / 2, x + tw / 2, y + th / 2, paint)
-        c.restore()
-    }
+    private fun tapeBitmap(src: Bitmap): Bitmap =
+        com.toolsboox.ot.CardTreatment.tapeOnly(src)
 
     private fun invertBitmap(bmp: Bitmap): Bitmap {
         val outBmp = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
@@ -3583,7 +3529,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
 
-        val dialog = AlertDialog.Builder(ctx).setView(root).create()
+        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setView(root).create()
         dialog.setCanceledOnTouchOutside(true)
         dialog.setOnDismissListener {
             applyLiveSelection()
@@ -3611,7 +3557,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         editText.layoutParams = params
         container.addView(editText)
 
-        val builder = AlertDialog.Builder(context)
+        val builder = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
             .setTitle(R.string.calendar_text_dialog_title)
             .setView(container)
             .setPositiveButton(R.string.ok) { dialog, _ ->
