@@ -381,6 +381,22 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             widgetPrefs.edit().putBoolean("vertical", checked).apply()
         }
 
+        // Auto-rotate. The rotate button's hold gesture was meant to do this and proved neither
+        // discoverable nor reliable on the Palma, so it lives here as a plain switch. Applied
+        // immediately AND remembered, so it survives leaving the screen.
+        binding.autoRotateSwitch.isChecked = sharedPreferences.getBoolean("autoRotate", false)
+        binding.autoRotateSwitch.setOnCheckedChangeListener { _, checked ->
+            sharedPreferences.edit().putBoolean("autoRotate", checked).apply()
+            requireActivity().requestedOrientation = if (checked)
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
+            else com.toolsboox.ot.ScreenRotation.displayedBy(
+                @Suppress("DEPRECATION")
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+                    requireContext().display?.rotation ?: 0
+                else requireActivity().windowManager.defaultDisplay.rotation
+            )
+        }
+
         // Auto-capture section zones on page-leave (paid vision OCR). Global, default on.
         binding.autoCaptureSwitch.isChecked = sharedPreferences.getBoolean("autoCaptureSections", true)
         binding.autoCaptureSwitch.setOnCheckedChangeListener { _, checked ->

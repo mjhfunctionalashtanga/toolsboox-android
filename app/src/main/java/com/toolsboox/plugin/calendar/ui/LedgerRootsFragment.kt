@@ -92,18 +92,18 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
             for (t in threads.take(18)) {
                 val row = LinearLayout(ctx).apply {
                     orientation = LinearLayout.VERTICAL
-                    setPadding(0, dp(8), 0, dp(8))
+                    setPadding(0, dp(11), 0, dp(11))
                     setBackgroundResource(android.R.drawable.list_selector_background)
                 }
                 row.addView(TextView(ctx).apply {
                     // A quiet thread is one worth picking back up, so it says so rather than
                     // merely sorting lower.
                     text = t.term + (if (t.isQuiet(now)) "   · gone quiet" else "")
-                    textSize = 16f; setTextColor(0xFF000000.toInt())
+                    textSize = 22f; setTextColor(0xFF000000.toInt())
                 })
                 row.addView(TextView(ctx).apply {
                     text = "${t.size} times" + (if (t.spanDays > 0) "  ·  across ${t.spanDays} days" else "")
-                    textSize = 11f; setTextColor(0xFF888888.toInt())
+                    textSize = 13f; setTextColor(0xFF777777.toInt())
                 })
                 row.setOnClickListener { showThread(t) }
                 col.addView(row)
@@ -116,22 +116,26 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
                     val snip = all.getOrNull(idx) ?: continue
                     val row = LinearLayout(ctx).apply {
                         orientation = LinearLayout.VERTICAL
-                        setPadding(0, dp(8), 0, dp(8))
+                        setPadding(0, dp(13), 0, dp(13))
                         setBackgroundResource(android.R.drawable.list_selector_background)
                     }
                     row.addView(TextView(ctx).apply {
                         // Black, not the old blue: on an e-ink panel a mid-blue renders as a grey
                         // smudge, which is less legible than the body text it is meant to lead.
                         text = terms.joinToString("  ✕  ")
-                        textSize = 13f; setTextColor(0xFF000000.toInt())
+                        textSize = 17f; setTextColor(0xFF000000.toInt())
+                    })
+                    // The WORDS first, the provenance under them and small. The date used to lead
+                    // every crossing, which put the least interesting fact — when — above the thing
+                    // the crossing exists to show you, which is what.
+                    row.addView(TextView(ctx).apply {
+                        text = snip.text.take(240).trim() + if (snip.text.length > 240) "…" else ""
+                        textSize = 17f; setTextColor(0xFF000000.toInt()); setLineSpacing(0f, 1.25f)
+                        setPadding(0, dp(2), 0, dp(3))
                     })
                     row.addView(TextView(ctx).apply {
                         text = snip.citation
-                        textSize = 11f; setTextColor(0xFF888888.toInt())
-                    })
-                    row.addView(TextView(ctx).apply {
-                        text = snip.text.take(200).trim() + if (snip.text.length > 200) "…" else ""
-                        textSize = 14f; setTextColor(0xFF000000.toInt()); setLineSpacing(0f, 1.15f)
+                        textSize = 12f; setTextColor(0xFF999999.toInt())
                     })
                     col.addView(row)
                 }
@@ -143,7 +147,8 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
 
     private fun header(text: String, top: Int) = TextView(requireContext()).apply {
         this.text = text
-        textSize = 11f; setTextColor(0xFF888888.toInt()); setPadding(0, dp(top), 0, dp(6))
+        textSize = 12f; setTextColor(0xFF777777.toInt()); letterSpacing = 0.08f
+        setPadding(0, dp(top), 0, dp(8))
     }
 
     /** Everywhere one thread runs, oldest first — the shape of a preoccupation over time. */
@@ -156,12 +161,13 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
         for (i in thread.members.sortedBy { corpus.getOrNull(it)?.date?.time ?: 0L }) {
             val snip = corpus.getOrNull(i) ?: continue
             col.addView(TextView(ctx).apply {
-                text = snip.citation
-                textSize = 11f; setTextColor(0xFF888888.toInt()); setPadding(0, dp(10), 0, 0)
+                text = snip.text.take(300).trim() + if (snip.text.length > 300) "…" else ""
+                textSize = 17f; setTextColor(0xFF000000.toInt()); setLineSpacing(0f, 1.25f)
+                setPadding(0, dp(14), 0, dp(2))
             })
             col.addView(TextView(ctx).apply {
-                text = snip.text.take(300).trim() + if (snip.text.length > 300) "…" else ""
-                textSize = 14f; setTextColor(0xFF000000.toInt()); setLineSpacing(0f, 1.15f)
+                text = snip.citation
+                textSize = 12f; setTextColor(0xFF999999.toInt())
             })
         }
         val scroll = android.widget.ScrollView(ctx).apply { addView(col) }

@@ -100,6 +100,7 @@ class CalendarDayPage {
         ) {
             val schedulesText = context.getString(R.string.calendar_day_schedules)
             val tasksText = context.getString(R.string.calendar_day_tasks)
+            val rootsText = context.getString(R.string.calendar_day_roots)
             val notesText = context.getString(R.string.calendar_day_notes)
             val allDayText = context.getString(R.string.calendar_day_all_day)
             val locale = calendarDay.locale
@@ -257,9 +258,14 @@ class CalendarDayPage {
             canvas.drawRect(lo + cew + 50.0f, to, lo + 2 * cew + 50.0f, to + ceh, Creator.fillGrey80)
             canvas.drawText(tasksText, lo + cew + 60.0f, to + ceh - 10.0f, Creator.textDefaultWhite)
 
-            // Tasks grid
+            // Tasks grid.
+            //
+            // Twelve rows, not sixteen. The four given up become the Roots band below — the
+            // spiral's one line sits where you already look when you're deciding what to do,
+            // between what you have to do and what you've been reading. At the foot of the page
+            // it was out of the way in the sense of being ignorable.
             canvas.drawLine(lo + cew + 50.0f, to + ceh, lo + 2 * cew + 50.0f, to + ceh, Creator.lineDefaultBlack)
-            for (i in 1..16) {
+            for (i in 1..12) {
                 canvas.drawLine(
                     lo + cew + 50.0f, to + i * ceh, lo + 2 * cew + 50.0f, to + i * ceh,
                     Creator.lineDefaultGrey50
@@ -276,11 +282,21 @@ class CalendarDayPage {
                 )
             }
             canvas.drawLine(
-                lo + cew + 50.0f, to + 17 * ceh, lo + 2 * cew + 50.0f, to + 17 * ceh,
+                lo + cew + 50.0f, to + 13 * ceh, lo + 2 * cew + 50.0f, to + 13 * ceh,
                 Creator.lineDefaultBlack
             )
             canvas.drawLine(
-                lo + cew + 100.0f, to + ceh, lo + cew + 100.0f, to + 17 * ceh,
+                lo + cew + 100.0f, to + ceh, lo + cew + 100.0f, to + 13 * ceh,
+                Creator.lineDefaultBlack
+            )
+
+            // Roots band: title bar, then empty paper the live line is drawn over. The text
+            // itself is a view, not template ink, because it changes with the ledger and the
+            // template is baked per day.
+            canvas.drawRect(lo + cew + 50.0f, to + 13 * ceh, lo + 2 * cew + 50.0f, to + 14 * ceh, Creator.fillGrey80)
+            canvas.drawText(rootsText, lo + cew + 60.0f, to + 14 * ceh - 10.0f, Creator.textDefaultWhite)
+            canvas.drawLine(
+                lo + cew + 50.0f, to + 18 * ceh, lo + 2 * cew + 50.0f, to + 18 * ceh,
                 Creator.lineDefaultBlack
             )
 

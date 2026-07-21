@@ -34,4 +34,29 @@ object PillBounds {
         val toEnd = (parentSize - end).toFloat()
         return if (toStart <= toEnd) toStart..toEnd else toEnd..toStart
     }
+
+    /**
+     * The range that also keeps the HANDLE reachable.
+     *
+     * Letting an oversized pill slide across its own overflow was only half an answer. The grip is
+     * at the pill's leading edge, so sliding far enough to see the far end pushed the grip off the
+     * screen — and the grip is the only thing that can drag it back. The pill wasn't lost, but it
+     * was unreachable, which for the person holding the device is the same thing.
+     *
+     * So: when the pill FITS, keep the whole pill in view, as before. When it does not, keep the
+     * HANDLE in view and let the rest overhang. That is the invariant worth defending — you can
+     * always take hold of it — and it is strictly weaker than "keep everything in view", which is
+     * unsatisfiable for a pill longer than the screen.
+     *
+     * [handleStart]/[handleEnd] are the handle's laid-out edges in the same axis and the same
+     * coordinate space as [start]/[end] (i.e. relative to the pill's parent).
+     */
+    fun rangeKeepingHandle(
+        start: Int, end: Int, parentSize: Int, handleStart: Int, handleEnd: Int
+    ): ClosedFloatingPointRange<Float> {
+        if (end - start <= parentSize) return range(start, end, parentSize)
+        val lo = -handleStart.toFloat()                 // handle flush to the near edge
+        val hi = (parentSize - handleEnd).toFloat()     // handle flush to the far edge
+        return if (lo <= hi) lo..hi else hi..lo
+    }
 }

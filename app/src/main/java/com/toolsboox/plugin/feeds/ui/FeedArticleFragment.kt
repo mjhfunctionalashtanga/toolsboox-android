@@ -246,7 +246,8 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                         android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
                     else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             },
-            "↕  Flip pill layout" to {
+            getString(if (navPrefs().getBoolean("article_pill_vertical", false))
+                R.string.pill_switch_horizontal else R.string.pill_switch_vertical) to {
                 val v = !navPrefs().getBoolean("article_pill_vertical", false)
                 navPrefs().edit().putBoolean("article_pill_vertical", v).apply()
                 applyArticlePillOrientation()

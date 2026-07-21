@@ -26,8 +26,56 @@ object PageZones {
     const val PAGE_W = 1404f
     const val PAGE_H = 1872f
 
+    /**
+     * A whole blank page is one zone.
+     *
+     * Pickings has a designed layout, so it gets carved into labelled parts. A numbered note page
+     * has no layout at all — it is paper — so the only honest zone is the page.
+     *
+     * **No `aiPrompt`, deliberately.** Pickings' zones run their OCR through a model that tidies
+     * prose or extracts the strongest line, which is right for a page whose purpose is to produce
+     * something. It is wrong here: this text becomes the corpus the spiral and the roots are
+     * computed from, and a thread is supposed to be a word YOU keep coming back to. Run it through
+     * a model that "fixes obvious slips" first and the roots start measuring the model's
+     * vocabulary instead of yours — which is the same failure as reading your pasted newspapers,
+     * arriving by a politer road.
+     */
+    private val WHOLE_PAGE = bands(count = 4)
+
+    /**
+     * A blank page, cut into horizontal bands.
+     *
+     * One zone per page would be correct and wasteful: add a line at the foot of a full page and
+     * the whole page goes back to the model, so the cost of a page grows with how often you return
+     * to it rather than with how much you wrote. Bands make re-reading proportional to what
+     * changed — each carries its own ink signature, so writing in one leaves the other three alone.
+     *
+     * Four is a guess with a reason: fewer and a band is most of a page; more and ordinary
+     * handwriting starts straddling boundaries often enough that the saving is eaten by re-reading
+     * two bands instead of one.
+     *
+     * Bands are BUCKETS, not crops — a stroke belongs to the band its middle falls in, and the
+     * image sent for each band is the bounding box of the strokes that landed in it. So a line
+     * written across a boundary is read whole by one band rather than sliced in half by two, which
+     * is the thing that would have made this quietly worse than doing nothing.
+     */
+    private fun bands(count: Int): List<PageZone> {
+        val top = 120f
+        val bottom = 1800f
+        val h = (bottom - top) / count
+        return (0 until count).map { i ->
+            PageZone("page$i", "✎ Page ${i + 1}", RectF(60f, top + i * h, 1344f, top + (i + 1) * h), ZoneKind.TEXT)
+        }
+    }
+
     /** Each note-page's own zone layout (keyed by the fragment's notePage string). */
     fun zones(notePage: String?): List<PageZone> = when (notePage) {
+        // The numbered note pages — the freeform notebook, and where nearly all the handwriting
+        // actually is. Until these had a zone, `autoCaptureSections` returned immediately on every
+        // one of them, so tens of thousands of strokes never reached the corpus and the roots were
+        // computed almost entirely from pasted article text.
+        null -> emptyList()          // the day page: schedule + tasks + free space, see below
+        "gratitude" -> WHOLE_PAGE
         "pickings" -> listOf(
             PageZone("notes", "✎ Notes", RectF(80f, 190f, 1324f, 710f), ZoneKind.TEXT,
                 "Tidy these handwritten notes into clean prose, fixing obvious OCR slips. Keep the meaning."),
@@ -36,7 +84,9 @@ object PageZones {
             PageZone("image1", "Image 1", RectF(80f, 1280f, 680f, 1780f), ZoneKind.IMAGE),
             PageZone("image2", "Image 2", RectF(724f, 1280f, 1324f, 1780f), ZoneKind.IMAGE),
         )
-        else -> emptyList()
+        // A numbered page is paper. Anything else named (intake, write, synthesize) has its own
+        // pipeline that already produces text, so OCR'ing it would double-count.
+        else -> if (notePage.toIntOrNull() != null) WHOLE_PAGE else emptyList()
     }
 }
 

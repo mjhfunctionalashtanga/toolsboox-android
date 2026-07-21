@@ -30,7 +30,9 @@ object LedgerTaskCarryOver {
     private val TASKS_LEFT = LO + CEW + 50f
     private val TASKS_RIGHT = LO + 2 * CEW + 50f
     private val TASKS_TEXT_LEFT = LO + CEW + 110f   // right of the checkbox column
-    private const val ROWS = 16
+    // Twelve: the Tasks grid gave four rows to the Roots band (see CalendarDayPage). Carrying
+    // a task into a row that is no longer drawn would put it under the Roots title.
+    private const val ROWS = 12
 
     /**
      * Carry [yesterday]'s unfinished tasks onto [today] (mutated in place). Returns true if anything

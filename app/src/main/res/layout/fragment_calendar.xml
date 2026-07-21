@@ -195,38 +195,36 @@
                 app:layout_constraintStart_toEndOf="@id/toolbarDrawing"
                 app:layout_constraintEnd_toEndOf="parent"/>
 
-        <!-- The spiral, one line.
+        <!-- The spiral, one line, sitting IN the page.
 
-             Something out of your own ledger, come back around, at the very foot of the drawn
-             page. ONE LINE on purpose: the day page is a writing surface, and a card here crowds
-             it — the first time this was tried as a full card it surfaced so much that the page
-             stopped being a page. It says what came back; tapping opens the Roots, where the
-             whole breakdown lives.
+             It lands in the Roots band the day-page template leaves between Tasks and Stars &
+             Events — two rows the Tasks grid gives up for it. At the foot of the page it was out
+             of the way in the sense of being ignorable; here it is where you already look when
+             you are deciding what to do, between what you have to do and what you have been
+             reading. Tapping opens the Roots, where the whole breakdown lives.
+
+             Positioned from the surface's own transform (see `positionSpiralLine`) rather than by
+             constraints, so it sits over the right patch of paper at any zoom or toolbar side.
+             Size and translation are set in code; the constraints only pin it to the origin.
 
              DECLARED LAST, after the template and the surface, because a ConstraintLayout draws
-             its children in declaration order — placed earlier it was correctly laid out, made
-             visible, and then painted over by the page template every time.
+             its children in declaration order — placed earlier it was laid out, made visible, and
+             then painted over by the page template every time.
 
              Gone by default: it appears only once there is something worth handing back. -->
         <TextView
                 android:id="@+id/spiralLine"
-                android:layout_width="0dp"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:visibility="gone"
-                android:maxLines="1"
+                android:maxLines="4"
                 android:ellipsize="end"
-                android:textSize="12sp"
-                android:textColor="#333333"
+                android:textColor="#000000"
                 android:fontFamily="@font/atkinson_hyperlegible"
-                android:background="@drawable/ledger_bar_bg"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="6dp"
-                android:layout_marginStart="14dp"
-                android:layout_marginEnd="76dp"
-                android:layout_marginBottom="4dp"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toEndOf="@id/toolbarDrawing"
-                app:layout_constraintEnd_toEndOf="parent"/>
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="4dp"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toStartOf="parent"/>
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 

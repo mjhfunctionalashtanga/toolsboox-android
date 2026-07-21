@@ -1410,6 +1410,15 @@ abstract class SurfaceFragment : ScreenFragment() {
 
     open fun onTransformChanged(matrix: Matrix) {}
 
+    /**
+     * A copy of the design-space → surface-view transform.
+     *
+     * For overlays that have to sit on a particular patch of the drawn page. A copy, because the
+     * live matrix is rebuilt in place on every zoom and pan, and a caller holding a reference to
+     * it would silently start reading someone else's frame.
+     */
+    fun surfaceTransform(): Matrix = Matrix(viewMatrix)
+
     fun handleZoomPanTouch(motionEvent: MotionEvent): Boolean {
         if (motionEvent.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER) return false
 

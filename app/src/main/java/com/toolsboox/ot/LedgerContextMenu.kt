@@ -146,11 +146,36 @@ object LedgerContextMenu {
         // the window width, then hand the popup the exact card size.
         card.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
 
+        // …but never taller than the screen it has to appear on.
+        //
+        // The measured height was used as the popup height directly, so a long menu — the image
+        // menu is thirty-odd rows — simply ran off the bottom. On a Palma held landscape there is
+        // barely 800px of height, and the rows past it were not merely awkward to reach, they
+        // could not be reached at all: a PopupWindow does not scroll, and the part below the
+        // screen is not drawn. The menu looked complete and was silently truncated.
+        val rootView = anchor.rootView
+        val margin = dp(8f)
+        val maxH = (rootView.height - margin * 2).coerceAtLeast(dp(120f))
+        val maxW = (rootView.width - margin * 2).coerceAtLeast(dp(160f))
+        val tooTall = card.measuredHeight > maxH
+        val content: View = if (tooTall) {
+            android.widget.ScrollView(ctx).apply {
+                isFillViewport = true
+                // E-ink: a fading edge is a grey smear, and the overscroll glow is worse.
+                isVerticalFadingEdgeEnabled = false
+                overScrollMode = View.OVER_SCROLL_NEVER
+                addView(card, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }
+        } else card
+        val popupW = card.measuredWidth.coerceAtMost(maxW)
+        val popupH = card.measuredHeight.coerceAtMost(maxH)
+
         // NON-focusable on purpose: a focusable popup grabs a focus window, so the *next*
         // finger-down (a second long-press) is swallowed to dismiss it and never reaches the
         // surface — the menu "worked once, then died." Non-focusable lets that press dismiss
         // this menu (via ACTION_OUTSIDE) AND still land on the surface to start a fresh press.
-        popup = PopupWindow(card, card.measuredWidth, card.measuredHeight, false).apply {
+        popup = PopupWindow(content, popupW, popupH, false).apply {
             isOutsideTouchable = true
             elevation = 0f
             animationStyle = 0
@@ -159,15 +184,14 @@ object LedgerContextMenu {
         }
         current = popup
 
-        // Anchor the card's top-left just off the fingertip, clamped on-window.
+        // Anchor the card's top-left just off the fingertip, clamped on-window — against the
+        // popup's ACTUAL size, which is now capped, not the card's unconstrained measurement.
         val location = IntArray(2)
         anchor.getLocationInWindow(location)
-        val root = anchor.rootView
-        val margin = dp(8f)
         val x = (location[0] + pressX.roundToInt() + dp(6f))
-            .coerceIn(margin, (root.width - card.measuredWidth - margin).coerceAtLeast(margin))
+            .coerceIn(margin, (rootView.width - popupW - margin).coerceAtLeast(margin))
         val y = (location[1] + pressY.roundToInt() + dp(6f))
-            .coerceIn(margin, (root.height - card.measuredHeight - margin).coerceAtLeast(margin))
+            .coerceIn(margin, (rootView.height - popupH - margin).coerceAtLeast(margin))
         popup.showAtLocation(anchor, Gravity.NO_GRAVITY, x, y)
         onShow?.invoke()   // pause the Onyx raw-drawing pipeline, or the pen freezes on the menu
     }

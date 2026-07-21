@@ -200,8 +200,23 @@ abstract class ScreenFragment : Fragment() {
         // strand a pill off-screen — discard them by not reading the old `_tx`/`_ty` keys.
         pill.translationX = prefs.getFloat("${key}_px", 0f)
         pill.translationY = prefs.getFloat("${key}_py", 0f)
-        // Clamp on first layout so a restored position can never leave the pill clipped.
-        pill.post { clampInParent(pill) }
+        // Clamp once the pill actually HAS a size.
+        //
+        // This was a single `post {}`, which runs on the next frame whether or not layout has
+        // happened — and `clampInParent` returns early on a zero-width view. So on the pass where
+        // it mattered most, restoring a position saved by an earlier build, the clamp quietly did
+        // nothing and the pill stayed wherever the prefs said, including off-screen. A layout
+        // listener fires when there is something real to measure.
+        pill.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+            override fun onLayoutChange(
+                v: View, l: Int, t: Int, r: Int, b: Int, ol: Int, ot: Int, or_: Int, ob: Int
+            ) {
+                if (v.width == 0 || (v.parent as? View)?.width ?: 0 == 0) return
+                v.removeOnLayoutChangeListener(this)
+                clampInParent(pill, handle)
+            }
+        })
+        pill.post { clampInParent(pill, handle) }
         val slop = 12f * resources.displayMetrics.density
         var downX = 0f; var downY = 0f; var startTx = 0f; var startTy = 0f
         var downAt = 0L; var moved = false
@@ -214,7 +229,7 @@ abstract class ScreenFragment : Fragment() {
                 MotionEvent.ACTION_MOVE -> {
                     pill.translationX = startTx + (e.rawX - downX)
                     pill.translationY = startTy + (e.rawY - downY)
-                    clampInParent(pill)
+                    clampInParent(pill, handle)
                     if (kotlin.math.abs(e.rawX - downX) > slop || kotlin.math.abs(e.rawY - downY) > slop) moved = true
                     true
                 }
@@ -226,7 +241,7 @@ abstract class ScreenFragment : Fragment() {
                         pill.translationX = startTx; pill.translationY = startTy
                         onTap()
                     } else {
-                        clampInParent(pill)
+                        clampInParent(pill, handle)
                         prefs.edit().putFloat("${key}_px", pill.translationX)
                             .putFloat("${key}_py", pill.translationY).apply()
                     }
@@ -629,13 +644,19 @@ abstract class ScreenFragment : Fragment() {
      * from, and a pill longer than the screen can still be slid to either of its ends.
      * See [com.toolsboox.ot.PillBounds.range] for why that second half matters on a Palma.
      */
-    private fun clampInParent(pill: View) {
+    private fun clampInParent(pill: View, handle: View? = null) {
         val parent = pill.parent as? View ?: return
         if (pill.width == 0 || parent.width == 0) return
-        pill.translationX = pill.translationX
-            .coerceIn(com.toolsboox.ot.PillBounds.range(pill.left, pill.right, parent.width))
-        pill.translationY = pill.translationY
-            .coerceIn(com.toolsboox.ot.PillBounds.range(pill.top, pill.bottom, parent.height))
+        // Handle edges in the PARENT's space: the handle is laid out inside the pill, so its own
+        // left/top are relative to the pill and have to be shifted by the pill's position.
+        val hL = pill.left + (handle?.left ?: 0)
+        val hR = pill.left + (handle?.right ?: pill.width)
+        val hT = pill.top + (handle?.top ?: 0)
+        val hB = pill.top + (handle?.bottom ?: pill.height)
+        pill.translationX = pill.translationX.coerceIn(
+            com.toolsboox.ot.PillBounds.rangeKeepingHandle(pill.left, pill.right, parent.width, hL, hR))
+        pill.translationY = pill.translationY.coerceIn(
+            com.toolsboox.ot.PillBounds.rangeKeepingHandle(pill.top, pill.bottom, parent.height, hT, hB))
     }
 
     /**

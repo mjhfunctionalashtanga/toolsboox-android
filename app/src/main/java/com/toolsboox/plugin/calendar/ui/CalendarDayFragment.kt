@@ -1020,12 +1020,119 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             if (!isAdded || chosen == null) return@launch
             val snippet = chosen.item.text.replace(Regex("\\s+"), " ").trim()
             if (snippet.isEmpty()) return@launch
-            binding.spiralLine.text = "🌀  " + snippet.take(90) + (if (snippet.length > 90) "…" else "")
+            binding.spiralLine.text = spiralLineText(chosen, snippet)
             binding.spiralLine.setOnClickListener {
                 findNavController().navigate(R.id.action_to_ledger_roots)
             }
             binding.spiralLine.visibility = View.VISIBLE
+            positionSpiralLine()
         }
+    }
+
+    /**
+     * What the four lines of the Roots band say.
+     *
+     * The band is small and fixed, so the text has to be designed for it rather than truncated
+     * into it. Three things, in the order they answer the reader's questions: WHY this came back,
+     * WHAT it says, and WHERE it came from.
+     *
+     * The middle part is trimmed at a sentence end where there is one and at a word boundary
+     * otherwise — never mid-word. A fragment cut at "the patchwork of cross-bor…" reads as
+     * something broken; the same passage ended at a full stop reads as a quotation, and the whole
+     * thing is one tap from the page that holds all of it anyway.
+     */
+    private fun spiralLineText(
+        chosen: com.toolsboox.plugin.calendar.ot.Spiral.Pick<com.toolsboox.plugin.chat.da.CorpusSnippet>,
+        snippet: String
+    ): CharSequence {
+        val lead = if (chosen.shared.isEmpty()) getString(R.string.spiral_lead_plain)
+            else getString(R.string.spiral_lead_circling, chosen.shared.joinToString(" · "))
+        val body = trimToWhole(snippet, 150)
+        val cite = chosen.item.citation.substringAfter("· ", chosen.item.source).trim()
+        val tail = if (cite.isBlank()) "" else "  — $cite"
+
+        val text = android.text.SpannableStringBuilder()
+        val leadStart = text.length; text.append(lead); text.append("\n")
+        val bodyStart = text.length; text.append(body)
+        val tailStart = text.length; text.append(tail)
+
+        // The lead-in and the provenance are context; the passage is the thing. Size and weight
+        // say so, rather than punctuation trying to.
+        text.setSpan(android.text.style.RelativeSizeSpan(0.82f), leadStart, bodyStart, 0)
+        text.setSpan(android.text.style.ForegroundColorSpan(0xFF666666.toInt()), leadStart, bodyStart, 0)
+        if (tail.isNotEmpty()) {
+            text.setSpan(android.text.style.RelativeSizeSpan(0.82f), tailStart, text.length, 0)
+            text.setSpan(android.text.style.ForegroundColorSpan(0xFF888888.toInt()), tailStart, text.length, 0)
+        }
+        return text
+    }
+
+    /**
+     * [text] cut to at most [limit] characters, ending somewhere a reader would stop.
+     *
+     * Prefers the last sentence end past halfway — so the result is a whole thought — and falls
+     * back to the last word boundary with an ellipsis. Returns the text untouched when it already
+     * fits, so a short note never acquires a "…" it doesn't need.
+     */
+    private fun trimToWhole(text: String, limit: Int): String {
+        if (text.length <= limit) return text
+        val window = text.take(limit)
+        val sentence = window.indexOfLast { it == '.' || it == '!' || it == '?' }
+        if (sentence > limit / 2) return window.take(sentence + 1)
+        val space = window.lastIndexOf(' ')
+        return (if (space > limit / 2) window.take(space) else window).trimEnd(',', ';', ':', ' ') + "…"
+    }
+
+    /**
+     * The Roots band's paper, in design space (1404×1872).
+     *
+     * Between the Tasks grid — which now ends at row 14 — and the Stars & Events title at
+     * `to + 18*ceh`. The template paints the band's title bar and its closing rule; this is the
+     * space left between them for the line itself. Kept next to those numbers on purpose: if
+     * `CalendarDayPage` moves the band, this has to move with it or the text lands on a rule.
+     */
+    private val rootsBand = android.graphics.RectF(
+        20f + 600f + 60f,                       // lo + cew + 60 — the text inset the panels use
+        (1872f - 35 * 50f) / 2f + 14 * 50f,     // to + 14*ceh, under the title bar
+        20f + 2 * 600f + 50f - 10f,             // lo + 2*cew + 50, less a hair of right margin
+        (1872f - 35 * 50f) / 2f + 18 * 50f      // to + 18*ceh, the closing rule
+    )
+
+    /**
+     * Put the spiral line on its patch of paper.
+     *
+     * The line is a view over a drawn surface, so it can't be positioned by constraints — it has
+     * to follow the same transform the ink does, or it drifts off the band the moment the page is
+     * zoomed or the toolbar changes sides. Mapping the band through the surface's own matrix is
+     * the only thing that stays right in every case, since that matrix IS what "where the page is
+     * on screen" means here.
+     */
+    private fun positionSpiralLine() {
+        if (!isAdded) return
+        val v = binding.spiralLine
+        if (v.visibility != View.VISIBLE) return
+        val mapped = android.graphics.RectF(rootsBand)
+        surfaceTransform().mapRect(mapped)
+        if (mapped.width() < 1f || mapped.height() < 1f) return
+        // The matrix maps into the SURFACE's coordinates; the overlay is a sibling in the parent,
+        // so it needs the surface's own offset added or it lands a toolbar's width to the left.
+        mapped.offset(binding.surfaceView.left.toFloat(), binding.surfaceView.top.toFloat())
+        // Bound by maxWidth rather than by layoutParams: the ConstraintSet in CalendarUtils is
+        // re-applied on load and would overwrite an explicit width/height straight back to
+        // WRAP_CONTENT, leaving the line laid out at nothing. maxWidth survives that.
+        v.maxWidth = mapped.width().toInt()
+        v.translationX = mapped.left
+        v.translationY = mapped.top
+        // Sized so TWO lines and their leading fit inside the band with a little air, rather than
+        // by a guessed divisor: at height/3.1 the second line's descenders sat on the closing rule
+        // and read as clipped. Line height is roughly 1.2× the text size, so two lines plus
+        // padding want about 2.6× — leaving the rest as margin.
+        val padding = (v.paddingTop + v.paddingBottom).toFloat()
+        v.setTextSize(
+            android.util.TypedValue.COMPLEX_UNIT_PX,
+            ((mapped.height() - padding) / 2.6f).coerceAtLeast(8f)
+        )
+        v.requestLayout()
     }
 
     private fun applyWidgetOrientation() {
@@ -1143,19 +1250,27 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /** Pick the floating-pill layout — an explicit Horizontal / Vertical choice, persisted. */
+    /**
+     * There are two states, so this is one switch, not a menu.
+     *
+     * It used to open a dialog with a radio list and a Cancel — three taps and a decision, to flip
+     * a thing you can see. The row that opens it already says which way it will go, so pressing it
+     * IS the answer.
+     */
     private fun flipPillLayout() {
         val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
         val narrow = resources.configuration.screenWidthDp < 520
-        val current = if (prefs.getBoolean("vertical", narrow)) 1 else 0
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.pill_layout_title)
-            .setSingleChoiceItems(arrayOf(getString(R.string.pill_layout_horizontal), getString(R.string.pill_layout_vertical)), current) { d, which ->
-                prefs.edit().putBoolean("vertical", which == 1).apply()
-                applyWidgetOrientation()
-                d.dismiss()
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+        val vertical = prefs.getBoolean("vertical", narrow)
+        prefs.edit().putBoolean("vertical", !vertical).apply()
+        applyWidgetOrientation()
+    }
+
+    /** What flipping the pills would do next — so the row can say it. */
+    private fun pillFlipLabel(): String {
+        val narrow = resources.configuration.screenWidthDp < 520
+        val vertical = requireContext().getSharedPreferences("ledger_widgets", 0)
+            .getBoolean("vertical", narrow)
+        return getString(if (vertical) R.string.pill_switch_horizontal else R.string.pill_switch_vertical)
     }
 
     /** Return both pills to their anchored home positions. */
@@ -1193,7 +1308,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             listOf(
                 "Tools" to tools,
                 "Layout" to listOf(
-                    GoItem("🔀", "Pill Layout") { flipPillLayout() },
+                    GoItem("🔀", pillFlipLabel()) { flipPillLayout() },
                     GoItem("🎯", "Reset pill positions") { resetPillPositions() },
                     GoItem("⚙️", "Settings") { binding.toolbarDrawing.toolbarSettings.performClick() }
                 )
@@ -1922,18 +2037,32 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val appCtx = requireContext().applicationContext
         val pageKey = notePageKey ?: "default"
         val date = currentDate
-        val sig = strokesSignature(strokes)
         kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
             val values = com.toolsboox.plugin.calendar.ot.SectionStore.load(appCtx, pageKey, date)
-            if (values["__sig"] == sig) return@launch   // unchanged since last OCR
+            var any = false
             for (zone in zones) {
                 if (zone.kind != com.toolsboox.plugin.calendar.ot.ZoneKind.TEXT) continue
-                val inZone = strokes.filter {
-                    android.graphics.RectF.intersects(
-                        zone.rect, com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(listOf(it)))
+                // A stroke belongs to the zone its MIDDLE falls in, not every zone it grazes.
+                // Intersection double-counted a line sitting on a boundary — read once by each
+                // side, so the corpus got the same thought twice and paid twice for it.
+                val inZone = strokes.filter { s ->
+                    val b = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(listOf(s))
+                    zone.rect.contains(b.centerX(), b.centerY())
                 }
                 if (inZone.isEmpty()) continue
-                val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(inZone, zone.rect, 1600)
+                // Per-zone signature: re-read only what changed. One signature for the whole page
+                // meant a single new word anywhere sent every zone back to the model, so the cost
+                // of a page tracked how often you returned to it rather than how much you wrote.
+                val zoneSig = strokesSignature(inZone)
+                if (values["__sig.${zone.id}"] == zoneSig) continue
+                values["__sig.${zone.id}"] = zoneSig
+                any = true
+                // Send the strokes' OWN bounds, not the band's rectangle: a band is a bucket, so
+                // a line written across a boundary belongs whole to one band and must be rendered
+                // whole, not clipped to the band's edge.
+                val bounds = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(inZone)
+                    .apply { inset(-24f, -24f) }
+                val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(inZone, bounds, 1600)
                 val text = com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third)
                     ?: continue
                 if (text.isBlank()) continue
@@ -1945,9 +2074,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     if (r is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok) values[zone.id + ".ai"] = r.answer
                 }
             }
-            // Persist the signature even if nothing OCR'd, so we don't retry unchanged ink each leave.
-            values["__sig"] = sig
-            com.toolsboox.plugin.calendar.ot.SectionStore.save(appCtx, pageKey, date, values)
+            // Signatures are written per zone as each is read, so an unreadable zone still counts
+            // as "seen" and isn't retried on every page-leave. Save only if something moved.
+            if (any) com.toolsboox.plugin.calendar.ot.SectionStore.save(appCtx, pageKey, date, values)
         }
     }
 
@@ -2528,6 +2657,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     override fun onTransformChanged(matrix: Matrix) {
+        // The spiral line sits on a patch of the drawn page, so it has to move with the page.
+        if (::binding.isInitialized) positionSpiralLine()
         if (::binding.isInitialized) {
             binding.templateImageView.scaleType = ImageView.ScaleType.MATRIX
             binding.templateImageView.imageMatrix = matrix

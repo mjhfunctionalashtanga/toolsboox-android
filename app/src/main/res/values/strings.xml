@@ -8,6 +8,7 @@
     <string name="widget_schedule_description">Today\'s schedule column with hour grid and events</string>
     <string name="widget_tasks_notes_description">Today\'s tasks and notes columns</string>
     <string name="calendar_settings_rotation_label">Rotation</string>
+    <string name="calendar_settings_auto_rotate">Auto-rotate (let the gyro decide)</string>
     <string name="calendar_settings_rotation_hint">Pick which orientations the toolbar rotate button cycles through:</string>
     <string name="calendar_settings_rotation_portrait">Portrait (upright)</string>
     <string name="calendar_settings_rotation_landscape_cw">Landscape — clockwise (top tilts right)</string>
@@ -426,6 +427,12 @@
     <string name="ledger_ai_key_needed">Add your Ask-my-Ledger API key in Settings first.</string>
     <string name="ledger_educate_looking_up">Looking it up…</string>
     <string name="ledger_ink_task_label">Write a task by hand — ＋ adds it</string>
+    <string name="calendar_day_roots">🌿 Roots</string>
+    <string name="spiral_lead_circling">you have been circling %1$s</string>
+    <string name="spiral_lead_plain">come back around</string>
+    <!-- Two states, so the row names the ACTION rather than opening a chooser. -->
+    <string name="pill_switch_horizontal">🔀  Switch pill horizontal</string>
+    <string name="pill_switch_vertical">🔀  Switch pill vertical</string>
     <string name="quick_note_selector_title">Go to…</string>
     <string name="quick_note_notes">✎  Notes — where you left off</string>
     <string name="quick_note_media">📷  Media — catch something</string>

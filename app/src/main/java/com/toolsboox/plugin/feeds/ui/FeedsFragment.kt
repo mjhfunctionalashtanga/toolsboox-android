@@ -1131,7 +1131,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 }
             ),
             "Layout" to listOf(
-                ("🔀  Pill layout · " + (if (vertical) "horizontal" else "vertical")) to {
+                getString(if (vertical) R.string.pill_switch_horizontal else R.string.pill_switch_vertical) to {
                     prefs().edit().putBoolean("feeds_pill_vertical", !vertical).apply(); applyFeedsPillOrientation()
                 }
             ),
