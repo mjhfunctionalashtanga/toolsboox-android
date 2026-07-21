@@ -138,7 +138,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 val pos = vh.adapterPosition
                 val item = adapter.currentItems().getOrNull(pos) ?: return
                 // Confirm; on cancel, snap the row back.
-                androidx.appcompat.app.AlertDialog.Builder(requireContext())
+                androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
                     .setTitle("Delete this ${if (item.kind == LedgerItem.Kind.EVENT) "event" else "task"}?")
                     .setMessage(item.text.ifBlank { "(handwritten)" })
                     .setPositiveButton("Delete") { _, _ -> deleteItems(listOf(item)) }
@@ -166,7 +166,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         if (ids.isEmpty()) { adapter.clearSelection(); return }
         val d = day ?: return
         val toDelete = d.ledgerItems.filter { it.id in ids }
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle("Delete ${toDelete.size} item(s)?")
             .setPositiveButton("Delete") { _, _ -> adapter.clearSelection(); deleteItems(toDelete) }
             .setNegativeButton(android.R.string.cancel, null)
@@ -459,7 +459,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         }
         var due = anchor
         val baseTitle = if (isEvent) "New event" else "New task"
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(baseTitle)
             .setView(container)
             .setPositiveButton("Add") { _, _ -> createManual(kind, input.text.toString(), due, chosenTime) }
@@ -552,7 +552,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             c.birthday.takeIf { it.isNotBlank() }?.let { "🎂  $it" },
             c.bio.takeIf { it.isNotBlank() }
         ).joinToString("\n")
-        AlertDialog.Builder(requireContext())
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(c.name.ifBlank { "Contact" })
             .setMessage(info.ifBlank { "No details yet." })
             .setPositiveButton("Open Rolodex") { _, _ -> findNavController().navigate(R.id.action_to_rolodex) }
@@ -728,6 +728,18 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             setTextIsSelectable(true)
         })
 
+        // The words have to stay changeable. Until now the only place a task's text could be
+        // edited was the confirm dialog at creation — once that closed, an OCR mistake was
+        // permanent, and tapping the task did nothing at all. This is the way back in.
+        val editRow = TextView(ctx).apply {
+            text = "✎  Edit the words…"
+            textSize = 15f
+            setTextColor(0xFF3A3A3A.toInt())
+            setPadding(0, px(12), 0, px(2))
+            isClickable = true
+        }
+        col.addView(editRow)
+
         // Its hand: the drawn or pinned face, mounted like anything else shown rather than drawn.
         inkFaceOf(item)?.let { bmp ->
             col.addView(com.toolsboox.ot.InkMount.wrapInColumn(ctx,
@@ -759,12 +771,55 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
 
         val penLabel = if (inkFaceOf(item) != null) "✍  Redraw in pen…" else "✍  Write it in pen…"
 
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        val card = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(if (item.kind == LedgerItem.Kind.TASK) "Task card" else "Event card")
             .setView(scroll)
             .setPositiveButton(penLabel) { _, _ -> writeInPen(item) }
             .setNeutralButton("Assign…") { _, _ -> assign(item) }
             .setNegativeButton("Close", null)
+            .create()
+        editRow.setOnClickListener { card.dismiss(); editWords(item) }
+        card.show()
+    }
+
+    /**
+     * Change a task or event's words after the fact.
+     *
+     * Taken literally: what you type is what it says. The trailing "friday 9am" parsing belongs
+     * to creation, where you're writing the thing for the first time; applying it again here
+     * would silently eat words out of a correction, which is the opposite of what a fix is for.
+     */
+    private fun editWords(item: LedgerItem) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val input = android.widget.EditText(ctx).apply {
+            setText(item.text)
+            setSelection(item.text.length)
+            hint = "What it says"
+        }
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(18), px(8), px(18), 0)
+            addView(input)
+        }
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle(if (item.kind == LedgerItem.Kind.TASK) "Edit task" else "Edit event")
+            .setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                val next = input.text.toString().trim()
+                if (next.isNotBlank() && next != item.text) {
+                    item.text = next
+                    // An item whose ink face no longer matches its words is a lie. The words are
+                    // what was just corrected, so the text face is the truthful one to show.
+                    if (item.display == LedgerItem.Display.INK && item.crop.isNullOrBlank()) {
+                        item.display = LedgerItem.Display.TEXT
+                    }
+                    persist(item)
+                    load()
+                }
+            }
+            .setNegativeButton("Cancel", null)
             .show()
     }
 
@@ -814,7 +869,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             addView(frame)
         }
 
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Write it in pen")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
@@ -840,7 +895,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     private fun assign(item: LedgerItem) {
         val contacts = contactsById.values.sortedBy { it.name.lowercase() }
         val labels = (listOf("— None —") + contacts.map { it.name.ifBlank { "Unnamed" } }).toTypedArray()
-        AlertDialog.Builder(requireContext())
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle("Assign to…")
             .setItems(labels) { _, which ->
                 item.contactId = if (which == 0) null else contacts[which - 1].id

@@ -299,7 +299,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             val labels = places.map { p ->
                 "${p.date}  ·  ${if (p.page == "day") "Day page" else p.page.replaceFirstChar { it.uppercase() }}"
             }.toTypedArray()
-            AlertDialog.Builder(ctx)
+            AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                 .setTitle("Where used · ${places.size}")
                 .setItems(labels) { _, which ->
                     CalendarNavigator.toDayPage(this@CalendarDayFragment, places[which].date, CalendarDay.DEFAULT_STYLE)
@@ -388,7 +388,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             orientation = android.widget.LinearLayout.VERTICAL
             setPadding(px(16), px(8), px(16), 0); addView(titleIn); addView(tagsIn)
         }
-        AlertDialog.Builder(ctx)
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Share essay")
             .setView(box)
             .setPositiveButton("Next") { _, _ ->
@@ -424,7 +424,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             android.widget.Toast.makeText(ctx, "Set up the web bridge first (Boards → Web bridge…)", android.widget.Toast.LENGTH_LONG).show()
             return
         }
-        AlertDialog.Builder(ctx)
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Send to")
             .setItems(rows.map { it.first }.toTypedArray()) { _, which -> rows[which].second() }
             .setNegativeButton("Cancel", null)
@@ -441,7 +441,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val box = android.widget.LinearLayout(ctx).apply {
             orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(toIn)
         }
-        AlertDialog.Builder(ctx).setTitle("Email the essay").setView(box)
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle("Email the essay").setView(box)
             .setPositiveButton("Send") { _, _ ->
                 val to = toIn.text.toString().trim()
                 if (to.isNotBlank()) sendEssay(site.site, site.user, site.pass, "email", title, tags, to)
@@ -457,7 +457,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 android.widget.Toast.makeText(ctx, "Couldn't load spaces", android.widget.Toast.LENGTH_SHORT).show(); return@launch
             }
             val labels = spaces.map { (if (it.privacy == "public") "🌐  " else "🔒  ") + it.title }.toTypedArray()
-            AlertDialog.Builder(ctx).setTitle("Post to space")
+            AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle("Post to space")
                 .setItems(labels) { _, which ->
                     val space = spaces[which]
                     lifecycleScope.launch(Dispatchers.IO) {
@@ -560,7 +560,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             setPadding(px(6), px(4), px(6), px(8))
         }
         val scroll = android.widget.ScrollView(ctx).apply { addView(list) }
-        val dialog = AlertDialog.Builder(ctx).setTitle("Stars · open").setView(scroll)
+        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle("Stars · open").setView(scroll)
             .setNegativeButton("Close", null).create()
         starsDialogShowing = true
         dialog.setOnDismissListener {
@@ -649,7 +649,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val ctx = context ?: return
         val boards = com.toolsboox.plugin.calendar.ot.BoardsStore.list(ctx)
         val labels = (boards.map { it.name.ifBlank { "Untitled" } } + "Unfiled (All boards)").toTypedArray()
-        AlertDialog.Builder(ctx)
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Pin to which board?")
             .setItems(labels) { _, which ->
                 val boardId = if (which < boards.size) boards[which].id else ""
@@ -936,7 +936,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.toolPen.setOnLongClickListener { showPenStylePicker(); true }
         binding.toolEraser.setOnClickListener { binding.toolbarDrawing.toolbarEraser.performClick(); markActiveTool(binding.toolEraser) }
         binding.toolEraser.setOnLongClickListener {
-            AlertDialog.Builder(requireContext())
+            AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
                 .setTitle(R.string.calendar_drawing_toolbar_eraser)
                 .setItems(arrayOf(getString(R.string.eraser_clear_page))) { d, _ ->
                     binding.toolbarDrawing.toolbarTrash.performClick(); d.dismiss()
@@ -1331,7 +1331,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     /** Pen style picker (ballpoint vs calligraphy), showing the active choice. */
     private fun showPenStylePicker() {
         val opts = arrayOf("Ballpoint", "Calligraphy")
-        AlertDialog.Builder(requireContext())
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(R.string.calendar_drawing_toolbar_pen)
             .setSingleChoiceItems(opts, if (penIsCalligraphy()) 1 else 0) { d, w ->
                 setPenCalligraphy(w == 1)
@@ -1573,7 +1573,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
         val bmp = renderSelection(strokes) ?: return
         val labels = candidates.map { it.text.ifBlank { getString(R.string.ledger_selection_handwritten) }.take(50) }
-        AlertDialog.Builder(requireContext())
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(getString(R.string.ledger_selection_add_to))
             .setItems(labels.toTypedArray()) { _, which ->
                 val target = candidates[which]
@@ -1738,7 +1738,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             cm.setPrimaryClip(android.content.ClipData.newPlainText("Ledger", input.text.toString()))
             showMessage("Copied to clipboard", binding.root)
         }
-        showModal(androidx.appcompat.app.AlertDialog.Builder(ctx)
+        showModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Copy text")
             .setView(android.widget.ScrollView(ctx).apply { addView(box) })
             .setPositiveButton("Copy") { _, _ -> copy() }
@@ -1790,7 +1790,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     com.toolsboox.plugin.calendar.nw.LedgerEventSync.pushEvent(requireContext(), whenParsed)
                 }
                 val label = if (kind == com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT) "event" else "task"
-                showMessage(getString(R.string.ledger_extract_added, label, item.text), binding.root)
+                // whenParsed, not item — the confirm dialog's edits live on the parsed copy, and
+                // quoting the pre-edit words back made a correction look like it hadn't taken.
+                showMessage(getString(R.string.ledger_extract_added, label, whenParsed.text), binding.root)
             }
         }
     }
@@ -1867,7 +1869,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     /** Show the looked-up description with an option to open the link; it's already filed to the feed. */
     private fun showEducateResult(term: String, desc: String, url: String) {
-        showModal(androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        showModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(term)
             .setMessage(desc + "\n\n" + getString(R.string.ledger_educate_filed))
             .setPositiveButton(R.string.ledger_educate_open) { _, _ ->
@@ -1904,7 +1906,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             setPadding(pad, pad / 2, pad, 0); addView(input)
         }
         val title = (if (isEvent) "Create event" else "Create task") + " · " + due + (item.time?.let { " · $it" } ?: "")
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(title)
             .setView(container)
             .setPositiveButton("Create") { _, _ -> item.text = input.text.toString().trim(); onConfirm() }
@@ -2102,7 +2104,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 (resources.displayMetrics.heightPixels * 0.72f).toInt())
             loadUrl(url)
         }
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(ctx)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setView(web)
             .setPositiveButton("Open original ↗") { _, _ ->
                 runCatching { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
@@ -2120,14 +2122,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val boards = com.toolsboox.plugin.calendar.ot.PickingsStore.list(ctx, currentDate)
         val saved = boards.filter { it.key != com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY }
         val labels = (listOf("❝  Today's Pickings", "＋  New pickings…") + saved.map { "❝  ${it.name}" }).toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Add gram to Pickings")
             .setItems(labels) { _, which ->
                 when (which) {
                     0 -> addGramToPickingPage(bmp, com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY)
                     1 -> {
                         val input = android.widget.EditText(ctx).apply { hint = "Pickings name"; setSingleLine() }
-                        androidx.appcompat.app.AlertDialog.Builder(ctx).setTitle("New pickings").setView(input)
+                        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle("New pickings").setView(input)
                             .setPositiveButton("Create") { _, _ ->
                                 val page = com.toolsboox.plugin.calendar.ot.PickingsStore.add(ctx, currentDate, input.text.toString().trim())
                                 addGramToPickingPage(bmp, page.key)
@@ -2152,14 +2154,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val pages = ps.list(ctx, currentDate)
         val labels = (pages.map { "❝  ${it.name}" } +
             listOf("＋  New pickings…", "✎  Rename this pickings…")).toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Pickings · $currentDate")
             .setItems(labels) { _, which ->
                 when {
                     which < pages.size -> CalendarNavigator.toDayNote(this, currentDate, pages[which].key)
                     which == pages.size -> {
                         val input = android.widget.EditText(ctx).apply { hint = "Pickings name"; setSingleLine() }
-                        androidx.appcompat.app.AlertDialog.Builder(ctx).setTitle("New pickings").setView(input)
+                        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle("New pickings").setView(input)
                             .setPositiveButton("Create") { _, _ ->
                                 val page = ps.add(ctx, currentDate, input.text.toString().trim())
                                 CalendarNavigator.toDayNote(this, currentDate, page.key)
@@ -2170,7 +2172,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                         val input = android.widget.EditText(ctx).apply {
                             setText(pages.firstOrNull { it.key == key }?.name ?: ""); setSingleLine()
                         }
-                        androidx.appcompat.app.AlertDialog.Builder(ctx).setTitle("Rename pickings").setView(input)
+                        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle("Rename pickings").setView(input)
                             .setPositiveButton("Save") { _, _ ->
                                 ps.rename(ctx, currentDate, key, input.text.toString().trim())
                             }.setNegativeButton(android.R.string.cancel, null).show()
@@ -2550,7 +2552,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             if (prompts.isEmpty()) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
             com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.add(
                 requireContext(), currentDate, prompts, "prompt", (notePage ?: "day").replaceFirstChar { it.uppercase() })
-            androidx.appcompat.app.AlertDialog.Builder(requireContext())
+            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
                 .setTitle("Pick a writing prompt")
                 .setItems(prompts.toTypedArray()) { _, which ->
                     placeTextBoxes(listOf("Prompt: " + prompts[which]), "write", refresh = false)
@@ -2599,7 +2601,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             "$tag  ${it.text}"
         }.toTypedArray()
         val checked = BooleanArray(ideas.size)
-        androidx.appcompat.app.AlertDialog.Builder(ctx)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Ideas → grid")
             .setMultiChoiceItems(labels, checked) { _, which, isChecked -> checked[which] = isChecked }
             .setPositiveButton("Add to grid") { _, _ ->
@@ -2723,7 +2725,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val hooks = com.toolsboox.plugin.calendar.nw.PanelWebhookStore.list(requireContext())
         if (hooks.isEmpty()) { manageWebhooks(); return }
         val labels = hooks.map { it.name } + getString(R.string.webhook_add)
-        AlertDialog.Builder(requireContext())
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(R.string.webhook_pick)
             .setItems(labels.toTypedArray()) { d, w ->
                 if (w == hooks.size) manageWebhooks() else deliverPanel(panel, hooks[w])
@@ -2758,13 +2760,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val ctx = requireContext()
         val hooks = com.toolsboox.plugin.calendar.nw.PanelWebhookStore.list(ctx)
         val labels = hooks.map { "${it.name} — ${it.url}" } + getString(R.string.webhook_add)
-        AlertDialog.Builder(ctx)
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(R.string.webhook_manage)
             .setItems(labels.toTypedArray()) { d, which ->
                 if (which == hooks.size) addWebhookDialog()
                 else {
                     val h = hooks[which]
-                    AlertDialog.Builder(ctx).setTitle(h.name)
+                    AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle(h.name)
                         .setMessage(h.url)
                         .setPositiveButton(R.string.webhook_remove) { _, _ ->
                             com.toolsboox.plugin.calendar.nw.PanelWebhookStore.remove(ctx, h.name)
@@ -2791,7 +2793,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             val p = (16 * resources.displayMetrics.density).toInt(); setPadding(p, p / 2, p, 0)
             addView(name); addView(url); addView(key)
         }
-        AlertDialog.Builder(ctx).setTitle(R.string.webhook_add).setView(box)
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle(R.string.webhook_add).setView(box)
             .setPositiveButton(R.string.ok) { _, _ ->
                 val n = name.text.toString().trim(); val u = url.text.toString().trim()
                 if (n.isNotEmpty() && (u.startsWith("http://") || u.startsWith("https://"))) {
@@ -3234,7 +3236,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 .takeIf { it.isNotBlank() && it != "-no-description-" }
         ).joinToString("\n\n")
 
-        AlertDialog.Builder(ctx)
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(event.title.ifBlank { getString(R.string.calendar_day_untitled_event) })
             .setMessage(body)
             .setPositiveButton(android.R.string.ok, null)
@@ -3329,7 +3331,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         editText.layoutParams = params
         container.addView(editText)
 
-        AlertDialog.Builder(ctx)
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(panelTitle)
             .setView(container)
             .setPositiveButton(R.string.ok) { dialog, _ ->
