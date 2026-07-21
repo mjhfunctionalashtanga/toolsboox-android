@@ -71,6 +71,10 @@
             app:destination="@id/LedgerRootsFragment"/>
 
     <action
+            android:id="@+id/action_to_ledger_map"
+            app:destination="@id/LedgerMapFragment"/>
+
+    <action
             android:id="@+id/action_to_ledger_rhizome"
             app:destination="@id/LedgerRhizomeFragment"/>
 
@@ -179,6 +183,14 @@
             android:name="com.toolsboox.plugin.calendar.ui.LedgerItemsFragment"
             android:label="LedgerItemsFragment"
             tools:layout="@layout/fragment_ledger_items"/>
+
+    <fragment
+            android:id="@+id/LedgerMapFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.LedgerMapFragment"
+            android:label="LedgerMapFragment"
+            tools:layout="@layout/fragment_ledger_map">
+        <argument android:name="map_uri" app:argType="string" android:defaultValue=""/>
+    </fragment>
 
     <fragment
             android:id="@+id/LedgerRhizomeFragment"

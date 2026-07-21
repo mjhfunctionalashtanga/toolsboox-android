@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Map: the connection graph as a picture.
+
+     A plain full-bleed canvas on purpose — unlike the rhizome card, which is a short answer about
+     one thing, this is the thing you stare at, and it wants the whole panel. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingTop="10dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <TextView
+            android:id="@+id/map_title"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="#000000"
+            android:fontFamily="@font/atkinson_hyperlegible"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <TextView
+            android:id="@+id/map_subject"
+            android:textSize="13sp"
+            android:textColor="#666666"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+
+        <TextView
+            android:id="@+id/map_close"
+            android:text="@string/roots_close"
+            android:textSize="15sp"
+            android:textColor="#000000"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="6dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/map_canvas"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"/>
+</LinearLayout>

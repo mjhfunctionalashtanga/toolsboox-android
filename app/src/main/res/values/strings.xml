@@ -459,6 +459,8 @@
     <string name="roots_title">🌿  Roots</string>
     <string name="roots_close">Close</string>
     <string name="rhizome_title">🕸  Its rhizome</string>
+    <string name="map_title">🗺  Map</string>
+    <string name="map_empty">Nothing is connected yet. Connect a few things and the map draws itself.</string>
     <string name="rhizome_menu">🕸  Its rhizome</string>
     <string name="calendar_settings_button_text_size">Text size…</string>
     <string name="rhizome_cannot_open">Nothing here can open %1$s</string>

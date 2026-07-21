@@ -99,6 +99,16 @@ fun ledgerDirectoryFolders(
             "🗒  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
             "📋  Boards · Local" to { nav.navigate(R.id.action_to_kanban) }
         )),
+        // The Garden: the four surfaces that are about what you have already written rather
+        // than about capturing more of it. Roots is what keeps coming back, Map is the same
+        // material as a picture, and Synthesize and Write are what you do with it once you can
+        // see it. They were scattered across the day-page switcher and the Desk.
+        ScreenFragment.Folder("🌱", "Garden", listOf(
+            "🌿  Roots" to { nav.navigate(R.id.action_to_ledger_roots) },
+            "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
+            "🔬  Synthesize" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "synthesize") },
+            "✍  Write" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "write") }
+        )),
         // Community: the three that are other PEOPLE rather than your own desk. They were mixed
         // in with Notes and Boards, where the only thing they had in common was needing a
         // network — which is a fact about plumbing, not about what they are for.
