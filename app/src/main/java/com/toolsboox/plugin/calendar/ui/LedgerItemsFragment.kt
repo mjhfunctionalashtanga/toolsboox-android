@@ -625,7 +625,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         lifecycleScope.launch {
             val chosen = withContext(Dispatchers.IO) {
                 runCatching {
-                    val all = corpusService.gather(documentsRoot())
+                    val all = corpusService.gather(documentsRoot(), com.toolsboox.plugin.calendar.ot.Spiral.SCOPE)
                         .filter { it.text.isNotBlank() && it.text.length > 24 }
 
                     // The roots feed the spiral: an object that joins two threads — one you're in
@@ -751,7 +751,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    val all = corpusService.gather(documentsRoot())
+                    val all = corpusService.gather(documentsRoot(), com.toolsboox.plugin.calendar.ot.Spiral.SCOPE)
                         .filter { it.text.isNotBlank() && it.text.length > 24 }
                     val threads = com.toolsboox.plugin.calendar.ot.Rhizome.threads(
                         all.map { it.text + " " + it.title }, all.map { it.date.time }

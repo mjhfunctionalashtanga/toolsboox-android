@@ -100,6 +100,31 @@ object Spiral {
     private const val MIN_TERM = 4
 
     /**
+     * What the spiral is allowed to draw on: things you MADE or MARKED.
+     *
+     * Notably excludes [Section.FEED] — the offline article cache holds everything that synced,
+     * read or not. Letting that in would be quietly disastrous here: "what you've been circling"
+     * would be computed from other people's writing, and the card would start resurfacing articles
+     * you never chose to look at. That is the walled-garden dynamic wearing a different hat, which
+     * is the one thing this must not become.
+     *
+     * [Section.ARTICLES] stays, because those are your annotations ON articles — your words about
+     * someone else's, which is exactly the kind of thing worth having come back.
+     *
+     * Ask itself may still read the whole cache; being able to answer a question you asked from
+     * what you read is fine. Pushing it at you unbidden is not the same act.
+     */
+    val SCOPE: Set<com.toolsboox.plugin.chat.da.Section> = setOf(
+        com.toolsboox.plugin.chat.da.Section.BOOKS,       // book highlights
+        com.toolsboox.plugin.chat.da.Section.ARTICLES,    // your annotations on articles
+        com.toolsboox.plugin.chat.da.Section.PLANNER,     // what you wrote on the pages
+        com.toolsboox.plugin.chat.da.Section.MEDIA,       // A/V grams
+        com.toolsboox.plugin.chat.da.Section.SECTIONS,    // OCR'd handwriting
+        com.toolsboox.plugin.chat.da.Section.NOTES,       // text notes
+        com.toolsboox.plugin.chat.da.Section.TASKS
+    )
+
+    /**
      * Words too common to mean anything. Short list on purpose — an aggressive stop-list starts
      * throwing away the vocabulary a person actually thinks in.
      */
