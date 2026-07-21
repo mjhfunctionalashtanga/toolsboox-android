@@ -41,9 +41,18 @@ data class LedgerPanel(
                 LedgerPanel(it.kindKey, it.title, Kind.TEXT, RectF(it.rect))
             }
             null, "default", "0" -> listOf(
+                // These select which ink gets OCR'd, so they have to be where the columns are
+                // actually DRAWN. The right-hand two weren't: the tasks and notes column runs
+                // x 670..1270 (lo + cew + 50 … lo + 2*cew + 50), and both were declared
+                // 684..1384 — starting 14 past the left edge, so ink written hard against it was
+                // never read, and running 114 past the right edge over blank paper. The schedule
+                // rect was right, which is why this went unnoticed.
                 LedgerPanel("schedule", "Schedules", Kind.TEXT, RectF(20f, 60f, 620f, 1810f)),
-                LedgerPanel("tasks", "Tasks", Kind.TEXT, RectF(684f, 60f, 1384f, 611f)),
-                LedgerPanel("notes", "Notes", Kind.TEXT, RectF(684f, 1040f, 1384f, 1810f))
+                // Bottom is the GRID's last line (611), not the panel's. Below it is the write-in
+                // strip, and TaskEntry already lifts that on page-leave — an extractor that also
+                // covered it would file the same handwriting twice.
+                LedgerPanel("tasks", "Tasks", Kind.TEXT, RectF(670f, 60f, 1270f, 611f)),
+                LedgerPanel("notes", "Notes", Kind.TEXT, RectF(670f, 1011f, 1270f, 1811f))
             )
             else -> listOf(
                 // Any other named note page is a single full-page writing panel.

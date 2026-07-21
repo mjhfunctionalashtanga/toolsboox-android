@@ -60,11 +60,20 @@ object PageZones {
      * is the thing that would have made this quietly worse than doing nothing.
      */
     private fun bands(count: Int): List<PageZone> {
-        val top = 120f
-        val bottom = 1800f
-        val h = (bottom - top) / count
+        // The bands must tile the WHOLE page, edge to edge, not the comfortable middle of it.
+        //
+        // A stroke belongs to the band its centre falls in, so a band that stops short of the
+        // margin means ink written up in the header space or hard against a side belongs to no
+        // band at all — never OCR'd, never given a signature, and so invisible to the corpus for
+        // good rather than merely until next time. Writing into the margin is a normal thing to
+        // do on paper, and the failure would be completely silent.
+        //
+        // Costs nothing to extend: bands are buckets, and each one renders the bounding box of
+        // the strokes that landed in it rather than its own rectangle, so a wide band does not
+        // mean a wide image.
+        val h = PAGE_H / count
         return (0 until count).map { i ->
-            PageZone("page$i", "✎ Page ${i + 1}", RectF(60f, top + i * h, 1344f, top + (i + 1) * h), ZoneKind.TEXT)
+            PageZone("page$i", "✎ Page ${i + 1}", RectF(0f, i * h, PAGE_W, (i + 1) * h), ZoneKind.TEXT)
         }
     }
 
