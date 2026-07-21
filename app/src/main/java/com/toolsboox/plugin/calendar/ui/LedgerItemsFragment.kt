@@ -625,7 +625,8 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         lifecycleScope.launch {
             val chosen = withContext(Dispatchers.IO) {
                 runCatching {
-                    val all = corpusService.gather(documentsRoot(), com.toolsboox.plugin.calendar.ot.Spiral.SCOPE)
+                    val all = (corpusService.gather(documentsRoot(), com.toolsboox.plugin.calendar.ot.Spiral.SCOPE) +
+                        ownFeedSnippets())
                         .filter { it.text.isNotBlank() && it.text.length > 24 }
 
                     // The roots feed the spiral: an object that joins two threads — one you're in
@@ -723,6 +724,22 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     }
 
     /**
+     * Feed items that are actually your own material coming home.
+     *
+     * mjh.yoga publishes a secret-gated RSS of the notes — the starred, annotated, angled ones —
+     * so they arrive down the same pipe as everything else you subscribe to. Marked feeds are
+     * admitted to the spiral; the rest of the reader is not. See [com.toolsboox.plugin.calendar.ot.OwnFeeds].
+     */
+    private fun ownFeedSnippets(): List<com.toolsboox.plugin.chat.da.CorpusSnippet> {
+        val ctx = context ?: return emptyList()
+        if (com.toolsboox.plugin.calendar.ot.OwnFeeds.all(ctx).isEmpty()) return emptyList()
+        return runCatching {
+            corpusService.gather(documentsRoot(), setOf(com.toolsboox.plugin.chat.da.Section.FEED))
+                .filter { com.toolsboox.plugin.calendar.ot.OwnFeeds.isOwn(ctx, it.source) }
+        }.getOrDefault(emptyList())
+    }
+
+    /**
      * The roots: what you keep coming back to, and where two of them touch.
      *
      * A thread here is just a word that recurs across things you made at different times — a
@@ -752,7 +769,8 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    val all = corpusService.gather(documentsRoot(), com.toolsboox.plugin.calendar.ot.Spiral.SCOPE)
+                    val all = (corpusService.gather(documentsRoot(), com.toolsboox.plugin.calendar.ot.Spiral.SCOPE) +
+                        ownFeedSnippets())
                         .filter { it.text.isNotBlank() && it.text.length > 24 }
                     val threads = com.toolsboox.plugin.calendar.ot.Rhizome.threads(
                         all.map { it.text + " " + it.title }, all.map { it.date.time }
