@@ -286,6 +286,58 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /** "Where used": every day + page a gram with the same content is placed on — the rhizomatic web. */
+    /** This page's element address, for the connection graph. */
+    private fun elementUri(elementId: java.util.UUID): String =
+        com.toolsboox.ot.LedgerUri.element(currentDate.toString(), notePage ?: "default", elementId.toString())
+
+    /**
+     * The connectors to draw: every edge whose BOTH ends are elements on THIS page.
+     *
+     * A hand-drawn link is a real connection, so it lives in the same graph as everything else and
+     * surfaces in the rhizome and the Map; here we just pull back the ones that happen to join two
+     * things you can see at once, to draw the line between them.
+     */
+    override fun pageConnectors(): List<Pair<java.util.UUID, java.util.UUID>> {
+        if (!::calendarDay.isInitialized) return emptyList()
+        val ids = calendarDay.imageElements.filter { it.page == (notePage ?: "default") }
+            .map { it.elementId.toString() }.toSet()
+        if (ids.isEmpty()) return emptyList()
+        val here = "${com.toolsboox.ot.LedgerUri.page(currentDate.toString(), notePage ?: "default")}#"
+        return com.toolsboox.plugin.calendar.ot.ConnectionStore.loadAll(requireContext())
+            .asSequence()
+            .filter { !it.isDeleted && it.from.startsWith(here) && it.to.startsWith(here) }
+            .mapNotNull { e ->
+                val a = e.from.substringAfterLast('#'); val b = e.to.substringAfterLast('#')
+                if (a in ids && b in ids)
+                    runCatching { java.util.UUID.fromString(a) to java.util.UUID.fromString(b) }.getOrNull()
+                else null
+            }.toList()
+    }
+
+    /** Draw a link from this gram to another on the page — a real edge, shown as a line. */
+    override fun onImageConnect(element: ImageElement) {
+        val others = calendarDay.imageElements.filter {
+            it.page == (notePage ?: "default") && it.elementId != element.elementId && it.data.isNotBlank()
+        }
+        if (others.isEmpty()) { showMessage("Nothing else on this page to connect to yet.", binding.root); return }
+        val labels = others.mapIndexed { i, el ->
+            "🔗  " + el.sourceLabel.ifBlank { "Card ${i + 1}" }.take(50)
+        }.toTypedArray()
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+            .setTitle("Connect to which?")
+            .setItems(labels) { _, which ->
+                val other = others[which]
+                com.toolsboox.plugin.calendar.ot.ConnectionStore.connect(
+                    requireContext(), elementUri(element.elementId), elementUri(other.elementId),
+                    com.toolsboox.plugin.calendar.da.v2.Connection.ABOUT,
+                    fromLabel = element.sourceLabel, toLabel = other.sourceLabel)
+                redrawSurface()
+                showMessage("Linked.", binding.root)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
     /** Everything this gram joins, asked from the gram's own end. */
     override fun onImageRhizome(element: ImageElement) {
         val uri = com.toolsboox.plugin.calendar.ot.LegacyEdges.adopt(requireContext(), element, currentDate)

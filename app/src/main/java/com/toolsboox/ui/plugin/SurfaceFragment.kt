@@ -2178,7 +2178,51 @@ abstract class SurfaceFragment : ScreenFragment() {
                 targetCanvas.drawBitmap(bmp, null, rect, imagePaint)
             }
         }
+        renderConnectors(targetCanvas)
     }
+
+    /**
+     * Connectors: lines drawn between two elements you have linked, over the elements so the link
+     * is legible.
+     *
+     * A connector is not stored as its own art — it IS a connection between the two objects, so
+     * moving either end moves the line, and the same link shows up in the object's rhizome and on
+     * the Map. The subclass that knows the page's identity supplies the id-pairs; here we just draw
+     * a line between the live centres, dot at each end, so it reads as a deliberate join rather
+     * than a stray stroke.
+     */
+    private val connectorPaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; color = 0xFF444444.toInt()
+            strokeWidth = 3f * resources.displayMetrics.density; strokeCap = Paint.Cap.ROUND
+        }
+    }
+    private fun renderConnectors(canvas: Canvas) {
+        val pairs = pageConnectors()
+        if (pairs.isEmpty()) return
+        val byId = imageElements.associateBy { it.elementId }
+        for ((a, b) in pairs) {
+            val ea = byId[a] ?: continue
+            val eb = byId[b] ?: continue
+            val ax = ea.x + ea.width / 2f; val ay = ea.y + ea.height / 2f
+            val bx = eb.x + eb.width / 2f; val by = eb.y + eb.height / 2f
+            canvas.drawLine(ax, ay, bx, by, connectorPaint)
+            val dot = connectorPaint.strokeWidth
+            connectorPaint.style = Paint.Style.FILL
+            canvas.drawCircle(ax, ay, dot, connectorPaint)
+            canvas.drawCircle(bx, by, dot, connectorPaint)
+            connectorPaint.style = Paint.Style.STROKE
+        }
+    }
+
+    /** Element-id pairs to join with a connector line. The calendar page derives these from edges. */
+    protected open fun pageConnectors(): List<Pair<UUID, UUID>> = emptyList()
+
+    /** Repaint the page in place — after a connector is drawn, so the new line appears at once. */
+    protected fun redrawSurface() = applyStrokes(strokes, true)
+
+    /** "Connect to…" on a gram — the subclass picks the other end and records the link. */
+    protected open fun onImageConnect(element: ImageElement) {}
 
     private fun exitImageMode() {
         imageMode = false
@@ -2487,6 +2531,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 }
             },
             LedgerContextMenu.Item("Where used…") { onImageWhereUsed(element) },
+            LedgerContextMenu.Item("🔗 Connect to…") { onImageConnect(element) },
             LedgerContextMenu.Item("🕸 Its rhizome…") { onImageRhizome(element) },
             // A one-tap way off the page. Cleaning up a synthesis — tossing the pieces that
             // wandered in with a root — used to mean entering move/resize just to reach the delete
