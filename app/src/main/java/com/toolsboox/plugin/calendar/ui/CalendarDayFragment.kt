@@ -344,6 +344,45 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             fromLabel = fromLabel, toLabel = toLabel)
         redrawSurface()
         showMessage("Linked.", binding.root)
+        // A shape can circle HANDWRITING, not just text boxes. If either end is a shape whose
+        // region holds ink and no typed text, read that ink and let it become the edge's words —
+        // so a capsule drawn around a scrawled note carries the note, the same as around a label.
+        refineConnectionWithInk(fromId, toId)
+    }
+
+    private fun refineConnectionWithInk(fromId: java.util.UUID, toId: java.util.UUID) {
+        val creds = aiCreds() ?: return
+        val strokes = currentPageStrokes()
+        if (strokes.isEmpty()) return
+        for (id in listOf(fromId, toId)) {
+            val el = calendarDay.imageElements.firstOrNull { it.elementId == id && it.distortable } ?: continue
+            if (enclosedText(el).isNotBlank()) continue   // typed text already spoke for it
+            val rect = android.graphics.RectF(el.x, el.y, el.x + el.width, el.y + el.height)
+            val inside = strokes.filter { s ->
+                val pts = s.strokePoints
+                if (pts.isEmpty()) false else {
+                    val cx = pts.sumOf { it.x.toDouble() }.toFloat() / pts.size
+                    val cy = pts.sumOf { it.y.toDouble() }.toFloat() / pts.size
+                    rect.contains(cx, cy)
+                }
+            }
+            if (inside.isEmpty()) continue
+            lifecycleScope.launch {
+                val ocr = withContext(Dispatchers.IO) {
+                    val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(inside, rect, 1200)
+                    com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third)
+                }
+                if (!ocr.isNullOrBlank() && isAdded) {
+                    // Re-connect (idempotent by ends) to update just this end's label with the read.
+                    com.toolsboox.plugin.calendar.ot.ConnectionStore.connect(
+                        requireContext(), elementUri(fromId), elementUri(toId),
+                        com.toolsboox.plugin.calendar.da.v2.Connection.ABOUT,
+                        fromLabel = if (id == fromId) ocr.trim().take(60) else "",
+                        toLabel = if (id == toId) ocr.trim().take(60) else "")
+                    redrawSurface()
+                }
+            }
+        }
     }
 
     /**
