@@ -2401,6 +2401,10 @@ abstract class SurfaceFragment : ScreenFragment() {
             selectedImage = element
             applyStrokes(strokes, true)
             drawImageSelection()
+            // The panel drew the new gram but an e-ink partial update doesn't always show it —
+            // which is why it used to appear only when the NEXT change forced a repaint, one add
+            // behind. A full refresh on the next frame makes it land right away.
+            provideSurfaceView().post { forceFullEpdRefresh() }
         } catch (e: Exception) {
             Timber.e(e, "Insert image failed")
             Toast.makeText(requireContext(), "Couldn't insert that image", Toast.LENGTH_SHORT).show()
