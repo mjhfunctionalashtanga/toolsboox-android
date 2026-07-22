@@ -185,16 +185,21 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     // is a tap. The four faces are the four ways of getting something down in a hurry.
 
     private val quickNoteFaces = intArrayOf(
-        R.drawable.ic_pencil, R.drawable.ic_toolbar_text, R.drawable.ic_camera, R.drawable.ic_mic
+        R.drawable.ic_pencil, R.drawable.ic_reader_view, R.drawable.ic_edit,
+        R.drawable.ic_toolbar_text, R.drawable.ic_camera, R.drawable.ic_mic
     )
+    /** The glyph for each style, shown in the hold-out picker. Same order as the labels/faces. */
+    private val quickNoteGlyphs = arrayOf("✒", "📈", "⌱", "⌗", "📷", "🎤")
 
     companion object {
-        /** Hold-menu entries; index is stored, so keep the order stable. */
+        /** Hold-picker entries; the index is stored as the remembered tap action, so keep order stable. */
         val QUICK_NOTE_LABELS = arrayOf(
-            "✎  Note page (where you left off)",
-            "✎  Text Notes",
-            "📷  Capture a photo",
-            "🎤  Record a voice gram"
+            "Notes — where you left off",
+            "Grid Notes",
+            "Sketch Notes",
+            "Text Notes",
+            "Capture a photo",
+            "Record a voice gram"
         )
     }
 
@@ -245,28 +250,43 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
      * places worth reaching are the three the ledger actually keeps writing in: the note page you
      * were on, something caught as media, and the typed notes.
      */
+    /**
+     * Hold the pen button → a slider of note glyphs. Pick one and it becomes what a TAP does from
+     * now on — the button remembers your last style and goes back to it — so the common case is a
+     * single tap and only a change of style needs the hold.
+     */
     private fun showQuickNoteSelector() {
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val current = quickNoteAction()
+        val row = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(px(10), px(14), px(10), px(14))
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
             .setTitle(R.string.quick_note_selector_title)
-            .setItems(
-                arrayOf(
-                    getString(R.string.quick_note_notes),
-                    getString(R.string.quick_note_grid),
-                    getString(R.string.quick_note_sketch),
-                    getString(R.string.quick_note_media),
-                    getString(R.string.quick_note_text_notes)
-                )
-            ) { _, which ->
-                when (which) {
-                    0 -> openLastNotePage()
-                    1 -> navigateToDayNote("grid")
-                    2 -> navigateToDayNote("sketch")
-                    3 -> showQuickMediaSelector()
-                    else -> binding.fragmentContent.findNavController().navigate(R.id.action_to_text_notes)
-                }
-            }
+            .setView(android.widget.HorizontalScrollView(this).apply { addView(row); isHorizontalScrollBarEnabled = false })
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create()
+        quickNoteGlyphs.forEachIndexed { i, glyph ->
+            row.addView(android.widget.TextView(this).apply {
+                text = glyph
+                textSize = 30f
+                gravity = android.view.Gravity.CENTER
+                setPadding(px(16), px(10), px(16), px(10))
+                // The current style reads as selected; the rest are quieter.
+                setTextColor(if (i == current) 0xFF000000.toInt() else 0xFF999999.toInt())
+                if (i == current) setBackgroundResource(R.drawable.tool_active_bg)
+                contentDescription = QUICK_NOTE_LABELS.getOrElse(i) { "" }
+                setOnClickListener {
+                    dialog.dismiss()
+                    setQuickNoteAction(i)   // remember it — a tap returns here next time
+                    runQuickNoteAction(i)   // …and go there now
+                }
+            })
+        }
+        dialog.show()
     }
 
     /** Jump to today's page for a given note-page key (grid/sketch), from the pen-button menu. */
@@ -295,9 +315,11 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     private fun runQuickNoteAction(which: Int) {
         when (which) {
             0 -> openLastNotePage()
-            1 -> binding.fragmentContent.findNavController().navigate(R.id.action_to_text_notes)
-            2 -> startCapture()
-            3 -> requestVoiceGram()
+            1 -> navigateToDayNote("grid")
+            2 -> navigateToDayNote("sketch")
+            3 -> binding.fragmentContent.findNavController().navigate(R.id.action_to_text_notes)
+            4 -> startCapture()
+            5 -> requestVoiceGram()
         }
     }
 
