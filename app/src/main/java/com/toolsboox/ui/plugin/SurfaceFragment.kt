@@ -2505,7 +2505,12 @@ abstract class SurfaceFragment : ScreenFragment() {
             LedgerContextMenu.Item("⤢ Size · S / M / L") { showSizeMenu(element, pressX, pressY) },
             LedgerContextMenu.Item("🖼 Shapes & cute cuts…") { showShapeMenu(element, pressX, pressY) }
         ))
-        groups.add(listOf(
+        val actions = mutableListOf<LedgerContextMenu.Item>()
+        // A card that remembers its words can have them changed — the face is re-rendered from
+        // the new text, so an OCR slip or an opening line you don't want is fixable in place.
+        if (element.cardText.isNotBlank())
+            actions.add(LedgerContextMenu.Item("✎ Edit words…") { editImageWords(element) })
+        groups.add(actions + listOf(
             LedgerContextMenu.Item("🔗 Connect to…") { onImageConnect(element) },
             LedgerContextMenu.Item("🕸 Its rhizome…") { onImageRhizome(element) },
             LedgerContextMenu.Item(if (element.contactId.isNullOrBlank()) "Assign to contact…" else "Contact…") {
@@ -2528,6 +2533,50 @@ abstract class SurfaceFragment : ScreenFragment() {
             LedgerContextMenu.Item("🗑 Delete") { deleteImageElement(element) }
         ))
         showLedgerMenu(pressX, pressY, "IMAGE", groups)
+    }
+
+    /**
+     * Render a text card's face from [text] — the subclass knows the card style (QuoteCardRenderer
+     * + tape). Null means this surface can't re-render a card, so editing is silently unavailable.
+     */
+    protected open fun renderCard(text: String, element: ImageElement): Bitmap? = null
+
+    /**
+     * Edit the words a card was drawn from, and re-render its face.
+     *
+     * Plain multi-line text, edited as you'd edit any note — delete the first sentence, fix a
+     * word — then the card is drawn again from what's left. The words live on the element, so the
+     * edit is durable and the card can be edited again later.
+     */
+    private fun editImageWords(element: ImageElement) {
+        val ctx = context ?: return
+        val dp = resources.displayMetrics.density
+        val input = EditText(ctx).apply {
+            setText(element.cardText)
+            setSelection(element.cardText.length)
+            gravity = android.view.Gravity.TOP
+            setLines(6)
+        }
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0)
+            addView(input)
+        }
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Edit the card's words")
+            .setView(android.widget.ScrollView(ctx).apply { addView(box) })
+            .setPositiveButton("Save") { _, _ ->
+                val next = input.text.toString().trim()
+                if (next.isBlank() || next == element.cardText) return@setPositiveButton
+                val face = renderCard(next, element) ?: run {
+                    Toast.makeText(ctx, "Can't redraw this card here.", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                element.cardText = next
+                transformImageElement(element, preserveAspect = true) { face }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     /** Delete an image element off the page, undoably. */

@@ -286,6 +286,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /** "Where used": every day + page a gram with the same content is placed on — the rhizomatic web. */
+    /** Re-draw a text card's face from edited words — the quote card, taped like when it was placed. */
+    override fun renderCard(text: String, element: ImageElement): android.graphics.Bitmap? {
+        val face = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
+            text, element.sourceLabel.ifBlank { null }, null, 1080, 0)
+        return com.toolsboox.ot.CardTreatment.card(face)
+    }
+
     /** This page's element address, for the connection graph. */
     private fun elementUri(elementId: java.util.UUID): String =
         com.toolsboox.ot.LedgerUri.element(currentDate.toString(), notePage ?: "default", elementId.toString())
@@ -2776,7 +2783,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     val x = (60f + (count % 3) * (w + 30f)).coerceIn(0f, (1404f - w).coerceAtLeast(0f))
                     val y = (120f + (count / 3) * (h + 30f)).coerceIn(0f, (1872f - h).coerceAtLeast(0f))
                     calendarDay.imageElements.add(com.toolsboox.da.ImageElement(
-                        x = x, y = y, width = w, height = h, data = base64, page = pageKey))
+                        x = x, y = y, width = w, height = h, data = base64, page = pageKey,
+                        sourceLabel = "— ${idea.from}", cardText = idea.text))
                 }
             }
             calendarPattern.updateDay(calendarDay)

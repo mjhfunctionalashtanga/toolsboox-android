@@ -38,7 +38,7 @@ object PickingsPlacement {
     fun place(
         service: CalendarDayService, root: File, bitmap: Bitmap, date: LocalDate, pageKey: String,
         sourceLink: String = "", sourceLabel: String = "", media: MediaRef? = null,
-        treatment: Boolean = true
+        treatment: Boolean = true, cardText: String = ""
     ) {
         val longest = maxOf(bitmap.width, bitmap.height)
         val fitted = if (longest > MAX_DIM) {
@@ -68,7 +68,8 @@ object PickingsPlacement {
             mediaUrl = media?.url ?: "",
             durationMs = media?.durationMs ?: 0,
             mediaTitle = media?.title ?: "",
-            mediaDate = media?.date ?: ""))
+            mediaDate = media?.date ?: "",
+            cardText = cardText))
         service.save(root, date, day)
     }
 

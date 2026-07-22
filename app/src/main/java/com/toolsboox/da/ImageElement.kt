@@ -65,5 +65,10 @@ data class ImageElement(
     // Creator's choice, both optional: a title, and a date to show instead of the page's own day
     // (yyyy-MM-dd; "" = just use the day it sits on).
     var mediaTitle: String = "",
-    var mediaDate: String = ""
+    var mediaDate: String = "",
+    // The words a rendered TEXT card was drawn from. A card is a baked PNG, so its text is pixels
+    // and can't be edited — unless it remembers what it said. When this is set, the card offers
+    // "Edit words…", which re-renders the face from the new text. Empty for photos and grams that
+    // have no text of their own. New field with a default → older readers and iOS ignore it.
+    var cardText: String = ""
 )

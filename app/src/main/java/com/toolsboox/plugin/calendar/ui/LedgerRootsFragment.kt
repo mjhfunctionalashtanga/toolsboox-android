@@ -385,7 +385,8 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
                     snip.own.take(160).ifBlank { null }, 1080, 0)
                 runCatching {
                     place.place(calendarDayService, root, card, page.date, page.key,
-                        sourceLink = back, sourceLabel = terms.joinToString(" · "))
+                        sourceLink = back, sourceLabel = terms.joinToString(" · "),
+                        cardText = snip.text.take(600))
                 }
                 // The chosen pieces, brought over AS THEY LOOK — they keep their own faces
                 // (treatment = false, or a taped card would be taped twice) and a link home.
