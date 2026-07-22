@@ -336,6 +336,53 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     override fun onTextConnect(element: com.toolsboox.da.TextElement) =
         beginConnect(element.elementId, element.text.take(40).ifBlank { "Text" })
 
+    /**
+     * Gather a connected GROUP into a synthesis.
+     *
+     * A group is a cluster of things you joined by hand on the page — regions you circled, cards,
+     * text, all connected. This walks the whole cluster from the tapped element, collects what
+     * each node carries (the words a shape gathered, a card's label, a note's text), and drops
+     * them onto a Synthesize page as text to work from. Separate clusters on one sheet become
+     * separate syntheses — which is the whole point of drawing them apart.
+     */
+    override fun onImageSynthesizeGroup(element: ImageElement) {
+        val here = "${com.toolsboox.ot.LedgerUri.page(currentDate.toString(), notePage ?: "default")}#"
+        val edges = com.toolsboox.plugin.calendar.ot.ConnectionStore.loadAll(requireContext())
+            .filter { !it.isDeleted && it.from.startsWith(here) && it.to.startsWith(here) }
+        // Walk the connected component from this element.
+        val start = elementUri(element.elementId)
+        val adj = HashMap<String, MutableSet<String>>()
+        val label = HashMap<String, String>()
+        for (e in edges) {
+            adj.getOrPut(e.from) { mutableSetOf() }.add(e.to)
+            adj.getOrPut(e.to) { mutableSetOf() }.add(e.from)
+            if (e.fromLabel.isNotBlank()) label[e.from] = e.fromLabel
+            if (e.toLabel.isNotBlank()) label[e.to] = e.toLabel
+        }
+        val seen = linkedSetOf(start); val queue = ArrayDeque(listOf(start))
+        while (queue.isNotEmpty()) {
+            val n = queue.removeFirst()
+            adj[n]?.forEach { if (seen.add(it)) queue.add(it) }
+        }
+        // Each node's words: its recorded label, else what it carries now (circled text, card text).
+        val lines = seen.mapNotNull { uri ->
+            label[uri]?.takeIf { it.isNotBlank() }
+                ?: uri.substringAfterLast('#').let { id ->
+                    calendarDay.imageElements.firstOrNull { it.elementId.toString() == id }
+                        ?.let { enclosedText(it).ifBlank { it.sourceLabel } }
+                        ?: calendarDay.textElements.firstOrNull { it.elementId.toString() == id }?.text
+                }
+        }.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+
+        if (lines.size < 2) {
+            showMessage("Connect a few things into a group first, then synthesize it.", binding.root); return
+        }
+        // Drop the group's material onto today's Synthesize page and go there to work it.
+        placeTextBoxes(lines, "synthesize", refresh = false)
+        showMessage("Sent ${lines.size} to Synthesize.", binding.root)
+        CalendarNavigator.toDayNote(this@CalendarDayFragment, currentDate, "synthesize")
+    }
+
     /** The two ends were touched — record the edge and draw the line. */
     override fun onConnectComplete(fromId: java.util.UUID, toId: java.util.UUID, fromLabel: String, toLabel: String) {
         com.toolsboox.plugin.calendar.ot.ConnectionStore.connect(

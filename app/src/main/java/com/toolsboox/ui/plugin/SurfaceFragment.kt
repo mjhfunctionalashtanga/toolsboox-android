@@ -2313,6 +2313,9 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** "Connect to…" on a text box — join it to any other element on the page. */
     protected open fun onTextConnect(element: TextElement) {}
 
+    /** "Synthesize group" — gather everything this element's connected group holds into a synthesis. */
+    protected open fun onImageSynthesizeGroup(element: ImageElement) {}
+
     private fun exitImageMode() {
         imageMode = false
         selectedImage = null
@@ -2644,6 +2647,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         if (!element.decorative) {
             actions.add(LedgerContextMenu.Item("🔗 Connect to…") { onImageConnect(element) })
             actions.add(LedgerContextMenu.Item("🕸 Its rhizome…") { onImageRhizome(element) })
+            actions.add(LedgerContextMenu.Item("🔬 Synthesize group…") { onImageSynthesizeGroup(element) })
         }
         groups.add(actions + listOf(
             LedgerContextMenu.Item(if (element.contactId.isNullOrBlank()) "Assign to contact…" else "Contact…") {
