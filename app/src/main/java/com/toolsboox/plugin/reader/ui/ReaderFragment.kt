@@ -856,18 +856,22 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         val title = bookTitle.ifBlank { currentBookFile?.nameWithoutExtension ?: "" }
         val author = bookAuthor.ifBlank { null }
         val cover = bookCover
+        // The card names where in the book it came from: the chapter under the title, the author
+        // beside it, the cover on the footer. The provenance label carries the same, so a book
+        // highlight reads the same on the card, in its rhizome, and on the Map.
+        val footer = listOfNotNull(title, currentChapter.ifBlank { null }).joinToString(" · ")
+        val label = listOfNotNull(title, currentChapter.ifBlank { null }, author).joinToString(" · ")
         lifecycleScope.launch {
             val bmp = withContext(Dispatchers.IO) {
+                // Height 0 so a long highlight isn't shorn off by the square format.
                 com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
-                    text, source = title, note = null,
-                    W = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.Format.SQUARE.w,
-                    H = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.Format.SQUARE.h,
+                    text, source = footer, note = null, W = 1080, H = 0,
                     author = author, cover = cover)
             }
             val src = currentBookFile?.let { "book://${it.absolutePath}" } ?: ""
             com.toolsboox.plugin.calendar.ot.PickingsPlacement.chooseAndPlace(
                 this@ReaderFragment, calendarDayService, documentsRoot(), bmp,
-                sourceLink = src, sourceLabel = bookTitle.ifBlank { currentBookFile?.nameWithoutExtension ?: "" })
+                sourceLink = src, sourceLabel = label, cardText = text)
         }
     }
 

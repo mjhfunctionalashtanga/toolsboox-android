@@ -770,13 +770,18 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
      *  share or place on a pickings board (the old path silently rendered a fixed square). */
     private fun articleGramToPickings(text: String) {
         val src = currentArticle?.url?.takeIf { it.startsWith("http", ignoreCase = true) } ?: ""
+        // Carry the feed as well as the article: the label names both, so the gram reads the same
+        // on the card, in its rhizome and on the Map, and a gram from The Guardian sits with the
+        // others from The Guardian.
+        val label = listOfNotNull(currentArticle?.title, currentArticle?.feedTitle?.takeIf { it.isNotBlank() })
+            .joinToString(" · ")
         com.toolsboox.plugin.calendar.ot.GramStudio.show(
             this, text.ifBlank { "Clipping" }, source = currentArticle?.feedTitle,
             onShare = { cards -> shareCardBitmaps(cards) },
             onPickings = { cards ->
                 com.toolsboox.plugin.calendar.ot.PickingsPlacement.chooseAndPlace(
                     this, calendarDayService, documentsRoot(), cards,
-                    sourceLink = src, sourceLabel = currentArticle?.title ?: "")
+                    sourceLink = src, sourceLabel = label, cardText = text)
             }
         )
     }

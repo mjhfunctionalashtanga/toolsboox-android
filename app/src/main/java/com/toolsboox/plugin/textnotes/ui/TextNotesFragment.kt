@@ -28,6 +28,9 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
     private val main = Handler(Looper.getMainLooper())
     private var date: LocalDate = LocalDate.now()
     private val saveRunnable = Runnable { persist() }
+    private val highlightRunnable = Runnable {
+        binding.textNotesEdit.text?.let { com.toolsboox.ot.MarkdownHighlight.apply(it) }
+    }
 
     private var notes: MutableList<TextNote> = mutableListOf()
     private var current: Int = 0
@@ -52,10 +55,50 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
         binding.textNotesTitle.addTextChangedListener(watcher)
         binding.textNotesEdit.addTextChangedListener(watcher)
 
+        // Live markdown, the way Markor does it: style the note in the editor as it's typed —
+        // headings grow, **bold** goes bold — while the marks stay visible and editable. A
+        // separate, faster beat than the save debounce, and it never touches the text so the
+        // cursor doesn't move. The 👁 toggle is still there for a clean, marks-hidden read.
+        binding.textNotesEdit.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) {
+                if (suppressWatch || s == null) return
+                main.removeCallbacks(highlightRunnable)
+                main.postDelayed(highlightRunnable, 120)
+            }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+
         binding.textNotesNew.setOnClickListener { newNote() }
         binding.textNotesList.setOnClickListener { showNotesList() }
+        binding.textNotesPreview.setOnClickListener { togglePreview() }
         binding.textNotesMenu.setOnClickListener {
             showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
+        }
+    }
+
+    private var previewing = false
+
+    /**
+     * Flip between writing and reading the note.
+     *
+     * Writing is the raw markdown in the editor; reading is the rendered version — headings,
+     * bold, lists, quotes — the way Markor shows a note once you stop typing. The eye toggles it,
+     * and turning preview on saves first so what you read is what you just wrote.
+     */
+    private fun togglePreview() {
+        previewing = !previewing
+        if (previewing) {
+            persist()
+            binding.textNotesRender.text = com.toolsboox.ot.MarkdownRender.render(
+                binding.textNotesEdit.text.toString())
+            binding.textNotesEdit.visibility = View.GONE
+            binding.textNotesPreviewScroll.visibility = View.VISIBLE
+            binding.textNotesPreview.text = "✎"
+        } else {
+            binding.textNotesPreviewScroll.visibility = View.GONE
+            binding.textNotesEdit.visibility = View.VISIBLE
+            binding.textNotesPreview.text = "👁"
         }
     }
 
@@ -87,6 +130,7 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
         binding.textNotesEdit.setText(n.body)
         binding.textNotesEdit.setSelection(n.body.length)
         suppressWatch = false
+        binding.textNotesEdit.text?.let { com.toolsboox.ot.MarkdownHighlight.apply(it) }
         binding.textNotesList.text = "≡ Notes (${notes.size})"
     }
 

@@ -61,6 +61,15 @@
             android:background="?attr/selectableItemBackground"/>
 
         <Button
+            android:id="@+id/text_notes_preview"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:text="👁"
+            android:textSize="18sp"
+            android:textColor="@android:color/black"
+            android:background="?attr/selectableItemBackgroundBorderless"/>
+
+        <Button
             android:id="@+id/text_notes_new"
             android:layout_width="44dp"
             android:layout_height="44dp"
@@ -104,4 +113,24 @@
         android:inputType="textMultiLine|textCapSentences|textAutoCorrect"
         android:hint="Write anything…"
         android:importantForAutofill="no"/>
+
+    <!-- Rendered markdown, shown in place of the editor when preview is on. -->
+    <ScrollView
+        android:id="@+id/text_notes_preview_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:visibility="gone"
+        android:scrollbars="none">
+
+        <TextView
+            android:id="@+id/text_notes_render"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="20dp"
+            android:textSize="18sp"
+            android:lineSpacingMultiplier="1.2"
+            android:textColor="@android:color/black"
+            android:textIsSelectable="true"/>
+    </ScrollView>
 </LinearLayout>
