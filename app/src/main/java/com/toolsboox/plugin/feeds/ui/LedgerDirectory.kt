@@ -94,8 +94,8 @@ fun ledgerDirectoryFolders(
             // then the three that need the internet — Fluent-backed — last.
             "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
             "📈  Grid Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "grid") },
-            "✏️  Sketch Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "sketch") },
-            "📝  Text Notes" to { nav.navigate(R.id.action_to_text_notes) },
+            "⌱  Sketch Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "sketch") },
+            "⌗  Text Notes" to { nav.navigate(R.id.action_to_text_notes) },
             "👤  Rolodex" to { nav.navigate(R.id.action_to_rolodex) },
             // Boards = one system, two sources (Local on-device tasks · Site FluentBoards),
             // framed like the RSS Local/Site split. Tasks & Events is the list view of Local.
