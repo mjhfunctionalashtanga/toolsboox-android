@@ -2214,10 +2214,11 @@ abstract class SurfaceFragment : ScreenFragment() {
             val rb = connectableBounds(b) ?: continue
             val ax = ra.centerX(); val ay = ra.centerY()
             val bx = rb.centerX(); val by = rb.centerY()
-            // Anchor to each box's EDGE, not its centre, so the line touches the side of the shape
-            // and stops — reading as a join between two things rather than a spear through both.
-            val (sx, sy) = edgePoint(ax, ay, ra.width() / 2f, ra.height() / 2f, bx, by)
-            val (tx, ty) = edgePoint(bx, by, rb.width() / 2f, rb.height() / 2f, ax, ay)
+            // Anchor to each shape's TRUE edge toward the other — the curve of a circle, the slope
+            // of a diamond, the side of a box — so the line meets the outline it points at rather
+            // than the corner of an invisible bounding box.
+            val (sx, sy) = connectorEndpoint(a, bx, by) ?: (ax to ay)
+            val (tx, ty) = connectorEndpoint(b, ax, ay) ?: (bx to by)
             canvas.drawLine(sx, sy, tx, ty, connectorPaint)
             val dot = connectorPaint.strokeWidth
             connectorPaint.style = Paint.Style.FILL
@@ -2239,6 +2240,43 @@ abstract class SurfaceFragment : ScreenFragment() {
         val ty = if (dy != 0f) hh / kotlin.math.abs(dy) else Float.MAX_VALUE
         val t = minOf(tx, ty)
         return (cx + dx * t) to (cy + dy * t)
+    }
+
+    /** Shape keys that anchor as an ellipse / a diamond; everything else uses the box border. */
+    private val ROUND_SHAPES = setOf("circle", "oval", "ring", "burst")
+    private val DIAMOND_SHAPES = setOf("diamond")
+
+    /**
+     * The point on element [id]'s true outline facing ([towardX],[towardY]).
+     *
+     * A shape knows what it is (its key rides in sourceLabel, only for the shapes we place), so a
+     * circle anchors on its ellipse — semi-axes [hw],[hh], which also handles a circle stretched
+     * wide — a diamond on its slopes, and every rectangular thing on its border. Text boxes and
+     * cards fall through to the box border.
+     */
+    private fun connectorEndpoint(id: UUID, towardX: Float, towardY: Float): Pair<Float, Float>? {
+        val img = imageElements.firstOrNull { it.elementId == id }
+        if (img != null) {
+            val cx = img.x + img.width / 2f; val cy = img.y + img.height / 2f
+            val hw = img.width / 2f; val hh = img.height / 2f
+            val dx = towardX - cx; val dy = towardY - cy
+            if (dx == 0f && dy == 0f) return cx to cy
+            val key = if (img.distortable) img.sourceLabel else ""
+            return when {
+                key in ROUND_SHAPES -> {
+                    val t = 1f / kotlin.math.sqrt((dx / hw) * (dx / hw) + (dy / hh) * (dy / hh))
+                    (cx + dx * t) to (cy + dy * t)
+                }
+                key in DIAMOND_SHAPES -> {
+                    val t = 1f / (kotlin.math.abs(dx) / hw + kotlin.math.abs(dy) / hh)
+                    (cx + dx * t) to (cy + dy * t)
+                }
+                else -> edgePoint(cx, cy, hw, hh, towardX, towardY)
+            }
+        }
+        val txt = textElements.firstOrNull { it.elementId == id } ?: return null
+        val r = textElementBounds(txt)
+        return edgePoint(r.centerX(), r.centerY(), r.width() / 2f, r.height() / 2f, towardX, towardY)
     }
 
     /** Element-id pairs to join with a connector line. The calendar page derives these from edges. */
