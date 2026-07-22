@@ -39,7 +39,7 @@ object SettingsBackup {
         webdav.putIfNotBlank("pass", ub.getString("ultrabridge_webdav_pass", ""))
         if (webdav.length() > 0) root.put("webdav", webdav)
 
-        val feeds = plain(context, "ledger_feeds_prefs")
+        val feeds = enc(context, "ledger_feeds_prefs")
         val mf = JSONObject()
         mf.putIfNotBlank("url", feeds.getString("miniflux_url", ""))
         mf.putIfNotBlank("token", feeds.getString("miniflux_token", ""))
@@ -77,7 +77,7 @@ object SettingsBackup {
         }
 
         root.optJSONObject("miniflux")?.let { m ->
-            val e = plain(context, "ledger_feeds_prefs").edit()
+            val e = enc(context, "ledger_feeds_prefs").edit()
             m.optString("url").takeIf { it.isNotBlank() }?.let { e.putString("miniflux_url", it) }
             m.optString("token").takeIf { it.isNotBlank() }?.let { e.putString("miniflux_token", it) }
             e.apply()

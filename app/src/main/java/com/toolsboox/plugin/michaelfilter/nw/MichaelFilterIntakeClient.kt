@@ -21,7 +21,8 @@ object MichaelFilterIntakeClient {
     private const val TAG = "MichaelFilterIntake"
 
     private const val INTAKE_URL = "https://mjh.yoga/wp-json/mjh-rss/v1/intake"
-    private const val INTAKE_KEY = "4c5aa7bba4284529d849e19a0e0d76d85b0501a9"
+    // Out of source: set INTAKE_KEY in local.properties (git-ignored). See app/build.gradle.
+    private val INTAKE_KEY = com.toolsboox.BuildConfig.INTAKE_KEY
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15_000, TimeUnit.MILLISECONDS)

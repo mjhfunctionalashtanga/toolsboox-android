@@ -734,7 +734,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     fun accessTokenResult(accessToken: String) {
         sharedPreferences.edit().putString("accessToken", accessToken).apply()
         sharedPreferences.edit().putLong("accessTokenLastUpdate", Date.from(Instant.now()).time).apply()
-        Timber.i("Store the new access token in shared preferences: $accessToken")
+        Timber.i("Stored a new access token (${accessToken.length} chars)")
     }
 
     /**
@@ -745,7 +745,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     fun refreshTokenResult(refreshToken: String) {
         sharedPreferences.edit().putString("refreshToken", refreshToken).apply()
         sharedPreferences.edit().putLong("refreshTokenLastUpdate", Date.from(Instant.now()).time).apply()
-        Timber.i("Store the new refresh token in shared preferences: $refreshToken")
+        Timber.i("Stored a new refresh token (${refreshToken.length} chars)")
     }
 
     /**

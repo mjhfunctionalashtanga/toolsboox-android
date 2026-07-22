@@ -26,6 +26,13 @@ android {
         multiDexEnabled = true
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
+
+        // The intake secret is read from local.properties (git-ignored) rather than hard-coded in
+        // source, so it isn't in the repo. Falls back to blank when unset.
+        def props = new Properties()
+        def lp = rootProject.file("local.properties")
+        if (lp.exists()) lp.withInputStream { props.load(it) }
+        buildConfigField "String", "INTAKE_KEY", "\"${props.getProperty('INTAKE_KEY', '')}\""
     }
 
     applicationVariants.configureEach {
