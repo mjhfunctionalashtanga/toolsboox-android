@@ -2767,8 +2767,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
                 for (idea in ideas) {
-                    val bmp = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
-                        idea.text, "— ${idea.from}", null, 1080, 1080)
+                    val bmp = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(idea.text, "— ${idea.from}", null, 1080, 0)
                     val baos = java.io.ByteArrayOutputStream()
                     bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
                     val base64 = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)

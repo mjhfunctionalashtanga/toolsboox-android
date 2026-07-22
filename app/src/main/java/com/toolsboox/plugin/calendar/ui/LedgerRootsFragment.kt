@@ -381,8 +381,8 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
                 val place = com.toolsboox.plugin.calendar.ot.PickingsPlacement
                 // The root as a fresh quote card — it gets the tape.
                 val card = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
-                    snip.text.take(400), terms.joinToString("  ✕  "),
-                    snip.own.take(120).ifBlank { null }, 1080, 1000)
+                    snip.text.take(600), terms.joinToString("  ✕  "),
+                    snip.own.take(160).ifBlank { null }, 1080, 0)
                 runCatching {
                     place.place(calendarDayService, root, card, page.date, page.key,
                         sourceLink = back, sourceLabel = terms.joinToString(" · "))

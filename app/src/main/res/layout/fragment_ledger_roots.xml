@@ -28,7 +28,7 @@
         <ImageView
             android:id="@+id/navigatorImageView"
             android:layout_width="0dp" android:layout_weight="1"
-            android:layout_height="52dp"
+            android:layout_height="56dp"
             android:contentDescription="@null"/>
     </LinearLayout>
 
@@ -44,7 +44,7 @@
         <TextView
             android:id="@+id/roots_title"
             android:text="@string/roots_title"
-            android:textSize="18sp"
+            android:textSize="24sp"
             android:textStyle="bold"
             android:textColor="#000000"
             android:fontFamily="@font/atkinson_hyperlegible"
