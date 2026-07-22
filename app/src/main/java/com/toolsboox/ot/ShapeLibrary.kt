@@ -27,23 +27,44 @@ object ShapeLibrary {
     data class Shape(val key: String, val label: String)
 
     val ALL = listOf(
+        // Boxes & rounds
         Shape("box", "▭  Box"),
         Shape("rounded", "▢  Rounded box"),
+        Shape("capsule", "▱  Capsule"),
         Shape("circle", "◯  Circle"),
         Shape("oval", "⬭  Oval"),
+        Shape("ring", "◎  Ring"),
+        // Angles
         Shape("triangle", "△  Triangle"),
         Shape("diamond", "◇  Diamond"),
-        Shape("star", "☆  Star"),
-        Shape("heart", "♡  Heart"),
-        Shape("arrow", "→  Arrow"),
-        Shape("arrow_bent", "↷  Curved arrow"),
+        Shape("pentagon", "⬠  Pentagon"),
+        Shape("hexagon", "⬡  Hexagon"),
+        Shape("parallelogram", "▰  Parallelogram"),
+        Shape("trapezoid", "⏢  Trapezoid"),
+        Shape("chevron", "❯  Chevron"),
+        // Diagram
+        Shape("cylinder", "⛁  Cylinder"),
+        Shape("document", "🗎  Document"),
+        Shape("speech", "💬  Speech bubble"),
+        Shape("cloud", "☁  Thought cloud"),
+        Shape("banner", "▤  Banner"),
+        // Lines & arrows
         Shape("line", "—  Line"),
+        Shape("dashed", "┄  Dashed line"),
+        Shape("dotted", "⋯  Dotted line"),
+        Shape("arrow", "→  Arrow"),
+        Shape("double_arrow", "↔  Double arrow"),
+        Shape("elbow", "⌐  Elbow connector"),
+        Shape("arrow_bent", "↷  Curved arrow"),
         Shape("brace", "}  Brace"),
         Shape("bracket", "]  Bracket"),
-        Shape("banner", "▤  Banner"),
-        Shape("cloud", "☁  Thought cloud"),
+        // Marks
+        Shape("star", "☆  Star"),
+        Shape("heart", "♡  Heart"),
+        Shape("plus", "✚  Plus"),
         Shape("check", "✓  Tick"),
         Shape("cross", "✕  Cross"),
+        Shape("bolt", "⚡  Lightning"),
         Shape("burst", "✳  Burst")
     )
 
@@ -137,6 +158,74 @@ object ShapeLibrary {
                         cy + (rr * Math.sin(a)).toFloat(), p)
                 }
             }
+            "capsule" -> c.drawRoundRect(RectF(pad, s * 0.30f, s - pad, s * 0.70f),
+                s * 0.20f, s * 0.20f, p)
+            "ring" -> {
+                c.drawCircle(s / 2f, s / 2f, (s / 2f) - pad, p)
+                c.drawCircle(s / 2f, s / 2f, (s / 2f - pad) * 0.5f, p)
+            }
+            "pentagon" -> c.drawPath(polygon(5, s / 2f, s / 2f, (s / 2f) - pad), p)
+            "hexagon" -> c.drawPath(polygon(6, s / 2f, s / 2f, (s / 2f) - pad), p)
+            "parallelogram" -> c.drawPath(closed(
+                s * 0.30f to s * 0.28f, s - pad to s * 0.28f,
+                s * 0.70f to s * 0.72f, pad to s * 0.72f), p)
+            "trapezoid" -> c.drawPath(closed(
+                s * 0.28f to s * 0.30f, s * 0.72f to s * 0.30f,
+                s - pad to s * 0.70f, pad to s * 0.70f), p)
+            "chevron" -> c.drawPath(closed(
+                pad to s * 0.28f, s * 0.55f to s * 0.28f, s - pad to s / 2f,
+                s * 0.55f to s * 0.72f, pad to s * 0.72f, s * 0.32f to s / 2f), p)
+            "cylinder" -> {
+                val top = s * 0.24f; val bot = s * 0.76f; val ry = s * 0.09f
+                c.drawOval(RectF(pad, top - ry, s - pad, top + ry), p)
+                c.drawLine(pad, top, pad, bot, p)
+                c.drawLine(s - pad, top, s - pad, bot, p)
+                // Front half of the bottom ellipse only.
+                c.drawArc(RectF(pad, bot - ry, s - pad, bot + ry), 0f, 180f, false, p)
+            }
+            "document" -> c.drawPath(Path().apply {
+                moveTo(pad, pad); lineTo(s - pad, pad); lineTo(s - pad, s * 0.72f)
+                // Wavy bottom edge — the "document" tell.
+                cubicTo(s * 0.75f, s * 0.60f, s * 0.60f, s * 0.84f, s / 2f, s * 0.72f)
+                cubicTo(s * 0.40f, s * 0.64f, s * 0.25f, s * 0.84f, pad, s * 0.72f)
+                close()
+            }, p)
+            "speech" -> {
+                c.drawRoundRect(RectF(pad, pad, s - pad, s * 0.66f), s * 0.10f, s * 0.10f, p)
+                c.drawPath(open(
+                    s * 0.30f to s * 0.66f, s * 0.30f to s * 0.86f, s * 0.50f to s * 0.66f), p)
+            }
+            "dashed" -> {
+                p.pathEffect = android.graphics.DashPathEffect(
+                    floatArrayOf(s * 0.06f, s * 0.045f), 0f)
+                c.drawLine(pad, s / 2f, s - pad, s / 2f, p)
+            }
+            "dotted" -> {
+                p.strokeCap = Paint.Cap.ROUND
+                p.pathEffect = android.graphics.DashPathEffect(
+                    floatArrayOf(0.1f, s * 0.05f), 0f)
+                c.drawLine(pad, s / 2f, s - pad, s / 2f, p)
+            }
+            "double_arrow" -> {
+                c.drawLine(pad + s * 0.10f, s / 2f, s - pad - s * 0.10f, s / 2f, p)
+                c.drawPath(open(
+                    pad + s * 0.10f to s / 2f - s * 0.12f, pad to s / 2f, pad + s * 0.10f to s / 2f + s * 0.12f), p)
+                c.drawPath(open(
+                    s - pad - s * 0.10f to s / 2f - s * 0.12f, s - pad to s / 2f, s - pad - s * 0.10f to s / 2f + s * 0.12f), p)
+            }
+            "elbow" -> {
+                c.drawPath(open(pad to pad, pad to s - pad, s - pad to s - pad), p)
+                c.drawPath(open(
+                    s - pad - s * 0.14f to s - pad - s * 0.12f, s - pad to s - pad,
+                    s - pad - s * 0.14f to s - pad + s * 0.12f), p)
+            }
+            "plus" -> {
+                c.drawLine(s / 2f, pad, s / 2f, s - pad, p)
+                c.drawLine(pad, s / 2f, s - pad, s / 2f, p)
+            }
+            "bolt" -> c.drawPath(closed(
+                s * 0.56f to pad, s * 0.30f to s * 0.54f, s * 0.48f to s * 0.54f,
+                s * 0.42f to s - pad, s * 0.70f to s * 0.42f, s * 0.52f to s * 0.42f), p)
             else -> c.drawRect(box, p)
         }
         return out
@@ -149,6 +238,17 @@ object ShapeLibrary {
 
     private fun open(vararg pts: Pair<Float, Float>): Path = Path().apply {
         pts.forEachIndexed { i, (x, y) -> if (i == 0) moveTo(x, y) else lineTo(x, y) }
+    }
+
+    /** A regular [n]-gon centred on ([cx], [cy]), point up. */
+    private fun polygon(n: Int, cx: Float, cy: Float, r: Float): Path = Path().apply {
+        for (i in 0 until n) {
+            val a = Math.toRadians((i * 360.0 / n - 90))
+            val x = cx + (r * Math.cos(a)).toFloat()
+            val y = cy + (r * Math.sin(a)).toFloat()
+            if (i == 0) moveTo(x, y) else lineTo(x, y)
+        }
+        close()
     }
 
     private fun star(cx: Float, cy: Float, outer: Float, inner: Float): Path = Path().apply {
