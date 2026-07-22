@@ -461,6 +461,16 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.communityUserInput.setText(bridgeCfg.user.ifBlank { boardsCfg.user })
         binding.communityPassInput.setText(bridgeCfg.pass.ifBlank { boardsCfg.pass })
         binding.communityBoardInput.setText(if (boardsCfg.boardId > 0) boardsCfg.boardId.toString() else "")
+        // Collapse the four connection fields behind an enable switch (like Ultrabridge / GCal),
+        // so a page full of credential boxes isn't the first thing you see. Start expanded only
+        // when creds already exist. Hiding a field never clears it — Save reads the inputs directly.
+        val communityHasCreds = bridgeCfg.site.isNotBlank() || boardsCfg.site.isNotBlank() ||
+            bridgeCfg.user.isNotBlank() || boardsCfg.user.isNotBlank() || boardsCfg.boardId > 0
+        binding.communityEnableSwitch.isChecked = communityHasCreds
+        updateCommunityFieldsVisibility(communityHasCreds)
+        binding.communityEnableSwitch.setOnCheckedChangeListener { _, isChecked ->
+            updateCommunityFieldsVisibility(isChecked)
+        }
         // Persist toggles the INSTANT they flip — not only on the Save button. Users expect a
         // toggle to stick; tapping Connect or backing out used to lose an un-Saved flip.
         binding.gcalEnableSwitch.setOnCheckedChangeListener { _, isChecked ->
@@ -718,6 +728,18 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         val visibility = if (enabled) View.VISIBLE else View.GONE
         binding.gcalIdLayout.visibility = visibility
         binding.gcalConnectButton.visibility = visibility
+    }
+
+    /**
+     * Show or hide the Community / Boards bridge fields (site, user, pass, board) based on the
+     * enable switch. Hiding via GONE keeps the text intact, so Save still persists what was typed.
+     */
+    private fun updateCommunityFieldsVisibility(enabled: Boolean) {
+        val visibility = if (enabled) View.VISIBLE else View.GONE
+        binding.communitySiteLayout.visibility = visibility
+        binding.communityUserLayout.visibility = visibility
+        binding.communityPassLayout.visibility = visibility
+        binding.communityBoardLayout.visibility = visibility
     }
 
 

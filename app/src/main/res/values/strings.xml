@@ -162,8 +162,11 @@
 
     <string name="calendar_settings_gcal_title">Google Calendar</string>
     <string name="calendar_settings_gcal_enable">Add events to Google Calendar</string>
+    <string name="calendar_settings_capture_label">Capture &amp; OCR</string>
     <string name="calendar_settings_extract_title">On-device extract</string>
     <string name="calendar_settings_extract_enable">Extract tasks &amp; events on this device</string>
+    <string name="calendar_settings_community_label">Community &amp; Boards (Fluent)</string>
+    <string name="calendar_settings_community_enable">Connect a community / boards site</string>
     <string name="calendar_settings_gcal_id_hint">Calendar (primary, or an ID)</string>
     <string name="calendar_settings_gcal_connect">Connect Google Calendar</string>
     <string name="calendar_settings_gcal_connected_toast">Google Calendar connected</string>

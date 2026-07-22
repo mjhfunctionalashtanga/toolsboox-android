@@ -70,15 +70,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content">
 
-            <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/auto_capture_switch"
-                    android:text="Auto-capture sections on leave (uses OCR credits)"
-
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
-                    android:layout_marginEnd="16dp"/>
-
+            <!-- The auto-capture switch used to float here, above the first section heading, with
+                 no group. It now lives under the "Capture & OCR" section further down. -->
             <TextView
                     style="@style/Settings.SectionHeading"
                     android:id="@+id/calendar_section_label"
@@ -505,16 +498,28 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginStart="16dp"/>
 
-            <!-- On-device extract (redundant with the server OCR) — off by default -->
+            <!-- Capture & OCR: server auto-capture (default on) + on-device extract (default off) -->
+            <TextView
+                    style="@style/Settings.SectionHeading"
+                    android:id="@+id/capture_section_label"
+                    android:text="@string/calendar_settings_capture_label"/>
+
+            <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/auto_capture_switch"
+                    android:text="Auto-capture sections on leave (uses OCR credits)"
+
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginEnd="16dp"/>
+
             <TextView
                     android:id="@+id/auto_extract_label"
                     android:text="@string/calendar_settings_extract_title"
-                    android:textSize="18sp"
-                    android:textStyle="bold"
 
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
+                    android:layout_marginTop="12dp"
                     android:layout_marginEnd="16dp"/>
 
             <androidx.appcompat.widget.SwitchCompat
@@ -523,19 +528,22 @@
 
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
+                    android:layout_marginTop="4dp"
                     android:layout_marginEnd="16dp"/>
 
             <!-- Community + Boards bridge (FluentCommunity / FluentBoards) — one home -->
             <TextView
+                    style="@style/Settings.SectionHeading"
                     android:id="@+id/community_section_label"
-                    android:text="Community &amp; Boards (Fluent)"
-                    android:textSize="18sp"
-                    android:textStyle="bold"
+                    android:text="@string/calendar_settings_community_label"/>
 
-                    android:layout_width="wrap_content"
+            <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/community_enable_switch"
+                    android:text="@string/calendar_settings_community_enable"
+
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
+                    android:layout_marginTop="8dp"
                     android:layout_marginEnd="16dp"/>
 
             <com.google.android.material.textfield.TextInputLayout
