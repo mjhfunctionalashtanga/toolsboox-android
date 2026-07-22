@@ -293,6 +293,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         return com.toolsboox.ot.CardTreatment.card(face)
     }
 
+    /** Grid Notes snaps dragged objects to its 50px grid; other pages don't snap. */
+    override fun snapStep(): Float = if (notePage == "grid") 50f else 0f
+
     /** This page's element address, for the connection graph. */
     private fun elementUri(elementId: java.util.UUID): String =
         com.toolsboox.ot.LedgerUri.element(currentDate.toString(), notePage ?: "default", elementId.toString())

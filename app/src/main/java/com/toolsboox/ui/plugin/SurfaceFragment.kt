@@ -2206,17 +2206,38 @@ abstract class SurfaceFragment : ScreenFragment() {
             val eb = byId[b] ?: continue
             val ax = ea.x + ea.width / 2f; val ay = ea.y + ea.height / 2f
             val bx = eb.x + eb.width / 2f; val by = eb.y + eb.height / 2f
-            canvas.drawLine(ax, ay, bx, by, connectorPaint)
+            // Anchor to each box's EDGE, not its centre, so the line touches the side of the shape
+            // and stops — reading as a join between two things rather than a spear through both.
+            val (sx, sy) = edgePoint(ax, ay, ea.width / 2f, ea.height / 2f, bx, by)
+            val (tx, ty) = edgePoint(bx, by, eb.width / 2f, eb.height / 2f, ax, ay)
+            canvas.drawLine(sx, sy, tx, ty, connectorPaint)
             val dot = connectorPaint.strokeWidth
             connectorPaint.style = Paint.Style.FILL
-            canvas.drawCircle(ax, ay, dot, connectorPaint)
-            canvas.drawCircle(bx, by, dot, connectorPaint)
+            canvas.drawCircle(sx, sy, dot, connectorPaint)
+            canvas.drawCircle(tx, ty, dot, connectorPaint)
             connectorPaint.style = Paint.Style.STROKE
         }
     }
 
+    /**
+     * Where a line from the box centred at ([cx],[cy]) with half-extents ([hw],[hh]) toward
+     * ([towardX],[towardY]) crosses the box's border. Axis-aligned; rotation is ignored, which is
+     * fine for the boxes and cards these join.
+     */
+    private fun edgePoint(cx: Float, cy: Float, hw: Float, hh: Float, towardX: Float, towardY: Float): Pair<Float, Float> {
+        val dx = towardX - cx; val dy = towardY - cy
+        if (dx == 0f && dy == 0f) return cx to cy
+        val tx = if (dx != 0f) hw / kotlin.math.abs(dx) else Float.MAX_VALUE
+        val ty = if (dy != 0f) hh / kotlin.math.abs(dy) else Float.MAX_VALUE
+        val t = minOf(tx, ty)
+        return (cx + dx * t) to (cy + dy * t)
+    }
+
     /** Element-id pairs to join with a connector line. The calendar page derives these from edges. */
     protected open fun pageConnectors(): List<Pair<UUID, UUID>> = emptyList()
+
+    /** Grid step to snap a dragged object to, or 0 for no snap. Grid Notes returns its grid size. */
+    protected open fun snapStep(): Float = 0f
 
     /** Repaint the page in place — after a connector is drawn, so the new line appears at once. */
     protected fun redrawSurface() = applyStrokes(strokes, true)
@@ -4729,6 +4750,13 @@ abstract class SurfaceFragment : ScreenFragment() {
                     // A tap on the Rot handle (no swing) nudges a discrete 15° instead.
                     if (imageDrag == ImageDrag.ROTATE && !imageRotateMoved && sel != null) {
                         sel.rotation = ((imageRotateOrigRotation + 15f) % 360f + 360f) % 360f
+                    }
+                    // Snap a moved object to the page's grid, when it has one — so shapes and cards
+                    // line up with the graph paper instead of by eye. No grid, no snap.
+                    val step = snapStep()
+                    if (step > 0f && sel != null && imageDrag == ImageDrag.MOVE) {
+                        sel.x = kotlin.math.round(sel.x / step) * step
+                        sel.y = kotlin.math.round(sel.y / step) * step
                     }
                     if (sel != null) sel.timestamp = System.currentTimeMillis()
                     imageDrag = ImageDrag.NONE
