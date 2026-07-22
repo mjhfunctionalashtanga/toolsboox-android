@@ -2197,19 +2197,27 @@ abstract class SurfaceFragment : ScreenFragment() {
             strokeWidth = 3f * resources.displayMetrics.density; strokeCap = Paint.Cap.ROUND
         }
     }
+    /** An element's bounds by id — image or text box — so a connector can join either kind. */
+    private fun connectableBounds(id: UUID): RectF? {
+        imageElements.firstOrNull { it.elementId == id }?.let {
+            return RectF(it.x, it.y, it.x + it.width, it.y + it.height)
+        }
+        textElements.firstOrNull { it.elementId == id }?.let { return textElementBounds(it) }
+        return null
+    }
+
     private fun renderConnectors(canvas: Canvas) {
         val pairs = pageConnectors()
         if (pairs.isEmpty()) return
-        val byId = imageElements.associateBy { it.elementId }
         for ((a, b) in pairs) {
-            val ea = byId[a] ?: continue
-            val eb = byId[b] ?: continue
-            val ax = ea.x + ea.width / 2f; val ay = ea.y + ea.height / 2f
-            val bx = eb.x + eb.width / 2f; val by = eb.y + eb.height / 2f
+            val ra = connectableBounds(a) ?: continue
+            val rb = connectableBounds(b) ?: continue
+            val ax = ra.centerX(); val ay = ra.centerY()
+            val bx = rb.centerX(); val by = rb.centerY()
             // Anchor to each box's EDGE, not its centre, so the line touches the side of the shape
             // and stops — reading as a join between two things rather than a spear through both.
-            val (sx, sy) = edgePoint(ax, ay, ea.width / 2f, ea.height / 2f, bx, by)
-            val (tx, ty) = edgePoint(bx, by, eb.width / 2f, eb.height / 2f, ax, ay)
+            val (sx, sy) = edgePoint(ax, ay, ra.width() / 2f, ra.height() / 2f, bx, by)
+            val (tx, ty) = edgePoint(bx, by, rb.width() / 2f, rb.height() / 2f, ax, ay)
             canvas.drawLine(sx, sy, tx, ty, connectorPaint)
             val dot = connectorPaint.strokeWidth
             connectorPaint.style = Paint.Style.FILL
@@ -2247,6 +2255,9 @@ abstract class SurfaceFragment : ScreenFragment() {
 
     /** "Go to feed" on a feed gram — the subclass opens Feed Ledger filtered to that feed. */
     protected open fun onImageGoToFeed(element: ImageElement) {}
+
+    /** "Connect to…" on a text box — join it to any other element on the page. */
+    protected open fun onTextConnect(element: TextElement) {}
 
     private fun exitImageMode() {
         imageMode = false
@@ -3065,6 +3076,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                     LedgerContextMenu.Item("Edit text") { showTextEditDialog(element) },
                     LedgerContextMenu.Item("Move — drag it") { enterTextBoxManipulation(element) },
                     LedgerContextMenu.Item("Synthesize…") { onSynthesizeText(element) },
+                    LedgerContextMenu.Item("🔗 Connect to…") { onTextConnect(element) },
                     LedgerContextMenu.Item("🕸 Its rhizome…") { onTextRhizome(element) },
                     LedgerContextMenu.Item(if (element.contactId.isNullOrBlank()) "Assign to contact…" else "Contact…") {
                         pickContact { id ->

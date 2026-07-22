@@ -309,8 +309,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     override fun pageConnectors(): List<Pair<java.util.UUID, java.util.UUID>> {
         if (!::calendarDay.isInitialized) return emptyList()
-        val ids = calendarDay.imageElements.filter { it.page == (notePage ?: "default") }
-            .map { it.elementId.toString() }.toSet()
+        val pk = notePage ?: "default"
+        // Both images and text boxes can be an end of a connector, so both count as ids here.
+        val ids = (calendarDay.imageElements.filter { it.page == pk }.map { it.elementId.toString() } +
+            calendarDay.textElements.filter { it.pageKey == pk }.map { it.elementId.toString() }).toSet()
         if (ids.isEmpty()) return emptyList()
         val here = "${com.toolsboox.ot.LedgerUri.page(currentDate.toString(), notePage ?: "default")}#"
         return com.toolsboox.plugin.calendar.ot.ConnectionStore.loadAll(requireContext())
@@ -325,22 +327,36 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /** Draw a link from this gram to another on the page — a real edge, shown as a line. */
-    override fun onImageConnect(element: ImageElement) {
-        val others = calendarDay.imageElements.filter {
-            it.page == (notePage ?: "default") && it.elementId != element.elementId && it.data.isNotBlank()
-        }
-        if (others.isEmpty()) { showMessage("Nothing else on this page to connect to yet.", binding.root); return }
-        val labels = others.mapIndexed { i, el ->
-            "🔗  " + el.sourceLabel.ifBlank { "Card ${i + 1}" }.take(50)
-        }.toTypedArray()
+    override fun onImageConnect(element: ImageElement) =
+        connectFrom(element.elementId, element.sourceLabel.ifBlank { "Card" })
+
+    override fun onTextConnect(element: com.toolsboox.da.TextElement) =
+        connectFrom(element.elementId, element.text.take(40).ifBlank { "Text" })
+
+    /**
+     * Draw a link from one element to another on the page — image OR text, either end. Anything
+     * placed here can point at anything else placed here; the line follows both, and the edge
+     * lands in the graph like any other connection.
+     */
+    private fun connectFrom(fromId: java.util.UUID, fromLabel: String) {
+        if (!::calendarDay.isInitialized) return
+        val pk = notePage ?: "default"
+        val targets: List<Triple<java.util.UUID, String, String>> =
+            calendarDay.imageElements
+                .filter { it.page == pk && it.elementId != fromId && it.data.isNotBlank() && !it.decorative }
+                .map { Triple(it.elementId, "🖼  " + it.sourceLabel.ifBlank { "Card" }.take(48), it.sourceLabel) } +
+            calendarDay.textElements
+                .filter { it.pageKey == pk && it.elementId != fromId && it.text.isNotBlank() }
+                .map { Triple(it.elementId, "✍  " + it.text.take(48), it.text.take(40)) }
+        if (targets.isEmpty()) { showMessage("Nothing else on this page to connect to yet.", binding.root); return }
         AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle("Connect to which?")
-            .setItems(labels) { _, which ->
-                val other = others[which]
+            .setItems(targets.map { it.second }.toTypedArray()) { _, which ->
+                val (toId, _, toLabel) = targets[which]
                 com.toolsboox.plugin.calendar.ot.ConnectionStore.connect(
-                    requireContext(), elementUri(element.elementId), elementUri(other.elementId),
+                    requireContext(), elementUri(fromId), elementUri(toId),
                     com.toolsboox.plugin.calendar.da.v2.Connection.ABOUT,
-                    fromLabel = element.sourceLabel, toLabel = other.sourceLabel)
+                    fromLabel = fromLabel, toLabel = toLabel)
                 redrawSurface()
                 showMessage("Linked.", binding.root)
             }
