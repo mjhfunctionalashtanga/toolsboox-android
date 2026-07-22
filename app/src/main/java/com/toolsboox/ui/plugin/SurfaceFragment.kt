@@ -2477,19 +2477,53 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     fun handleCanvasLongPress(cx: Float, cy: Float, pressX: Float, pressY: Float) {
         val image = imageElementAt(cx, cy)
+        val textBox = if (image == null) textElementAt(cx, cy) else null
+
+        // A connection is waiting for its other end: this press picks it. Touch the first object,
+        // touch the second, done — no picker. Pressing the same object or empty space cancels.
+        if (connectFromId != null) {
+            val toId = image?.elementId ?: textBox?.elementId
+            val toLabel = image?.sourceLabel?.ifBlank { "Card" }
+                ?: textBox?.text?.take(40)?.ifBlank { "Text" }
+            val from = connectFromId!!; val fromLabel = connectFromLabel
+            connectFromId = null; connectFromLabel = ""
+            if (toId != null && toId != from) {
+                onConnectComplete(from, toId, fromLabel, toLabel ?: "")
+            } else {
+                Toast.makeText(requireContext(), "Connect cancelled.", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+
         if (image != null) {
             // All images now get the long-press menu (move/resize, transforms, layer order);
             // grams also surface a jump-back. Move/resize is one tap in, as before.
             showImageMenu(image, cx, cy, pressX, pressY)
             return
         }
-        val textBox = textElementAt(cx, cy)
         if (textBox != null) {
             showTextBoxMenu(textBox, pressX, pressY)
             return
         }
         showCanvasCreationMenu(cx, cy, pressX, pressY)
     }
+
+    private var connectFromId: UUID? = null
+    private var connectFromLabel: String = ""
+
+    /**
+     * Begin a connection FROM one element: the next press on another object completes it.
+     *
+     * Touch one, touch the other — which reads far better than a list of everything on the page.
+     * The subclass records the edge in [onConnectComplete].
+     */
+    protected fun beginConnect(fromId: UUID, fromLabel: String) {
+        connectFromId = fromId; connectFromLabel = fromLabel
+        Toast.makeText(requireContext(), "Now press the object to connect to.", Toast.LENGTH_SHORT).show()
+    }
+
+    /** Two ends chosen — the subclass writes the edge and redraws. */
+    protected open fun onConnectComplete(fromId: UUID, toId: UUID, fromLabel: String, toLabel: String) {}
 
     /**
      * Long-press on a gram that carries a source: jump back to the origin (article / ledger page)
