@@ -2488,6 +2488,17 @@ abstract class SurfaceFragment : ScreenFragment() {
             },
             LedgerContextMenu.Item("Where used…") { onImageWhereUsed(element) },
             LedgerContextMenu.Item("🕸 Its rhizome…") { onImageRhizome(element) },
+            // A one-tap way off the page. Cleaning up a synthesis — tossing the pieces that
+            // wandered in with a root — used to mean entering move/resize just to reach the delete
+            // chip; here it is where the rest of the card's actions live.
+            LedgerContextMenu.Item("🗑 Delete") {
+                pushUndo()
+                imageElements.remove(element)
+                imageBitmapCache.remove(element.elementId)
+                if (selectedImage === element) selectedImage = null
+                onImageElementsChanged(imageElements)
+                applyStrokes(strokes, true)
+            },
             LedgerContextMenu.Item("Post to community…") { postGramToCommunity(element) },
             LedgerContextMenu.Item("Pin to Board…") { onImagePinToBoard(element) },
             LedgerContextMenu.Item("Save to Clippings") {

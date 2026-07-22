@@ -315,21 +315,73 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
      */
     private fun sendCrossingToSynth(snip: CorpusSnippet, terms: List<String>) {
         val day = snip.date.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        val back = com.toolsboox.ot.LedgerUri.page(day.toString())
         chooseSynthPage { page ->
-            val bmp = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
-                snip.text.take(400), terms.joinToString("  ✕  "), snip.own.take(120).ifBlank { null },
-                1080, 1000)
+            // Ask which of that day's pieces to bring, rather than dumping them and making you
+            // delete the strays. The root always comes; the grams, cards and pictures that shared
+            // the day are ticked by default but yours to untick — the boundary trim, applied at
+            // the moment you move the object rather than after.
             lifecycleScope.launch {
-                withContext(Dispatchers.IO) {
+                val pieces = withContext(Dispatchers.IO) {
                     runCatching {
-                        com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
-                            calendarDayService, documentsRoot(), bmp, page.date, page.key,
-                            sourceLink = com.toolsboox.ot.LedgerUri.page(day.toString()),
-                            sourceLabel = terms.joinToString(" · "))
+                        calendarDayService.load(documentsRoot(), day, null, java.util.Locale.getDefault())
+                            .imageElements.toList()
+                    }.getOrNull().orEmpty()
+                }
+                if (pieces.isEmpty()) { placeCrossing(snip, terms, page, back, emptyList()); return@launch }
+                val ctx = context ?: return@launch
+                val labels = pieces.mapIndexed { i, el ->
+                    "🖼  " + el.sourceLabel.ifBlank { el.mediaTitle.ifBlank { "Piece ${i + 1}" } }.take(60)
+                }.toTypedArray()
+                val checked = BooleanArray(pieces.size) { true }
+                androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                    .setTitle("Bring which pieces with it?")
+                    .setMultiChoiceItems(labels, checked) { _, which, on -> checked[which] = on }
+                    .setPositiveButton("Send") { _, _ ->
+                        placeCrossing(snip, terms, page, back, pieces.filterIndexed { i, _ -> checked[i] })
+                    }
+                    .setNeutralButton("Root only") { _, _ -> placeCrossing(snip, terms, page, back, emptyList()) }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+            }
+        }
+    }
+
+    /** Drop the root's quote card plus [pieces] onto [page], each with a link back to its day. */
+    private fun placeCrossing(
+        snip: CorpusSnippet, terms: List<String>,
+        page: com.toolsboox.plugin.calendar.ot.SynthPage, back: String,
+        pieces: List<com.toolsboox.da.ImageElement>
+    ) {
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                val root = documentsRoot()
+                val place = com.toolsboox.plugin.calendar.ot.PickingsPlacement
+                // The root as a fresh quote card — it gets the tape.
+                val card = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
+                    snip.text.take(400), terms.joinToString("  ✕  "),
+                    snip.own.take(120).ifBlank { null }, 1080, 1000)
+                runCatching {
+                    place.place(calendarDayService, root, card, page.date, page.key,
+                        sourceLink = back, sourceLabel = terms.joinToString(" · "))
+                }
+                // The chosen pieces, brought over AS THEY LOOK — they keep their own faces
+                // (treatment = false, or a taped card would be taped twice) and a link home.
+                for (el in pieces) {
+                    val bytes = runCatching { android.util.Base64.decode(el.data, android.util.Base64.DEFAULT) }.getOrNull()
+                    val bmp = bytes?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
+                    if (bmp != null) runCatching {
+                        place.place(calendarDayService, root, bmp, page.date, page.key,
+                            sourceLink = el.sourceLink.ifBlank { back },
+                            sourceLabel = el.sourceLabel.ifBlank { terms.joinToString(" · ") },
+                            treatment = false)
                     }
                 }
-                showMessage("Sent to ${page.name}.", binding.root)
             }
+            showMessage(
+                if (pieces.isEmpty()) "Sent to ${page.name}."
+                else "Sent to ${page.name} — the root and ${pieces.size} pieces.",
+                binding.root)
         }
     }
 
