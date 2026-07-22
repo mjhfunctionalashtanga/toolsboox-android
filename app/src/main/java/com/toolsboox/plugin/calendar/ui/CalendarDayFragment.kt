@@ -3255,9 +3255,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 longPressFired = false
                 longPressArmed = false
                 com.toolsboox.ot.LedgerContextMenu.dismissCurrent()   // clear any lingering menu
-                // Not while manipulating an element (finger drags move/resize there)
-                // and only for a single finger.
-                if (motionEvent.pointerCount == 1 && !isImageModeActive()) {
+                // Armed in move/resize mode too, now — a hold that stays put opens the full menu,
+                // while a drag past the slop cancels it and moves the element as before. Being in
+                // move/resize used to seal off the menu entirely, so the only actions you could
+                // reach were the on-canvas chips; a still finger reaches the rest again.
+                if (motionEvent.pointerCount == 1) {
                     longPressDownX = motionEvent.x
                     longPressDownY = motionEvent.y
                     longPressPending = true

@@ -2499,29 +2499,15 @@ abstract class SurfaceFragment : ScreenFragment() {
             val jumpLabel = "↩ Go to source" + (if (element.sourceLabel.isNotBlank()) " · ${element.sourceLabel}" else "")
             groups.add(listOf(LedgerContextMenu.Item(jumpLabel) { onImageSource(element) }))
         }
-        groups.add(listOf(LedgerContextMenu.Item("Move / resize") { enterImageManipulation(element) }))
-        // Creation, at the point pressed — the same doors "ADD HERE" offers on bare canvas.
+        // The everyday things, up top: move, size, connect, where it goes.
         groups.add(listOf(
-            LedgerContextMenu.Item("＋ Add media…") { showAddMediaMenu(cx, cy) },
-            LedgerContextMenu.Item("＋ Text box") { showTextInputDialog(cx, cy) }
+            LedgerContextMenu.Item("Move / resize") { enterImageManipulation(element) },
+            LedgerContextMenu.Item("⤢ Size · S / M / L") { showSizeMenu(element, pressX, pressY) },
+            LedgerContextMenu.Item("🖼 Shapes & cute cuts…") { showShapeMenu(element, pressX, pressY) }
         ))
         groups.add(listOf(
-            LedgerContextMenu.Item("✎ Edit in ink") { penEditImage(element) },
-            LedgerContextMenu.Item("Flip horizontal") { transformImageElement(element) { flipBitmap(it, true) } },
-            LedgerContextMenu.Item("Flip vertical") { transformImageElement(element) { flipBitmap(it, false) } },
-            LedgerContextMenu.Item("Invert") { transformImageElement(element) { invertBitmap(it) } },
-            LedgerContextMenu.Item("Line art (B&W)") { transformImageElement(element) { thresholdBitmap(it) } },
-            LedgerContextMenu.Item("Solid black") { transformImageElement(element) { solidBlackBitmap(it) } },
-            LedgerContextMenu.Item("🖼 Shapes & cute cuts…") { showShapeMenu(element, pressX, pressY) },
-            LedgerContextMenu.Item("⤢ Size · S") { setGramWidth(element, 380f) },
-            LedgerContextMenu.Item("⤢ Size · M") { setGramWidth(element, 590f) },
-            LedgerContextMenu.Item("⤢ Size · L") { setGramWidth(element, 900f) }
-        ))
-        groups.add(listOf(
-            LedgerContextMenu.Item("Bring to front") { bringImageToFront(element) },
-            LedgerContextMenu.Item("Send to back") { sendImageToBack(element) }
-        ))
-        groups.add(listOf(
+            LedgerContextMenu.Item("🔗 Connect to…") { onImageConnect(element) },
+            LedgerContextMenu.Item("🕸 Its rhizome…") { onImageRhizome(element) },
             LedgerContextMenu.Item(if (element.contactId.isNullOrBlank()) "Assign to contact…" else "Contact…") {
                 pickContact { id ->
                     element.contactId = id
@@ -2529,44 +2515,92 @@ abstract class SurfaceFragment : ScreenFragment() {
                     onImageElementsChanged(imageElements)
                     applyStrokes(strokes, true)
                 }
-            },
-            LedgerContextMenu.Item("Where used…") { onImageWhereUsed(element) },
-            LedgerContextMenu.Item("🔗 Connect to…") { onImageConnect(element) },
-            LedgerContextMenu.Item("🕸 Its rhizome…") { onImageRhizome(element) },
-            // A one-tap way off the page. Cleaning up a synthesis — tossing the pieces that
-            // wandered in with a root — used to mean entering move/resize just to reach the delete
-            // chip; here it is where the rest of the card's actions live.
-            LedgerContextMenu.Item("🗑 Delete") {
-                pushUndo()
-                imageElements.remove(element)
-                imageBitmapCache.remove(element.elementId)
-                if (selectedImage === element) selectedImage = null
-                onImageElementsChanged(imageElements)
-                applyStrokes(strokes, true)
-            },
-            LedgerContextMenu.Item("Post to community…") { postGramToCommunity(element) },
-            LedgerContextMenu.Item("Pin to Board…") { onImagePinToBoard(element) },
-            LedgerContextMenu.Item("Save to Clippings") {
-                com.toolsboox.plugin.calendar.ot.ClippingsStore.add(
-                    requireContext(), element.data, label = element.sourceLabel,
-                    gramId = element.gramId ?: "", sourceLink = element.sourceLink, sourceLabel = element.sourceLabel)
-                Toast.makeText(requireContext(), "Saved to Clippings", Toast.LENGTH_SHORT).show()
-            },
-            LedgerContextMenu.Item("Photo → Clipping") {
-                val bmp = bitmapForElement(element)
-                if (bmp != null) {
-                    val baos = ByteArrayOutputStream()
-                    thresholdBitmap(bmp).compress(Bitmap.CompressFormat.PNG, 100, baos)
-                    // The line-art keeps the ORIGINAL's lineage — it's a variant of the same gram.
-                    com.toolsboox.plugin.calendar.ot.ClippingsStore.add(
-                        requireContext(), Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP),
-                        label = element.sourceLabel,
-                        gramId = element.gramId ?: "", sourceLink = element.sourceLink, sourceLabel = element.sourceLabel)
-                    Toast.makeText(requireContext(), "Line art saved to Clippings", Toast.LENGTH_SHORT).show()
-                }
             }
         ))
+        // The deep drawers, folded away so the menu is short: adjust the picture, send it
+        // somewhere, add something new here. Each opens its own small menu.
+        groups.add(listOf(
+            LedgerContextMenu.Item("🎨 Adjust…") { showImageAdjustMenu(element, pressX, pressY) },
+            LedgerContextMenu.Item("↥ Send / save…") { showImageSendMenu(element, pressX, pressY) },
+            LedgerContextMenu.Item("＋ Add here…") { showImageAddMenu(cx, cy, pressX, pressY) }
+        ))
+        groups.add(listOf(
+            LedgerContextMenu.Item("🗑 Delete") { deleteImageElement(element) }
+        ))
         showLedgerMenu(pressX, pressY, "IMAGE", groups)
+    }
+
+    /** Delete an image element off the page, undoably. */
+    private fun deleteImageElement(element: ImageElement) {
+        pushUndo()
+        imageElements.remove(element)
+        imageBitmapCache.remove(element.elementId)
+        if (selectedImage === element) selectedImage = null
+        onImageElementsChanged(imageElements)
+        applyStrokes(strokes, true)
+    }
+
+    private fun showSizeMenu(element: ImageElement, pressX: Float, pressY: Float) {
+        showLedgerMenu(pressX, pressY, "SIZE", listOf(listOf(
+            LedgerContextMenu.Item("⤢ Small") { setGramWidth(element, 380f) },
+            LedgerContextMenu.Item("⤢ Medium") { setGramWidth(element, 590f) },
+            LedgerContextMenu.Item("⤢ Large") { setGramWidth(element, 900f) }
+        )))
+    }
+
+    /** Picture adjustments — the transforms and layer order, off the main menu. */
+    private fun showImageAdjustMenu(element: ImageElement, pressX: Float, pressY: Float) {
+        showLedgerMenu(pressX, pressY, "ADJUST", listOf(
+            listOf(
+                LedgerContextMenu.Item("✎ Edit in ink") { penEditImage(element) },
+                LedgerContextMenu.Item("Flip horizontal") { transformImageElement(element) { flipBitmap(it, true) } },
+                LedgerContextMenu.Item("Flip vertical") { transformImageElement(element) { flipBitmap(it, false) } },
+                LedgerContextMenu.Item("Invert") { transformImageElement(element) { invertBitmap(it) } },
+                LedgerContextMenu.Item("Line art (B&W)") { transformImageElement(element) { thresholdBitmap(it) } },
+                LedgerContextMenu.Item("Solid black") { transformImageElement(element) { solidBlackBitmap(it) } }
+            ),
+            listOf(
+                LedgerContextMenu.Item("Bring to front") { bringImageToFront(element) },
+                LedgerContextMenu.Item("Send to back") { sendImageToBack(element) }
+            )
+        ))
+    }
+
+    /** Where a gram can go — community, boards, the clippings library. */
+    private fun showImageSendMenu(element: ImageElement, pressX: Float, pressY: Float) {
+        val send = mutableListOf<LedgerContextMenu.Item>()
+        if (element.sourceLink.isNotBlank())
+            send.add(LedgerContextMenu.Item("↩ Go to source" +
+                (if (element.sourceLabel.isNotBlank()) " · ${element.sourceLabel}" else "")) { onImageSource(element) })
+        send.add(LedgerContextMenu.Item("Where used…") { onImageWhereUsed(element) })
+        send.add(LedgerContextMenu.Item("Post to community…") { postGramToCommunity(element) })
+        send.add(LedgerContextMenu.Item("Pin to Board…") { onImagePinToBoard(element) })
+        send.add(LedgerContextMenu.Item("Save to Clippings") {
+            com.toolsboox.plugin.calendar.ot.ClippingsStore.add(
+                requireContext(), element.data, label = element.sourceLabel,
+                gramId = element.gramId ?: "", sourceLink = element.sourceLink, sourceLabel = element.sourceLabel)
+            Toast.makeText(requireContext(), "Saved to Clippings", Toast.LENGTH_SHORT).show()
+        })
+        send.add(LedgerContextMenu.Item("Photo → Clipping") {
+            val bmp = bitmapForElement(element)
+            if (bmp != null) {
+                val baos = ByteArrayOutputStream()
+                thresholdBitmap(bmp).compress(Bitmap.CompressFormat.PNG, 100, baos)
+                com.toolsboox.plugin.calendar.ot.ClippingsStore.add(
+                    requireContext(), Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP),
+                    label = element.sourceLabel,
+                    gramId = element.gramId ?: "", sourceLink = element.sourceLink, sourceLabel = element.sourceLabel)
+                Toast.makeText(requireContext(), "Line art saved to Clippings", Toast.LENGTH_SHORT).show()
+            }
+        })
+        showLedgerMenu(pressX, pressY, "SEND / SAVE", listOf(send))
+    }
+
+    private fun showImageAddMenu(cx: Float, cy: Float, pressX: Float, pressY: Float) {
+        showLedgerMenu(pressX, pressY, "ADD HERE", listOf(listOf(
+            LedgerContextMenu.Item("＋ Add media…") { showAddMediaMenu(cx, cy) },
+            LedgerContextMenu.Item("＋ Text box") { showTextInputDialog(cx, cy) }
+        )))
     }
 
     /**
