@@ -2802,7 +2802,7 @@ abstract class SurfaceFragment : ScreenFragment() {
      *
      * Shapes lived only behind a long-press on BARE canvas, so on a full synthesis page — where
      * every press lands on something — they were unreachable. This makes them reachable from the
-     * tools, the way "Add text" and "Add image" already are.
+     * tools wrench as well (text and image already ride hold-to-add on any page).
      */
     fun openShapesPicker() = showShapesPicker(CANVAS_WIDTH / 2f, CANVAS_HEIGHT / 2f)
 

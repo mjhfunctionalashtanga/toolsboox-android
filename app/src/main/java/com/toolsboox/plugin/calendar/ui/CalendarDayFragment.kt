@@ -1653,8 +1653,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val onSynth = com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage)
         val onWrite = notePage == "write"
         val tools = buildList {
-            add(GoItem("🖊️", "Add text") { binding.toolbarDrawing.toolbarText.performClick() })
-            add(GoItem("🖼️", "Add image") { binding.toolbarDrawing.toolbarImage.performClick() })
+            // "Add text" / "Add image" left the wrench: hold-to-add (long-press on the page, bare
+            // canvas or over an image) already offers "Text box" and "Add media…" everywhere, so
+            // these were duplicates. Matches the iPad, where they were removed for the same reason.
             add(GoItem("🔷", "Simple shapes…") { openShapesPicker() })
             if (onSynth) add(GoItem("🃏", "Card…") { showCardMenu() })
             add(GoItem("❝", "Pickings…") { managePickings() })
