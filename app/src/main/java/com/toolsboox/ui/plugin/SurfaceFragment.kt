@@ -2197,6 +2197,22 @@ abstract class SurfaceFragment : ScreenFragment() {
             strokeWidth = 3f * resources.displayMetrics.density; strokeCap = Paint.Cap.ROUND
         }
     }
+    /**
+     * The text a shape encircles: the text boxes whose centre falls inside its bounds, joined.
+     *
+     * This is what turns a shape into a region — a capsule drawn around a line of notes takes
+     * that line as its meaning, so when the shape is connected or synthesized, the words it
+     * gathered are what travel, not the fact that it's a capsule.
+     */
+    protected fun enclosedText(element: ImageElement): String {
+        val r = RectF(element.x, element.y, element.x + element.width, element.y + element.height)
+        return textElements
+            .filter { it.text.isNotBlank() }
+            .filter { val b = textElementBounds(it); r.contains(b.centerX(), b.centerY()) }
+            .joinToString(" ") { it.text.trim() }
+            .trim()
+    }
+
     /** An element's bounds by id — image or text box — so a connector can join either kind. */
     private fun connectableBounds(id: UUID): RectF? {
         imageElements.firstOrNull { it.elementId == id }?.let {
@@ -2521,8 +2537,11 @@ abstract class SurfaceFragment : ScreenFragment() {
         // touch the second, done — no picker. Pressing the same object or empty space cancels.
         if (connectFromId != null) {
             val toId = image?.elementId ?: textBox?.elementId
-            val toLabel = image?.sourceLabel?.ifBlank { "Card" }
-                ?: textBox?.text?.take(40)?.ifBlank { "Text" }
+            // A shape's label is the text it circled, when it circled any — so the edge carries
+            // the words, not "capsule".
+            val toLabel = image?.let {
+                (if (it.distortable) enclosedText(it).ifBlank { it.sourceLabel } else it.sourceLabel).ifBlank { "Card" }
+            } ?: textBox?.text?.take(40)?.ifBlank { "Text" }
             val from = connectFromId!!; val fromLabel = connectFromLabel
             connectFromId = null; connectFromLabel = ""
             if (toId != null && toId != from) {

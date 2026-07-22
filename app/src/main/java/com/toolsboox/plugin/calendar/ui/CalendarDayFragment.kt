@@ -328,7 +328,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     /** Draw a link from this gram to another on the page — a real edge, shown as a line. */
     override fun onImageConnect(element: ImageElement) =
-        beginConnect(element.elementId, element.sourceLabel.ifBlank { "Card" })
+        // A shape connects AS the text it circled — the words become the edge, not the shape's name.
+        beginConnect(element.elementId,
+            (if (element.distortable) enclosedText(element).ifBlank { element.sourceLabel } else element.sourceLabel)
+                .ifBlank { "Card" })
 
     override fun onTextConnect(element: com.toolsboox.da.TextElement) =
         beginConnect(element.elementId, element.text.take(40).ifBlank { "Text" })
