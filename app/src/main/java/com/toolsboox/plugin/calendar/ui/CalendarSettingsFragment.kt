@@ -265,6 +265,12 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding = FragmentCalendarSettingsBinding.bind(view)
 
         toolbar.toolbarPager.visibility = View.GONE
+
+        // Multi-site foundation. Fold any existing single-site bridge creds into one site (so nothing
+        // breaks on first run after the update), then seed the owner's three sites once. Both are
+        // idempotent — safe to call every time settings opens.
+        com.toolsboox.plugin.calendar.nw.SiteStore.seedIfNeeded(requireContext())
+        com.toolsboox.plugin.calendar.nw.SiteStore.seedKnownSites(requireContext())
     }
 
     /**
@@ -470,6 +476,23 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         updateCommunityFieldsVisibility(communityHasCreds)
         binding.communityEnableSwitch.setOnCheckedChangeListener { _, isChecked ->
             updateCommunityFieldsVisibility(isChecked)
+        }
+
+        // Manage sites: the multi-site surface. Activating a site write-throughs its creds into the
+        // same bridge keys these inline fields edit, so on return we re-read the active site's creds
+        // into the boxes to keep the two views in step.
+        binding.buttonManageSites.setOnClickListener {
+            SitesSettingsDialog.show(requireContext()) {
+                val bCfg = com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(requireContext())
+                val brCfg = com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(requireContext())
+                binding.communitySiteInput.setText(bCfg.site.ifBlank { brCfg.site })
+                binding.communityUserInput.setText(bCfg.user.ifBlank { brCfg.user })
+                binding.communityPassInput.setText(bCfg.pass.ifBlank { brCfg.pass })
+                binding.communityBoardInput.setText(if (brCfg.boardId > 0) brCfg.boardId.toString() else "")
+                val has = brCfg.site.isNotBlank() || bCfg.site.isNotBlank()
+                binding.communityEnableSwitch.isChecked = has
+                updateCommunityFieldsVisibility(has)
+            }
         }
         // Persist toggles the INSTANT they flip — not only on the Save button. Users expect a
         // toggle to stick; tapping Connect or backing out used to lose an un-Saved flip.

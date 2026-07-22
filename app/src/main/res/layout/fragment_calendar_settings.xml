@@ -537,6 +537,16 @@
                     android:id="@+id/community_section_label"
                     android:text="@string/calendar_settings_community_label"/>
 
+            <!-- Multi-site: manage every WordPress site and pick the active one. The active site's
+                 creds write through into the single-cred fields below, which stay as a quick edit. -->
+            <Button
+                    android:id="@+id/button_manage_sites"
+                    android:text="@string/calendar_settings_button_manage_sites"
+
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"/>
+
             <androidx.appcompat.widget.SwitchCompat
                     android:id="@+id/community_enable_switch"
                     android:text="@string/calendar_settings_community_enable"
