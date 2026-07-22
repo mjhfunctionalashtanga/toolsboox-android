@@ -251,18 +251,31 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             .setItems(
                 arrayOf(
                     getString(R.string.quick_note_notes),
+                    getString(R.string.quick_note_grid),
+                    getString(R.string.quick_note_sketch),
                     getString(R.string.quick_note_media),
                     getString(R.string.quick_note_text_notes)
                 )
             ) { _, which ->
                 when (which) {
                     0 -> openLastNotePage()
-                    1 -> showQuickMediaSelector()
+                    1 -> navigateToDayNote("grid")
+                    2 -> navigateToDayNote("sketch")
+                    3 -> showQuickMediaSelector()
                     else -> binding.fragmentContent.findNavController().navigate(R.id.action_to_text_notes)
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    /** Jump to today's page for a given note-page key (grid/sketch), from the pen-button menu. */
+    private fun navigateToDayNote(notePage: String) {
+        val d = java.time.LocalDate.now()
+        val bundle = androidx.core.os.bundleOf(
+            "year" to d.year.toString(), "month" to d.monthValue.toString(),
+            "day" to d.dayOfMonth.toString(), "notePage" to notePage)
+        binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle)
     }
 
     /** Photo and voice are the same gesture — getting a thing down when there isn't time to write. */

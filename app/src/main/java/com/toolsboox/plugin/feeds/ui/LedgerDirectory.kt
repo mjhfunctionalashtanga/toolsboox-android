@@ -84,7 +84,7 @@ fun ledgerDirectoryFolders(
             "🔖  Intake" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
             "❝  Pickings" to { showPickingsPicker(fragment) },
             "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") },
-            "🎯  Self Executive" to { CalendarNavigator.toDayNote(fragment, today, "selfexec") }
+            "🐘  Self Executive" to { CalendarNavigator.toDayNote(fragment, today, "selfexec") }
         )),
         // Desk Ledger — the working surfaces: notes, tasks, people, boards, correspondence.
         ScreenFragment.Folder("🗒", "Desk", listOf(

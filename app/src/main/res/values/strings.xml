@@ -453,7 +453,9 @@
     <string name="quick_note_selector_title">Go to…</string>
     <string name="quick_note_notes">✎  Notes — where you left off</string>
     <string name="quick_note_media">📷  Media — catch something</string>
-    <string name="quick_note_text_notes">⌨  Text Notes</string>
+    <string name="quick_note_text_notes">⌗  Text Notes</string>
+    <string name="quick_note_grid">📈  Grid Notes</string>
+    <string name="quick_note_sketch">⌱  Sketch Notes</string>
     <string name="quick_note_photo">📷  Capture a photo</string>
     <string name="quick_note_voice">🎤  Record a voice gram</string>
     <string name="roots_title">🌿  Roots</string>
