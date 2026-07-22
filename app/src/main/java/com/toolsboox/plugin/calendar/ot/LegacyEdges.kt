@@ -31,6 +31,8 @@ object LegacyEdges {
      */
     fun adopt(context: Context, element: com.toolsboox.da.ImageElement, date: LocalDate): String {
         val me = LedgerUri.element(date.toString(), element.page, element.elementId.toString())
+        // Decoration carries nothing into the graph.
+        if (element.decorative) return me
         element.sourceLink.takeIf { it.isNotBlank() }?.let {
             ConnectionStore.connect(context, me, it, Connection.SOURCE, element.sourceLabel)
         }

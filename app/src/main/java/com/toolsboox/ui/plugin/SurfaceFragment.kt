@@ -2513,9 +2513,12 @@ abstract class SurfaceFragment : ScreenFragment() {
         // the new text, so an OCR slip or an opening line you don't want is fixable in place.
         if (element.cardText.isNotBlank())
             actions.add(LedgerContextMenu.Item("✎ Edit words…") { editImageWords(element) })
+        // Decoration doesn't join the graph, so it isn't offered the graph's verbs.
+        if (!element.decorative) {
+            actions.add(LedgerContextMenu.Item("🔗 Connect to…") { onImageConnect(element) })
+            actions.add(LedgerContextMenu.Item("🕸 Its rhizome…") { onImageRhizome(element) })
+        }
         groups.add(actions + listOf(
-            LedgerContextMenu.Item("🔗 Connect to…") { onImageConnect(element) },
-            LedgerContextMenu.Item("🕸 Its rhizome…") { onImageRhizome(element) },
             LedgerContextMenu.Item(if (element.contactId.isNullOrBlank()) "Assign to contact…" else "Contact…") {
                 pickContact { id ->
                     element.contactId = id
@@ -3011,11 +3014,12 @@ abstract class SurfaceFragment : ScreenFragment() {
         val h = w * bmp.height / bmp.width
         val pxp = (cx - w / 2f).coerceIn(0f, (CANVAS_WIDTH - w).coerceAtLeast(0f))
         val pyp = (cy - h / 2f).coerceIn(0f, (CANVAS_HEIGHT - h).coerceAtLeast(0f))
+        // Placed clip-art is decoration: no source, no label, no provenance — it snaps onto the
+        // page for looks and never shows up in a rhizome or on the Map. The library keeps the
+        // clipping's lineage; a copy stamped onto a page does not inherit it.
         val element = ImageElement(
             x = pxp, y = pyp, width = w, height = h, data = base64,
-            gramId = clip.gramId.ifBlank { null },
-            sourceLink = clip.sourceLink,
-            sourceLabel = clip.sourceLabel.ifBlank { clip.label }
+            decorative = true
         )
         pushUndo()
         imageElements.add(element)

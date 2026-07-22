@@ -74,5 +74,9 @@ data class ImageElement(
     // The feed a gram was clipped from — the publication, not the article (which is sourceLink).
     // Lets a feed gram offer "Go to feed", opening Feed Ledger filtered to that feed, so a clipping
     // sits one tap from the others from the same place. New field with a default.
-    var sourceFeed: String = ""
+    var sourceFeed: String = "",
+    // Decoration, not content: a clip-art sticker snapped onto the page for looks. It carries no
+    // provenance and never joins the rhizome/Map — an edge to a decorative flourish is noise. New
+    // field with a default. (Shapes stay non-decorative: they're diagram parts you connect.)
+    var decorative: Boolean = false
 )
