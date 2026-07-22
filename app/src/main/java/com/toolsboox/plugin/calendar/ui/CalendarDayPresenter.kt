@@ -83,7 +83,9 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                     val calendarDay = calendarDayService.load(rootPath, currentDate, defaultStartHour, locale)
                     val calendarPattern = calendarPatternService.load(rootPath, currentDate, locale)
                     var calendarEvents = calendarEventsService.loadEvents(fragment, currentDate)
-                    calendarDay.startHour = calendarDay.startHour ?: defaultStartHour
+                    // The setting is authoritative when it names an hour; see CalendarDayService.
+                    calendarDay.startHour =
+                        if (defaultStartHour >= 0) defaultStartHour else calendarDay.startHour ?: defaultStartHour
 
                     if (currentDate.isEqual(LocalDate.now())) {
                         val yesterday = currentDate.minusDays(1)

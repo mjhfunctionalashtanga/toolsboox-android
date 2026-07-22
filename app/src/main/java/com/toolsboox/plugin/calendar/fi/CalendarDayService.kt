@@ -85,7 +85,13 @@ class CalendarDayService @Inject constructor() {
         val day = currentDate.format(DateTimeFormatter.ofPattern("dd"))
 
         val loadedCalendarDay = load(rootPath, "$year/$month/", "day-$year-$month-$day") ?: calendarDay
-        loadedCalendarDay.startHour = loadedCalendarDay.startHour ?: defaultStartHour
+        // A concrete start-hour SETTING wins over whatever the day cached. It used to be the other
+        // way — the day's saved value took precedence — so once a day had been opened at the old
+        // 5am default, changing the setting to 7am never took on that day. When the caller passes
+        // no setting (null), or "no fixed start" (< 0), the day keeps its own value.
+        loadedCalendarDay.startHour =
+            if (defaultStartHour != null && defaultStartHour >= 0) defaultStartHour
+            else loadedCalendarDay.startHour ?: defaultStartHour
 
         return loadedCalendarDay
     }
