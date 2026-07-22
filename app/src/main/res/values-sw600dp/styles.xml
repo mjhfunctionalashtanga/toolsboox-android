@@ -1,9 +1,18 @@
 <resources>
     <!--
-        A dialog on a big e-ink panel should still be the width of something you read, not the
-        width of the desk. 520dp is about a paragraph; the same figure the rhizome card uses.
+        Dialog width on a big e-ink panel, per text-size tier. The old single 520dp was too wide
+        for most people and ignored the setting entirely. These are narrower and they move with
+        the dial, so "Small" is a compact selector and "Large" is still readable at arm's length.
     -->
-    <style name="LedgerAlertDialog" parent="Theme.AppCompat.Light.Dialog.Alert">
+    <style name="LedgerAlertDialog.Small" parent="Theme.AppCompat.Light.Dialog.Alert">
+        <item name="windowFixedWidthMajor">340dp</item>
+        <item name="windowFixedWidthMinor">340dp</item>
+    </style>
+    <style name="LedgerAlertDialog.Medium" parent="Theme.AppCompat.Light.Dialog.Alert">
+        <item name="windowFixedWidthMajor">420dp</item>
+        <item name="windowFixedWidthMinor">420dp</item>
+    </style>
+    <style name="LedgerAlertDialog.Large" parent="Theme.AppCompat.Light.Dialog.Alert">
         <item name="windowFixedWidthMajor">520dp</item>
         <item name="windowFixedWidthMinor">520dp</item>
     </style>

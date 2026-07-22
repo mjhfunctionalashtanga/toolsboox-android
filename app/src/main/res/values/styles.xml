@@ -22,11 +22,23 @@
         <item name="android:layout_height">wrap_content</item>
     </style>
 
-    <style name="LedgerAlertDialog" parent="Theme.AppCompat.Light.Dialog.Alert"/>
+    <style name="LedgerAlertDialog.Small" parent="Theme.AppCompat.Light.Dialog.Alert"/>
+    <style name="LedgerAlertDialog.Medium" parent="Theme.AppCompat.Light.Dialog.Alert"/>
+    <style name="LedgerAlertDialog.Large" parent="Theme.AppCompat.Light.Dialog.Alert"/>
 
-    <style name="LedgerModalOverlay">
-        <item name="alertDialogTheme">@style/LedgerAlertDialog</item>
-        <item name="android:alertDialogTheme">@style/LedgerAlertDialog</item>
+    <!-- One overlay per text-size tier: ModalScale picks the matching one, so the BOX narrows or
+         widens with the setting instead of sitting at one fixed width nobody chose. -->
+    <style name="LedgerModalOverlay.Small" parent="">
+        <item name="alertDialogTheme">@style/LedgerAlertDialog.Small</item>
+        <item name="android:alertDialogTheme">@style/LedgerAlertDialog.Small</item>
+    </style>
+    <style name="LedgerModalOverlay.Medium" parent="">
+        <item name="alertDialogTheme">@style/LedgerAlertDialog.Medium</item>
+        <item name="android:alertDialogTheme">@style/LedgerAlertDialog.Medium</item>
+    </style>
+    <style name="LedgerModalOverlay.Large" parent="">
+        <item name="alertDialogTheme">@style/LedgerAlertDialog.Large</item>
+        <item name="android:alertDialogTheme">@style/LedgerAlertDialog.Large</item>
     </style>
 
     <style name="App.Theme" parent="Theme.AppCompat.Light.NoActionBar">

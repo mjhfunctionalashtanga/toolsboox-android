@@ -1502,6 +1502,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val tools = buildList {
             add(GoItem("🖊️", "Add text") { binding.toolbarDrawing.toolbarText.performClick() })
             add(GoItem("🖼️", "Add image") { binding.toolbarDrawing.toolbarImage.performClick() })
+            add(GoItem("🔷", "Simple shapes…") { openShapesPicker() })
             if (onSynth) add(GoItem("🃏", "Card…") { showCardMenu() })
             add(GoItem("❝", "Pickings…") { managePickings() })
             // Redundant with the VPS server OCR — off by default, re-enable in Settings.

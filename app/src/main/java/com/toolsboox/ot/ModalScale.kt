@@ -33,8 +33,16 @@ object ModalScale {
         // bigger type, different metrics, nothing to do with the accessibility setting.
         //
         // A non-zero id takes the honest path instead: copy the base context's theme, then apply
-        // just this overlay on top of it.
-        val wrapper = ContextThemeWrapper(context, com.toolsboox.R.style.LedgerModalOverlay)
+        // just this overlay on top of it. The overlay is per-tier, so it also sets the dialog's
+        // WIDTH on big panels — Small is a compact selector, Large reads at arm's length.
+        val tier = context.getSharedPreferences("ledger_a11y", 0)
+            .getString("modal_text_size", "medium")
+        val overlay = when (tier) {
+            "small" -> com.toolsboox.R.style.LedgerModalOverlay_Small
+            "large" -> com.toolsboox.R.style.LedgerModalOverlay_Large
+            else -> com.toolsboox.R.style.LedgerModalOverlay_Medium
+        }
+        val wrapper = ContextThemeWrapper(context, overlay)
         val scale = ScreenFragment.modalTextScale(context)
         if (scale != 1f) {
             // Must land before anything reads a resource off this context, hence before the theme

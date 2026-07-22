@@ -2653,9 +2653,20 @@ abstract class SurfaceFragment : ScreenFragment() {
     private fun showImageAddMenu(cx: Float, cy: Float, pressX: Float, pressY: Float) {
         showLedgerMenu(pressX, pressY, "ADD HERE", listOf(listOf(
             LedgerContextMenu.Item("＋ Add media…") { showAddMediaMenu(cx, cy) },
-            LedgerContextMenu.Item("＋ Text box") { showTextInputDialog(cx, cy) }
+            LedgerContextMenu.Item("＋ Text box") { showTextInputDialog(cx, cy) },
+            LedgerContextMenu.Item("🔷 Simple shapes…") { showShapesPicker(cx, cy) }
         )))
     }
+
+    /**
+     * Open the shapes picker from a menu that has no press point (the tools wrench), dropping the
+     * chosen shape near the middle of the page.
+     *
+     * Shapes lived only behind a long-press on BARE canvas, so on a full synthesis page — where
+     * every press lands on something — they were unreachable. This makes them reachable from the
+     * tools, the way "Add text" and "Add image" already are.
+     */
+    fun openShapesPicker() = showShapesPicker(CANVAS_WIDTH / 2f, CANVAS_HEIGHT / 2f)
 
     /**
      * The scrapbook drawer: shape crops and edge treatments that make a gram cute. Every
