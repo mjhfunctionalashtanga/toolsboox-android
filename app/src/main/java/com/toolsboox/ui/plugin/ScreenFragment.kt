@@ -1151,6 +1151,7 @@ abstract class ScreenFragment : Fragment() {
                     GoItem("🔖", "Intake") { nav.toDayNote(this, today, "intake") },
                     GoItem("❝", "Pickings") { nav.toDayNote(this, today, "pickings") },
                     GoItem("🙏", "Gratitude") { nav.toDayNote(this, today, "gratitude") },
+                    GoItem("🎯", "Self Executive") { nav.toDayNote(this, today, "selfexec") },
                     GoItem("📰", "Feed") { go(com.toolsboox.R.id.action_to_feeds) },
                     GoItem("🎬", "AV") { go(com.toolsboox.R.id.action_to_reading_log) },
                     GoItem("📆", "Almanac") { nav.toWeekPage(this, today, locale) }

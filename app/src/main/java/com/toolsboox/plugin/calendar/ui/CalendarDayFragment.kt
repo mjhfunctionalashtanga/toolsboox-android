@@ -1468,6 +1468,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 add(GoItem("🔖", "Intake") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
                 add(GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "pickings") })
                 add(GoItem("🙏", "Gratitude") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "gratitude") })
+                add(GoItem("🎯", "Self Executive") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "selfexec") })
                 // Notes lives on the floating pen button (tap = last location, hold = Text
                 // Notes) — off this modal per the field notes, one entry point not two.
                 add(GoItem("📰", "Feed") { findNavController().navigate(R.id.action_to_feeds) })
