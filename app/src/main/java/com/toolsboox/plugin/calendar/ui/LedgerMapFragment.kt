@@ -42,6 +42,10 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
 
     companion object {
         const val ARG_URI = "map_uri"
+        // Map ONE page's gathered pieces instead of the whole connection graph — a synthesis laid
+        // out as where its material came from and how it clusters.
+        const val ARG_PAGE_DATE = "map_page_date"
+        const val ARG_PAGE_KEY = "map_page_key"
     }
 
     @Inject
@@ -95,9 +99,66 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             )
         )
 
-        loadGraph()
-        focus = arguments?.getString(ARG_URI)?.takeIf { it.isNotBlank() } ?: busiest()
+        val pageDate = arguments?.getString(ARG_PAGE_DATE)?.takeIf { it.isNotBlank() }
+        if (pageDate != null) {
+            loadPageGraph(pageDate, arguments?.getString(ARG_PAGE_KEY).orEmpty())
+        } else {
+            loadGraph()
+            focus = arguments?.getString(ARG_URI)?.takeIf { it.isNotBlank() } ?: busiest()
+        }
         render()
+    }
+
+    /**
+     * Map one page's gathered pieces: where the material came from, and how it clusters.
+     *
+     * The page sits in the middle. Each distinct SOURCE the pieces carry (a root's terms, a day)
+     * rings it, and the pieces themselves hang off the source they came from — so a synthesis
+     * built from three roots reads as three clusters, and a stray piece with no provenance sits on
+     * its own spoke. This is the picture you arrange before you skeleton: what belongs together is
+     * suddenly visible, and the odd one out is suddenly obvious.
+     */
+    private fun loadPageGraph(dateStr: String, pageKey: String) {
+        val date = runCatching { java.time.LocalDate.parse(dateStr) }.getOrNull() ?: return
+        val ctx = requireContext()
+        val day = runCatching {
+            calendarDayService.load(documentsRoot(), date, null, java.util.Locale.getDefault())
+        }.getOrNull() ?: return
+
+        val adj = HashMap<String, MutableList<String>>()
+        val names = HashMap<String, String>()
+        val center = com.toolsboox.ot.LedgerUri.page(dateStr, pageKey)
+        names[center] = com.toolsboox.plugin.calendar.ot.SynthPageStore.nameOf(ctx, pageKey)
+
+        fun link(a: String, b: String) {
+            adj.getOrPut(a) { mutableListOf() }.add(b)
+            adj.getOrPut(b) { mutableListOf() }.add(a)
+        }
+
+        val pieces = day.imageElements.filter { it.page == pageKey && it.data.isNotBlank() && it.mediaKind.isBlank() }
+        val textPieces = day.textElements.filter { it.pageKey == pageKey && it.text.isNotBlank() }
+
+        for (el in pieces) {
+            val id = com.toolsboox.ot.LedgerUri.element(dateStr, pageKey, el.elementId.toString())
+            names[id] = el.sourceLabel.ifBlank { "Card" }.take(40)
+            // Group under the source it came from, when it named one; else straight to the centre.
+            val src = el.sourceLabel.takeIf { it.isNotBlank() }
+            if (src != null) {
+                val srcId = "src:$src"
+                names[srcId] = src.take(40)
+                if (srcId !in adj) link(center, srcId)
+                link(srcId, id)
+            } else link(center, id)
+        }
+        for (el in textPieces) {
+            val id = com.toolsboox.ot.LedgerUri.element(dateStr, pageKey, el.elementId.toString())
+            names[id] = el.text.take(40)
+            link(center, id)
+        }
+
+        adjacency = adj
+        labels = names
+        focus = center
     }
 
     /** Draw the strip for the anchor day. */

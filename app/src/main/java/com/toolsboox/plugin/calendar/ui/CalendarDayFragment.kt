@@ -393,6 +393,17 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
     }
 
+    /** Lay this synthesis out as a map — its pieces clustered by where they came from. */
+    private fun mapThisPage() {
+        findNavController().navigate(
+            R.id.action_to_ledger_map,
+            androidx.core.os.bundleOf(
+                LedgerMapFragment.ARG_PAGE_DATE to currentDate.toString(),
+                LedgerMapFragment.ARG_PAGE_KEY to (notePage ?: "synthesize")
+            )
+        )
+    }
+
     /** Just THIS page's gathered text — the page as a selection basket. */
     private fun thisPageMaterial(): String =
         currentTextElements().filter { it.text.isNotBlank() }
@@ -1434,6 +1445,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             add(GoItem("🗂", "Capture sections") { captureSections() })   // auto-capture toggle now lives in Settings
             if (onSynth) add(GoItem("🔬", "Synthesize · 3 questions") { synthesizeQuestions() })
             if (onSynth || onWrite) add(GoItem("✍", "Writing prompt → Write") { writingPrompts() })
+            if (onSynth) add(GoItem("🗺", "Map this page") { mapThisPage() })
             if (onSynth) add(GoItem("🗒", "Essay outline → Write") { essayOutline() })
             if (onSynth) add(GoItem("🃏", "Ideas → grid") { showSynthesisIdeas() })
             add(GoItem("👆", "Finger / hand") { binding.toolbarDrawing.toolbarHandTouch.performClick() })
