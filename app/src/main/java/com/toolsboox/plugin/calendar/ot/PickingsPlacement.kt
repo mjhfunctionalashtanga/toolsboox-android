@@ -38,7 +38,7 @@ object PickingsPlacement {
     fun place(
         service: CalendarDayService, root: File, bitmap: Bitmap, date: LocalDate, pageKey: String,
         sourceLink: String = "", sourceLabel: String = "", media: MediaRef? = null,
-        treatment: Boolean = true, cardText: String = ""
+        treatment: Boolean = true, cardText: String = "", sourceFeed: String = ""
     ) {
         val longest = maxOf(bitmap.width, bitmap.height)
         val fitted = if (longest > MAX_DIM) {
@@ -69,7 +69,7 @@ object PickingsPlacement {
             durationMs = media?.durationMs ?: 0,
             mediaTitle = media?.title ?: "",
             mediaDate = media?.date ?: "",
-            cardText = cardText))
+            cardText = cardText, sourceFeed = sourceFeed))
         service.save(root, date, day)
     }
 
@@ -77,14 +77,14 @@ object PickingsPlacement {
     fun chooseAndPlace(
         fragment: ScreenFragment, service: CalendarDayService, root: File, bitmap: Bitmap,
         date: LocalDate = LocalDate.now(), sourceLink: String = "", sourceLabel: String = "",
-        media: MediaRef? = null, cardText: String = ""
-    ) = chooseAndPlace(fragment, service, root, listOf(bitmap), date, sourceLink, sourceLabel, media, cardText)
+        media: MediaRef? = null, cardText: String = "", sourceFeed: String = ""
+    ) = chooseAndPlace(fragment, service, root, listOf(bitmap), date, sourceLink, sourceLabel, media, cardText, sourceFeed)
 
     /** Same chooser for SEVERAL cards (a gram series) — one board pick, all placed. */
     fun chooseAndPlace(
         fragment: ScreenFragment, service: CalendarDayService, root: File, bitmaps: List<Bitmap>,
         date: LocalDate = LocalDate.now(), sourceLink: String = "", sourceLabel: String = "",
-        media: MediaRef? = null, cardText: String = ""
+        media: MediaRef? = null, cardText: String = "", sourceFeed: String = ""
     ) {
         val bitmap = bitmaps.firstOrNull() ?: return
         val ctx = fragment.requireContext()
@@ -94,7 +94,7 @@ object PickingsPlacement {
             .setTitle("Add to Pickings")
             .setItems(labels) { _, which ->
                 when (which) {
-                    0 -> placeAsync(fragment, service, root, bitmaps, date, PickingsStore.DEFAULT_KEY, "today's Pickings", sourceLink, sourceLabel, media, cardText)
+                    0 -> placeAsync(fragment, service, root, bitmaps, date, PickingsStore.DEFAULT_KEY, "today's Pickings", sourceLink, sourceLabel, media, cardText, sourceFeed)
                     1 -> {
                         val input = android.widget.EditText(ctx).apply { hint = "Pickings name"; setSingleLine() }
                         val pad = (16 * ctx.resources.displayMetrics.density).toInt()
@@ -104,12 +104,12 @@ object PickingsPlacement {
                         androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle("New pickings").setView(box)
                             .setPositiveButton("Create") { _, _ ->
                                 val page = PickingsStore.add(ctx, date, input.text.toString().trim())
-                                placeAsync(fragment, service, root, bitmaps, date, page.key, page.name, sourceLink, sourceLabel, media, cardText)
+                                placeAsync(fragment, service, root, bitmaps, date, page.key, page.name, sourceLink, sourceLabel, media, cardText, sourceFeed)
                             }.setNegativeButton(android.R.string.cancel, null).show()
                     }
                     else -> {
                         val board = saved[which - 2]
-                        placeAsync(fragment, service, root, bitmaps, date, board.key, board.name, sourceLink, sourceLabel, media, cardText)
+                        placeAsync(fragment, service, root, bitmaps, date, board.key, board.name, sourceLink, sourceLabel, media, cardText, sourceFeed)
                     }
                 }
             }.setNegativeButton(android.R.string.cancel, null).show()
@@ -118,10 +118,10 @@ object PickingsPlacement {
     private fun placeAsync(
         fragment: ScreenFragment, service: CalendarDayService, root: File, bitmaps: List<Bitmap>,
         date: LocalDate, key: String, name: String, sourceLink: String = "", sourceLabel: String = "",
-        media: MediaRef? = null, cardText: String = ""
+        media: MediaRef? = null, cardText: String = "", sourceFeed: String = ""
     ) {
         Thread {
-            for (b in bitmaps) runCatching { place(service, root, b, date, key, sourceLink, sourceLabel, media, cardText = cardText) }
+            for (b in bitmaps) runCatching { place(service, root, b, date, key, sourceLink, sourceLabel, media, cardText = cardText, sourceFeed = sourceFeed) }
             val what = if (bitmaps.size > 1) "${bitmaps.size} cards" else "Placed"
             // Offer the trip rather than taking it. You were mid-something on the page you
             // circled from, and the usual next move is to put another thing on the same board —

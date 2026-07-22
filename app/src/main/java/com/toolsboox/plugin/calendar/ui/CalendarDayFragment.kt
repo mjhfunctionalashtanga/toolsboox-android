@@ -345,6 +345,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .show()
     }
 
+    /** Open Feed Ledger showing only the feed this gram was clipped from. */
+    override fun onImageGoToFeed(element: ImageElement) {
+        if (element.sourceFeed.isBlank()) return
+        com.toolsboox.plugin.feeds.ui.FeedSelection.filterFeedTitle = element.sourceFeed
+        findNavController().navigate(R.id.action_to_feeds)
+    }
+
     /** Everything this gram joins, asked from the gram's own end. */
     override fun onImageRhizome(element: ImageElement) {
         val uri = com.toolsboox.plugin.calendar.ot.LegacyEdges.adopt(requireContext(), element, currentDate)

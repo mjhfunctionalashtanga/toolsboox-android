@@ -2224,6 +2224,9 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** "Connect to…" on a gram — the subclass picks the other end and records the link. */
     protected open fun onImageConnect(element: ImageElement) {}
 
+    /** "Go to feed" on a feed gram — the subclass opens Feed Ledger filtered to that feed. */
+    protected open fun onImageGoToFeed(element: ImageElement) {}
+
     private fun exitImageMode() {
         imageMode = false
         selectedImage = null
@@ -2621,6 +2624,8 @@ abstract class SurfaceFragment : ScreenFragment() {
         if (element.sourceLink.isNotBlank())
             send.add(LedgerContextMenu.Item("↩ Go to source" +
                 (if (element.sourceLabel.isNotBlank()) " · ${element.sourceLabel}" else "")) { onImageSource(element) })
+        if (element.sourceFeed.isNotBlank())
+            send.add(LedgerContextMenu.Item("📰 Go to feed · ${element.sourceFeed}") { onImageGoToFeed(element) })
         send.add(LedgerContextMenu.Item("Where used…") { onImageWhereUsed(element) })
         send.add(LedgerContextMenu.Item("Post to community…") { postGramToCommunity(element) })
         send.add(LedgerContextMenu.Item("Pin to Board…") { onImagePinToBoard(element) })

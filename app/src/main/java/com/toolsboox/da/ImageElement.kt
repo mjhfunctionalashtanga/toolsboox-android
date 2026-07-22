@@ -70,5 +70,9 @@ data class ImageElement(
     // and can't be edited — unless it remembers what it said. When this is set, the card offers
     // "Edit words…", which re-renders the face from the new text. Empty for photos and grams that
     // have no text of their own. New field with a default → older readers and iOS ignore it.
-    var cardText: String = ""
+    var cardText: String = "",
+    // The feed a gram was clipped from — the publication, not the article (which is sourceLink).
+    // Lets a feed gram offer "Go to feed", opening Feed Ledger filtered to that feed, so a clipping
+    // sits one tap from the others from the same place. New field with a default.
+    var sourceFeed: String = ""
 )

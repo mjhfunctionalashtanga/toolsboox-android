@@ -781,7 +781,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             onPickings = { cards ->
                 com.toolsboox.plugin.calendar.ot.PickingsPlacement.chooseAndPlace(
                     this, calendarDayService, documentsRoot(), cards,
-                    sourceLink = src, sourceLabel = label, cardText = text)
+                    sourceLink = src, sourceLabel = label, cardText = text,
+                    sourceFeed = currentArticle?.feedTitle ?: "")
             }
         )
     }
