@@ -1469,6 +1469,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 add(GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "pickings") })
                 add(GoItem("🙏", "Gratitude") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "gratitude") })
                 add(GoItem("🎯", "Self Executive") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "selfexec") })
+                add(GoItem("▦", "Grid Notes") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "grid") })
+                add(GoItem("📈", "Sketch Notes") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "sketch") })
                 // Notes lives on the floating pen button (tap = last location, hold = Text
                 // Notes) — off this modal per the field notes, one entry point not two.
                 add(GoItem("📰", "Feed") { findNavController().navigate(R.id.action_to_feeds) })
@@ -3119,6 +3121,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         "write" -> R.drawable.ic_edit
         "synthesize" -> R.drawable.ic_swap
         "grid" -> R.drawable.ic_reader_view
+        "sketch" -> R.drawable.ic_edit
         "selfexec" -> R.drawable.ic_refresh
         else -> if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(currentNotePage())) R.drawable.ic_swap else R.drawable.ic_pencil
     }
@@ -3134,6 +3137,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         "write" -> "✍"
         "synthesize" -> "🔬"
         "grid" -> "▦"
+        "sketch" -> "📈"
         "selfexec" -> "🎯"
         else -> if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(currentNotePage())) "🔬" else "✒"
     }

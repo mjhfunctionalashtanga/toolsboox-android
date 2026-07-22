@@ -131,6 +131,12 @@ class CalendarDayPageNotes : Creator {
                 drawGridNotesPage(canvas)
                 return
             }
+            if (notePage == "sketch") {
+                // Sketch Notes: the same light dot grid as the synthesize whiteboard — dots stay
+                // out of the way of a drawing far better than rules or a full grid do.
+                drawBrainstormPage(canvas)
+                return
+            }
             if (notePage == "selfexec") {
                 drawSelfExecutivePage(canvas)
                 return
