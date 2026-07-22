@@ -3117,6 +3117,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         "intake" -> R.drawable.ic_bookmark
         "write" -> R.drawable.ic_edit
         "synthesize" -> R.drawable.ic_swap
+        "grid" -> R.drawable.ic_reader_view
         else -> if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(currentNotePage())) R.drawable.ic_swap else R.drawable.ic_pencil
     }
 
@@ -3130,6 +3131,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         "intake" -> "🔖"
         "write" -> "✍"
         "synthesize" -> "🔬"
+        "grid" -> "▦"
         else -> if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(currentNotePage())) "🔬" else "✒"
     }
 

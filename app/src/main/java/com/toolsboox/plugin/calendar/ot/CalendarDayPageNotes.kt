@@ -127,6 +127,10 @@ class CalendarDayPageNotes : Creator {
                 drawBrainstormPage(canvas)
                 return
             }
+            if (notePage == "grid") {
+                drawGridNotesPage(canvas)
+                return
+            }
 
             val page = notePage.toIntOrNull() ?: 0
 
@@ -162,6 +166,33 @@ class CalendarDayPageNotes : Creator {
                     canvas.drawLine(lo + i * 50.0f, to + 0 * ceh, lo + i * 50.0f, to + 35 * ceh, Creator.lineDefaultGrey50)
                 }
                 canvas.drawLine(lo + 26 * 50.0f, to + 0 * ceh, lo + 26 * 50.0f, to + 35 * ceh, Creator.lineDefaultBlack)
+            }
+        }
+
+        /**
+         * Grid Notes: the Notes surface with a square grid instead of rules — the same freeform
+         * ink-and-image canvas, but graph paper. It suits laying out shapes and connectors, boxes
+         * and arrows, where lined paper fights you. Always a grid, whatever the notes template is
+         * set to, since choosing "Grid Notes" already said what you wanted.
+         */
+        private fun drawGridNotesPage(canvas: Canvas) {
+            canvas.drawRect(0f, 0f, 1404f, 1872f, Creator.fillWhite)
+            canvas.drawText("GRID NOTES", lo, to - 16.0f, Creator.textDefaultBlack)
+
+            val step = 50.0f
+            val bottom = to + 35 * ceh
+            // Grid inside the same frame the ruled notes use, so it aligns with the margins.
+            var x = lo
+            while (x <= lo + cew + 0.5f) {
+                val edge = x <= lo + 0.5f || x >= lo + cew - 0.5f
+                canvas.drawLine(x, to, x, bottom, if (edge) Creator.lineDefaultBlack else Creator.lineDefaultGrey50)
+                x += step
+            }
+            var y = to
+            while (y <= bottom + 0.5f) {
+                val edge = y <= to + 0.5f || y >= bottom - 0.5f
+                canvas.drawLine(lo, y, lo + cew, y, if (edge) Creator.lineDefaultBlack else Creator.lineDefaultGrey50)
+                y += step
             }
         }
 
