@@ -131,6 +131,10 @@ class CalendarDayPageNotes : Creator {
                 drawGridNotesPage(canvas)
                 return
             }
+            if (notePage == "selfexec") {
+                drawSelfExecutivePage(canvas)
+                return
+            }
 
             val page = notePage.toIntOrNull() ?: 0
 
@@ -167,6 +171,81 @@ class CalendarDayPageNotes : Creator {
                 }
                 canvas.drawLine(lo + 26 * 50.0f, to + 0 * ceh, lo + 26 * 50.0f, to + 35 * ceh, Creator.lineDefaultBlack)
             }
+        }
+
+        /**
+         * Self Executive: a daily executive-function template — the Top 3, friction control,
+         * if-then plays, state design, a handoff queue and an inbox dump — printed as prompts with
+         * lines to write on, the way the gratitude page is. Freeform ink over the top like any
+         * note, so you can tick, cross out and scrawl in the margins.
+         */
+        private fun drawSelfExecutivePage(canvas: Canvas) {
+            canvas.drawRect(0f, 0f, 1404f, 1872f, Creator.fillWhite)
+            val bold = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            val plain = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+
+            val left = 64f; val right = 1340f
+            val title = TextPaint().apply { color = Color.BLACK; textSize = 40f; typeface = bold; isAntiAlias = true }
+            val header = TextPaint().apply { color = Color.BLACK; textSize = 27f; typeface = bold; isAntiAlias = true }
+            val prompt = TextPaint().apply { color = Color.argb(150, 0, 0, 0); textSize = 19f; typeface = Typeface.create(Typeface.MONOSPACE, Typeface.ITALIC); isAntiAlias = true }
+            val labelP = TextPaint().apply { color = Color.BLACK; textSize = 22f; typeface = plain; isAntiAlias = true }
+            val writeLine = Paint().apply { color = Color.argb(90, 0, 0, 0); strokeWidth = 1.2f; style = Paint.Style.STROKE; isAntiAlias = true }
+            val rule = Paint().apply { color = Color.argb(60, 0, 0, 0); strokeWidth = 1.2f; style = Paint.Style.STROKE; isAntiAlias = true }
+
+            var y = 84f
+            fun header(text: String, sub: String? = null) {
+                y += 30f
+                canvas.drawText(text, left, y, header)
+                if (sub != null) { y += 24f; canvas.drawText(sub, left, y, prompt) }
+                y += 14f
+            }
+            // A label followed by a write-line filling the rest of its row.
+            fun field(label: String, indent: Float = 0f) {
+                y += 40f
+                canvas.drawText(label, left + indent, y, labelP)
+                val lx = left + indent + labelP.measureText(label) + 16f
+                canvas.drawLine(lx, y + 6f, right, y + 6f, writeLine)
+            }
+            fun blankLine(indent: Float = 0f) {
+                y += 40f
+                canvas.drawLine(left + indent, y + 6f, right, y + 6f, writeLine)
+            }
+            fun divider() { y += 26f; canvas.drawLine(left, y, right, y, rule) }
+
+            canvas.drawText("☀︎ SELF EXECUTIVE", left, y, title)
+            canvas.drawText("Date: ____________", right - 300f, y, labelP)
+            y += 12f
+
+            header("THE DAILY TOP 3", "Three essential, action-oriented outcomes for today.")
+            field("1.  Why:")
+            field("2.  Why:")
+            field("3.  Why:")
+            divider()
+
+            header("CONSTRAINTS & FRICTION", "Pre-empt distractions and roadblocks before they happen.")
+            field("Anti-Goal:")
+            field("Main Friction:")
+            field("Boundary Line:")
+            divider()
+
+            header("IF — THEN", "Pre-programmed responses to daily disruptions.")
+            field("If:"); field("Then:", indent = 40f)
+            field("If:"); field("Then:", indent = 40f)
+            divider()
+
+            header("STATE & FOCUS", "The internal tone for how you engage today.")
+            field("Today's Theme:")
+            field("The One Win:")
+            divider()
+
+            header("THE HANDOFF QUEUE", "Clear your plate — pass on or roll over.")
+            field("Delegating to:")
+            field("Waiting on:")
+            field("Hand-off to tomorrow:")
+            divider()
+
+            header("THE INBOX DUMP", "Park intrusive thoughts here, then return to focus.")
+            blankLine(); blankLine(); blankLine()
         }
 
         /**
