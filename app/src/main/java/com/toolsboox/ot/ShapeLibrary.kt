@@ -78,11 +78,15 @@ object ShapeLibrary {
         val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val c = Canvas(out)
         val s = size.toFloat()
-        val pad = s * 0.10f
+        val strokeW = (s * 0.022f * weight).coerceAtLeast(2f)
+        // Only enough margin to keep the stroke from clipping — the shape fills its bitmap, so its
+        // edge IS the bitmap edge and a connector anchored to the box actually touches the shape,
+        // instead of stopping a tenth of the way short where a fixed inset used to hold it.
+        val pad = strokeW
         val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             color = 0xFF000000.toInt()
-            strokeWidth = (s * 0.022f * weight).coerceAtLeast(2f)
+            strokeWidth = strokeW
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
         }

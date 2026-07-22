@@ -2985,7 +2985,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             x = (cx - w / 2f).coerceIn(0f, (CANVAS_WIDTH - w).coerceAtLeast(0f)),
             y = (cy - h / 2f).coerceIn(0f, (CANVAS_HEIGHT - h).coerceAtLeast(0f)),
             width = w, height = h, data = base64,
-            sourceLabel = key
+            sourceLabel = key, distortable = true
         )
         pushUndo()
         imageElements.add(element)
@@ -4784,7 +4784,10 @@ abstract class SurfaceFragment : ScreenFragment() {
                 } else if (actionMove && sel != null && imageDrag == ImageDrag.RESIZE) {
                     val newW = (x - sel.x).coerceAtLeast(40f)
                     sel.width = newW
-                    sel.height = newW * (imageOrigRect.height() / imageOrigRect.width().coerceAtLeast(1f))
+                    // A shape distorts freely — the corner follows your finger, so a box can go
+                    // tall and thin. A photo keeps its aspect so it isn't squashed.
+                    sel.height = if (sel.distortable) (y - sel.y).coerceAtLeast(40f)
+                    else newW * (imageOrigRect.height() / imageOrigRect.width().coerceAtLeast(1f))
                     drawImageSelection()
                     return true
                 } else if (actionMove && sel != null && imageDrag == ImageDrag.ROTATE) {

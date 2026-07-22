@@ -78,5 +78,8 @@ data class ImageElement(
     // Decoration, not content: a clip-art sticker snapped onto the page for looks. It carries no
     // provenance and never joins the rhizome/Map — an edge to a decorative flourish is noise. New
     // field with a default. (Shapes stay non-decorative: they're diagram parts you connect.)
-    var decorative: Boolean = false
+    var decorative: Boolean = false,
+    // Free to stretch: width and height resize independently instead of keeping aspect. True for
+    // simple shapes — a box you can make tall and thin — false for photos, which want their shape.
+    var distortable: Boolean = false
 )
