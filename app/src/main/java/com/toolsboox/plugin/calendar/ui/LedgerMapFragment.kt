@@ -75,6 +75,9 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         binding = FragmentLedgerMapBinding.bind(view)
         binding.mapTitle.text = getString(R.string.map_title)
         binding.mapMenu.setOnClickListener { showDrawMenu() }
+        binding.gotoButton.setOnClickListener {
+            showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
+        }
 
         // The almanac strip, as on Write and Synthesize. The map is the whole graph, not one day,
         // so the date is a place to leave from: step to a day and open it, or tap a period to

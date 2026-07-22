@@ -55,6 +55,9 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentLedgerRootsBinding.bind(view)
         binding.rootsClose.setOnClickListener { requireActivity().onBackPressedDispatcher.onBackPressed() }
+        binding.gotoButton.setOnClickListener {
+            showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
+        }
 
         // The almanac strip, as on Write and Synthesize. The roots are the whole ledger at once,
         // not one day — so here the date is a place to LEAVE from: step to a day and open it, or

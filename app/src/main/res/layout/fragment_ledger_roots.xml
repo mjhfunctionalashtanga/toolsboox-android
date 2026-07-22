@@ -11,11 +11,26 @@
     android:layout_height="match_parent"
     android:background="#FFFFFF">
 
-    <ImageView
-        android:id="@+id/navigatorImageView"
-        android:layout_width="match_parent"
-        android:layout_height="52dp"
-        android:contentDescription="@null"/>
+    <!-- Nav line: hamburger left of the navigator, unified with feed / Tasks & Events. -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp" android:paddingTop="6dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content">
+        <ImageButton
+            android:id="@+id/goto_button"
+            android:src="@drawable/ic_menu"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter" android:padding="3dp"
+            android:layout_marginEnd="4dp"
+            android:contentDescription="@string/go_to_title"
+            android:layout_width="32dp" android:layout_height="32dp"/>
+        <ImageView
+            android:id="@+id/navigatorImageView"
+            android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="52dp"
+            android:contentDescription="@null"/>
+    </LinearLayout>
 
     <LinearLayout
         android:orientation="horizontal"
