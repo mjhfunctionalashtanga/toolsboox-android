@@ -2654,9 +2654,13 @@ abstract class SurfaceFragment : ScreenFragment() {
         showLedgerMenu(pressX, pressY, "ADD HERE", listOf(listOf(
             LedgerContextMenu.Item("＋ Add media…") { showAddMediaMenu(cx, cy) },
             LedgerContextMenu.Item("＋ Text box") { showTextInputDialog(cx, cy) },
+            LedgerContextMenu.Item("🔖 Intake a link…") { onIntakeLink(cx, cy) },
             LedgerContextMenu.Item("🔷 Simple shapes…") { showShapesPicker(cx, cy) }
         )))
     }
+
+    /** "Intake a link" — the subclass renders the link card and places it. Center when no press. */
+    protected open fun onIntakeLink(cx: Float = CANVAS_WIDTH / 2f, cy: Float = CANVAS_HEIGHT / 2f) {}
 
     /**
      * Open the shapes picker from a menu that has no press point (the tools wrench), dropping the
@@ -2804,6 +2808,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                     // One door for everything you can catch: photo, upload, voice, video. It used
                     // to be two image entries here and recording hidden behind a lasso.
                     LedgerContextMenu.Item("Add media…") { showAddMediaMenu(cx, cy) },
+                    LedgerContextMenu.Item("🔖 Intake a link…") { onIntakeLink(cx, cy) },
                     LedgerContextMenu.Item("Insert clipping…") { showClippingsPicker(cx, cy) },
                     LedgerContextMenu.Item("Simple shapes…") { showShapesPicker(cx, cy) }
                 ),

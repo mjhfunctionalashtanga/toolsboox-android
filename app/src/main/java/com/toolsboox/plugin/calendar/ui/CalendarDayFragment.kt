@@ -345,6 +345,62 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .show()
     }
 
+    /**
+     * Intake a link as an object.
+     *
+     * A website, a video, a podcast — all the same thing: paste the address, and it lands on the
+     * page as a card you can move, connect and tap back to open, not a line of blue text. The kind
+     * is guessed from the host (read / watch / listen) the way a shared link is, and you can file
+     * it to the matching Later lane at the same time — placed AND filed, or just placed.
+     */
+    override fun onIntakeLink(cx: Float, cy: Float) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        val urlIn = android.widget.EditText(ctx).apply { hint = "Paste a link — website, video, podcast"; setSingleLine() }
+        val titleIn = android.widget.EditText(ctx).apply { hint = "Title (optional)"; setSingleLine() }
+        val box = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0)
+            addView(urlIn); addView(titleIn)
+        }
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Intake a link")
+            .setView(box)
+            .setPositiveButton("Place") { _, _ -> placeLinkObject(urlIn.text.toString().trim(), titleIn.text.toString().trim(), cx, cy, alsoFile = false) }
+            .setNeutralButton("Place & file to Later") { _, _ -> placeLinkObject(urlIn.text.toString().trim(), titleIn.text.toString().trim(), cx, cy, alsoFile = true) }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun placeLinkObject(rawUrl: String, title: String, cx: Float, cy: Float, alsoFile: Boolean) {
+        var url = rawUrl.trim()
+        if (url.isBlank()) return
+        if (!url.startsWith("http", ignoreCase = true)) url = "https://$url"
+        val kind = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.inferKind(url)
+        val label = title.ifBlank { url }
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                val bmp = com.toolsboox.plugin.calendar.ot.LinkCardRenderer.render(url, title, kind)
+                runCatching {
+                    com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                        calendarDayService, documentsRoot(), bmp, currentDate, notePage ?: "default",
+                        sourceLink = url, sourceLabel = label, cardText = title)
+                }
+                if (alsoFile) runCatching {
+                    com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.fileLink(
+                        requireContext(), currentDate, kind, url, title.ifBlank { null })
+                }
+            }
+            // Refresh so the new card shows on the page you're on.
+            if (::calendarDay.isInitialized) {
+                val fresh = calendarDayService.load(documentsRoot(), currentDate, null, java.util.Locale.getDefault())
+                calendarDay.imageElements.clear(); calendarDay.imageElements.addAll(fresh.imageElements)
+                setImageElements(calendarDay.imageElements.filter { it.page == (notePage ?: "default") }.toMutableList())
+            }
+            showMessage(if (alsoFile) "Placed, and filed to Later." else "Link placed.", binding.root)
+        }
+    }
+
     /** Open Feed Ledger showing only the feed this gram was clipped from. */
     override fun onImageGoToFeed(element: ImageElement) {
         if (element.sourceFeed.isBlank()) return
@@ -1502,6 +1558,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val tools = buildList {
             add(GoItem("🖊️", "Add text") { binding.toolbarDrawing.toolbarText.performClick() })
             add(GoItem("🖼️", "Add image") { binding.toolbarDrawing.toolbarImage.performClick() })
+            add(GoItem("🔖", "Intake a link…") { onIntakeLink() })
             add(GoItem("🔷", "Simple shapes…") { openShapesPicker() })
             if (onSynth) add(GoItem("🃏", "Card…") { showCardMenu() })
             add(GoItem("❝", "Pickings…") { managePickings() })
