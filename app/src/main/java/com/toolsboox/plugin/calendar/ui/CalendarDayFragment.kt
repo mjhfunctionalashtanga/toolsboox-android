@@ -986,8 +986,17 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             val sharedUrl = arguments?.getString("sharedUrl")
             arguments?.remove("sharedText")
             arguments?.remove("sharedUrl")
-            Timber.i("Shared text queued for insert (${shared.length} chars, url=$sharedUrl)")
-            queueSharedTextInsert(shared, sharedUrl)
+            // A shared LINK comes in as an object — a link card you can move and connect — not a
+            // pasted line of text. This is the natural intake the wrench button was standing in
+            // for; sharing from another app IS the button. Anything without a URL is still text.
+            if (!sharedUrl.isNullOrBlank()) {
+                Timber.i("Shared link → link object ($sharedUrl)")
+                val title = shared.substringBefore('\n').trim().takeIf { it != sharedUrl }.orEmpty()
+                placeLinkObject(sharedUrl, title, CANVAS_WIDTH / 2f, CANVAS_HEIGHT / 2f, alsoFile = false)
+            } else {
+                Timber.i("Shared text queued for insert (${shared.length} chars)")
+                queueSharedTextInsert(shared, sharedUrl)
+            }
         }
 
         val defaultStartHour = sharedPreferences.getInt("calendarStartHour", 5)
@@ -1558,7 +1567,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val tools = buildList {
             add(GoItem("🖊️", "Add text") { binding.toolbarDrawing.toolbarText.performClick() })
             add(GoItem("🖼️", "Add image") { binding.toolbarDrawing.toolbarImage.performClick() })
-            add(GoItem("🔖", "Intake a link…") { onIntakeLink() })
             add(GoItem("🔷", "Simple shapes…") { openShapesPicker() })
             if (onSynth) add(GoItem("🃏", "Card…") { showCardMenu() })
             add(GoItem("❝", "Pickings…") { managePickings() })
