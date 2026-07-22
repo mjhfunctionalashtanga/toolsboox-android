@@ -184,68 +184,74 @@ class CalendarDayPageNotes : Creator {
             val bold = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             val plain = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
 
-            val left = 64f; val right = 1340f
-            val title = TextPaint().apply { color = Color.BLACK; textSize = 40f; typeface = bold; isAntiAlias = true }
-            val header = TextPaint().apply { color = Color.BLACK; textSize = 27f; typeface = bold; isAntiAlias = true }
-            val prompt = TextPaint().apply { color = Color.argb(150, 0, 0, 0); textSize = 19f; typeface = Typeface.create(Typeface.MONOSPACE, Typeface.ITALIC); isAntiAlias = true }
-            val labelP = TextPaint().apply { color = Color.BLACK; textSize = 22f; typeface = plain; isAntiAlias = true }
-            val writeLine = Paint().apply { color = Color.argb(90, 0, 0, 0); strokeWidth = 1.2f; style = Paint.Style.STROKE; isAntiAlias = true }
-            val rule = Paint().apply { color = Color.argb(60, 0, 0, 0); strokeWidth = 1.2f; style = Paint.Style.STROKE; isAntiAlias = true }
+            val left = 60f; val right = 1344f
+            val title = TextPaint().apply { color = Color.BLACK; textSize = 38f; typeface = bold; isAntiAlias = true }
+            val header = TextPaint().apply { color = Color.BLACK; textSize = 24f; typeface = bold; isAntiAlias = true }
+            val prompt = TextPaint().apply { color = Color.argb(150, 0, 0, 0); textSize = 17f; typeface = Typeface.create(Typeface.MONOSPACE, Typeface.ITALIC); isAntiAlias = true }
+            val labelP = TextPaint().apply { color = Color.BLACK; textSize = 21f; typeface = plain; isAntiAlias = true }
+            val writeLine = Paint().apply { color = Color.argb(85, 0, 0, 0); strokeWidth = 1.2f; style = Paint.Style.STROKE; isAntiAlias = true }
+            val cellBorder = Paint().apply { color = Color.argb(70, 0, 0, 0); strokeWidth = 1.4f; style = Paint.Style.STROKE; isAntiAlias = true }
 
-            var y = 84f
-            fun header(text: String, sub: String? = null) {
-                y += 30f
-                canvas.drawText(text, left, y, header)
-                if (sub != null) { y += 24f; canvas.drawText(sub, left, y, prompt) }
-                y += 14f
+            // Title, centred and tucked near the top so the grid can rise with it.
+            val titleCenter = TextPaint(title).apply { textAlign = Paint.Align.CENTER }
+            canvas.drawText("☀︎ SELF EXECUTIVE", 1404f / 2f, 56f, titleCenter)
+
+            // One cell of the grid: header, prompt, and its rows evenly filling the height.
+            fun cell(cx: Float, cy: Float, cw: Float, ch: Float, head: String, sub: String, rows: List<String>) {
+                canvas.drawRoundRect(android.graphics.RectF(cx, cy, cx + cw, cy + ch), 12f, 12f, cellBorder)
+                val px = cx + 20f
+                canvas.drawText(head, px, cy + 36f, header)
+                canvas.drawText(sub, px, cy + 60f, prompt)
+                val top = cy + 88f
+                val avail = ch - 104f
+                val rh = avail / rows.size
+                rows.forEachIndexed { i, label ->
+                    val ry = top + i * rh + rh * 0.66f
+                    if (label.isNotEmpty()) {
+                        canvas.drawText(label, px, ry, labelP)
+                        val lx = px + labelP.measureText(label) + 14f
+                        canvas.drawLine(lx, ry + 6f, cx + cw - 20f, ry + 6f, writeLine)
+                    } else {
+                        canvas.drawLine(px, ry + 6f, cx + cw - 20f, ry + 6f, writeLine)
+                    }
+                }
             }
-            // A label followed by a write-line filling the rest of its row.
-            fun field(label: String, indent: Float = 0f) {
-                y += 40f
-                canvas.drawText(label, left + indent, y, labelP)
-                val lx = left + indent + labelP.measureText(label) + 16f
-                canvas.drawLine(lx, y + 6f, right, y + 6f, writeLine)
+
+            // 2 columns × 3 rows, then the Inbox taking the doodle-sized space below.
+            val gap = 34f
+            val colW = (right - left - gap) / 2f            // ~625
+            val c1 = left; val c2 = left + colW + gap
+            val gridTop = 78f
+            val rowH = 380f
+            val r1 = gridTop; val r2 = gridTop + rowH; val r3 = gridTop + 2 * rowH
+            val cellH = rowH - 16f
+
+            cell(c1, r1, colW, cellH, "THE DAILY TOP 3", "Action-oriented outcomes, and why.",
+                listOf("1.", "→ why:", "2.", "→ why:", "3.", "→ why:"))
+            cell(c2, r1, colW, cellH, "CONSTRAINTS & FRICTION", "Pre-empt the roadblocks.",
+                listOf("Anti-Goal:", "Main Friction:", "Boundary Line:"))
+
+            cell(c1, r2, colW, cellH, "IF — THEN  ·  ONE", "A pre-programmed play.",
+                listOf("If:", "Then:"))
+            cell(c2, r2, colW, cellH, "IF — THEN  ·  TWO", "Another pre-programmed play.",
+                listOf("If:", "Then:"))
+
+            cell(c1, r3, colW, cellH, "STATE & FOCUS", "The tone you engage with.",
+                listOf("Today's Theme:", "The One Win:"))
+            cell(c2, r3, colW, cellH, "THE HANDOFF QUEUE", "Pass on, or roll over.",
+                listOf("Delegating to:", "Waiting on:", "To tomorrow:"))
+
+            // The Inbox Dump: a single wide box, doodle-sized, faint rules to catch stray thoughts.
+            val inboxTop = gridTop + 3 * rowH + 8f
+            val inboxBottom = 1852f
+            canvas.drawRoundRect(android.graphics.RectF(left, inboxTop, right, inboxBottom), 12f, 12f, cellBorder)
+            canvas.drawText("THE INBOX DUMP", left + 20f, inboxTop + 36f, header)
+            canvas.drawText("Park intrusive thoughts here, then return to focus.", left + 20f, inboxTop + 60f, prompt)
+            var ly = inboxTop + 108f
+            while (ly < inboxBottom - 24f) {
+                canvas.drawLine(left + 20f, ly, right - 20f, ly, writeLine)
+                ly += 66f
             }
-            fun blankLine(indent: Float = 0f) {
-                y += 40f
-                canvas.drawLine(left + indent, y + 6f, right, y + 6f, writeLine)
-            }
-            fun divider() { y += 26f; canvas.drawLine(left, y, right, y, rule) }
-
-            canvas.drawText("☀︎ SELF EXECUTIVE", left, y, title)
-            canvas.drawText("Date: ____________", right - 300f, y, labelP)
-            y += 12f
-
-            header("THE DAILY TOP 3", "Three essential, action-oriented outcomes for today.")
-            field("1.  Why:")
-            field("2.  Why:")
-            field("3.  Why:")
-            divider()
-
-            header("CONSTRAINTS & FRICTION", "Pre-empt distractions and roadblocks before they happen.")
-            field("Anti-Goal:")
-            field("Main Friction:")
-            field("Boundary Line:")
-            divider()
-
-            header("IF — THEN", "Pre-programmed responses to daily disruptions.")
-            field("If:"); field("Then:", indent = 40f)
-            field("If:"); field("Then:", indent = 40f)
-            divider()
-
-            header("STATE & FOCUS", "The internal tone for how you engage today.")
-            field("Today's Theme:")
-            field("The One Win:")
-            divider()
-
-            header("THE HANDOFF QUEUE", "Clear your plate — pass on or roll over.")
-            field("Delegating to:")
-            field("Waiting on:")
-            field("Hand-off to tomorrow:")
-            divider()
-
-            header("THE INBOX DUMP", "Park intrusive thoughts here, then return to focus.")
-            blankLine(); blankLine(); blankLine()
         }
 
         /**
