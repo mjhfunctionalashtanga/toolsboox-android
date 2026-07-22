@@ -84,14 +84,21 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    private fun load() {
+    /**
+     * Rebuild the page. [silent] keeps the current content on screen while the recompute runs,
+     * instead of flashing "Reading the roots…" — a mute or a hide changes one thing, and clearing
+     * the whole pane to a spinner for it reads as the page reloading out from under you.
+     */
+    private fun load(silent: Boolean = false) {
         val ctx = context ?: return
         val col = binding.rootsColumn
-        col.removeAllViews()
-        col.addView(TextView(ctx).apply {
-            text = getString(R.string.roots_loading)
-            textSize = 14f; setTextColor(0xFF888888.toInt()); setPadding(0, dp(10), 0, 0)
-        })
+        if (!silent) {
+            col.removeAllViews()
+            col.addView(TextView(ctx).apply {
+                text = getString(R.string.roots_loading)
+                textSize = 14f; setTextColor(0xFF888888.toInt()); setPadding(0, dp(10), 0, 0)
+            })
+        }
 
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
@@ -185,7 +192,7 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
                     label?.paintFlags = if (nowMuted)
                         label.paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
                     else label.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG.inv()
-                    load()
+                    load(silent = true)
                 }
                 card.setOnLongClickListener { showThread(t); true }
                 rowBox?.addView(card)
@@ -208,9 +215,11 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
             val liveCrossings = Rhizome.crossings(liveThreads)
             if (liveCrossings.isNotEmpty()) {
                 col.addView(header(getString(R.string.roots_where_they_touch), top = 18))
-                // Most-connected first: the things holding the most threads together.
-                for ((idx, terms) in liveCrossings.entries.sortedByDescending { it.value.size }.take(10)) {
+                // Most-connected first, minus the ones you've thrown away as junk meeting-points.
+                val dismissed = com.toolsboox.plugin.calendar.ot.RootsMute.dismissedCrossings(ctx)
+                for ((idx, terms) in liveCrossings.entries.sortedByDescending { it.value.size }.take(12)) {
                     val snip = all.getOrNull(idx) ?: continue
+                    if (snip.citation in dismissed) continue
                     val row = LinearLayout(ctx).apply {
                         orientation = LinearLayout.VERTICAL
                         setPadding(dp(13), dp(12), dp(13), dp(12))
@@ -301,7 +310,12 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
                 com.toolsboox.plugin.calendar.CalendarNavigator.toDayPage(this, day,
                     com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE)
             }
-            .setNegativeButton(getString(R.string.roots_close), null)
+            // Throw a junk meeting-point away — two snippets that share a stray word and mean
+            // nothing together. It stays in the corpus; it just stops being offered here.
+            .setNegativeButton("🗑 Hide") { _, _ ->
+                com.toolsboox.plugin.calendar.ot.RootsMute.dismissCrossing(requireContext(), snip.citation)
+                load(silent = true)
+            }
             .show()
     }
 
@@ -325,7 +339,12 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
                 val pieces = withContext(Dispatchers.IO) {
                     runCatching {
                         calendarDayService.load(documentsRoot(), day, null, java.util.Locale.getDefault())
-                            .imageElements.toList()
+                            .imageElements
+                            // Real static cards only. An A/V gram is a poster for a recording that
+                            // isn't coming with it, and a blank-data element is nothing to place —
+                            // either would land as a stray image on the synthesis.
+                            .filter { it.data.isNotBlank() && it.mediaKind.isBlank() }
+                            .toList()
                     }.getOrNull().orEmpty()
                 }
                 if (pieces.isEmpty()) { placeCrossing(snip, terms, page, back, emptyList()); return@launch }
@@ -378,10 +397,15 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
                     }
                 }
             }
-            showMessage(
-                if (pieces.isEmpty()) "Sent to ${page.name}."
-                else "Sent to ${page.name} — the root and ${pieces.size} pieces.",
-                binding.root)
+            val what = if (pieces.isEmpty()) "Sent to ${page.name}."
+                else "Sent to ${page.name} — the root and ${pieces.size} pieces."
+            // Offer the trip rather than taking it — you may be sending several roots to the same
+            // page before you go look at it — but make going one tap.
+            com.google.android.material.snackbar.Snackbar.make(
+                binding.root, what, com.google.android.material.snackbar.Snackbar.LENGTH_LONG
+            ).setAction("Go to it") {
+                com.toolsboox.plugin.calendar.CalendarNavigator.toDayNote(this@LedgerRootsFragment, page.date, page.key)
+            }.show()
         }
     }
 

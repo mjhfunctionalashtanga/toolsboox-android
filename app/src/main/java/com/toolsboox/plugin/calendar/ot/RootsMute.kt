@@ -41,4 +41,24 @@ object RootsMute {
     }
 
     fun clear(context: Context) = prefs(context).edit().remove(KEY).apply()
+
+    // ─── Dismissed crossings ──────────────────────────────────────────────────
+    //
+    // Muting a WORD tidies the threads; sometimes a whole meeting-point is just junk — two
+    // newspaper snippets that share a stray term and mean nothing together. You can't un-say the
+    // text, but you can tell the roots to stop offering this particular crossing. Keyed by the
+    // snippet's own citation, which is stable across reloads.
+
+    private const val KEY_DISMISSED = "dismissed_crossings"
+
+    fun dismissedCrossings(context: Context): Set<String> =
+        prefs(context).getStringSet(KEY_DISMISSED, emptySet())?.toSet() ?: emptySet()
+
+    fun isCrossingDismissed(context: Context, id: String): Boolean = id in dismissedCrossings(context)
+
+    fun dismissCrossing(context: Context, id: String) {
+        val next = dismissedCrossings(context).toMutableSet()
+        next.add(id)
+        prefs(context).edit().putStringSet(KEY_DISMISSED, next).apply()
+    }
 }
