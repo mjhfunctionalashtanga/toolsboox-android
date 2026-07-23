@@ -149,12 +149,14 @@ fun ledgerDirectoryFolders(
             "🛟  Support" to { openSiteWeb(nav, "support") },
             "🛍  Shop" to { openSiteWeb(nav, "shop") }
         )),
-        // Feed Ledger — the RSS reader lenses.
+        // Feed Ledger — the RSS reader lenses. Starred (your RSS stars) and Later (the read-later
+        // intake) are DIFFERENT stores — both here, as on iPad, not one standing in for the other.
         ScreenFragment.Folder("📰", "Feed", listOf(
             "📰  All" to { openFeed("feed", null) },
             "📖  The Read" to { openFeed("feed", "read") },
             "📺  The Watch" to { openFeed("feed", "watch") },
             "🎧  The Listen" to { openFeed("feed", "listen") },
+            "⭐  Starred" to { openFeed("stars", null) },
             "🔖  Later" to { openFeed("later", null) }
         ), expanded = expandFeedLedger),
         bookshelf,
