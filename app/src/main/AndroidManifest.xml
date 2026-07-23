@@ -3,7 +3,11 @@
           xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.VIBRATE"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.READ_CALENDAR"/>
+    <uses-permission android:name="android.permission.READ_CONTACTS"/>
+    <uses-permission android:name="android.permission.WRITE_CONTACTS"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>
 
@@ -33,11 +37,22 @@
                 android:name="firebase_analytics_collection_deactivated"
                 android:value="true"/>
 
+        <!-- Camera capture target for the long-press "Image — camera" flow. -->
+        <provider
+                android:name="androidx.core.content.FileProvider"
+                android:authorities="${applicationId}.fileprovider"
+                android:exported="false"
+                android:grantUriPermissions="true">
+            <meta-data
+                    android:name="android.support.FILE_PROVIDER_PATHS"
+                    android:resource="@xml/file_paths"/>
+        </provider>
+
         <activity
                 tools:ignore="LockedOrientationActivity"
                 android:name=".ui.main.MainActivity"
                 android:screenOrientation="sensorPortrait"
-                android:configChanges="orientation"
+                android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
                 android:enableOnBackInvokedCallback="true"
         android:exported="true">
             <intent-filter>
@@ -55,6 +70,23 @@
                 <data android:host="app.toolsboox.com"/>
                 <data android:scheme="toolsboox"/>
                 <data android:host="app"/>
+            </intent-filter>
+            <!-- Share-to-Ledger (text): URLs feed the MichaelFilter intake pipeline AND
+                 land as a text box on today's day page. One share identity: "Ledger". -->
+            <intent-filter android:label="@string/ledger_share_target_title">
+                <action android:name="android.intent.action.SEND"/>
+
+                <category android:name="android.intent.category.DEFAULT"/>
+
+                <data android:mimeType="text/plain"/>
+            </intent-filter>
+            <!-- Share-to-Ledger target: share an image from any app onto today's day page. -->
+            <intent-filter android:label="@string/ledger_share_target_title">
+                <action android:name="android.intent.action.SEND"/>
+
+                <category android:name="android.intent.category.DEFAULT"/>
+
+                <data android:mimeType="image/*"/>
             </intent-filter>
         </activity>
         <receiver

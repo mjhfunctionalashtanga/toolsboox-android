@@ -25,9 +25,6 @@
             android:id="@+id/action_to_calendar_year"
             app:destination="@id/CalendarYearFragment"/>
     <action
-            android:id="@+id/action_to_templates_main"
-            app:destination="@id/TemplatesMainFragment"/>
-    <action
             android:id="@+id/action_to_about"
             app:destination="@id/AboutFragment"/>
 
@@ -35,11 +32,252 @@
             android:id="@+id/action_to_cloud"
             app:destination="@id/CloudFragment"/>
 
+    <action
+            android:id="@+id/action_to_michaelfilter_intake"
+            app:destination="@id/MichaelFilterIntakeFragment"/>
+
+    <action
+            android:id="@+id/action_to_ledger_chat"
+            app:destination="@id/LedgerChatFragment"/>
+
+    <action
+            android:id="@+id/action_to_reader"
+            app:destination="@id/ReaderFragment"/>
+
+    <action
+            android:id="@+id/action_to_feeds"
+            app:destination="@id/FeedsFragment"/>
+
+    <action
+            android:id="@+id/action_to_reading_log"
+            app:destination="@id/ReadingLogFragment"/>
+
+    <!-- Scratch ink surface (same fragment as the day page, but a DISTINCT destination so Back
+         pops it and returns to the previous screen instead of collapsing to the start dest). -->
+    <action
+            android:id="@+id/action_to_scratch"
+            app:destination="@id/CalendarScratchFragment"/>
+
+    <action
+            android:id="@+id/action_to_settings"
+            app:destination="@id/CalendarSettingsFragment"/>
+
+    <action
+            android:id="@+id/action_to_ledger_items"
+            app:destination="@id/LedgerItemsFragment"/>
+
+    <action
+            android:id="@+id/action_to_ledger_roots"
+            app:destination="@id/LedgerRootsFragment"/>
+
+    <action
+            android:id="@+id/action_to_ledger_map"
+            app:destination="@id/LedgerMapFragment"/>
+
+    <action
+            android:id="@+id/action_to_ledger_rhizome"
+            app:destination="@id/LedgerRhizomeFragment"/>
+
+    <action
+            android:id="@+id/action_to_rolodex"
+            app:destination="@id/RolodexFragment"/>
+
+    <action
+            android:id="@+id/action_to_kanban"
+            app:destination="@id/KanbanFragment"/>
+
+    <action
+            android:id="@+id/action_to_correspondence"
+            app:destination="@id/CorrespondenceFragment"/>
+
+    <action
+            android:id="@+id/action_to_site_boards"
+            app:destination="@id/SiteBoardsFragment"/>
+
+    <action
+            android:id="@+id/action_to_messages"
+            app:destination="@id/MessagesFragment"/>
+
+    <action
+            android:id="@+id/action_to_text_notes"
+            app:destination="@id/TextNotesFragment"/>
+
     <fragment
             android:id="@+id/DashboardFragment"
             android:name="com.toolsboox.plugin.dashboard.ui.DashboardFragment"
             android:label="DashboardFragment"
             tools:layout="@layout/fragment_dashboard">
+    </fragment>
+
+    <fragment
+            android:id="@+id/TextNotesFragment"
+            android:name="com.toolsboox.plugin.textnotes.ui.TextNotesFragment"
+            android:label="TextNotesFragment"
+            tools:layout="@layout/fragment_text_notes">
+    </fragment>
+
+    <!-- Pull-up scratch surface: reuses CalendarDayFragment but as its own destination. -->
+    <fragment
+            android:id="@+id/CalendarScratchFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.CalendarDayFragment"
+            android:label="Scratch"
+            tools:layout="@layout/fragment_calendar"/>
+
+    <fragment
+            android:id="@+id/LedgerChatFragment"
+            android:name="com.toolsboox.plugin.chat.ui.LedgerChatFragment"
+            android:label="LedgerChatFragment"
+            tools:layout="@layout/fragment_ledger_chat">
+
+        <action
+                android:id="@+id/action_to_dashboard"
+                app:destination="@id/DashboardFragment"
+                app:popUpTo="@id/DashboardFragment"
+                app:popUpToInclusive="true"/>
+    </fragment>
+
+    <fragment
+            android:id="@+id/ReaderFragment"
+            android:name="com.toolsboox.plugin.reader.ui.ReaderFragment"
+            android:label="ReaderFragment"
+            tools:layout="@layout/fragment_reader">
+
+        <action
+                android:id="@+id/action_to_dashboard"
+                app:destination="@id/DashboardFragment"
+                app:popUpTo="@id/DashboardFragment"
+                app:popUpToInclusive="true"/>
+    </fragment>
+
+    <fragment
+            android:id="@+id/FeedsFragment"
+            android:name="com.toolsboox.plugin.feeds.ui.FeedsFragment"
+            android:label="FeedsFragment"
+            tools:layout="@layout/fragment_feeds">
+
+        <action
+                android:id="@+id/action_to_feed_article"
+                app:destination="@id/FeedArticleFragment"/>
+        <action
+                android:id="@+id/action_to_dashboard"
+                app:destination="@id/DashboardFragment"
+                app:popUpTo="@id/DashboardFragment"
+                app:popUpToInclusive="true"/>
+    </fragment>
+
+    <fragment
+            android:id="@+id/FeedArticleFragment"
+            android:name="com.toolsboox.plugin.feeds.ui.FeedArticleFragment"
+            android:label="FeedArticleFragment"
+            tools:layout="@layout/fragment_feed_article">
+
+        <action
+                android:id="@+id/action_to_dashboard"
+                app:destination="@id/DashboardFragment"
+                app:popUpTo="@id/DashboardFragment"
+                app:popUpToInclusive="true"/>
+    </fragment>
+
+    <fragment
+            android:id="@+id/LedgerItemsFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.LedgerItemsFragment"
+            android:label="LedgerItemsFragment"
+            tools:layout="@layout/fragment_ledger_items"/>
+
+    <fragment
+            android:id="@+id/LedgerMapFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.LedgerMapFragment"
+            android:label="LedgerMapFragment"
+            tools:layout="@layout/fragment_ledger_map">
+        <argument android:name="map_uri" app:argType="string" android:defaultValue=""/>
+    </fragment>
+
+    <fragment
+            android:id="@+id/LedgerRhizomeFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.LedgerRhizomeFragment"
+            android:label="LedgerRhizomeFragment"
+            tools:layout="@layout/fragment_ledger_rhizome">
+        <argument android:name="rhizome_uri" app:argType="string" android:defaultValue=""/>
+        <argument android:name="rhizome_label" app:argType="string" android:defaultValue=""/>
+    </fragment>
+
+    <fragment
+            android:id="@+id/LedgerRootsFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.LedgerRootsFragment"
+            android:label="LedgerRootsFragment"
+            tools:layout="@layout/fragment_ledger_roots"/>
+
+    <fragment
+            android:id="@+id/RolodexFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.RolodexFragment"
+            android:label="RolodexFragment"
+            tools:layout="@layout/fragment_rolodex"/>
+
+    <fragment
+            android:id="@+id/KanbanFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.KanbanFragment"
+            android:label="KanbanFragment"
+            tools:layout="@layout/fragment_kanban"/>
+
+    <fragment
+            android:id="@+id/CorrespondenceFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.CorrespondenceFragment"
+            android:label="CorrespondenceFragment"
+            tools:layout="@layout/fragment_correspondence"/>
+
+    <fragment
+            android:id="@+id/SiteBoardsFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.SiteBoardsFragment"
+            android:label="SiteBoardsFragment"
+            tools:layout="@layout/fragment_site_boards"/>
+
+    <fragment
+            android:id="@+id/MessagesFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.MessagesFragment"
+            android:label="MessagesFragment"
+            tools:layout="@layout/fragment_messages"/>
+
+    <fragment
+            android:id="@+id/ReadingLogFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.ReadingLogFragment"
+            android:label="ReadingLogFragment"
+            tools:layout="@layout/fragment_reading_log">
+
+        <action
+                android:id="@+id/action_to_calendar_day"
+                app:destination="@id/CalendarDayFragment"
+                app:popUpTo="@id/CalendarDayFragment"
+                app:popUpToInclusive="true"/>
+    </fragment>
+
+    <fragment
+            android:id="@+id/MichaelFilterIntakeFragment"
+            android:name="com.toolsboox.plugin.michaelfilter.ui.MichaelFilterIntakeFragment"
+            android:label="MichaelFilterIntakeFragment"
+            tools:layout="@layout/fragment_michaelfilter_intake">
+
+        <argument
+                android:name="url"
+                app:argType="string"
+                app:nullable="true"/>
+        <argument
+                android:name="title"
+                app:argType="string"
+                app:nullable="true"/>
+        <argument
+                android:name="kind"
+                app:argType="string"
+                app:nullable="true"/>
+        <argument
+                android:name="text"
+                app:argType="string"
+                app:nullable="true"/>
+
+        <action
+                android:id="@+id/action_to_dashboard"
+                app:destination="@id/DashboardFragment"
+                app:popUpTo="@id/DashboardFragment"
+                app:popUpToInclusive="true"/>
     </fragment>
 
     <fragment
@@ -335,64 +573,6 @@
     </fragment>
 
     <fragment
-            android:id="@+id/TemplatesMainFragment"
-            android:name="com.toolsboox.plugin.templates.ui.TemplatesMainFragment"
-            android:label="TemplatesMainFragment"
-            tools:layout="@layout/fragment_templates_main">
-
-        <action
-                android:id="@+id/action_to_templates_boxed_days_calendar"
-                app:destination="@id/TemplatesBoxedDaysCalendarFragment"/>
-        <action
-                android:id="@+id/action_to_templates_boxed_weeks_calendar"
-                app:destination="@id/TemplatesBoxedWeeksCalendarFragment"/>
-        <action
-                android:id="@+id/action_to_templates_community"
-                app:destination="@id/TemplatesCommunityFragment"/>
-        <action
-                android:id="@+id/action_to_templates_flat_weeks_calendar"
-                app:destination="@id/TemplatesFlatWeeksCalendarFragment"/>
-        <action
-                android:id="@+id/action_to_templates_this_weeks_calendar"
-                app:destination="@id/TemplatesThisWeeksCalendarFragment"/>
-    </fragment>
-
-    <fragment
-            android:id="@+id/TemplatesBoxedDaysCalendarFragment"
-            android:name="com.toolsboox.plugin.templates.ui.BoxedDaysCalendarFragment"
-            android:label="TemplatesBoxedDaysCalendarFragment"
-            tools:layout="@layout/fragment_templates_boxed_days_calendar">
-    </fragment>
-
-    <fragment
-            android:id="@+id/TemplatesBoxedWeeksCalendarFragment"
-            android:name="com.toolsboox.plugin.templates.ui.BoxedWeeksCalendarFragment"
-            android:label="TemplatesBoxedWeeksCalendarFragment"
-            tools:layout="@layout/fragment_templates_boxed_weeks_calendar">
-    </fragment>
-
-    <fragment
-            android:id="@+id/TemplatesCommunityFragment"
-            android:name="com.toolsboox.plugin.templates.ui.CommunityFragment"
-            android:label="TemplatesCommunityFragment"
-            tools:layout="@layout/fragment_templates_community">
-    </fragment>
-
-    <fragment
-            android:id="@+id/TemplatesFlatWeeksCalendarFragment"
-            android:name="com.toolsboox.plugin.templates.ui.FlatWeeksCalendarFragment"
-            android:label="TemplatesFlatWeeksCalendarFragment"
-            tools:layout="@layout/fragment_templates_flat_weeks_calendar">
-    </fragment>
-
-    <fragment
-            android:id="@+id/TemplatesThisWeeksCalendarFragment"
-            android:name="com.toolsboox.plugin.templates.ui.ThisWeeksCalendarFragment"
-            android:label="TemplatesThisWeeksCalendarFragment"
-            tools:layout="@layout/fragment_templates_this_weeks_calendar">
-    </fragment>
-
-    <fragment
             android:id="@+id/AboutFragment"
             android:name="com.toolsboox.plugin.about.ui.AboutFragment"
             android:label="AboutFragment"
@@ -406,24 +586,4 @@
             tools:layout="@layout/fragment_cloud">
     </fragment>
 
-    <!-- Dead fragments kept for compile compatibility (never navigated to) -->
-    <fragment
-            android:id="@+id/TeamDrawerRoomFragment"
-            android:name="com.toolsboox.plugin.teamdrawer.ui.RoomFragment"
-            android:label="TeamDrawerRoomFragment">
-        <action android:id="@+id/action_to_teamdrawer_note" app:destination="@id/TeamDrawerNoteFragment"/>
-    </fragment>
-    <fragment
-            android:id="@+id/TeamDrawerNoteFragment"
-            android:name="com.toolsboox.plugin.teamdrawer.ui.NoteFragment"
-            android:label="TeamDrawerNoteFragment">
-        <action android:id="@+id/action_to_teamdrawer_note" app:destination="@id/TeamDrawerNoteFragment"/>
-        <action android:id="@+id/action_to_teamdrawer_page" app:destination="@id/TeamDrawerPageFragment"/>
-    </fragment>
-    <fragment
-            android:id="@+id/TeamDrawerPageFragment"
-            android:name="com.toolsboox.plugin.teamdrawer.ui.PageFragment"
-            android:label="TeamDrawerPageFragment">
-        <action android:id="@+id/action_to_teamdrawer_note" app:destination="@id/TeamDrawerNoteFragment"/>
-    </fragment>
 </navigation>

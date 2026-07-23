@@ -115,6 +115,9 @@ class CalendarQuarterFragment @Inject constructor() : SurfaceFragment() {
      */
     override fun provideSurfaceView(): SurfaceView = binding.surfaceView
 
+    override fun provideExcludeViews(): List<android.view.View> =
+        if (::binding.isInitialized) listOf(binding.navWidget) else emptyList()
+
 
     /**
      * Provide toolbar of drawing's bindings.
@@ -233,6 +236,16 @@ class CalendarQuarterFragment @Inject constructor() : SurfaceFragment() {
                 CalendarNavigator.toQuarterNote(this, currentDate, "0")
             }
         }
+        binding.toolbarDrawing.toolbarCalendarView.setOnClickListener {
+            // Jump back to today's day page from the quarter view.
+            CalendarNavigator.toDayPage(this, LocalDate.now())
+        }
+
+        setupAlmanacNavPill(
+            binding.navWidget, binding.navGrip, binding.navUp, binding.navDown, binding.navGoto,
+            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, com.toolsboox.R.drawable.ic_calendar_today,
+            isAtPresent = { val n = LocalDate.now(); currentDate.year == n.year && (currentDate.monthValue - 1) / 3 == (n.monthValue - 1) / 3 }
+        ) { CalendarNavigator.toQuarterPage(this, LocalDate.now(), CalendarQuarter.DEFAULT_STYLE) }
 
         utils.updateToolbar(binding)
         initializeSurface(true)

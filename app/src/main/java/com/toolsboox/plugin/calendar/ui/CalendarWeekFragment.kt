@@ -115,6 +115,9 @@ class CalendarWeekFragment @Inject constructor() : SurfaceFragment() {
      */
     override fun provideSurfaceView(): SurfaceView = binding.surfaceView
 
+    override fun provideExcludeViews(): List<android.view.View> =
+        if (::binding.isInitialized) listOf(binding.navWidget) else emptyList()
+
 
     /**
      * Provide toolbar of drawing's bindings.
@@ -237,6 +240,33 @@ class CalendarWeekFragment @Inject constructor() : SurfaceFragment() {
                 CalendarNavigator.toWeekNote(this, currentDate, calendarWeek.locale, "0")
             }
         }
+        binding.toolbarDrawing.toolbarCalendarView.setOnClickListener {
+            // Jump back to today's day page from the week view.
+            CalendarNavigator.toDayPage(this, LocalDate.now())
+        }
+
+        // Top-left hamburger → the shared Ledger directory (Ask, Bookshelf, Notes/Ledger Log, Write,
+        // Text Notes, …). The week page reuses the day layout but never wired this, so its only "menu"
+        // was the date-strip navigator — hence "the old menu pops out on weeks".
+        //
+        // It was then wired to `showSectionMenu()`, which is the OLD nine-row list, so the week page
+        // still opened last generation's drawer while every other surface opened the accordion. Same
+        // call the day page makes, so there is now one directory rather than two that drift apart.
+        binding.goAppsButton.visibility = View.VISIBLE
+        binding.goAppsButton.setOnClickListener {
+            showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
+        }
+        binding.goAppsButton.bringToFront()
+
+        setupAlmanacNavPill(
+            binding.navWidget, binding.navGrip, binding.navUp, binding.navDown, binding.navGoto,
+            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, com.toolsboox.R.drawable.ic_calendar_today,
+            isAtPresent = {
+                val wf = java.time.temporal.WeekFields.ISO; val n = LocalDate.now()
+                currentDate.get(wf.weekOfWeekBasedYear()) == n.get(wf.weekOfWeekBasedYear()) &&
+                    currentDate.get(wf.weekBasedYear()) == n.get(wf.weekBasedYear())
+            }
+        ) { CalendarNavigator.toWeekPage(this, LocalDate.now(), calendarWeek.locale, CalendarWeek.DEFAULT_STYLE) }
 
         utils.updateToolbar(binding)
         initializeSurface(true)

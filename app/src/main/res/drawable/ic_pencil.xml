@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Notes: a fountain-pen nib (vent hole punched out) — the ✒ ink surface, distinct
+         from the pencil (ic_edit = Write) and the text lines (ic_go_notes = Text Notes). -->
+    <path android:fillColor="#FF000000" android:fillType="evenOdd"
+        android:pathData="M7,3H17L18.2,11.2L12,21L5.8,11.2L7,3ZM12,10.2m-1.7,0a1.7,1.7 0 1,0 3.4,0a1.7,1.7 0 1,0 -3.4,0"/>
+</vector>

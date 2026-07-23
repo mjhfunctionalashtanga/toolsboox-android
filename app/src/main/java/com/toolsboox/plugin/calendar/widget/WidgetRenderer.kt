@@ -287,25 +287,39 @@ object WidgetRenderer {
         canvas.drawLine(lo + 120f, to + ceh, lo + 120f, to + 35 * ceh, lineBlack)
 
         if (calendarDay != null && calendarDay.hasLanes && startHour >= 0) {
+            // Events that fall inside the visible schedule window.
+            val timed = events.filter { event ->
+                if (event.allDay) return@filter false
+                val s = Instant.ofEpochMilli(event.startDate).atZone(ZoneId.systemDefault()).toLocalDateTime()
+                if (s.hour * 60 + s.minute < startHour * 60) return@filter false
+                val e = Instant.ofEpochMilli(event.endDate).atZone(ZoneId.systemDefault()).toLocalDateTime()
+                if (e.hour * 60 + e.minute > (startHour + 17) * 60) return@filter false
+                true
+            }
+
+            // An event takes the full column width unless it actually shares its time
+            // with another event. Only genuinely overlapping events are split into two
+            // half-width lanes; previously every event was drawn at half width, leaving
+            // the right half of the schedule empty for non-overlapping events.
+            val solo = mutableListOf<CalendarEvent>()
             val laneOne = mutableListOf<CalendarEvent>()
             val laneTwo = mutableListOf<CalendarEvent>()
-
-            for (event in events) {
-                if (event.allDay) continue
-                val s = Instant.ofEpochMilli(event.startDate).atZone(ZoneId.systemDefault()).toLocalDateTime()
-                if (s.hour * 60 + s.minute < startHour * 60) continue
-                val e = Instant.ofEpochMilli(event.endDate).atZone(ZoneId.systemDefault()).toLocalDateTime()
-                if (e.hour * 60 + e.minute > (startHour + 17) * 60) continue
-
-                if (overlaps(event, laneOne)) {
+            for (event in timed) {
+                val hasNeighbor = timed.any { it !== event && overlaps(event, listOf(it)) }
+                if (!hasNeighbor) {
+                    solo.add(event)
+                } else if (overlaps(event, laneOne)) {
                     if (!overlaps(event, laneTwo)) laneTwo.add(event)
                 } else {
                     laneOne.add(event)
                 }
             }
 
-            if (laneOne.isNotEmpty()) drawEventLane(canvas, startHour, laneOne, 120f, (cew - 120f) / 2)
-            if (laneTwo.isNotEmpty()) drawEventLane(canvas, startHour, laneTwo, 120f + (cew - 120f) / 2, (cew - 120f) / 2)
+            val fullW = cew - 120f
+            val halfW = fullW / 2
+            if (solo.isNotEmpty()) drawEventLane(canvas, startHour, solo, 120f, fullW)
+            if (laneOne.isNotEmpty()) drawEventLane(canvas, startHour, laneOne, 120f, halfW)
+            if (laneTwo.isNotEmpty()) drawEventLane(canvas, startHour, laneTwo, 120f + halfW, halfW)
         }
 
         // --- Right column: Tasks ---
@@ -313,15 +327,50 @@ object WidgetRenderer {
         canvas.drawText(context.getString(R.string.calendar_day_tasks), lo + cew + 60f, to + ceh - 10f, textDefaultWhite)
 
         canvas.drawLine(lo + cew + 50f, to + ceh, lo + 2 * cew + 50f, to + ceh, lineBlack)
-        for (i in 1..16) {
+        for (i in 1..12) {   // four rows given to the Roots band; see CalendarDayPage
             canvas.drawLine(lo + cew + 50f, to + i * ceh, lo + 2 * cew + 50f, to + i * ceh, lineGrey50)
             if (i % 2 == 0) {
                 canvas.drawRect(lo + cew + 50f, to + i * ceh, lo + 2 * cew + 50f, to + i * ceh + ceh, fillGrey20)
             }
             canvas.drawRect(lo + cew + 60f, to + i * ceh + 10f, lo + cew + 90f, to + i * ceh + 40f, lineGrey50)
         }
-        canvas.drawLine(lo + cew + 50f, to + 17 * ceh, lo + 2 * cew + 50f, to + 17 * ceh, lineBlack)
-        canvas.drawLine(lo + cew + 100f, to + ceh, lo + cew + 100f, to + 17 * ceh, lineBlack)
+        canvas.drawLine(lo + cew + 50f, to + 13 * ceh, lo + 2 * cew + 50f, to + 13 * ceh, lineBlack)
+        canvas.drawLine(lo + cew + 100f, to + ceh, lo + cew + 100f, to + 13 * ceh, lineBlack)
+
+        // --- Right column: Roots ---
+        //
+        // The page keeps two rows here for writing a task into; the widget can't be written on,
+        // so on the home screen that space is just a dashed empty box. It gets given to the
+        // spiral instead — the one thing on this surface that changes on its own, and the reason
+        // to look at the widget twice.
+        //
+        // Rotating on READ, so each return to the home screen brings the next one round. Same
+        // sentence twenty times a day is wallpaper; it stops being seen.
+        canvas.drawRect(lo + cew + 50f, to + 13 * ceh, lo + 2 * cew + 50f, to + 14 * ceh, fillGrey80)
+        canvas.drawText(context.getString(R.string.calendar_day_roots),
+            lo + cew + 60f, to + 14 * ceh - 10f, textDefaultWhite)
+        canvas.drawLine(lo + cew + 50f, to + 18 * ceh, lo + 2 * cew + 50f, to + 18 * ceh, lineBlack)
+
+        com.toolsboox.plugin.calendar.ot.SpiralRing.next(context)?.let { entry ->
+            val body = TextPaint(textSmall)
+            val grey = TextPaint(textSmall).apply { color = 0x99000000.toInt() }
+            val left = lo + cew + 60f
+            val width = (cew - 30f).toInt()
+            // Four lines of the page's own small text, then the provenance under it. Wrapped by a
+            // StaticLayout rather than clipped, so a long passage ends at a word.
+            val layout = android.text.StaticLayout.Builder
+                .obtain(entry.text, 0, entry.text.length, body, width)
+                .setMaxLines(4).setEllipsize(android.text.TextUtils.TruncateAt.END).build()
+            canvas.save()
+            canvas.translate(left, to + 14 * ceh + 8f)
+            layout.draw(canvas)
+            canvas.restore()
+            if (entry.citation.isNotBlank()) {
+                canvas.drawText(
+                    TextUtils.ellipsize(entry.citation, grey, cew - 30f, TextUtils.TruncateAt.END).toString(),
+                    left, to + 18 * ceh - 12f, grey)
+            }
+        }
 
         // --- Right column: Notes ---
         val readingProgress = calendarDay?.readingProgress ?: emptyList()

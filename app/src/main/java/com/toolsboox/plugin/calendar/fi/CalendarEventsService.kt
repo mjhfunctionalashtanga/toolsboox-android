@@ -42,7 +42,13 @@ class CalendarEventsService @Inject constructor() {
             CalendarContract.Instances._ID, CalendarContract.Instances.EVENT_COLOR, CalendarContract.Instances.CALENDAR_COLOR,
             CalendarContract.Instances.TITLE, CalendarContract.Instances.DESCRIPTION, CalendarContract.Instances.ALL_DAY,
             CalendarContract.Instances.BEGIN, CalendarContract.Instances.END,
-            CalendarContract.Instances.START_DAY, CalendarContract.Instances.END_DAY
+            CalendarContract.Instances.START_DAY, CalendarContract.Instances.END_DAY,
+            // The half of an appointment that says what to DO about it: where, whose calendar,
+            // who called it. Queried but never read before, so the day page could show you that
+            // something was happening and nothing about where.
+            CalendarContract.Instances.EVENT_LOCATION,
+            CalendarContract.Instances.CALENDAR_DISPLAY_NAME,
+            CalendarContract.Instances.ORGANIZER
         )
 
         val selection = CalendarContract.Calendars.VISIBLE + "=?"
@@ -67,7 +73,10 @@ class CalendarEventsService @Inject constructor() {
                 calendarEvents.add(
                     CalendarEvent(
                         id, title, description, allDay > 0,
-                        dtStart, dtEnd, calendarColor, eventColor
+                        dtStart, dtEnd, calendarColor, eventColor,
+                        location = cursor.getStringOrNull(10)?.trim().orEmpty(),
+                        calendarName = cursor.getStringOrNull(11)?.trim().orEmpty(),
+                        organizer = cursor.getStringOrNull(12)?.trim().orEmpty()
                     )
                 )
             }

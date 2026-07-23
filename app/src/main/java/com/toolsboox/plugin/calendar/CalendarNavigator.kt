@@ -43,6 +43,26 @@ object CalendarNavigator {
     }
 
     /**
+     * Remember where the free-form Notes surface is open (numeric pages only — Intake,
+     * Gratitude etc. are their own destinations, not "Notes").
+     */
+    fun rememberNoteLocation(context: android.content.Context, date: LocalDate, notePage: String) {
+        if (notePage.toIntOrNull() == null) return
+        context.getSharedPreferences("ledger_notes", 0).edit()
+            .putString("last_note_date", date.toString())
+            .putString("last_note_page", notePage)
+            .apply()
+    }
+
+    /** Open Notes where you last left it; today's first page when there's no memory yet. */
+    fun toLastDayNote(fragment: ScreenFragment) {
+        val p = fragment.requireContext().getSharedPreferences("ledger_notes", 0)
+        val date = runCatching { LocalDate.parse(p.getString("last_note_date", "") ?: "") }
+            .getOrNull() ?: LocalDate.now()
+        toDayNote(fragment, date, p.getString("last_note_page", "0") ?: "0")
+    }
+
+    /**
      * Navigate to the daily calendar notes.
      *
      * @param fragment the fragment

@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:background="#FFFFFF"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="10dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <Button
+            android:id="@+id/kanban_board"
+            android:text="All boards  ▾"
+            android:textAllCaps="false"
+            android:textColor="#000000"
+            android:textStyle="bold"
+            android:textSize="18sp"
+            android:background="@android:color/transparent"
+            android:gravity="start|center_vertical"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+
+        <Button
+            android:id="@+id/kanban_new"
+            android:text="＋ New"
+            android:textAllCaps="false"
+            android:textColor="#000000"
+            android:background="@drawable/dialog_rounded_bg"
+            android:minHeight="44dp"
+            android:layout_marginEnd="8dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <Button
+            android:id="@+id/kanban_close"
+            android:text="Close"
+            android:textAllCaps="false"
+            android:textColor="#000000"
+            android:background="@drawable/dialog_rounded_bg"
+            android:minHeight="44dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:paddingHorizontal="8dp"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <LinearLayout android:orientation="vertical" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:layout_margin="4dp" android:background="#F2F2F2" android:padding="6dp">
+            <TextView android:id="@+id/col_todo_head" android:text="TO DO" android:textColor="#666666" android:textStyle="bold" android:textSize="12sp" android:paddingBottom="4dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+            <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+                <LinearLayout android:id="@+id/col_todo_cards" android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+            </ScrollView>
+        </LinearLayout>
+
+        <LinearLayout android:orientation="vertical" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:layout_margin="4dp" android:background="#F2F2F2" android:padding="6dp">
+            <TextView android:id="@+id/col_doing_head" android:text="DOING" android:textColor="#666666" android:textStyle="bold" android:textSize="12sp" android:paddingBottom="4dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+            <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+                <LinearLayout android:id="@+id/col_doing_cards" android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+            </ScrollView>
+        </LinearLayout>
+
+        <LinearLayout android:orientation="vertical" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:layout_margin="4dp" android:background="#F2F2F2" android:padding="6dp">
+            <TextView android:id="@+id/col_done_head" android:text="DONE" android:textColor="#666666" android:textStyle="bold" android:textSize="12sp" android:paddingBottom="4dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+            <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+                <LinearLayout android:id="@+id/col_done_cards" android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+            </ScrollView>
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

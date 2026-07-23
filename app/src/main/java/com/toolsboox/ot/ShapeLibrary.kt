@@ -1,0 +1,276 @@
+package com.toolsboox.ot
+
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+
+/**
+ * Simple shapes you can put down.
+ *
+ * The Clippings library starts empty and only ever fills with things you cut out yourself, so
+ * there was never anything basic to stamp — no box to put round a heading, no arrow to join two
+ * thoughts, no bracket to gather three lines. Drawing a passable circle freehand on e-ink is
+ * a fussy job, and it is not the part anyone wants to be doing.
+ *
+ * Drawn as paths at request time rather than shipped as assets: they come out crisp at whatever
+ * size they are placed, they are a few lines each, and they cost nothing in the APK.
+ *
+ * Stroked, not filled, and pure black on transparency — these go OVER handwriting, and a filled
+ * shape would bury the words underneath. Line weight scales with the shape so a big box and a
+ * small one look like the same pen drew them.
+ */
+object ShapeLibrary {
+
+    /** One offered shape: what it is called and how to draw it. */
+    data class Shape(val key: String, val label: String)
+
+    val ALL = listOf(
+        // Boxes & rounds
+        Shape("box", "▭  Box"),
+        Shape("rounded", "▢  Rounded box"),
+        Shape("capsule", "▱  Capsule"),
+        Shape("circle", "◯  Circle"),
+        Shape("oval", "⬭  Oval"),
+        Shape("ring", "◎  Ring"),
+        // Angles
+        Shape("triangle", "△  Triangle"),
+        Shape("diamond", "◇  Diamond"),
+        Shape("pentagon", "⬠  Pentagon"),
+        Shape("hexagon", "⬡  Hexagon"),
+        Shape("parallelogram", "▰  Parallelogram"),
+        Shape("trapezoid", "⏢  Trapezoid"),
+        Shape("chevron", "❯  Chevron"),
+        // Diagram
+        Shape("cylinder", "⛁  Cylinder"),
+        Shape("document", "🗎  Document"),
+        Shape("speech", "💬  Speech bubble"),
+        Shape("cloud", "☁  Thought cloud"),
+        Shape("banner", "▤  Banner"),
+        // Lines & arrows
+        Shape("line", "—  Line"),
+        Shape("dashed", "┄  Dashed line"),
+        Shape("dotted", "⋯  Dotted line"),
+        Shape("arrow", "→  Arrow"),
+        Shape("double_arrow", "↔  Double arrow"),
+        Shape("elbow", "⌐  Elbow connector"),
+        Shape("arrow_bent", "↷  Curved arrow"),
+        Shape("brace", "}  Brace"),
+        Shape("bracket", "]  Bracket"),
+        // Marks
+        Shape("star", "☆  Star"),
+        Shape("heart", "♡  Heart"),
+        Shape("plus", "✚  Plus"),
+        Shape("check", "✓  Tick"),
+        Shape("cross", "✕  Cross"),
+        Shape("bolt", "⚡  Lightning"),
+        Shape("burst", "✳  Burst")
+    )
+
+    /**
+     * Draw [key] at [size] px square, transparent behind.
+     *
+     * [weight] is a multiplier on the line, so a shape can be drawn heavier when it is meant to
+     * be a frame and lighter when it is a mark among words.
+     */
+    fun bitmap(key: String, size: Int = 480, weight: Float = 1f): Bitmap {
+        val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(out)
+        val s = size.toFloat()
+        val strokeW = (s * 0.022f * weight).coerceAtLeast(2f)
+        // Only enough margin to keep the stroke from clipping — the shape fills its bitmap, so its
+        // edge IS the bitmap edge and a connector anchored to the box actually touches the shape,
+        // instead of stopping a tenth of the way short where a fixed inset used to hold it.
+        val pad = strokeW
+        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            color = 0xFF000000.toInt()
+            strokeWidth = strokeW
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+        val box = RectF(pad, pad, s - pad, s - pad)
+
+        when (key) {
+            "box" -> c.drawRect(box, p)
+            "rounded" -> c.drawRoundRect(box, s * 0.10f, s * 0.10f, p)
+            "circle" -> c.drawCircle(s / 2f, s / 2f, (s / 2f) - pad, p)
+            "oval" -> c.drawOval(RectF(pad, s * 0.24f, s - pad, s * 0.76f), p)
+            "triangle" -> c.drawPath(closed(
+                s / 2f to pad, s - pad to s - pad, pad to s - pad), p)
+            "diamond" -> c.drawPath(closed(
+                s / 2f to pad, s - pad to s / 2f, s / 2f to s - pad, pad to s / 2f), p)
+            "star" -> c.drawPath(star(s / 2f, s / 2f, (s / 2f) - pad, (s / 2f - pad) * 0.42f), p)
+            "heart" -> c.drawPath(heart(s), p)
+            "line" -> c.drawLine(pad, s / 2f, s - pad, s / 2f, p)
+            "check" -> c.drawPath(open(
+                pad to s * 0.55f, s * 0.42f to s - pad * 1.4f, s - pad to pad * 1.4f), p)
+            "cross" -> {
+                c.drawLine(pad, pad, s - pad, s - pad, p)
+                c.drawLine(s - pad, pad, pad, s - pad, p)
+            }
+            "arrow" -> {
+                c.drawLine(pad, s / 2f, s - pad, s / 2f, p)
+                c.drawPath(open(
+                    s - pad - s * 0.16f to s / 2f - s * 0.14f,
+                    s - pad to s / 2f,
+                    s - pad - s * 0.16f to s / 2f + s * 0.14f), p)
+            }
+            "arrow_bent" -> {
+                c.drawPath(Path().apply {
+                    moveTo(pad, s - pad)
+                    cubicTo(pad, s * 0.3f, s * 0.5f, pad, s - pad, pad * 1.6f)
+                }, p)
+                c.drawPath(open(
+                    s - pad - s * 0.18f to pad * 0.9f,
+                    s - pad to pad * 1.6f,
+                    s - pad - s * 0.16f to s * 0.22f), p)
+            }
+            "brace" -> c.drawPath(Path().apply {
+                val r = s - pad
+                moveTo(r, pad)
+                cubicTo(s * 0.55f, pad, s * 0.72f, s / 2f, pad, s / 2f)
+                cubicTo(s * 0.72f, s / 2f, s * 0.55f, r, r, r)
+            }, p)
+            "bracket" -> c.drawPath(open(
+                s * 0.66f to pad, s - pad to pad, s - pad to s - pad, s * 0.66f to s - pad), p)
+            "banner" -> {
+                val top = s * 0.30f; val bot = s * 0.70f
+                c.drawPath(closed(
+                    pad to top, s - pad to top, s - pad to bot, pad to bot), p)
+                c.drawPath(open(pad to top, pad + s * 0.10f to s / 2f, pad to bot), p)
+                c.drawPath(open(s - pad to top, s - pad - s * 0.10f to s / 2f, s - pad to bot), p)
+            }
+            "cloud" -> {
+                val r = s * 0.15f
+                c.drawCircle(s * 0.35f, s * 0.45f, r * 1.35f, p)
+                c.drawCircle(s * 0.55f, s * 0.36f, r * 1.6f, p)
+                c.drawCircle(s * 0.72f, s * 0.48f, r * 1.2f, p)
+                c.drawCircle(s * 0.52f, s * 0.56f, r * 1.5f, p)
+                c.drawCircle(s * 0.30f, s * 0.74f, r * 0.34f, p)
+                c.drawCircle(s * 0.22f, s * 0.86f, r * 0.22f, p)
+            }
+            "burst" -> {
+                val cx = s / 2f; val cy = s / 2f; val rr = (s / 2f) - pad
+                for (i in 0 until 8) {
+                    val a = Math.toRadians((i * 45).toDouble())
+                    c.drawLine(
+                        cx + (rr * 0.35f * Math.cos(a)).toFloat(),
+                        cy + (rr * 0.35f * Math.sin(a)).toFloat(),
+                        cx + (rr * Math.cos(a)).toFloat(),
+                        cy + (rr * Math.sin(a)).toFloat(), p)
+                }
+            }
+            "capsule" -> c.drawRoundRect(RectF(pad, s * 0.30f, s - pad, s * 0.70f),
+                s * 0.20f, s * 0.20f, p)
+            "ring" -> {
+                c.drawCircle(s / 2f, s / 2f, (s / 2f) - pad, p)
+                c.drawCircle(s / 2f, s / 2f, (s / 2f - pad) * 0.5f, p)
+            }
+            "pentagon" -> c.drawPath(polygon(5, s / 2f, s / 2f, (s / 2f) - pad), p)
+            "hexagon" -> c.drawPath(polygon(6, s / 2f, s / 2f, (s / 2f) - pad), p)
+            "parallelogram" -> c.drawPath(closed(
+                s * 0.30f to s * 0.28f, s - pad to s * 0.28f,
+                s * 0.70f to s * 0.72f, pad to s * 0.72f), p)
+            "trapezoid" -> c.drawPath(closed(
+                s * 0.28f to s * 0.30f, s * 0.72f to s * 0.30f,
+                s - pad to s * 0.70f, pad to s * 0.70f), p)
+            "chevron" -> c.drawPath(closed(
+                pad to s * 0.28f, s * 0.55f to s * 0.28f, s - pad to s / 2f,
+                s * 0.55f to s * 0.72f, pad to s * 0.72f, s * 0.32f to s / 2f), p)
+            "cylinder" -> {
+                val top = s * 0.24f; val bot = s * 0.76f; val ry = s * 0.09f
+                c.drawOval(RectF(pad, top - ry, s - pad, top + ry), p)
+                c.drawLine(pad, top, pad, bot, p)
+                c.drawLine(s - pad, top, s - pad, bot, p)
+                // Front half of the bottom ellipse only.
+                c.drawArc(RectF(pad, bot - ry, s - pad, bot + ry), 0f, 180f, false, p)
+            }
+            "document" -> c.drawPath(Path().apply {
+                moveTo(pad, pad); lineTo(s - pad, pad); lineTo(s - pad, s * 0.72f)
+                // Wavy bottom edge — the "document" tell.
+                cubicTo(s * 0.75f, s * 0.60f, s * 0.60f, s * 0.84f, s / 2f, s * 0.72f)
+                cubicTo(s * 0.40f, s * 0.64f, s * 0.25f, s * 0.84f, pad, s * 0.72f)
+                close()
+            }, p)
+            "speech" -> {
+                c.drawRoundRect(RectF(pad, pad, s - pad, s * 0.66f), s * 0.10f, s * 0.10f, p)
+                c.drawPath(open(
+                    s * 0.30f to s * 0.66f, s * 0.30f to s * 0.86f, s * 0.50f to s * 0.66f), p)
+            }
+            "dashed" -> {
+                p.pathEffect = android.graphics.DashPathEffect(
+                    floatArrayOf(s * 0.06f, s * 0.045f), 0f)
+                c.drawLine(pad, s / 2f, s - pad, s / 2f, p)
+            }
+            "dotted" -> {
+                p.strokeCap = Paint.Cap.ROUND
+                p.pathEffect = android.graphics.DashPathEffect(
+                    floatArrayOf(0.1f, s * 0.05f), 0f)
+                c.drawLine(pad, s / 2f, s - pad, s / 2f, p)
+            }
+            "double_arrow" -> {
+                c.drawLine(pad + s * 0.10f, s / 2f, s - pad - s * 0.10f, s / 2f, p)
+                c.drawPath(open(
+                    pad + s * 0.10f to s / 2f - s * 0.12f, pad to s / 2f, pad + s * 0.10f to s / 2f + s * 0.12f), p)
+                c.drawPath(open(
+                    s - pad - s * 0.10f to s / 2f - s * 0.12f, s - pad to s / 2f, s - pad - s * 0.10f to s / 2f + s * 0.12f), p)
+            }
+            "elbow" -> {
+                c.drawPath(open(pad to pad, pad to s - pad, s - pad to s - pad), p)
+                c.drawPath(open(
+                    s - pad - s * 0.14f to s - pad - s * 0.12f, s - pad to s - pad,
+                    s - pad - s * 0.14f to s - pad + s * 0.12f), p)
+            }
+            "plus" -> {
+                c.drawLine(s / 2f, pad, s / 2f, s - pad, p)
+                c.drawLine(pad, s / 2f, s - pad, s / 2f, p)
+            }
+            "bolt" -> c.drawPath(closed(
+                s * 0.56f to pad, s * 0.30f to s * 0.54f, s * 0.48f to s * 0.54f,
+                s * 0.42f to s - pad, s * 0.70f to s * 0.42f, s * 0.52f to s * 0.42f), p)
+            else -> c.drawRect(box, p)
+        }
+        return out
+    }
+
+    private fun closed(vararg pts: Pair<Float, Float>): Path = Path().apply {
+        pts.forEachIndexed { i, (x, y) -> if (i == 0) moveTo(x, y) else lineTo(x, y) }
+        close()
+    }
+
+    private fun open(vararg pts: Pair<Float, Float>): Path = Path().apply {
+        pts.forEachIndexed { i, (x, y) -> if (i == 0) moveTo(x, y) else lineTo(x, y) }
+    }
+
+    /** A regular [n]-gon centred on ([cx], [cy]), point up. */
+    private fun polygon(n: Int, cx: Float, cy: Float, r: Float): Path = Path().apply {
+        for (i in 0 until n) {
+            val a = Math.toRadians((i * 360.0 / n - 90))
+            val x = cx + (r * Math.cos(a)).toFloat()
+            val y = cy + (r * Math.sin(a)).toFloat()
+            if (i == 0) moveTo(x, y) else lineTo(x, y)
+        }
+        close()
+    }
+
+    private fun star(cx: Float, cy: Float, outer: Float, inner: Float): Path = Path().apply {
+        for (i in 0 until 10) {
+            val r = if (i % 2 == 0) outer else inner
+            val a = Math.toRadians((i * 36 - 90).toDouble())
+            val x = cx + (r * Math.cos(a)).toFloat()
+            val y = cy + (r * Math.sin(a)).toFloat()
+            if (i == 0) moveTo(x, y) else lineTo(x, y)
+        }
+        close()
+    }
+
+    private fun heart(s: Float): Path = Path().apply {
+        val cx = s / 2f
+        moveTo(cx, s * 0.82f)
+        cubicTo(s * 0.08f, s * 0.56f, s * 0.18f, s * 0.14f, cx, s * 0.34f)
+        cubicTo(s * 0.82f, s * 0.14f, s * 0.92f, s * 0.56f, cx, s * 0.82f)
+        close()
+    }
+}

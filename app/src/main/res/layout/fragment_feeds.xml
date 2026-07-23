@@ -1,0 +1,247 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+<LinearLayout
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <!-- Full-width timeline filter across the very top: the date navigator scopes the feed
+         (a finite feed to clear day to day), above BOTH the directory drawer and the list. -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp" android:paddingTop="6dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content">
+        <ImageButton
+            android:id="@+id/ledger_button"
+            android:src="@drawable/ic_feed"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter" android:padding="3dp"
+            android:layout_marginEnd="4dp"
+            android:contentDescription="@string/feeds_title"
+            android:layout_width="32dp" android:layout_height="32dp"/>
+        <ImageView
+            android:id="@+id/navigatorImageView"
+            android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="56dp"
+            android:contentDescription="@null"/>
+        <Button
+            android:id="@+id/view_toggle_button"
+            android:visibility="gone"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <!-- Row below the timeline: directory drawer | list -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#FFFFFF">
+
+    <!-- Persistent left directory pane (two-pane feed): feeds + unread counts + read/unread
+         filter. Populated in code by renderDirectory(). Replaces the floating dropdown. -->
+    <ScrollView
+        android:id="@+id/directory_scroll"
+        android:layout_width="0dp"
+        android:layout_weight="0.24"
+        android:layout_height="match_parent"
+        android:background="#FFFFFF"
+        android:scrollbars="none">
+        <LinearLayout
+            android:id="@+id/feeds_directory"
+            android:orientation="vertical"
+            android:paddingVertical="8dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+    </ScrollView>
+
+    <View android:id="@+id/directory_divider"
+        android:layout_width="1dp" android:layout_height="match_parent" android:background="#D8D5CE"/>
+
+    <LinearLayout
+    android:orientation="vertical"
+    android:layout_width="0dp"
+    android:layout_weight="0.76"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <ProgressBar
+        android:id="@+id/progress"
+        style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+        android:indeterminate="true"
+        android:visibility="invisible"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+    <LinearLayout
+        android:id="@+id/settings_panel"
+        android:orientation="vertical"
+        android:visibility="gone"
+        android:padding="12dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <EditText
+            android:id="@+id/url_edit"
+            android:hint="@string/feeds_url_hint"
+            android:textColor="#000000" android:textColorHint="#888888"
+            android:inputType="textUri"
+            android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        <EditText
+            android:id="@+id/token_edit"
+            android:hint="@string/feeds_token_hint"
+            android:textColor="#000000" android:textColorHint="#888888"
+            android:inputType="textPassword"
+            android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/save_settings_button"
+            android:text="@string/feeds_save"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/empty_text"
+        android:text="@string/feeds_empty"
+        android:textColor="#666666"
+        android:textSize="16sp"
+        android:padding="20dp"
+        android:visibility="gone"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/feeds_recycler"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"/>
+
+    <!-- In-pane article: opening an article loads it HERE (right pane) so the feed
+         directory + list stay put. Back returns to the list. -->
+    <LinearLayout
+        android:id="@+id/article_pane"
+        android:orientation="vertical"
+        android:visibility="gone"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+        <LinearLayout
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="6dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content">
+            <ImageButton android:id="@+id/article_back" android:src="@drawable/ic_nav_left"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:scaleType="fitCenter" android:padding="8dp"
+                android:contentDescription="@string/reader_prev"
+                android:layout_width="40dp" android:layout_height="40dp"/>
+            <TextView android:id="@+id/article_title" android:maxLines="1" android:ellipsize="end"
+                android:textColor="#000000" android:textSize="15sp"
+                android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+            <ImageButton android:id="@+id/article_browser" android:src="@drawable/ic_globe"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:scaleType="fitCenter" android:padding="9dp"
+                android:contentDescription="@string/feeds_open_external"
+                android:visibility="gone"
+                android:layout_width="40dp" android:layout_height="40dp"/>
+        </LinearLayout>
+        <FrameLayout
+            android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+            <WebView android:id="@+id/article_web"
+                android:layout_width="match_parent" android:layout_height="match_parent"/>
+            <!-- Touch pagination (like the book reader): tap the lower band — left = page up,
+                 right = page down. Upper area stays scrollable/selectable. -->
+            <LinearLayout android:id="@+id/article_tap_zones"
+                android:orientation="horizontal"
+                android:layout_width="match_parent" android:layout_height="200dp"
+                android:layout_gravity="bottom">
+                <View android:id="@+id/article_tap_left"
+                    android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"/>
+                <View android:id="@+id/article_tap_right"
+                    android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"/>
+            </LinearLayout>
+        </FrameLayout>
+    </LinearLayout>
+    </LinearLayout>
+    </LinearLayout>
+</LinearLayout>
+
+    <!-- Persistent floating nav pill (grip = tap to collapse), matching the day/article/
+         almanac pills: ‹ page-up · ☰ directory (center) · › page-down over the list. -->
+    <LinearLayout
+        android:id="@+id/feeds_pill"
+        android:orientation="horizontal"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="16dp"
+        android:gravity="center_vertical"
+        android:background="@drawable/ledger_bar_bg"
+        android:padding="4dp">
+
+        <ImageView android:id="@+id/feeds_grip" android:layout_width="@dimen/ledger_grip_short" android:layout_height="@dimen/ledger_pill_button"
+            android:scaleType="fitCenter" android:src="@drawable/ic_grip" android:contentDescription="@null"/>
+        <!-- Refresh + settings(wrench) sit left of the ↑ carrot. -->
+        <ImageButton android:id="@+id/refresh_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_refresh"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_refresh"/>
+        <ImageButton android:id="@+id/settings_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_wrench"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_settings"/>
+        <ImageButton android:id="@+id/feeds_page_up" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
+        <ImageButton android:id="@+id/feeds_goto" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_menu"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+        <ImageButton android:id="@+id/feeds_page_down" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
+        <!-- Article actions (shown only while reading an article in-pane). -->
+        <ImageButton android:id="@+id/feeds_star" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_star"
+            android:visibility="gone"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_view_starred"/>
+        <ImageButton android:id="@+id/feeds_note" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_go_notes"
+            android:visibility="gone"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+        <ImageButton android:id="@+id/feeds_parsed" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_reader_view"
+            android:visibility="gone"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+        <ImageButton android:id="@+id/feeds_tts" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_speaker"
+            android:visibility="gone"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+        <ImageButton android:id="@+id/feeds_later" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_go_later"
+            android:visibility="gone"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_add_later"/>
+        <!-- Shrunk article drawer (shown only when the pill is shrunk while reading):
+             ⏫ last article · ‹ page up · › page down · ⏬ next article. -->
+        <ImageButton android:id="@+id/feeds_dw_prev" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up2"
+            android:visibility="gone"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_prev_article"/>
+        <ImageButton android:id="@+id/feeds_dw_pgup" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_left"
+            android:visibility="gone"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
+        <ImageButton android:id="@+id/feeds_dw_pgdn" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_right"
+            android:visibility="gone"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
+        <ImageButton android:id="@+id/feeds_dw_next" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down2"
+            android:visibility="gone"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_next_article"/>
+    </LinearLayout>
+
+
+</FrameLayout>

@@ -1,4 +1,46 @@
 <resources>
+    <!--
+        Modal sizing. Every dialog is built through ModalScale.wrap, which applies this overlay,
+        so capping the width here caps all ~137 of them without touching a call site.
+
+        No cap on a handset-sized panel: a Palma's screen IS the right width for a dialog. The
+        override lives in values-sw600dp, where a stock AlertDialog otherwise stretches across a
+        13" page and a four-line menu becomes a wall.
+    -->
+    <!--
+        Settings section heading. There were five of these, each with its own size and margins
+        typed out by hand, so the page read as a list of unrelated things rather than as sections.
+    -->
+    <style name="Settings.SectionHeading" parent="">
+        <item name="android:textSize">13sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">#7A7A7A</item>
+        <item name="android:letterSpacing">0.09</item>
+        <item name="android:layout_marginTop">26dp</item>
+        <item name="android:layout_marginBottom">2dp</item>
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+    </style>
+
+    <style name="LedgerAlertDialog.Small" parent="Theme.AppCompat.Light.Dialog.Alert"/>
+    <style name="LedgerAlertDialog.Medium" parent="Theme.AppCompat.Light.Dialog.Alert"/>
+    <style name="LedgerAlertDialog.Large" parent="Theme.AppCompat.Light.Dialog.Alert"/>
+
+    <!-- One overlay per text-size tier: ModalScale picks the matching one, so the BOX narrows or
+         widens with the setting instead of sitting at one fixed width nobody chose. -->
+    <style name="LedgerModalOverlay.Small" parent="">
+        <item name="alertDialogTheme">@style/LedgerAlertDialog.Small</item>
+        <item name="android:alertDialogTheme">@style/LedgerAlertDialog.Small</item>
+    </style>
+    <style name="LedgerModalOverlay.Medium" parent="">
+        <item name="alertDialogTheme">@style/LedgerAlertDialog.Medium</item>
+        <item name="android:alertDialogTheme">@style/LedgerAlertDialog.Medium</item>
+    </style>
+    <style name="LedgerModalOverlay.Large" parent="">
+        <item name="alertDialogTheme">@style/LedgerAlertDialog.Large</item>
+        <item name="android:alertDialogTheme">@style/LedgerAlertDialog.Large</item>
+    </style>
+
     <style name="App.Theme" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="colorPrimary">@color/colorPrimary</item>
         <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
@@ -21,5 +63,11 @@
     </style>
 
     <style name="App.Text.Headline6" parent="TextAppearance.MaterialComponents.Headline6">
+    </style>
+
+    <!-- Left drawer: the ledger directory slides in/out from the left edge. -->
+    <style name="DrawerAnimation">
+        <item name="android:windowEnterAnimation">@anim/drawer_enter</item>
+        <item name="android:windowExitAnimation">@anim/drawer_exit</item>
     </style>
 </resources>

@@ -64,6 +64,15 @@ class CalendarUtils @Inject constructor() {
             constraintSet.connect(R.id.surfaceView, ConstraintSet.END, ConstraintSet.PARENT_ID, ConstraintSet.END)
         }
 
+        // The spiral line is placed by translation from the surface transform (it has to sit on a
+        // specific patch of the drawn page), so it only needs pinning to the origin. It still has
+        // to be DESCRIBED here: a view this cloned set doesn't mention comes back 0×0 — laid out,
+        // visible, and invisible, which looks exactly like a feature that was never wired up.
+        constraintSet.connect(R.id.spiralLine, ConstraintSet.TOP, ConstraintSet.PARENT_ID, ConstraintSet.TOP)
+        constraintSet.connect(R.id.spiralLine, ConstraintSet.START, ConstraintSet.PARENT_ID, ConstraintSet.START)
+        constraintSet.constrainWidth(R.id.spiralLine, ConstraintSet.WRAP_CONTENT)
+        constraintSet.constrainHeight(R.id.spiralLine, ConstraintSet.WRAP_CONTENT)
+
         constraintSet.applyTo(binding.drawingLayout)
     }
 }

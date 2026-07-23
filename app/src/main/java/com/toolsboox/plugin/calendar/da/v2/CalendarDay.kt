@@ -1,6 +1,8 @@
 package com.toolsboox.plugin.calendar.da.v2
 
 import com.squareup.moshi.JsonClass
+import com.toolsboox.da.Attachment
+import com.toolsboox.da.ImageElement
 import com.toolsboox.da.Stroke
 import com.toolsboox.da.TextElement
 import com.toolsboox.plugin.calendar.da.v1.CalendarEvent
@@ -28,8 +30,49 @@ data class CalendarDay(
     override var calendarValues: MutableMap<String, Map<String, Float?>> = mutableMapOf(),
     override var noteStrokes: MutableMap<String, List<Stroke>> = mutableMapOf(),
     override var textElements: MutableList<TextElement> = mutableListOf(),
+    var imageElements: MutableList<ImageElement> = mutableListOf(),
+
+    /**
+     * Per-day reading timeline written by the iOS/cross-device Ledger — starred
+     * articles (Feed Ledger) and book highlights (Book Ledger). This app doesn't
+     * yet author these, but it MUST carry them through a load→save round-trip
+     * (and the sync merge) or an Android save would silently strip the reading
+     * data the iPad wrote. Defaulted so older/foreign day JSON still loads.
+     */
+    var readingEvents: MutableList<ReadingEvent> = mutableListOf(),
+
+    /**
+     * A/V Grams — the day's voice/video recordings, written by the iOS Ledger.
+     * Same round-trip-preservation contract as [readingEvents].
+     */
+    var avGrams: MutableList<Attachment> = mutableListOf(),
+
+    /**
+     * Structured tasks + calendar events extracted from this day's handwriting (per-section
+     * OCR). Each [LedgerItem] keeps both its OCR text and a link back to its ink. Same
+     * round-trip-preservation + sync-merge contract as [readingEvents] / [avGrams].
+     */
+    var ledgerItems: MutableList<LedgerItem> = mutableListOf(),
+
     override var created: Date? = null,
-    override var updated: Date? = null
+    override var updated: Date? = null,
+
+    /**
+     * Tombstones for strokes the user has erased, keyed by [Stroke.strokeId] (as string).
+     * A plain growing set is enough because strokeIds are globally-unique UUIDs and an
+     * erase is permanent for that id. The sync merge unions these across devices and
+     * subtracts them from the unioned strokes so a deletion on one device wins over the
+     * surviving copy on another — instead of the union silently resurrecting erased ink.
+     */
+    var deletedStrokeIds: MutableList<String> = mutableListOf(),
+
+    /**
+     * Tombstones for erased/cut text and image elements, keyed by their elementId (as
+     * string). Same purpose as [deletedStrokeIds] but for the element union merges — a
+     * cut image resurrects on the next Drive-sync merge without this (the union sees the
+     * other device's surviving copy and re-adds it → "echo image after open/shut").
+     */
+    var deletedElementIds: MutableList<String> = mutableListOf()
 ) : Calendar {
 
     companion object {
@@ -37,16 +80,6 @@ data class CalendarDay(
          * Name of the default calendar page style.
          */
         const val DEFAULT_STYLE = "Default"
-
-        /**
-         * Name of the Health v1 page style.
-         */
-        const val HEALTH_V1_STYLE = "Health.v1"
-
-        /**
-         * Name of the TimeBox v1 page style.
-         */
-        const val TIME_BOX_V1_STYLE = "TimeBox.v1"
 
         /**
          * Covert calendar day data class from v1 format to v2 format.
@@ -76,7 +109,13 @@ data class CalendarDay(
         return CalendarDay(
             this.year, this.month, this.day, this.locale, this.events.toMutableList(), this.readingProgress.toMutableList(), this.hasLanes, this.startHour,
             Calendar.strokesDeepCopy(calendarStrokes), Calendar.valuesDeepCopy(calendarValues), Calendar.strokesDeepCopy(noteStrokes),
-            Calendar.textElementsDeepCopy(textElements)
+            Calendar.textElementsDeepCopy(textElements),
+            imageElements.map { it.copy() }.toMutableList(),
+            readingEvents = this.readingEvents.map { it.copy() }.toMutableList(),
+            avGrams = this.avGrams.map { it.copy() }.toMutableList(),
+            ledgerItems = this.ledgerItems.map { it.copy(strokeIds = it.strokeIds.toMutableList()) }.toMutableList(),
+            deletedStrokeIds = this.deletedStrokeIds.toMutableList(),
+            deletedElementIds = this.deletedElementIds.toMutableList()
         )
     }
 }

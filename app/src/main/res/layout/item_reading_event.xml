@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One annotation card in the Notes & Annotations log: a book highlight or a starred article. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="#FFFFFF"
+    android:paddingHorizontal="16dp"
+    android:paddingVertical="12dp">
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <TextView
+            android:id="@+id/event_mark"
+            android:text="★"
+            android:textSize="18sp"
+            android:textColor="#000000"
+            android:paddingEnd="8dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <TextView
+            android:id="@+id/event_title"
+            android:textSize="17sp"
+            android:textStyle="bold"
+            android:textColor="#000000"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/event_meta"
+        android:textSize="12sp"
+        android:textColor="#8A8A8A"
+        android:paddingStart="26dp"
+        android:paddingTop="2dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+    <TextView
+        android:id="@+id/event_excerpt"
+        android:textSize="15sp"
+        android:textColor="#444444"
+        android:maxLines="4"
+        android:ellipsize="end"
+        android:paddingStart="26dp"
+        android:paddingTop="6dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+    <ImageView
+        android:id="@+id/event_thumb"
+        android:layout_width="wrap_content"
+        android:layout_height="140dp"
+        android:adjustViewBounds="true"
+        android:scaleType="fitStart"
+        android:visibility="gone"
+        android:paddingStart="26dp"
+        android:paddingTop="8dp"
+        android:contentDescription="@string/reading_log_title"
+        android:layout_gravity="start"/>
+</LinearLayout>

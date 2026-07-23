@@ -98,4 +98,24 @@ object NavigatorRenderer {
 
         canvas.drawLine(0.0f, 138.4f, 1404.0f, 138.4f, underline)
     }
+
+    // Hit-testing geometry — MUST stay in sync with render()'s slot layout above.
+    const val SLOTS_LEFT = 140.0f
+    const val SLOTS_RIGHT = 1264.0f
+    const val ARROW_PREV = -1
+    const val ARROW_NEXT = -2
+
+    /**
+     * Which slot the x-coordinate (in the 1404-wide navigator space) falls on,
+     * matching the even slot layout [render] draws. Returns a 0-based slot index,
+     * or [ARROW_PREV] / [ARROW_NEXT] for the `<` / `>` arrow zones. This replaces
+     * the old fixed 20-cell ladder hit-testing, which no longer matched the drawn
+     * strip (so slots like a quarter page's "year" were untappable).
+     */
+    fun slotAt(px: Float, slotCount: Int): Int {
+        if (slotCount <= 0 || px < SLOTS_LEFT) return ARROW_PREV
+        if (px > SLOTS_RIGHT) return ARROW_NEXT
+        val w = (SLOTS_RIGHT - SLOTS_LEFT) / slotCount
+        return ((px - SLOTS_LEFT) / w).toInt().coerceIn(0, slotCount - 1)
+    }
 }

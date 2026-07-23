@@ -45,51 +45,18 @@ Strings related to dashboard fragment -->
     <string name="dashboard_new_version_message">"Je k dispozici nová verze 'Tools for Boox', pro plnou funkčnost upgradujte."</string>
 
     <!-- Strings related to team drawer plugin -->
-    <string name="team_drawer_title">"Týmová Tabule – %1$s"</string>
 
     <!-- Strings related to team drawer page fragment -->
-    <string name="team_drawer_page_title">"'%s' stran"</string>
-    <string name="team_drawer_page_text">"Vítejte v naší týmové tabuli! :)"</string>
-    <string name="team_drawer_page_button_export_text">"Exportovat"</string>
-    <string name="team_drawer_page_button_erase_text">"Smaž stránku"</string>
-    <string name="team_drawer_page_export_message">"Uloženo jako %s"</string>
-    <string name="team_drawer_page_add_new_page_dialog_title">"Přidej stránku"</string>
-    <string name="team_drawer_page_add_new_page_dialog_message">"Chceš přidat novou stránku?"</string>
 
     <!-- Strings related to team drawer room fragment -->
-    <string name="team_drawer_room_title">"TýmováTabule - Místnosti"</string>
-    <string name="team_drawer_room_item_image">"Obrázek místnosti"</string>
-    <string name="team_drawer_room_add_dialog_title">"Přidej novou místnost"</string>
 
     <!-- Strings related to team drawer note fragment -->
-    <string name="team_drawer_note_title">"'%s' poznámky"</string>
-    <string name="team_drawer_note_item_image">"Obrázek položky poznámky"</string>
-    <string name="team_drawer_note_add_dialog_title">"Přidej novou poznámku"</string>
 
     <!-- Strings related to templates plugin -->
-    <string name="templates_main_title">"Šablony"</string>
-    <string name="templates_preview_button_text">"Náhled"</string>
-    <string name="templates_settings_button_text">"Nastavení"</string>
-    <string name="templates_export_button_text">"Exportovat"</string>
 
     <!-- Strings related to templates 'boxed week's calendar' fragment -->
-    <string name="templates_boxed_weeks_calendar_title">"Šablona ročního kalendáře s týdenním boxem"</string>
-    <string name="templates_boxed_weeks_calendar_preview_description">"Náhled obrázku"</string>
-    <string name="templates_boxed_weeks_calendar_button_export_text">"Exportovat"</string>
-    <string name="templates_boxed_weeks_calendar_message">"Uložit jako vícestránkovou PDF šablonu"</string>
-    <string name="templates_boxed_weeks_calendar_preview_export_message">"Uložit jako %s"</string>
-    <string name="templates_boxed_weeks_calendar_settings_days_layout_message">"Rozvržení dní v týdnu:"</string>
-    <string name="templates_boxed_weeks_calendar_settings_days_layout_vertical">"Svisle"</string>
-    <string name="templates_boxed_weeks_calendar_settings_days_layout_horizontal">"Vodorovně"</string>
 
     <!-- Strings related to templates 'this week's calendar' fragment -->
-    <string name="templates_this_weeks_calendar_title">"Kalendář na tento týden"</string>
-    <string name="templates_this_weeks_calendar_preview_description">"Náhled obrázku"</string>
-    <string name="templates_this_weeks_calendar_button_export_text">"Exportovat"</string>
-    <string name="templates_this_weeks_calendar_message">"Uložit jako místní šablonu"</string>
-    <string name="templates_this_weeks_calendar_preview_title">"%dW%d"</string>
-    <string name="templates_this_weeks_calendar_preview_weekly_notes">"Týdenní poznámky"</string>
-    <string name="templates_this_weeks_calendar_preview_export_message">"Uloženo jako %s"</string>
 
     <!-- Strings related to utils -->
     <string name="util_fluent_unknown">"neznámé"</string>
@@ -97,30 +64,10 @@ Strings related to dashboard fragment -->
     <string name="util_fluent_hour">"hodina"</string>
     <string name="util_fluent_minute">"minuta"</string>
     <string name="util_fluent_second">"sekunda"</string>
-    <string name="templates_boxed_week_calendar_creator_title">"%dW%d"</string>
-    <string name="templates_boxed_week_calendar_creator_weekly_notes">"Týdenní poznámky"</string>
 
     <!-- Strings related to templates 'flat week's calendar' fragment -->
-    <string name="templates_flat_weeks_calendar_title">"Roční kalendář po týdnech"</string>
-    <string name="templates_flat_weeks_calendar_preview_description">"Náhled obrázku"</string>
-    <string name="templates_flat_weeks_calendar_button_export_text">"Exportovat"</string>
-    <string name="templates_flat_weeks_calendar_message">"Uložit jako vícestránkovou PDF šablonu"</string>
-    <string name="templates_flat_weeks_calendar_preview_export_message">"Uloženo jako %s"</string>
-    <string name="templates_flat_week_calendar_creator_title">"%dW%d"</string>
-    <string name="templates_flat_weeks_calendar_settings_with_days">"Generovat s daty"</string>
 
     <!-- Strings related to templates 'boxed week's calendar' fragment -->
-    <string name="templates_boxed_days_calendar_title">"Šablona ročního kalendáře s dny"</string>
-    <string name="templates_boxed_days_calendar_preview_description">"Náhled obrázku"</string>
-    <string name="templates_boxed_days_calendar_button_export_text">"Exportovat"</string>
-    <string name="templates_boxed_days_calendar_message">"Uložit tento náhled jako vícestránkovou místní šablonu PDF"</string>
-    <string name="templates_boxed_days_calendar_preview_export_message">"Uloženo jako %s"</string>
-    <string name="templates_boxed_days_calendar_settings_with_notes">"Generovat s poznámkami"</string>
-    <string name="templates_boxed_days_calendar_settings_with_tasks">"Generovat s úkoly"</string>
-    <string name="templates_boxed_day_calendar_creator_title">"%s denní plánovač"</string>
-    <string name="templates_boxed_day_calendar_creator_notes">"Poznámky"</string>
-    <string name="templates_boxed_day_calendar_creator_tasks">"Úkoly"</string>
-    <string name="templates_boxed_days_calendar_settings_with_hours">"Vygenerujte s předvyplněnými hodinami"</string>
     <string name="dashboard_item_cancel_alt">"Zrušit"</string>
     <string name="dashboard_item_edit_alt">"Upravit"</string>
     <string name="dashboard_item_save_alt">"Uložit"</string>
@@ -129,10 +76,8 @@ Strings related to dashboard fragment -->
     <!-- Strings related to kanban planner plugin -->
     <string name="kanban_planner_main_title">"Kanban plánovač"</string>
     <string name="kanban_planner_card_content">"Kanban plánovač náhled"</string>
-    <string name="templates_list_button_text">"Seznam"</string>
 
     <!-- Strings related to templates 'community' fragment -->
-    <string name="templates_community_title">"Komunitní šablony"</string>
     <string name="dashboard_item_delete_alt">"Smaž"</string>
     <string name="dashboard_item_erase_alt">"Vymaž"</string>
     <string name="kanban_planner_lane_dueSoonBacklogTitle">"Brzký termín backlog (%d)"</string>
@@ -143,9 +88,6 @@ Strings related to dashboard fragment -->
     <string name="list_loading">"Nahrávám seznam..."</string>
     <string name="list_empty">"Prázdný seznam..."</string>
     <string name="export_message">"Uloženo jako %s"</string>
-    <string name="templates_community_list_thumbnail">"Komunitní připínáček"</string>
-    <string name="templates_community_list_icon_star">"Hvězda"</string>
-    <string name="templates_community_list_icon_starred">"Označené hvězdou"</string>
 
     <!-- Common messages -->
     <string name="ok">"OK"</string>
@@ -246,21 +188,8 @@ Strings related to dashboard fragment -->
     <string name="about_this_translation_contributors_title">"Překladatelé aktuální verze aplikace"</string>
     <string name="about_this_translation_contributors_list">"anonymní překladatel"</string>
     <string name="dashboard_item_calendar_title">"Kalendář"</string>
-    <string name="dashboard_item_templates_title">"Šablony"</string>
-    <string name="dashboard_item_teamdrawer_title">"Společné malování"</string>
     <string name="dashboard_item_kanban_planner_title">"Kanban plánovač"</string>
     <string name="dashboard_item_about_title">"O aplikaci"</string>
-    <string name="templates_item_boxed_days_title">"Denní 
-kalendář"</string>
-    <string name="templates_item_boxed_weeks_title">"Týdenní
-kalendář"</string>
-    <string name="templates_item_community_title">"Komunitní 
-šablony"</string>
-    <string name="templates_item_flat_weeks_title">"Plošný týd.
-kalendář
-"</string>
-    <string name="templates_item_this_weeks_title">"Kalendář akt.
-týdne"</string>
     <string name="calendar_settings_button_pattern_sync">"Aktualizovat značky"</string>
     <string name="calendar_settings_pattern_sync_done">"Značky kalendáře aktualizovány"</string>
     <string name="cancel">"Zrušit"</string>
@@ -274,9 +203,6 @@ týdne"</string>
     <string name="calendar_settings_shortcut_long_label">"Kalendář pro Boox"</string>
     <string name="calendar_settings_button_restore">"Import zálohy"</string>
     <string name="calendar_settings_restore_done">"Import zálohy kalendáře ze složky Downloads"</string>
-    <string name="templates_boxed_days_calendar_settings_date_picker_button">"Nastavit datum"</string>
-    <string name="templates_boxed_weeks_calendar_settings_date_picker_button">"Nastavit datum"</string>
-    <string name="templates_flat_weeks_calendar_settings_date_picker_button">"Nastavit datum"</string>
     <string name="week_abbreviation">"T%d"</string>
     <string name="quarter_abbreviation">"Q%d"</string>
     <string name="calendar_settings_select_start_hour_text">"Vyberte počáteční hodinu denního zobrazení:"</string>
@@ -367,4 +293,5 @@ týdne"</string>
     <string name="calendar_cloud_passphrase_mismatch">"Přístupová fráze nesouhlasí, nelze dešifrovat položky kalendáře"</string>
     <string name="calendar_cloud_compare_button">"Porovnat"</string>
     <string name="calendar_cloud_sync_remember_passphrase">"Zapamatovat přístupovou frázi (není bezpečné!)"</string>
+    <string name="surface_page_export_message">"Uloženo jako %s"</string>
 </resources>

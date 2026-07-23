@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:background="#FFFFFF"
+    android:paddingHorizontal="18dp"
+    android:paddingVertical="12dp"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <!-- Task: checkbox (done). Event: time label. -->
+    <TextView
+        android:id="@+id/li_lead"
+        android:textColor="#000000"
+        android:textSize="18sp"
+        android:gravity="center"
+        android:minWidth="44dp"
+        android:paddingEnd="8dp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"/>
+
+    <!-- Text face -->
+    <TextView
+        android:id="@+id/li_text"
+        android:textColor="#000000"
+        android:textSize="17sp"
+        android:layout_width="0dp"
+        android:layout_weight="1"
+        android:layout_height="wrap_content"/>
+
+    <!-- Ink face (shown when display=ink) -->
+    <ImageView
+        android:id="@+id/li_ink"
+        android:visibility="gone"
+        android:adjustViewBounds="true"
+        android:maxHeight="120dp"
+        android:scaleType="fitStart"
+        android:contentDescription="@null"
+        android:layout_width="0dp"
+        android:layout_weight="1"
+        android:layout_height="wrap_content"/>
+
+    <!-- Assign a rolodex contact -->
+    <ImageButton
+        android:id="@+id/li_assignee"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:scaleType="fitCenter"
+        android:padding="6dp"
+        android:src="@drawable/ic_person"
+        android:contentDescription="@string/ledger_items_toggle"
+        android:layout_width="40dp"
+        android:layout_height="40dp"/>
+
+    <!-- Per-item Ink/Text toggle -->
+    <ImageButton
+        android:id="@+id/li_toggle"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:scaleType="fitCenter"
+        android:padding="8dp"
+        android:contentDescription="@string/ledger_items_toggle"
+        android:layout_width="40dp"
+        android:layout_height="40dp"/>
+</LinearLayout>

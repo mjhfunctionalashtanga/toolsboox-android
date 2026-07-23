@@ -24,6 +24,8 @@ import com.toolsboox.nw.CredentialService
 import com.toolsboox.ui.BaseActivity
 import com.toolsboox.utils.ReleaseTree
 import dagger.hilt.android.AndroidEntryPoint
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import timber.log.Timber
 import java.time.Instant
@@ -38,6 +40,27 @@ import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : BaseActivity<MainPresenter>(), MainView {
+
+    /**
+     * Optional volume-key page-turn handler set by the active reader fragment. Returns true
+     * if it consumed the key (up = back/page-up, down = forward/page-down).
+     */
+    var volumeKeyHandler: ((up: Boolean) -> Boolean)? = null
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        val h = volumeKeyHandler
+        if (h != null && event.action == android.view.KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                // Boox page-turn buttons emit either volume OR page keycodes depending on device;
+                // accept both so the hardware buttons page everywhere a handler is registered.
+                android.view.KeyEvent.KEYCODE_VOLUME_UP,
+                android.view.KeyEvent.KEYCODE_PAGE_UP -> if (h(true)) return true
+                android.view.KeyEvent.KEYCODE_VOLUME_DOWN,
+                android.view.KeyEvent.KEYCODE_PAGE_DOWN -> if (h(false)) return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
 
     /**
      * The view model.
@@ -62,6 +85,19 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     @Inject
     lateinit var credentialService: CredentialService
 
+    /** For placing a captured photo into the Ledger (today's Pickings). */
+    @Inject
+    lateinit var calendarDayService: com.toolsboox.plugin.calendar.fi.CalendarDayService
+
+    // 📷 Capture — photograph handwritten content and ingest it as a Ledger object.
+    private var pendingCameraFile: java.io.File? = null
+    private val captureCameraLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.TakePicture()
+    ) { ok -> if (ok) pendingCameraFile?.let { ingestPhotoFile(it) } }
+    private val capturePickLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri -> uri?.let { ingestPhotoUri(it) } }
+
     /**
      * The view binding.
      */
@@ -72,10 +108,438 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
      *
      * @param savedInstanceState the saved state of the instance
      */
+    /**
+     * Make the floating pen-note button draggable: a tap still opens Notes, but a drag repositions
+     * it and persists where you put it — so it can move off whatever it's covering (e.g. the feed
+     * drawer's lower-left). Clamped on-screen; restored on next launch.
+     */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun makeFloatButtonDraggable(view: android.view.View) {
+        val prefs = getSharedPreferences("MAIN", MODE_PRIVATE)
+        view.post {
+            view.translationX = prefs.getFloat("floatNoteTx", 0f)
+            view.translationY = prefs.getFloat("floatNoteTy", 0f)
+        }
+        var downX = 0f; var downY = 0f; var startTx = 0f; var startTy = 0f; var dragging = false
+        val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+        view.setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX; downY = e.rawY; startTx = v.translationX; startTy = v.translationY; dragging = false
+                    true
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val dx = e.rawX - downX; val dy = e.rawY - downY
+                    if (!dragging && Math.hypot(dx.toDouble(), dy.toDouble()) > slop) dragging = true
+                    if (dragging) {
+                        val parent = v.parent as android.view.View
+                        // Shared with the pills. This was its own inline copy of the same clamp,
+                        // and the copy was worse: with the limits reversed `coerceIn(min, max)`
+                        // throws rather than pinning, so a button laid out wider than its parent
+                        // took the app down mid-drag instead of merely refusing to move.
+                        v.translationX = (startTx + dx)
+                            .coerceIn(com.toolsboox.ot.PillBounds.range(v.left, v.right, parent.width))
+                        v.translationY = (startTy + dy)
+                            .coerceIn(com.toolsboox.ot.PillBounds.range(v.top, v.bottom, parent.height))
+                    }
+                    true
+                }
+                // CANCEL arrives instead of UP when an ancestor takes the gesture — which the ink
+                // surfaces do. It fell through to `else -> false`, so on exactly the pages you
+                // most want the pen button on, neither the tap nor the hold ever fired.
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    if (dragging) {
+                        prefs.edit().putFloat("floatNoteTx", v.translationX)
+                            .putFloat("floatNoteTy", v.translationY).apply()
+                    } else if (e.eventTime - e.downTime >= 550L) {
+                        v.performLongClick()
+                    }
+                    true
+                }
+                android.view.MotionEvent.ACTION_UP -> {
+                    if (dragging) {
+                        prefs.edit().putFloat("floatNoteTx", v.translationX).putFloat("floatNoteTy", v.translationY).apply()
+                        // Clean the drag's ghost trail off the e-ink panel.
+                        try {
+                            com.onyx.android.sdk.api.device.epd.EpdController.repaintEveryThing(
+                                com.onyx.android.sdk.api.device.epd.UpdateMode.GC
+                            )
+                        } catch (t: Throwable) { /* non-Onyx device — no panel to clean */ }
+                    } else if (e.eventTime - e.downTime >= 550L) {
+                        v.performLongClick()   // hold-in-place → the alternate surface (Text Notes)
+                    } else {
+                        v.performClick()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun documentsRoot(): java.io.File = com.toolsboox.ot.LedgerPaths.documentsRoot(this)
+
+    // --- The quick-note button -------------------------------------------------------------
+    //
+    // Hold it to choose what it does; it then WEARS that choice, so going back to the same thing
+    // is a tap. The four faces are the four ways of getting something down in a hurry.
+
+    private val quickNoteFaces = intArrayOf(
+        R.drawable.ic_pencil, R.drawable.ic_reader_view, R.drawable.ic_edit,
+        R.drawable.ic_toolbar_text, R.drawable.ic_camera, R.drawable.ic_mic
+    )
+    /** The glyph for each style, shown in the hold-out picker. Same order as the labels/faces. */
+    private val quickNoteGlyphs = arrayOf("✒", "📈", "⌱", "⌗", "📷", "🎤")
+
+    companion object {
+        /** Hold-picker entries; the index is stored as the remembered tap action, so keep order stable. */
+        val QUICK_NOTE_LABELS = arrayOf(
+            "Notes — where you left off",
+            "Grid Notes",
+            "Sketch Notes",
+            "Text Notes",
+            "Capture a photo",
+            "Record a voice gram"
+        )
+    }
+
+    /**
+     * Whether the quick-note button is shown at all.
+     *
+     * It floats over every screen, which is right for someone who writes constantly and wrong for
+     * someone who just wants to read — so it can be put away, from the reader's wrench.
+     */
+    fun quickNoteVisible(): Boolean =
+        getSharedPreferences("MAIN", MODE_PRIVATE).getBoolean("quick_note_visible", true)
+
+    fun setQuickNoteVisible(visible: Boolean) {
+        getSharedPreferences("MAIN", MODE_PRIVATE).edit().putBoolean("quick_note_visible", visible).apply()
+        applyQuickNoteVisibility()
+    }
+
+    private fun applyQuickNoteVisibility() {
+        binding.floatNoteButton.visibility =
+            if (quickNoteVisible()) android.view.View.VISIBLE else android.view.View.GONE
+    }
+
+    private fun quickNoteAction(): Int =
+        getSharedPreferences("MAIN", MODE_PRIVATE).getInt("quick_note_action", 0)
+            .coerceIn(0, QUICK_NOTE_LABELS.size - 1)
+
+    private fun setQuickNoteAction(which: Int) {
+        getSharedPreferences("MAIN", MODE_PRIVATE).edit().putInt("quick_note_action", which).apply()
+        applyQuickNoteFace()
+    }
+
+    /** Put the current choice on the button, so you can see what a tap will do. */
+    private fun applyQuickNoteFace() {
+        val which = quickNoteAction()
+        binding.floatNoteButton.setImageResource(quickNoteFaces.getOrElse(which) { R.drawable.ic_pencil })
+        binding.floatNoteButton.contentDescription = QUICK_NOTE_LABELS.getOrElse(which) { "Notes" }
+    }
+
+    /**
+     * Hold the pen button → where do you want to go.
+     *
+     * It used to double as a mode switch: picking an entry also re-pointed the TAP at it and
+     * changed the button's face, so holding felt less like choosing a destination than like
+     * flipping the button between hand notes and text notes — which is exactly what it looked
+     * like from the outside, and why the selector seemed not to appear at all.
+     *
+     * Now the hold only ever chooses where to go THIS time. Tap keeps its one job, and the three
+     * places worth reaching are the three the ledger actually keeps writing in: the note page you
+     * were on, something caught as media, and the typed notes.
+     */
+    /**
+     * Hold the pen button → a slider of note glyphs. Pick one and it becomes what a TAP does from
+     * now on — the button remembers your last style and goes back to it — so the common case is a
+     * single tap and only a change of style needs the hold.
+     */
+    private fun showQuickNoteSelector() {
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val current = quickNoteAction()
+        val row = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(px(10), px(14), px(10), px(14))
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
+            .setTitle(R.string.quick_note_selector_title)
+            .setView(android.widget.HorizontalScrollView(this).apply { addView(row); isHorizontalScrollBarEnabled = false })
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        quickNoteGlyphs.forEachIndexed { i, glyph ->
+            row.addView(android.widget.TextView(this).apply {
+                text = glyph
+                textSize = 30f
+                gravity = android.view.Gravity.CENTER
+                setPadding(px(16), px(10), px(16), px(10))
+                // The current style reads as selected; the rest are quieter.
+                setTextColor(if (i == current) 0xFF000000.toInt() else 0xFF999999.toInt())
+                if (i == current) setBackgroundResource(R.drawable.tool_active_bg)
+                contentDescription = QUICK_NOTE_LABELS.getOrElse(i) { "" }
+                setOnClickListener {
+                    dialog.dismiss()
+                    setQuickNoteAction(i)   // remember it — a tap returns here next time
+                    runQuickNoteAction(i)   // …and go there now
+                }
+            })
+        }
+        dialog.show()
+    }
+
+    /** Jump to today's page for a given note-page key (grid/sketch), from the pen-button menu. */
+    private fun navigateToDayNote(notePage: String) {
+        val d = java.time.LocalDate.now()
+        val bundle = androidx.core.os.bundleOf(
+            "year" to d.year.toString(), "month" to d.monthValue.toString(),
+            "day" to d.dayOfMonth.toString(), "notePage" to notePage)
+        binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle)
+    }
+
+    /** Photo and voice are the same gesture — getting a thing down when there isn't time to write. */
+    private fun showQuickMediaSelector() {
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
+            .setTitle(R.string.quick_note_media)
+            .setItems(
+                arrayOf(
+                    getString(R.string.quick_note_photo),
+                    getString(R.string.quick_note_voice)
+                )
+            ) { _, which -> if (which == 0) startCapture() else requestVoiceGram() }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun runQuickNoteAction(which: Int) {
+        when (which) {
+            0 -> openLastNotePage()
+            1 -> navigateToDayNote("grid")
+            2 -> navigateToDayNote("sketch")
+            3 -> binding.fragmentContent.findNavController().navigate(R.id.action_to_text_notes)
+            4 -> startCapture()
+            5 -> requestVoiceGram()
+        }
+    }
+
+    /** The original behaviour: back to the page you were last writing on. */
+    private fun openLastNotePage() {
+        val p = getSharedPreferences("ledger_notes", 0)
+        val date = runCatching {
+            java.time.LocalDate.parse(p.getString("last_note_date", "") ?: "")
+        }.getOrNull() ?: java.time.LocalDate.now()
+        val bundle = bundleOf(
+            "year" to "${date.year}", "month" to "${date.monthValue}", "day" to "${date.dayOfMonth}",
+            "notePage" to (p.getString("last_note_page", "0") ?: "0")
+        )
+        binding.fragmentContent.findNavController().navigate(R.id.action_to_scratch, bundle)
+    }
+
+    private fun toast(m: String) = android.widget.Toast.makeText(this, m, android.widget.Toast.LENGTH_SHORT).show()
+
+    /** Chooser: take a photo, or pick one — then ingest it as a Ledger object. */
+    private fun startCapture() {
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
+            .setTitle("Capture to Ledger")
+            .setItems(arrayOf("📷  Take a photo", "🖼  Choose from gallery")) { _, which ->
+                when (which) {
+                    0 -> try {
+                        val dir = java.io.File(cacheDir, "camera").apply { mkdirs() }
+                        val photo = java.io.File(dir, "capture-${System.currentTimeMillis()}.jpg")
+                        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.fileprovider", photo)
+                        pendingCameraFile = photo
+                        captureCameraLauncher.launch(uri)
+                    } catch (e: Exception) { toast("No camera available") }
+                    1 -> capturePickLauncher.launch("image/*")
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    // 🎤 Record a voice gram from the floating pen button — reachable from anywhere in the app,
+    // not just a page you happen to be standing on.
+    private val micPermLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) startVoiceGram() else toast("Microphone permission is needed to record") }
+
+    private fun requestVoiceGram() {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO)
+            == android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) startVoiceGram()
+        else micPermLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+    }
+
+    private fun startVoiceGram() {
+        val dir = com.toolsboox.ot.LedgerPaths.attachmentsDir(this)
+        com.toolsboox.ot.VoiceRecorder.record(
+            context = this,
+            out = java.io.File(dir, "voice-${UUID.randomUUID()}.m4a"),
+            recordingLabel = { clock -> getString(R.string.reader_capture_recording, clock) },
+            stopLabel = getString(R.string.reader_capture_stop),
+            onSaved = { file, seconds ->
+                val att = com.toolsboox.da.Attachment(
+                    UUID.randomUUID().toString(), com.toolsboox.da.Attachment.Kind.AUDIO,
+                    file.name, seconds, Date()
+                )
+                lifecycleScope.launch {
+                    val placed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        com.toolsboox.plugin.calendar.ot.AvGrams.file(
+                            calendarDayService, documentsRoot(), file, att
+                        )
+                    }
+                    toast(if (placed) "🎤 Voice gram → today's Pickings" else "Voice gram saved")
+                }
+            }
+        )
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Never leave the microphone open behind a backgrounded app; keep the memo.
+        com.toolsboox.ot.VoiceRecorder.stop(save = true)
+    }
+
+    private fun ingestPhotoFile(f: java.io.File) {
+        val bmp = runCatching { decodeSampled(android.net.Uri.fromFile(f)) }.getOrNull()
+        f.delete()
+        ingestBitmap(bmp)
+    }
+    private fun ingestPhotoUri(uri: android.net.Uri) = ingestBitmap(runCatching { decodeSampled(uri) }.getOrNull())
+
+    /** Decode a photo downsampled to a sane size for a page object (avoids OOM on 12MP shots). */
+    private fun decodeSampled(uri: android.net.Uri): android.graphics.Bitmap? {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+        var sample = 1
+        val longest = maxOf(bounds.outWidth, bounds.outHeight)
+        while (longest / sample > 2200) sample *= 2
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        return contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) }
+    }
+
+    /** Place the photo as a Ledger object (today's Pickings gram) and offer OCR. */
+    private fun ingestBitmap(bmp: android.graphics.Bitmap?) {
+        if (bmp == null) { toast("Couldn't read that image"); return }
+        lifecycleScope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                        calendarDayService, documentsRoot(), bmp, java.time.LocalDate.now(),
+                        com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY,
+                        sourceLabel = "📷 Photo · ${java.time.LocalDate.now()}"
+                    )
+                }
+            }
+            toast("Added to today's Pickings")
+            offerOcr(bmp)   // recycles bmp when done
+        }
+    }
+
+    /** If AI creds are set, offer to extract the handwriting's text and file it where it belongs. */
+    private fun offerOcr(bmp: android.graphics.Bitmap) {
+        val creds = aiCreds()
+        if (creds == null) { bmp.recycle(); return }
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
+            .setTitle("Extract the text too?")
+            .setMessage("Read the handwriting and file it — a to-do becomes a task, longer writing becomes a note.")
+            .setPositiveButton("Extract text") { _, _ ->
+                lifecycleScope.launch {
+                    // The QUALITY GATE: structured recognition discards illegible / low-confidence /
+                    // confabulated output, and classifies what's left (task | event | note | prose)
+                    // so a recipe stays a recipe instead of becoming a bunk task.
+                    val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching {
+                            com.toolsboox.plugin.calendar.nw.VisionOcr.recognizeStructured(bmp, creds.first, creds.second, creds.third)
+                        }.getOrNull()
+                    }
+                    bmp.recycle()
+                    if (result == null) { toast("Couldn't read it clearly — kept just the image"); return@launch }
+                    // PREVIEW-AND-CONFIRM (converged with iOS): nothing files without a glance.
+                    // The model's kind is only the SUGGESTION (the lead button); the human is
+                    // the final classifier — this is what makes bunk tasks structurally impossible.
+                    confirmOcrFiling(result)
+                }
+            }
+            .setNegativeButton("Just the image") { _, _ -> bmp.recycle() }
+            // Dismissed without choosing (back / tap-outside) → still free the bitmap (no leak).
+            // Only fires on cancel, not on a button tap, so the extract path keeps its bitmap.
+            .setOnCancelListener { if (!bmp.isRecycled) bmp.recycle() }
+            .show()
+    }
+
+    /** Show what was read; the user confirms where it files (suggested kind leads). */
+    private fun confirmOcrFiling(result: com.toolsboox.plugin.calendar.nw.VisionOcr.OcrResult) {
+        val suggestTask = result.kind == "task" || result.kind == "event"
+        val suggested = when (result.kind) {
+            "task" -> "Save as a task"; "event" -> "Save as an event"; else -> "Save as a note"
+        }
+        val alternate = if (suggestTask) "Save as a note" else "Save as a task"
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
+            .setTitle("Reads:")
+            .setMessage(result.text.take(400))
+            .setPositiveButton(suggested) { _, _ -> fileOcrText(result.text, asTask = suggestTask, asEvent = result.kind == "event") }
+            .setNeutralButton(alternate) { _, _ -> fileOcrText(result.text, asTask = !suggestTask, asEvent = false) }
+            .setNegativeButton("Just the image", null)
+            .show()
+    }
+
+    private fun fileOcrText(text: String, asTask: Boolean, asEvent: Boolean) {
+        lifecycleScope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val root = documentsRoot(); val today = java.time.LocalDate.now()
+                    if (asTask) {
+                        val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
+                        day.ledgerItems.add(com.toolsboox.plugin.calendar.da.v2.LedgerItem(
+                            id = "photo-" + java.util.UUID.randomUUID().toString().lowercase(),
+                            kind = if (asEvent) com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT
+                                   else com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
+                            text = text, date = java.util.Date(), stage = "todo"))
+                        calendarDayService.save(root, today, day)
+                    } else {
+                        com.toolsboox.plugin.textnotes.TextNotesStore.addNote(
+                            this@MainActivity, today, "📷 Photo · $today", text)
+                    }
+                }
+            }
+            toast(if (asEvent) "Filed as an event on today" else if (asTask) "Filed as a task on today" else "Saved as a note")
+        }
+    }
+
+    private fun aiCreds(): Triple<String, String, String>? = try {
+        val prefs = androidx.security.crypto.EncryptedSharedPreferences.create(
+            this, "ledger_chat_encrypted_prefs",
+            androidx.security.crypto.MasterKey.Builder(this).setKeyScheme(androidx.security.crypto.MasterKey.KeyScheme.AES256_GCM).build(),
+            androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+        val provider = prefs.getString("ledger_chat_provider", "anthropic") ?: "anthropic"
+        val key = prefs.getString("ledger_chat_api_key_$provider", "")?.trim().orEmpty()
+        if (key.isBlank()) null else {
+            val default = if (provider == "openai") "gpt-4o" else "claude-sonnet-5"
+            val model = prefs.getString("ledger_chat_model_$provider", default) ?: default
+            Triple(provider, key, model)
+        }
+    } catch (e: Exception) { null }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Bound the re-creatable caches (article copies, later media, temp shots) —
+        // daily, off-main, never touching user media or day JSONs.
+        com.toolsboox.ot.CacheJanitor.runDaily(this)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // Global "pull up the Notes surface" button — available on every screen. It reopens the
+        // note page you last had open (same memory the menus' "✒ Notes" uses), falling back to
+        // today's first page. Hold it instead to switch over to Text Notes.
+        binding.floatNoteButton.setOnClickListener { runQuickNoteAction(quickNoteAction()) }
+        binding.floatNoteButton.setOnLongClickListener { showQuickNoteSelector(); true }
+        makeFloatButtonDraggable(binding.floatNoteButton)
+        applyQuickNoteFace()
+        applyQuickNoteVisibility()
 
         firebaseAnalytics = Firebase.analytics
 
@@ -112,10 +576,138 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     }
 
     /**
+     * Soft-wrap shared text for an on-canvas text box: text boxes only break on
+     * newlines, so long lines (especially URLs) are folded to stay on the page.
+     */
+    private fun wrapForTextBox(raw: String, maxLine: Int = 48): String =
+        raw.lines().joinToString("\n") { line ->
+            if (line.length <= maxLine) return@joinToString line
+            val out = StringBuilder()
+            var current = StringBuilder()
+            for (word in line.split(" ")) {
+                var token = word
+                // Hard-chunk unbreakable tokens (URLs) to the line width.
+                while (token.length > maxLine) {
+                    if (current.isNotEmpty()) {
+                        out.append(current).append('\n'); current = StringBuilder()
+                    }
+                    out.append(token.take(maxLine)).append('\n')
+                    token = token.drop(maxLine)
+                }
+                if (current.isEmpty()) current.append(token)
+                else if (current.length + 1 + token.length <= maxLine) current.append(' ').append(token)
+                else {
+                    out.append(current).append('\n'); current = StringBuilder(token)
+                }
+            }
+            out.append(current).toString()
+        }
+
+    /**
+     * A shared link arrived — offer to file it into the reading pipeline (read later /
+     * watch / listen / educate), or drop it as a box on the day page. Filing appends it to
+     * today's intake sidecar (so it shows in Notes & Annotations) and enqueues it.
+     */
+    private fun offerToFileLink(url: String, title: String?, sharedText: String?) {
+        // (iconRes, label, action). Monochrome outline icons for e-ink contrast.
+        val fileAction: (String, String) -> Unit = { kind, label ->
+            com.toolsboox.plugin.michaelfilter.nw.IntakePageStore
+                .fileLink(applicationContext, java.time.LocalDate.now(), kind, url, title)
+            android.widget.Toast.makeText(this, getString(R.string.ledger_share_filed, label), android.widget.Toast.LENGTH_SHORT).show()
+        }
+        val items = listOf(
+            Triple(R.drawable.ic_book, getString(R.string.ledger_share_read), { fileAction("read", getString(R.string.ledger_share_read)) }),
+            Triple(R.drawable.ic_tv, getString(R.string.ledger_share_watch), { fileAction("watch", getString(R.string.ledger_share_watch)) }),
+            Triple(R.drawable.ic_headphones, getString(R.string.ledger_share_listen), { fileAction("listen", getString(R.string.ledger_share_listen)) }),
+            Triple(R.drawable.ic_book, getString(R.string.ledger_share_educate), { fileAction("educate", getString(R.string.ledger_share_educate)) }),
+            Triple(R.drawable.ic_add, getString(R.string.ledger_share_drop_on_page), {
+                val boxText = wrapForTextBox(listOfNotNull(title, url).joinToString("\n").ifBlank { sharedText?.trim().orEmpty() })
+                if (boxText.isNotBlank()) dropTextOnDay(boxText, url); Unit
+            })
+        )
+        // Defer to after the first layout — a dialog straight from onResume on a share
+        // cold-start can be swallowed before the window is ready.
+        binding.fragmentContent.post {
+            val list = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL }
+            val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
+                .setTitle(R.string.ledger_share_file_title)
+                .setView(androidx.core.widget.NestedScrollView(this).apply { addView(list) })
+                .create()
+            for ((iconRes, label, action) in items) {
+                val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
+                r.findViewById<android.widget.ImageView>(R.id.go_icon).apply { setImageResource(iconRes); visibility = android.view.View.VISIBLE }
+                r.findViewById<android.widget.TextView>(R.id.go_label).text = label
+                r.setOnClickListener { dialog.dismiss(); action() }
+                list.addView(r)
+            }
+            dialog.show()
+        }
+    }
+
+    /** Drop shared text as a movable box on today's day page (the pre-existing behavior). */
+    private fun dropTextOnDay(boxText: String, url: String?) {
+        val bundle = bundleOf("sharedText" to boxText)
+        if (url != null) {
+            bundle.putString("sharedUrl", url)
+            bundle.putString("notePage", "intake")
+        }
+        val navOptions = androidx.navigation.navOptions {
+            popUpTo(R.id.CalendarDayFragment) { inclusive = true }
+        }
+        binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle, navOptions)
+    }
+
+    /**
      * Activity onResume.
      */
     override fun onResume() {
         super.onResume()
+
+        // Share-to-Ledger (text/link): the shared text lands as a movable text box.
+        // A link lands on today's INTAKE page — nothing is queued on share; dropping
+        // the box onto a panel (THE READ / WATCH / LISTEN / EDUCATE) is what files it.
+        if (intent?.action == android.content.Intent.ACTION_SEND && intent?.type == "text/plain") {
+            val sharedText = intent?.getStringExtra(android.content.Intent.EXTRA_TEXT)
+            val sharedSubject = intent?.getStringExtra(android.content.Intent.EXTRA_SUBJECT)
+            // Consume the intent so re-resume doesn't re-navigate.
+            intent?.action = null
+
+            val parsed = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.parse(sharedText, sharedSubject)
+            Timber.i("Share to ledger (text): url=${parsed.url}")
+            // A shared LINK → offer to file it (read later / watch / listen); plain text
+            // with no link falls back to dropping a movable box on the day page.
+            if (parsed.url != null) {
+                offerToFileLink(parsed.url!!, parsed.title, sharedText)
+            } else {
+                val boxText = wrapForTextBox(
+                    listOfNotNull(parsed.title, parsed.leftoverText).joinToString("\n")
+                        .ifBlank { sharedText?.trim().orEmpty() }
+                )
+                if (boxText.isNotBlank()) dropTextOnDay(boxText, null)
+            }
+        }
+
+        // Share-to-Ledger target: an image shared from Gallery or any app lands on
+        // today's day page as a movable image element.
+        if (intent?.action == android.content.Intent.ACTION_SEND && intent?.type?.startsWith("image/") == true) {
+            @Suppress("DEPRECATION")
+            val streamUri = intent?.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
+            // Consume the intent so re-resume doesn't re-insert.
+            intent?.action = null
+
+            if (streamUri != null) {
+                Timber.i("Share to ledger: $streamUri")
+                val bundle = bundleOf("sharedImageUri" to streamUri.toString())
+                // Pop any existing day fragment first: on a share cold-start the nav graph has
+                // already created the start-destination day page, and two stacked day fragments
+                // means two SurfaceViews fighting over the window — the stale one can win and
+                // hide the freshly inserted image until the next reload.
+                val navOptions = androidx.navigation.navOptions {
+                    popUpTo(R.id.CalendarDayFragment) { inclusive = true }
+                }
+                binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle, navOptions)
+            }
+        }
 
         val host = intent?.data?.host
         val path = intent?.data?.path
@@ -177,7 +769,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     fun accessTokenResult(accessToken: String) {
         sharedPreferences.edit().putString("accessToken", accessToken).apply()
         sharedPreferences.edit().putLong("accessTokenLastUpdate", Date.from(Instant.now()).time).apply()
-        Timber.i("Store the new access token in shared preferences: $accessToken")
+        Timber.i("Stored a new access token (${accessToken.length} chars)")
     }
 
     /**
@@ -188,7 +780,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     fun refreshTokenResult(refreshToken: String) {
         sharedPreferences.edit().putString("refreshToken", refreshToken).apply()
         sharedPreferences.edit().putLong("refreshTokenLastUpdate", Date.from(Instant.now()).time).apply()
-        Timber.i("Store the new refresh token in shared preferences: $refreshToken")
+        Timber.i("Stored a new refresh token (${refreshToken.length} chars)")
     }
 
     /**

@@ -73,9 +73,13 @@ abstract class FragmentPresenter {
                 fragment.showLoading()
             }
 
-            onSuccess(call().await())
+            // The GlobalScope job outlives the fragment; every onSuccess passed in touches
+            // fragment views/context. Route it through runOnActivity so a response landing
+            // after navigation is dropped instead of crashing on a dead fragment.
+            val response = call().await()
+            fragment.runOnActivity { onSuccess(response) }
         } catch (t: Throwable) {
-            onError(t)
+            fragment.runOnActivity { onError(t) }
         } finally {
             fragment.runOnActivity {
                 fragment.hideLoading()

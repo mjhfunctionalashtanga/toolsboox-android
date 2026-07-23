@@ -52,23 +52,11 @@ class CalendarYearNavigator {
             when (motionEvent.action) {
                 MotionEvent.ACTION_UP -> {
                     val px = motionEvent.x * 1404.0f / view.width
-                    val py = motionEvent.y * 140.4f / view.height
-
-                    if (px >= lo + 0 * cew && px <= lo + 1 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toYearPage(fragment, localDate.minusYears(1L))
-                        return true
-                    }
-                    if (px >= lo + 1 * cew && px <= lo + 3 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toDayPage(fragment, LocalDate.now())
-                        return true
-                    }
-                    if (px >= lo + 15 * cew && px <= lo + 19 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toYearPage(fragment, localDate)
-                        return true
-                    }
-                    if (px >= lo + 19 * cew && px <= lo + 20 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toYearPage(fragment, localDate.plusYears(1L))
-                        return true
+                    // Drawn slots (see draw()): [0]=Year (focal).
+                    when (NavigatorRenderer.slotAt(px, 1)) {
+                        NavigatorRenderer.ARROW_PREV -> CalendarNavigator.toYearPage(fragment, localDate.minusYears(1L))
+                        NavigatorRenderer.ARROW_NEXT -> CalendarNavigator.toYearPage(fragment, localDate.plusYears(1L))
+                        0 -> CalendarNavigator.toYearPage(fragment, localDate)
                     }
                 }
             }

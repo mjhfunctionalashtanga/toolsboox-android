@@ -15,6 +15,7 @@ import com.toolsboox.plugin.calendar.CalendarNavigator
 import com.toolsboox.plugin.calendar.da.v1.CalendarPattern
 import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import com.toolsboox.plugin.calendar.ui.CalendarDayFragment
+import com.toolsboox.ui.plugin.ScreenFragment
 import java.time.LocalDate
 import java.time.format.TextStyle
 import java.time.temporal.WeekFields
@@ -50,7 +51,11 @@ class CalendarDayNavigator {
          * @return true
          */
         fun onTouchEvent(
-            view: View, motionEvent: MotionEvent, fragment: CalendarDayFragment, calendarDay: CalendarDay
+            view: View, motionEvent: MotionEvent, fragment: ScreenFragment, calendarDay: CalendarDay,
+            onStepDay: ((LocalDate) -> Unit)? = null,
+            // List surfaces (feed / notes) pass this to FILTER by the tapped level
+            // ("day"/"week"/"month"/"quarter"/"year") instead of opening the calendar page.
+            onSelectPeriod: ((String, LocalDate) -> Unit)? = null
         ): Boolean {
             val year = calendarDay.year
             val month = calendarDay.month
@@ -62,40 +67,55 @@ class CalendarDayNavigator {
             when (motionEvent.action) {
                 MotionEvent.ACTION_UP -> {
                     val px = motionEvent.x * 1404.0f / view.width
-                    val py = motionEvent.y * 140.4f / view.height
-
-                    if (px >= lo + 0 * cew && px <= lo + 1 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toDayPage(fragment, localDate.minusDays(1L))
-                        return true
-                    }
-                    if (px >= lo + 1 * cew && px <= lo + 3 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toDayPage(fragment, localDate)
-                        return true
-                    }
-                    if (px >= lo + 3 * cew && px <= lo + 9 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toWeekPage(fragment, localDate, locale)
-                        return true
-                    }
-                    if (px >= lo + 9 * cew && px <= lo + 13 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toMonthPage(fragment, localDate)
-                        return true
-                    }
-                    if (px >= lo + 13 * cew && px <= lo + 15 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toQuarterPage(fragment, localDate)
-                        return true
-                    }
-                    if (px >= lo + 15 * cew && px <= lo + 19 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toYearPage(fragment, localDate)
-                        return true
-                    }
-                    if (px >= lo + 19 * cew && px <= lo + 20 * cew && py >= to && py <= to + ceh) {
-                        CalendarNavigator.toDayPage(fragment, localDate.plusDays(1L))
-                        return true
+                    // Drawn slots (see draw()): [0]=Day (focal), [1]=weekday, [2]=Week, [3]=Month, [4]=Quarter, [5]=Year.
+                    // On a list surface (onStepDay/onSelectPeriod set) the arrows move that
+                    // surface's date in place and slots FILTER; on the day page they navigate.
+                    when (NavigatorRenderer.slotAt(px, 6)) {
+                        NavigatorRenderer.ARROW_PREV ->
+                            if (onStepDay != null) onStepDay(localDate.minusDays(1L))
+                            else toSameDayPage(fragment, localDate.minusDays(1L))
+                        NavigatorRenderer.ARROW_NEXT ->
+                            if (onStepDay != null) onStepDay(localDate.plusDays(1L))
+                            else toSameDayPage(fragment, localDate.plusDays(1L))
+                        0, 1 ->
+                            if (onSelectPeriod != null) onSelectPeriod("day", localDate)
+                            else CalendarNavigator.toDayPage(fragment, localDate)
+                        2 ->
+                            if (onSelectPeriod != null) onSelectPeriod("week", localDate)
+                            else CalendarNavigator.toWeekPage(fragment, localDate, locale)
+                        3 ->
+                            if (onSelectPeriod != null) onSelectPeriod("month", localDate)
+                            else CalendarNavigator.toMonthPage(fragment, localDate)
+                        4 ->
+                            if (onSelectPeriod != null) onSelectPeriod("quarter", localDate)
+                            else CalendarNavigator.toQuarterPage(fragment, localDate)
+                        5 ->
+                            if (onSelectPeriod != null) onSelectPeriod("year", localDate)
+                            else CalendarNavigator.toYearPage(fragment, localDate)
                     }
                 }
             }
 
             return true
+        }
+
+        /**
+         * Navigate to another day while staying in the current page group:
+         * on a named/numbered note page (pickings, gratitude, intake, 0...),
+         * open the SAME page of the target day; on the plain day page, open
+         * the target day's day page. A day with no ink yet for that page just
+         * shows its empty template (normal named-page behavior).
+         *
+         * @param fragment the fragment
+         * @param targetDate the target date
+         */
+        private fun toSameDayPage(fragment: ScreenFragment, targetDate: LocalDate) {
+            val notePage = (fragment as? CalendarDayFragment)?.currentNotePage()
+            if (notePage != null) {
+                CalendarNavigator.toDayNote(fragment, targetDate, notePage)
+            } else {
+                CalendarNavigator.toDayPage(fragment, targetDate)
+            }
         }
 
         /**

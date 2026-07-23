@@ -1,8 +1,10 @@
 package com.toolsboox.ot
 
 import android.graphics.PointF
+import com.toolsboox.da.ImageElement
 import com.toolsboox.da.Stroke
 import com.toolsboox.da.StrokePoint
+import com.toolsboox.da.TextElement
 import java.util.*
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -30,9 +32,19 @@ class StrokeClipboard @Inject constructor() {
         private set
 
     /**
-     * True when the clipboard holds at least one stroke.
+     * The copied image (deep copy), or null when the clipboard holds strokes / is empty.
+     * Unified clipboard: copying an image clears strokes and vice versa — last grab wins.
      */
-    val hasContent: Boolean get() = strokes.isNotEmpty()
+    var image: ImageElement? = null
+        private set
+
+    /** True when the clipboard holds an image. */
+    val hasImage: Boolean get() = image != null
+
+    /**
+     * True when the clipboard holds at least one stroke or an image.
+     */
+    val hasContent: Boolean get() = strokes.isNotEmpty() || image != null
 
     /**
      * Deep-copy the given strokes into the clipboard and compute the bounding-box origin.
@@ -42,6 +54,8 @@ class StrokeClipboard @Inject constructor() {
     fun copy(selectedStrokes: List<Stroke>) {
         if (selectedStrokes.isEmpty()) return
 
+        image = null
+        textBox = null
         strokes = Stroke.listDeepCopy(selectedStrokes)
 
         var minX = Float.MAX_VALUE
@@ -63,6 +77,7 @@ class StrokeClipboard @Inject constructor() {
         strokes = emptyList()
         originX = 0f
         originY = 0f
+        image = null
     }
 
     /**
@@ -84,6 +99,51 @@ class StrokeClipboard @Inject constructor() {
             }
             Stroke(UUID.randomUUID(), timestamp, movedPoints)
         }
+    }
+
+    /**
+     * The copied text box (deep copy), or null. Unified clipboard — last grab wins.
+     */
+    var textBox: TextElement? = null
+        private set
+
+    /** True when the clipboard holds a text box. */
+    val hasTextBox: Boolean get() = textBox != null
+
+    /** Copy a single image into the clipboard (clears strokes — unified, last grab wins). */
+    fun copyImage(element: ImageElement) {
+        strokes = emptyList()
+        textBox = null
+        image = element.copy()
+    }
+
+    /** Copy a single text box into the clipboard (unified — last grab wins). */
+    fun copyTextBox(element: TextElement) {
+        strokes = emptyList()
+        image = null
+        textBox = element.copy()
+    }
+
+    /** A paste-ready copy of the clipboard text box with a fresh id at (targetX, targetY). */
+    fun stampTextBoxAt(targetX: Float, targetY: Float): TextElement? {
+        val box = textBox ?: return null
+        return box.copy(
+            elementId = UUID.randomUUID(),
+            timestamp = System.currentTimeMillis(),
+            x = targetX,
+            y = targetY
+        )
+    }
+
+    /** A paste-ready copy of the clipboard image with a fresh id, top-left at (targetX, targetY). */
+    fun stampImageAt(targetX: Float, targetY: Float): ImageElement? {
+        val img = image ?: return null
+        return img.copy(
+            elementId = UUID.randomUUID(),
+            timestamp = System.currentTimeMillis(),
+            x = targetX,
+            y = targetY
+        )
     }
 
     companion object {

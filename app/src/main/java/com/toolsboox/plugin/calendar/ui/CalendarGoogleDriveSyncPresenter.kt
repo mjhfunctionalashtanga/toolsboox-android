@@ -5,12 +5,19 @@ import android.os.Environment
 import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.auth.api.signin.GoogleSignInClient
 import com.google.api.client.http.ByteArrayContent
+import com.google.api.client.http.FileContent
 import com.google.api.services.drive.Drive
+import com.toolsboox.da.Attachment
+import com.toolsboox.da.ImageElement
+import com.toolsboox.da.Stroke
+import com.toolsboox.da.TextElement
 import com.toolsboox.databinding.FragmentCalendarGoogleDriveSyncBinding
 import com.toolsboox.di.GoogleDriveModule
 import com.toolsboox.fi.GoogleDriveService
 import com.toolsboox.plugin.calendar.da.v1.CalendarSyncItem
 import com.toolsboox.plugin.calendar.da.v1.CalendarSyncViewItem
+import com.toolsboox.plugin.calendar.da.v2.CalendarDay
+import com.toolsboox.plugin.calendar.da.v2.ReadingEvent
 import com.toolsboox.plugin.calendar.fi.*
 import com.toolsboox.ui.plugin.FragmentPresenter
 import com.toolsboox.ui.plugin.ScreenFragment
@@ -21,9 +28,12 @@ import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 import java.time.Instant
 import java.time.LocalDate
 import java.util.*
@@ -275,24 +285,60 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
                                 val fileList = fileList(rootPath, userId)
                                 val cloudList = cloudList(driveService)
                                 val syncList = calculateSyncList(fileList, cloudList)
+
+                                // Carry annotation / A-V-gram media blobs too (immutable, UUID-named).
+                                runCatching { syncDriveAttachments(driveService, rootPath) }
+                                    .onFailure { Timber.w(it, "Drive attachment sync failed") }
+
                                 if (syncList.isEmpty()) return@launch
 
                                 Timber.i("Background sync items: ${syncList}")
                                 syncList.forEach { item ->
-                                    val fileLastModified = item.file?.updated?.time ?: 0L
-                                    val cloudLastModified = item.cloud?.updated?.time ?: 0L
-
-                                    if (fileLastModified < cloudLastModified) {
-                                        Timber.i("File update: ${item.cloud}")
-                                        fileUpdate(rootPath, cloudLoad(driveService, item.cloud!!))
-                                    } else {
-                                        Timber.i("Cloud update: ${item.file}")
-                                        cloudUpdate(driveService, fileLoad(rootPath, item.file!!))
+                                    val fileItem = item.file
+                                    val cloudItem = item.cloud
+                                    when {
+                                        // New on cloud only → pull it down as-is.
+                                        fileItem == null && cloudItem != null -> {
+                                            Timber.i("File create (cloud-only): ${cloudItem}")
+                                            fileUpdate(rootPath, cloudLoad(driveService, cloudItem))
+                                        }
+                                        // New on local only → push it up as-is.
+                                        cloudItem == null && fileItem != null -> {
+                                            Timber.i("Cloud create (local-only): ${fileItem}")
+                                            cloudUpdate(driveService, fileLoad(rootPath, fileItem))
+                                        }
+                                        // Exists on both and diverged → stroke-level MERGE (union
+                                        // by id) instead of last-write-wins clobber, then write the
+                                        // merged result to BOTH sides so the two devices converge.
+                                        fileItem != null && cloudItem != null -> {
+                                            val localLoaded = fileLoad(rootPath, fileItem)
+                                            val cloudLoaded = cloudLoad(driveService, cloudItem)
+                                            val merged = mergeDaySyncItem(localLoaded, cloudLoaded)
+                                            if (merged != null) {
+                                                Timber.i("Merge (both sides): ${fileItem.baseName}")
+                                                fileUpdate(rootPath, merged)
+                                                cloudUpdate(driveService, merged)
+                                            } else {
+                                                // Non-day / legacy file → last-write-wins fallback.
+                                                if ((fileItem.updated?.time ?: 0L) < (cloudItem.updated?.time ?: 0L)) {
+                                                    Timber.i("File update (LWW): ${cloudItem}")
+                                                    fileUpdate(rootPath, cloudLoaded)
+                                                } else {
+                                                    Timber.i("Cloud update (LWW): ${fileItem}")
+                                                    cloudUpdate(driveService, localLoaded)
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             } catch (e: IOException) {
+                                Timber.w(e, "Background Drive sync network failure")
                                 withContext(Dispatchers.Main) {
-                                    fragment.somethingHappened(e)
+                                    android.widget.Toast.makeText(
+                                        fragment.requireContext(),
+                                        "⚠ Drive sync failed — check your connection. Changes will sync when you're back online.",
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
                                 }
                             }
                         }
@@ -300,7 +346,55 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
             }
             .addOnFailureListener { e ->
                 Timber.i("Silent-sign-in failed: ${e.message}")
+                android.widget.Toast.makeText(
+                    fragment.requireContext(),
+                    "⚠ Couldn't reach Google Drive to sync — check your connection.",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
             }
+    }
+
+    /**
+     * Sync the annotation / A-V-gram media blobs to Drive. Immutable, UUID-named files, so a
+     * simple push-new / pull-missing pass with no conflicts. Each is tagged with a
+     * {type: attachment} property so it can be enumerated regardless of folder. Mirrors the
+     * WebDAV attachment sync so both cloud back-ends carry the media the day JSON references.
+     */
+    private fun syncDriveAttachments(driveService: Drive, rootPath: File) {
+        val dir = File(rootPath, "attachments")
+        val local = dir.listFiles()?.filter { it.isFile } ?: emptyList()
+        val remote = GoogleDriveService.walkByProperty(driveService, Pair("type", "attachment"))
+        val remoteNames = remote.mapNotNull { it.name }.toSet()
+        val localNames = local.map { it.name }.toSet()
+
+        val toPush = local.filter { it.name !in remoteNames }
+        if (toPush.isNotEmpty()) {
+            val attachRoot = GoogleDriveService.getOrCreateRootFolder(driveService, "attachments") ?: return
+            toPush.forEach { f ->
+                runCatching {
+                    GoogleDriveService.uploadFile(
+                        driveService, attachRoot, f.name, FileContent(mimeFor(f.name), f), mapOf("type" to "attachment")
+                    )
+                }.onFailure { Timber.w(it, "Drive attachment push failed: ${f.name}") }
+            }
+        }
+
+        if (!dir.exists()) dir.mkdirs()
+        remote.forEach { rf ->
+            val name = rf.name ?: return@forEach
+            if (name in localNames) return@forEach
+            runCatching {
+                File(dir, name).outputStream().use { GoogleDriveService.downloadFile(driveService, rf, it) }
+            }.onFailure { Timber.w(it, "Drive attachment pull failed: $name") }
+        }
+    }
+
+    private fun mimeFor(name: String): String = when {
+        name.endsWith(".jpg", true) || name.endsWith(".jpeg", true) -> "image/jpeg"
+        name.endsWith(".png", true) -> "image/png"
+        name.endsWith(".m4a", true) -> "audio/mp4"
+        name.endsWith(".mp4", true) -> "video/mp4"
+        else -> "application/octet-stream"
     }
 
     /**
@@ -316,10 +410,34 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
         val path = File(rootPath, "calendar/")
         if (!path.exists()) return calendarSyncItems
 
-        Files.walk(Paths.get(path.toURI())).use { stream ->
-            stream.map(Path::toFile).filter(File::isFile).filter { it.name.endsWith(".json") }.forEach { item ->
-                if (item.name.startsWith("pattern-")) return@forEach
+        // Collect the .json files with a fault-tolerant walk. Day pages are saved
+        // atomically (write day-*.json.tmp, then rename over day-*.json), so a *.tmp
+        // file can vanish mid-traversal. Files.walk reads attributes eagerly while
+        // walking and would throw NoSuchFileException (→ UncheckedIOException) on that
+        // race, killing the background sync coroutine. walkFileTree + visitFileFailed
+        // lets us skip a transient/vanished entry and keep going.
+        val jsonFiles = mutableListOf<File>()
+        try {
+            Files.walkFileTree(Paths.get(path.toURI()), object : SimpleFileVisitor<Path>() {
+                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                    val f = file.toFile()
+                    if (f.isFile && f.name.endsWith(".json") && !f.name.startsWith("pattern-")) {
+                        jsonFiles.add(f)
+                    }
+                    return FileVisitResult.CONTINUE
+                }
 
+                override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult {
+                    Timber.w(exc, "fileList: skipping unreadable/vanished path $file")
+                    return FileVisitResult.CONTINUE
+                }
+            })
+        } catch (e: IOException) {
+            Timber.w(e, "fileList: walk failed for $path")
+        }
+
+        jsonFiles.forEach { item ->
+            try {
                 calendarYearService.load(item)?.let { calendarYear ->
                     calendarSyncItems.add(calendarYearService.getItem(userId, calendarYear))
                 }
@@ -335,6 +453,10 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
                 calendarDayService.load(item)?.let { calendarDay ->
                     calendarSyncItems.add(calendarDayService.getItem(userId, calendarDay))
                 }
+            } catch (e: Exception) {
+                // A file can still disappear between the walk and load() (same save race);
+                // don't let one transient item abort the whole sync scan.
+                Timber.w(e, "fileList: skipping item ${item.name}")
             }
         }
 
@@ -547,4 +669,31 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
 
         return syncList
     }
+
+    /**
+     * Stroke-level merge of a day page that diverged on two devices.
+     *
+     * Both sides are parsed to [CalendarDay] and their strokes, text, and images are
+     * UNIONED by their stable IDs, so two devices that wrote on the same day COMBINE
+     * instead of last-write-wins clobbering one. Only v2 day files merge; anything else
+     * (legacy v1, week/month/year) returns null so the caller falls back to LWW.
+     *
+     * @param local the local side sync item (json loaded)
+     * @param cloud the cloud side sync item (json loaded)
+     * @return a sync item carrying the merged json, or null if not mergeable
+     */
+    private fun mergeDaySyncItem(local: CalendarSyncItem, cloud: CalendarSyncItem): CalendarSyncItem? {
+        if (local.version != "v2" || cloud.version != "v2") return null
+        val localDay = calendarDayService.fromSyncItem(local) ?: return null
+        val cloudDay = calendarDayService.fromSyncItem(cloud) ?: return null
+        val merged = mergeCalendarDay(localDay, cloudDay)
+        return local.copy(json = calendarDayService.json(merged), created = merged.created, updated = merged.updated)
+    }
+
+    /**
+     * Merge two versions of the same calendar day — now the shared [CalendarDayMerger] used by both
+     * the Drive and WebDAV sync paths, so they can never drift apart.
+     */
+    private fun mergeCalendarDay(a: CalendarDay, b: CalendarDay): CalendarDay =
+        com.toolsboox.plugin.calendar.fi.CalendarDayMerger.merge(a, b)
 }

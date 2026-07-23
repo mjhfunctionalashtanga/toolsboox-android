@@ -79,7 +79,7 @@ class CalendarDayPage {
                 }
 
                 OnGestureListener.DTU -> {
-                    CalendarNavigator.toDayNote(fragment, localDate, "gratitude")
+                    CalendarNavigator.toDayNote(fragment, localDate, "pickings")
                     return true
                 }
             }
@@ -100,6 +100,7 @@ class CalendarDayPage {
         ) {
             val schedulesText = context.getString(R.string.calendar_day_schedules)
             val tasksText = context.getString(R.string.calendar_day_tasks)
+            val rootsText = context.getString(R.string.calendar_day_roots)
             val notesText = context.getString(R.string.calendar_day_notes)
             val allDayText = context.getString(R.string.calendar_day_all_day)
             val locale = calendarDay.locale
@@ -193,6 +194,23 @@ class CalendarDayPage {
                 }
             }
 
+            // Reading Ledger: today's book highlights + article stars (synced from the
+            // iPad / logged in the reader) shown here so they're visible on the Boox, not
+            // just preserved through sync. "★" marks the row; the excerpt is the title.
+            // A cached featured thumbnail (warmed by the fragment) makes the row a tiny card.
+            val notesThumb = mutableListOf<String?>()
+            repeat(notesTitle.size) { notesThumb.add(null) }
+            if (notesTitle.size < 8) {
+                calendarDay.readingEvents.takeLast(8 - notesTitle.size).forEach {
+                    val label = it.excerpt?.takeIf { e -> e.isNotBlank() } ?: it.title
+                    // Row 1: ★ + title. Row 2: the feed/site it came from (time on the right).
+                    notesTitle.add("★  $label")
+                    notesLeft.add(it.source ?: "")
+                    notesRight.add(DateFormat.getTimeFormat(context).format(it.date))
+                    notesThumb.add(starThumbPath(context, it.image))
+                }
+            }
+
             val notesCalsText = if (notesTitle.size > 8) {
                 context.getString(R.string.calendar_day_notes_events_ex).format(notesTitle.size)
             } else {
@@ -240,9 +258,16 @@ class CalendarDayPage {
             canvas.drawRect(lo + cew + 50.0f, to, lo + 2 * cew + 50.0f, to + ceh, Creator.fillGrey80)
             canvas.drawText(tasksText, lo + cew + 60.0f, to + ceh - 10.0f, Creator.textDefaultWhite)
 
-            // Tasks grid
+            // Tasks grid.
+            //
+            // Twelve rows, not sixteen: four go to the Roots band below. There was briefly a
+            // write-in strip taking two more — lassoing a written task and tapping "→ item" does
+            // the same job without deleting your ink, so the rows came back. — the
+            // spiral's one line sits where you already look when you're deciding what to do,
+            // between what you have to do and what you've been reading. At the foot of the page
+            // it was out of the way in the sense of being ignorable.
             canvas.drawLine(lo + cew + 50.0f, to + ceh, lo + 2 * cew + 50.0f, to + ceh, Creator.lineDefaultBlack)
-            for (i in 1..16) {
+            for (i in 1..12) {
                 canvas.drawLine(
                     lo + cew + 50.0f, to + i * ceh, lo + 2 * cew + 50.0f, to + i * ceh,
                     Creator.lineDefaultGrey50
@@ -259,11 +284,21 @@ class CalendarDayPage {
                 )
             }
             canvas.drawLine(
-                lo + cew + 50.0f, to + 17 * ceh, lo + 2 * cew + 50.0f, to + 17 * ceh,
+                lo + cew + 50.0f, to + 13 * ceh, lo + 2 * cew + 50.0f, to + 13 * ceh,
                 Creator.lineDefaultBlack
             )
             canvas.drawLine(
-                lo + cew + 100.0f, to + ceh, lo + cew + 100.0f, to + 17 * ceh,
+                lo + cew + 100.0f, to + ceh, lo + cew + 100.0f, to + 13 * ceh,
+                Creator.lineDefaultBlack
+            )
+
+            // Roots band: title bar, then empty paper the live line is drawn over. The text
+            // itself is a view, not template ink, because it changes with the ledger and the
+            // template is baked per day.
+            canvas.drawRect(lo + cew + 50.0f, to + 13 * ceh, lo + 2 * cew + 50.0f, to + 14 * ceh, Creator.fillGrey80)
+            canvas.drawText(rootsText, lo + cew + 60.0f, to + 14 * ceh - 10.0f, Creator.textDefaultWhite)
+            canvas.drawLine(
+                lo + cew + 50.0f, to + 18 * ceh, lo + 2 * cew + 50.0f, to + 18 * ceh,
                 Creator.lineDefaultBlack
             )
 
@@ -274,7 +309,6 @@ class CalendarDayPage {
             } else {
                 canvas.drawText(notesCalsText, lo + cew + 60.0f, to + 19 * ceh - 10.0f, Creator.textDefaultWhite)
             }
-
             // Notes grid
             canvas.drawLine(
                 lo + cew + 50.0f,
@@ -300,23 +334,81 @@ class CalendarDayPage {
                 Creator.lineDefaultBlack
             )
 
-            // Calendar events
-            for (i in 0..7) {
+            // Weather + moon — a subtle line, then a compact hour-by-hour temperature sparkline,
+            // right below the Notes & Other events bar.
+            val wmDate = java.time.LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day)
+            Creator.drawEllipsizedText(
+                canvas, WeatherMoon.summary(context, wmDate),
+                Creator.textSmallBlack, lo + cew + 60.0f, to + 20 * ceh - 12.0f, cew
+            )
+            val temps = WeatherMoon.hourly(context, wmDate)
+            if (temps.size >= 2) {
+                val x0 = lo + cew + 60.0f
+                val x1 = lo + 2 * cew + 40.0f
+                val yBot = to + 21 * ceh - 6.0f
+                val yTop = to + 20 * ceh + 10.0f
+                val minT = temps.minOrNull() ?: 0.0f
+                val range = ((temps.maxOrNull() ?: 0.0f) - minT).coerceAtLeast(1.0f)
+                val n = temps.size
+                fun px(i: Int) = x0 + (x1 - x0) * i / (n - 1)
+                fun py(t: Float) = yBot - (t - minT) / range * (yBot - yTop)
+                for (i in 1 until n) {
+                    canvas.drawLine(px(i - 1), py(temps[i - 1]), px(i), py(temps[i]), Creator.lineDefaultBlack)
+                }
+                // Dot the current hour.
+                val nowH = java.time.LocalTime.now().hour.coerceIn(0, n - 1)
+                val dot = android.graphics.Paint().apply {
+                    color = android.graphics.Color.BLACK
+                    style = android.graphics.Paint.Style.FILL
+                    isAntiAlias = true
+                }
+                canvas.drawCircle(px(nowH), py(temps[nowH]), 6.0f, dot)
+            }
+
+            // Calendar events (shifted one slot down to sit under the weather/moon line).
+            // Star rows with a cached featured image render as a tiny card: 86px thumb + title.
+            for (i in 0..6) {
                 if (i < notesTitle.size) {
+                    var textX = lo + cew + 60.0f
+                    val thumb = notesThumb.getOrNull(i)?.let { p ->
+                        runCatching { android.graphics.BitmapFactory.decodeFile(p) }.getOrNull()
+                    }
+                    if (thumb != null) {
+                        val top = to + (21 + i * 2) * ceh + 7.0f
+                        val dst = android.graphics.RectF(textX, top, textX + 86.0f, top + 86.0f)
+                        canvas.drawBitmap(thumb, null, dst, null)
+                        canvas.drawRect(dst, Creator.lineDefaultGrey50)
+                        textX += 100.0f
+                    }
                     Creator.drawEllipsizedText(
                         canvas, notesTitle[i], Creator.textDefaultBlack,
-                        lo + cew + 60.0f, to + (20 + i * 2) * ceh - 10.0f, cew
+                        textX, to + (22 + i * 2) * ceh - 10.0f, cew - (textX - lo - cew - 60.0f)
                     )
                     canvas.drawText(
-                        notesLeft[i], lo + cew + 60.0f, to + (21 + i * 2) * ceh - 10.0f,
+                        notesLeft[i], textX, to + (23 + i * 2) * ceh - 10.0f,
                         Creator.textSmallBlack
                     )
                     canvas.drawText(
-                        notesRight[i], lo + cew + 40.0f + cew, to + (21 + i * 2) * ceh - 10.0f,
+                        notesRight[i], lo + cew + 40.0f + cew, to + (23 + i * 2) * ceh - 10.0f,
                         Creator.textSmallBlackRight
                     )
                 }
             }
+        }
+
+        /** Cached thumbnail path for a star's featured image, or null when absent / not yet warmed. */
+        fun starThumbPath(context: Context, imageUrl: String?): String? {
+            if (imageUrl.isNullOrBlank()) return null
+            val dir = java.io.File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS), "star-thumbs")
+            val f = java.io.File(dir, com.toolsboox.ot.CryptoUtils.md5Hash(imageUrl.toByteArray()) + ".png")
+            return if (f.exists()) f.absolutePath else null
+        }
+
+        /** Where a star's thumbnail should be cached (whether or not it exists yet). */
+        fun starThumbFile(context: Context, imageUrl: String): java.io.File {
+            val dir = java.io.File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS), "star-thumbs")
+            dir.mkdirs()
+            return java.io.File(dir, com.toolsboox.ot.CryptoUtils.md5Hash(imageUrl.toByteArray()) + ".png")
         }
 
         private fun drawEventLane(canvas: Canvas, startHour: Int, lane: MutableList<CalendarEvent>, llo: Float, lw: Float) {

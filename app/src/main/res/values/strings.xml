@@ -1,13 +1,14 @@
 <resources>
     <string name="drawer_title">%1$s &#8211; %2$s</string>
     <string name="fab_add_item">Add item</string>
-    <string name="something_happened_error">Something happened&#8230; please check your network status. :(</string>
+    <string name="something_happened_error">Something happened&#8230; couldn\'t load or save just now. It\'ll retry.</string>
     <string name="something_happened_action">Okay</string>
 
     <string name="widget_description">Today\'s full planner page with strokes and events</string>
     <string name="widget_schedule_description">Today\'s schedule column with hour grid and events</string>
     <string name="widget_tasks_notes_description">Today\'s tasks and notes columns</string>
     <string name="calendar_settings_rotation_label">Rotation</string>
+    <string name="calendar_settings_auto_rotate">Auto-rotate (let the gyro decide)</string>
     <string name="calendar_settings_rotation_hint">Pick which orientations the toolbar rotate button cycles through:</string>
     <string name="calendar_settings_rotation_portrait">Portrait (upright)</string>
     <string name="calendar_settings_rotation_landscape_cw">Landscape — clockwise (top tilts right)</string>
@@ -140,6 +141,8 @@
     <string name="calendar_settings_button_backup">Export backup</string>
     <string name="calendar_settings_backup_done">Calendar backup exported to the Downloads</string>
     <string name="calendar_settings_button_restore">Import backup</string>
+    <string name="calendar_settings_button_export_settings">Export settings</string>
+    <string name="calendar_settings_button_import_settings">Import settings</string>
     <string name="calendar_settings_restore_done">Calendar backup imported from the Downloads</string>
     <string name="calendar_settings_auto_sync_label">Automatic cloud sync</string>
     <string name="calendar_settings_auto_sync_enabled">Enable auto-sync</string>
@@ -156,6 +159,19 @@
     <string name="calendar_settings_ultrabridge_enabled_toast">WebCal backup enabled</string>
     <string name="calendar_settings_ultrabridge_disabled_toast">WebCal backup disabled</string>
     <string name="calendar_settings_ultrabridge_missing_fields">Please fill in all WebDAV fields</string>
+
+    <string name="calendar_settings_gcal_title">Google Calendar</string>
+    <string name="calendar_settings_gcal_enable">Add events to Google Calendar</string>
+    <string name="calendar_settings_capture_label">Capture &amp; OCR</string>
+    <string name="calendar_settings_extract_title">On-device extract</string>
+    <string name="calendar_settings_extract_enable">Extract tasks &amp; events on this device</string>
+    <string name="calendar_settings_community_label">Community &amp; Boards (Fluent)</string>
+    <string name="calendar_settings_button_manage_sites">Manage sites…</string>
+    <string name="calendar_settings_community_enable">Connect a community / boards site</string>
+    <string name="calendar_settings_gcal_id_hint">Calendar (primary, or an ID)</string>
+    <string name="calendar_settings_gcal_connect">Connect Google Calendar</string>
+    <string name="calendar_settings_gcal_connected_toast">Google Calendar connected</string>
+    <string name="calendar_settings_gcal_connect_failed_toast">Couldn\'t connect Google Calendar</string>
 
     <string name="calendar_settings_button_save">Save</string>
     <string name="calendar_settings_button_back">Back</string>
@@ -213,24 +229,26 @@
     <string name="calendar_navigator_week_button_text">W41</string>
     <string name="calendar_navigator_day_of_week_button_text">Thu</string>
 
+    <!-- Almanac periods label their scribble area "Write" — "Notes" is its own thing (the
+         dedicated Notes & Annotations / day Notes), not a per-period blank page. -->
     <string name="calendar_year_title">Yearly planner &#8211; %s</string>
-    <string name="calendar_year_notes">Notes</string>
+    <string name="calendar_year_notes">Write</string>
 
     <string name="calendar_quarter_title">Quarterly planner &#8211; %s</string>
-    <string name="calendar_quarter_notes">Notes</string>
+    <string name="calendar_quarter_notes">Write</string>
 
     <string name="calendar_month_title">Monthly planner &#8211; %s</string>
-    <string name="calendar_month_notes">Notes</string>
+    <string name="calendar_month_notes">Write</string>
 
     <string name="calendar_week_title">Weekly planner &#8211; %1$s week %2$s</string>
-    <string name="calendar_week_notes">Notes</string>
+    <string name="calendar_week_notes">Write</string>
 
     <string name="calendar_day_title">Daily planner &#8211; %s</string>
     <string name="calendar_day_schedules">Schedules</string>
     <string name="calendar_day_tasks">Tasks</string>
     <string name="calendar_day_notes">Notes</string>
-    <string name="calendar_day_notes_events">Notes &amp; Other events (%d)</string>
-    <string name="calendar_day_notes_events_ex">Notes &amp; Other events (%d+)</string>
+    <string name="calendar_day_notes_events">Stars &amp; Events (%d)</string>
+    <string name="calendar_day_notes_events_ex">Stars &amp; Events (%d+)</string>
     <string name="calendar_day_all_day">All day event</string>
 
     <string name="calendar_health_day_start_it">Start it!</string>
@@ -320,11 +338,263 @@
     <string name="dashboard_device_mismatch_title">Device mismatch</string>
     <string name="dashboard_device_mismatch_message">The \'Tools for Boox\' application is developed to Onyx Boox devices, your device does not look like an Onxy Boox (%1$s - %2$s), there may be bugs and crashes.</string>
     <string name="dashboard_item_calendar_title">Calendar</string>
-    <string name="dashboard_item_templates_title">Templates</string>
-    <string name="dashboard_item_teamdrawer_title">TeamDrawer</string>
     <string name="dashboard_item_kanban_planner_title">Kanban\nplanner</string>
     <string name="dashboard_item_about_title">About</string>
     <string name="dashboard_item_cloud_title">Cloud</string>
+    <string name="dashboard_item_chat_title">Ask my\nLedger</string>
+    <string name="go_to_title">Go to</string>
+    <string name="reader_empty_title">No book open yet.</string>
+    <string name="reader_add_book">Add a book</string>
+    <string name="go_group_views">Almanac</string>
+    <string name="go_group_day">On this day</string>
+    <string name="go_group_ledger">Ledger</string>
+    <string name="dashboard_item_reader_title">Reader</string>
+    <string name="dashboard_item_feeds_title">Feed\nLedger</string>
+    <string name="ledger_share_target_title">Ledger</string>
+    <string name="ledger_share_file_title">File this link</string>
+    <string name="ledger_share_drop_on_page">✍️  Drop on page</string>
+    <string name="ledger_share_filed">Filed to %s</string>
+
+    <!-- Feed Ledger -->
+    <string name="feeds_title">Feed Ledger</string>
+    <string name="feeds_refresh">Refresh</string>
+    <string name="feeds_settings">Setup</string>
+    <string name="feeds_url_hint">Miniflux URL (https://rss.example.com)</string>
+    <string name="feeds_token_hint">API token</string>
+    <string name="feeds_save">Save</string>
+    <string name="feeds_saved">Saved on this device.</string>
+    <string name="feeds_empty">No unread entries.</string>
+    <string name="feeds_later_empty">Nothing on your Later List yet — intake a link to read/watch/listen later.</string>
+    <string name="ledger_persona">🎭 Persona</string>
+    <string name="ledger_chat_dictate">🎤 Dictate</string>
+    <string name="ledger_chat_save_feed">💾 Save to feed</string>
+    <string name="ledger_chat_history">🕘 History</string>
+    <string name="text_notes_saving">Saving…</string>
+    <string name="text_notes_saved">Saved</string>
+    <string name="feeds_add_later">Add to Later</string>
+    <string name="feeds_added_later">Added to Later List.</string>
+    <string name="feeds_added_later_dl">Added to Later — downloading audio for offline…</string>
+    <string name="feeds_need_creds">Add your Miniflux URL and API token to load your feeds.</string>
+    <string name="feeds_nothing_to_mark">Nothing to mark read.</string>
+    <string name="feeds_marking_read">Marking %d read…</string>
+    <string name="feeds_marked_read">Marked read.</string>
+    <string name="feeds_no_next">No next article.</string>
+    <string name="feeds_open_external">Open in app / browser</string>
+    <string name="feeds_open_external_failed">Couldn\'t open this link.</string>
+    <string name="feeds_no_prev">No previous article.</string>
+    <string name="feeds_next_article">Next article</string>
+    <string name="feeds_prev_article">Last article</string>
+    <string name="feeds_starred">Starred and saved to your Ledger.</string>
+    <string name="feeds_unstarred">Unstarred.</string>
+    <string name="feeds_view_starred">★ Saved</string>
+    <string name="feeds_view_unread">Unread</string>
+    <string name="feeds_title_starred">Saved for later</string>
+    <string name="feeds_article_star">★ Star</string>
+    <string name="feeds_article_unstar">★ Unstar</string>
+    <string name="feeds_article_note">Note</string>
+    <string name="feeds_article_annotate">Annotate</string>
+    <string name="feeds_article_highlight">Highlight</string>
+    <string name="feeds_article_parsing">Parsing…</string>
+    <string name="feeds_article_first">First article.</string>
+    <string name="feeds_article_last">Last article.</string>
+    <string name="feeds_article_browser">Browser</string>
+    <string name="feeds_article_missing">Could not open this entry.</string>
+    <string name="feeds_article_note_hint">Your note about this article…</string>
+    <string name="feeds_note_saved">Note saved to your Ledger.</string>
+
+    <!-- Reader -->
+    <string name="reader_prev">‹</string>
+    <string name="reader_next">›</string>
+    <string name="reader_open">Open</string>
+    <string name="reader_highlight">Highlight</string>
+    <string name="reader_select_first">Select text first, then tap Highlight.</string>
+    <string name="reader_highlight_saved">Saved to your Ledger.</string>
+    <string name="reader_highlight_delete_confirm">Remove this highlight?</string>
+    <string name="reader_highlight_delete">Remove</string>
+    <string name="eraser_clear_page">Clear page</string>
+    <string name="reading_log_title">Ledger Log</string>
+    <string name="reading_log_empty">Nothing in your Ledger Log for this range yet. Highlight in a book, star an article, or capture an AV gram — they land here.</string>
+    <string name="reading_log_export">Export highlights</string>
+    <string name="reading_log_search_hint">Search your Ledger…</string>
+    <string name="reading_log_untitled">Untitled</string>
+    <string name="reading_log_origin_all">All</string>
+    <string name="reading_log_range_all">All time</string>
+    <string name="feeds_star">Star</string>
+    <string name="ledger_extract_day_only">Extraction runs on the day page (Schedule + Tasks).</string>
+    <string name="ledger_extract_done">Extracted %1$d tasks · %2$d events</string>
+    <string name="ledger_items_title">Tasks &amp; Events</string>
+    <string name="ledger_items_empty">No tasks or events yet. On the day page, open the tools menu and tap “Extract tasks &amp; events”.</string>
+    <string name="ledger_items_toggle">Ink / text</string>
+    <string name="ledger_extract_unreadable">Couldn\'t read that selection.</string>
+    <string name="ledger_extract_added">Added %1$s: %2$s</string>
+    <string name="ledger_selection_title">Create from selection</string>
+    <string name="ledger_ai_key_needed">Add your Ask-my-Ledger API key in Settings first.</string>
+    <string name="ledger_educate_looking_up">Looking it up…</string>
+    <string name="calendar_day_roots">🌿 Roots</string>
+    <string name="ledger_selection_create">Create…</string>
+    <string name="ledger_selection_add_to">Add to…</string>
+    <string name="ledger_selection_do">Do…</string>
+    <string name="ledger_selection_switch_add">⇄  Switch to: Add to…</string>
+    <string name="ledger_selection_switch_create">⇄  Switch to: Create…</string>
+    <string name="ledger_selection_nothing_to_add_to">Nothing on this day to add it to yet</string>
+    <string name="ledger_selection_handwritten">(handwritten)</string>
+    <string name="ledger_selection_added_to">🗒 Added to %1$s</string>
+    <string name="ledger_selection_pickings_name">Pickings name</string>
+    <string name="ledger_picking_created">❮  Pickings “%1$s” created</string>
+    <string name="ledger_picking_go">Go to it</string>
+    <string name="ledger_modal_size">Menu text · %1$s</string>
+    <string name="ledger_modal_size_now">Menu text: %1$s</string>
+    <string name="ledger_selection_clipped">📋 Saved to Clippings</string>
+    <string name="calendar_day_untitled_event">Event</string>
+    <string name="calendar_day_event_to_task">Make a task</string>
+    <string name="calendar_day_event_already_task">Already a task on this day</string>
+    <string name="calendar_day_event_made_task">🗒 Task made: %1$s</string>
+    <string name="spiral_lead_circling">you have been circling %1$s</string>
+    <string name="spiral_lead_plain">come back around</string>
+    <!-- Two states, so the row names the ACTION rather than opening a chooser. -->
+    <string name="pill_switch_horizontal">🔀  Switch pill horizontal</string>
+    <string name="pill_switch_vertical">🔀  Switch pill vertical</string>
+    <string name="quick_note_selector_title">Go to…</string>
+    <string name="quick_note_notes">✎  Notes — where you left off</string>
+    <string name="quick_note_media">📷  Media — catch something</string>
+    <string name="quick_note_text_notes">⌗  Text Notes</string>
+    <string name="quick_note_grid">📈  Grid Notes</string>
+    <string name="quick_note_sketch">⌱  Sketch Notes</string>
+    <string name="quick_note_photo">📷  Capture a photo</string>
+    <string name="quick_note_voice">🎤  Record a voice gram</string>
+    <string name="roots_title">🌿  Roots</string>
+    <string name="roots_close">Close</string>
+    <string name="rhizome_title">🕸  Its rhizome</string>
+    <string name="map_title">🗺  Map</string>
+    <string name="map_menu">Draw…</string>
+    <string name="calendar_settings_calendar_label">CALENDAR</string>
+    <string name="calendar_settings_data_label">BACKUP &amp; DATA</string>
+    <string name="map_drawing">drawing…</string>
+    <string name="map_needs_key">Add your AI key in Settings to ask for a map.</string>
+    <string name="map_nothing_to_map">Nothing to map yet.</string>
+    <string name="map_empty">Nothing is connected yet. Connect a few things and the map draws itself.</string>
+    <string name="rhizome_menu">🕸  Its rhizome</string>
+    <string name="calendar_settings_button_text_size">Text size…</string>
+    <string name="rhizome_cannot_open">Nothing here can open %1$s</string>
+    <string name="rhizome_empty">Nothing joins this yet. Assign it to someone, put it on a board, or connect it to something — the connections you make show up here, from either end.</string>
+    <string name="roots_loading">Reading the roots…</string>
+    <string name="roots_empty">Nothing has come back often enough yet to call it a thread.\n\nThis fills in as the ledger does — it needs the same word in a few things made at different times.</string>
+    <string name="roots_what_comes_back">WHAT KEEPS COMING BACK</string>
+    <string name="roots_where_they_touch">WHERE THEY TOUCH</string>
+    <string name="rotate_auto">Auto-rotate on — the gyro has it</string>
+    <string name="rotate_locked">Rotation locked here</string>
+    <string name="ledger_educate_filed">Filed to your Later List → Educate (and your feed).</string>
+    <string name="ledger_educate_open">Open link</string>
+    <string name="ledger_selection_card">Selection</string>
+    <string name="ledger_share_read">Read later</string>
+    <string name="ledger_share_watch">Watch</string>
+    <string name="ledger_share_listen">Listen</string>
+    <string name="ledger_share_educate">Educate</string>
+    <string name="feeds_article_parse">Reader view</string>
+
+    <!-- Shared annotation capture (books + feeds). -->
+    <string name="reader_capture_title">Add annotation</string>
+    <string name="reader_capture_highlight_note">Highlight &amp; note</string>
+    <string name="reader_capture_note">Add a note</string>
+    <string name="reader_capture_photo">📷  Take a picture</string>
+    <string name="reader_capture_upload">🖼️  Upload a picture</string>
+    <string name="reader_capture_voice">🎤  Voice memo</string>
+    <string name="reader_capture_note_hint">Your note…</string>
+    <string name="reader_capture_save">Save</string>
+    <string name="reader_capture_saved">Annotation saved</string>
+    <string name="reader_capture_recording">Recording…  %s</string>
+    <string name="reader_capture_stop">Stop</string>
+    <string name="reader_capture_mic_denied">Microphone permission is needed for voice memos.</string>
+    <string name="reader_capture_no_camera">No camera available on this device.</string>
+    <string name="reader_capture_failed">Couldn\'t save that — try again.</string>
+
+    <!-- A/V gram capture. -->
+    <string name="gram_capture_title">Record an A/V gram</string>
+    <string name="gram_capture_video">🎥  Record a video</string>
+    <string name="gram_capture_saved">A/V gram saved</string>
+
+    <string name="pill_layout_title">Pill layout</string>
+    <string name="pill_layout_horizontal">Horizontal</string>
+    <string name="pill_layout_vertical">Vertical</string>
+    <string name="pill_layout_vertical_setting">Vertical floating pills</string>
+    <string name="reading_log_open_hint">%s — open it from its source.</string>
+    <string name="reading_log_av_video">Video note to self</string>
+    <string name="reading_log_av_audio">Audio note to self</string>
+    <string name="reading_log_av_photo">Photo</string>
+    <string name="card_pick_panel">Gram from…</string>
+    <string name="card_whole_page">🗎  Whole page</string>
+    <string name="card_render_failed">Couldn\'t render that panel. :(</string>
+    <string name="card_saved_to_notes">Saved “%s” to Ledger Log.</string>
+    <string name="webhook_none">Add a webhook first — Tools → Webhooks…</string>
+    <string name="webhook_pick">Send to which webhook?</string>
+    <string name="webhook_sent">Sent “%1$s” to %2$s.</string>
+    <string name="webhook_manage">Webhooks</string>
+    <string name="webhook_add">＋ Add webhook…</string>
+    <string name="webhook_remove">Remove</string>
+    <string name="webhook_name_hint">Name (e.g. Clinic intake)</string>
+    <string name="webhook_url_hint">https://…/webhook</string>
+    <string name="webhook_key_hint">API key (optional)</string>
+    <string name="webhook_saved">Saved webhook “%s”.</string>
+    <string name="webhook_invalid">Need a name and an http(s) URL.</string>
+    <string name="reader_aa">Aa</string>
+    <string name="reader_read_aloud">Read aloud</string>
+    <string name="reader_controls">Screen controls</string>
+    <string name="reader_settings_title">Reading</string>
+    <string name="reader_font_smaller">A −</string>
+    <string name="reader_font_larger">A +</string>
+    <string name="reader_theme">Theme: %1$s</string>
+    <string name="reader_shelf_title">Your books</string>
+    <string name="reader_import_new">Import a book…</string>
+    <string name="reader_import_failed">Couldn\'t open that book — try importing it again.</string>
+    <string name="reader_no_books">No books yet — import one.</string>
+
+    <!-- Ask my Ledger (chat over the corpus) -->
+    <string name="ledger_chat_title">Ask my Ledger</string>
+    <string name="ledger_chat_subtitle">Ask across your highlights, notes, feed annotations and A/V grams.</string>
+    <string name="ledger_chat_scope_books">Book highlights</string>
+    <string name="ledger_chat_scope_articles">Feed annotations</string>
+    <string name="ledger_chat_scope_planner">Planner text</string>
+    <string name="ledger_chat_scope_media">A/V grams</string>
+    <string name="ledger_chat_hint">Ask a question about your ledger…</string>
+    <string name="ledger_chat_ask">Ask</string>
+    <string name="ledger_chat_thinking">Reading your ledger…</string>
+    <string name="ledger_chat_footer">— grounded in %1$d of %2$d entries in scope</string>
+    <string name="ledger_chat_need_question">Type a question first.</string>
+    <string name="ledger_chat_need_scope">Pick at least one section to search.</string>
+    <string name="ledger_chat_settings_toggle">Claude API key &amp; model</string>
+    <string name="ledger_chat_api_key_hint">Claude API key (sk-ant-…)</string>
+    <string name="ledger_chat_api_key_hint_openai">OpenAI API key (sk-…)</string>
+    <string name="ledger_chat_provider_claude">Claude</string>
+    <string name="ledger_chat_provider_openai">OpenAI</string>
+    <string name="ledger_chat_model_hint">Model (default claude-sonnet-5)</string>
+    <string name="ledger_chat_save_key">Save</string>
+    <string name="ledger_chat_key_saved">Saved on this device.</string>
+    <string name="michaelfilter_intake_title">MichaelFilter Intake</string>
+    <string name="michaelfilter_intake_typed_dialog_hint">Paste a link or type text</string>
+    <string name="michaelfilter_intake_queued_count">%1$d intake item(s) queued for tomorrow\'s edition</string>
+    <string name="michaelfilter_intake_url_label">Link URL</string>
+    <string name="michaelfilter_intake_url_hint">https://…</string>
+    <string name="michaelfilter_intake_paste">Paste</string>
+    <string name="michaelfilter_intake_kind_label">Kind</string>
+    <string name="michaelfilter_intake_kind_read">Read</string>
+    <string name="michaelfilter_intake_kind_listen">Listen</string>
+    <string name="michaelfilter_intake_kind_watch">Watch</string>
+    <string name="michaelfilter_intake_title_label">Title (optional)</string>
+    <string name="michaelfilter_intake_title_hint">Title</string>
+    <string name="michaelfilter_intake_text_label">Pasted text (optional)</string>
+    <string name="michaelfilter_intake_text_hint">Paste the article body or an excerpt here</string>
+    <string name="michaelfilter_intake_why_label">Why I saved this (optional)</string>
+    <string name="michaelfilter_intake_why_hint">One or two lines on why this matters</string>
+    <string name="michaelfilter_intake_save">Save to MichaelFilter</string>
+    <string name="michaelfilter_intake_status_sending">Sending…</string>
+    <string name="michaelfilter_intake_status_saved">Saved — in tomorrow\'s edition.</string>
+    <string name="michaelfilter_intake_status_dup">Already in the pipeline (duplicate URL).</string>
+    <string name="michaelfilter_intake_status_rejected">The server rejected this submission (HTTP %1$d).</string>
+    <string name="michaelfilter_intake_status_queued">Offline — queued, will send automatically.</string>
+    <string name="michaelfilter_intake_status_url_required">Enter or paste a link URL (http/https) first.</string>
+    <string name="michaelfilter_intake_pending">%1$d submission(s) queued for retry</string>
+    <string name="michaelfilter_intake_clipboard_empty">Clipboard is empty.</string>
+    <string name="michaelfilter_intake_clipboard_no_url">No URL in clipboard — pasted into the text field.</string>
     <string name="dashboard_item_cancel_alt">Cancel</string>
     <string name="dashboard_item_delete_alt">Delete</string>
     <string name="dashboard_item_edit_alt">Edit</string>
@@ -343,90 +613,24 @@
     <string name="kanban_planner_no_due_date">no due date</string>
 
     <!-- Strings related to team drawer plugin -->
-    <string name="team_drawer_title">TeamDrawer &#8211; %1$s</string>
 
     <!-- Strings related to team drawer page fragment -->
-    <string name="team_drawer_page_title">\'%s\' pages</string>
-    <string name="team_drawer_page_text">Welcome in our team drawer! :)</string>
-    <string name="team_drawer_page_button_export_text">Export</string>
-    <string name="team_drawer_page_button_erase_text">Erase page</string>
-    <string name="team_drawer_page_export_message">Exported as %s</string>
-    <string name="team_drawer_page_add_new_page_dialog_title">Add page</string>
-    <string name="team_drawer_page_add_new_page_dialog_message">Do you want to add a new page?</string>
 
     <!-- Strings related to team drawer room fragment -->
-    <string name="team_drawer_room_title">TeamDrawer &#8211; Rooms</string>
-    <string name="team_drawer_room_item_image">Room item image</string>
-    <string name="team_drawer_room_add_dialog_title">Add new room</string>
 
     <!-- Strings related to team drawer note fragment -->
-    <string name="team_drawer_note_title">\'%s\' notes</string>
-    <string name="team_drawer_note_item_image">Note item image</string>
-    <string name="team_drawer_note_add_dialog_title">Add new note</string>
 
     <!-- Strings related to templates plugin -->
-    <string name="templates_main_title">Templates</string>
-    <string name="templates_item_boxed_days_title">Boxed days\ncalendar</string>
-    <string name="templates_item_boxed_weeks_title">Boxed weeks\ncalendar</string>
-    <string name="templates_item_community_title">Community\ntemplates</string>
-    <string name="templates_item_flat_weeks_title">Flat week\ncalendar</string>
-    <string name="templates_item_this_weeks_title">This week\'s\ncalendar</string>
-    <string name="templates_list_button_text">List</string>
-    <string name="templates_preview_button_text">Preview</string>
-    <string name="templates_settings_button_text">Settings</string>
-    <string name="templates_export_button_text">Export</string>
 
     <!-- Strings related to templates 'boxed week's calendar' fragment -->
-    <string name="templates_boxed_days_calendar_title">Boxed days of year calendar template</string>
-    <string name="templates_boxed_days_calendar_preview_description">Preview image</string>
-    <string name="templates_boxed_days_calendar_button_export_text">Export</string>
-    <string name="templates_boxed_days_calendar_message">Export this preview as multipage local PDF template</string>
-    <string name="templates_boxed_days_calendar_preview_export_message">Exported as %s</string>
-    <string name="templates_boxed_days_calendar_settings_with_notes">Generate with notes</string>
-    <string name="templates_boxed_days_calendar_settings_with_tasks">Generate with tasks</string>
-    <string name="templates_boxed_days_calendar_settings_with_hours">Generate with prefilled hours</string>
-    <string name="templates_boxed_days_calendar_settings_date_picker_button">Set date</string>
-    <string name="templates_boxed_day_calendar_creator_title">%s daily planner</string>
-    <string name="templates_boxed_day_calendar_creator_notes">Notes</string>
-    <string name="templates_boxed_day_calendar_creator_tasks">Tasks</string>
 
     <!-- Strings related to templates 'boxed week's calendar' fragment -->
-    <string name="templates_boxed_weeks_calendar_title">Boxed weeks of year calendar template</string>
-    <string name="templates_boxed_weeks_calendar_preview_description">Preview image</string>
-    <string name="templates_boxed_weeks_calendar_button_export_text">Export</string>
-    <string name="templates_boxed_weeks_calendar_message">Export this preview as multipage local PDF template</string>
-    <string name="templates_boxed_weeks_calendar_preview_export_message">Exported as %s</string>
-    <string name="templates_boxed_weeks_calendar_settings_days_layout_message">Layout of days in the week:</string>
-    <string name="templates_boxed_weeks_calendar_settings_days_layout_vertical">Vertical</string>
-    <string name="templates_boxed_weeks_calendar_settings_days_layout_horizontal">Horizontal</string>
-    <string name="templates_boxed_weeks_calendar_settings_date_picker_button">Set date</string>
-    <string name="templates_boxed_week_calendar_creator_title">%1$dW%2$d</string>
-    <string name="templates_boxed_week_calendar_creator_weekly_notes">Weekly notes</string>
 
     <!-- Strings related to templates 'community' fragment -->
-    <string name="templates_community_title">Community templates</string>
-    <string name="templates_community_list_thumbnail">Community thumbnail</string>
-    <string name="templates_community_list_icon_star">Star</string>
-    <string name="templates_community_list_icon_starred">Starred</string>
 
     <!-- Strings related to templates 'flat week's calendar' fragment -->
-    <string name="templates_flat_weeks_calendar_title">Flat weeks of year calendar template</string>
-    <string name="templates_flat_weeks_calendar_preview_description">Preview image</string>
-    <string name="templates_flat_weeks_calendar_button_export_text">Export</string>
-    <string name="templates_flat_weeks_calendar_message">Export this preview as multipage local PDF template</string>
-    <string name="templates_flat_weeks_calendar_preview_export_message">Exported as %s</string>
-    <string name="templates_flat_weeks_calendar_settings_with_days">Generate with dates</string>
-    <string name="templates_flat_weeks_calendar_settings_date_picker_button">Set date</string>
-    <string name="templates_flat_week_calendar_creator_title">%1$dW%2$d</string>
 
     <!-- Strings related to templates 'this week's calendar' fragment -->
-    <string name="templates_this_weeks_calendar_title">This week\'s calendar</string>
-    <string name="templates_this_weeks_calendar_preview_description">Preview image</string>
-    <string name="templates_this_weeks_calendar_button_export_text">Export</string>
-    <string name="templates_this_weeks_calendar_message">Export this preview as local template</string>
-    <string name="templates_this_weeks_calendar_preview_title">%1$dW%2$d</string>
-    <string name="templates_this_weeks_calendar_preview_weekly_notes">Weekly notes</string>
-    <string name="templates_this_weeks_calendar_preview_export_message">Exported as %s</string>
 
     <!-- Strings related to utils -->
     <string name="util_fluent_unknown">unknown</string>
@@ -457,4 +661,5 @@
     <!--string name="placeholder_256">But I must explain to you how all this mistaken idea of denouncing pleasure and praising pain was born and I will give you a complete account of the system, and expound the actual teachings of the great explorer of the truth, the master-builder of human we</string-->
     <!--string name="placeholder_384">But you must explain to you how all this mistaken idea of denouncing pleasure and praising pain was born and I will give you a complete account of the system, and expound the actual teachings of the great explorer of the truth, the master-builder of human happiness. No one rejects, dislikes, or avoids pleasure itself, because it is pleasure, but because those who do not know how to</string-->
     <!--string name="placeholder_512">But you must explain to you how all this mistaken idea of denouncing pleasure and praising pain was born and I will give you a complete account of the system, and expound the actual teachings of the great explorer of the truth, the master-builder of human happiness. No one rejects, dislikes, or avoids pleasure itself, because it is pleasure, but because those who do not know how to pursue pleasure rationally encounter consequences that are extremely painful. Nor again is there anyone who loves or pursues or</string-->
+    <string name="surface_page_export_message">Exported as %s</string>
 </resources>

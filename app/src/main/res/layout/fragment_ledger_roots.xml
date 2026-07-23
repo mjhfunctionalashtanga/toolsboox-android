@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The roots, on their own page.
+
+     It used to be an AlertDialog stacked over the tasks list, which is the wrong container for
+     something you read: it can't be scrolled comfortably on e-ink, Back dismisses it rather than
+     stepping through it, and it dies with the fragment underneath. A page can be arrived at,
+     lingered on and left. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <!-- Nav line: hamburger left of the navigator, unified with feed / Tasks & Events. -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp" android:paddingTop="6dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content">
+        <ImageButton
+            android:id="@+id/goto_button"
+            android:src="@drawable/ic_menu"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter" android:padding="3dp"
+            android:layout_marginEnd="4dp"
+            android:contentDescription="@string/go_to_title"
+            android:layout_width="32dp" android:layout_height="32dp"/>
+        <ImageView
+            android:id="@+id/navigatorImageView"
+            android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="56dp"
+            android:contentDescription="@null"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="14dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="6dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <TextView
+            android:id="@+id/roots_title"
+            android:text="@string/roots_title"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:textColor="#000000"
+            android:fontFamily="@font/atkinson_hyperlegible"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+
+        <TextView
+            android:id="@+id/roots_close"
+            android:text="@string/roots_close"
+            android:textSize="15sp"
+            android:textColor="#000000"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="6dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <ScrollView
+        android:id="@+id/roots_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/roots_column"
+            android:orientation="vertical"
+            android:paddingHorizontal="18dp"
+            android:paddingBottom="24dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+    </ScrollView>
+</LinearLayout>

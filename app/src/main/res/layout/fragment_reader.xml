@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <WebView
+        android:id="@+id/reader_web"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"/>
+
+    <!-- Empty state: no book open yet → a clear way to add one (visible until a book loads). -->
+    <LinearLayout
+        android:id="@+id/reader_empty"
+        android:orientation="vertical"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:visibility="gone">
+        <TextView
+            android:text="@string/reader_empty_title"
+            android:textSize="18sp" android:textColor="#333333"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/reader_add_book"
+            android:text="@string/reader_add_book"
+            android:layout_marginTop="14dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <!-- Capy-style page-turn zones over the lower band (upper text stays selectable for
+         highlights): tap left = previous page, tap right = next page. Toggled in ☰ → Reading. -->
+    <LinearLayout
+        android:id="@+id/tap_zones"
+        android:orientation="horizontal"
+        android:layout_width="match_parent"
+        android:layout_height="220dp"
+        android:layout_gravity="bottom"
+        android:visibility="gone">
+        <View android:id="@+id/reader_tap_left" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="match_parent"/>
+        <View android:id="@+id/reader_tap_right" android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="match_parent"/>
+    </LinearLayout>
+
+    <!-- Draggable floating nav pill (grip taps to collapse) — matches the day/feed pill:
+         ☰ book directory · ▦ Ledger directory · ‹ prev · ✎ highlight · › next · Aa settings. -->
+    <LinearLayout
+        android:id="@+id/reader_bar"
+        android:orientation="horizontal"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="16dp"
+        android:gravity="center_vertical"
+        android:background="@drawable/ledger_bar_bg"
+        android:padding="4dp">
+
+        <ImageView android:id="@+id/reader_grip" android:layout_width="22dp" android:layout_height="46dp"
+            android:scaleType="fitCenter" android:src="@drawable/ic_grip" android:contentDescription="@null"/>
+        <ImageButton android:id="@+id/today_button" android:layout_width="44dp" android:layout_height="46dp"
+            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_today"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+        <ImageButton android:id="@+id/goto_button" android:layout_width="44dp" android:layout_height="46dp"
+            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_menu"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+        <ImageButton android:id="@+id/open_button" android:layout_width="44dp" android:layout_height="46dp"
+            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_wrench"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_controls"/>
+        <ImageButton android:id="@+id/prev_button" android:layout_width="44dp" android:layout_height="46dp"
+            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_left"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
+        <ImageButton android:id="@+id/highlight_button" android:layout_width="44dp" android:layout_height="46dp"
+            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_pencil"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_highlight"/>
+        <ImageButton android:id="@+id/next_button" android:layout_width="44dp" android:layout_height="46dp"
+            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_right"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
+        <ImageButton android:id="@+id/settings_button" android:layout_width="44dp" android:layout_height="46dp"
+            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_text_size"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_aa"/>
+    </LinearLayout>
+
+</FrameLayout>

@@ -52,12 +52,30 @@ class UltrabridgeSyncWorker(
         private const val MAIN_PREFS_NAME = "MAIN"
         private const val PREF_LAST_SYNC_MS = "ultrabridgeLastSyncMs"
 
+        /**
+         * True while an ink surface is in the foreground. The sync renders every calendar group to
+         * PDF (17+ documents) and uploads them — CPU-heavy work that, run alongside active drawing,
+         * pegged the SoC and starved the UI thread into a 5s input-timeout ANR ("crashes on rotation
+         * while drawing" — really the sync colliding with the pen). While this is set, doWork() bows
+         * out with Result.retry(), so the heavy pass only runs once the pen is put down.
+         */
+        @Volatile
+        var inkSurfaceActive: Boolean = false
+
         fun syncNow(context: Context) {
             val request = androidx.work.OneTimeWorkRequestBuilder<UltrabridgeSyncWorker>()
                 .setConstraints(
                     androidx.work.Constraints.Builder()
                         .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
                         .build()
+                )
+                // On wake/reconnect the CONNECTED constraint is met before WiFi is actually
+                // validated, so the first attempt often beats the network. Retry on a short
+                // linear backoff (15s, 30s, 45s…) so it recovers in seconds once WiFi settles,
+                // instead of the default 30s→60s→120s exponential.
+                .setBackoffCriteria(
+                    androidx.work.BackoffPolicy.LINEAR,
+                    15, java.util.concurrent.TimeUnit.SECONDS
                 )
                 .build()
             androidx.work.WorkManager.getInstance(context)
@@ -94,6 +112,11 @@ class UltrabridgeSyncWorker(
     }
 
     override suspend fun doWork(): Result {
+        // Never run the heavy PDF pass while the pen is live — defer until the surface is idle.
+        if (inkSurfaceActive) {
+            Timber.i("$TAG: Ink surface active — deferring sync so drawing stays smooth")
+            return Result.retry()
+        }
         Timber.i("$TAG: Starting Ultrabridge PDF sync")
 
         try {
@@ -109,6 +132,37 @@ class UltrabridgeSyncWorker(
                 Timber.w("$TAG: WebDAV credentials not configured, skipping sync")
                 return Result.success()
             }
+
+            // Host only (no path/creds) so connection failures are diagnosable from logcat.
+            val targetHost = runCatching {
+                java.net.URI(webdavUrl).let { "${it.scheme}://${it.host}:${it.port}" }
+            }.getOrDefault("unparseable")
+            Timber.i("$TAG: Sync target: $targetHost")
+
+            // Pre-flight reachability. WorkManager's CONNECTED constraint fires the instant a
+            // network attaches — before it's validated — so on wake/reconnect the sync often
+            // beats WiFi actually being usable (DNS resolves to nothing / connect hangs). Probe
+            // the host cheaply and Result.retry() FAST, rather than rendering every PDF only to
+            // fail on upload. The short linear backoff (see syncNow) then re-fires in ~15s, by
+            // which point WiFi has usually settled.
+            val reachable = withContext(Dispatchers.IO) {
+                try {
+                    val uri = java.net.URI(webdavUrl)
+                    val port = when {
+                        uri.port > 0 -> uri.port
+                        uri.scheme == "https" -> 443
+                        else -> 80
+                    }
+                    java.net.Socket().use { sock ->
+                        sock.connect(java.net.InetSocketAddress(uri.host, port), 4000)
+                    }
+                    true
+                } catch (e: Exception) {
+                    Timber.i("$TAG: Host not reachable yet (${e.javaClass.simpleName}); retry when network settles")
+                    false
+                }
+            }
+            if (!reachable) return Result.retry()
 
             val lastSyncMs = mainPrefs.getLong(PREF_LAST_SYNC_MS, 0L)
 
@@ -160,6 +214,12 @@ class UltrabridgeSyncWorker(
 
             try {
                 for ((groupKey, files) in groupedFiles) {
+                    // If the pen goes live mid-run, abandon and reschedule — a half-done sync is
+                    // fine (it's idempotent), a frozen page is not.
+                    if (inkSurfaceActive) {
+                        Timber.i("$TAG: Ink surface went active mid-render — yielding, will retry")
+                        return Result.retry()
+                    }
                     try {
                         val pdfFile = renderGroupToPdf(groupKey, files, moshi, tempDir, calendarDir)
                             ?: continue
@@ -201,6 +261,24 @@ class UltrabridgeSyncWorker(
                     }
                 }
                 Timber.i("$TAG: Uploaded $jsonUploadCount of ${dayJsonFiles.size} day JSON files")
+
+                // Two-way mirror of the versioned day JSON files against the SAME WebDAV tree the
+                // iPad app uses (calendar/YYYY/MM/day-...-vN.json), so the two clients converge.
+                // This is additive to the flat json/ push above (which feeds the OCR pipeline):
+                // here we both push local edits AND pull remote/iPad edits down, last-write-wins by
+                // the day's `updated` field. Failures here don't fail the whole worker — the pass
+                // is self-healing and re-runs next window.
+                try {
+                    val daySync = CalendarWebDavSyncService(
+                        UltrabridgeWebDavService(webdavUrl, webdavUser, webdavPass),
+                        rootDir,
+                        moshi
+                    )
+                    val stats = daySync.sync()
+                    Timber.i("$TAG: Day-JSON WebDAV mirror: $stats")
+                } catch (e: Exception) {
+                    Timber.w(e, "$TAG: Day-JSON WebDAV mirror failed (non-fatal)")
+                }
 
                 // If anything failed, ask WorkManager to retry with backoff rather than
                 // reporting a clean success. The worker re-uploads everything each run
@@ -337,7 +415,7 @@ class UltrabridgeSyncWorker(
         // so the PDF always contains the complete set.
         val allFilesInGroup = findAllFilesForGroup(groupKey, calendarDir)
 
-        val pages = mutableListOf<Pair<String, Pair<Map<String, List<com.toolsboox.da.Stroke>>, Map<String, List<com.toolsboox.da.Stroke>>>>>()
+        val pages = mutableListOf<Pair<String, com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.PageContent>>()
 
         // Sort files for consistent page ordering
         val sortedFiles = allFilesInGroup.sortedBy { it.name }
@@ -390,12 +468,28 @@ class UltrabridgeSyncWorker(
      * Load a calendar JSON file and extract its stroke maps.
      * Handles all calendar types (day, week, month, quarter, year) in both v1 and v2 formats.
      */
+    /**
+     * Build a PageContent from any calendar type: strokes always, plus text boxes (all
+     * types) and images (day pages only). Keeps typed/pasted text + images in the exported
+     * PDF so they reach the OCR/notes pipeline instead of being silently dropped.
+     */
+    private fun pageContentOf(cal: com.toolsboox.plugin.calendar.da.v2.Calendar): com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.PageContent {
+        val images = (cal as? CalendarDay)?.imageElements ?: emptyList()
+        return com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.PageContent(
+            cal.calendarStrokes, cal.noteStrokes, cal.textElements, images
+        )
+    }
+
     private fun loadCalendarData(
         file: File,
         moshi: Moshi
-    ): Pair<Map<String, List<com.toolsboox.da.Stroke>>, Map<String, List<com.toolsboox.da.Stroke>>>? {
+    ): com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.PageContent? {
         try {
             val json = file.readText(Charsets.UTF_8)
+            // Empty/half-synced day files are expected (unwritten days, interrupted
+            // downloads). Skip them quietly instead of throwing EOFException and logging
+            // a stack trace per file — they simply contribute no page to the PDF.
+            if (json.isBlank()) return null
             val name = file.name
             val isV2 = name.endsWith("-v2.json")
 
@@ -403,12 +497,12 @@ class UltrabridgeSyncWorker(
                 name.startsWith("day-") -> {
                     if (isV2) {
                         moshi.adapter(CalendarDay::class.java).fromJson(json)?.let {
-                            it.calendarStrokes to it.noteStrokes
+                            pageContentOf(it)
                         }
                     } else {
                         moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarDay::class.java)
                             .fromJson(json)?.let { CalendarDay.convert(it) }?.let {
-                                it.calendarStrokes to it.noteStrokes
+                                pageContentOf(it)
                             }
                     }
                 }
@@ -416,12 +510,12 @@ class UltrabridgeSyncWorker(
                 name.startsWith("week-") -> {
                     if (isV2) {
                         moshi.adapter(CalendarWeek::class.java).fromJson(json)?.let {
-                            it.calendarStrokes to it.noteStrokes
+                            pageContentOf(it)
                         }
                     } else {
                         moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarWeek::class.java)
                             .fromJson(json)?.let { CalendarWeek.convert(it) }?.let {
-                                it.calendarStrokes to it.noteStrokes
+                                pageContentOf(it)
                             }
                     }
                 }
@@ -429,12 +523,12 @@ class UltrabridgeSyncWorker(
                 name.startsWith("month-") -> {
                     if (isV2) {
                         moshi.adapter(CalendarMonth::class.java).fromJson(json)?.let {
-                            it.calendarStrokes to it.noteStrokes
+                            pageContentOf(it)
                         }
                     } else {
                         moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarMonth::class.java)
                             .fromJson(json)?.let { CalendarMonth.convert(it) }?.let {
-                                it.calendarStrokes to it.noteStrokes
+                                pageContentOf(it)
                             }
                     }
                 }
@@ -442,12 +536,12 @@ class UltrabridgeSyncWorker(
                 name.startsWith("quarter-") -> {
                     if (isV2) {
                         moshi.adapter(CalendarQuarter::class.java).fromJson(json)?.let {
-                            it.calendarStrokes to it.noteStrokes
+                            pageContentOf(it)
                         }
                     } else {
                         moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarQuarter::class.java)
                             .fromJson(json)?.let { CalendarQuarter.convert(it) }?.let {
-                                it.calendarStrokes to it.noteStrokes
+                                pageContentOf(it)
                             }
                     }
                 }
@@ -455,12 +549,12 @@ class UltrabridgeSyncWorker(
                 name.startsWith("year-") -> {
                     if (isV2) {
                         moshi.adapter(CalendarYear::class.java).fromJson(json)?.let {
-                            it.calendarStrokes to it.noteStrokes
+                            pageContentOf(it)
                         }
                     } else {
                         moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarYear::class.java)
                             .fromJson(json)?.let { CalendarYear.convert(it) }?.let {
-                                it.calendarStrokes to it.noteStrokes
+                                pageContentOf(it)
                             }
                     }
                 }

@@ -114,6 +114,7 @@ class DashboardFragment @Inject constructor() : ScreenFragment() {
         sharedPreferences.edit().putString("androidId", androidId).apply()
         Timber.i("Stored androidId: $androidId")
 
+        // Order the home around the daily Ledger: plan, read, ask — then sync + about.
         val squareItems = mutableListOf<SquareItem>()
         squareItems.add(
             SquareItem(
@@ -123,21 +124,32 @@ class DashboardFragment @Inject constructor() : ScreenFragment() {
         )
         squareItems.add(
             SquareItem(
-                getString(R.string.dashboard_item_templates_title), R.drawable.ic_dashboard_item_templates,
-                R.id.action_to_templates_main, bundleOf()
+                getString(R.string.dashboard_item_reader_title), R.drawable.ic_dashboard_item_reader,
+                R.id.action_to_reader, bundleOf()
+            )
+        )
+        squareItems.add(
+            SquareItem(
+                getString(R.string.dashboard_item_feeds_title), R.drawable.ic_dashboard_item_feeds,
+                R.id.action_to_feeds, bundleOf()
+            )
+        )
+        squareItems.add(
+            SquareItem(
+                getString(R.string.dashboard_item_chat_title), R.drawable.ic_dashboard_item_chat,
+                R.id.action_to_ledger_chat, bundleOf()
+            )
+        )
+        squareItems.add(
+            SquareItem(
+                getString(R.string.dashboard_item_cloud_title), R.drawable.ic_dashboard_item_cloud,
+                R.id.action_to_cloud, bundleOf()
             )
         )
         squareItems.add(
             SquareItem(
                 getString(R.string.dashboard_item_about_title), R.drawable.ic_dashboard_item_about,
                 R.id.action_to_about, bundleOf()
-            )
-        )
-
-        squareItems.add(
-            SquareItem(
-                getString(R.string.dashboard_item_cloud_title), R.drawable.ic_dashboard_item_cloud,
-                R.id.action_to_cloud, bundleOf()
             )
         )
 
@@ -207,7 +219,7 @@ class DashboardFragment @Inject constructor() : ScreenFragment() {
         val message = getString(R.string.dashboard_device_mismatch_message).format(Build.BRAND, Build.DEVICE)
 
         sharedPreferences.edit().putBoolean("notifiedAboutDeviceMismatch", true).apply()
-        val builder: AlertDialog.Builder = AlertDialog.Builder(this.requireContext())
+        val builder: AlertDialog.Builder = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this.requireContext()))
         builder.setTitle(R.string.dashboard_device_mismatch_title)
             .setMessage(message)
             .setPositiveButton(R.string.ok) { dialog, _ ->
@@ -250,7 +262,7 @@ class DashboardFragment @Inject constructor() : ScreenFragment() {
             val url = "https://github.com/gaborauth/toolsboox-android/releases/latest/download/$filename"
             Timber.i("The update URL is '$url'")
 
-            val builder: AlertDialog.Builder = AlertDialog.Builder(this.requireContext())
+            val builder: AlertDialog.Builder = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this.requireContext()))
             builder.setTitle(R.string.dashboard_new_version_title)
                 .setMessage(R.string.dashboard_new_version_message)
                 .setPositiveButton(R.string.main_update) { _, _ ->
@@ -260,7 +272,7 @@ class DashboardFragment @Inject constructor() : ScreenFragment() {
                 .setNegativeButton(R.string.main_update_not_now) { dialog, _ -> dialog.cancel() }
             builder.create().show()
         } else {
-            val builder: AlertDialog.Builder = AlertDialog.Builder(this.requireContext())
+            val builder: AlertDialog.Builder = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this.requireContext()))
             builder.setTitle(R.string.dashboard_new_version_title)
                 .setMessage(R.string.dashboard_new_version_message)
                 .setPositiveButton(R.string.ok) { dialog, _ -> dialog.cancel() }

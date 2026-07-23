@@ -27,6 +27,7 @@
             android:id="@+id/drawing_layout"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:background="#FFFFFF"
 
             app:layout_constraintTop_toBottomOf="@id/mainProgress"
             app:layout_constraintBottom_toBottomOf="parent"
@@ -36,7 +37,7 @@
         <ImageView
                 android:id="@+id/navigatorImageView"
                 android:layout_width="0dp"
-                android:layout_height="50dp"
+                android:layout_height="@dimen/ledger_navigator_height"
                 android:scaleType="fitXY"
                 android:contentDescription="@string/calendar_navigator_image"
 
@@ -44,10 +45,127 @@
                 app:layout_constraintStart_toEndOf="@id/toolbarDrawing"
                 app:layout_constraintEnd_toEndOf="parent"/>
 
+        <!-- iPad-style jump buttons by the carets: left = apps/almanac, right = sections.
+             Hidden by default; only the day page turns them on. -->
+        <ImageButton
+                android:id="@+id/goAppsButton"
+                android:layout_width="@dimen/ledger_nav_button"
+                android:layout_height="@dimen/ledger_nav_button"
+                android:padding="10dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_bar_sections"
+                android:background="#FFFFFF"
+                android:contentDescription="@string/go_to_title"
+                android:visibility="gone"
+                app:layout_constraintTop_toTopOf="@id/navigatorImageView"
+                app:layout_constraintBottom_toBottomOf="@id/navigatorImageView"
+                app:layout_constraintStart_toStartOf="parent"
+                android:layout_marginStart="4dp"/>
+
+        <ImageButton
+                android:id="@+id/goSectionsButton"
+                android:layout_width="@dimen/ledger_nav_button"
+                android:layout_height="@dimen/ledger_nav_button"
+                android:padding="10dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_bar_sections"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/go_group_day"
+                android:visibility="gone"
+                app:layout_constraintTop_toTopOf="@id/navigatorImageView"
+                app:layout_constraintBottom_toBottomOf="@id/navigatorImageView"
+                app:layout_constraintEnd_toEndOf="@id/navigatorImageView"
+                android:layout_marginEnd="2dp"/>
+
+        <!-- Floating nav widget (day page only): ‹ prev-date · ↑↓ sections · next-date ›.
+             Overlays the page (does not shift it). Hidden by default. -->
+        <LinearLayout
+                android:id="@+id/navWidget"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/ledger_bar_bg"
+                android:padding="4dp"
+                android:visibility="gone"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="@id/navigatorImageView"
+                android:layout_marginEnd="14dp"
+                android:layout_marginBottom="18dp">
+
+            <ImageView android:id="@+id/navGrip" android:layout_width="@dimen/ledger_grip_short" android:layout_height="@dimen/ledger_pill_button"
+                android:scaleType="fitCenter" android:src="@drawable/ic_grip"
+                android:contentDescription="@null"/>
+            <ImageButton android:id="@+id/navUp" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+                android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_group_day"/>
+            <ImageButton android:id="@+id/navGoto" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+                android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_today"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+            <ImageButton android:id="@+id/navDown" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+                android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_group_day"/>
+            <ImageButton android:id="@+id/navExpand" android:visibility="gone"
+                android:layout_width="0dp" android:layout_height="0dp" android:src="@drawable/ic_nav_left"
+                android:contentDescription="@null"/>
+            <!-- Retired from the nav pill (kept hidden so code refs/tests survive): date
+                 arrows live on the top bar now; the wrench moved to the tool pill. -->
+            <ImageButton android:id="@+id/navLeft" android:visibility="gone"
+                android:layout_width="0dp" android:layout_height="0dp" android:src="@drawable/ic_nav_left"
+                android:contentDescription="@null"/>
+            <ImageButton android:id="@+id/navRight" android:visibility="gone"
+                android:layout_width="0dp" android:layout_height="0dp" android:src="@drawable/ic_nav_right"
+                android:contentDescription="@null"/>
+            <ImageButton android:id="@+id/navGear" android:visibility="gone"
+                android:layout_width="0dp" android:layout_height="0dp" app:srcCompat="@drawable/ic_wrench"
+                android:contentDescription="@null"/>
+        </LinearLayout>
+
+        <!-- Floating tool selector (day page only): pen · eraser · lasso · undo · redo.
+             Overlays the page; each button drives the real (hidden) toolbar action so the
+             Onyx ink wiring is unchanged. Hidden by default. -->
+        <LinearLayout
+                android:id="@+id/toolWidget"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/ledger_bar_bg"
+                android:padding="4dp"
+                android:visibility="gone"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintStart_toStartOf="@id/navigatorImageView"
+                android:layout_marginStart="14dp"
+                android:layout_marginBottom="18dp">
+
+            <ImageView android:id="@+id/toolGrip" android:layout_width="@dimen/ledger_grip_short" android:layout_height="@dimen/ledger_pill_button"
+                android:scaleType="fitCenter" android:src="@drawable/ic_grip"
+                android:contentDescription="@null"/>
+            <ImageButton android:id="@+id/toolPen" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+                android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_pen"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_pen"/>
+            <ImageButton android:id="@+id/toolEraser" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+                android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_eraser"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_eraser"/>
+            <ImageButton android:id="@+id/toolLasso" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+                android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_lasso"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_lasso"/>
+            <ImageButton android:id="@+id/toolUndo" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+                android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_undo"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="Undo"/>
+            <ImageButton android:id="@+id/toolRedo" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+                android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_redo"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="Redo"/>
+            <ImageButton android:id="@+id/toolGear" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+                android:padding="11dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_wrench"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_settings"/>
+            <ImageButton android:id="@+id/toolExpand" android:visibility="gone"
+                android:layout_width="0dp" android:layout_height="0dp" android:src="@drawable/ic_nav_left"
+                android:contentDescription="@null"/>
+        </LinearLayout>
+
         <include
                 layout="@layout/toolbar_drawing"
                 android:id="@+id/toolbarDrawing"
-                android:layout_width="40dp"
+                android:layout_width="@dimen/ledger_toolbar_width"
                 android:layout_height="match_parent"
 
                 app:layout_constraintTop_toTopOf="parent"
@@ -76,6 +194,37 @@
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintStart_toEndOf="@id/toolbarDrawing"
                 app:layout_constraintEnd_toEndOf="parent"/>
+
+        <!-- The spiral, one line, sitting IN the page.
+
+             It lands in the Roots band the day-page template leaves between Tasks and Stars &
+             Events — two rows the Tasks grid gives up for it. At the foot of the page it was out
+             of the way in the sense of being ignorable; here it is where you already look when
+             you are deciding what to do, between what you have to do and what you have been
+             reading. Tapping opens the Roots, where the whole breakdown lives.
+
+             Positioned from the surface's own transform (see `positionSpiralLine`) rather than by
+             constraints, so it sits over the right patch of paper at any zoom or toolbar side.
+             Size and translation are set in code; the constraints only pin it to the origin.
+
+             DECLARED LAST, after the template and the surface, because a ConstraintLayout draws
+             its children in declaration order — placed earlier it was laid out, made visible, and
+             then painted over by the page template every time.
+
+             Gone by default: it appears only once there is something worth handing back. -->
+        <TextView
+                android:id="@+id/spiralLine"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:visibility="gone"
+                android:maxLines="4"
+                android:ellipsize="end"
+                android:textColor="#000000"
+                android:fontFamily="@font/atkinson_hyperlegible"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="4dp"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toStartOf="parent"/>
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 

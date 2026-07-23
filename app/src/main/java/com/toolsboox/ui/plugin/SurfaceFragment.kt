@@ -1,14 +1,30 @@
 package com.toolsboox.ui.plugin
 
 import android.Manifest
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.*
+import android.graphics.drawable.GradientDrawable
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import android.util.Base64
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import java.io.ByteArrayOutputStream
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.provider.MediaStore
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.SurfaceHolder
@@ -16,6 +32,8 @@ import android.view.SurfaceView
 import android.view.View
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.GestureDetectorCompat
@@ -40,22 +58,31 @@ import com.onyx.android.sdk.utils.DeviceFeatureUtil
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import com.toolsboox.R
+import com.toolsboox.da.ImageElement
 import com.toolsboox.da.Stroke
 import com.toolsboox.da.StrokePoint
 import com.toolsboox.da.TextElement
 import com.toolsboox.databinding.ToolbarDrawingBinding
+import com.toolsboox.ot.LedgerContextMenu
 import com.toolsboox.ot.OnGestureListener
 import com.toolsboox.ot.StrokeClipboard
 import com.toolsboox.plugin.calendar.CalendarNavigator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.tasks.await
 import timber.log.Timber
+import java.io.File
 import java.time.Instant
 import java.util.*
 import javax.inject.Inject
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.ceil
+import kotlin.math.hypot
 import kotlin.math.roundToInt
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
@@ -70,6 +97,99 @@ abstract class SurfaceFragment : ScreenFragment() {
         const val CANVAS_HEIGHT = 1872
         const val MIN_ZOOM = 1.0f
         const val MAX_ZOOM = 4.0f
+
+        /**
+         * The zoom to carry onto the next page.
+         *
+         * Deliberately in-memory and process-wide rather than in prefs. Paging the day surface
+         * navigates, so the fragment is rebuilt and no instance field survives it — but a zoom
+         * level is a reading posture, not a preference, and it should not still be waiting for
+         * you a week later. Losing it when the app restarts is the correct behaviour, not a gap.
+         *
+         * Reset by [resetZoom], so a deliberate double-tap out really does end it.
+         */
+        @Volatile
+        var carriedZoom: Float = 1.0f
+
+        /**
+         * Debounce window for re-applying the Onyx raw-drawing limit rect after a
+         * surfaceChanged. On open the surface is resized more than once (toolbar/immersive
+         * relayout), and each limit-rect re-apply toggles setRawDrawingEnabled false->true,
+         * which cold-starts the native pen reader (seconds to spin up on the Go 6 Gen 2).
+         * Coalescing to the final size cold-starts the reader at most once.
+         */
+        private const val LIMIT_RECT_DEBOUNCE_MS = 250L
+
+        /**
+         * Delay before re-baking committed strokes to the SurfaceView after a pen-up. The
+         * live Onyx hardware overlay already shows the stroke, so the heavy full-canvas
+         * re-post (redraw all strokes + a blocking surface post) doesn't need to run on every
+         * lift — doing so hogs the main thread and delays delivery of the next pen-down
+         * (~1s "won't start writing" on the Go 6 Gen 2). Deferring and resetting it on each
+         * new stroke means rapid write-lift-write stays fluid; the bake fires once the user
+         * actually pauses. Storage save still happens immediately on pen-up.
+         */
+        private const val COMMIT_VISUAL_DEBOUNCE_MS = 700L
+
+        /**
+         * Always-on ink-gesture thresholds (canvas space, 1404×1872). Tunable — these
+         * govern how aggressively a stroke is read as a circle (→ lasso) or a scribble
+         * (→ erase) rather than committed as ink. Raise to reduce false positives.
+         */
+        // Size FLOOR only — a degenerate-loop guard, NOT the safeguard against false lassos.
+        // The real discriminator is "does the ring enclose a DIFFERENT existing stroke"
+        // (see enclosesOtherInk): a small tight ring around a letter should lasso, but a
+        // handwritten "e"/"o" encloses only itself → rejected. So the floor can be tiny.
+        // User clue: circling TIGHTLY around one letter made a <140px ring the old gate ate.
+        private const val GESTURE_MIN_CIRCLE_DIAG = 60f        // reject only near-degenerate loops; enclosure does the real work
+        private const val GESTURE_MIN_POINTS = 6               // a fast Boox capture can be sparse; 8→6 so quick loops pass.
+        private const val GESTURE_ENCLOSE_MAJORITY = 0.5f      // an existing stroke counts as encircled if ≥ this fraction of
+                                                               // its points fall inside the ring (tolerates grazing/overlap)
+
+        // Circle-FIT detector (replaces the wobble-sensitive net/abs-turning heuristic that
+        // failed on shaky hand-drawn rings). Fit a circle to the points: centroid, mean
+        // radius r̄, radial band, and angular coverage around the centroid. Tolerant of
+        // ovals, wobble, and an unclosed loop.
+        // Device toast from two real failed lassos: in-band 65–68%, coverage 360°,
+        // enclosesOtherInk=yes — i.e. ONLY the radial-band gate rejected clearly-intentional
+        // rings. Widened band 0.35→0.45 (raises in-band %) and dropped the threshold 0.72→0.55
+        // so wobbly hand-drawn rings pass with margin; coverage(≥270°)+enclosesOtherInk still guard.
+        private const val GESTURE_CIRCLE_BAND = 0.45f          // a point is "on the ring" if |r_i − r̄| ≤ this × r̄
+        private const val GESTURE_CIRCLE_BAND_FRAC = 0.55f     // ≥ this fraction of points must sit in that radial band
+        private const val GESTURE_CIRCLE_COVERAGE_DEG = 270f   // points must wrap ≥ this many degrees around the centroid…
+        private const val GESTURE_CIRCLE_CLOSURE_R = 0.5f      // …OR the endpoint returns within this × r̄ of the start
+        private const val GESTURE_DEBUG_TOAST = false          // temp: toast the deciding metrics on a REJECTED ring attempt
+        private const val GESTURE_SCRIBBLE_LENGTH_RATIO = 3.8f // path length ≥ this × bbox diagonal — a tight, in-place
+                                                               // back-and-forth. Cursive flows sideways (low ratio), so
+                                                               // this is the main thing that stops cursive erasing; eased
+                                                               // 4.5→3.8 (kept high enough to spare cursive).
+        private const val GESTURE_SCRIBBLE_MIN_ABS_TURN = 8.5f // total accumulated wiggle (radians); eased 11→8.5
+        private const val GESTURE_SCRIBBLE_MIN_REVERSALS = 4   // minimum direction reversals; eased 6→4 — these two are the
+                                                               // zig-zag signal, loosened for reliable firing; the length
+                                                               // ratio above still guards against normal writing.
+
+        /**
+         * Calligraphy nib width as a multiple of the base stroke width, scaled by pen
+         * pressure. Lightest touch ≈ MIN, firmest ≈ MAX — the spread is what gives the
+         * baked stroke its fountain-pen taper. Tunable.
+         */
+        private const val CALLIGRAPHY_MIN_FACTOR = 0.18f    // thinnest — stroke running ALONG the nib
+        private const val CALLIGRAPHY_MAX_FACTOR = 2.8f      // thickest — stroke running ACROSS the nib
+        private const val CALLIGRAPHY_NIB_ANGLE_DEG = 45f    // broad-nib orientation (classic italic)
+
+        // Calligraphy uses its own narrower base-width mapping: the shared width
+        // presets read too thick through the broad-nib factors (MJH: "standard
+        // calligraphy medium is a bit too thick"). 0.72 thins every preset ~28%
+        // proportionally, so the thin/medium/thick ladder still feels even and
+        // ballpoint widths are untouched.
+        private const val CALLIGRAPHY_WIDTH_SCALE = 0.72f
+
+        /** Pasted images: downscale the longest side to this on import, and place at this fraction of page width. */
+        private const val IMAGE_MAX_DIM = 1400
+        private const val IMAGE_PLACE_FRACTION = 0.6f
+        private const val IMAGE_HANDLE_SIZE = 64f   // pen-friendly resize handle
+        private const val IMAGE_CHIP_SIZE = 64f     // pen-friendly delete chip
+        private const val MIN_TEXTBOX_WIDTH = 80f   // narrowest a text box may be dragged before words stop reflowing
 
         /**
          * Touch drawing state.
@@ -130,14 +250,159 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** Bounding box (canvas-space) of the current selection, set when the lasso closes. */
     private var selBox: RectF? = null
 
+    /** Always-on gestures: a circle around ink auto-lassos it; a scribble over ink auto-erases it. */
+    private var autoGesturesEnabled = true
+
+    /** When true the pen lays down pressure-variable calligraphy ink (live via the Onyx fountain nib). */
+    private var calligraphyMode = false
+
+    /** Read/write the pen style (ballpoint vs calligraphy) for the floating pen picker. */
+    protected fun penIsCalligraphy(): Boolean = calligraphyMode
+    protected fun setPenCalligraphy(on: Boolean) {
+        calligraphyMode = on
+        sharedPreferences.edit().putBoolean("calligraphyMode", on).apply()
+    }
+
+    /** Image insert/manipulate mode (toolbar image button): select, move, resize, delete pasted images. */
+    private var imageMode = false
+    private var imageElements: MutableList<ImageElement> = mutableListOf()
+    private var selectedImage: ImageElement? = null
+    private enum class ImageDrag { NONE, MOVE, RESIZE, ROTATE }
+    private var imageDrag = ImageDrag.NONE
+    private var imageDragStartX = 0f
+    private var imageDragStartY = 0f
+    // Free-rotate drag off the "Rot" handle: swing about the image centre. A tap (no swing)
+    // falls back to the discrete 15° nudge, so both gestures live on the one handle.
+    private var imageRotateCX = 0f
+    private var imageRotateCY = 0f
+    private var imageRotateStartAngle = 0f
+    private var imageRotateOrigRotation = 0f
+    private var imageRotateMoved = false
+
+    /** Text box selected in element-manipulation mode (dragged like an image). */
+    private var selectedTextBox: TextElement? = null
+    private var textBoxDrag = false
+    private var textBoxResize = false
+    private var textBoxOrigX = 0f
+    private var textBoxOrigY = 0f
+    private var textBoxOrigH = 0f
+    private var textBoxOrigFont = 0f
+    private var textBoxFontResize = false
+    private var imageOrigRect = RectF()
+    private var cropMode = false
+    private var cropDragging = false
+    private var cropRect: RectF? = null
+    private var cropStartX = 0f
+    private var cropStartY = 0f
+    private val imageBitmapCache = HashMap<UUID, Bitmap>()
+    private val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { isFilterBitmap = true }
+
+    /** Photo/file picker fallback when the clipboard has no image. Registered at construction. */
+    private val imagePickLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            result.data?.data?.let { handlePickedImage(it) }
+        }
+    }
+
+    /** Image URI waiting for the page data to finish loading before insertion. */
+    private var deferredInsertUri: Uri? = null
+
+    /**
+     * True when the fragment's page data is loaded enough to accept element
+     * changes. Activity results (picker/camera) can arrive BEFORE the async
+     * page load completes — inserting then crashes on lateinit page state and
+     * the insert would be wiped by the load's renderPage anyway.
+     */
+    open fun isPageDataReady(): Boolean = true
+
+    /** Insert a picked/captured image now, or defer it until the page data is ready. */
+    private fun handlePickedImage(uri: Uri) {
+        if (isPageDataReady()) {
+            insertImageFromUri(uri)
+        } else {
+            Timber.i("Page data not ready; deferring image insert")
+            deferredInsertUri = uri
+        }
+    }
+
+    /** Queue an externally shared image (share-to-Ledger) — inserts now or defers to page load. */
+    fun queueSharedImageInsert(uri: Uri) = handlePickedImage(uri)
+
+    /** Shared text (and its intact source URL) waiting for page data before insert. */
+    private var deferredInsertText: Pair<String, String?>? = null
+
+    /** Queue externally shared text (share-to-Ledger) — inserts now or defers to page load. */
+    fun queueSharedTextInsert(text: String, sourceUrl: String? = null) {
+        if (isPageDataReady()) {
+            insertSharedTextBox(text, sourceUrl)
+        } else {
+            Timber.i("Page data not ready; deferring text insert")
+            deferredInsertText = text to sourceUrl
+        }
+    }
+
+    /** Insert shared text as a movable text box, centered on the page. */
+    private fun insertSharedTextBox(text: String, sourceUrl: String? = null) {
+        val lines = text.split("\n")
+        val fontSize = 24f
+        val approxWidth = (lines.maxOf { it.length } * fontSize * 0.55f).coerceIn(200f, CANVAS_WIDTH - 100f)
+        val approxHeight = lines.size * fontSize * 1.25f
+        val x = ((CANVAS_WIDTH - approxWidth) / 2f).coerceAtLeast(50f)
+        val y = ((CANVAS_HEIGHT - approxHeight) / 2f).coerceIn(100f, CANVAS_HEIGHT - 100f)
+        val element = TextElement(x = x, y = y, text = text, fontSize = fontSize, sourceUrl = sourceUrl)
+        textElements.add(element)
+        onTextElementsChanged(textElements)
+        // Land selected and draggable, same as a freshly inserted image.
+        enterTextBoxManipulation(element)
+    }
+
+    /**
+     * A text-box drag just ended. Fragments override to react to where the box
+     * landed (e.g. the intake page files a link dropped onto a panel).
+     */
+    open fun onTextBoxDropped(element: TextElement) {}
+
+    /** Called by fragments once page data is loaded — completes a deferred insert. */
+    fun consumeDeferredImageInsert() {
+        deferredInsertText?.let { (text, sourceUrl) ->
+            deferredInsertText = null
+            Timber.i("Completing deferred text insert (%d chars)", text.length)
+            insertSharedTextBox(text, sourceUrl)
+        }
+        val uri = deferredInsertUri ?: return
+        deferredInsertUri = null
+        Timber.i("Completing deferred image insert: %s", uri)
+        insertImageFromUri(uri)
+    }
+
+    /** Where the next inserted element should land (canvas coords) — set by long-press. */
+    private var pendingPlacePoint: PointF? = null
+
+    /** Camera capture target for the long-press "Image — camera" flow. */
+    private var pendingCameraUri: Uri? = null
+
+    /** Camera capture launcher (long-press menu). Registered at construction. */
+    private val cameraCaptureLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val uri = pendingCameraUri
+        pendingCameraUri = null
+        if (result.resultCode == Activity.RESULT_OK && uri != null) {
+            handlePickedImage(uri)
+        }
+    }
+
     /** Which transform is currently being driven by the stylus (NONE = idle). */
-    private enum class SelectionDrag { NONE, HANDLE_TL, HANDLE_TR, HANDLE_BL, HANDLE_BR, MOVE }
+    private enum class SelectionDrag { NONE, HANDLE_TL, HANDLE_TR, HANDLE_BL, HANDLE_BR, MOVE, ROTATE }
     private var selectionDrag = SelectionDrag.NONE
 
     /** Anchor (opposite corner) for the active scale drag and the bbox snapshot at drag start. */
     private var scaleAnchorX = 0f
     private var scaleAnchorY = 0f
     private var scaleOrigBox: RectF? = null
+
+    /** Fixed pivot + press angle for a rotate drag of the selected strokes (about the box centre). */
+    private var rotateCenterX = 0f
+    private var rotateCenterY = 0f
+    private var rotateStartAngle = 0f
 
     /** Pen-down canvas coords when a MOVE drag begins. */
     private var moveStartX = 0f
@@ -154,12 +419,15 @@ abstract class SurfaceFragment : ScreenFragment() {
     private var pasteMode = false
 
     // --- Undo/redo history ---
-    private val undoStack = mutableListOf<List<Stroke>>()
-    private val redoStack = mutableListOf<List<Stroke>>()
+    /** Combined undo/redo snapshot so strokes and images undo together, in chronological order. */
+    private class CanvasSnapshot(val strokes: List<Stroke>, val images: List<ImageElement>)
+    private val undoStack = mutableListOf<CanvasSnapshot>()
+    private val redoStack = mutableListOf<CanvasSnapshot>()
 
     // --- Zoom and pan state ---
     protected var twoFingerGesture = false
     private var zoomScale = 1.0f
+        set(value) { field = value; carriedZoom = value }
     private var panX = 0.0f
     private var panY = 0.0f
     private var baseScale = 1.0f
@@ -167,6 +435,9 @@ abstract class SurfaceFragment : ScreenFragment() {
     private val inverseViewMatrix = Matrix()
     private var scaleGestureDetector: ScaleGestureDetector? = null
     private var doubleTapDetector: GestureDetector? = null
+    // Small floating grip that overlays the canvas to reopen the toolbar when it's collapsed to
+    // zero width (so the calendar can use the full screen width). Created lazily.
+    private var toolbarReopenHandle: View? = null
     private var lastFingerX = 0f
     private var lastFingerY = 0f
     private var isPanning = false
@@ -179,7 +450,8 @@ abstract class SurfaceFragment : ScreenFragment() {
     private var textElements: MutableList<TextElement> = mutableListOf()
 
     /** Paint used for rendering text elements on canvas. */
-    private var textPaint = Paint().apply {
+    // TextPaint (not plain Paint) so it can back a StaticLayout for word-wrapping.
+    private var textPaint = TextPaint().apply {
         isAntiAlias = true
         style = Paint.Style.FILL
         color = Color.BLACK
@@ -233,6 +505,13 @@ abstract class SurfaceFragment : ScreenFragment() {
      * keeps the live stroke tight to the nib. Viwoods software path only.
      */
     private var viwoodsLivePostScheduled = false
+    /** Index into stylusPointList of the last point already posted to the panel; the live EPD
+     *  refresh covers only points since this index, so update cost is O(new segment), not O(stroke). */
+    private var viwoodsLastLiveIndex = 0
+    /** Cached page snapshot for the hardware-ink path, re-pushed each move to beat the async
+     *  engine-readiness race (see onBeginDrawing). Generated once per stroke (O(strokes) render),
+     *  re-pushed cheaply (native call only). */
+    private var viwoodsCachedSnapshot: android.graphics.Bitmap? = null
     private val viwoodsLivePostRunnable = Runnable {
         viwoodsLivePostScheduled = false
         if (penState && stylusPointList.isNotEmpty()) renderLivePreviewSoftware()
@@ -290,6 +569,20 @@ abstract class SurfaceFragment : ScreenFragment() {
      * The actual size of the surface.
      */
     private var surfaceSize: Rect = Rect(0, 0, 0, 0)
+
+    /** Surface size for which the Onyx limit rect is currently applied (-1 = none yet). */
+    private var appliedLimitWidth = -1
+    private var appliedLimitHeight = -1
+
+    /** Latest surface size awaiting a (debounced) limit-rect apply. */
+    private var pendingLimitWidth = 0
+    private var pendingLimitHeight = 0
+
+    /** Coalesces rapid/duplicate surfaceChanged callbacks into a single reader reconfigure. */
+    private val applyLimitRectRunnable = Runnable { applyPendingLimitRect() }
+
+    /** Deferred full-canvas re-bake after a pen-up; see [COMMIT_VISUAL_DEBOUNCE_MS]. */
+    private val commitVisualRunnable = Runnable { applyStrokes(strokes, false) }
 
     /**
      * Pen or eraser state.
@@ -379,6 +672,10 @@ abstract class SurfaceFragment : ScreenFragment() {
     override fun onResume() {
         super.onResume()
 
+        // The pen is (about to be) live: tell the Ultrabridge sync to hold its heavy PDF pass so it
+        // can't collide with drawing and freeze the page. Cleared in onPause, where the sync fires.
+        com.toolsboox.plugin.calendar.nw.UltrabridgeSyncWorker.inkSurfaceActive = true
+
         // Immersive fullscreen: hide system bars + action bar, draw into the display
         // cutout area, so the canvas truly fills the whole screen. System bars can
         // still be revealed by swiping from the edge for back/home access.
@@ -426,6 +723,8 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         // Restore the single-finger-gestures preference, then sync the toolbar icon.
         singleFingerGesturesEnabled = sharedPreferences.getBoolean("singleFingerGesturesEnabled", false)
+        autoGesturesEnabled = sharedPreferences.getBoolean("autoGesturesEnabled", true)
+        calligraphyMode = sharedPreferences.getBoolean("calligraphyMode", false)
         if (singleFingerGesturesEnabled)
             provideToolbarDrawing().toolbarHandTouch.setImageResource(R.drawable.ic_toolbar_hand_draw)
         else
@@ -493,16 +792,23 @@ abstract class SurfaceFragment : ScreenFragment() {
                 provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
                 provideToolbarDrawing().toolbarLasso.background.setTint(Color.GRAY)
                 provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
+                syncRawInkToSelectionMenu()   // lasso-draw up → stylus paints no stray hardware ink
             }
         }
 
         // --- Copy button ---
         provideToolbarDrawing().toolbarCopy.setOnClickListener {
-            if (selectedStrokes.isNotEmpty()) {
-                strokeClipboard.copy(selectedStrokes.toList())
-                showMessage(R.string.calendar_drawing_toolbar_copied, provideSurfaceView())
-            } else {
-                showMessage(R.string.calendar_drawing_toolbar_nothing_selected, provideSurfaceView())
+            val img = selectedImage
+            when {
+                img != null -> {
+                    strokeClipboard.copyImage(img)
+                    showMessage(R.string.calendar_drawing_toolbar_copied, provideSurfaceView())
+                }
+                selectedStrokes.isNotEmpty() -> {
+                    strokeClipboard.copy(selectedStrokes.toList())
+                    showMessage(R.string.calendar_drawing_toolbar_copied, provideSurfaceView())
+                }
+                else -> showMessage(R.string.calendar_drawing_toolbar_nothing_selected, provideSurfaceView())
             }
         }
 
@@ -510,6 +816,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideToolbarDrawing().toolbarPaste.setOnClickListener {
             if (!strokeClipboard.hasContent) {
                 showMessage(R.string.calendar_drawing_toolbar_clipboard_empty, provideSurfaceView())
+                return@setOnClickListener
+            }
+            if (strokeClipboard.hasImage) {
+                pasteClipboardImage()
                 return@setOnClickListener
             }
             pasteMode = true
@@ -526,6 +836,8 @@ abstract class SurfaceFragment : ScreenFragment() {
             provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarPaste.background.setTint(Color.GRAY)
+            exitImageMode()
+            syncRawInkToSelectionMenu()   // paste-place mode up → tap places ink, doesn't dot
             showMessage(R.string.calendar_drawing_toolbar_paste, provideSurfaceView())
         }
 
@@ -553,7 +865,11 @@ abstract class SurfaceFragment : ScreenFragment() {
                 provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
                 provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
                 provideToolbarDrawing().toolbarText.background.setTint(Color.GRAY)
+                exitImageMode()
             }
+            // Switching into/out of text clears the selection states → restore the hardware
+            // pen if a prior lasso/paste had paused it (else the pen would stay dead).
+            syncRawInkToSelectionMenu()
         }
 
         provideToolbarDrawing().toolbarHandTouch.setOnClickListener {
@@ -569,24 +885,34 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         provideToolbarDrawing().toolbarUndo.setOnClickListener {
             if (undoStack.isNotEmpty()) {
-                redoStack.add(Stroke.listDeepCopy(strokes))
-                strokes = undoStack.removeAt(undoStack.size - 1).toMutableList()
+                redoStack.add(snapshotCanvas())
+                val snap = undoStack.removeAt(undoStack.size - 1)
+                strokes = snap.strokes.toMutableList()
+                imageElements = snap.images.map { it.copy() }.toMutableList()
+                imageBitmapCache.clear()
+                selectedImage = null
                 applyStrokes(strokes, true)
                 onStrokeChanged(strokes)
+                onImageElementsChanged(imageElements)
             }
         }
 
         provideToolbarDrawing().toolbarRedo.setOnClickListener {
             if (redoStack.isNotEmpty()) {
-                undoStack.add(Stroke.listDeepCopy(strokes))
-                strokes = redoStack.removeAt(redoStack.size - 1).toMutableList()
+                undoStack.add(snapshotCanvas())
+                val snap = redoStack.removeAt(redoStack.size - 1)
+                strokes = snap.strokes.toMutableList()
+                imageElements = snap.images.map { it.copy() }.toMutableList()
+                imageBitmapCache.clear()
+                selectedImage = null
                 applyStrokes(strokes, true)
                 onStrokeChanged(strokes)
+                onImageElementsChanged(imageElements)
             }
         }
 
         provideToolbarDrawing().toolbarTrash.setOnClickListener {
-            val builder: AlertDialog.Builder = AlertDialog.Builder(this.requireContext())
+            val builder: AlertDialog.Builder = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this.requireContext()))
             builder.setTitle(R.string.calendar_drawing_toolbar_trash_dialog_title)
                 .setMessage(R.string.calendar_drawing_toolbar_trash_dialog_message)
                 .setPositiveButton(R.string.ok) { dialog, _ ->
@@ -611,6 +937,13 @@ abstract class SurfaceFragment : ScreenFragment() {
             builder.create().show()
         }
 
+        // Fold "trash" into the eraser: hide the standalone trash button and clear the
+        // page via a long-press on the eraser instead.
+        provideToolbarDrawing().toolbarTrash.visibility = View.GONE
+        provideToolbarDrawing().toolbarEraser.setOnLongClickListener {
+            provideToolbarDrawing().toolbarTrash.performClick(); true
+        }
+
         provideToolbarDrawing().toolbarSwitchSide.setOnClickListener {
             onSideSwitched()
         }
@@ -619,24 +952,11 @@ abstract class SurfaceFragment : ScreenFragment() {
             CalendarNavigator.toCloudSync(this)
         }
 
-        provideToolbarDrawing().toolbarRotate.setOnClickListener {
-            val activity = requireActivity()
-            val current = activity.requestedOrientation
-
-            // Build the cycle order from the user's preference (bitmask).
-            // SCREEN_ORIENTATION_LANDSCAPE == landscape CCW (top tilts left in Android terms)
-            // SCREEN_ORIENTATION_REVERSE_LANDSCAPE == landscape CW (top tilts right)
-            val mask = sharedPreferences.getInt("rotationOrientationMask", 0b1111)
-            val cycle = mutableListOf<Int>()
-            if (mask and 0b0001 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
-            if (mask and 0b0010 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE)
-            if (mask and 0b0100 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT)
-            if (mask and 0b1000 != 0) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE)
-            if (cycle.isEmpty()) cycle.add(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
-
-            val idx = cycle.indexOf(current).takeIf { it >= 0 } ?: -1
-            activity.requestedOrientation = cycle[(idx + 1) % cycle.size]
-        }
+        // Tap steps the rotation; hold hands the screen back to the gyro.
+        // SCREEN_ORIENTATION_LANDSCAPE == landscape CCW (top tilts left in Android terms)
+        // SCREEN_ORIENTATION_REVERSE_LANDSCAPE == landscape CW (top tilts right)
+        provideToolbarDrawing().toolbarRotate.setOnClickListener { stepScreenOrientation() }
+        provideToolbarDrawing().toolbarRotate.setOnLongClickListener { toggleAutoRotate(); true }
 
         // Hide the cloud sync feature in case of regular users or enable it generally.
         val androidId = sharedPreferences.getString("androidId", "")
@@ -652,7 +972,8 @@ abstract class SurfaceFragment : ScreenFragment() {
         val earlyAdopter = earlyAdopterDeviceIds?.contains(androidId) ?: false
         Timber.i("Early adopter: $earlyAdopter")
 
-        provideToolbarDrawing().toolbarCloudSync.visibility = View.VISIBLE
+        // Cloud sync moves off the strip (reachable from the Go-to panel / Settings).
+        provideToolbarDrawing().toolbarCloudSync.visibility = View.GONE
 
         provideToolbarDrawing().toolbarSettings.setOnClickListener {
             CalendarNavigator.toSettings(this)
@@ -696,6 +1017,10 @@ abstract class SurfaceFragment : ScreenFragment() {
     override fun onPause() {
         super.onPause()
 
+        // Pen is down / leaving the surface — release the sync so its deferred PDF pass can run
+        // (the syncNow() below re-triggers it) now that it won't fight active drawing.
+        com.toolsboox.plugin.calendar.nw.UltrabridgeSyncWorker.inkSurfaceActive = false
+
         // Restore system bars and action bar so other screens (settings, etc.) behave normally.
         (requireActivity() as? androidx.appcompat.app.AppCompatActivity)?.supportActionBar?.show()
         requireActivity().window.let { window ->
@@ -705,11 +1030,31 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
         requireActivity().findViewById<View>(R.id.drawerLayout)?.fitsSystemWindows = true
 
+        // Drop pending debounced work (limit-rect apply, deferred stroke re-bake) so it can't
+        // run after teardown.
+        try {
+            provideSurfaceView().removeCallbacks(applyLimitRectRunnable)
+            provideSurfaceView().removeCallbacks(commitVisualRunnable)
+            // Boox: a stroke finished within the last COMMIT_VISUAL_DEBOUNCE_MS lives ONLY on the
+            // hardware raw-drawing overlay until the deferred bake runs. On a fast page turn we tear
+            // down before that — so bake it into the software surface NOW, or it lingers on the panel
+            // and overlaps the next page ("overlapping strokes when paging quickly").
+            if (touchHelper != null) runCatching { applyStrokes(strokes, true) }
+        } catch (_: Exception) {}
+
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
 
         touchHelper?.closeRawDrawing()
+        // With the reader closed, force a full-screen EPD refresh so the stale hardware overlay is
+        // wiped and only the baked software surface remains.
+        if (touchHelper != null) forceFullEpdRefresh()
+        // Null after recycle: onPause without surfaceDestroyed (permission dialog, floating
+        // activity, multi-window focus loss) meant `canvas` still wrapped a recycled bitmap —
+        // the next applyStrokes/clearSurface/exportBitmap crashed drawing into it. The draw
+        // entry points lazily recreate via ensureShadowCanvas().
         bitmap?.recycle()
+        bitmap = null
 
         // Tear down Viwoods AutoDraw and return the panel to reading mode. No-op on Boox.
         viwoodsInk?.disable()
@@ -735,26 +1080,136 @@ abstract class SurfaceFragment : ScreenFragment() {
             toolbar.toolbarToggle.visibility = View.GONE
             toolbar.root.setBackgroundColor(Color.LTGRAY)
             toolbar.root.layoutParams?.let { lp ->
-                lp.width = (12 * density).toInt()
+                // Slim collapsed handle, kept in the layout flow (zero-width + overlay broke the
+                // page rendering). The back-gesture exclusion below makes it reliably tappable
+                // without needing to be wide.
+                lp.width = (16 * density).toInt()
                 toolbar.root.layoutParams = lp
             }
+            excludeToolbarFromBackGesture()
         } else {
             group.visibility = View.VISIBLE
             toolbar.toolbarToggle.visibility = View.VISIBLE
             toolbar.root.setBackgroundColor(Color.TRANSPARENT)
-            // Decide column count from the available height.
-            // Single column needs ~17 buttons * 40dp + bottom toggle ≈ 720dp.
-            // If the screen is shorter than that (e.g. Palma 2 Pro in landscape),
-            // widen the toolbar to 80dp and split buttons into two columns.
-            val needsTwoColumns = resources.configuration.screenHeightDp < 720
-            // In two-column mode use 100dp so there's ~20dp of breathing room
-            // between the left (40dp) and right (40dp) columns.
-            val toolbarWidthDp = if (needsTwoColumns) 100 else 40
-            toolbar.root.layoutParams?.let { lp ->
-                lp.width = (toolbarWidthDp * density).toInt()
-                toolbar.root.layoutParams = lp
+            // Fit the buttons to the available height. Portrait has room for one comfortable
+            // column; landscape (short height) would force a single column below a tappable size,
+            // so add columns and tile every visible button into an even, column-major grid.
+            val buttonViews = listOf(
+                toolbar.toolbarHandTouch, toolbar.toolbarPen, toolbar.toolbarEraser,
+                toolbar.toolbarProcrastinator, toolbar.toolbarLasso, toolbar.toolbarCopy,
+                toolbar.toolbarPaste, toolbar.toolbarText, toolbar.toolbarUndo,
+                toolbar.toolbarRedo, toolbar.toolbarTrash, toolbar.toolbarCalendarView,
+                toolbar.toolbarSwipeUp, toolbar.toolbarSwipeDown, toolbar.toolbarSwitchSide,
+                toolbar.toolbarCloudSync, toolbar.toolbarRotate, toolbar.toolbarSettings
+            )
+            val visibleList = buttonViews.filter { it.visibility == View.VISIBLE }
+            val visibleCount = visibleList.size.coerceAtLeast(1)
+            val availDp = resources.configuration.screenHeightDp
+            val minButtonDp = 28
+            val maxButtonDp = 40
+            // Below this a single column is too cramped; add a column instead of shrinking further.
+            val comfortableButtonDp = 30
+
+            val singleColButtonDp = (availDp / visibleCount).coerceIn(minButtonDp, maxButtonDp)
+            val columns = if (singleColButtonDp >= comfortableButtonDp) {
+                1
+            } else {
+                val rowsPerColumn = (availDp / maxButtonDp).coerceAtLeast(1)
+                Math.ceil(visibleCount.toDouble() / rowsPerColumn).toInt().coerceAtLeast(1)
             }
-            applyToolbarTwoColumnLayout(needsTwoColumns)
+            val rows = Math.ceil(visibleCount.toDouble() / columns).toInt().coerceAtLeast(1)
+            val buttonPx = ((availDp / rows).coerceIn(minButtonDp, maxButtonDp) * density).toInt()
+
+            if (columns <= 1) {
+                // Single column (portrait): keep the XML layout (tools at top, nav pinned to the
+                // bottom), just sized to fit. Fresh XML is restored on rotation recreation.
+                resizeToolbarButtons(buttonViews, buttonPx)
+                toolbar.root.layoutParams?.let { lp ->
+                    lp.width = buttonPx
+                    toolbar.root.layoutParams = lp
+                }
+                applyToolbarTwoColumnLayout(false)
+            } else {
+                // Multiple columns (landscape / short screens): tile every visible button into an
+                // even column-major grid so the columns are uniform and none overflows the height.
+                applyToolbarGridLayout(visibleList, columns, buttonPx)
+                toolbar.root.layoutParams?.let { lp ->
+                    lp.width = columns * buttonPx
+                    toolbar.root.layoutParams = lp
+                }
+            }
+            excludeToolbarFromBackGesture()
+        }
+    }
+
+    /**
+     * Claim the docked toolbar's left-edge band from the system back gesture, so swipes/taps that
+     * land on the toolbar (especially the thin collapsed handle) open it instead of navigating Back.
+     * No-op below Android 10, which has no edge back gesture. Posted so the view is measured first.
+     */
+    private fun excludeToolbarFromBackGesture() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val root = provideToolbarDrawing().root
+        root.post {
+            val w = root.width
+            val h = root.height
+            if (w > 0 && h > 0) {
+                root.systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, w, h))
+            }
+        }
+    }
+
+    /**
+     * Resize every toolbar tool button to a square of [sizePx]. Some buttons declare a 0dp
+     * (constraint-driven) height in XML; forcing both dimensions makes the column uniform so
+     * the stack height is predictable when we scale to fit a single column.
+     */
+    private fun resizeToolbarButtons(buttons: List<View>, sizePx: Int) {
+        for (v in buttons) {
+            val lp = v.layoutParams ?: continue
+            lp.width = sizePx
+            lp.height = sizePx
+            v.layoutParams = lp
+        }
+    }
+
+    /**
+     * Lay the given (visible) buttons out as an even, column-major grid: fill the first column
+     * top-to-bottom, then the next, and so on. Every button becomes a uniform [sizePx] square and
+     * columns tile left-to-right from the start edge. This overrides the XML constraint chains
+     * while the toolbar is expanded in a multi-column (short / landscape) configuration, so the
+     * columns stay uniform and no column overflows the screen height. Fresh XML is restored on the
+     * activity recreation that follows a rotation back to a single-column (portrait) layout.
+     */
+    private fun applyToolbarGridLayout(buttons: List<View>, columns: Int, sizePx: Int) {
+        val parentId = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+        val unset = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
+        val rows = Math.ceil(buttons.size.toDouble() / columns).toInt().coerceAtLeast(1)
+        for ((i, view) in buttons.withIndex()) {
+            val lp = view.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams ?: continue
+            val col = i / rows
+            val row = i % rows
+            lp.width = sizePx
+            lp.height = sizePx
+            // Horizontal: place each column by its index from the start edge.
+            lp.startToStart = parentId
+            lp.startToEnd = unset
+            lp.endToEnd = unset
+            lp.endToStart = unset
+            lp.marginStart = col * sizePx
+            // Vertical: top of a column anchors to the parent top; the rest chain under the
+            // previous button in the same column (the immediately-preceding visible button).
+            lp.bottomToBottom = unset
+            lp.bottomToTop = unset
+            if (row == 0) {
+                lp.topToTop = parentId
+                lp.topToBottom = unset
+            } else {
+                lp.topToTop = unset
+                lp.topToBottom = buttons[i - 1].id
+            }
+            lp.topMargin = 0
+            view.layoutParams = lp
         }
     }
 
@@ -797,7 +1252,133 @@ abstract class SurfaceFragment : ScreenFragment() {
     /**
      * Exit lasso selection / paste mode and reset all selection state.
      */
-    private fun exitSelectionMode() {
+    /**
+     * The post-lasso selection / copy-paste menu (hasSelection / pasteMode) and the lasso-draw
+     * state keep the Onyx raw-ink session live, so a stylus tap on a chip/menu paints a stray
+     * hardware dot even though the app consumes the tap. Pause the raw session while any of those
+     * menu states is active (exactly as the pen modal does) and restore it on exit — tracked so
+     * we never redundantly cold-start the native pen (each false→true costs ~1s). MotionEvents
+     * still reach the app with raw drawing off (the intake-page path), so chips/move/paste-place
+     * all keep working; legit ink resumes cleanly once the selection is dismissed.
+     */
+    private var rawInkPausedForMenu = false
+
+    /**
+     * A modal is on screen RIGHT NOW.
+     *
+     * Distinct from [rawInkPausedForMenu], which says the pen is currently parked and can be
+     * cleared by whoever parks it. This says "there is a dialog in front of the canvas", and
+     * while that is true nothing may re-arm the pen underneath it.
+     */
+    private var modalShowing = false
+    private val resumeRawInkRunnable = Runnable { resumeRawInkNow() }
+    /**
+     * Raw hardware ink must stay OFF whenever a lasso/selection/paste or a popover menu is up —
+     * otherwise the stylus paints strokes instead of drawing the lasso (or hits the menu). Several
+     * surface-refresh and limit-rect paths toggle raw drawing false→true; they must consult this
+     * before re-enabling, or they silently defeat the pause (the "lasso highlighted but still making
+     * strokes" bug). Only [resumeRawInkNow] (which clears the flag) may turn it back on when true.
+     */
+    private val inkSuppressed: Boolean
+        get() = rawInkPausedForMenu || selectionMode || hasSelection || pasteMode
+
+    private fun syncRawInkToSelectionMenu() {
+        val menuActive = hasSelection || pasteMode || selectionMode
+        if (menuActive && !rawInkPausedForMenu) {
+            provideSurfaceView().removeCallbacks(resumeRawInkRunnable)   // cancel any pending resume
+            touchHelper?.setRawDrawingEnabled(false)
+            touchHelper?.isRawDrawingRenderEnabled = false
+            rawInkPausedForMenu = true
+        } else if (!menuActive && rawInkPausedForMenu) {
+            resumeRawInkNow()
+        }
+    }
+
+    /** A popover is showing over the canvas → pause the hardware pen so its taps register. */
+    override fun onModalShown() {
+        modalShowing = true
+        // Cancel any resume already in flight.
+        //
+        // Tapping a lasso chip runs exitSelectionMode(deferRawResume = true), which clears the
+        // selection and posts a resume 250 ms later. The menu opens well inside that window, and
+        // the guard in resumeRawInkNow only checks the selection — which the same call just
+        // cleared. So the pen came back to life UNDER the open menu, and the next tap on a menu
+        // button was taken as ink and left a mark on the page.
+        provideSurfaceView().removeCallbacks(resumeRawInkRunnable)
+        provideSurfaceView().removeCallbacks(forcedResumeRunnable)
+        touchHelper?.setRawDrawingEnabled(false)
+        touchHelper?.isRawDrawingRenderEnabled = false
+        // …and hand the WHOLE surface back to ordinary touch while the menu is up.
+        //
+        // `setRawDrawingEnabled(false)` stops the hardware RENDERING the stroke; it does not stop
+        // the TouchHelper consuming the stylus inside its limit rect. So a pen tap on a menu over
+        // the page was swallowed before it reached the dialog — the menu simply didn't respond,
+        // which reads as a freeze — and a pen tap outside it was still taken as ink and left a
+        // mark you then had to erase.
+        //
+        // Excluding the full rect is the same call the pills use to keep the pen off themselves,
+        // just applied to everything: while a menu is open, nothing on this surface is a drawing
+        // target. Restored by refreshRawExcludeRects() on dismiss.
+        val v = provideSurfaceView()
+        if (v.width > 0 && v.height > 0) {
+            val whole = Rect(0, 0, v.width, v.height)
+            touchHelper?.setLimitRect(whole, mutableListOf(Rect(whole)))
+        }
+        rawInkPausedForMenu = true
+    }
+
+    override fun onModalDismissed() {
+        modalShowing = false
+        // Deferred and forced: past the dismissing tap so its ACTION_UP can't land on a
+        // re-enabled raw session and paint a stray dot (the same mechanism CUT documents below),
+        // and past the selection guard so the pen never stays dead after a lasso menu.
+        provideSurfaceView().removeCallbacks(forcedResumeRunnable)
+        provideSurfaceView().postDelayed(forcedResumeRunnable, 250L)
+    }
+
+    private val forcedResumeRunnable = Runnable {
+        // Put the real limit rect back before re-arming, or the pen returns with the whole
+        // surface still excluded and stays dead in a quieter way.
+        rawInkPausedForMenu = false
+        refreshRawExcludeRects()
+        rawInkPausedForMenu = true
+        resumeRawInkNow(force = true)
+    }
+
+    /**
+     * Re-enable the hardware pen if it's paused and no menu is active. Idempotent.
+     *
+     * [force] ignores the selection guard. A menu opened OVER a live lasso selection has to resume
+     * on dismiss regardless: the guard exists so a selection interaction can hold the pen off
+     * mid-flight, but on the menu path it meant `rawInkPausedForMenu` stayed true and the pen went
+     * dead — the menu closed and the stylus simply stopped working, with nothing on screen to say
+     * why. Getting out of it meant tapping the page, which resumed the pen and painted a dot with
+     * the same tap.
+     */
+    private fun resumeRawInkNow(force: Boolean = false) {
+        // Never under an open modal, not even forced: the forced path exists for AFTER a dismiss,
+        // and re-arming while a dialog is up is the one case that always paints on the page.
+        if (modalShowing) return
+        if (!rawInkPausedForMenu) return
+        if (!force && (hasSelection || pasteMode || selectionMode)) return
+        touchHelper?.setRawDrawingEnabled(true)
+        touchHelper?.isRawDrawingRenderEnabled = true
+        rawInkPausedForMenu = false
+    }
+
+    /**
+     * Resume the hardware pen AFTER the current tap has fully lifted. Used by CUT: cut deletes
+     * the selection and exits it within a single stylus tap, so resuming synchronously re-enables
+     * raw ink while that tap is still down — its ACTION_UP then paints a stray hardware dot on the
+     * Cut chip (copy/paste/trash don't resume mid-tap, so they never had this). Deferring past the
+     * release avoids the dot; the delayed runnable always fires, so the pen never stays dead.
+     */
+    private fun scheduleRawInkResume() {
+        provideSurfaceView().removeCallbacks(resumeRawInkRunnable)
+        provideSurfaceView().postDelayed(resumeRawInkRunnable, 250L)
+    }
+
+    private fun exitSelectionMode(deferRawResume: Boolean = false) {
         selectionMode = false
         hasSelection = false
         pasteMode = false
@@ -810,6 +1391,11 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
         provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
         provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
+        exitImageMode()
+        // Restore the hardware pen. CUT defers it past the tap release so the Cut chip's own
+        // ACTION_UP can't land on a re-enabled raw session and paint a dot; all other callers
+        // (toolbar buttons, off-surface) resume immediately.
+        if (deferRawResume) scheduleRawInkResume() else syncRawInkToSelectionMenu()
     }
 
     // --- Zoom / pan infrastructure ---
@@ -820,6 +1406,29 @@ abstract class SurfaceFragment : ScreenFragment() {
         zoomScale = 1.0f
         panX = 0.0f
         panY = 0.0f
+        carriedZoom = 1.0f
+        updateTransformMatrix()
+        applyStrokes(strokes, true)
+    }
+
+    /**
+     * Carry the zoom across a page change, refitted to the page.
+     *
+     * Zoom used to survive a page turn only by accident — nothing reset it, so it kept both the
+     * scale AND the pan offset, and the new page arrived scrolled to wherever the last one had
+     * been left. Which is rarely where its content is: you'd turn the page while reading and land
+     * in its margin.
+     *
+     * Keeping the scale and re-centring horizontally means the new page arrives filling the width
+     * at the magnification you chose, and starting at its top, which is where a page starts. It is
+     * still your zoom; it is just pointed at the new page rather than at the old one's coordinates.
+     */
+    fun refitZoomForPage() {
+        if (!isZoomed()) return
+        panX = 0f
+        // Top of the page. Positive panY pushes content down, revealing what's above; the clamp in
+        // updateTransformMatrix trims it to the exact edge, so overshooting deliberately is safe.
+        panY = Float.MAX_VALUE / 4f
         updateTransformMatrix()
         applyStrokes(strokes, true)
     }
@@ -855,12 +1464,21 @@ abstract class SurfaceFragment : ScreenFragment() {
         viewMatrix.postTranslate(baseOffX + panX, baseOffY + panY)
         viewMatrix.invert(inverseViewMatrix)
 
-        touchHelper?.setStrokeWidth(paint.strokeWidth * totalScale)
+        touchHelper?.setStrokeWidth(effectivePenWidth() * totalScale)
 
         onTransformChanged(viewMatrix)
     }
 
     open fun onTransformChanged(matrix: Matrix) {}
+
+    /**
+     * A copy of the design-space → surface-view transform.
+     *
+     * For overlays that have to sit on a particular patch of the drawn page. A copy, because the
+     * live matrix is rebuilt in place on every zoom and pan, and a caller holding a reference to
+     * it would silently start reading someone else's frame.
+     */
+    fun surfaceTransform(): Matrix = Matrix(viewMatrix)
 
     fun handleZoomPanTouch(motionEvent: MotionEvent): Boolean {
         if (motionEvent.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER) return false
@@ -905,6 +1523,18 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         if (doubleTapDetector == null) {
             doubleTapDetector = GestureDetector(requireContext(), object : GestureDetector.SimpleOnGestureListener() {
+                override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                    // Genuine-tap gate (the double-tap-zoom race lens): e-ink stalls replay
+                    // QUEUED events after a modal dismiss, and those ghosts carry old
+                    // timestamps. Only a fresh, short press may act — a stale eventTime or a
+                    // long press-to-release is not a tap someone just made.
+                    if (android.os.SystemClock.uptimeMillis() - e.eventTime > 400L) return false
+                    if (e.eventTime - e.downTime > 350L) return false
+                    val pts = floatArrayOf(e.x, e.y)
+                    inverseViewMatrix.mapPoints(pts)
+                    return onCanvasSingleTap(pts[0], pts[1])
+                }
+
                 override fun onDoubleTap(e: MotionEvent): Boolean {
                     if (isZoomed()) {
                         resetZoom()
@@ -979,7 +1609,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         return false
     }
 
-    private fun screenToCanvas(screenX: Float, screenY: Float): FloatArray {
+    protected fun screenToCanvas(screenX: Float, screenY: Float): FloatArray {
         val pts = floatArrayOf(screenX, screenY)
         inverseViewMatrix.mapPoints(pts)
         return pts
@@ -1022,6 +1652,74 @@ abstract class SurfaceFragment : ScreenFragment() {
         return RectF(right - chipSize, top, right, top + chipSize)
     }
 
+    /** "→ item" chip (left of Copy): turn the lasso selection into a structured task/event. */
+    private fun itemChipRect(box: RectF): RectF {
+        val top = chipBaseY(box)
+        val right = box.right - 2 * (chipSize + chipGap)
+        return RectF(right - chipSize, top, right, top + chipSize)
+    }
+
+    /** Delete chip (left of → item): remove the lassoed strokes outright, no clipboard copy. */
+    private fun deleteChipRect(box: RectF): RectF {
+        val top = chipBaseY(box)
+        val right = box.right - 3 * (chipSize + chipGap)
+        return RectF(right - chipSize, top, right, top + chipSize)
+    }
+
+    /** Rotation handle: a circle below the selection's bottom-centre — drag it to swing the strokes. */
+    private fun rotateHandleCenter(box: RectF): PointF = PointF(box.centerX(), box.bottom + chipSize)
+
+    /**
+     * A lasso selection asked to become a structured item (the "→ item" chip). The day page
+     * overrides this to OCR the enclosed strokes and add a task/event; default is a no-op.
+     */
+    protected open fun onSelectionExtract(strokes: List<Stroke>) {}
+
+    /**
+     * The three lasso-selection chip taps (→ item / cut / copy) in canvas coords. Extracted so it
+     * runs for BOTH the stylus (via the drawing path) and the finger (which never enters that
+     * path) — otherwise the chips only respond to the pen. Returns true if a chip was hit.
+     */
+    private fun handleSelectionChipTap(x: Float, y: Float): Boolean {
+        if (!hasSelection || selectionMode) return false
+        val box = selBox ?: return false
+        if (itemChipRect(box).contains(x, y)) {
+            val sel = selectedStrokes.toList()
+            exitSelectionMode(deferRawResume = true)
+            applyStrokes(strokes, true)
+            onSelectionExtract(sel)
+            return true
+        }
+        if (cutChipRect(box).contains(x, y)) {
+            pushUndo()
+            strokeClipboard.copy(selectedStrokes.toList())
+            val removedIds = selectedStrokes.map { it.strokeId }
+            strokes.removeAll { it.strokeId in removedIds.toSet() }
+            onStrokesDeleted(removedIds)
+            exitSelectionMode(deferRawResume = true)
+            applyStrokes(strokes, true)
+            onStrokeChanged(strokes)
+            return true
+        }
+        if (deleteChipRect(box).contains(x, y)) {
+            // Delete = remove the lassoed strokes outright, WITHOUT touching the clipboard.
+            pushUndo()
+            val removedIds = selectedStrokes.map { it.strokeId }
+            strokes.removeAll { it.strokeId in removedIds.toSet() }
+            onStrokesDeleted(removedIds)
+            exitSelectionMode(deferRawResume = true)
+            applyStrokes(strokes, true)
+            onStrokeChanged(strokes)
+            return true
+        }
+        if (copyChipRect(box).contains(x, y)) {
+            strokeClipboard.copy(selectedStrokes.toList())
+            showMessage(R.string.calendar_drawing_toolbar_copied, provideSurfaceView())
+            return true
+        }
+        return false
+    }
+
     /** Returns which handle (if any) the canvas-space point hits. */
     private fun hitTestHandle(x: Float, y: Float, box: RectF): SelectionDrag {
         val pad = handleSize / 2f + handleHitPad
@@ -1040,7 +1738,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         SelectionDrag.HANDLE_TR -> box.left to box.bottom
         SelectionDrag.HANDLE_BL -> box.right to box.top
         SelectionDrag.HANDLE_BR -> box.left to box.top
-        SelectionDrag.NONE, SelectionDrag.MOVE -> 0f to 0f
+        SelectionDrag.NONE, SelectionDrag.MOVE, SelectionDrag.ROTATE -> 0f to 0f
     }
 
     /**
@@ -1058,20 +1756,20 @@ abstract class SurfaceFragment : ScreenFragment() {
         lockCanvas.save()
         lockCanvas.concat(viewMatrix)
 
+        renderImageElements(lockCanvas)
         for (stroke in strokes) {
             val usePaint = if (stroke.strokeId in selectedIds) selectionHighlightPaint else paint
             drawStrokePath(lockCanvas, usePaint, stroke)
         }
 
-        // Draw lasso polygon (points are in canvas space)
-        if (selectionPoints.size > 1) {
+        // Draw the freehand lasso outline only while the lasso is still being drawn.
+        // Once a selection is committed the bounding box represents it; the raw polygon
+        // would otherwise linger at its original spot when the strokes are moved away.
+        if (!hasSelection && selectionPoints.size > 1) {
             val lassoPath = Path()
             lassoPath.moveTo(selectionPoints[0].x, selectionPoints[0].y)
             for (i in 1 until selectionPoints.size) {
                 lassoPath.lineTo(selectionPoints[i].x, selectionPoints[i].y)
-            }
-            if (hasSelection) {
-                lassoPath.close()
             }
             lockCanvas.drawPath(lassoPath, lassoPaint)
         }
@@ -1100,13 +1798,30 @@ abstract class SurfaceFragment : ScreenFragment() {
             // Chips
             val cutR = cutChipRect(box)
             val copyR = copyChipRect(box)
+            val itemR = itemChipRect(box)
+            val deleteR = deleteChipRect(box)
             val chipBg = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL; isAntiAlias = true }
             val chipBorder = Paint().apply {
                 color = Color.BLACK; style = Paint.Style.STROKE; strokeWidth = 3f; isAntiAlias = true
             }
-            for (r in listOf(cutR, copyR)) {
+            for (r in listOf(cutR, copyR, itemR, deleteR)) {
                 lockCanvas.drawRoundRect(r, 12f, 12f, chipBg)
                 lockCanvas.drawRoundRect(r, 12f, 12f, chipBorder)
+            }
+            // Delete chip icon = an X (drawn, like the image "Del" chip — no drawable needed).
+            run {
+                val p = 20f
+                lockCanvas.drawLine(deleteR.left + p, deleteR.top + p, deleteR.right - p, deleteR.bottom - p, chipBorder)
+                lockCanvas.drawLine(deleteR.right - p, deleteR.top + p, deleteR.left + p, deleteR.bottom - p, chipBorder)
+            }
+            // Rotation handle — a circle below the box with a small ↻ arc.
+            run {
+                val rc = rotateHandleCenter(box)
+                val rr = handleSize / 2f
+                lockCanvas.drawCircle(rc.x, rc.y, rr, handleFill)
+                lockCanvas.drawCircle(rc.x, rc.y, rr, handleStroke)
+                val ar = rr * 0.5f
+                lockCanvas.drawArc(RectF(rc.x - ar, rc.y - ar, rc.x + ar, rc.y + ar), 20f, 300f, false, handleStroke)
             }
             // Draw icons inside chips
             val pad = 14
@@ -1118,6 +1833,11 @@ abstract class SurfaceFragment : ScreenFragment() {
             copyIcon?.setBounds((copyR.left + pad).toInt(), (copyR.top + pad).toInt(),
                 (copyR.right - pad).toInt(), (copyR.bottom - pad).toInt())
             copyIcon?.draw(lockCanvas)
+            // "→ item" chip (turn selection into a task/event).
+            val itemIcon = ResourcesCompat.getDrawable(resources, R.drawable.ic_card, null)
+            itemIcon?.setBounds((itemR.left + pad).toInt(), (itemR.top + pad).toInt(),
+                (itemR.right - pad).toInt(), (itemR.bottom - pad).toInt())
+            itemIcon?.draw(lockCanvas)
         }
 
         lockCanvas.restore()
@@ -1125,8 +1845,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
         provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
-        touchHelper?.setRawDrawingEnabled(true)
-        touchHelper?.isRawDrawingRenderEnabled = true
+        if (!inkSuppressed) {   // don't wake the hardware pen while a lasso/selection/menu is up
+            touchHelper?.setRawDrawingEnabled(true)
+            touchHelper?.isRawDrawingRenderEnabled = true
+        }
     }
 
     /**
@@ -1136,36 +1858,1877 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     fun setTextElements(elements: MutableList<TextElement>) {
         this.textElements = elements
+        // Keep an active selection pointing at the reloaded element so a drag
+        // in progress isn't mutating an object the list no longer contains.
+        val selId = selectedTextBox?.elementId
+        selectedTextBox = if (selId != null) elements.firstOrNull { it.elementId == selId } else null
+    }
+
+    /** Resolve the Atkinson Hyperlegible face once (falls back to the system default). */
+    private fun textTypeface(): Typeface = try {
+        ResourcesCompat.getFont(requireContext(), R.font.atkinson_hyperlegible) ?: Typeface.DEFAULT
+    } catch (e: Exception) {
+        Typeface.DEFAULT
     }
 
     /**
-     * Render all text elements onto the given canvas.
+     * Build a word-wrapping layout for a text element at its current box width.
+     * The text reflows to [TextElement.width] — resizing the box reorganises the
+     * words rather than rescaling the font. Long pasted paragraphs (no explicit
+     * newlines) now wrap instead of running off the right edge.
+     */
+    private fun buildTextLayout(element: TextElement): StaticLayout {
+        textPaint.textSize = element.fontSize
+        textPaint.color = element.color
+        textPaint.typeface = textTypeface()
+        val width = element.width.coerceAtLeast(MIN_TEXTBOX_WIDTH).toInt()
+        return StaticLayout.Builder
+            .obtain(element.text, 0, element.text.length, textPaint, width)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setIncludePad(false)
+            .build()
+    }
+
+    /**
+     * Render all text elements onto the given canvas, word-wrapped to each box's width.
      *
      * @param targetCanvas the canvas to draw on
      */
     private fun renderTextElements(targetCanvas: Canvas) {
-        val typeface = try {
-            ResourcesCompat.getFont(requireContext(), R.font.atkinson_hyperlegible)
+        for (element in textElements) {
+            val layout = buildTextLayout(element)
+            // Keep the stored height in sync with the wrapped layout so hit-testing,
+            // the selection outline and persisted JSON all match what's drawn.
+            element.height = layout.height.toFloat()
+            targetCanvas.save()
+            targetCanvas.translate(element.x, element.y)
+            layout.draw(targetCanvas)
+            targetCanvas.restore()
+        }
+    }
+
+    // ─── Image elements: paste/insert, render, move/resize/delete ───────────────
+    // Images live on the v2 CalendarDay alongside text/strokes; bytes are inline base64
+    // (downscaled) so they ride the existing JSON save + Drive sync untouched.
+
+    fun setImageElements(elements: MutableList<ImageElement>) {
+        this.imageElements = elements
+        imageBitmapCache.clear()
+        // Keep an active selection pointing at the reloaded element so it survives page reloads.
+        val selId = selectedImage?.elementId
+        selectedImage = if (selId != null) elements.firstOrNull { it.elementId == selId } else null
+    }
+
+    /** Redraw the selected-image overlay if one is active (call after a page reload repaints). */
+    fun redrawImageSelectionIfActive() {
+        if (imageMode && selectedImage != null) drawImageSelection()
+    }
+
+    /** Override to persist image changes (the day fragment writes them back to CalendarDay). */
+    open fun onImageElementsChanged(imageElements: MutableList<ImageElement>) {}
+
+    /** "Where used" for a gram — the day page subclass walks day files for the same content + navigates. */
+    open fun onImageWhereUsed(element: ImageElement) {}
+
+    /** Everything this gram joins. The subclass knows the date, which is half of its address. */
+    open fun onImageRhizome(element: ImageElement) {}
+
+    /** Everything this text box joins — for a dropped link, the thing it points at. */
+    open fun onTextRhizome(element: TextElement) {}
+
+    /** Share the current page as one image — the day-page subclass wires it to the share sheet. */
+    open fun onSharePage() {}
+
+    /** Auto-arrange this page's grams into a tidy 3-column masonry (shortest-column flow, width-
+     *  normalised, aspect preserved) — the one-tap composition helper for a Pickings page. */
+    private fun arrangeGallery() {
+        if (imageElements.isEmpty()) return
+        val cols = 3
+        val margin = 60f; val gap = 30f
+        val cellW = (CANVAS_WIDTH - 2 * margin - (cols - 1) * gap) / cols
+        val colY = FloatArray(cols) { margin }
+        pushUndo()
+        for (e in imageElements.sortedWith(compareBy({ it.z }, { it.timestamp }))) {
+            val c = (0 until cols).minByOrNull { colY[it] } ?: 0
+            val h = cellW * (e.height / maxOf(e.width, 1f))
+            e.x = margin + c * (cellW + gap)
+            e.y = colY[c]
+            e.width = cellW
+            e.height = h
+            e.rotation = 0f
+            e.timestamp = System.currentTimeMillis()
+            colY[c] += h + gap
+        }
+        onImageElementsChanged(imageElements)
+        applyStrokes(strokes, true)
+    }
+
+    /** Composite the whole page — grams + strokes + text on white — into one bitmap for sharing. */
+    protected fun renderPageBitmap(): Bitmap {
+        val bmp = Bitmap.createBitmap(CANVAS_WIDTH, CANVAS_HEIGHT, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        canvas.drawColor(android.graphics.Color.WHITE)
+        renderImageElements(canvas)
+        val strokePaint = Paint(paint)
+        for (stroke in strokes) drawStrokePath(canvas, strokePaint, stroke)
+        renderTextElements(canvas)
+        return bmp
+    }
+
+    /** Shape-crop: mask a bitmap to the largest centred circle (transparent outside). */
+    private fun circleCropBitmap(bmp: Bitmap): Bitmap {
+        val d = minOf(bmp.width, bmp.height)
+        val out = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paintC = Paint(Paint.ANTI_ALIAS_FLAG)
+        val cx = bmp.width / 2f; val cy = bmp.height / 2f
+        canvas.drawCircle(cx, cy, d / 2f, paintC)
+        paintC.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(bmp, 0f, 0f, paintC)
+        return out
+    }
+
+    /** Crop to a full-frame oval (no square pre-crop — portraits stay portrait). */
+    private fun ovalCropBitmap(bmp: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        canvas.drawOval(RectF(0f, 0f, bmp.width.toFloat(), bmp.height.toFloat()), paint)
+        paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(bmp, 0f, 0f, paint)
+        return out
+    }
+
+    private fun roundedCornersBitmap(bmp: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val r = minOf(bmp.width, bmp.height) * 0.09f
+        canvas.drawRoundRect(RectF(0f, 0f, bmp.width.toFloat(), bmp.height.toFloat()), r, r, paint)
+        paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(bmp, 0f, 0f, paint)
+        return out
+    }
+
+    /** Crop the CENTER SQUARE of the photo to an arbitrary unit path (0..1 space). */
+    private fun pathCropBitmap(bmp: Bitmap, unitPath: (android.graphics.Path) -> Unit): Bitmap {
+        val d = minOf(bmp.width, bmp.height)
+        val out = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val path = android.graphics.Path()
+        unitPath(path)
+        val m = Matrix()
+        m.postScale(d.toFloat(), d.toFloat())
+        m.postTranslate((bmp.width - d) / 2f, (bmp.height - d) / 2f)
+        path.transform(m)
+        canvas.drawPath(path, paint)
+        paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(bmp, 0f, 0f, paint)
+        return out
+    }
+
+    /** Classic two-lobe heart in unit space. */
+    private fun heartPath(p: android.graphics.Path) {
+        p.moveTo(0.5f, 0.95f)
+        p.cubicTo(0.16f, 0.72f, 0.02f, 0.48f, 0.06f, 0.30f)
+        p.cubicTo(0.10f, 0.10f, 0.36f, 0.05f, 0.5f, 0.24f)
+        p.cubicTo(0.64f, 0.05f, 0.90f, 0.10f, 0.94f, 0.30f)
+        p.cubicTo(0.98f, 0.48f, 0.84f, 0.72f, 0.5f, 0.95f)
+        p.close()
+    }
+
+    /** Five-point star in unit space. */
+    private fun starPath(p: android.graphics.Path) {
+        val cx = 0.5f; val cy = 0.52f
+        val rOut = 0.48f; val rIn = 0.20f
+        for (i in 0 until 10) {
+            val r = if (i % 2 == 0) rOut else rIn
+            val a = Math.toRadians((i * 36 - 90).toDouble())
+            val x = cx + (r * Math.cos(a)).toFloat()
+            val y = cy + (r * Math.sin(a)).toFloat()
+            if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
+        }
+        p.close()
+    }
+
+    /** Eight-petal flower (overlapping circles around a center) in unit space. */
+    private fun flowerPath(p: android.graphics.Path) {
+        val petal = 0.19f
+        for (i in 0 until 8) {
+            val a = Math.toRadians((i * 45).toDouble())
+            val x = 0.5f + (0.30f * Math.cos(a)).toFloat()
+            val y = 0.5f + (0.30f * Math.sin(a)).toFloat()
+            p.addCircle(x, y, petal, android.graphics.Path.Direction.CW)
+        }
+        p.addCircle(0.5f, 0.5f, 0.31f, android.graphics.Path.Direction.CW)
+    }
+
+    /** Postage stamp: white border with perforation notches punched along the outer edge. */
+    private fun stampBitmap(src: Bitmap): Bitmap {
+        val border = (src.width * 0.055f).coerceAtLeast(14f)
+        val w = (src.width + border * 2).toInt()
+        val h = (src.height + border * 2).toInt()
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = Color.WHITE
+        canvas.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
+        canvas.drawBitmap(src, border, border, null)
+        // Perforations: transparent circles punched along all four edges.
+        val hole = border * 0.42f
+        val pitch = hole * 2.6f
+        paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
+        var x = pitch / 2
+        while (x < w) { canvas.drawCircle(x, 0f, hole, paint); canvas.drawCircle(x, h.toFloat(), hole, paint); x += pitch }
+        var y = pitch / 2
+        while (y < h) { canvas.drawCircle(0f, y, hole, paint); canvas.drawCircle(w.toFloat(), y, hole, paint); y += pitch }
+        return out
+    }
+
+    /** Scalloped edge: the photo clipped to a ring of half-round bites (lace doily edge). */
+    private fun scallopedEdgeBitmap(bmp: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val r = minOf(bmp.width, bmp.height) * 0.045f
+        val path = android.graphics.Path()
+        val inset = r
+        path.addRect(inset, inset, bmp.width - inset, bmp.height - inset, android.graphics.Path.Direction.CW)
+        // Bumps outward along each edge.
+        fun bumps(fixed: Float, from: Float, to: Float, horizontal: Boolean) {
+            var t = from + r
+            while (t + r <= to) {
+                if (horizontal) path.addCircle(t, fixed, r, android.graphics.Path.Direction.CW)
+                else path.addCircle(fixed, t, r, android.graphics.Path.Direction.CW)
+                t += r * 2.1f
+            }
+        }
+        bumps(inset, inset, bmp.width - inset, true)
+        bumps(bmp.height - inset, inset, bmp.width - inset, true)
+        bumps(inset, inset, bmp.height - inset, false)
+        bumps(bmp.width - inset, inset, bmp.height - inset, false)
+        canvas.drawPath(path, paint)
+        paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(bmp, 0f, 0f, paint)
+        return out
+    }
+
+    /** Torn paper: a thin white deckle border with an irregular hand-torn edge. Deterministic
+     *  per size (seeded) so re-applying or re-syncing renders the identical tear. */
+    private fun tornEdgeBitmap(src: Bitmap): Bitmap {
+        val margin = (src.width * 0.05f).coerceAtLeast(12f)
+        val w = (src.width + margin * 2).toInt()
+        val h = (src.height + margin * 2).toInt()
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val rnd = kotlin.random.Random(src.width * 31 + src.height)
+        val path = android.graphics.Path()
+        val step = (w / 24f).coerceAtLeast(10f)
+        fun jitter() = (rnd.nextFloat() - 0.35f) * margin
+        // Walk the perimeter with jittered points.
+        path.moveTo(margin / 2, margin / 2)
+        var x = margin / 2
+        while (x < w - margin / 2) { path.lineTo(x, margin / 2 + jitter()); x += step }
+        path.lineTo(w - margin / 2, margin / 2)
+        var y = margin / 2
+        while (y < h - margin / 2) { path.lineTo(w - margin / 2 + jitter(), y); y += step }
+        path.lineTo(w - margin / 2, h - margin / 2)
+        x = w - margin / 2
+        while (x > margin / 2) { path.lineTo(x, h - margin / 2 + jitter()); x -= step }
+        path.lineTo(margin / 2, h - margin / 2)
+        y = h - margin / 2
+        while (y > margin / 2) { path.lineTo(margin / 2 + jitter(), y); y -= step }
+        path.close()
+        // White paper clipped to the tear, then the photo inset on top.
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.color = Color.WHITE
+        canvas.drawPath(path, paint)
+        canvas.save()
+        canvas.clipPath(path)
+        canvas.drawBitmap(src, margin, margin, null)
+        canvas.restore()
+        return out
+    }
+
+    private fun bitmapForElement(element: ImageElement): Bitmap? {
+        imageBitmapCache[element.elementId]?.let { return it }
+        return try {
+            val bytes = Base64.decode(element.data, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.also { imageBitmapCache[element.elementId] = it }
         } catch (e: Exception) {
-            Typeface.DEFAULT
+            Timber.e(e, "Failed to decode image element")
+            null
+        }
+    }
+
+    /** Render all image elements (drawn under strokes/text so the user can write over them). */
+    private fun renderImageElements(targetCanvas: Canvas) {
+        if (imageElements.isEmpty()) return
+        // Draw in layer order (z asc, then timestamp) so higher-z elements land on top.
+        for (element in imageElements.sortedWith(compareBy({ it.z }, { it.timestamp }))) {
+            val bmp = bitmapForElement(element) ?: continue
+            val rect = RectF(element.x, element.y, element.x + element.width, element.y + element.height)
+            if (element.rotation != 0f) {
+                targetCanvas.save()
+                targetCanvas.rotate(element.rotation, rect.centerX(), rect.centerY())
+                targetCanvas.drawBitmap(bmp, null, rect, imagePaint)
+                targetCanvas.restore()
+            } else {
+                targetCanvas.drawBitmap(bmp, null, rect, imagePaint)
+            }
+        }
+        renderConnectors(targetCanvas)
+    }
+
+    /**
+     * Connectors: lines drawn between two elements you have linked, over the elements so the link
+     * is legible.
+     *
+     * A connector is not stored as its own art — it IS a connection between the two objects, so
+     * moving either end moves the line, and the same link shows up in the object's rhizome and on
+     * the Map. The subclass that knows the page's identity supplies the id-pairs; here we just draw
+     * a line between the live centres, dot at each end, so it reads as a deliberate join rather
+     * than a stray stroke.
+     */
+    private val connectorPaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; color = 0xFF444444.toInt()
+            strokeWidth = 3f * resources.displayMetrics.density; strokeCap = Paint.Cap.ROUND
+        }
+    }
+    /**
+     * The text a shape encircles: the text boxes whose centre falls inside its bounds, joined.
+     *
+     * This is what turns a shape into a region — a capsule drawn around a line of notes takes
+     * that line as its meaning, so when the shape is connected or synthesized, the words it
+     * gathered are what travel, not the fact that it's a capsule.
+     */
+    protected fun enclosedText(element: ImageElement): String {
+        val r = RectF(element.x, element.y, element.x + element.width, element.y + element.height)
+        return textElements
+            .filter { it.text.isNotBlank() }
+            .filter { val b = textElementBounds(it); r.contains(b.centerX(), b.centerY()) }
+            .joinToString(" ") { it.text.trim() }
+            .trim()
+    }
+
+    /** An element's bounds by id — image or text box — so a connector can join either kind. */
+    private fun connectableBounds(id: UUID): RectF? {
+        imageElements.firstOrNull { it.elementId == id }?.let {
+            return RectF(it.x, it.y, it.x + it.width, it.y + it.height)
+        }
+        textElements.firstOrNull { it.elementId == id }?.let { return textElementBounds(it) }
+        return null
+    }
+
+    private fun renderConnectors(canvas: Canvas) {
+        val pairs = pageConnectors()
+        if (pairs.isEmpty()) return
+        for ((a, b) in pairs) {
+            val ra = connectableBounds(a) ?: continue
+            val rb = connectableBounds(b) ?: continue
+            val ax = ra.centerX(); val ay = ra.centerY()
+            val bx = rb.centerX(); val by = rb.centerY()
+            // Anchor to each shape's TRUE edge toward the other — the curve of a circle, the slope
+            // of a diamond, the side of a box — so the line meets the outline it points at rather
+            // than the corner of an invisible bounding box.
+            val (sx, sy) = connectorEndpoint(a, bx, by) ?: (ax to ay)
+            val (tx, ty) = connectorEndpoint(b, ax, ay) ?: (bx to by)
+            canvas.drawLine(sx, sy, tx, ty, connectorPaint)
+            val dot = connectorPaint.strokeWidth
+            connectorPaint.style = Paint.Style.FILL
+            canvas.drawCircle(sx, sy, dot, connectorPaint)
+            canvas.drawCircle(tx, ty, dot, connectorPaint)
+            connectorPaint.style = Paint.Style.STROKE
+        }
+    }
+
+    /**
+     * Where a line from the box centred at ([cx],[cy]) with half-extents ([hw],[hh]) toward
+     * ([towardX],[towardY]) crosses the box's border. Axis-aligned; rotation is ignored, which is
+     * fine for the boxes and cards these join.
+     */
+    private fun edgePoint(cx: Float, cy: Float, hw: Float, hh: Float, towardX: Float, towardY: Float): Pair<Float, Float> {
+        val dx = towardX - cx; val dy = towardY - cy
+        if (dx == 0f && dy == 0f) return cx to cy
+        val tx = if (dx != 0f) hw / kotlin.math.abs(dx) else Float.MAX_VALUE
+        val ty = if (dy != 0f) hh / kotlin.math.abs(dy) else Float.MAX_VALUE
+        val t = minOf(tx, ty)
+        return (cx + dx * t) to (cy + dy * t)
+    }
+
+    /** Shape keys that anchor as an ellipse / a diamond; everything else uses the box border. */
+    private val ROUND_SHAPES = setOf("circle", "oval", "ring", "burst")
+    private val DIAMOND_SHAPES = setOf("diamond")
+
+    /**
+     * The point on element [id]'s true outline facing ([towardX],[towardY]).
+     *
+     * A shape knows what it is (its key rides in sourceLabel, only for the shapes we place), so a
+     * circle anchors on its ellipse — semi-axes [hw],[hh], which also handles a circle stretched
+     * wide — a diamond on its slopes, and every rectangular thing on its border. Text boxes and
+     * cards fall through to the box border.
+     */
+    private fun connectorEndpoint(id: UUID, towardX: Float, towardY: Float): Pair<Float, Float>? {
+        val img = imageElements.firstOrNull { it.elementId == id }
+        if (img != null) {
+            val cx = img.x + img.width / 2f; val cy = img.y + img.height / 2f
+            val hw = img.width / 2f; val hh = img.height / 2f
+            val dx = towardX - cx; val dy = towardY - cy
+            if (dx == 0f && dy == 0f) return cx to cy
+            val key = if (img.distortable) img.sourceLabel else ""
+            return when {
+                key in ROUND_SHAPES -> {
+                    val t = 1f / kotlin.math.sqrt((dx / hw) * (dx / hw) + (dy / hh) * (dy / hh))
+                    (cx + dx * t) to (cy + dy * t)
+                }
+                key in DIAMOND_SHAPES -> {
+                    val t = 1f / (kotlin.math.abs(dx) / hw + kotlin.math.abs(dy) / hh)
+                    (cx + dx * t) to (cy + dy * t)
+                }
+                else -> edgePoint(cx, cy, hw, hh, towardX, towardY)
+            }
+        }
+        val txt = textElements.firstOrNull { it.elementId == id } ?: return null
+        val r = textElementBounds(txt)
+        return edgePoint(r.centerX(), r.centerY(), r.width() / 2f, r.height() / 2f, towardX, towardY)
+    }
+
+    /** Element-id pairs to join with a connector line. The calendar page derives these from edges. */
+    protected open fun pageConnectors(): List<Pair<UUID, UUID>> = emptyList()
+
+    /** Grid step to snap a dragged object to, or 0 for no snap. Grid Notes returns its grid size. */
+    protected open fun snapStep(): Float = 0f
+
+    /** Repaint the page in place — after a connector is drawn, so the new line appears at once. */
+    protected fun redrawSurface() = applyStrokes(strokes, true)
+
+    /** "Connect to…" on a gram — the subclass picks the other end and records the link. */
+    protected open fun onImageConnect(element: ImageElement) {}
+
+    /** "Go to feed" on a feed gram — the subclass opens Feed Ledger filtered to that feed. */
+    protected open fun onImageGoToFeed(element: ImageElement) {}
+
+    /** "Connect to…" on a text box — join it to any other element on the page. */
+    protected open fun onTextConnect(element: TextElement) {}
+
+    /** "Synthesize group" — gather everything this element's connected group holds into a synthesis. */
+    protected open fun onImageSynthesizeGroup(element: ImageElement) {}
+
+    private fun exitImageMode() {
+        imageMode = false
+        selectedImage = null
+        selectedTextBox = null
+        textBoxDrag = false
+        textBoxResize = false
+        imageDrag = ImageDrag.NONE
+        cropMode = false
+        cropDragging = false
+        cropRect = null
+    }
+
+    private fun snapshotCanvas() = CanvasSnapshot(Stroke.listDeepCopy(strokes), imageElements.map { it.copy() })
+
+    /** Push the current strokes+images onto the undo stack (cap 50) and clear redo. */
+    private fun pushUndo() {
+        undoStack.add(snapshotCanvas())
+        if (undoStack.size > 50) undoStack.removeAt(0)
+        redoStack.clear()
+    }
+
+    /** Paste the unified clipboard's image as a new element, offset + selected, in image mode. */
+    private fun pasteClipboardImage() {
+        val img = strokeClipboard.image ?: return
+        val stamped = strokeClipboard.stampImageAt(img.x + 40f, img.y + 40f) ?: return
+        pushUndo()
+        textMode = false
+        pasteMode = false
+        selectionMode = false
+        hasSelection = false
+        syncRawInkToSelectionMenu()   // selection cleared → restore hardware pen if it was paused
+        procrastinator = false
+        penState = false
+        imageMode = true
+        imageElements.add(stamped)
+        onImageElementsChanged(imageElements)
+        selectedImage = stamped
+        applyStrokes(strokes, true)
+        drawImageSelection()
+    }
+
+    /** Insert from the system clipboard if it holds an image, otherwise open the picker. */
+    private fun insertImageFromClipboardOrPicker() {
+        try {
+            val cm = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            val clip = cm?.primaryClip
+            if (clip != null && clip.itemCount > 0) {
+                val uri = clip.getItemAt(0).uri
+                if (uri != null) {
+                    insertImageFromUri(uri)
+                    return
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "Clipboard image check failed")
+        }
+        launchImagePicker()
+    }
+
+    /**
+     * Open an image picker robustly: try the gallery (ACTION_PICK) first — most stable on
+     * Boox/AOSP — then fall back to the document picker (ACTION_GET_CONTENT). Both launches
+     * are guarded so a missing/incompatible picker can never crash the app.
+     */
+    private fun launchImagePicker() {
+        val pick = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply { type = "image/*" }
+        try {
+            imagePickLauncher.launch(pick)
+            return
+        } catch (e: Exception) {
+            Timber.w(e, "ACTION_PICK gallery unavailable, falling back to ACTION_GET_CONTENT")
+        }
+        val get = Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "image/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+        }
+        try {
+            imagePickLauncher.launch(get)
+        } catch (e: Exception) {
+            Timber.e(e, "No image picker available")
+            Toast.makeText(requireContext(), "No image picker on this device — copy an image, then tap the image button", Toast.LENGTH_LONG).show()
+            exitImageMode()
+        }
+    }
+
+    /** Decode an image already downsampled near [IMAGE_MAX_DIM] so a large photo can't OOM. */
+    private fun decodeDownsampledImage(uri: Uri): Bitmap? {
+        val cr = requireContext().contentResolver
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        val longest = maxOf(bounds.outWidth, bounds.outHeight)
+        while (longest / sample > IMAGE_MAX_DIM * 2) sample *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+        return cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+    }
+
+    private fun insertImageFromUri(uri: Uri) {
+        try {
+            val original = decodeDownsampledImage(uri)
+            if (original == null) {
+                Timber.w("Image decode failed for %s", uri)
+                Toast.makeText(requireContext(), "Couldn't read that image", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            // Downscale the longest side so the inline base64 stays sync-friendly.
+            val longest = maxOf(original.width, original.height)
+            val scaled = if (longest > IMAGE_MAX_DIM) {
+                val ratio = IMAGE_MAX_DIM.toFloat() / longest
+                Bitmap.createScaledBitmap(
+                    original,
+                    (original.width * ratio).toInt().coerceAtLeast(1),
+                    (original.height * ratio).toInt().coerceAtLeast(1),
+                    true
+                )
+            } else original
+
+            // JPEG for a photograph, PNG for anything with hard edges or transparency. This is
+            // the path a camera capture and a gallery pick both take, and it was writing lossless
+            // PNG — tens of megabytes of sensor noise preserved exactly, then grown a third again
+            // by base64 to sit inside the day's JSON. See LedgerImageCodec.
+            val bytes = if (com.toolsboox.ot.LedgerImageCodec.looksPhotographic(scaled))
+                com.toolsboox.ot.LedgerImageCodec.photo(scaled)
+            else com.toolsboox.ot.LedgerImageCodec.ink(scaled)
+            val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+
+            // Place centered on the long-press point when one is pending, otherwise
+            // centered on the page; sized to a fraction of the page width.
+            val w = (CANVAS_WIDTH * IMAGE_PLACE_FRACTION).coerceAtMost(scaled.width.toFloat())
+            val h = w * scaled.height / scaled.width
+            val place = pendingPlacePoint
+            pendingPlacePoint = null
+            val px = ((place?.x ?: (CANVAS_WIDTH / 2f)) - w / 2f).coerceIn(0f, (CANVAS_WIDTH - w).coerceAtLeast(0f))
+            val py = ((place?.y ?: (CANVAS_HEIGHT / 2f)) - h / 2f).coerceIn(0f, (CANVAS_HEIGHT - h).coerceAtLeast(0f))
+            val element = ImageElement(
+                x = px,
+                y = py,
+                width = w,
+                height = h,
+                data = base64
+            )
+            pushUndo()
+            imageElements.add(element)
+            onImageElementsChanged(imageElements)
+
+            // Land in image mode with the new image selected for immediate move/resize.
+            imageMode = true
+            penState = false
+            selectedImage = element
+            applyStrokes(strokes, true)
+            drawImageSelection()
+            // The panel drew the new gram but an e-ink partial update doesn't always show it —
+            // which is why it used to appear only when the NEXT change forced a repaint, one add
+            // behind. A full refresh on the next frame makes it land right away.
+            provideSurfaceView().post { forceFullEpdRefresh() }
+        } catch (e: Exception) {
+            Timber.e(e, "Insert image failed")
+            Toast.makeText(requireContext(), "Couldn't insert that image", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // ─── Finger long-press: element creation menu + select-to-manage ────────────
+    // "Pen writes, finger manages." A finger long-press on empty canvas opens a
+    // small creation menu (text box / camera / upload / paste); on an existing
+    // image or text box it selects it for management. Fragments detect the
+    // long-press in their touch listener and call handleCanvasLongPress.
+
+    /** True while the element-manipulation mode is active. */
+    fun isImageModeActive(): Boolean = imageMode
+
+    /** Topmost image element under a canvas point, or null. */
+    private fun imageElementAt(cx: Float, cy: Float): ImageElement? =
+        imageElements.lastOrNull { cx >= it.x && cx <= it.x + it.width && cy >= it.y && cy <= it.y + it.height }
+
+    /** Canvas-space bounds of a text box (measured from its rendered lines). */
+    protected fun textElementBounds(element: TextElement): RectF {
+        // The box is as wide as element.width; height follows the wrapped layout.
+        val layout = buildTextLayout(element)
+        val boxWidth = element.width.coerceAtLeast(MIN_TEXTBOX_WIDTH)
+        val boxHeight = layout.height.toFloat()
+        val pad = 14f
+        return RectF(
+            element.x - pad,
+            element.y - pad,
+            element.x + boxWidth + pad,
+            element.y + boxHeight + pad
+        )
+    }
+
+    /** Bottom-right resize handle for a selected text box (mirrors the image handle). */
+    private fun textResizeHandle(box: RectF): RectF {
+        val h = IMAGE_HANDLE_SIZE
+        return RectF(box.right - h / 2f, box.bottom - h / 2f, box.right + h / 2f, box.bottom + h / 2f)
+    }
+
+    /** Bottom-left "A" handle: drag to scale the FONT (the right handle stays spatial). */
+    private fun fontResizeHandle(box: RectF): RectF {
+        val h = IMAGE_HANDLE_SIZE
+        return RectF(box.left - h / 2f, box.bottom - h / 2f, box.left + h / 2f, box.bottom + h / 2f)
+    }
+
+    /** Topmost text box under a canvas point, or null. */
+    private fun textElementAt(cx: Float, cy: Float): TextElement? =
+        textElements.lastOrNull { textElementBounds(it).contains(cx, cy) }
+
+    /**
+     * Entry point for a finger long-press at canvas coordinates: select the
+     * element under the finger, or open the creation menu on empty canvas.
+     *
+     * @param cx canvas x
+     * @param cy canvas y
+     * @param pressX press x in the surface view's coordinates (menu anchor)
+     * @param pressY press y in the surface view's coordinates (menu anchor)
+     */
+    fun handleCanvasLongPress(cx: Float, cy: Float, pressX: Float, pressY: Float) {
+        val image = imageElementAt(cx, cy)
+        val textBox = if (image == null) textElementAt(cx, cy) else null
+
+        // A connection is waiting for its other end: this press picks it. Touch the first object,
+        // touch the second, done — no picker. Pressing the same object or empty space cancels.
+        if (connectFromId != null) {
+            val toId = image?.elementId ?: textBox?.elementId
+            // A shape's label is the text it circled, when it circled any — so the edge carries
+            // the words, not "capsule".
+            val toLabel = image?.let {
+                (if (it.distortable) enclosedText(it).ifBlank { it.sourceLabel } else it.sourceLabel).ifBlank { "Card" }
+            } ?: textBox?.text?.take(40)?.ifBlank { "Text" }
+            val from = connectFromId!!; val fromLabel = connectFromLabel
+            connectFromId = null; connectFromLabel = ""
+            if (toId != null && toId != from) {
+                onConnectComplete(from, toId, fromLabel, toLabel ?: "")
+            } else {
+                Toast.makeText(requireContext(), "Connect cancelled.", Toast.LENGTH_SHORT).show()
+            }
+            return
         }
 
-        for (element in textElements) {
-            textPaint.textSize = element.fontSize
-            textPaint.color = element.color
-            textPaint.typeface = typeface ?: Typeface.DEFAULT
+        if (image != null) {
+            // All images now get the long-press menu (move/resize, transforms, layer order);
+            // grams also surface a jump-back. Move/resize is one tap in, as before.
+            showImageMenu(image, cx, cy, pressX, pressY)
+            return
+        }
+        if (textBox != null) {
+            showTextBoxMenu(textBox, pressX, pressY)
+            return
+        }
+        showCanvasCreationMenu(cx, cy, pressX, pressY)
+    }
 
-            // Draw each line of the text (split on newline)
-            val lines = element.text.split("\n")
-            val lineHeight = textPaint.fontSpacing
-            for ((index, line) in lines.withIndex()) {
-                targetCanvas.drawText(
-                    line,
-                    element.x,
-                    element.y + lineHeight * (index + 1),
-                    textPaint
-                )
+    private var connectFromId: UUID? = null
+    private var connectFromLabel: String = ""
+
+    /**
+     * Begin a connection FROM one element: the next press on another object completes it.
+     *
+     * Touch one, touch the other — which reads far better than a list of everything on the page.
+     * The subclass records the edge in [onConnectComplete].
+     */
+    protected fun beginConnect(fromId: UUID, fromLabel: String) {
+        connectFromId = fromId; connectFromLabel = fromLabel
+        Toast.makeText(requireContext(), "Now press the object to connect to.", Toast.LENGTH_SHORT).show()
+    }
+
+    /** Two ends chosen — the subclass writes the edge and redraws. */
+    protected open fun onConnectComplete(fromId: UUID, toId: UUID, fromLabel: String, toLabel: String) {}
+
+    /**
+     * Long-press on a gram that carries a source: jump back to the origin (article / ledger page)
+     * or drop into move/resize. Plain images skip this and go straight to manipulation.
+     */
+    /** LedgerContextMenu over the surface, pausing the Onyx raw-drawing pipeline while it's up
+     *  (or a stylus tap gets grabbed by raw drawing and freezes the menu — the "pen on the
+     *  clip-art menu freezes" bug). Resumes on dismiss via the same hooks AlertDialogs use. */
+    private fun showLedgerMenu(pressX: Float, pressY: Float, title: String, groups: List<List<LedgerContextMenu.Item>>) {
+        LedgerContextMenu.show(
+            provideSurfaceView(), pressX, pressY, title, groups,
+            onShow = { onModalShown() }, onDismiss = { onModalDismissed() }
+        )
+    }
+
+    /**
+     * Where the blob for an A/V gram lives on this device, or null when it isn't here (in which
+     * case playback falls back to [ImageElement.mediaUrl]). Overridden by the surfaces that hold
+     * the day, since the filename lives on the day's `avGrams`, keyed by `attachmentId`.
+     */
+    protected open fun resolveAvGramFile(element: ImageElement): java.io.File? = null
+
+    /**
+     * [cx]/[cy] are the canvas point that was pressed, kept so that "add here" still means *here*
+     * even though the press landed on a picture.
+     *
+     * On a small screen a pasted image covers most of the page, so nearly every long press finds
+     * one and this menu was the only thing that ever appeared — capturing an A/V gram meant hunting
+     * for a patch of bare canvas, and on a full-bleed page there wasn't one. Making creation
+     * reachable from here as well means the long press does the same thing wherever it lands.
+     */
+    private fun showImageMenu(element: ImageElement, cx: Float, cy: Float, pressX: Float, pressY: Float) {
+        if (context == null) return
+        val groups = mutableListOf<List<LedgerContextMenu.Item>>()
+        // An A/V gram is a picture until you ask it to play — so playing is the first thing offered.
+        if (element.mediaKind == "audio" || element.mediaKind == "video") {
+            val clock = com.toolsboox.plugin.calendar.ot.AvPoster.clock(element.durationMs)
+            val label = (if (element.mediaKind == "video") "▶ Play video" else "▶ Play audio") +
+                (if (clock.isNotBlank()) " · $clock" else "")
+            groups.add(listOf(
+                LedgerContextMenu.Item(label) { playAvGram(element) },
+                LedgerContextMenu.Item("✎ Rename…") { renameAvGram(element) }
+            ))
+        }
+        if (element.sourceLink.isNotBlank()) {
+            val jumpLabel = "↩ Go to source" + (if (element.sourceLabel.isNotBlank()) " · ${element.sourceLabel}" else "")
+            groups.add(listOf(LedgerContextMenu.Item(jumpLabel) { onImageSource(element) }))
+        }
+        // The everyday things, up top: move, size, connect, where it goes.
+        groups.add(listOf(
+            LedgerContextMenu.Item("Move / resize") { enterImageManipulation(element) },
+            LedgerContextMenu.Item("⤢ Size · S / M / L") { showSizeMenu(element, pressX, pressY) },
+            LedgerContextMenu.Item("🖼 Shapes & cute cuts…") { showShapeMenu(element, pressX, pressY) }
+        ))
+        val actions = mutableListOf<LedgerContextMenu.Item>()
+        // A card that remembers its words can have them changed — the face is re-rendered from
+        // the new text, so an OCR slip or an opening line you don't want is fixable in place.
+        if (element.cardText.isNotBlank())
+            actions.add(LedgerContextMenu.Item("✎ Edit words…") { editImageWords(element) })
+        // Decoration doesn't join the graph, so it isn't offered the graph's verbs.
+        if (!element.decorative) {
+            actions.add(LedgerContextMenu.Item("🔗 Connect to…") { onImageConnect(element) })
+            actions.add(LedgerContextMenu.Item("🕸 Its rhizome…") { onImageRhizome(element) })
+            actions.add(LedgerContextMenu.Item("🔬 Synthesize group…") { onImageSynthesizeGroup(element) })
+        }
+        groups.add(actions + listOf(
+            LedgerContextMenu.Item(if (element.contactId.isNullOrBlank()) "Assign to contact…" else "Contact…") {
+                pickContact { id ->
+                    element.contactId = id
+                    element.timestamp = System.currentTimeMillis()
+                    onImageElementsChanged(imageElements)
+                    applyStrokes(strokes, true)
+                }
             }
+        ))
+        // The deep drawers, folded away so the menu is short: adjust the picture, send it
+        // somewhere, add something new here. Each opens its own small menu.
+        groups.add(listOf(
+            LedgerContextMenu.Item("🎨 Adjust…") { showImageAdjustMenu(element, pressX, pressY) },
+            LedgerContextMenu.Item("↥ Send / save…") { showImageSendMenu(element, pressX, pressY) },
+            LedgerContextMenu.Item("＋ Add here…") { showImageAddMenu(cx, cy, pressX, pressY) }
+        ))
+        groups.add(listOf(
+            LedgerContextMenu.Item("🗑 Delete") { deleteImageElement(element) }
+        ))
+        showLedgerMenu(pressX, pressY, "IMAGE", groups)
+    }
+
+    /**
+     * Render a text card's face from [text] — the subclass knows the card style (QuoteCardRenderer
+     * + tape). Null means this surface can't re-render a card, so editing is silently unavailable.
+     */
+    protected open fun renderCard(text: String, element: ImageElement): Bitmap? = null
+
+    /**
+     * Edit the words a card was drawn from, and re-render its face.
+     *
+     * Plain multi-line text, edited as you'd edit any note — delete the first sentence, fix a
+     * word — then the card is drawn again from what's left. The words live on the element, so the
+     * edit is durable and the card can be edited again later.
+     */
+    private fun editImageWords(element: ImageElement) {
+        val ctx = context ?: return
+        val dp = resources.displayMetrics.density
+        val input = EditText(ctx).apply {
+            setText(element.cardText)
+            setSelection(element.cardText.length)
+            gravity = android.view.Gravity.TOP
+            setLines(6)
+        }
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0)
+            addView(input)
+        }
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Edit the card's words")
+            .setView(android.widget.ScrollView(ctx).apply { addView(box) })
+            .setPositiveButton("Save") { _, _ ->
+                val next = input.text.toString().trim()
+                if (next.isBlank() || next == element.cardText) return@setPositiveButton
+                val face = renderCard(next, element) ?: run {
+                    Toast.makeText(ctx, "Can't redraw this card here.", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                element.cardText = next
+                transformImageElement(element, preserveAspect = true) { face }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** Delete an image element off the page, undoably. */
+    private fun deleteImageElement(element: ImageElement) {
+        pushUndo()
+        imageElements.remove(element)
+        imageBitmapCache.remove(element.elementId)
+        if (selectedImage === element) selectedImage = null
+        onImageElementsChanged(imageElements)
+        applyStrokes(strokes, true)
+    }
+
+    private fun showSizeMenu(element: ImageElement, pressX: Float, pressY: Float) {
+        showLedgerMenu(pressX, pressY, "SIZE", listOf(listOf(
+            LedgerContextMenu.Item("⤢ Small") { setGramWidth(element, 380f) },
+            LedgerContextMenu.Item("⤢ Medium") { setGramWidth(element, 590f) },
+            LedgerContextMenu.Item("⤢ Large") { setGramWidth(element, 900f) }
+        )))
+    }
+
+    /** Picture adjustments — the transforms and layer order, off the main menu. */
+    private fun showImageAdjustMenu(element: ImageElement, pressX: Float, pressY: Float) {
+        showLedgerMenu(pressX, pressY, "ADJUST", listOf(
+            listOf(
+                LedgerContextMenu.Item("✎ Edit in ink") { penEditImage(element) },
+                LedgerContextMenu.Item("Flip horizontal") { transformImageElement(element) { flipBitmap(it, true) } },
+                LedgerContextMenu.Item("Flip vertical") { transformImageElement(element) { flipBitmap(it, false) } },
+                LedgerContextMenu.Item("Invert") { transformImageElement(element) { invertBitmap(it) } },
+                LedgerContextMenu.Item("Line art (B&W)") { transformImageElement(element) { thresholdBitmap(it) } },
+                LedgerContextMenu.Item("Solid black") { transformImageElement(element) { solidBlackBitmap(it) } }
+            ),
+            listOf(
+                LedgerContextMenu.Item("Bring to front") { bringImageToFront(element) },
+                LedgerContextMenu.Item("Send to back") { sendImageToBack(element) }
+            )
+        ))
+    }
+
+    /** Where a gram can go — community, boards, the clippings library. */
+    private fun showImageSendMenu(element: ImageElement, pressX: Float, pressY: Float) {
+        val send = mutableListOf<LedgerContextMenu.Item>()
+        if (element.sourceLink.isNotBlank())
+            send.add(LedgerContextMenu.Item("↩ Go to source" +
+                (if (element.sourceLabel.isNotBlank()) " · ${element.sourceLabel}" else "")) { onImageSource(element) })
+        if (element.sourceFeed.isNotBlank())
+            send.add(LedgerContextMenu.Item("📰 Go to feed · ${element.sourceFeed}") { onImageGoToFeed(element) })
+        send.add(LedgerContextMenu.Item("Where used…") { onImageWhereUsed(element) })
+        send.add(LedgerContextMenu.Item("Post to community…") { postGramToCommunity(element) })
+        send.add(LedgerContextMenu.Item("Pin to Board…") { onImagePinToBoard(element) })
+        send.add(LedgerContextMenu.Item("Save to Clippings") {
+            com.toolsboox.plugin.calendar.ot.ClippingsStore.add(
+                requireContext(), element.data, label = element.sourceLabel,
+                gramId = element.gramId ?: "", sourceLink = element.sourceLink, sourceLabel = element.sourceLabel)
+            Toast.makeText(requireContext(), "Saved to Clippings", Toast.LENGTH_SHORT).show()
+        })
+        send.add(LedgerContextMenu.Item("Photo → Clipping") {
+            val bmp = bitmapForElement(element)
+            if (bmp != null) {
+                val baos = ByteArrayOutputStream()
+                thresholdBitmap(bmp).compress(Bitmap.CompressFormat.PNG, 100, baos)
+                com.toolsboox.plugin.calendar.ot.ClippingsStore.add(
+                    requireContext(), Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP),
+                    label = element.sourceLabel,
+                    gramId = element.gramId ?: "", sourceLink = element.sourceLink, sourceLabel = element.sourceLabel)
+                Toast.makeText(requireContext(), "Line art saved to Clippings", Toast.LENGTH_SHORT).show()
+            }
+        })
+        showLedgerMenu(pressX, pressY, "SEND / SAVE", listOf(send))
+    }
+
+    private fun showImageAddMenu(cx: Float, cy: Float, pressX: Float, pressY: Float) {
+        showLedgerMenu(pressX, pressY, "ADD HERE", listOf(listOf(
+            LedgerContextMenu.Item("＋ Add media…") { showAddMediaMenu(cx, cy) },
+            LedgerContextMenu.Item("＋ Text box") { showTextInputDialog(cx, cy) },
+            LedgerContextMenu.Item("🔖 Intake a link…") { onIntakeLink(cx, cy) },
+            LedgerContextMenu.Item("🔷 Simple shapes…") { showShapesPicker(cx, cy) }
+        )))
+    }
+
+    /** "Intake a link" — the subclass renders the link card and places it. Center when no press. */
+    protected open fun onIntakeLink(cx: Float = CANVAS_WIDTH / 2f, cy: Float = CANVAS_HEIGHT / 2f) {}
+
+    /**
+     * Open the shapes picker from a menu that has no press point (the tools wrench), dropping the
+     * chosen shape near the middle of the page.
+     *
+     * Shapes lived only behind a long-press on BARE canvas, so on a full synthesis page — where
+     * every press lands on something — they were unreachable. This makes them reachable from the
+     * tools wrench as well (text and image already ride hold-to-add on any page).
+     */
+    fun openShapesPicker() = showShapesPicker(CANVAS_WIDTH / 2f, CANVAS_HEIGHT / 2f)
+
+    /**
+     * The scrapbook drawer: shape crops and edge treatments that make a gram cute. Every
+     * one bakes into the PNG (syncs as pixels, free to render, grayscale-safe on e-ink).
+     */
+    private fun showShapeMenu(element: ImageElement, pressX: Float, pressY: Float) {
+        showLedgerMenu(
+            pressX, pressY, "SHAPE & CUT", listOf(
+                listOf(
+                    LedgerContextMenu.Item("● Circle") { transformImageElement(element) { circleCropBitmap(it) } },
+                    LedgerContextMenu.Item("⬭ Oval") { transformImageElement(element) { ovalCropBitmap(it) } },
+                    LedgerContextMenu.Item("▢ Rounded corners") { transformImageElement(element) { roundedCornersBitmap(it) } },
+                    LedgerContextMenu.Item("♥ Heart") { transformImageElement(element) { pathCropBitmap(it, ::heartPath) } },
+                    LedgerContextMenu.Item("★ Star") { transformImageElement(element) { pathCropBitmap(it, ::starPath) } },
+                    LedgerContextMenu.Item("✿ Flower") { transformImageElement(element) { pathCropBitmap(it, ::flowerPath) } }
+                ),
+                listOf(
+                    LedgerContextMenu.Item("✉ Postage stamp") { transformImageElement(element, preserveAspect = true) { stampBitmap(it) } },
+                    LedgerContextMenu.Item("⌇ Torn paper edge") { transformImageElement(element, preserveAspect = true) { tornEdgeBitmap(it) } },
+                    LedgerContextMenu.Item("✂ Scalloped edge") { transformImageElement(element) { scallopedEdgeBitmap(it) } }
+                ),
+                listOf(
+                    LedgerContextMenu.Item("🖼 Polaroid frame") { transformImageElement(element, preserveAspect = true) { polaroidBitmap(it, tape = false) } },
+                    LedgerContextMenu.Item("🖼 Polaroid + tape") { transformImageElement(element, preserveAspect = true) { polaroidBitmap(it, tape = true) } },
+                    LedgerContextMenu.Item("➰ Tape corners") { transformImageElement(element, preserveAspect = true) { tapeBitmap(it) } }
+                )
+            )
+        )
+    }
+
+    /**
+     * Post a gram into a FluentCommunity space through the ledgr-fb-bridge: space picker first
+     * (never auto-posts), then the ink PNG becomes the post. Idempotent on the gram's content key,
+     * so re-sharing the same gram never double-posts. Mirrors iOS "Post to community…".
+     */
+    private fun postGramToCommunity(element: ImageElement) {
+        val ctx = context ?: return
+        if (!com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(ctx).ready) {
+            Toast.makeText(ctx, "Set up the community bridge in Boards → Web bridge…", Toast.LENGTH_LONG).show()
+            return
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            val spaces = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.spaces(ctx)
+            }
+            if (spaces.isEmpty()) {
+                Toast.makeText(ctx, "Couldn't load spaces", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val labels = spaces.map { (if (it.privacy == "public") "🌐  " else "🔒  ") + it.title }.toTypedArray()
+            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                .setTitle("Post to space")
+                .setItems(labels) { _, which ->
+                    val space = spaces[which]
+                    val key = element.gramId?.ifBlank { null } ?: run {
+                        com.toolsboox.ot.CryptoUtils.md5Hash(element.data.toByteArray())
+                    }
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        val status = withContext(Dispatchers.IO) {
+                            com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.postGram(
+                                ctx, element.data, element.sourceLabel, "gram-$key", space.id
+                            )
+                        }
+                        Toast.makeText(ctx, status, Toast.LENGTH_SHORT).show()
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
+    /** "Pin to Board…" — the day page subclass files the gram as a kanban card. Base is a no-op. */
+    protected open fun onImagePinToBoard(element: ImageElement) {}
+
+    /** Finger single-tap in canvas (design) space. Return true when handled (e.g. a star row). */
+    protected open fun onCanvasSingleTap(cx: Float, cy: Float): Boolean = false
+
+    /** Pick a contact (or "None") to link a picking / note / gram to — bidirectional CRM linking. */
+    private fun pickContact(onPick: (String?) -> Unit) {
+        val contacts = com.toolsboox.plugin.calendar.ot.ContactStore.list(requireContext())
+        val names = (listOf("None") + contacts.map { it.name.ifBlank { "Unnamed" } }).toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+            .setTitle("Assign to contact")
+            .setItems(names) { _, which -> onPick(if (which == 0) null else contacts[which - 1].id) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /**
+     * Navigate to a gram's origin. Base is a no-op; surfaces that know how to route a source link
+     * (the day page → feed article / ledger page) override this.
+     */
+    protected open fun onImageSource(element: ImageElement) {}
+
+    /** Select an image element and enter the manipulation mode (move/resize/chips). */
+    private fun enterImageManipulation(element: ImageElement) {
+        textMode = false
+        pasteMode = false
+        selectionMode = false
+        hasSelection = false
+        syncRawInkToSelectionMenu()   // selection cleared → restore hardware pen if it was paused
+        procrastinator = false
+        penState = false
+        imageMode = true
+        selectedImage = element
+        selectedTextBox = null
+        applyStrokes(strokes, true)
+        drawImageSelection()
+    }
+
+    /** Select a text box and enter the manipulation mode (finger drag moves it, like an image). */
+    private fun enterTextBoxManipulation(element: TextElement) {
+        textMode = false
+        pasteMode = false
+        selectionMode = false
+        hasSelection = false
+        syncRawInkToSelectionMenu()   // selection cleared → restore hardware pen if it was paused
+        procrastinator = false
+        penState = false
+        imageMode = true
+        selectedImage = null
+        selectedTextBox = element
+        applyStrokes(strokes, true)
+        drawImageSelection()
+    }
+
+    /** The creation menu shown on a long-press over empty canvas. */
+    private fun showCanvasCreationMenu(cx: Float, cy: Float, pressX: Float, pressY: Float) {
+        if (context == null) return
+        showLedgerMenu(
+            pressX, pressY, "ADD HERE",
+            listOf(
+                listOf(
+                    LedgerContextMenu.Item("Text box") { showTextInputDialog(cx, cy) },
+                    // One door for everything you can catch: photo, upload, voice, video. It used
+                    // to be two image entries here and recording hidden behind a lasso.
+                    LedgerContextMenu.Item("Add media…") { showAddMediaMenu(cx, cy) },
+                    LedgerContextMenu.Item("🔖 Intake a link…") { onIntakeLink(cx, cy) },
+                    LedgerContextMenu.Item("Insert clipping…") { showClippingsPicker(cx, cy) },
+                    LedgerContextMenu.Item("Simple shapes…") { showShapesPicker(cx, cy) }
+                ),
+                listOf(
+                    LedgerContextMenu.Item("Arrange as gallery") { arrangeGallery() },
+                    LedgerContextMenu.Item("Paste") { pasteUnifiedAt(cx, cy) },
+                    LedgerContextMenu.Item("Share page as image") { onSharePage() }
+                )
+            ) + extraCreationGroups(cx, cy)
+        )
+    }
+
+    /**
+     * Everything you can catch, behind one entry.
+     *
+     * A picture lands on the page where you pressed, because that's a thing you're placing. A
+     * recording becomes an A/V gram on the day's board instead, because it isn't something you
+     * put in a spot — it's something you file.
+     */
+    private fun showAddMediaMenu(cx: Float, cy: Float) {
+        if (context == null) return
+        showIconMenu(getString(R.string.gram_capture_title), listOf(
+            getString(R.string.reader_capture_photo) to {
+                pendingPlacePoint = PointF(cx, cy); launchCameraCapture()
+            },
+            getString(R.string.reader_capture_upload) to {
+                pendingPlacePoint = PointF(cx, cy); launchImagePicker()
+            },
+            getString(R.string.reader_capture_voice) to { onRecordAvGram(com.toolsboox.da.Attachment.Kind.AUDIO) },
+            getString(R.string.gram_capture_video) to { onRecordAvGram(com.toolsboox.da.Attachment.Kind.VIDEO) }
+        ))
+    }
+
+    /** Record an A/V gram of [kind] for this surface's day. Base: nothing to record onto. */
+    protected open fun onRecordAvGram(kind: com.toolsboox.da.Attachment.Kind) {}
+
+    /** Page-specific creation actions (e.g. the Synthesize page's engines). Base: none. */
+    protected open fun extraCreationGroups(cx: Float, cy: Float): List<List<LedgerContextMenu.Item>> = emptyList()
+
+    /** "Synthesize…" on a single text box — the day page runs the engines on just that object. */
+    protected open fun onSynthesizeText(element: TextElement) {}
+
+    /** The current page.s text boxes, read-only (for gathering essay body text). */
+    protected fun currentTextElements(): List<TextElement> = textElements
+
+    /** Drop generated text onto the page below the existing boxes, saved + re-rendered. */
+    protected fun placeGeneratedText(text: String) {
+        val y = ((textElements.maxOfOrNull { it.y } ?: 60f) + 140f).coerceAtMost(CANVAS_HEIGHT - 400f)
+        textElements.add(TextElement(x = 80f, y = y, text = text))
+        applyStrokes(strokes, true)
+        onTextElementsChanged(textElements)
+    }
+
+    /**
+     * Grid picker of the built-in shapes — tap to drop one at [cx],[cy], ready to move and resize.
+     *
+     * Deliberately not seeded into the Clippings library: that library is yours, a record of
+     * things you cut out, and filling it with eighteen stock shapes would bury your own work in
+     * furniture. These are always available and never accumulate.
+     */
+    private fun showShapesPicker(cx: Float, cy: Float) {
+        val ctx = context ?: return
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val cols = (resources.configuration.screenWidthDp / 110).coerceIn(3, 6)
+        val grid = android.widget.GridLayout(ctx).apply {
+            columnCount = cols
+            setPadding(px(12), px(8), px(12), px(8))
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Simple shapes")
+            .setView(android.widget.ScrollView(ctx).apply { addView(grid) })
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        for (shape in com.toolsboox.ot.ShapeLibrary.ALL) {
+            val cell = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER
+                setPadding(px(6), px(6), px(6), px(6))
+                addView(android.widget.ImageView(ctx).apply {
+                    setImageBitmap(com.toolsboox.ot.ShapeLibrary.bitmap(shape.key, 160))
+                    layoutParams = LinearLayout.LayoutParams(px(52), px(52))
+                })
+                setOnClickListener { dialog.dismiss(); placeShapeAt(shape.key, cx, cy) }
+            }
+            grid.addView(cell)
+        }
+        showModal(dialog)
+    }
+
+    /** Drop a shape on the surface, selected so the very next thing you do is size it. */
+    private fun placeShapeAt(key: String, cx: Float, cy: Float) {
+        val bmp = com.toolsboox.ot.ShapeLibrary.bitmap(key) ?: return
+        val baos = java.io.ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
+        val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        // Smaller than a placed gram: a shape is a mark you put ON the page, not a card.
+        val w = (CANVAS_WIDTH * 0.22f)
+        val h = w * bmp.height / bmp.width
+        val element = ImageElement(
+            x = (cx - w / 2f).coerceIn(0f, (CANVAS_WIDTH - w).coerceAtLeast(0f)),
+            y = (cy - h / 2f).coerceIn(0f, (CANVAS_HEIGHT - h).coerceAtLeast(0f)),
+            width = w, height = h, data = base64,
+            sourceLabel = key, distortable = true
+        )
+        pushUndo()
+        imageElements.add(element)
+        onImageElementsChanged(imageElements)
+        imageMode = true
+        penState = false
+        selectedImage = element
+        applyStrokes(strokes, true)
+    }
+
+    /** Grid picker of the Clippings library — tap to place at [cx],[cy]; long-press to delete. */
+    private fun showClippingsPicker(cx: Float, cy: Float) {
+        val ctx = requireContext()
+        val clippings = com.toolsboox.plugin.calendar.ot.ClippingsStore.list(ctx)
+        if (clippings.isEmpty()) {
+            Toast.makeText(ctx, "No clippings yet. Save a gram to your library first.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val grid = android.widget.GridLayout(ctx).apply {
+            columnCount = 3; setPadding(px(12), px(12), px(12), px(12))
+        }
+        lateinit var dialog: androidx.appcompat.app.AlertDialog
+        for (c in clippings) {
+            val bytes = runCatching { Base64.decode(c.data, Base64.DEFAULT) }.getOrNull() ?: continue
+            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: continue
+            val cell = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = android.widget.GridLayout.LayoutParams().apply {
+                    width = px(100); setMargins(px(6), px(6), px(6), px(6))
+                }
+            }
+            val iv = android.widget.ImageView(ctx).apply {
+                setImageBitmap(bmp)
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                setBackgroundColor(0xFFF0F0F0.toInt())
+                layoutParams = LinearLayout.LayoutParams(px(100), px(92))
+            }
+            cell.addView(iv)
+            cell.addView(TextView(ctx).apply {
+                text = c.label.ifBlank { " " }
+                textSize = 10f; setTextColor(0xFF555555.toInt()); maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                gravity = Gravity.CENTER_HORIZONTAL
+            })
+            cell.setOnClickListener { dialog.dismiss(); placeClippingAt(c, cx, cy) }
+            // Long-press: manage — rename (label follows the clip everywhere) or delete.
+            cell.setOnLongClickListener {
+                androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                    .setTitle(c.label.ifBlank { "Clipping" })
+                    .setItems(arrayOf("✎  Rename", "🗑  Delete")) { _, which ->
+                        if (which == 0) {
+                            val input = EditText(ctx).apply { hint = "Name"; setText(c.label); setSingleLine() }
+                            val pad = px(16)
+                            val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input) }
+                            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                                .setTitle("Rename clipping").setView(box)
+                                .setPositiveButton("Save") { _, _ ->
+                                    com.toolsboox.plugin.calendar.ot.ClippingsStore.rename(ctx, c.id, input.text.toString().trim())
+                                }
+                                .setNegativeButton("Cancel", null).show()
+                        } else {
+                            com.toolsboox.plugin.calendar.ot.ClippingsStore.delete(ctx, c.id)
+                            Toast.makeText(ctx, "Clipping deleted", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    .setNegativeButton("Cancel", null).show()
+                dialog.dismiss(); true
+            }
+            grid.addView(cell)
+        }
+        dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Insert clipping")
+            .setView(android.widget.ScrollView(ctx).apply { addView(grid) })
+            .setNegativeButton("Close", null)
+            .create()
+        dialog.show()
+    }
+
+    /** Place a saved clipping onto the surface at [cx],[cy], selected for immediate move/resize.
+     *  LINEAGE PRESERVED: the placed gram carries the clipping's gramId + source pointers, so
+     *  "Where used" groups it with every other placement and "Go to source" still jumps home. */
+    private fun placeClippingAt(clip: com.toolsboox.plugin.calendar.da.v2.Clipping, cx: Float, cy: Float) {
+        val bytes = runCatching { Base64.decode(clip.data, Base64.DEFAULT) }.getOrNull() ?: return
+        val raw = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
+        // A scrap gets its paper and its tape, the same as a card placed on a board. This door
+        // was missed when placement got its treatment: Add-to-Pickings ran it, Insert clipping
+        // dropped the pixels verbatim, and the two look like different apps on the same page.
+        // Change it afterwards from "Shapes & cute cuts" like any other gram.
+        val bmp = com.toolsboox.ot.CardTreatment.card(raw)
+        val baos = java.io.ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
+        val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        val w = (CANVAS_WIDTH * IMAGE_PLACE_FRACTION).coerceAtMost(bmp.width.toFloat())
+        val h = w * bmp.height / bmp.width
+        val pxp = (cx - w / 2f).coerceIn(0f, (CANVAS_WIDTH - w).coerceAtLeast(0f))
+        val pyp = (cy - h / 2f).coerceIn(0f, (CANVAS_HEIGHT - h).coerceAtLeast(0f))
+        // Placed clip-art is decoration: no source, no label, no provenance — it snaps onto the
+        // page for looks and never shows up in a rhizome or on the Map. The library keeps the
+        // clipping's lineage; a copy stamped onto a page does not inherit it.
+        val element = ImageElement(
+            x = pxp, y = pyp, width = w, height = h, data = base64,
+            decorative = true
+        )
+        pushUndo()
+        imageElements.add(element)
+        onImageElementsChanged(imageElements)
+        imageMode = true
+        penState = false
+        selectedImage = element
+        applyStrokes(strokes, true)
+    }
+
+    /** Long-press on a text box: management menu (edit / move / clipboard ops / delete). */
+    private fun showTextBoxMenu(element: TextElement, pressX: Float, pressY: Float) {
+        val ctx = context ?: return
+        showLedgerMenu(
+            pressX, pressY, "TEXT BOX",
+            listOf(
+                listOf(
+                    LedgerContextMenu.Item("Edit text") { showTextEditDialog(element) },
+                    LedgerContextMenu.Item("Move — drag it") { enterTextBoxManipulation(element) },
+                    LedgerContextMenu.Item("Synthesize…") { onSynthesizeText(element) },
+                    LedgerContextMenu.Item("🔗 Connect to…") { onTextConnect(element) },
+                    LedgerContextMenu.Item("🕸 Its rhizome…") { onTextRhizome(element) },
+                    LedgerContextMenu.Item(if (element.contactId.isNullOrBlank()) "Assign to contact…" else "Contact…") {
+                        pickContact { id ->
+                            element.contactId = id
+                            element.timestamp = System.currentTimeMillis()
+                            onTextElementsChanged(textElements)
+                            applyStrokes(strokes, true)
+                        }
+                    }
+                ),
+                listOf(
+                    LedgerContextMenu.Item("Duplicate") {
+                        val copy = element.copy(
+                            elementId = UUID.randomUUID(),
+                            timestamp = System.currentTimeMillis(),
+                            x = element.x + 40f, y = element.y + 40f
+                        )
+                        textElements.add(copy)
+                        onTextElementsChanged(textElements)
+                        applyStrokes(strokes, true)
+                    },
+                    LedgerContextMenu.Item("Cut") {
+                        strokeClipboard.copyTextBox(element)
+                        textElements.remove(element)
+                        onTextElementsChanged(textElements)
+                        applyStrokes(strokes, true)
+                    },
+                    LedgerContextMenu.Item("Copy") { strokeClipboard.copyTextBox(element) }
+                ),
+                listOf(
+                    LedgerContextMenu.Item("Delete") {
+                        textElements.remove(element)
+                        onTextElementsChanged(textElements)
+                        applyStrokes(strokes, true)
+                    }
+                )
+            )
+        )
+    }
+
+    /**
+     * Paste the unified clipboard at a canvas point: internal image or text box
+     * first, then the system clipboard (image URI → image element, text → text box).
+     */
+    private fun pasteUnifiedAt(cx: Float, cy: Float) {
+        // Internal clipboard: image element.
+        strokeClipboard.stampImageAt(cx, cy)?.let { stamped ->
+            pushUndo()
+            imageElements.add(stamped)
+            onImageElementsChanged(imageElements)
+            enterImageManipulation(stamped)
+            return
+        }
+        // Internal clipboard: text box.
+        strokeClipboard.stampTextBoxAt(cx, cy)?.let { stamped ->
+            textElements.add(stamped)
+            onTextElementsChanged(textElements)
+            applyStrokes(strokes, true)
+            return
+        }
+        // Internal clipboard: ink strokes — so recently cut/copied INK pastes as ink, not as
+        // stale system-clipboard text.
+        if (strokeClipboard.hasContent && !strokeClipboard.hasImage) {
+            val pasted = strokeClipboard.stampAt(cx, cy)
+            if (pasted.isNotEmpty()) {
+                pushUndo()
+                strokes.addAll(pasted)
+                onStrokesAdded(pasted)
+                applyStrokes(strokes, true)
+                // Leave the pasted ink as a LIVE selection so it can be dragged into place right
+                // away (mirrors the paste-mode tap path) — a lasso'd paste that drops un-selected
+                // can't be moved, which is the whole point of pasting a selection.
+                selectedStrokes = pasted.toMutableList()
+                hasSelection = true
+                selectionMode = false
+                selBox = computeSelBox(selectedStrokes)
+                syncRawInkToSelectionMenu()   // keep the hardware pen paused while the selection is live
+                drawWithSelection()
+                onStrokeChanged(strokes)
+                return
+            }
+        }
+        // System clipboard: image URI or plain text.
+        try {
+            val cm = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            val clip = cm?.primaryClip
+            if (clip != null && clip.itemCount > 0) {
+                val item = clip.getItemAt(0)
+                val uri = item.uri
+                if (uri != null) {
+                    pendingPlacePoint = PointF(cx, cy)
+                    insertImageFromUri(uri)
+                    return
+                }
+                val text = item.coerceToText(requireContext())?.toString()?.trim()
+                if (!text.isNullOrEmpty()) {
+                    val element = TextElement(x = cx, y = cy, text = text)
+                    textElements.add(element)
+                    onTextElementsChanged(textElements)
+                    applyStrokes(strokes, true)
+                    return
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "Paste from system clipboard failed")
+        }
+        Toast.makeText(requireContext(), "Nothing to paste", Toast.LENGTH_SHORT).show()
+    }
+
+    /** Edit an existing text box's content; emptying the text deletes the box. */
+    private fun showTextEditDialog(element: TextElement) {
+        val ctx = context ?: return
+        val editText = EditText(ctx)
+        editText.setSingleLine(false)
+        editText.setLines(3)
+        editText.setText(element.text)
+        editText.setSelection(element.text.length)
+
+        val container = FrameLayout(ctx)
+        val params = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        )
+        val margin = (16 * resources.displayMetrics.density).toInt()
+        params.setMargins(margin, 0, margin, 0)
+        editText.layoutParams = params
+        container.addView(editText)
+
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle(R.string.calendar_text_dialog_title)
+            .setView(container)
+            .setPositiveButton(R.string.ok) { dialog, _ ->
+                val newText = editText.text.toString().trim()
+                if (newText.isEmpty()) {
+                    textElements.remove(element)
+                } else {
+                    element.text = newText
+                }
+                onTextElementsChanged(textElements)
+                applyStrokes(strokes, true)
+                dialog.dismiss()
+            }
+            .setNegativeButton(R.string.cancel) { dialog, _ -> dialog.cancel() }
+            .create().show()
+        editText.requestFocus()
+    }
+
+    /** Launch a standard camera capture into a FileProvider cache file. */
+    private fun launchCameraCapture() {
+        try {
+            val dir = File(requireContext().cacheDir, "camera").apply { mkdirs() }
+            val photo = File(dir, "capture-${Instant.now().epochSecond}.jpg")
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                requireContext(), "${requireContext().packageName}.fileprovider", photo
+            )
+            pendingCameraUri = uri
+            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            cameraCaptureLauncher.launch(intent)
+        } catch (e: Exception) {
+            pendingCameraUri = null
+            Timber.w(e, "Camera capture unavailable")
+            Toast.makeText(requireContext(), "No camera available on this device", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun imageResizeHandle(box: RectF): RectF {
+        val h = IMAGE_HANDLE_SIZE
+        return RectF(box.right - h / 2f, box.bottom - h / 2f, box.right + h / 2f, box.bottom + h / 2f)
+    }
+
+    /** The ✂ Cut / ⛶ Crop / ✕ Del chips along the top edge of a selected image (right-anchored, inside).
+     *  Copy / Duplicate / Paste are handled by the toolbar; these are the image-specific actions. */
+    private fun imageChipRects(box: RectF): List<Pair<String, RectF>> {
+        val s = IMAGE_CHIP_SIZE
+        val pad = 6f
+        val top = box.top + pad
+        val rects = mutableListOf<Pair<String, RectF>>()
+        var right = box.right - pad
+        for (label in listOf("Del", "Crop", "Cut", "Rot", "Dup")) {
+            rects.add(label to RectF(right - s, top, right, top + s))
+            right -= (s + pad)
+        }
+        return rects
+    }
+
+    /** Crop the selected image's bitmap to the given canvas-space rect, re-encode, and reposition. */
+    private fun applyCropToImage(element: ImageElement, cropCanvas: RectF) {
+        val bmp = bitmapForElement(element) ?: return
+        val c = RectF(cropCanvas)
+        if (!c.intersect(RectF(element.x, element.y, element.x + element.width, element.y + element.height))) return
+        val sx = bmp.width / element.width
+        val sy = bmp.height / element.height
+        val bx = ((c.left - element.x) * sx).toInt().coerceIn(0, bmp.width - 1)
+        val by = ((c.top - element.y) * sy).toInt().coerceIn(0, bmp.height - 1)
+        val bw = (c.width() * sx).toInt().coerceIn(1, bmp.width - bx)
+        val bh = (c.height() * sy).toInt().coerceIn(1, bmp.height - by)
+        val cropped = Bitmap.createBitmap(bmp, bx, by, bw, bh)
+        val baos = ByteArrayOutputStream()
+        cropped.compress(Bitmap.CompressFormat.PNG, 100, baos)
+        seedGramId(element)
+        element.data = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        element.x = c.left
+        element.y = c.top
+        element.width = c.width()
+        element.height = c.height()
+        imageBitmapCache[element.elementId] = cropped
+    }
+
+    /**
+     * Pen-edit a placed gram: the image sits under a live ink pad; you write on it with the
+     * stylus and Done composites the ink into the bitmap at its NATIVE resolution. The edit
+     * rides transformImageElement, so gramId is seeded first and sourceLink/sourceLabel are
+     * untouched — the edited gram still jumps home and still groups in "Where used".
+     * Mirrors iOS PenEditView.
+     */
+    private fun penEditImage(element: ImageElement) {
+        val ctx = context ?: return
+        val src = bitmapForElement(element) ?: return
+        val pad = InkOverImageView(ctx, src)
+        val dm = resources.displayMetrics
+        // Size the pad to the gram's aspect, capped so the dialog buttons stay on screen.
+        val maxH = (dm.heightPixels * 0.68f).toInt()
+        val padW = (dm.widthPixels * 0.88f).toInt()
+        val padH = (padW.toFloat() * src.height / src.width).toInt()
+            .coerceAtLeast((240 * dm.density).toInt()).coerceAtMost(maxH)
+        val box = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            val p = (8 * dm.density).toInt(); setPadding(p, p / 2, p, 0)
+            addView(pad, android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT, padH))
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Edit in ink")
+            .setView(box)
+            .setPositiveButton("Done") { _, _ ->
+                val edited = pad.composite()
+                if (edited != null) transformImageElement(element) { edited }
+            }
+            .setNeutralButton("Clear", null)
+            .setNegativeButton("Cancel", null)
+            .show()
+        // Keep the dialog open on Clear — re-bind after show().
+        dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { pad.clear() }
+    }
+
+    /** The gram drawn fit-to-view with a live ink layer on top. composite() bakes the ink into
+     *  a copy of the bitmap at native resolution (stroke width scales with the bitmap). */
+    private class InkOverImageView(context: android.content.Context, private val src: Bitmap) : View(context) {
+        private val paths = mutableListOf<android.graphics.Path>()
+        private var current: android.graphics.Path? = null
+        private val dst = RectF()
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.BLACK; style = Paint.Style.STROKE
+            strokeWidth = 4f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+        }
+
+        init { setBackgroundColor(android.graphics.Color.WHITE) }
+
+        override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
+            // Fit-center the gram; ink coordinates are captured in view space over this rect.
+            val scale = minOf(w / src.width.toFloat(), h / src.height.toFloat())
+            val dw = src.width * scale; val dh = src.height * scale
+            dst.set((w - dw) / 2f, (h - dh) / 2f, (w + dw) / 2f, (h + dh) / 2f)
+        }
+
+        @android.annotation.SuppressLint("ClickableViewAccessibility")
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    current = android.graphics.Path().also { it.moveTo(event.x, event.y); paths.add(it) }
+                }
+                MotionEvent.ACTION_MOVE -> current?.lineTo(event.x, event.y)
+                MotionEvent.ACTION_UP -> current = null
+            }
+            invalidate()
+            return true
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            canvas.drawBitmap(src, null, dst, null)
+            for (p in paths) canvas.drawPath(p, paint)
+        }
+
+        fun clear() { paths.clear(); current = null; invalidate() }
+
+        /** The gram with the ink baked in at native resolution, or null when nothing was drawn. */
+        fun composite(): Bitmap? {
+            if (paths.isEmpty() || dst.width() <= 0f) return null
+            val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+            val c = Canvas(out)
+            c.drawBitmap(src, 0f, 0f, null)
+            val scale = src.width / dst.width()
+            val m = Matrix().apply {
+                postTranslate(-dst.left, -dst.top)
+                postScale(scale, scale)
+            }
+            val inkPaint = Paint(paint).apply { strokeWidth = paint.strokeWidth * scale }
+            for (p in paths) {
+                val scaled = android.graphics.Path(p).apply { transform(m) }
+                c.drawPath(scaled, inkPaint)
+            }
+            return out
+        }
+    }
+
+    /** Apply a bitmap transform to an image: re-encode PNG inline, refresh cache, persist, repaint. */
+    /** Discrete gram sizes (long-press menu): width in page units, aspect kept.
+     *  Default placement is ~590 wide (M); S tucks in a corner, L dominates the page. */
+    /** Play an A/V gram: the local blob if this device has it, else the remote copy. */
+    private fun playAvGram(element: ImageElement) {
+        val ctx = context ?: return
+        com.toolsboox.plugin.calendar.ot.AvPlayback.play(
+            ctx, element.mediaKind, resolveAvGramFile(element), element.mediaUrl,
+            element.mediaTitle, element.durationMs
+        )
+    }
+
+    /** The creator's choice of title — renames the card, not the file. */
+    private fun renameAvGram(element: ImageElement) {
+        val ctx = context ?: return
+        val input = android.widget.EditText(ctx).apply {
+            setText(element.mediaTitle)
+            setSelection(text.length)
+            hint = "Title"
+            setSingleLine()
+        }
+        val pad = (16 * ctx.resources.displayMetrics.density).toInt()
+        val box = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(input)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Name this gram")
+            .setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                pushUndo()
+                element.mediaTitle = input.text.toString().trim()
+                element.timestamp = System.currentTimeMillis()
+                onImageElementsChanged(imageElements)
+                applyStrokes(strokes, true)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun setGramWidth(element: ImageElement, width: Float) {
+        val aspect = if (element.width > 0f) element.height / element.width else 1f
+        pushUndo()
+        element.width = width
+        element.height = width * aspect
+        element.timestamp = System.currentTimeMillis()
+        onImageElementsChanged(imageElements)
+        applyStrokes(strokes, true)
+    }
+
+    private fun transformImageElement(
+        element: ImageElement, preserveAspect: Boolean = false, transform: (Bitmap) -> Bitmap
+    ) {
+        val bmp = bitmapForElement(element) ?: return
+        val out = transform(bmp)
+        val baos = ByteArrayOutputStream()
+        out.compress(Bitmap.CompressFormat.PNG, 100, baos)
+        pushUndo()
+        seedGramId(element)
+        element.data = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        // Frames change the aspect ratio — grow the placed box to match so the
+        // polaroid isn't squashed into the photo's old proportions.
+        if (preserveAspect && out.width > 0) {
+            element.height = element.width * out.height.toFloat() / out.width
+        }
+        element.timestamp = System.currentTimeMillis()
+        imageBitmapCache[element.elementId] = out
+        onImageElementsChanged(imageElements)
+        applyStrokes(strokes, true)
+    }
+
+    /** Seed a gram's lineage id from its current (pre-edit) content so an edited variant still groups
+     *  with unedited copies of the original in "where used". Match key = gramId if set, else md5(data). */
+    private fun seedGramId(element: ImageElement) {
+        if (element.gramId.isNullOrBlank()) {
+            element.gramId = com.toolsboox.ot.CryptoUtils.md5Hash(element.data.toByteArray())
+        }
+    }
+
+    private fun flipBitmap(bmp: Bitmap, horizontal: Boolean): Bitmap {
+        val m = Matrix().apply { if (horizontal) preScale(-1f, 1f) else preScale(1f, -1f) }
+        return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+    }
+
+    // The frame and tape drawing now lives in com.toolsboox.ot.CardTreatment, so that placement
+    // can bake one on by default without reaching into a Fragment. These stay as the menu's
+    // names for them.
+
+    private fun polaroidBitmap(src: Bitmap, tape: Boolean): Bitmap =
+        com.toolsboox.ot.CardTreatment.polaroid(src, tape)
+
+    private fun tapeBitmap(src: Bitmap): Bitmap =
+        com.toolsboox.ot.CardTreatment.tapeOnly(src)
+
+    private fun invertBitmap(bmp: Bitmap): Bitmap {
+        val outBmp = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+        val cm = ColorMatrix(floatArrayOf(
+            -1f, 0f, 0f, 0f, 255f,
+            0f, -1f, 0f, 0f, 255f,
+            0f, 0f, -1f, 0f, 255f,
+            0f, 0f, 0f, 1f, 0f
+        ))
+        Canvas(outBmp).drawBitmap(bmp, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(cm) })
+        return outBmp
+    }
+
+    /** Threshold to 1-bit line art: dark pixels → opaque black, the rest → transparent (clean overlay). */
+    private fun thresholdBitmap(bmp: Bitmap, cutoff: Int = 128): Bitmap {
+        val w = bmp.width; val h = bmp.height
+        val pixels = IntArray(w * h)
+        bmp.getPixels(pixels, 0, w, 0, 0, w, h)
+        for (i in pixels.indices) {
+            val c = pixels[i]
+            val a = (c ushr 24) and 0xFF
+            val r = (c ushr 16) and 0xFF
+            val g = (c ushr 8) and 0xFF
+            val b = c and 0xFF
+            val lum = (r * 299 + g * 587 + b * 114) / 1000
+            pixels[i] = if (a > 32 && lum < cutoff) 0xFF000000.toInt() else 0x00000000
+        }
+        val outBmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        outBmp.setPixels(pixels, 0, w, 0, 0, w, h)
+        return outBmp
+    }
+
+    /** Fill the shape solid black — every non-transparent pixel → opaque black (a silhouette sticker). */
+    private fun solidBlackBitmap(bmp: Bitmap): Bitmap {
+        val w = bmp.width; val h = bmp.height
+        val pixels = IntArray(w * h)
+        bmp.getPixels(pixels, 0, w, 0, 0, w, h)
+        for (i in pixels.indices) {
+            pixels[i] = if (((pixels[i] ushr 24) and 0xFF) > 32) 0xFF000000.toInt() else 0x00000000
+        }
+        val outBmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        outBmp.setPixels(pixels, 0, w, 0, 0, w, h)
+        return outBmp
+    }
+
+    private fun bringImageToFront(element: ImageElement) {
+        pushUndo()
+        element.z = (imageElements.maxOfOrNull { it.z } ?: 0) + 1
+        element.timestamp = System.currentTimeMillis()
+        onImageElementsChanged(imageElements)
+        applyStrokes(strokes, true)
+    }
+
+    private fun sendImageToBack(element: ImageElement) {
+        pushUndo()
+        element.z = (imageElements.minOfOrNull { it.z } ?: 0) - 1
+        element.timestamp = System.currentTimeMillis()
+        onImageElementsChanged(imageElements)
+        applyStrokes(strokes, true)
+    }
+
+    /** Repaint the page plus the selected image's bounding box, resize handle and delete chip. */
+    private fun drawImageSelection() {
+        val lockCanvas = provideSurfaceView().holder.lockCanvas() ?: return
+        lockCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        lockCanvas.save()
+        lockCanvas.concat(viewMatrix)
+        renderImageElements(lockCanvas)
+        val strokePaint = Paint(paint)
+        for (stroke in strokes) drawStrokePath(lockCanvas, strokePaint, stroke)
+        renderTextElements(lockCanvas)
+        val sel = selectedImage
+        if (sel != null) {
+            val box = RectF(sel.x, sel.y, sel.x + sel.width, sel.y + sel.height)
+            lockCanvas.drawRect(box, lassoPaint)
+            val fill = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL; isAntiAlias = true }
+            val border = Paint().apply { color = Color.BLACK; style = Paint.Style.STROKE; strokeWidth = 3f; isAntiAlias = true }
+            val rh = imageResizeHandle(box)
+            lockCanvas.drawRect(rh, fill)
+            lockCanvas.drawRect(rh, border)
+            for ((label, r) in imageChipRects(box)) {
+                lockCanvas.drawRoundRect(r, 8f, 8f, fill)
+                lockCanvas.drawRoundRect(r, 8f, 8f, border)
+                val pad = 14f
+                val il = (r.left + pad).toInt(); val it = (r.top + pad).toInt()
+                val ir = (r.right - pad).toInt(); val ib = (r.bottom - pad).toInt()
+                when (label) {
+                    "Cut" -> ResourcesCompat.getDrawable(resources, R.drawable.ic_toolbar_cut, null)?.apply { setBounds(il, it, ir, ib); draw(lockCanvas) }
+                    "Crop" -> ResourcesCompat.getDrawable(resources, R.drawable.ic_toolbar_crop, null)?.apply { setBounds(il, it, ir, ib); draw(lockCanvas) }
+                    "Del" -> {
+                        lockCanvas.drawLine(il.toFloat(), it.toFloat(), ir.toFloat(), ib.toFloat(), border)
+                        lockCanvas.drawLine(ir.toFloat(), it.toFloat(), il.toFloat(), ib.toFloat(), border)
+                    }
+                    "Rot" -> {
+                        // A ~300° arc with a small chevron arrowhead → "rotate a step".
+                        val cx = (il + ir) / 2f; val cy = (it + ib) / 2f
+                        val rad = (ir - il) / 2.2f
+                        lockCanvas.drawArc(RectF(cx - rad, cy - rad, cx + rad, cy + rad), 20f, 300f, false, border)
+                        val a = Math.toRadians(20.0)
+                        val ex = cx + (rad * Math.cos(a)).toFloat(); val ey = cy + (rad * Math.sin(a)).toFloat()
+                        lockCanvas.drawLine(ex, ey, ex - 7f, ey - 7f, border)
+                        lockCanvas.drawLine(ex, ey, ex + 7f, ey - 7f, border)
+                    }
+                    "Dup" -> {
+                        // Two overlapping squares → "duplicate".
+                        val o = 5f
+                        lockCanvas.drawRect(il.toFloat() + o, it.toFloat() + o, ir.toFloat(), ib.toFloat(), border)
+                        lockCanvas.drawRect(il.toFloat(), it.toFloat(), ir.toFloat() - o, ib.toFloat() - o, fill)
+                        lockCanvas.drawRect(il.toFloat(), it.toFloat(), ir.toFloat() - o, ib.toFloat() - o, border)
+                    }
+                }
+            }
+            // Crop rectangle overlay while cropping.
+            val cr = cropRect
+            if (cropMode && cr != null) {
+                val cropPaint = Paint().apply {
+                    color = Color.BLACK; style = Paint.Style.STROKE; strokeWidth = 2f
+                    pathEffect = DashPathEffect(floatArrayOf(12f, 8f), 0f); isAntiAlias = true
+                }
+                lockCanvas.drawRect(cr, cropPaint)
+            }
+        }
+        // Selected text box: dashed outline + two handles. Bottom-right reflows the words
+        // to a new width (spatial); bottom-left ("A") scales the font. Dragging the body
+        // moves it; edit / duplicate / delete stay on the long-press menu.
+        selectedTextBox?.let {
+            val box = textElementBounds(it)
+            lockCanvas.drawRect(box, lassoPaint)
+            val fill = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL; isAntiAlias = true }
+            val border = Paint().apply { color = Color.BLACK; style = Paint.Style.STROKE; strokeWidth = 3f; isAntiAlias = true }
+            val rh = textResizeHandle(box)
+            lockCanvas.drawRect(rh, fill)
+            lockCanvas.drawRect(rh, border)
+            val fh = fontResizeHandle(box)
+            lockCanvas.drawRect(fh, fill)
+            lockCanvas.drawRect(fh, border)
+            val aPaint = Paint().apply {
+                color = Color.BLACK; isAntiAlias = true
+                textSize = fh.height() * 0.7f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                textAlign = Paint.Align.CENTER
+            }
+            lockCanvas.drawText("A", fh.centerX(), fh.bottom - fh.height() * 0.24f, aPaint)
+        }
+        lockCanvas.restore()
+
+        // Pause the Onyx raw-drawing renderer around the post, exactly like drawWithSelection —
+        // posting to the surface while the pen renderer owns it crashes the native layer.
+        touchHelper?.setRawDrawingEnabled(false)
+        touchHelper?.isRawDrawingRenderEnabled = false
+        provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
+        if (!inkSuppressed) {   // don't wake the hardware pen while a lasso/selection/menu is up
+            touchHelper?.setRawDrawingEnabled(true)
+            touchHelper?.isRawDrawingRenderEnabled = true
         }
     }
 
@@ -1176,9 +3739,9 @@ abstract class SurfaceFragment : ScreenFragment() {
      * @param y the y coordinate on the surface
      */
     private fun showPenSettingsDialog() {
-        val colorNames = arrayOf("Black", "Red", "Blue", "Green")
-        val colorValues = intArrayOf(Color.BLACK, Color.RED, Color.BLUE, Color.rgb(0, 128, 0))
-        val widthNames = arrayOf("Fine", "Med", "Thick", "Bold")
+        // Last entry is the "highlighter" / transparent marker: a translucent yellow,
+        // drawn with normal alpha blending like any other stroke.
+        val colorValues = intArrayOf(Color.BLACK, Color.RED, Color.BLUE, Color.rgb(0, 128, 0), Color.argb(90, 255, 213, 0))
         val widthValues = floatArrayOf(1.0f, 3.0f, 5.0f, 8.0f)
 
         var selColor = colorValues.indexOfFirst { it == paint.color }.coerceAtLeast(0)
@@ -1186,43 +3749,190 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         val dp = resources.displayMetrics.density
         val ctx = requireContext()
-        val root = android.widget.LinearLayout(ctx).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), (4 * dp).toInt())
         }
 
-        val colorGroup = android.widget.RadioGroup(ctx).apply { orientation = android.widget.RadioGroup.HORIZONTAL }
-        val colorBtns = colorNames.mapIndexed { i, name ->
-            android.widget.RadioButton(ctx).apply {
-                text = name; id = i; isChecked = i == selColor
-                textSize = 14f
-            }.also { colorGroup.addView(it) }
+        fun ringDrawable(selected: Boolean, shape: Int) = GradientDrawable().apply {
+            this.shape = shape
+            setColor(Color.TRANSPARENT)
+            if (shape == GradientDrawable.RECTANGLE) cornerRadius = 8f * dp
+            if (selected) setStroke((2 * dp).toInt(), Color.DKGRAY)
         }
-        colorGroup.setOnCheckedChangeListener { _, id -> selColor = id }
-        root.addView(colorGroup)
 
-        val widthGroup = android.widget.RadioGroup(ctx).apply { orientation = android.widget.RadioGroup.HORIZONTAL }
-        widthNames.forEachIndexed { i, name ->
-            android.widget.RadioButton(ctx).apply {
-                text = name; id = i + 10; isChecked = i == selWidth
-                textSize = 14f
-            }.also { widthGroup.addView(it) }
+        val itemSize = (44 * dp).toInt()
+        val itemMargin = (4 * dp).toInt()
+
+        // Two-letter labels so the swatches stay distinguishable on grayscale e-ink.
+        val colorLabels = arrayOf("Bk", "Rd", "Bl", "Gn", "Hl")
+        // Picks white or black text based on the swatch's perceived luminance.
+        fun labelColorFor(color: Int): Int {
+            val lum = 0.299 * Color.red(color) + 0.587 * Color.green(color) + 0.114 * Color.blue(color)
+            return if (lum < 140) Color.WHITE else Color.BLACK
         }
-        widthGroup.setOnCheckedChangeListener { _, id -> selWidth = id - 10 }
-        root.addView(widthGroup)
 
-        AlertDialog.Builder(ctx).setView(root)
-            .setPositiveButton("OK") { _, _ ->
-                paint.color = colorValues[selColor]
-                paint.strokeWidth = widthValues[selWidth]
-                touchHelper?.setStrokeWidth(paint.strokeWidth * baseScale * zoomScale)
-                touchHelper?.setStrokeColor(paint.color)
-                provideToolbarDrawing().toolbarPen.background.setTint(
-                    if (paint.color == Color.BLACK) Color.GRAY else paint.color
-                )
+        // Color row: circular swatches showing the actual pen color.
+        val colorRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        val colorItems = colorValues.indices.map { i ->
+            val swatch = View(ctx).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(colorValues[i])
+                    if (Color.alpha(colorValues[i]) < 255) setStroke((1 * dp).toInt(), Color.LTGRAY)
+                }
             }
-            .setNegativeButton("Cancel", null)
-            .create().show()
+            val label = TextView(ctx).apply {
+                text = colorLabels.getOrElse(i) { "" }
+                setTextColor(labelColorFor(colorValues[i]))
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+            }
+            FrameLayout(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(itemSize, itemSize).apply {
+                    setMargins(itemMargin, itemMargin, itemMargin, itemMargin)
+                }
+                background = ringDrawable(i == selColor, GradientDrawable.OVAL)
+                val swatchSize = (itemSize * 0.65f).toInt()
+                addView(swatch, FrameLayout.LayoutParams(swatchSize, swatchSize).apply { gravity = Gravity.CENTER })
+                addView(label, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER })
+                isClickable = true
+            }.also { colorRow.addView(it) }
+        }
+        // Selections apply LIVE (no OK step) and activate on ACTION_DOWN: on e-ink
+        // the click round-trip (press-state redraw + UP) reads as lag, and MJH asked
+        // for no confirmation step. applyLiveSelection is assigned after the rows
+        // are built; the reference lets the row handlers call it.
+        var applyLiveSelection: () -> Unit = {}
+        // Cheap per-tap subset (app-side pen state + toolbar tint) — no Onyx hardware calls.
+        var applyLivePrefs: () -> Unit = {}
+
+        colorItems.forEachIndexed { i, item ->
+            item.setOnTouchListener { v, e ->
+                if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                    selColor = i
+                    colorItems.forEachIndexed { j, c -> c.background = ringDrawable(j == selColor, GradientDrawable.OVAL) }
+                    applyLivePrefs()
+                    v.performClick()
+                }
+                true
+            }
+        }
+        root.addView(colorRow)
+
+        // Width row: horizontal bars whose thickness represents the stroke width.
+        val widthItemWidth = (60 * dp).toInt()
+        val widthRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        val widthItems = widthValues.indices.map { i ->
+            val barHeight = (widthValues[i] * 2.5f * dp).toInt().coerceAtLeast((2 * dp).toInt())
+            val bar = View(ctx).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    setColor(Color.DKGRAY)
+                    cornerRadius = barHeight / 2f
+                }
+            }
+            FrameLayout(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(widthItemWidth, itemSize).apply {
+                    setMargins(itemMargin, itemMargin, itemMargin, itemMargin)
+                }
+                background = ringDrawable(i == selWidth, GradientDrawable.RECTANGLE)
+                val barWidth = (widthItemWidth * 0.7f).toInt()
+                addView(bar, FrameLayout.LayoutParams(barWidth, barHeight).apply { gravity = Gravity.CENTER })
+                isClickable = true
+            }.also { widthRow.addView(it) }
+        }
+        widthItems.forEachIndexed { i, item ->
+            item.setOnTouchListener { v, e ->
+                if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                    selWidth = i
+                    widthItems.forEachIndexed { j, c -> c.background = ringDrawable(j == selWidth, GradientDrawable.RECTANGLE) }
+                    applyLivePrefs()
+                    v.performClick()
+                }
+                true
+            }
+        }
+        root.addView(widthRow)
+
+        // Style row: normal pen vs. calligraphy (pressure-variable fountain nib).
+        var selCalligraphy = calligraphyMode
+        val styleLabels = arrayOf("Pen", "✒ Calligraphy")
+        val styleRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        val styleItems = styleLabels.indices.map { i ->
+            val label = TextView(ctx).apply {
+                text = styleLabels[i]
+                setTextColor(Color.BLACK)
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+            }
+            FrameLayout(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, itemSize).apply {
+                    setMargins(itemMargin, itemMargin, itemMargin, itemMargin)
+                }
+                background = ringDrawable((i == 1) == selCalligraphy, GradientDrawable.RECTANGLE)
+                setPadding((12 * dp).toInt(), 0, (12 * dp).toInt(), 0)
+                addView(label, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.MATCH_PARENT).apply { gravity = Gravity.CENTER })
+                isClickable = true
+            }.also { styleRow.addView(it) }
+        }
+        styleItems.forEachIndexed { i, item ->
+            item.setOnTouchListener { v, e ->
+                if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                    selCalligraphy = (i == 1)
+                    styleItems.forEachIndexed { j, c -> c.background = ringDrawable((j == 1) == selCalligraphy, GradientDrawable.RECTANGLE) }
+                    applyLivePrefs()
+                    v.performClick()
+                }
+                true
+            }
+        }
+        root.addView(styleRow)
+
+        // Live-apply: every tapped option takes effect immediately (pen, hardware
+        // preview, prefs, toolbar tint). Exactly what the old OK button did.
+        // Per-tap (cheap): app-side pen state, pref, and the toolbar tint for instant visual
+        // feedback. Deliberately NO touchHelper.setStroke* here — the raw session is paused
+        // while the modal is up, so those hardware reconfigures (setStrokeStyle cold-starts the
+        // native pen, ~1s on-device) have no visible effect yet froze the UI on every tap.
+        applyLivePrefs = {
+            paint.color = colorValues[selColor]
+            paint.strokeWidth = widthValues[selWidth]
+            calligraphyMode = selCalligraphy
+            sharedPreferences.edit().putBoolean("calligraphyMode", calligraphyMode).apply()
+            val opaqueColor = Color.rgb(Color.red(paint.color), Color.green(paint.color), Color.blue(paint.color))
+            provideToolbarDrawing().toolbarPen.background.setTint(
+                if (opaqueColor == Color.BLACK) Color.GRAY else opaqueColor
+            )
+        }
+        // Full apply (incl. the heavy Onyx hardware calls) — run ONCE on dismiss, right before
+        // the raw session is restored, so the hardware pen picks up the final selection.
+        applyLiveSelection = {
+            applyLivePrefs()
+            touchHelper?.setStrokeWidth(effectivePenWidth() * baseScale * zoomScale)
+            touchHelper?.setStrokeColor(paint.color)
+            applyStrokeStyle()
+        }
+
+        // Pause the raw-ink session while the modal is up. With the session live,
+        // the Onyx EPD layer keeps priority on the EMR stylus for the surface
+        // below, which made stylus taps on the dialog feel sluggish. Paused, the
+        // stylus dispatches to the dialog window like any other pointer. The
+        // dismiss listener re-applies the final selection (persisting it exactly
+        // as OK used to) and restores the hardware pen with the NEW settings.
+        touchHelper?.setRawDrawingEnabled(false)
+        touchHelper?.isRawDrawingRenderEnabled = false
+
+        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setView(root).create()
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.setOnDismissListener {
+            applyLiveSelection()
+            touchHelper?.setRawDrawingEnabled(true)
+            touchHelper?.isRawDrawingRenderEnabled = true
+        }
+        dialog.show()
     }
 
     private fun showTextInputDialog(x: Float, y: Float) {
@@ -1243,7 +3953,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         editText.layoutParams = params
         container.addView(editText)
 
-        val builder = AlertDialog.Builder(context)
+        val builder = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
             .setTitle(R.string.calendar_text_dialog_title)
             .setView(container)
             .setPositiveButton(R.string.ok) { dialog, _ ->
@@ -1269,6 +3979,7 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     fun exportBitmap() {
+        if (!ensureShadowCanvas()) return
         if (!checkPermission(Manifest.permission.READ_EXTERNAL_STORAGE)) {
             showError(null, R.string.main_read_external_storage_permission_missing, provideSurfaceView())
             return
@@ -1286,7 +3997,57 @@ abstract class SurfaceFragment : ScreenFragment() {
             title,
             title
         )
-        showMessage(getString(R.string.team_drawer_page_export_message).format(title), provideSurfaceView())
+        showMessage(getString(R.string.surface_page_export_message).format(title), provideSurfaceView())
+    }
+
+    /**
+     * When true, the Onyx raw-ink session is not created for this screen and
+     * the fragment uses the plain MotionEvent capture + software rendering
+     * path instead (the same fallback the Viwoods flavor uses). Needed for
+     * pages with tap-to-interact zones: the Onyx raw input reader grabs ALL
+     * touch (pen and finger) over the surface at the system level, so finger
+     * taps never reach the app while a raw session is open.
+     */
+    open fun provideDisableRawInkCapture(): Boolean = false
+
+    /**
+     * Floating overlay views (nav / tool pills + their grips) that sit ON TOP of the
+     * drawing surface. Their bounds are fed to the Onyx raw reader as EXCLUDE rects so
+     * the stylus neither inks a stray dot over them nor gets swallowed there — which lets
+     * a stylus drag/tap the pill (finger already worked via enableFingerTouch). Concrete
+     * drawing screens override this to return their pills. Re-fed via [refreshRawExcludeRects]
+     * when a pill is moved or collapsed.
+     */
+    open fun provideExcludeViews(): List<View> = emptyList()
+
+    /** Bounds of the visible exclude views, in the surface's own coordinate space. */
+    private fun rawExcludeRects(): ArrayList<Rect> {
+        val out = ArrayList<Rect>()
+        val surface = provideSurfaceView()
+        val s = IntArray(2); surface.getLocationOnScreen(s)
+        for (v in provideExcludeViews()) {
+            if (v.visibility != View.VISIBLE || v.width == 0 || v.height == 0) continue
+            val p = IntArray(2); v.getLocationOnScreen(p)
+            val left = p[0] - s[0]; val top = p[1] - s[1]
+            out.add(Rect(left, top, left + v.width, top + v.height))
+        }
+        return out
+    }
+
+    /**
+     * Re-apply the raw limit rect with fresh exclude rects (after a pill moved/collapsed).
+     * This cold-starts the pen reader, so only call it on drag-end, not per move.
+     */
+    fun refreshRawExcludeRects() {
+        val th = touchHelper ?: return
+        val v = provideSurfaceView()
+        if (v.width <= 0 || v.height <= 0) return
+        th.setRawDrawingEnabled(false)
+        th.setLimitRect(Rect(0, 0, v.width, v.height), rawExcludeRects())
+        if (!inkSuppressed) {   // limit-rect re-apply must not re-arm the pen mid-lasso
+            th.setRawDrawingEnabled(true)
+            th.isRawDrawingRenderEnabled = true
+        }
     }
 
     /**
@@ -1315,7 +4076,13 @@ abstract class SurfaceFragment : ScreenFragment() {
                 // even when raw stylus drawing is supported, which forces the slow
                 // MotionEvent fallback rendering path. Catch and fall back only on real
                 // failure (non-Onyx device or SDK incompatibility).
-                try {
+                if (provideDisableRawInkCapture()) {
+                    // This screen needs normal Android touch over the surface (finger
+                    // taps). The Onyx raw session would grab all of it at the system
+                    // level, so skip it and use MotionEvent capture + software render.
+                    Timber.i("Raw ink capture disabled for this screen; MotionEvent rendering path")
+                    touchHelper = null
+                } else try {
                     touchHelper = TouchHelper.create(provideSurfaceView(), callback)
                     Timber.i("TouchHelper created successfully on ${Build.MODEL}")
                 } catch (e: Throwable) {
@@ -1357,15 +4124,29 @@ abstract class SurfaceFragment : ScreenFragment() {
 
                     clearSurface()
 
-                    touchHelper?.setLimitRect(limit, ArrayList())?.setStrokeWidth(paint.strokeWidth)?.openRawDrawing()
-                    touchHelper?.setStrokeStyle(TouchHelper.STROKE_STYLE_PENCIL)
+                    touchHelper?.setLimitRect(limit, rawExcludeRects())?.setStrokeWidth(effectivePenWidth())?.openRawDrawing()
+                    // Let FINGER touch pass through to normal Android dispatch while the
+                    // raw session is open. Without this the Onyx raw input reader grabs
+                    // finger input over the whole limit rect at the system level, so the
+                    // app never sees finger taps/swipes/long-presses on ink pages.
+                    touchHelper?.enableFingerTouch(true)
+                    applyStrokeStyle()
                     touchHelper?.setStrokeColor(paint.color)
+                    // Record the size we just opened the reader with, so the first
+                    // surfaceChanged at the same size won't needlessly cold-start it again.
+                    appliedLimitWidth = view.width
+                    appliedLimitHeight = view.height
                 }
 
                 override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
                     Timber.i("surfaceChanged: ${width}x${height}")
                     surfaceSize = Rect(0, 0, width, height)
+                    // Take up the zoom the last page was left at. Paging the day surface NAVIGATES,
+                    // so the fragment is rebuilt and an instance field can't survive it — the zoom
+                    // was lost on every page turn no matter what the pan state did.
+                    if (carriedZoom > 1.01f && zoomScale <= 1.01f) zoomScale = carriedZoom
                     updateTransformMatrix()
+                    if (zoomScale > 1.01f) refitZoomForPage()
                     // Activate Viwoods T1000 AutoDraw for this surface. The hardware then
                     // renders pen strokes live; we draw nothing during the stroke. Uses
                     // full-screen metrics (not just the surface) to register the region.
@@ -1379,20 +4160,69 @@ abstract class SurfaceFragment : ScreenFragment() {
                             // the whole panel (slightly less instant than the native overlay, but
                             // consistent everywhere). Flip this back to BuildConfig.VIWOODS_FAST_INK
                             // to re-enable the native hardware path for testing.
+                            //
+                            // Native T1000 fast ink (initWriting → libpaintworker → WritingSurface)
+                            // is the ONLY fast path on this panel; the AutoDraw binder path can't set
+                            // native rects (framework bug in updateAutoDrawRegion) so it never produces
+                            // fast ink. See jdkruzr's VIWOODS_APP_DEV.md ("How Fast Ink Actually Works").
+                            //
+                            // Prerequisite: persist.sys.focusmonitor.config=1 present AT BOOT + targetSdk
+                            // 30. Both satisfied — yet hardware ink still does not render on the AiPaper
+                            // Mini from a sideloaded app. PROVEN 2026-07 by building jdkruzr's own PoC
+                            // (com.example.einkpoc) and running the identical full recipe (initWriting +
+                            // ENoteWriting.setAutoDrawRects + T1000 arm): the PoC is slow too. The
+                            // libpaintworker WritingSurface can't lock the system buffer from the
+                            // untrusted_app_30 sandbox (lock error:-22); only a privileged /product app
+                            // (like WiNote) can. Keep the live software FAST-waveform path until Ledger
+                            // can be installed as a system/privileged app (needs root). The full hardware
+                            // recipe stays in ViwoodsFastInk.enable(), gated off here.
+                            // Permanently OFF. The hardware path suppresses live software drawing
+                            // (native is supposed to paint), but native never paints on this sideloaded
+                            // app — so it's strictly WORSE (ink only appears on pen-up). Exhaustively
+                            // disproven 2026-07: prop set + reboot + targetSdk30 + full recipe + adb root
+                            // + SELinux permissive + WiNote-primed native state — all still slow. Leave
+                            // software FAST-waveform; hardware recipe stays in ViwoodsFastInk, gated here.
+                            // 2026-07-11: hardware ink RE-ENABLED on the viwoods flavor. Diffing
+                            // WiNote's working logcat against a failing sideloaded app on the same
+                            // freshly-rebooted (clean) WritingProducer queue showed the sideloaded
+                            // failure was self-inflicted: the AutoDraw binder path + T1000 arm made
+                            // system_server spin up a WritingSurface that can't lock the producer
+                            // (lock error:-22). WiNote calls NONE of that — it uses only the
+                            // in-process JNI recipe (initWriting → setWritingEnabled → onWritingStart).
+                            // ViwoodsFastInk.enable() now mirrors WiNote exactly. Gate on the flavor
+                            // flag so the Boox (standard, targetSdk 36) build never takes this path.
+                            // Hardware ink gated OFF: the app-level API surface now matches WiNote
+                            // exactly (initWriting → setWritingEnabled → onWritingStart → setWriting-
+                            // JavaBackgroundBitmap, all fire "ok", no lock error:-22) yet the native
+                            // RjHandWriting fast-show engine still won't paint — the remaining gate is
+                            // native/first-party and the /product-install test is blocked by a LOCKED
+                            // bootloader (unlock = wipe). Software FAST-waveform is the daily path.
+                            // Flip to BuildConfig.VIWOODS_FAST_INK to resume the hardware experiment.
+                            // Daily = software ink (usable, optimized: segment-only live refresh +
+                            // no frame delay). Hardware path preserved behind the flag; flip to
+                            // BuildConfig.VIWOODS_FAST_INK to resume the experiment.
                             val useHardwareInk = false
                             viwoodsInk?.enable(
                                 dm.widthPixels, dm.heightPixels,
                                 useHardwareInk
                             )
+                            // Hand the native overlay the page bitmap at setup (WiNote sets it once,
+                            // full device res, before overlay-enable). Refreshed again per stroke.
+                            if (viwoodsInk?.hardwareInk == true) {
+                                viwoodsPageSnapshot()?.let { viwoodsInk?.setPageBitmap(it) }
+                            }
                         } catch (t: Throwable) {
                             Timber.w(t, "Viwoods enable() failed")
                         }
                     }
-                    // Re-apply the limit rect with the new dimensions (e.g. after rotation).
-                    touchHelper?.let { th ->
-                        th.setRawDrawingEnabled(false)
-                        th.setLimitRect(Rect(0, 0, width, height), ArrayList())
-                        th.setRawDrawingEnabled(true)
+                    // Re-apply the limit rect with the new dimensions (e.g. after rotation),
+                    // but coalesce rapid/duplicate surfaceChanged callbacks so the pen reader
+                    // cold-starts at most once on open. See [applyPendingLimitRect].
+                    touchHelper?.let {
+                        pendingLimitWidth = width
+                        pendingLimitHeight = height
+                        provideSurfaceView().removeCallbacks(applyLimitRectRunnable)
+                        provideSurfaceView().postDelayed(applyLimitRectRunnable, LIMIT_RECT_DEBOUNCE_MS)
                     }
                     // On Android 10+, claim the whole SurfaceView area back from the
                     // system gesture-navigation handler. Without this, the bottom ~10%
@@ -1406,6 +4236,9 @@ abstract class SurfaceFragment : ScreenFragment() {
 
                 override fun surfaceDestroyed(holder: SurfaceHolder) {
                     Timber.i("surfaceDestroyed")
+                    provideSurfaceView().removeCallbacks(applyLimitRectRunnable)
+                    appliedLimitWidth = -1
+                    appliedLimitHeight = -1
                     holder.removeCallback(surfaceCallback)
                     surfaceCallback = null
                 }
@@ -1416,9 +4249,50 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     /**
+     * Re-apply the Onyx raw-drawing limit rect for the latest surface size, but only when it
+     * actually changed. Each setRawDrawingEnabled false->true cold-starts the native pen
+     * reader (seconds to spin up on the Go 6 Gen 2), so this is coalesced via
+     * [applyLimitRectRunnable] and skipped entirely when the size already matches — the first
+     * stroke after opening a page no longer waits through repeated reader cold-starts.
+     */
+    private fun applyPendingLimitRect() {
+        val th = touchHelper ?: return
+        val w = pendingLimitWidth
+        val h = pendingLimitHeight
+        if (w <= 0 || h <= 0) return
+        if (w == appliedLimitWidth && h == appliedLimitHeight) return
+        th.setRawDrawingEnabled(false)
+        th.setLimitRect(Rect(0, 0, w, h), rawExcludeRects())
+        if (!inkSuppressed) {   // limit-rect re-apply must not re-arm the pen mid-lasso
+            th.setRawDrawingEnabled(true)
+            th.isRawDrawingRenderEnabled = true
+        }
+        appliedLimitWidth = w
+        appliedLimitHeight = h
+        Timber.i("raw limit rect applied: ${w}x${h}")
+    }
+
+    /**
      * Clear the surface and the shadow canvas.
      */
+    /** Recreate the shadow bitmap+canvas if onPause recycled them while the surface stayed alive. */
+    private fun ensureShadowCanvas(): Boolean {
+        val b = bitmap
+        if (b != null && !b.isRecycled) return true
+        return try {
+            bitmap = Bitmap.createBitmap(CANVAS_WIDTH, CANVAS_HEIGHT, Bitmap.Config.ARGB_8888).also {
+                it.eraseColor(Color.TRANSPARENT)
+                canvas = Canvas(it)
+            }
+            true
+        } catch (e: Exception) {
+            Timber.w(e, "shadow canvas recreate failed")
+            false
+        }
+    }
+
     fun clearSurface() {
+        if (!ensureShadowCanvas()) return
         val lockerCanvas = provideSurfaceView().holder.lockCanvas() ?: return
         // EpdController is Onyx-only and relies on the SDK being initialized by
         // TouchHelper.create(). On Viwoods we never create the TouchHelper, so this would
@@ -1436,24 +4310,110 @@ abstract class SurfaceFragment : ScreenFragment() {
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
     }
 
+    /**
+     * Force a full-screen (GC) EPD refresh. Onyx-only: wipes the hardware raw-drawing overlay so a
+     * just-finished stroke can't linger on the panel across a page turn. No-op / guarded elsewhere.
+     */
+    fun forceFullEpdRefresh() {
+        if (viwoodsInk != null) return
+        try {
+            EpdController.repaintEveryThing(com.onyx.android.sdk.api.device.epd.UpdateMode.GC)
+        } catch (t: Throwable) {
+            Timber.w(t, "EPD full refresh failed")
+        }
+    }
+
+    /**
+     * The pen's effective base stroke width: the shared preset, narrowed for
+     * calligraphy (see CALLIGRAPHY_WIDTH_SCALE).
+     */
+    protected fun effectivePenWidth(): Float =
+        paint.strokeWidth * (if (calligraphyMode) CALLIGRAPHY_WIDTH_SCALE else 1f)
+
+    /** Put the Onyx hardware overlay into the live stroke style that matches the current pen. */
+    private fun applyStrokeStyle() {
+        touchHelper?.setStrokeStyle(
+            if (calligraphyMode) TouchHelper.STROKE_STYLE_FOUNTAIN else TouchHelper.STROKE_STYLE_PENCIL
+        )
+    }
+
+    /**
+     * Broad-nib calligraphy width as a multiple of the base width, from the stroke's DIRECTION:
+     * thick when the stroke runs across the nib edge, thin when it runs along it. This directional
+     * thick/thin (not pressure) is what gives real calligraphic contrast — the Boox pen barely
+     * varies pressure, so a pressure-only nib looked nearly uniform.
+     */
+    private fun calligraphyWidthFactor(motionAngleRad: Float): Float {
+        val nibRad = CALLIGRAPHY_NIB_ANGLE_DEG * (PI.toFloat() / 180f)
+        val across = abs(sin(motionAngleRad - nibRad))   // 0 (along the nib) .. 1 (across the nib)
+        return CALLIGRAPHY_MIN_FACTOR + (CALLIGRAPHY_MAX_FACTOR - CALLIGRAPHY_MIN_FACTOR) * across
+    }
+
+    /**
+     * Bake a calligraphy stroke: each segment's width comes from its direction (broad nib), with a
+     * gentle pressure nudge on top. Round cap/join keep the segments visually continuous.
+     */
+    private fun drawCalligraphyPath(targetCanvas: Canvas, strokePaint: Paint, stroke: Stroke) {
+        val points = stroke.strokePoints
+        strokePaint.color = stroke.color
+        val savedCap = strokePaint.strokeCap
+        val savedJoin = strokePaint.strokeJoin
+        strokePaint.strokeCap = Paint.Cap.ROUND
+        strokePaint.strokeJoin = Paint.Join.ROUND
+        val base = stroke.strokeWidth
+        if (points.size == 1) {
+            strokePaint.strokeWidth = base
+            targetCanvas.drawPoint(points[0].x, points[0].y, strokePaint)
+        } else {
+            for (i in 0 until points.size - 1) {
+                val a = points[i]
+                val b = points[i + 1]
+                val angle = atan2(b.y - a.y, b.x - a.x)
+                val pAvg = ((a.p + b.p) / 2f).coerceIn(0f, 1f)
+                strokePaint.strokeWidth = (base * calligraphyWidthFactor(angle) * (0.8f + 0.4f * pAvg)).coerceAtLeast(1f)
+                targetCanvas.drawLine(a.x, a.y, b.x, b.y, strokePaint)
+            }
+        }
+        strokePaint.strokeCap = savedCap
+        strokePaint.strokeJoin = savedJoin
+    }
+
     private fun drawStrokePath(targetCanvas: Canvas, strokePaint: Paint, stroke: Stroke) {
         val points = stroke.strokePoints
         if (points.isEmpty()) return
+        if (stroke.inkStyle == Stroke.STYLE_CALLIGRAPHY) {
+            drawCalligraphyPath(targetCanvas, strokePaint, stroke)
+            return
+        }
         strokePaint.color = stroke.color
         strokePaint.strokeWidth = stroke.strokeWidth
+        // Round cap/join so segment ends and direction changes read smooth, not angular.
+        val savedCap = strokePaint.strokeCap
+        val savedJoin = strokePaint.strokeJoin
+        strokePaint.strokeCap = Paint.Cap.ROUND
+        strokePaint.strokeJoin = Paint.Join.ROUND
         val path = Path()
-        val prePoint = PointF(points[0].x, points[0].y)
         if (points.size == 1) {
-            path.moveTo(prePoint.x - 1f, prePoint.y - 1f)
+            path.moveTo(points[0].x - 1f, points[0].y - 1f)
+            path.lineTo(points[0].x, points[0].y)
         } else {
-            path.moveTo(prePoint.x, prePoint.y)
-        }
-        for (point in points) {
-            path.quadTo(prePoint.x, prePoint.y, point.x, point.y)
-            prePoint.x = point.x
-            prePoint.y = point.y
+            // Quadratic Bézier through the segment midpoints: each raw point is the
+            // control handle, so the curve passes smoothly between samples instead of
+            // kinking at every point. (The old quadTo(prePoint, point) put the control
+            // ON the segment start, which degenerates to a straight polyline — the
+            // source of the jagged look on sparsely-sampled Boox strokes.)
+            path.moveTo(points[0].x, points[0].y)
+            for (i in 1 until points.size - 1) {
+                val midX = (points[i].x + points[i + 1].x) / 2f
+                val midY = (points[i].y + points[i + 1].y) / 2f
+                path.quadTo(points[i].x, points[i].y, midX, midY)
+            }
+            val last = points[points.size - 1]
+            path.lineTo(last.x, last.y)
         }
         targetCanvas.drawPath(path, strokePaint)
+        strokePaint.strokeCap = savedCap
+        strokePaint.strokeJoin = savedJoin
     }
 
     /**
@@ -1471,6 +4431,7 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     fun applyStrokes(strokes: List<Stroke>, clearPage: Boolean) {
         this.strokes = strokes.toMutableList()
+        if (!ensureShadowCanvas()) return
         val lockCanvas = provideSurfaceView().holder.lockCanvas() ?: return
 
         lockCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
@@ -1480,6 +4441,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         // Draw to screen with zoom matrix
         lockCanvas.save()
         lockCanvas.concat(viewMatrix)
+        renderImageElements(lockCanvas)
         for (stroke in strokes) {
             drawStrokePath(lockCanvas, strokePaint, stroke)
         }
@@ -1490,16 +4452,20 @@ abstract class SurfaceFragment : ScreenFragment() {
         // undo/redo, paste — anything that may have removed or relocated strokes).
         if (clearPage) {
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+            renderImageElements(canvas)
             for (stroke in strokes) {
                 drawStrokePath(canvas, strokePaint, stroke)
             }
             renderTextElements(canvas)
         }
 
-        touchHelper?.setRawDrawingEnabled(false)
+        // Commit the canvas to the surface WITHOUT closing the native pen reader. Previously
+        // this toggled setRawDrawingEnabled(false)->(true) around the post, which closes and
+        // reopens the reader on every pen-up — a multi-second cold start on the Go 6 Gen 2,
+        // so each stroke lift stalled. Pausing only the render flag (isRawDrawingRenderEnabled)
+        // lets us post the committed strokes while the reader stays open and warm.
         touchHelper?.isRawDrawingRenderEnabled = false
         provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
-        touchHelper?.setRawDrawingEnabled(true)
         touchHelper?.isRawDrawingRenderEnabled = true
     }
 
@@ -1619,8 +4585,22 @@ abstract class SurfaceFragment : ScreenFragment() {
         val actionMove = listOf(MotionEvent.ACTION_MOVE, 213).contains(motionEvent.action)
         val actionUp = listOf(MotionEvent.ACTION_UP, 212).contains(motionEvent.action)
 
-        val drawing = ((toolTypeStylus || toolTypeEraser) && !touchDrawingState) || (toolTypeFinger && touchDrawingState)
+        // "Pen writes, finger manages": while element-manipulation mode is active,
+        // FINGER (and injected UNKNOWN) events route through the same handling path
+        // as the pen so move/resize/chips work by finger. The imageMode branch
+        // consumes them before any ink capture, so a finger can never lay strokes.
+        val toolTypeUnknown = motionEvent.getToolType(0) == MotionEvent.TOOL_TYPE_UNKNOWN
+        val fingerManipulating = imageMode && (toolTypeFinger || toolTypeUnknown)
+        val drawing = ((toolTypeStylus || toolTypeEraser) && !touchDrawingState) ||
+            (toolTypeFinger && touchDrawingState) || fingerManipulating
         val erasing = motionEvent.buttonState != 0 || toolTypeEraser
+
+        // Lasso-selection chips must also respond to a FINGER tap — finger events don't enter the
+        // stylus-only `drawing` path below (finger doesn't draw), so the chips would be pen-only.
+        if (hasSelection && !selectionMode && actionDown && !drawing) {
+            val cp = screenToCanvas(motionEvent.x, motionEvent.y)
+            if (handleSelectionChipTap(cp[0], cp[1])) return true
+        }
 
         if (drawing) {
             val canvasPts = screenToCanvas(motionEvent.x, motionEvent.y)
@@ -1637,6 +4617,270 @@ abstract class SurfaceFragment : ScreenFragment() {
             // regions — rejecting them caused the TouchHelper to paint a brief preview
             // that vanished on the next applyStrokes refresh, looking like the pen was
             // "blocked" near the edge of the screen.
+
+            // --- Image mode: select / move / resize / crop / delete inserted images ---
+            if (imageMode) {
+                // Text-box drag: a selected text box follows the finger like an image.
+                val selT = selectedTextBox
+                if (selT != null) {
+                    if (actionDown) {
+                        // Bottom-left "A" handle → drag down/up scales the FONT; bottom-right
+                        // handle → spatial: reflow the words to a new width, font untouched.
+                        // (Field notes: both adjustments, independently, by handle choice.)
+                        if (fontResizeHandle(textElementBounds(selT)).contains(x, y)) {
+                            textBoxFontResize = true
+                            textBoxOrigFont = selT.fontSize
+                            textBoxOrigY = selT.y
+                            textBoxOrigH = textElementBounds(selT).height().coerceAtLeast(1f)
+                            return true
+                        }
+                        if (textResizeHandle(textElementBounds(selT)).contains(x, y)) {
+                            textBoxResize = true
+                            return true
+                        }
+                        if (textElementBounds(selT).contains(x, y)) {
+                            textBoxDrag = true
+                            imageDragStartX = x
+                            imageDragStartY = y
+                            textBoxOrigX = selT.x
+                            textBoxOrigY = selT.y
+                            return true
+                        }
+                        // Tap another element → grab it instead.
+                        val hitT = textElementAt(x, y)
+                        if (hitT != null) {
+                            selectedTextBox = hitT
+                            applyStrokes(strokes, true)
+                            drawImageSelection()
+                            return true
+                        }
+                        val hitI = imageElementAt(x, y)
+                        if (hitI != null) {
+                            enterImageManipulation(hitI)
+                            return true
+                        }
+                        // Blank tap → done, back to the pen.
+                        exitImageMode()
+                        penState = true
+                        applyStrokes(strokes, true)
+                        return true
+                    }
+                    if (actionMove && textBoxFontResize) {
+                        // Drag below the box bottom → grow the type; above → shrink. Scale is
+                        // the drag's height over the box's original height, so it tracks 1:1.
+                        val scale = ((y - textBoxOrigY) / textBoxOrigH).coerceIn(0.3f, 5f)
+                        selT.fontSize = (textBoxOrigFont * scale).coerceIn(10f, 120f)
+                        drawImageSelection()
+                        return true
+                    }
+                    if (actionMove && textBoxResize) {
+                        // Only the width changes; height is recomputed from the wrap on render.
+                        selT.width = (x - selT.x).coerceAtLeast(MIN_TEXTBOX_WIDTH)
+                        drawImageSelection()
+                        return true
+                    }
+                    if (actionMove && textBoxDrag) {
+                        selT.x = textBoxOrigX + (x - imageDragStartX)
+                        selT.y = textBoxOrigY + (y - imageDragStartY)
+                        drawImageSelection()
+                        return true
+                    }
+                    if (actionUp && (textBoxDrag || textBoxResize || textBoxFontResize)) {
+                        textBoxDrag = false
+                        textBoxResize = false
+                        textBoxFontResize = false
+                        onTextElementsChanged(textElements)
+                        onTextBoxDropped(selT)
+                        applyStrokes(strokes, true)
+                        drawImageSelection()
+                        return true
+                    }
+                    return true
+                }
+                val sel = selectedImage
+                // Crop: drag a rectangle over the image, apply on release.
+                if (cropMode && sel != null) {
+                    when {
+                        // A fresh press starts the crop rectangle. The chip-tap that armed crop
+                        // mode has cropDragging=false, so its trailing move/up are ignored.
+                        actionDown -> { cropStartX = x; cropStartY = y; cropRect = RectF(x, y, x, y); cropDragging = true }
+                        actionMove -> if (cropDragging) {
+                            cropRect = RectF(minOf(cropStartX, x), minOf(cropStartY, y), maxOf(cropStartX, x), maxOf(cropStartY, y))
+                            drawImageSelection()
+                        }
+                        actionUp -> if (cropDragging) {
+                            cropDragging = false
+                            val cr = cropRect
+                            if (cr != null && cr.width() > 12f && cr.height() > 12f) {
+                                pushUndo()
+                                applyCropToImage(sel, cr)
+                                onImageElementsChanged(imageElements)
+                            }
+                            cropMode = false
+                            cropRect = null
+                            applyStrokes(strokes, true)
+                            drawImageSelection()
+                        }
+                    }
+                    return true
+                }
+                if (actionDown) {
+                    if (sel != null) {
+                        val box = RectF(sel.x, sel.y, sel.x + sel.width, sel.y + sel.height)
+                        // Chips: Cut / Copy / Dup / Del (unified clipboard via strokeClipboard)
+                        for ((label, r) in imageChipRects(box)) {
+                            if (r.contains(x, y)) {
+                                when (label) {
+                                    "Cut" -> {
+                                        strokeClipboard.copyImage(sel)
+                                        pushUndo()
+                                        imageElements.remove(sel)
+                                        imageBitmapCache.remove(sel.elementId)
+                                        selectedImage = null
+                                        onImageElementsChanged(imageElements)
+                                        applyStrokes(strokes, true)
+                                    }
+                                    "Crop" -> {
+                                        cropMode = true
+                                        cropRect = null
+                                        Toast.makeText(requireContext(), "Drag a rectangle over the image to crop", Toast.LENGTH_SHORT).show()
+                                    }
+                                    "Del" -> {
+                                        pushUndo()
+                                        imageElements.remove(sel)
+                                        imageBitmapCache.remove(sel.elementId)
+                                        selectedImage = null
+                                        onImageElementsChanged(imageElements)
+                                        applyStrokes(strokes, true)
+                                    }
+                                    "Rot" -> {
+                                        // Arm a free-rotate drag about the image centre. Swing the stylus/
+                                        // finger to set any angle; a plain tap (no swing) falls back to the
+                                        // discrete 15° nudge on release. Angle is measured relative to the
+                                        // press point so grabbing the handle never snaps the image.
+                                        pushUndo()
+                                        imageDrag = ImageDrag.ROTATE
+                                        imageRotateCX = box.centerX()
+                                        imageRotateCY = box.centerY()
+                                        imageRotateStartAngle = Math.toDegrees(
+                                            Math.atan2((y - imageRotateCY).toDouble(), (x - imageRotateCX).toDouble())
+                                        ).toFloat()
+                                        imageRotateOrigRotation = sel.rotation
+                                        imageRotateMoved = false
+                                    }
+                                    "Dup" -> {
+                                        // Copy in place with a slight offset (fresh id + timestamp);
+                                        // carries rotation and all fields. Select the new copy.
+                                        pushUndo()
+                                        val copy = sel.copy(
+                                            elementId = UUID.randomUUID(),
+                                            timestamp = System.currentTimeMillis(),
+                                            x = sel.x + 40f, y = sel.y + 40f
+                                        )
+                                        imageElements.add(copy)
+                                        selectedImage = copy
+                                        onImageElementsChanged(imageElements)
+                                        drawImageSelection()
+                                    }
+                                }
+                                return true
+                            }
+                        }
+                        // Resize handle (bottom-right) → uniform scale
+                        if (imageResizeHandle(box).contains(x, y)) {
+                            pushUndo()
+                            imageDrag = ImageDrag.RESIZE
+                            imageOrigRect = RectF(box)
+                            return true
+                        }
+                        // Inside the box → move
+                        if (box.contains(x, y)) {
+                            pushUndo()
+                            imageDrag = ImageDrag.MOVE
+                            imageDragStartX = x
+                            imageDragStartY = y
+                            imageOrigRect = RectF(box)
+                            return true
+                        }
+                    }
+                    // Tap an image → select it; tap blank with a selection → deselect;
+                    // tap blank with nothing selected → add a new image (clipboard or picker).
+                    val hit = imageElements.lastOrNull {
+                        x >= it.x && x <= it.x + it.width && y >= it.y && y <= it.y + it.height
+                    }
+                    val hitText = textElementAt(x, y)
+                    when {
+                        hit == null && hitText != null -> {
+                            enterTextBoxManipulation(hitText)
+                        }
+                        hit != null -> {
+                            // Select AND arm a move so the very first tap can drag the image.
+                            selectedImage = hit
+                            pushUndo()
+                            imageDrag = ImageDrag.MOVE
+                            imageDragStartX = x
+                            imageDragStartY = y
+                            imageOrigRect = RectF(hit.x, hit.y, hit.x + hit.width, hit.y + hit.height)
+                            applyStrokes(strokes, true)
+                            drawImageSelection()
+                        }
+                        selectedImage != null -> {
+                            selectedImage = null
+                            applyStrokes(strokes, true)
+                        }
+                        // Blank tap with nothing selected → leave manipulation mode
+                        // (insertion now lives in the finger long-press menu).
+                        else -> {
+                            exitImageMode()
+                            penState = true
+                            applyStrokes(strokes, true)
+                        }
+                    }
+                    return true
+                } else if (actionMove && sel != null && imageDrag == ImageDrag.MOVE) {
+                    sel.x = imageOrigRect.left + (x - imageDragStartX)
+                    sel.y = imageOrigRect.top + (y - imageDragStartY)
+                    drawImageSelection()
+                    return true
+                } else if (actionMove && sel != null && imageDrag == ImageDrag.RESIZE) {
+                    val newW = (x - sel.x).coerceAtLeast(40f)
+                    sel.width = newW
+                    // A shape distorts freely — the corner follows your finger, so a box can go
+                    // tall and thin. A photo keeps its aspect so it isn't squashed.
+                    sel.height = if (sel.distortable) (y - sel.y).coerceAtLeast(40f)
+                    else newW * (imageOrigRect.height() / imageOrigRect.width().coerceAtLeast(1f))
+                    drawImageSelection()
+                    return true
+                } else if (actionMove && sel != null && imageDrag == ImageDrag.ROTATE) {
+                    val ang = Math.toDegrees(
+                        Math.atan2((y - imageRotateCY).toDouble(), (x - imageRotateCX).toDouble())
+                    ).toFloat()
+                    val delta = ang - imageRotateStartAngle
+                    if (abs(delta) > 1.5f) imageRotateMoved = true
+                    sel.rotation = ((imageRotateOrigRotation + delta) % 360f + 360f) % 360f
+                    drawImageSelection()
+                    return true
+                } else if (actionUp && imageDrag != ImageDrag.NONE) {
+                    // A tap on the Rot handle (no swing) nudges a discrete 15° instead.
+                    if (imageDrag == ImageDrag.ROTATE && !imageRotateMoved && sel != null) {
+                        sel.rotation = ((imageRotateOrigRotation + 15f) % 360f + 360f) % 360f
+                    }
+                    // Snap a moved object to the page's grid, when it has one — so shapes and cards
+                    // line up with the graph paper instead of by eye. No grid, no snap.
+                    val step = snapStep()
+                    if (step > 0f && sel != null && imageDrag == ImageDrag.MOVE) {
+                        sel.x = kotlin.math.round(sel.x / step) * step
+                        sel.y = kotlin.math.round(sel.y / step) * step
+                    }
+                    if (sel != null) sel.timestamp = System.currentTimeMillis()
+                    imageDrag = ImageDrag.NONE
+                    onImageElementsChanged(imageElements)
+                    applyStrokes(strokes, true)
+                    drawImageSelection()
+                    return true
+                }
+                return true
+            }
 
             // --- Text mode: tap to place a text element ---
             if (textMode) {
@@ -1664,9 +4908,14 @@ abstract class SurfaceFragment : ScreenFragment() {
                     showMessage(R.string.calendar_drawing_toolbar_pasted, provideSurfaceView())
                 }
                 if (actionUp) {
+                    // Leave the freshly pasted strokes as a LIVE selection (exactly like a lasso
+                    // commit) so they can be moved / rotated / scaled / deleted until the user taps
+                    // off — don't revert to the pen. syncRawInkToSelectionMenu keeps hardware ink
+                    // paused (hasSelection is true) so the stylus manipulates rather than draws.
                     pasteMode = false
                     provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
-                    provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
+                    syncRawInkToSelectionMenu()
+                    drawWithSelection()
                 }
                 return true
             }
@@ -1676,32 +4925,25 @@ abstract class SurfaceFragment : ScreenFragment() {
                 val box = selBox
                 if (box != null) {
                     if (actionDown) {
-                        // Cut chip?
-                        if (cutChipRect(box).contains(x, y)) {
-                            undoStack.add(Stroke.listDeepCopy(strokes))
-                            if (undoStack.size > 50) undoStack.removeAt(0)
-                            redoStack.clear()
-                            strokeClipboard.copy(selectedStrokes.toList())
-                            val removedIds = selectedStrokes.map { it.strokeId }
-                            strokes.removeAll { it.strokeId in removedIds.toSet() }
-                            onStrokesDeleted(removedIds)
-                            exitSelectionMode()
-                            applyStrokes(strokes, true)
-                            onStrokeChanged(strokes)
-                            return true
-                        }
-                        // Copy chip?
-                        if (copyChipRect(box).contains(x, y)) {
-                            strokeClipboard.copy(selectedStrokes.toList())
-                            showMessage(R.string.calendar_drawing_toolbar_copied, provideSurfaceView())
+                        // Chip taps (→ item / cut / copy / delete) — shared with the finger path above.
+                        if (handleSelectionChipTap(x, y)) return true
+                        // Rotation handle (below bottom-centre): swing the selected strokes freely.
+                        val rc = rotateHandleCenter(box)
+                        if (abs(x - rc.x) <= handleSize / 2f + handleHitPad && abs(y - rc.y) <= handleSize / 2f + handleHitPad) {
+                            pushUndo()
+                            selectionDrag = SelectionDrag.ROTATE
+                            rotateCenterX = box.centerX()
+                            rotateCenterY = box.centerY()
+                            rotateStartAngle = kotlin.math.atan2(y - rotateCenterY, x - rotateCenterX)
+                            scaleOrigPoints = selectedStrokes.associate { stroke ->
+                                stroke.strokeId to stroke.strokePoints.map { it.x to it.y }
+                            }
                             return true
                         }
                         // Corner handle?
                         val hit = hitTestHandle(x, y, box)
                         if (hit != SelectionDrag.NONE) {
-                            undoStack.add(Stroke.listDeepCopy(strokes))
-                            if (undoStack.size > 50) undoStack.removeAt(0)
-                            redoStack.clear()
+                            pushUndo()
                             selectionDrag = hit
                             scaleOrigBox = RectF(box)
                             val (ax, ay) = anchorForHandle(hit, box)
@@ -1714,9 +4956,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                         }
                         // Inside the bbox (but not on a handle/chip)? Start a MOVE drag.
                         if (box.contains(x, y)) {
-                            undoStack.add(Stroke.listDeepCopy(strokes))
-                            if (undoStack.size > 50) undoStack.removeAt(0)
-                            redoStack.clear()
+                            pushUndo()
                             selectionDrag = SelectionDrag.MOVE
                             moveStartX = x
                             moveStartY = y
@@ -1739,6 +4979,23 @@ abstract class SurfaceFragment : ScreenFragment() {
                                 val (ox, oy) = origs[i]
                                 pt.x = ox + dx
                                 pt.y = oy + dy
+                            }
+                        }
+                        selBox = computeSelBox(selectedStrokes)
+                        drawWithSelection()
+                        return true
+                    } else if (actionMove && selectionDrag == SelectionDrag.ROTATE) {
+                        // Rotate every original point about the fixed centre by the swing angle.
+                        val d = kotlin.math.atan2(y - rotateCenterY, x - rotateCenterX) - rotateStartAngle
+                        val cos = kotlin.math.cos(d); val sin = kotlin.math.sin(d)
+                        for (stroke in selectedStrokes) {
+                            val origs = scaleOrigPoints[stroke.strokeId] ?: continue
+                            for ((i, pt) in stroke.strokePoints.withIndex()) {
+                                if (i >= origs.size) break
+                                val (ox, oy) = origs[i]
+                                val rx = ox - rotateCenterX; val ry = oy - rotateCenterY
+                                pt.x = rotateCenterX + rx * cos - ry * sin
+                                pt.y = rotateCenterY + rx * sin + ry * cos
                             }
                         }
                         selBox = computeSelBox(selectedStrokes)
@@ -1802,6 +5059,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                         hasSelection = true
                         selectionMode = false
                         selBox = computeSelBox(selectedStrokes)
+                        syncRawInkToSelectionMenu()   // selection→menu still active; keep hardware ink paused
                         drawWithSelection()
                         if (selectedStrokes.isEmpty()) {
                             showMessage(R.string.calendar_drawing_toolbar_nothing_selected, provideSurfaceView())
@@ -1851,19 +5109,278 @@ abstract class SurfaceFragment : ScreenFragment() {
         return d <= epsilon
     }
 
+    // ─── Always-on ink gestures: circle-to-lasso and scribble-to-erase ──────────
+    // Evaluated at pen-up in plain pen mode (see onEndDrawing). A completed stroke is
+    // analysed geometrically: a deliberate ring drawn around existing ink becomes a
+    // lasso selection, and a dense back-and-forth scribble over existing ink erases the
+    // strokes underneath. Anything ambiguous — a handwritten "O", or a loop/scribble
+    // over blank space — is left alone and commits as normal ink.
+
+    /** Geometry summary of a candidate gesture stroke. */
+    private class GestureMetrics(
+        val pathLength: Float,
+        val bboxDiag: Float,
+        val closureDist: Float,
+        val netTurning: Float,
+        val absTurning: Float,
+    )
+
+    private fun gestureMetrics(points: List<StrokePoint>): GestureMetrics {
+        var minX = Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+        var pathLength = 0f
+        for (i in points.indices) {
+            val p = points[i]
+            if (p.x < minX) minX = p.x
+            if (p.x > maxX) maxX = p.x
+            if (p.y < minY) minY = p.y
+            if (p.y > maxY) maxY = p.y
+            if (i > 0) pathLength += hypot(p.x - points[i - 1].x, p.y - points[i - 1].y)
+        }
+        var netTurning = 0f
+        var absTurning = 0f
+        for (i in 1 until points.size - 1) {
+            val ax = points[i].x - points[i - 1].x
+            val ay = points[i].y - points[i - 1].y
+            val bx = points[i + 1].x - points[i].x
+            val by = points[i + 1].y - points[i].y
+            val cross = ax * by - ay * bx
+            val dot = ax * bx + ay * by
+            val ang = atan2(cross, dot)            // signed turn angle at this vertex
+            if (!ang.isNaN()) {
+                netTurning += ang
+                absTurning += abs(ang)
+            }
+        }
+        val closure = hypot(points.last().x - points.first().x, points.last().y - points.first().y)
+        return GestureMetrics(pathLength, hypot(maxX - minX, maxY - minY), closure, netTurning, absTurning)
+    }
+
+    /** Count direction reversals (sign flips of the per-vertex turn) — high for a scribble. */
+    private fun gestureReversals(points: List<StrokePoint>): Int {
+        var reversals = 0
+        var lastSign = 0
+        for (i in 1 until points.size - 1) {
+            val ax = points[i].x - points[i - 1].x
+            val ay = points[i].y - points[i - 1].y
+            val bx = points[i + 1].x - points[i].x
+            val by = points[i + 1].y - points[i].y
+            val cross = ax * by - ay * bx
+            val sign = if (cross > 1f) 1 else if (cross < -1f) -1 else 0
+            if (sign != 0) {
+                if (lastSign != 0 && sign != lastSign) reversals++
+                lastSign = sign
+            }
+        }
+        return reversals
+    }
+
+    /** Result of fitting a circle to a candidate stroke — shape flags + the metrics behind them. */
+    private class CircleFit(
+        val shapeOk: Boolean,     // shape ALONE reads as a ring (size-floor + band + coverage + closed-ish)
+        val sizeOk: Boolean,      // above the degenerate size floor
+        val closedish: Boolean,   // roughly closed OR wraps most of the way round → a real ring attempt
+        val bandFrac: Float,      // fraction of points within the radial band of r̄
+        val coverageDeg: Float,   // angular span the points cover around the centroid
+        val closureOverR: Float,  // endpoint→start distance as a multiple of r̄
+        val diameterPx: Float,    // bbox diagonal — the ring's rough diameter
+    )
+
+    /**
+     * Fit a circle to the stroke and decide if it's a ring. Robust to wobble/ovals: a
+     * hand-drawn circle has most points at a similar radius from the centroid (radial
+     * band) and its points sweep most of the way around (angular coverage) — neither of
+     * which a shaky hand breaks, unlike the old turning-consistency ratio.
+     */
+    /**
+     * Delegates to [com.toolsboox.ot.RingFit], which normalises by the bounding box before
+     * measuring — so a loop drawn round a short wide thing (a row of the Tasks panel) reads as a
+     * ring, which the old centroid-radius fit could never allow. See RingFit for why.
+     */
+    private fun classifyCircle(points: List<StrokePoint>): CircleFit {
+        val n = points.size
+        val xs = FloatArray(n); val ys = FloatArray(n)
+        for (i in 0 until n) { xs[i] = points[i].x; ys[i] = points[i].y }
+        val r = com.toolsboox.ot.RingFit.fit(xs, ys)
+        return CircleFit(r.isRing, r.sizeOk, r.closedish, r.bandFraction, r.coverageDegrees,
+            r.closureOverRadius, r.diagonal)
+    }
+
+    /** True if the ring described by [points] encircles any existing ink at all (≥1 point inside). */
+    private fun encirclesInk(points: List<StrokePoint>): Boolean {
+        val polygon = points.map { PointF(it.x, it.y) }
+        if (polygon.size < 3) return false
+        return strokes.any { StrokeClipboard.isStrokeInsidePolygon(it, polygon) }
+    }
+
+    /**
+     * The real lasso safeguard: does the ring enclose a DIFFERENT existing stroke, counting a
+     * stroke as enclosed when a MAJORITY (≥ [GESTURE_ENCLOSE_MAJORITY]) of its points fall inside
+     * the ring polygon — tolerant of the ring grazing/overlapping the letter. The ring itself is
+     * not yet in [strokes] at eval time, so it's naturally excluded.
+     */
+    private fun enclosesOtherInk(points: List<StrokePoint>): Boolean {
+        val polygon = points.map { PointF(it.x, it.y) }
+        if (polygon.size < 3) return false
+        // The ring's bounding box: any point outside it can't be inside the polygon, so the
+        // crossing test only runs for points that could plausibly be enclosed.
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        for (p in polygon) {
+            if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x
+            if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y
+        }
+        val scratch = PointF()
+        return strokes.any { stroke ->
+            val pts = stroke.strokePoints
+            if (pts.isEmpty()) return@any false
+            val needed = ceil(pts.size * GESTURE_ENCLOSE_MAJORITY).toInt().coerceAtLeast(1)
+            var inside = 0
+            for ((i, tp) in pts.withIndex()) {
+                if (tp.x in minX..maxX && tp.y in minY..maxY) {
+                    scratch.set(tp.x, tp.y)
+                    if (StrokeClipboard.isPointInPolygon(scratch, polygon)) {
+                        inside++
+                        if (inside >= needed) return@any true
+                    }
+                }
+                if (inside + (pts.size - i - 1) < needed) return@any false   // majority no longer reachable
+            }
+            false
+        }
+    }
+
+    private fun isScribbleGesture(points: List<StrokePoint>): Boolean {
+        if (points.size < 8) return false
+        val m = gestureMetrics(points)
+        if (m.bboxDiag < 1f) return false
+        if (m.pathLength < GESTURE_SCRIBBLE_LENGTH_RATIO * m.bboxDiag) return false      // lots of length in a small area
+        if (m.absTurning < GESTURE_SCRIBBLE_MIN_ABS_TURN) return false                   // lots of wiggle…
+        if (m.absTurning > 0f && abs(m.netTurning) / m.absTurning > 0.4f) return false   // …that cancels out (not a loop)
+        if (gestureReversals(points) < GESTURE_SCRIBBLE_MIN_REVERSALS) return false
+        return true
+    }
+
+    /** Erase every committed stroke the scribble passed over. Returns false (→ commit as ink) if it hit nothing. */
+    private fun performScribbleErase(points: List<StrokePoint>): Boolean {
+        // Scribble bbox (inflated by the hit radius): strokes entirely outside it can't be
+        // hit, so the epsilon scan only runs near the scribble — not across the whole page.
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        for (ep in points) {
+            if (ep.x < minX) minX = ep.x; if (ep.x > maxX) maxX = ep.x
+            if (ep.y < minY) minY = ep.y; if (ep.y > maxY) maxY = ep.y
+        }
+        minX -= 25f; minY -= 25f; maxX += 25f; maxY += 25f
+        val toRemove: MutableSet<UUID> = mutableSetOf()
+        for (stroke in strokes) {
+            var hit = false
+            for (tp in stroke.strokePoints) {
+                if (tp.x < minX || tp.x > maxX || tp.y < minY || tp.y > maxY) continue
+                for (ep in points) {
+                    if (epsilon(ep.x, ep.y, tp.x, tp.y, 25.0f)) {
+                        hit = true
+                        break
+                    }
+                }
+                if (hit) break
+            }
+            if (hit) toRemove.add(stroke.strokeId)
+        }
+        if (toRemove.isEmpty()) return false
+        strokes.removeIf { it.strokeId in toRemove }
+        onStrokesDeleted(toRemove.toList())
+        applyStrokes(strokes, true)
+        onStrokeChanged(strokes)
+        return true
+    }
+
+    /**
+     * Short confirmation buzz when an ink gesture (circle-to-lasso / scribble-to-erase)
+     * fires — the user can't watch logcat on the tablet, so this is the "it caught" signal
+     * alongside the on-screen selection/erase. No-ops silently on a device without a motor.
+     */
+    private fun gestureHaptic() {
+        try {
+            val vib = context?.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator ?: return
+            if (!vib.hasVibrator()) return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vib.vibrate(VibrationEffect.createOneShot(35, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION") vib.vibrate(35)
+            }
+        } catch (_: Exception) { /* haptics are best-effort */ }
+    }
+
+    /** Turn the circle into a lasso selection of the enclosed ink. Returns false (→ commit as ink) if it enclosed nothing. */
+    private fun performCircleSelect(points: List<StrokePoint>): Boolean {
+        val polygon = points.map { PointF(it.x, it.y) }.toMutableList()
+        val enclosed = strokes.filter { StrokeClipboard.isStrokeInsidePolygon(it, polygon) }
+        if (enclosed.isEmpty()) return false
+        selectionPoints.clear()
+        selectionPoints.addAll(polygon)
+        selectedStrokes = enclosed.toMutableList()
+        hasSelection = true
+        selectionMode = false
+        selBox = computeSelBox(selectedStrokes)
+        syncRawInkToSelectionMenu()   // selection up → pause hardware ink so menu taps don't dot
+        applyStrokes(strokes, true)
+        drawWithSelection()
+        return true
+    }
+
     private fun onBeginDrawing(touchPoint: StrokePoint) {
         Timber.i("onBeginDrawing (${touchPoint.x}/${touchPoint.y})")
         // Start the coalescer from a clean slate (drop any post left scheduled from a prior stroke).
         provideSurfaceView().removeCallbacks(viwoodsLivePostRunnable)
         viwoodsLivePostScheduled = false
+        // Cancel a pending deferred re-bake so it can't fire mid-stroke (the bake toggles
+        // render + posts the canvas, which would interrupt the live stroke).
+        provideSurfaceView().removeCallbacks(commitVisualRunnable)
         lastPoint = touchPoint
         firstPointTimestamp = Instant.now().toEpochMilli()
         touchPoint.t = 0L
         stylusPointList.add(touchPoint)
+        viwoodsLastLiveIndex = 0
         if (penState) {
+            // Hardware ink: enable the native overlay FIRST, then hand it the page bitmap. The
+            // native RjHandWriting engine is readied asynchronously (~0.3s after initWriting by an
+            // eink-worker thread), so a single early setBackgroundBitmap hits a null engine
+            // ("bufWorker is null"). WiNote succeeds because it re-pushes the bitmap repeatedly; we
+            // do the same — here on stroke start and again on every move (see onMoveDrawing).
             viwoodsInk?.onStrokeStart()
             viwoodsInk?.reassertFastMode()
+            if (viwoodsInk?.hardwareInk == true) {
+                viwoodsCachedSnapshot = viwoodsPageSnapshot()
+                viwoodsCachedSnapshot?.let { viwoodsInk?.setPageBitmap(it) }
+            }
         }
+    }
+
+    /**
+     * Render the current page (template + committed strokes) to a full device-resolution bitmap,
+     * for the Viwoods native writing overlay's background. Uses [viewMatrix] so logical canvas
+     * coordinates map to the panel exactly as on screen. Viwoods hardware-ink path only.
+     */
+    private fun viwoodsPageSnapshot(): android.graphics.Bitmap? {
+        // Full device-panel resolution (WiNote hands the native layer a 1440×1920 bitmap).
+        val dm = resources.displayMetrics
+        val w = dm.widthPixels; val h = dm.heightPixels
+        if (w <= 0 || h <= 0) { Timber.w("viwoodsPageSnapshot null: dm ${w}x${h}"); return null }
+        val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.drawColor(Color.WHITE)
+        // Map logical canvas (CANVAS_WIDTH×CANVAS_HEIGHT) to fill the full panel.
+        c.save()
+        c.scale(w.toFloat() / CANVAS_WIDTH, h.toFloat() / CANVAS_HEIGHT)
+        if (::templateBitmap.isInitialized) c.drawBitmap(templateBitmap, 0f, 0f, null)
+        renderImageElements(c)
+        for (stroke in strokes) drawStrokePath(c, paint, stroke)
+        c.restore()
+        Timber.i("viwoodsPageSnapshot ${w}x${h} strokes=${strokes.size}")
+        return bmp
     }
 
     private fun onMoveDrawing(touchPoints: List<StrokePoint>) {
@@ -1882,20 +5399,26 @@ abstract class SurfaceFragment : ScreenFragment() {
             }
         }
 
+        // Hardware ink: re-push the cached page bitmap on every move. The native RjHandWriting
+        // engine is readied asynchronously after initWriting, so repeated pushes ensure one lands
+        // once it's ready (WiNote re-pushes similarly). Cheap: reuses the stroke-start snapshot.
+        if (penState && viwoodsInk?.hardwareInk == true) {
+            viwoodsCachedSnapshot?.let { viwoodsInk?.setPageBitmap(it) }
+            return
+        }
+
         // Software live rendering for the no-Onyx path. Skipped when Viwoods hardware ink is
         // active (the T1000 renders the live stroke natively — drawing it ourselves too would
         // double-image). On the FAST-waveform fallback the panel is in FAST mode so these
         // partial posts refresh quickly.
         if (touchHelper == null && penState && viwoodsInk?.hardwareInk != true) {
             if (viwoodsInk != null) {
-                // Viwoods: coalesce the heavy full-stroke post to one per display frame so a
-                // burst of MotionEvents can't build a backlog of full-area FAST refreshes that
-                // makes the ink lag behind the nib. Points were already captured above; this
-                // only throttles the panel post. See [viwoodsLivePostRunnable].
-                if (!viwoodsLivePostScheduled) {
-                    viwoodsLivePostScheduled = true
-                    provideSurfaceView().postOnAnimation(viwoodsLivePostRunnable)
-                }
+                // Viwoods: render THIS batch of points immediately. The old code coalesced to one
+                // post per animation frame because each post refreshed the whole-stroke bbox and a
+                // burst would back up. Now the live refresh is segment-only (constant, tiny cost —
+                // see renderLivePreviewSoftware), so per-batch synchronous rendering no longer backs
+                // up and removes the ~1-frame postOnAnimation delay that made the ink trail the nib.
+                renderLivePreviewSoftware()
             } else {
                 // Non-Onyx Boox fallback (e.g. Palma 2 Pro): render immediately, unchanged.
                 renderLivePreviewSoftware()
@@ -1921,11 +5444,18 @@ abstract class SurfaceFragment : ScreenFragment() {
         val totalScale = baseScale * zoomScale
         val sigma = paint.strokeWidth * totalScale * 4.0f
 
-        // Transform canvas-space bounds to screen space for the dirty rect.
-        val allX = stylusPointList.map { it.x }
-        val allY = stylusPointList.map { it.y }
-        val minPt = floatArrayOf(allX.min() - sigma / totalScale, allY.min() - sigma / totalScale)
-        val maxPt = floatArrayOf(allX.max() + sigma / totalScale, allY.max() + sigma / totalScale)
+        // Dirty rect covers ONLY the points added since the last post (bridged to the previous
+        // point so the new segment joins seamlessly), NOT the whole stroke. This keeps each e-ink
+        // partial refresh tiny and constant-cost even as the stroke grows long — the whole-stroke
+        // bbox was making every frame refresh a bigger region, so the ink trailed the nib. We still
+        // redraw the full path (vector, cheap) but clipped to this small rect, so nothing outside it
+        // is touched and prior posted segments are preserved.
+        val from = (viwoodsLastLiveIndex - 1).coerceAtLeast(0)
+        val recent = stylusPointList.subList(from, stylusPointList.size)
+        val rx = recent.map { it.x }
+        val ry = recent.map { it.y }
+        val minPt = floatArrayOf(rx.min() - sigma / totalScale, ry.min() - sigma / totalScale)
+        val maxPt = floatArrayOf(rx.max() + sigma / totalScale, ry.max() + sigma / totalScale)
         viewMatrix.mapPoints(minPt)
         viewMatrix.mapPoints(maxPt)
         val rect = Rect(
@@ -1944,6 +5474,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         lockCanvas.drawPath(path, viwoodsPredrawPaint())
         lockCanvas.restore()
         provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
+        viwoodsLastLiveIndex = stylusPointList.size
     }
 
     /** Lazily-built non-AA paint for the Viwoods software live preview (matches [paint] width/color). */
@@ -1964,20 +5495,25 @@ abstract class SurfaceFragment : ScreenFragment() {
         touchPoint.t = Instant.now().toEpochMilli() - firstPointTimestamp
         stylusPointList.add(touchPoint)
 
-        undoStack.add(Stroke.listDeepCopy(strokes))
-        if (undoStack.size > 50) undoStack.removeAt(0)
-        redoStack.clear()
+        pushUndo()
 
         if (!penState || erasing) {
             val strokesToRemove: MutableSet<UUID> = mutableSetOf()
-            for (ep in stylusPointList) {
-                for (stroke in strokes) {
-                    for (tp in stroke.strokePoints) {
+            // Stroke-outer with early break: once a stroke is hit there's no reason to keep
+            // testing its remaining points (the old point-outer form kept scanning the whole
+            // page per eraser point — quadratic on a full page).
+            for (stroke in strokes) {
+                var hit = false
+                for (tp in stroke.strokePoints) {
+                    for (ep in stylusPointList) {
                         if (epsilon(ep.x, ep.y, tp.x, tp.y, 25.0f)) {
-                            strokesToRemove.add(stroke.strokeId)
+                            hit = true
+                            break
                         }
                     }
+                    if (hit) break
                 }
+                if (hit) strokesToRemove.add(stroke.strokeId)
             }
             if (procrastinator) {
                 onStrokesProcrastinated(strokes.filter { it.strokeId in strokesToRemove }.toList())
@@ -1988,7 +5524,44 @@ abstract class SurfaceFragment : ScreenFragment() {
             applyStrokes(strokes, true)
             onStrokeChanged(strokes)
         } else {
-            val stroke = Stroke(UUID.randomUUID(), firstPointTimestamp, stylusPointList.toList(), paint.color, paint.strokeWidth)
+            // Always-on gestures: a deliberate circle around ink becomes a selection,
+            // a scribble over ink erases it. Ambiguous marks fall through to commit as ink.
+            if (autoGesturesEnabled && !hasSelection && !selectionMode && !pasteMode && !textMode) {
+                val gesturePoints = stylusPointList.toList()
+                if (isScribbleGesture(gesturePoints) && performScribbleErase(gesturePoints)) {
+                    gestureHaptic()
+                    lastPoint = null
+                    stylusPointList.clear()
+                    return
+                }
+                val fit = classifyCircle(gesturePoints)
+                // Only pay for the enclosure scan (every point on the page) when the mark
+                // actually classifies as a ring — normal handwriting never should.
+                val enclosesOther = fit.shapeOk && enclosesOtherInk(gesturePoints)   // the real lasso safeguard
+                val accepted = enclosesOther
+                if (accepted && performCircleSelect(gesturePoints)) {
+                    gestureHaptic()
+                    lastPoint = null
+                    stylusPointList.clear()
+                    return
+                }
+                // Diagnostic: a real ring attempt (closed-ish, above the floor, at least grazing
+                // other ink) that was NOT accepted — surface the deciding numbers, incl. whether
+                // SIZE or ENCLOSURE was the blocker. Gated on closed-ish + encircles ink so
+                // normal writing (open letters, self-enclosing "o"s) never toasts.
+                if (GESTURE_DEBUG_TOAST && !accepted && fit.closedish && fit.sizeOk && encirclesInk(gesturePoints)) {
+                    val msg = "circle? in-band=${(fit.bandFrac * 100).roundToInt()}% " +
+                        "coverage=${fit.coverageDeg.roundToInt()}° " +
+                        "closure=${((fit.closureOverR * 10).roundToInt() / 10f)}r " +
+                        "diam=${fit.diameterPx.roundToInt()}px enclosesOtherInk=${if (enclosesOtherInk(gesturePoints)) "yes" else "no"}"
+                    Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
+                }
+            }
+
+            val stroke = Stroke(
+                UUID.randomUUID(), firstPointTimestamp, stylusPointList.toList(), paint.color, effectivePenWidth(),
+                if (calligraphyMode) Stroke.STYLE_CALLIGRAPHY else Stroke.STYLE_NORMAL
+            )
             strokes.add(stroke)
             strokesToAdd.add(stroke)
 
@@ -2045,12 +5618,22 @@ abstract class SurfaceFragment : ScreenFragment() {
     private fun convertStrokes() {
         if (strokesToAdd.isEmpty()) return
 
-        applyStrokes(strokes, false)
+        // Persist + notify immediately (the save is already off the main thread), but defer
+        // the heavy full-canvas re-bake so it doesn't block delivery of the next pen-down.
+        // The live hardware overlay keeps the stroke visible until the bake runs. On the
+        // Viwoods software path there's no persistent overlay, so bake right away.
         onStrokeChanged(strokes)
         onStrokesAdded(strokesToAdd.toList())
 
         processStrokes(strokesToAdd)
         strokesToAdd.clear()
+
+        if (touchHelper != null) {
+            provideSurfaceView().removeCallbacks(commitVisualRunnable)
+            provideSurfaceView().postDelayed(commitVisualRunnable, COMMIT_VISUAL_DEBOUNCE_MS)
+        } else {
+            applyStrokes(strokes, false)
+        }
     }
 
     /**

@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Notes & Annotations — the day/week/… log of book highlights + starred articles
+     (CalendarDay.readingEvents), mirroring the iPad ReadingTimelineView. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+<LinearLayout
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- Nav line: hamburger left of the navigator (unified with feed / Tasks & Events). -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp" android:paddingTop="8dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content">
+        <ImageButton
+            android:id="@+id/goto_button"
+            android:src="@drawable/ic_menu"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter" android:padding="3dp"
+            android:layout_marginEnd="4dp"
+            android:contentDescription="@string/go_to_title"
+            android:layout_width="32dp" android:layout_height="32dp"/>
+        <ImageView
+            android:id="@+id/navigatorImageView"
+            android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="56dp"
+            android:contentDescription="@null"/>
+    </LinearLayout>
+
+    <!-- Title -->
+    <TextView
+        android:text="@string/reading_log_title"
+        android:textSize="24sp" android:textStyle="bold" android:textColor="#000000"
+        android:paddingHorizontal="14dp" android:paddingTop="6dp"
+        android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+
+    <!-- Plain (no-AI) search across the whole Ledger corpus. -->
+    <EditText
+        android:id="@+id/search_field"
+        android:hint="@string/reading_log_search_hint"
+        android:inputType="text"
+        android:imeOptions="actionSearch"
+        android:maxLines="1"
+        android:textSize="16sp"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="8dp"
+        android:layout_marginHorizontal="10dp"
+        android:layout_marginBottom="6dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+    <ProgressBar
+        android:id="@+id/progress"
+        style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+        android:indeterminate="true"
+        android:visibility="invisible"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+    <TextView
+        android:id="@+id/empty_text"
+        android:text="@string/reading_log_empty"
+        android:textColor="#666666"
+        android:textSize="16sp"
+        android:padding="24dp"
+        android:visibility="gone"
+        android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/reading_recycler"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"/>
+</LinearLayout>
+
+    <!-- Floating nav pill (unified with feed/almanac): ‹ page-up · ☀ today/menu · page-down ›. -->
+    <LinearLayout
+        android:id="@+id/reading_pill"
+        android:orientation="horizontal"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="16dp"
+        android:gravity="center_vertical"
+        android:background="@drawable/ledger_bar_bg"
+        android:padding="4dp">
+        <ImageView android:id="@+id/reading_grip" android:layout_width="22dp" android:layout_height="44dp"
+            android:scaleType="fitCenter" android:src="@drawable/ic_grip" android:contentDescription="@null"/>
+        <!-- Actions on the left: origin filter · capture gram · export. -->
+        <Button android:id="@+id/origin_button"
+            style="?android:attr/borderlessButtonStyle"
+            android:textSize="14sp" android:minWidth="0dp" android:paddingHorizontal="8dp"
+            android:layout_width="wrap_content" android:layout_height="44dp"/>
+        <ImageButton android:id="@+id/gram_button" android:layout_width="44dp" android:layout_height="44dp"
+            android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_add"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/gram_capture_title"/>
+        <ImageButton android:id="@+id/export_button" android:layout_width="44dp" android:layout_height="44dp"
+            android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_share"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reading_log_export"/>
+        <!-- Nav group on the far right: ‹up · ☀ today/menu · down›. -->
+        <ImageButton android:id="@+id/reading_page_up" android:layout_width="46dp" android:layout_height="44dp"
+            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
+        <ImageButton android:id="@+id/reading_goto" android:layout_width="46dp" android:layout_height="44dp"
+            android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_today"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+        <ImageButton android:id="@+id/reading_page_down" android:layout_width="46dp" android:layout_height="44dp"
+            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
+    </LinearLayout>
+
+</FrameLayout>
