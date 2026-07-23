@@ -489,6 +489,25 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     private var touchHelper: TouchHelper? = null
 
+    // Keep-awake with an IDLE RELEASE. keepScreenOn is turned on while the planner is in use (it
+    // stops the Onyx power manager idling mid-stroke), but a plain `= true` also overrode the system
+    // screen timeout for as long as the app was foregrounded — so leaving the Ledger open never let
+    // the device sleep and drained the battery. This timer releases the flag after a spell of no
+    // interaction; it is re-armed on every touch / ink stroke, so active use never sleeps but an
+    // untouched page does. onPause still clears it outright.
+    private val screenOnIdleMs = 2 * 60 * 1000L
+    private val idleHandler = Handler(Looper.getMainLooper())
+    private val releaseScreenOn = Runnable {
+        try { provideSurfaceView().keepScreenOn = false } catch (_: Exception) {}
+    }
+
+    /** Turn the screen-on flag on and (re)start the idle countdown that releases it. */
+    private fun armScreenOn() {
+        try { provideSurfaceView().keepScreenOn = true } catch (_: Exception) { return }
+        idleHandler.removeCallbacks(releaseScreenOn)
+        idleHandler.postDelayed(releaseScreenOn, screenOnIdleMs)
+    }
+
     /**
      * Viwoods AiPaper fast-ink backend. Non-null only on Viwoods hardware (where the Onyx
      * TouchHelper is inert); puts the panel into the FAST e-ink waveform so our software
@@ -1062,6 +1081,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         // Release the screen-on flag so the device can enter Doze when the planner is
         // backgrounded. Without this the SoC stays awake — on e-ink the frozen frame
         // looks "off" but Wi-Fi/CPU never sleep, draining the battery overnight.
+        idleHandler.removeCallbacks(releaseScreenOn)
         try {
             provideSurfaceView().keepScreenOn = false
         } catch (_: Exception) {}
@@ -1481,6 +1501,7 @@ abstract class SurfaceFragment : ScreenFragment() {
     fun surfaceTransform(): Matrix = Matrix(viewMatrix)
 
     fun handleZoomPanTouch(motionEvent: MotionEvent): Boolean {
+        if (motionEvent.actionMasked == MotionEvent.ACTION_DOWN) armScreenOn()   // any touch re-arms keep-awake
         if (motionEvent.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER) return false
 
         if (motionEvent.actionMasked == MotionEvent.ACTION_DOWN) twoFingerGesture = false
@@ -4165,10 +4186,11 @@ abstract class SurfaceFragment : ScreenFragment() {
             }
             provideSurfaceView().setZOrderOnTop(true)
             provideSurfaceView().holder.setFormat(PixelFormat.TRANSPARENT)
-            // Keep the screen on while the planner is showing — prevents the Onyx
-            // power manager from idling the device every few seconds (which causes
-            // first-stroke-after-idle latency on Palma 2 Pro).
-            provideSurfaceView().keepScreenOn = true
+            // Keep the screen on while the planner is being used — prevents the Onyx power manager
+            // from idling the device mid-stroke (first-stroke-after-idle latency on Palma 2 Pro).
+            // Armed with an idle release (see armScreenOn) so an untouched page still lets the device
+            // sleep on the system timeout instead of staying awake and draining the battery.
+            armScreenOn()
         }
 
         paint.isAntiAlias = true
@@ -4600,6 +4622,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
 
         override fun onBeginRawDrawing(b: Boolean, touchPoint: TouchPoint) {
+            armScreenOn()   // active inking re-arms keep-awake so a stroke never sleeps mid-way
         }
 
         override fun onEndRawDrawing(b: Boolean, touchPoint: TouchPoint) {
