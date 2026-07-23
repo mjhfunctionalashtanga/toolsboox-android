@@ -135,8 +135,14 @@ object SiteStore {
         val user = s.username.trim()
         val e = prefs(context).edit()
         // Boards + Community share the site's WP login (one application password on one site).
-        e.putString("site", url).putString("user", user).putString("pass", pass)
-        e.putString("communitySite", url).putString("communityUser", user).putString("communityPass", pass)
+        e.putString("site", url).putString("user", user)
+        e.putString("communitySite", url).putString("communityUser", user)
+        // Only write the password when this site actually has one — otherwise activating a site
+        // seeded (or edited) with a blank password would WIPE the creds the user already had live
+        // (e.g. entered via the legacy settings fields). A blank site just carries its URL/user.
+        if (pass.isNotBlank()) {
+            e.putString("pass", pass).putString("communityPass", pass)
+        }
         // boardId is an Int in the bridge; only overwrite when the site names one.
         s.boardId.trim().toIntOrNull()?.let { e.putInt("boardId", it) }
         // Forward-facing portal slugs → mirror iOS's keys (blank falls back to the default). No Android

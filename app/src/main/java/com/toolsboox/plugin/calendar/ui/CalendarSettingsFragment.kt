@@ -632,6 +632,24 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             }
 
             // Persist Ultrabridge settings
+            // Community (FluentCommunity) + Boards bridge creds — persisted FIRST, before the
+            // Ultrabridge validation below can early-return, so an incomplete Ultrabridge never
+            // silently drops community/boards creds typed in the same session.
+            run {
+                val bSite = binding.communitySiteInput.text?.toString()?.trim().orEmpty()
+                val bUser = binding.communityUserInput.text?.toString()?.trim().orEmpty()
+                val bPass = binding.communityPassInput.text?.toString().orEmpty().replace(" ", "")
+                com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.saveConfig(
+                    requireContext(),
+                    com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.Config(bSite, bUser, bPass)
+                )
+                val bBoard = binding.communityBoardInput.text?.toString()?.trim()?.toIntOrNull() ?: 0
+                com.toolsboox.plugin.calendar.nw.LedgerWebBridge.saveConfig(
+                    requireContext(),
+                    com.toolsboox.plugin.calendar.nw.LedgerWebBridge.Config(bSite, bUser, bPass, bBoard)
+                )
+            }
+
             val ubEnabled = binding.ultrabridgeEnableSwitch.isChecked
             val ubUrl = binding.ultrabridgeUrlInput.text?.toString()?.trim() ?: ""
             val ubUser = binding.ultrabridgeUserInput.text?.toString()?.trim() ?: ""
@@ -687,25 +705,8 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 workManager.cancelUniqueWork(UltrabridgeSyncWorker.WORK_NAME)
             }
 
-            // (Google Calendar + on-device extract were persisted early, above.)
-
-            // Community bridge (FluentCommunity) creds — moved here from Boards → Web bridge
-            // so all connection settings live in one place.
-            val bridgeSite = binding.communitySiteInput.text?.toString()?.trim().orEmpty()
-            val bridgeUser = binding.communityUserInput.text?.toString()?.trim().orEmpty()
-            // WordPress application passwords display in spaced groups ("abcd efgh …") but the
-            // real secret has no spaces — strip them so a cut-and-paste of either form works.
-            val bridgePass = binding.communityPassInput.text?.toString().orEmpty().replace(" ", "")
-            com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.saveConfig(
-                requireContext(),
-                com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.Config(bridgeSite, bridgeUser, bridgePass)
-            )
-            // Same site/user/pass also drive the Boards bridge (gram pinning); board ID is its own.
-            val bridgeBoard = binding.communityBoardInput.text?.toString()?.trim()?.toIntOrNull() ?: 0
-            com.toolsboox.plugin.calendar.nw.LedgerWebBridge.saveConfig(
-                requireContext(),
-                com.toolsboox.plugin.calendar.nw.LedgerWebBridge.Config(bridgeSite, bridgeUser, bridgePass, bridgeBoard)
-            )
+            // (Google Calendar, on-device extract, and community/boards creds were persisted early,
+            // above — before the Ultrabridge validation — so nothing is dropped on an early return.)
 
             this@CalendarSettingsFragment.requireActivity().onBackPressed()
         }

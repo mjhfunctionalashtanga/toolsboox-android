@@ -143,7 +143,7 @@ object SitesSettingsDialog {
                 val s = collect()
                 if (s.url.isBlank()) { Toast.makeText(context, "A site needs a URL", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
                 val firstEver = SiteStore.all(context).isEmpty()
-                SiteStore.upsert(context, s); savePass(s.id)
+                savePass(s.id); SiteStore.upsert(context, s)   // password first — upsert re-activates with it
                 if (firstEver) SiteStore.activate(context, s.id)   // the first site you add becomes active
                 Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show()
                 onChanged(); dialog.dismiss(); show(context, onChanged)
@@ -151,7 +151,7 @@ object SitesSettingsDialog {
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
                 val s = collect()
                 if (s.url.isBlank()) { Toast.makeText(context, "A site needs a URL", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-                SiteStore.upsert(context, s); savePass(s.id)
+                savePass(s.id); SiteStore.upsert(context, s)   // password first — upsert re-activates with it
                 SiteStore.activate(context, s.id)
                 Toast.makeText(context, "Now using ${s.display}", Toast.LENGTH_SHORT).show()
                 onChanged(); dialog.dismiss(); show(context, onChanged)
