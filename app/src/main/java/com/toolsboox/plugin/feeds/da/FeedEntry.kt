@@ -1,5 +1,7 @@
 package com.toolsboox.plugin.feeds.da
 
+import com.toolsboox.ot.HtmlText
+
 /**
  * One feed entry from Miniflux, flattened to what the Ledger's feed list + reader need.
  * Deliberately lightweight (no persistence) — the source of truth stays on the Miniflux
@@ -63,10 +65,5 @@ data class FeedEntry(
 
     /** Plain-text blurb for the list row. */
     val blurb: String
-        get() = content
-            .replace(Regex("<[^>]+>"), " ")
-            .replace(Regex("&[a-zA-Z#0-9]+;"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-            .take(180)
+        get() = HtmlText.toPlain(content).take(180)
 }

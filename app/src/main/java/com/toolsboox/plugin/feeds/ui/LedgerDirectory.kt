@@ -124,9 +124,10 @@ fun ledgerDirectoryFolders(
             "🔬  Synthesize" to { showSynthPicker(fragment) },
             "✍  Write" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "write") }
         )),
-        // Community: the three that are other PEOPLE rather than your own desk. They were mixed
-        // in with Notes and Boards, where the only thing they had in common was needing a
-        // network — which is a fact about plumbing, not about what they are for.
+        // Community: the NATIVE people-facing surfaces — your desk's connection to others. The active
+        // site's member-facing WEB portals used to be jumbled in here too; they moved to their own
+        // "Site" folder below, so it's clear at a glance which rows are native tools and which are the
+        // website rendered in a WebView.
         ScreenFragment.Folder("👥", "Community", listOf(
             "🌐  Boards · Site" to { nav.navigate(R.id.action_to_site_boards) },
             "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
@@ -134,13 +135,16 @@ fun ledgerDirectoryFolders(
             // Native unified mail (IMAP/SMTP) and the day's booking roster (tap a person → their CRM,
             // scribble a note that OCRs onto their CRM timeline).
             "✉  Mail" to { nav.navigate(R.id.action_to_mail_inbox) },
-            "🎟  Roster" to { nav.navigate(R.id.action_to_roster) },
-            // The active site's own forward-facing Vue apps, in a persistent-session WebView —
-            // FluentCommunity portal / Courses, the FluentBoards front, FluentBooking, FluentSupport,
-            // FluentCRM and the FluentCart storefront. Sign in once and the cookies stick.
+            "🎟  Roster" to { nav.navigate(R.id.action_to_roster) }
+        )),
+        // Site — the active site's own forward-facing Vue apps in a persistent-session WebView (sign in
+        // once, cookies stick). This is the WEBSITE as members/customers see it, kept apart from the
+        // native tools above. The FluentBoards front is intentionally omitted: the native "Boards ·
+        // Site" in Community is the same backend with a better e-ink UX, so the webview "Board" row
+        // (an exact duplicate) was removed.
+        ScreenFragment.Folder("🌐", "Site", listOf(
             "👥  Community portal" to { openSiteWeb(nav, "community") },
             "🎓  Courses" to { openSiteWeb(nav, "courses") },
-            "🗂  Board" to { openSiteWeb(nav, "board") },
             "📅  Booking" to { openSiteWeb(nav, "booking") },
             "🛟  Support" to { openSiteWeb(nav, "support") },
             "📇  CRM" to { openSiteWeb(nav, "crm") },
@@ -163,6 +167,9 @@ fun ledgerDirectoryFolders(
         )),
         ScreenFragment.Folder("⚙", "Settings", listOf(
             "⚙  Settings" to { nav.navigate(R.id.action_to_settings) },
+            // Sites is configuration, so it belongs here — not buried behind a button deep inside the
+            // calendar-settings scroll. Same manager the settings screen opens; one source of truth.
+            "🌐  Sites" to { com.toolsboox.plugin.calendar.ui.SitesSettingsDialog.show(fragment.requireContext()) },
             "🔤  OCR model" to { com.toolsboox.ui.plugin.OcrModel.showPicker(fragment.requireContext()) },
             "☁  Cloud sync" to { nav.navigate(R.id.action_to_cloud) }
         ))

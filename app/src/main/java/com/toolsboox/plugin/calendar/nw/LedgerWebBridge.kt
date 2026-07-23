@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.toolsboox.ot.HtmlText
 import com.toolsboox.plugin.calendar.da.v2.LedgerItem
 import okhttp3.Credentials
 import okhttp3.MediaType.Companion.toMediaType
@@ -1423,10 +1424,7 @@ object LedgerChat {
     private fun auth(c: LedgerCommunityBridge.Config) = Credentials.basic(c.user, c.pass)
 
     /** Strip the server's chat HTML to plain text for e-ink rendering. */
-    private fun plain(html: String): String =
-        html.replace(Regex("<[^>]+>"), " ").replace("&amp;", "&").replace("&lt;", "<")
-            .replace("&gt;", ">").replace("&#039;", "'").replace("&quot;", "\"")
-            .replace(Regex("\\s+"), " ").trim()
+    private fun plain(html: String): String = HtmlText.toPlain(html)
 
     /** Group (space) chats first, then DMs. Empty on failure. */
     fun threads(context: Context): List<ChatThread> {

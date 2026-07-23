@@ -506,7 +506,7 @@
 
             <androidx.appcompat.widget.SwitchCompat
                     android:id="@+id/auto_capture_switch"
-                    android:text="Auto-capture sections on leave (uses OCR credits)"
+                    android:text="@string/calendar_settings_capture_enable"
 
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -531,14 +531,16 @@
                     android:layout_marginTop="4dp"
                     android:layout_marginEnd="16dp"/>
 
-            <!-- Community + Boards bridge (FluentCommunity / FluentBoards) — one home -->
+            <!-- Sites & bridge. "Manage sites" is the SOURCE OF TRUTH (every WordPress site + the
+                 active one). The single-cred fields below are the same active-site bridge as an
+                 advanced quick-edit — they write the same prefs, so editing them mirrors, and can
+                 override, the active site. Hidden behind the toggle so the two aren't mistaken for
+                 rival editors. -->
             <TextView
                     style="@style/Settings.SectionHeading"
                     android:id="@+id/community_section_label"
                     android:text="@string/calendar_settings_community_label"/>
 
-            <!-- Multi-site: manage every WordPress site and pick the active one. The active site's
-                 creds write through into the single-cred fields below, which stay as a quick edit. -->
             <Button
                     android:id="@+id/button_manage_sites"
                     android:text="@string/calendar_settings_button_manage_sites"

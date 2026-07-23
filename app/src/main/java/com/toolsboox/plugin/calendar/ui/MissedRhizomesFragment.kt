@@ -9,6 +9,7 @@ import android.widget.TextView
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.toolsboox.R
+import com.toolsboox.ot.HtmlText
 import com.toolsboox.ot.LedgerUri
 import com.toolsboox.plugin.calendar.da.v2.Connection
 import com.toolsboox.plugin.calendar.ot.ConnectionStore
@@ -308,15 +309,7 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         s.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.length >= 4 }.toSet()
 
     /** Lightweight HTML→text — scripts/styles out, tags out, a handful of entities, whitespace tidy. */
-    private fun strip(html: String): String {
-        var s = html.replace(Regex("(?is)<script.*?</script>|<style.*?</style>"), " ")
-            .replace(Regex("<[^>]+>"), " ")
-        for ((a, b) in listOf(
-            "&amp;" to "&", "&lt;" to "<", "&gt;" to ">", "&quot;" to "\"",
-            "&#39;" to "'", "&nbsp;" to " ", "&rsquo;" to "’", "&ldquo;" to "“", "&rdquo;" to "”"
-        )) s = s.replace(a, b)
-        return s.replace(Regex("\\s+"), " ").trim()
-    }
+    private fun strip(html: String): String = HtmlText.toPlain(html)
 
     override fun showLoading() {}
     override fun hideLoading() {}

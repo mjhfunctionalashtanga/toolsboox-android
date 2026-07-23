@@ -4,7 +4,14 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.toolsboox.plugin.calendar.nw.LedgerSite
+import com.toolsboox.plugin.calendar.nw.SiteStore
+import com.toolsboox.plugin.mail.MailAccount
+import com.toolsboox.plugin.mail.MailAccountStore
+import org.json.JSONArray
 import org.json.JSONObject
+import timber.log.Timber
+import java.util.UUID
 
 /**
  * Export/import of connection settings so a device is set up once and copied to the others, instead
@@ -16,7 +23,11 @@ import org.json.JSONObject
  *  - The AI section uses the iPad's per-provider shape (ai.provider / ai.anthropicKey / ai.openaiKey
  *    / ai.anthropicModel / ai.openaiModel), mapped onto Android's `ledger_chat_*` prefs. The old
  *    single-provider {key, model} shape silently carried nothing to the iPad.
- *  - Any section (opds, support, books, ttsOpenAI, prefs, mail, …) or any field inside a section
+ *  - The multi-site `sites` array (each site + its password + `activeSite`) and the `mail` accounts
+ *    array (each account + its password) round-trip through SiteStore / MailAccountStore — the same
+ *    stores the app actually reads — so a site or account configured on the iPad appears on the Boox
+ *    and vice-versa. (They used to fall into passthrough: re-emitted but never ingested.)
+ *  - Any OTHER section (opds, support, books, ttsOpenAI, prefs, …) or any field inside a section
  *    Android does not have a home for is captured verbatim on import into an encrypted passthrough
  *    store and re-emitted on the next export, so an Android re-export NEVER destroys iOS-only
  *    settings.
@@ -125,6 +136,55 @@ object SettingsBackup {
         }
 
         for ((name, obj) in sections) if (obj.length() > 0) root.put(name, obj)
+
+        // Multi-site "Sites" system + mail accounts. These are ARRAYS (each entry carries its own
+        // encrypted password), not scalar prefs, so they can't ride the field map above. They used to
+        // fall into the opaque passthrough store — re-emitted but never actually ingested — which is
+        // the data-loss bug: an export emitted zero mail accounts and only the single active site's
+        // write-through creds. We now read them straight from SiteStore / MailAccountStore.
+        //
+        // Ports and SSL flags are written as STRINGS ("993", "1"/"0") EXACTLY as the iPad writes them
+        // (see App/LedgerSettingsBackup.swift ~:73-93): iOS parses these fields with `as? String`, so
+        // emitting raw ints/bools would make an iPad import silently drop the port and SSL flags.
+        // Emitted last so live values override any stale copy the passthrough merge may have surfaced.
+        runCatching {
+            val sites = SiteStore.all(context)
+            if (sites.isNotEmpty()) {
+                val arr = JSONArray()
+                for (s in sites) {
+                    // LedgerSite.toJson() is already all-string (id/name/url/username/boardId/*Path),
+                    // matching the iPad's site shape; we only add the per-site password.
+                    arr.put(s.toJson().put("password", SiteStore.password(context, s.id)))
+                }
+                root.put("sites", arr)
+                root.put("activeSite", SiteStore.activeId(context))
+            }
+        }.onFailure { Timber.w(it, "sites export failed") }
+
+        runCatching {
+            val accounts = MailAccountStore.all(context)
+            if (accounts.isNotEmpty()) {
+                val arr = JSONArray()
+                for (a in accounts) {
+                    arr.put(
+                        JSONObject()
+                            .put("id", a.id)
+                            .put("displayName", a.displayName)
+                            .put("email", a.email)
+                            .put("username", a.username)
+                            .put("imapHost", a.imapHost)
+                            .put("imapPort", a.imapPort.toString())
+                            .put("imapSSL", if (a.imapSSL) "1" else "0")
+                            .put("smtpHost", a.smtpHost)
+                            .put("smtpPort", a.smtpPort.toString())
+                            .put("smtpSSL", if (a.smtpSSL) "1" else "0")
+                            .put("password", MailAccountStore.password(context, a.id))
+                    )
+                }
+                root.put("mail", arr)
+            }
+        }.onFailure { Timber.w(it, "mail export failed") }
+
         return root.toString(2)
     }
 
@@ -155,6 +215,63 @@ object SettingsBackup {
         editors.values.forEach { it.apply() }
         applied.addAll(appliedSections)
 
+        // Multi-site "Sites" system: ACTUALLY ingest each site into SiteStore (create-or-update by id,
+        // its password into the encrypted per-site key, then honour `activeSite`) instead of dropping
+        // the array into passthrough where it was re-emitted but never applied. Non-destructive, exactly
+        // like the scalar import above: upsert only creates/updates by id and never deletes sites that
+        // aren't in the file. Every entry is guarded so one malformed record can't abort the import.
+        root.optJSONArray("sites")?.let { arr ->
+            var any = false
+            for (i in 0 until arr.length()) {
+                runCatching {
+                    val o = arr.optJSONObject(i) ?: return@runCatching
+                    // iPad site keys match LedgerSite.fromJson one-for-one (all string-valued).
+                    val site = LedgerSite.fromJson(o)
+                    if (site.url.isBlank()) return@runCatching   // mirror iOS: skip creds-less rows
+                    SiteStore.upsert(context, site)
+                    val p = o.optString("password", "")
+                    if (p.isNotBlank()) SiteStore.setPassword(context, site.id, p)
+                    any = true
+                }.onFailure { Timber.w(it, "site import entry failed") }
+            }
+            // Re-point the live/write-through creds at whichever site the backup marks active.
+            val active = root.optString("activeSite", "")
+            if (active.isNotBlank()) runCatching { SiteStore.activate(context, active) }
+                .onFailure { Timber.w(it, "activate site failed") }
+            if (any) applied.add("sites")
+        }
+
+        // Mail accounts: ingest into MailAccountStore (create-or-update by id; password to the encrypted
+        // per-account key). Ports arrive as strings and SSL as "1"/"0" (the iPad's shape); parse them to
+        // match iOS semantics — MailAccount.fromJson's optBoolean would NOT coerce "1"/"0", so we build
+        // the account by hand. Guarded per-entry; upsert never deletes accounts absent from the file.
+        root.optJSONArray("mail")?.let { arr ->
+            var any = false
+            for (i in 0 until arr.length()) {
+                runCatching {
+                    val o = arr.optJSONObject(i) ?: return@runCatching
+                    val a = MailAccount(
+                        id = o.optString("id", UUID.randomUUID().toString()),
+                        displayName = o.optString("displayName", ""),
+                        email = o.optString("email", ""),
+                        username = o.optString("username", ""),
+                        imapHost = o.optString("imapHost", ""),
+                        imapPort = o.optString("imapPort", "").toIntOrNull() ?: 993,
+                        imapSSL = o.optString("imapSSL", "1") != "0",
+                        smtpHost = o.optString("smtpHost", ""),
+                        smtpPort = o.optString("smtpPort", "").toIntOrNull() ?: 465,
+                        smtpSSL = o.optString("smtpSSL", "1") != "0",
+                    )
+                    if (a.email.isBlank()) return@runCatching   // mirror iOS: skip address-less rows
+                    MailAccountStore.upsert(context, a)
+                    val p = o.optString("password", "")
+                    if (p.isNotBlank()) MailAccountStore.setPassword(context, a.id, p)
+                    any = true
+                }.onFailure { Timber.w(it, "mail import entry failed") }
+            }
+            if (any) applied.add("mail")
+        }
+
         // Capture everything Android didn't map — whole iOS-only sections and any unmapped fields
         // inside sections we only partially handle — so a later Android export re-emits them intact.
         val passthrough = JSONObject()
@@ -162,6 +279,9 @@ object SettingsBackup {
         while (keys.hasNext()) {
             val key = keys.next()
             if (key == "app" || key == "version" || key == "platform") continue
+            // Now natively modelled (ingested into SiteStore / MailAccountStore above) — must NOT fall
+            // into passthrough, or they'd be re-emitted from there as a stale, un-ingested shadow copy.
+            if (key == "sites" || key == "mail" || key == "activeSite") continue
             val value = root.get(key)
             if (value is JSONObject) {
                 val leftover = JSONObject()

@@ -75,22 +75,34 @@ object SitesSettingsDialog {
             orientation = LinearLayout.VERTICAL
             setPadding(px(20), px(4), px(20), px(4))
         }
-        val (nameV, nameE) = field("NAME", site.name, InputType.TYPE_CLASS_TEXT)
+        // Sentence-case labels (no shouting on e-ink) with the developer word "slug" dropped in favour
+        // of "page", matching iOS App/LedgerSites.swift. A footer below explains the portal fields.
+        val (nameV, nameE) = field("Name", site.name, InputType.TYPE_CLASS_TEXT)
         val (urlV, urlE) = field("URL (https://…)", site.url, InputType.TYPE_TEXT_VARIATION_URI or InputType.TYPE_CLASS_TEXT)
-        val (userV, userE) = field("WORDPRESS USERNAME", site.username, InputType.TYPE_CLASS_TEXT)
+        val (userV, userE) = field("WordPress username", site.username, InputType.TYPE_CLASS_TEXT)
         val (passV, passE) = field(
-            "APPLICATION PASSWORD", SiteStore.password(context, site.id),
+            "Application password", SiteStore.password(context, site.id),
             InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         )
-        val (boardV, boardE) = field("DEFAULT BOARD ID (optional)", site.boardId, InputType.TYPE_CLASS_NUMBER)
-        val (portalV, portalE) = field("COMMUNITY PORTAL SLUG", site.portalPath, InputType.TYPE_CLASS_TEXT)
-        val (boardsV, boardsE) = field("BOARDS PORTAL SLUG", site.boardsPath, InputType.TYPE_CLASS_TEXT)
-        val (bookingV, bookingE) = field("BOOKING PAGE SLUG", site.bookingPath, InputType.TYPE_CLASS_TEXT)
-        val (supportV, supportE) = field("SUPPORT PORTAL SLUG", site.supportPath, InputType.TYPE_CLASS_TEXT)
-        val (shopV, shopE) = field("SHOP SLUG", site.shopPath, InputType.TYPE_CLASS_TEXT)
-        val (crmV, crmE) = field("CRM PAGE SLUG (optional)", site.crmPath, InputType.TYPE_CLASS_TEXT)
+        val (boardV, boardE) = field("Default board ID (optional)", site.boardId, InputType.TYPE_CLASS_NUMBER)
+        val (portalV, portalE) = field("Community portal", site.portalPath, InputType.TYPE_CLASS_TEXT)
+        val (boardsV, boardsE) = field("Boards portal", site.boardsPath, InputType.TYPE_CLASS_TEXT)
+        val (bookingV, bookingE) = field("Booking page", site.bookingPath, InputType.TYPE_CLASS_TEXT)
+        val (supportV, supportE) = field("Support portal", site.supportPath, InputType.TYPE_CLASS_TEXT)
+        val (shopV, shopE) = field("Shop page", site.shopPath, InputType.TYPE_CLASS_TEXT)
+        val (crmV, crmE) = field("CRM page (optional)", site.crmPath, InputType.TYPE_CLASS_TEXT)
         listOf(nameV, urlV, userV, passV, boardV, portalV, boardsV, bookingV, supportV, shopV, crmV)
             .forEach { col.addView(it) }
+
+        // Footer help — the terms above ("application password", the portal paths) are unexplained
+        // otherwise. iOS shows the same guidance under the form (LedgerSites.swift:211-213).
+        col.addView(TextView(ctx).apply {
+            text = "The portal fields are the path each front-facing page lives at on your site " +
+                "(e.g. “portal”, “booking”). Leave blank to use the defaults. Create an application " +
+                "password in WordPress → Users → Profile → Application Passwords."
+            textSize = 12f; setTextColor(0xFF8A8A8A.toInt()); setLineSpacing(0f, 1.2f)
+            setPadding(0, px(14), 0, px(2))
+        })
 
         // Persist the inputs back onto a fresh copy of the site (id preserved).
         fun collect(): LedgerSite = site.copy(

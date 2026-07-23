@@ -1,6 +1,7 @@
 package com.toolsboox.plugin.chat.fi
 
 import android.content.Context
+import com.toolsboox.ot.HtmlText
 import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import com.toolsboox.plugin.calendar.da.v2.ReadingEvent
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
@@ -79,9 +80,7 @@ class LedgerCorpusService @Inject constructor(
                         if (title.isEmpty()) continue
                         val html = File(cacheDir, "content-$id.html").takeIf { it.exists() }?.readText()
                             ?: o.optString("content")
-                        val text = html.replace(Regex("(?is)<script.*?</script>|<style.*?</style>"), "")
-                            .replace(Regex("<[^>]+>"), " ")
-                            .replace(Regex("\\s+"), " ").trim()
+                        val text = HtmlText.toPlain(html)
                         if (text.isEmpty()) continue
                         val date = runCatching {
                             java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)

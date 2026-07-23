@@ -190,6 +190,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
     /** An opened message: its body, and the moves that make it an assignable object. */
     private fun openMessage(m: InboxMessage) {
         val ctx = requireContext()
+        lateinit var dialog: androidx.appcompat.app.AlertDialog   // referenced by the action rows below
         val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(8), dp(18), dp(8)) }
         col.addView(TextView(ctx).apply {
             text = m.subject; textSize = 17f; setTextColor(0xFF000000.toInt())
@@ -203,6 +204,21 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             text = m.body; textSize = 15f; setTextColor(0xFF000000.toInt()); setTextIsSelectable(true)
         })
 
+        // The moves that let a message join the knowledge graph like any other Ledger object, mirroring
+        // iOS MessageDetailView. AlertDialog only has three buttons (Close / star / Reply), so these ride
+        // as tappable rows under the body -- the same plain-TextView idiom as "Clear un-starred".
+        fun action(label: String, onClick: () -> Unit) = TextView(ctx).apply {
+            text = label; textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, dp(14), 0, dp(2))
+            setOnClickListener { onClick() }
+        }
+        col.addView(action("🕸  Rhizome — connect & open graph") { dialog.dismiss(); openRhizome(m) })
+        col.addView(action("🧩  Assign to synthesis") { dialog.dismiss(); assignToSynthesis(m) })
+        // TODO(roots): a "rhymes / roots" action would open the semantic-roots surface seeded from this
+        // message, but R.id.action_to_ledger_roots -> LedgerRootsFragment takes NO arguments (confirmed:
+        // every call site navigates it bare) and shows the global roots view -- there is no seed hook. Per
+        // the brief, skipping rather than inventing an entry point; wire it here if LedgerRootsFragment
+        // ever gains a seed/URI argument.
+
         val canReply = MailSync.accountId(m.id) != null
         val builder = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setView(ScrollView(ctx).apply { addView(col) })
@@ -211,12 +227,55 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
                 if (InboxStore.isStarred(ctx, m.id)) unstar(m) else starToTodo(m)
             }
         if (canReply) builder.setNegativeButton("Reply…") { _, _ -> showReply(m) }
-        val dialog = builder.create()
+        dialog = builder.create()
         dialog.show()
         dialog.window?.setLayout(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT
         )
+    }
+
+    /**
+     * Join this message into the connection graph and open its rhizome -- the same move every other
+     * Ledger object makes (mirrors QuickWinsFragment.openRhizome / DailyPileFragment.rhizome). The
+     * message rides a stable `mail://<id>` URI, so any edge drawn on the rhizome surface sticks to it.
+     */
+    private fun openRhizome(m: InboxMessage) {
+        NavHostFragment.findNavController(this).navigate(
+            R.id.action_to_ledger_rhizome,
+            androidx.core.os.bundleOf(
+                com.toolsboox.plugin.calendar.ui.LedgerRhizomeFragment.ARG_URI to "mail://${m.id}",
+                com.toolsboox.plugin.calendar.ui.LedgerRhizomeFragment.ARG_LABEL
+                    to m.subject.ifBlank { m.fromName }.take(60)
+            )
+        )
+    }
+
+    /**
+     * File the message onto today's synthesis pile (its subject + a body snippet), and drop a provenance
+     * edge from its `mail://<id>` URI to today's Synthesize page so it shows up in the graph. Mirrors the
+     * SynthesisIdeaStore.add usage in ReaderFragment / CalendarDayFragment; IO runs off the main thread.
+     */
+    private fun assignToSynthesis(m: InboxMessage) {
+        val ctx = requireContext()
+        val uri = "mail://${m.id}"
+        val label = m.subject.ifBlank { m.fromName.ifBlank { m.fromEmail } }.take(60)
+        val snippet = m.body.trim().replace(Regex("\\s+"), " ").take(280)
+        val line = listOf(m.subject.trim(), snippet).filter { it.isNotBlank() }.joinToString(" — ")
+        if (line.isBlank()) { toast("Nothing to file"); return }
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                val today = LocalDate.now()
+                com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.add(ctx, today, listOf(line), "note", label)
+                com.toolsboox.plugin.calendar.ot.ConnectionStore.connect(
+                    ctx, uri, com.toolsboox.ot.LedgerUri.page(today.toString(), "synthesize"),
+                    kind = com.toolsboox.plugin.calendar.da.v2.Connection.PLACED,
+                    fromLabel = label, toLabel = "Synthesize · $today"
+                )
+            }
+            if (!isAdded) return@launch
+            toast("Filed to today's synthesis")
+        }
     }
 
     /** A plain reply, sent out the account the message arrived on (via SMTP). */
