@@ -23,27 +23,34 @@ class ImapClient(host: String, port: Int, useTLS: Boolean) {
         withContext(Dispatchers.IO) { run(user, pass, limit) }
 
     private fun run(user: String, pass: String, limit: Int): List<FetchedMessage> {
-        conn.start()
-        conn.readLine()                                   // server greeting: * OK ...
+        // A read-timeout, a mid-FETCH socket drop, or a parse throw must NOT leak the TLS socket: the
+        // finally closes on every path (double-close via logout() is harmless). Servers routinely drop
+        // slow connections mid-fetch, so this runs on essentially every refresh.
+        try {
+            conn.start()
+            conn.readLine()                                   // server greeting: * OK ...
 
-        val login = command("LOGIN ${quote(user)} ${quote(pass)}")
-        if (!login.ok) { close(); throw MailException("The server rejected the username or password.") }
+            val login = command("LOGIN ${quote(user)} ${quote(pass)}")
+            if (!login.ok) throw MailException("The server rejected the username or password.")
 
-        val sel = command("SELECT INBOX")
-        if (!sel.ok) { close(); throw MailException("Couldn't open INBOX.") }
-        val exists = parseExists(sel.lines)
-        if (exists <= 0) { logout(); return emptyList() }
+            val sel = command("SELECT INBOX")
+            if (!sel.ok) throw MailException("Couldn't open INBOX.")
+            val exists = parseExists(sel.lines)
+            if (exists <= 0) { logout(); return emptyList() }
 
-        val start = maxOf(1, exists - limit + 1)
-        val out = ArrayList<FetchedMessage>()
-        var seq = exists
-        while (seq >= start) {
-            val r = command("FETCH $seq (UID INTERNALDATE BODY.PEEK[])")
-            if (r.ok) parseFetch(r.lines, r.literals)?.let { out.add(it) }
-            seq -= 1
+            val start = maxOf(1, exists - limit + 1)
+            val out = ArrayList<FetchedMessage>()
+            var seq = exists
+            while (seq >= start) {
+                val r = command("FETCH $seq (UID INTERNALDATE BODY.PEEK[])")
+                if (r.ok) parseFetch(r.lines, r.literals)?.let { out.add(it) }
+                seq -= 1
+            }
+            logout()
+            return out
+        } finally {
+            close()
         }
-        logout()
-        return out
     }
 
     // Command / response

@@ -299,7 +299,8 @@
         <argument
                 android:name="site_web_target"
                 app:argType="string"
-                app:nullable="true"/>
+                app:nullable="true"
+                android:defaultValue="@null"/>
         <argument
                 android:name="site_web_path"
                 app:argType="string"

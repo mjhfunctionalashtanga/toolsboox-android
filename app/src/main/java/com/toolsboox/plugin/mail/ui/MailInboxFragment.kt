@@ -243,6 +243,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
                 lifecycleScope.launch {
                     val err = try { withContext(Dispatchers.IO) { MailSync.sendReply(ctx, text, m) }; null }
                     catch (e: Exception) { e.message ?: "Send failed" }
+                    if (!isAdded) return@launch          // send outlives the fragment; toast needs it attached
                     toast(if (err == null) "Reply sent" else "Send failed: $err")
                 }
             }

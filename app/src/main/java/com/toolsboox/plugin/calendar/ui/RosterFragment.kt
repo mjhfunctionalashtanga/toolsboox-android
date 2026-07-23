@@ -294,7 +294,13 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
         if (url.isBlank()) return
         lifecycleScope.launch {
             val bmp = withContext(Dispatchers.IO) {
-                runCatching { java.net.URL(url).openStream().use { android.graphics.BitmapFactory.decodeStream(it) } }.getOrNull()
+                runCatching {
+                    // Bounded: a slow/hung avatar host must not pin an IO thread (one fires per card).
+                    val c = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                        connectTimeout = 8_000; readTimeout = 8_000
+                    }
+                    c.inputStream.use { android.graphics.BitmapFactory.decodeStream(it) }
+                }.getOrNull()
             }
             if (isAdded && bmp != null) view.setImageBitmap(bmp)
         }

@@ -34,27 +34,32 @@ class SmtpClient(host: String, port: Int, useTLS: Boolean) {
         withContext(Dispatchers.IO) { run(login, password, message) }
 
     private fun run(login: String, password: String, m: Outgoing) {
-        conn.start()
-        expect(2, "greeting")                          // 220
+        // A broken pipe on any write (EHLO / MAIL FROM / the body sendRaw) must not leak the socket:
+        // the finally closes on every path (a double-close after the graceful QUIT is harmless).
+        try {
+            conn.start()
+            expect(2, "greeting")                          // 220
 
-        cmd("EHLO ledger.local", 2)
-        cmd("AUTH LOGIN", 3)                           // 334
-        cmd(b64(login), 3)                             // 334
-        try { cmd(b64(password), 2) }                  // 235
-        catch (e: Exception) { close(); throw MailException("The server rejected the username or password.") }
+            cmd("EHLO ledger.local", 2)
+            cmd("AUTH LOGIN", 3)                           // 334
+            cmd(b64(login), 3)                             // 334
+            try { cmd(b64(password), 2) }                  // 235
+            catch (e: Exception) { throw MailException("The server rejected the username or password.") }
 
-        cmd("MAIL FROM:<${m.fromEmail}>", 2)
-        cmd("RCPT TO:<${m.toEmail}>", 2)
-        cmd("DATA", 3)                                 // 354
+            cmd("MAIL FROM:<${m.fromEmail}>", 2)
+            cmd("RCPT TO:<${m.toEmail}>", 2)
+            cmd("DATA", 3)                                 // 354
 
-        conn.sendRaw((buildMessage(m) + "\r\n.\r\n").toByteArray(Charsets.UTF_8))
-        expect(2, "message body")                      // 250 -- the message is now accepted
+            conn.sendRaw((buildMessage(m) + "\r\n.\r\n").toByteArray(Charsets.UTF_8))
+            expect(2, "message body")                      // 250 -- the message is now accepted
 
-        // Cleanup only (the mail is already delivered): say QUIT AFTER the 250, then read its 221 if
-        // it comes. Never before the 250.
-        try { conn.send("QUIT") } catch (e: Exception) { }
-        try { readReply() } catch (e: Exception) { }
-        close()
+            // Cleanup only (the mail is already delivered): say QUIT AFTER the 250, then read its 221
+            // if it comes. Never before the 250.
+            try { conn.send("QUIT") } catch (e: Exception) { }
+            try { readReply() } catch (e: Exception) { }
+        } finally {
+            close()
+        }
     }
 
     // Message

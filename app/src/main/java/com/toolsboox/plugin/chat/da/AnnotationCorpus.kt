@@ -38,7 +38,13 @@ object AnnotationCorpus {
         runCatching {
             val obj = JSONObject()
             for ((k, v) in map) obj.put(k, v)
-            file(context).writeText(obj.toString())
+            // Atomic: write a temp file and rename over the index, so a process kill mid-write leaves the
+            // old good file intact rather than a truncated one that load() would read as empty and then
+            // overwrite — which would silently discard the whole corpus.
+            val dest = file(context)
+            val tmp = File(dest.parentFile, dest.name + ".tmp")
+            tmp.writeText(obj.toString())
+            if (!tmp.renameTo(dest)) { dest.writeText(obj.toString()); tmp.delete() }
         }
     }
 
@@ -46,7 +52,11 @@ object AnnotationCorpus {
      * Record an annotation's text with provenance. [surface]+[id] make a key unique across surfaces
      * (e.g. "crm" + "crmnote-42-1690000000"). [uri] is the object's LedgerUri, [label] its human name
      * (the person, the article title). Blank [text] forgets the entry so a cleared note doesn't linger.
+     *
+     * Synchronized: callers invoke this from Dispatchers.IO, so two roster saves could otherwise
+     * interleave the load→mutate→save and lose one annotation.
      */
+    @Synchronized
     fun record(context: Context, surface: String, id: String, uri: String, label: String, text: String) {
         val key = "$surface:$id"
         val clean = text.trim()
@@ -59,6 +69,7 @@ object AnnotationCorpus {
         save(context, map)
     }
 
+    @Synchronized
     fun remove(context: Context, key: String) {
         val map = load(context)
         if (map.remove(key) != null) save(context, map)

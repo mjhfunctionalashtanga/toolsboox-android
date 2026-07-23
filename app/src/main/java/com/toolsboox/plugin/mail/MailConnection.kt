@@ -36,16 +36,24 @@ class MailConnection(
 
     fun start() {
         val raw = Socket()
-        raw.connect(InetSocketAddress(host, port), connectTimeoutMs)   // throws fast on no-route / DNS
-        raw.soTimeout = readTimeoutMs                                   // bounds a silent server
-        val s: Socket = if (useTLS) {
-            (SSLSocketFactory.getDefault() as SSLSocketFactory)
-                .createSocket(raw, host, port, true)                    // layered over the live socket
-                .also { (it as SSLSocket).startHandshake() }
-        } else raw
-        socket = s
-        input = BufferedInputStream(s.getInputStream())
-        output = s.getOutputStream()
+        try {
+            raw.connect(InetSocketAddress(host, port), connectTimeoutMs)   // throws fast on no-route / DNS
+            raw.soTimeout = readTimeoutMs                                   // bounds a silent server
+            val s: Socket = if (useTLS) {
+                (SSLSocketFactory.getDefault() as SSLSocketFactory)
+                    .createSocket(raw, host, port, true)                    // layered over the live socket
+                    .also { (it as SSLSocket).startHandshake() }
+            } else raw
+            socket = s
+            input = BufferedInputStream(s.getInputStream())
+            output = s.getOutputStream()
+        } catch (e: Exception) {
+            // A bad cert / handshake reset / stream-open failure would otherwise leak the raw socket
+            // (and the layered SSLSocket): `socket` is still null, so a later close() is a no-op.
+            try { raw.close() } catch (_: Exception) { }
+            try { socket?.close() } catch (_: Exception) { }
+            throw e
+        }
     }
 
     fun close() { try { socket?.close() } catch (_: Exception) { } }
