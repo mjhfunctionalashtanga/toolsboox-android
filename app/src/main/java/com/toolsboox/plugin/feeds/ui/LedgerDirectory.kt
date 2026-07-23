@@ -102,7 +102,11 @@ fun ledgerDirectoryFolders(
             // Boards = one system, two sources (Local on-device tasks · Site FluentBoards),
             // framed like the RSS Local/Site split. Tasks & Events is the list view of Local.
             "🗒  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
-            "📋  Boards · Local" to { nav.navigate(R.id.action_to_kanban) }
+            "📋  Boards · Local" to { nav.navigate(R.id.action_to_kanban) },
+            // WordPress publishing on the active site — compose (post/schedule/draft, CPTs, grams as
+            // the featured image) and browse/edit/trash posts.
+            "🖋  Publish" to { nav.navigate(R.id.action_to_publish) },
+            "🗎  Posts" to { nav.navigate(R.id.action_to_posts_browser) }
         )),
         // The Garden: the four surfaces that are about what you have already written rather
         // than about capturing more of it. Roots is what keeps coming back, Map is the same
@@ -110,8 +114,14 @@ fun ledgerDirectoryFolders(
         // see it. They were scattered across the day-page switcher and the Desk.
         ScreenFragment.Folder("🌱", "Garden", listOf(
             "🌿  Roots" to { nav.navigate(R.id.action_to_ledger_roots) },
-            "🔬  Synthesize" to { showSynthPicker(fragment) },
             "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
+            // The three semantic action-surfaces: your graph and your meaning-model turned into
+            // something to DO — the quickest wins, the ideas that sprouted, the feed you skipped
+            // that speaks to what you're already thinking about.
+            "⚡  Quick Wins" to { nav.navigate(R.id.action_to_quick_wins) },
+            "🌱  Sprouts" to { nav.navigate(R.id.action_to_sprouts) },
+            "✧  Missed Rhizomes" to { nav.navigate(R.id.action_to_missed_rhizomes) },
+            "🔬  Synthesize" to { showSynthPicker(fragment) },
             "✍  Write" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "write") }
         )),
         // Community: the three that are other PEOPLE rather than your own desk. They were mixed
@@ -121,6 +131,10 @@ fun ledgerDirectoryFolders(
             "🌐  Boards · Site" to { nav.navigate(R.id.action_to_site_boards) },
             "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
             "💬  Messages" to { nav.navigate(R.id.action_to_messages) },
+            // Native unified mail (IMAP/SMTP) and the day's booking roster (tap a person → their CRM,
+            // scribble a note that OCRs onto their CRM timeline).
+            "✉  Mail" to { nav.navigate(R.id.action_to_mail_inbox) },
+            "🎟  Roster" to { nav.navigate(R.id.action_to_roster) },
             // The active site's own forward-facing Vue apps, in a persistent-session WebView —
             // FluentCommunity portal / Courses, the FluentBoards front, FluentBooking, FluentSupport,
             // FluentCRM and the FluentCart storefront. Sign in once and the cookies stick.

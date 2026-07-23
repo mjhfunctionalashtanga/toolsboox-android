@@ -1,0 +1,314 @@
+package com.toolsboox.plugin.calendar.ui
+
+import android.content.Context
+import android.os.Bundle
+import android.view.View
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import androidx.lifecycle.lifecycleScope
+import androidx.navigation.fragment.findNavController
+import com.toolsboox.R
+import com.toolsboox.ot.LedgerUri
+import com.toolsboox.plugin.calendar.da.v2.Connection
+import com.toolsboox.plugin.calendar.ot.ConnectionStore
+import com.toolsboox.plugin.calendar.ot.PickingsPlacement
+import com.toolsboox.plugin.calendar.ot.PickingsStore
+import com.toolsboox.plugin.calendar.ot.QuoteCardRenderer
+import com.toolsboox.plugin.calendar.ot.SemanticRoots
+import com.toolsboox.plugin.calendar.ot.Spiral
+import com.toolsboox.plugin.chat.da.CorpusSnippet
+import com.toolsboox.plugin.feeds.nw.FeedCache
+import com.toolsboox.ui.plugin.ScreenFragment
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.time.LocalDate
+import javax.inject.Inject
+
+/**
+ * ✧ **Missed Rhizomes** — the Android mirror of the iPad's MissedRhizomesView; a serendipity engine
+ * over the feed.
+ *
+ * It reads the items you walked past (cached, never starred) and, for each, asks the on-device
+ * meaning model how deeply it rhymes with your ROOTS — the surfaced material you've actually engaged
+ * with (see [SemanticRoots]). The few that rhyme deepest are connections you'd otherwise have lost:
+ * something you skipped that speaks straight to what you're already thinking about. Each can become a
+ * picking — a quote card dropped onto today's board next to the root it echoes — so the missed thing
+ * rejoins the woven corpus instead of scrolling away.
+ */
+@AndroidEntryPoint
+class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
+
+    @Inject
+    lateinit var corpusService: com.toolsboox.plugin.chat.fi.LedgerCorpusService
+
+    @Inject
+    lateinit var calendarDayService: com.toolsboox.plugin.calendar.fi.CalendarDayService
+
+    override val view = R.layout.fragment_semantic_surface
+
+    private lateinit var column: LinearLayout
+    private lateinit var scroll: ScrollView
+    private var finds: List<MissedFind> = emptyList()
+    private val picked = HashSet<String>()
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    private data class MissedFind(
+        val id: String, val entryTitle: String, val entryUrl: String, val feedName: String,
+        val quote: String, val rootTag: String, val rootText: String, val score: Double
+    )
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        view.findViewById<TextView>(R.id.semantic_title).text = "✧ Missed Rhizomes"
+        column = view.findViewById(R.id.semantic_column)
+        scroll = view.findViewById(R.id.semantic_scroll)
+        view.findViewById<TextView>(R.id.semantic_close)
+            .setOnClickListener { findNavController().popBackStack() }
+        load()
+    }
+
+    private fun load() {
+        val ctx = context ?: return
+        column.removeAllViews()
+        column.addView(hint("Listening for what you missed…"))
+        lifecycleScope.launch {
+            val found = withContext(Dispatchers.IO) { runCatching { discover(ctx) }.getOrNull() ?: emptyList() }
+            if (!isAdded) return@launch
+            finds = found
+            render()
+        }
+    }
+
+    private fun render() {
+        column.removeAllViews()
+        if (finds.isEmpty()) {
+            column.addView(hint(
+                "Nothing in the feed you skipped rhymes deeply with your roots yet. Let more feed " +
+                "collect, or add an embeddings key in Settings so the meaning model can compare them."))
+            com.toolsboox.ot.ReadingSize.apply(scroll)
+            return
+        }
+        for (f in finds) column.addView(card(f))
+        com.toolsboox.ot.ReadingSize.apply(scroll)
+    }
+
+    private fun hint(text: String) = TextView(requireContext()).apply {
+        this.text = text
+        textSize = 14f; setTextColor(0xFF666666.toInt()); setLineSpacing(0f, 1.15f)
+        setPadding(0, dp(12), 0, 0)
+    }
+
+    private fun card(f: MissedFind): View {
+        val ctx = requireContext()
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFFFFFFFF.toInt()); setStroke(dp(1), 0xFFBBBBBB.toInt()); cornerRadius = dp(10).toFloat()
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(dp(3), dp(4), dp(3), dp(5)) }
+        }
+        box.addView(TextView(ctx).apply {
+            text = "YOU SKIPPED"
+            textSize = 11f; setTextColor(0xFF999999.toInt()); letterSpacing = 0.08f
+        })
+        box.addView(TextView(ctx).apply {
+            text = f.entryTitle
+            textSize = 17f; setTextColor(0xFF000000.toInt()); setLineSpacing(0f, 1.15f)
+            maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(2), 0, 0)
+        })
+        if (f.feedName.isNotBlank()) box.addView(TextView(ctx).apply {
+            text = f.feedName
+            textSize = 12f; setTextColor(0xFF999999.toInt())
+        })
+        box.addView(TextView(ctx).apply {
+            text = "“${f.quote}”"
+            textSize = 15f; setTextColor(0xFF000000.toInt()); setLineSpacing(0f, 1.2f)
+            setTypeface(typeface, android.graphics.Typeface.ITALIC)
+            maxLines = 4; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(8), 0, dp(8))
+        })
+        box.addView(LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
+            addView(TextView(ctx).apply {
+                text = "⁂  rhymes with your ${f.rootTag}"
+                textSize = 12f; setTextColor(0xFF555555.toInt())
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+            addView(TextView(ctx).apply {
+                text = "${(f.score * 100).toInt()}%"
+                textSize = 12f; setTextColor(0xFF777777.toInt())
+            })
+        })
+        if (f.rootText.isNotBlank()) box.addView(TextView(ctx).apply {
+            text = f.rootText
+            textSize = 13f; setTextColor(0xFF777777.toInt()); setLineSpacing(0f, 1.15f)
+            maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(8), dp(4), 0, 0)
+        })
+
+        val actions = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(10), 0, 0)
+        }
+        actions.addView(actionButton("⁂ Rhizome") { openRhizome(f) })
+        actions.addView(actionButton("📖 Read") { openEntry(f) })
+        actions.addView(View(ctx).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })
+        actions.addView(actionButton(if (f.id in picked) "✓ Picked" else "⚗ Make picking") { makePicking(f) })
+        box.addView(actions)
+        return box
+    }
+
+    private fun actionButton(label: String, onClick: () -> Unit) = TextView(requireContext()).apply {
+        text = label
+        textSize = 14f; setTextColor(0xFF000000.toInt())
+        setPadding(dp(10), dp(6), dp(10), dp(6))
+        background = android.graphics.drawable.GradientDrawable().apply {
+            setColor(0x11000000); cornerRadius = dp(8).toFloat()
+        }
+        (layoutParams as? LinearLayout.LayoutParams
+            ?: LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .also { layoutParams = it }).setMargins(0, 0, dp(8), 0)
+        setOnClickListener { onClick() }
+    }
+
+    // MARK: - Actions
+
+    private fun openRhizome(f: MissedFind) {
+        findNavController().navigate(
+            R.id.action_to_ledger_rhizome,
+            androidx.core.os.bundleOf(
+                LedgerRhizomeFragment.ARG_URI to f.entryUrl,
+                LedgerRhizomeFragment.ARG_LABEL to f.entryTitle.take(60)
+            )
+        )
+    }
+
+    /** Open the skipped article. The in-app reader is the ideal home (TODO: route via FeedSelection);
+     *  for now open the source so the missed thing can still be read. */
+    private fun openEntry(f: MissedFind) {
+        runCatching {
+            startActivity(android.content.Intent(
+                android.content.Intent.ACTION_VIEW, android.net.Uri.parse(f.entryUrl)))
+        }.onFailure { showMessage("Couldn't open that article", requireView()) }
+    }
+
+    private fun makePicking(f: MissedFind) {
+        if (f.id in picked) return
+        val ctx = context ?: return
+        val today = LocalDate.now()
+        picked.add(f.id)
+        render()
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching {
+                val card = QuoteCardRenderer.render(
+                    f.quote.take(600), f.entryTitle.take(80), "✧ rhymes with your ${f.rootTag}".take(80),
+                    1080, 0)
+                PickingsPlacement.place(
+                    calendarDayService, documentsRoot(), card, today, PickingsStore.DEFAULT_KEY,
+                    sourceLink = f.entryUrl, sourceLabel = f.entryTitle.take(60), cardText = f.quote.take(600))
+                // Provenance: the skipped source now belongs to today's pickings basket.
+                if (f.entryUrl.isNotBlank()) ConnectionStore.connect(
+                    ctx, f.entryUrl, LedgerUri.page(today.toString(), PickingsStore.DEFAULT_KEY),
+                    kind = Connection.SOURCE, fromLabel = f.entryTitle.take(60), toLabel = "Pickings · $today")
+            }
+        }
+        showMessage("Picking added to today's board", requireView())
+    }
+
+    // MARK: - Discovery
+
+    private fun tag(s: CorpusSnippet): String = s.title.ifBlank { s.citation }
+
+    private fun discover(ctx: Context, minScore: Double = 0.60, topN: Int = 30): List<MissedFind> {
+        // Everything you walked past: cached, never starred — deduped across the cached views.
+        // (Miniflux read/unread isn't persisted in the offline cache, so "unread" can't be read back
+        //  here; starred is the reliable "you engaged with it" signal, so we exclude those.)
+        val cacheDir = File(ctx.filesDir, "feed-cache")
+        val lists = cacheDir.listFiles { f -> f.isFile && f.name.startsWith("list-") && f.name.endsWith(".json") }
+            ?: return emptyList()
+        val seen = HashSet<String>()
+        data class Entry(val title: String, val url: String, val feed: String, val body: String)
+        val unsurfaced = ArrayList<Entry>()
+        for (lf in lists) {
+            val key = lf.name.removePrefix("list-").removeSuffix(".json")
+            for (e in FeedCache.loadEntries(ctx, key)) {
+                if (e.starred || e.url.isBlank() || !seen.add(e.url)) continue
+                val body = strip(e.content)
+                unsurfaced.add(Entry(e.title, e.url, e.feedTitle, body))
+            }
+        }
+        if (unsurfaced.isEmpty()) return emptyList()
+        val entries = unsurfaced.take(150)
+
+        // Everything you've kept: the roots corpus (books/feeds/planner/annotations engaged with).
+        val roots = corpusService.gather(documentsRoot(), Spiral.SCOPE)
+            .filter { Spiral.isSubstantial(it.text) }
+            .let { Spiral.dedupe(it) { s -> s.text } }
+            .takeLast(300)
+        if (roots.isEmpty()) return emptyList()
+
+        // One round of embedding for both sides, then compare in memory.
+        fun entryText(e: Entry) = (e.title + ". " + e.body).trim()
+        val vecMap = SemanticRoots.vectorsFor(ctx, entries.map { entryText(it) } + roots.map { it.text })
+        if (vecMap.isEmpty()) return emptyList()
+        val rootVecs = roots.mapNotNull { s -> vecMap[s.text]?.let { s to it } }
+        if (rootVecs.isEmpty()) return emptyList()
+
+        val out = ArrayList<MissedFind>()
+        for (e in entries) {
+            if (e.body.length <= 40) continue
+            val ev = vecMap[entryText(e)] ?: continue
+            var best: Pair<CorpusSnippet, Double>? = null
+            for ((s, sv) in rootVecs) {
+                val c = SemanticRoots.cosine(ev, sv)
+                if (c > (best?.second ?: -1.0)) best = s to c
+            }
+            val b = best ?: continue
+            if (b.second < minScore || b.second >= 0.97) continue
+            out.add(MissedFind(
+                id = e.url, entryTitle = e.title, entryUrl = e.url, feedName = e.feed,
+                quote = bestSentence(e.body, b.first.text) ?: e.body.take(220),
+                rootTag = tag(b.first), rootText = b.first.text.take(200), score = b.second))
+        }
+        return out.sortedByDescending { it.score }.take(topN)
+    }
+
+    /** The entry sentence that shares the most vocabulary with the matched root — the line to quote.
+     *  (The iPad picks this by embedding each sentence; word-overlap is the bounded stand-in here.) */
+    private fun bestSentence(body: String, rootText: String): String? {
+        val rootWords = tokenize(rootText)
+        if (rootWords.isEmpty()) return null
+        val sentences = body.split(Regex("[.!?]"))
+            .map { it.trim() }.filter { it.length >= 30 }.take(12)
+        var best: Pair<String, Int>? = null
+        for (s in sentences) {
+            val overlap = tokenize(s).count { it in rootWords }
+            if (overlap > (best?.second ?: 0)) best = s.take(240) to overlap
+        }
+        return best?.first
+    }
+
+    private fun tokenize(s: String): Set<String> =
+        s.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).filter { it.length >= 4 }.toSet()
+
+    /** Lightweight HTML→text — scripts/styles out, tags out, a handful of entities, whitespace tidy. */
+    private fun strip(html: String): String {
+        var s = html.replace(Regex("(?is)<script.*?</script>|<style.*?</style>"), " ")
+            .replace(Regex("<[^>]+>"), " ")
+        for ((a, b) in listOf(
+            "&amp;" to "&", "&lt;" to "<", "&gt;" to ">", "&quot;" to "\"",
+            "&#39;" to "'", "&nbsp;" to " ", "&rsquo;" to "’", "&ldquo;" to "“", "&rdquo;" to "”"
+        )) s = s.replace(a, b)
+        return s.replace(Regex("\\s+"), " ").trim()
+    }
+
+    override fun showLoading() {}
+    override fun hideLoading() {}
+}

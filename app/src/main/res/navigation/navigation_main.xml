@@ -79,6 +79,18 @@
             app:destination="@id/LedgerRhizomeFragment"/>
 
     <action
+            android:id="@+id/action_to_quick_wins"
+            app:destination="@id/QuickWinsFragment"/>
+
+    <action
+            android:id="@+id/action_to_sprouts"
+            app:destination="@id/SproutsFragment"/>
+
+    <action
+            android:id="@+id/action_to_missed_rhizomes"
+            app:destination="@id/MissedRhizomesFragment"/>
+
+    <action
             android:id="@+id/action_to_rolodex"
             app:destination="@id/RolodexFragment"/>
 
@@ -105,6 +117,22 @@
     <action
             android:id="@+id/action_to_daily_pile"
             app:destination="@id/DailyPileFragment"/>
+
+    <action
+            android:id="@+id/action_to_roster"
+            app:destination="@id/RosterFragment"/>
+
+    <action
+            android:id="@+id/action_to_publish"
+            app:destination="@id/PublishFragment"/>
+
+    <action
+            android:id="@+id/action_to_posts_browser"
+            app:destination="@id/PostsBrowserFragment"/>
+
+    <action
+            android:id="@+id/action_to_mail_inbox"
+            app:destination="@id/MailInboxFragment"/>
 
     <action
             android:id="@+id/action_to_text_notes"
@@ -216,6 +244,24 @@
             tools:layout="@layout/fragment_ledger_roots"/>
 
     <fragment
+            android:id="@+id/QuickWinsFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.QuickWinsFragment"
+            android:label="QuickWinsFragment"
+            tools:layout="@layout/fragment_semantic_surface"/>
+
+    <fragment
+            android:id="@+id/SproutsFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.SproutsFragment"
+            android:label="SproutsFragment"
+            tools:layout="@layout/fragment_semantic_surface"/>
+
+    <fragment
+            android:id="@+id/MissedRhizomesFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.MissedRhizomesFragment"
+            android:label="MissedRhizomesFragment"
+            tools:layout="@layout/fragment_semantic_surface"/>
+
+    <fragment
             android:id="@+id/RolodexFragment"
             android:name="com.toolsboox.plugin.calendar.ui.RolodexFragment"
             android:label="RolodexFragment"
@@ -261,6 +307,29 @@
             android:name="com.toolsboox.plugin.calendar.ui.DailyPileFragment"
             android:label="DailyPileFragment"
             tools:layout="@layout/fragment_daily_pile"/>
+
+    <fragment
+            android:id="@+id/RosterFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.RosterFragment"
+            android:label="RosterFragment"/>
+
+    <fragment
+            android:id="@+id/PublishFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.PublishFragment"
+            android:label="PublishFragment"
+            tools:layout="@layout/fragment_publish"/>
+
+    <fragment
+            android:id="@+id/PostsBrowserFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.PostsBrowserFragment"
+            android:label="PostsBrowserFragment"
+            tools:layout="@layout/fragment_posts_browser"/>
+
+    <fragment
+            android:id="@+id/MailInboxFragment"
+            android:name="com.toolsboox.plugin.mail.ui.MailInboxFragment"
+            android:label="MailInboxFragment"
+            tools:layout="@layout/fragment_mail_inbox"/>
 
     <fragment
             android:id="@+id/ReadingLogFragment"

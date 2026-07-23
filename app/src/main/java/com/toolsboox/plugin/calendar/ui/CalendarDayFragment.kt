@@ -3264,6 +3264,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         maybeShowReturnChip()
         showSpiralLine()
 
+        // Pre-session appointment nudge: an opted-in class about to start prompts to record
+        // and pull up its roster/notes (self-throttled, once-a-day-dismissable). Roster port.
+        com.toolsboox.plugin.calendar.ui.AppointmentNudge.maybeShow(this) { recordAvGram() }
+
         // Hardware page-turn buttons (volume/page keycodes) paginate the day surface,
         // same as the nav pill's up/down.
         (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = { up ->

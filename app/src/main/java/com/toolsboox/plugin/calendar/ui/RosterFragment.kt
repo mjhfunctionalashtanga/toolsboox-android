@@ -1,0 +1,439 @@
+package com.toolsboox.plugin.calendar.ui
+
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.net.Uri
+import android.os.Bundle
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
+import androidx.lifecycle.lifecycleScope
+import androidx.navigation.fragment.NavHostFragment
+import com.toolsboox.da.Attachment
+import com.toolsboox.ot.InkPadView
+import com.toolsboox.plugin.calendar.fi.CalendarDayService
+import com.toolsboox.plugin.calendar.nw.LedgerWebBridge
+import com.toolsboox.plugin.calendar.nw.RecordPrefs
+import com.toolsboox.plugin.calendar.nw.RosterBridge
+import com.toolsboox.plugin.calendar.ot.ConnectionStore
+import com.toolsboox.plugin.calendar.ot.PanelOcr
+import com.toolsboox.ui.plugin.ScreenFragment
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import javax.inject.Inject
+
+/**
+ * Booking Roster — the day's attendees (FluentBooking) as touchable cards grouped by time slot.
+ *
+ * Each slot header carries the class title, a per-class bell (opt this class in/out of the pre-session
+ * record nudge — [RecordPrefs]) and a record button (an A/V gram, lands in today's page like any
+ * other). Tapping an attendee opens them: photo, contact lines, a jump to their FluentCRM profile,
+ * and an ink pad whose handwriting is OCR'd (ML Kit, [PanelOcr]) straight onto their CRM timeline
+ * (/crm/note). On a save the person also joins the connection graph, linked to the session day.
+ *
+ * Reuses the "Community & Boards" bridge creds. Read-only-safe: no creds → an empty list with a hint.
+ * Every network call runs off the main thread and fails quietly. Mirrors iOS `App/RosterView.swift`.
+ */
+@AndroidEntryPoint
+class RosterFragment @Inject constructor() : ScreenFragment() {
+
+    @Inject
+    lateinit var calendarDayService: CalendarDayService
+
+    private lateinit var content: FrameLayout
+    private lateinit var titleView: TextView
+
+    private var date: LocalDate = LocalDate.now()
+    private var attendees: List<RosterBridge.Attendee> = emptyList()
+    private var loading = true
+
+    private val density get() = resources.displayMetrics.density
+    private fun px(v: Int): Int = (v * density).toInt()
+    private fun toast(msg: String) {
+        if (isAdded) Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
+    }
+
+    private val dateStr: String get() = date.format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        // Sets `toolbar` from the host activity (the base builds no view when `view` is null).
+        super.onCreateView(inflater, container, savedInstanceState)
+        return buildRoot()
+    }
+
+    private fun buildRoot(): View {
+        val ctx = requireContext()
+        val col = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+        }
+
+        // Header bar: title on the left, actions on the right.
+        val bar = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(px(14), px(10), px(14), px(6))
+        }
+        titleView = TextView(ctx).apply {
+            textSize = 18f; setTextColor(Color.BLACK); typeface = Typeface.DEFAULT_BOLD
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        fun barBtn(label: String, onTap: () -> Unit) = Button(ctx).apply {
+            text = label; isAllCaps = false; textSize = 13f; minWidth = 0
+            setPadding(px(10), 0, px(10), 0)
+            setOnClickListener { onTap() }
+        }
+        bar.addView(titleView)
+        bar.addView(barBtn("‹") { step(-1) })
+        bar.addView(barBtn("Today") { date = LocalDate.now(); load() })
+        bar.addView(barBtn("›") { step(1) })
+        bar.addView(barBtn("↻") { load() })
+        bar.addView(barBtn("Close") { NavHostFragment.findNavController(this).popBackStack() })
+        col.addView(bar)
+
+        content = FrameLayout(ctx)
+        col.addView(content, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        return col
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        load()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // The pre-session nudge can also surface here (it primarily fires from the day page).
+        AppointmentNudge.maybeShow(this) { recordForToday() }
+    }
+
+    private fun step(days: Int) { date = date.plusDays(days.toLong()); load() }
+
+    private fun load() {
+        if (!isAdded) return
+        titleView.text = "Roster · $dateStr"
+        loading = true
+        renderLoading()
+        val ctx = requireContext()
+        val target = dateStr
+        lifecycleScope.launch {
+            val list = withContext(Dispatchers.IO) { RosterBridge.roster(ctx, target) }
+            if (!isAdded || target != dateStr) return@launch
+            attendees = list
+            loading = false
+            render()
+        }
+    }
+
+    private fun renderLoading() {
+        content.removeAllViews()
+        content.addView(TextView(requireContext()).apply {
+            text = "Loading…"; setTextColor(Color.parseColor("#666666"))
+            setPadding(px(20), px(24), px(20), px(20))
+        })
+    }
+
+    private fun render() {
+        val ctx = requireContext()
+        content.removeAllViews()
+        if (attendees.isEmpty()) {
+            content.addView(TextView(ctx).apply {
+                text = "Nobody's booked on $dateStr, or the site bridge isn't reachable."
+                setTextColor(Color.parseColor("#666666")); textSize = 15f
+                setPadding(px(20), px(24), px(20), px(20))
+            })
+            return
+        }
+        val scroll = ScrollView(ctx)
+        val list = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, px(24))
+        }
+        val slots = attendees.map { it.clock }.distinct().sorted()
+        for (slot in slots) {
+            val inSlot = attendees.filter { it.clock == slot }
+            list.addView(slotHeader(slot, inSlot.first()))
+            list.addView(cardGrid(inSlot))
+        }
+        scroll.addView(list)
+        content.addView(scroll)
+    }
+
+    private fun slotHeader(slot: String, sample: RosterBridge.Attendee): View {
+        val ctx = requireContext()
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(px(16), px(14), px(12), px(4))
+        }
+        val labels = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        labels.addView(TextView(ctx).apply {
+            text = slot; textSize = 16f; setTextColor(Color.BLACK); typeface = Typeface.DEFAULT_BOLD
+        })
+        if (sample.eventTitle.isNotBlank()) labels.addView(TextView(ctx).apply {
+            text = sample.eventTitle; textSize = 12f; setTextColor(Color.parseColor("#777777"))
+        })
+        row.addView(labels)
+
+        if (sample.eventId > 0) {
+            lateinit var bell: TextView
+            bell = TextView(ctx).apply {
+                textSize = 20f; setPadding(px(10), 0, px(10), 0)
+                fun paint() {
+                    val on = RecordPrefs.enabled(ctx, sample.eventId)
+                    text = if (on) "🔔" else "🔕"   // bell / bell-slash
+                    setTextColor(if (on) Color.parseColor("#2F6F96") else Color.parseColor("#999999"))
+                }
+                paint()
+                setOnClickListener {
+                    RecordPrefs.setEnabled(ctx, sample.eventId, !RecordPrefs.enabled(ctx, sample.eventId))
+                    paint()
+                    toast(if (RecordPrefs.enabled(ctx, sample.eventId))
+                        "Record prompts on for this class" else "Record prompts off")
+                }
+            }
+            row.addView(bell)
+        }
+        row.addView(TextView(ctx).apply {
+            text = "⏺"   // record dot
+            textSize = 20f; setTextColor(Color.parseColor("#B00020")); setPadding(px(8), 0, px(8), 0)
+            setOnClickListener { recordForToday() }
+        })
+        return row
+    }
+
+    /** Lay the slot's attendees out in wrapping rows of three. */
+    private fun cardGrid(people: List<RosterBridge.Attendee>): View {
+        val ctx = requireContext()
+        val perRow = 3
+        val grid = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(10), 0, px(10), 0)
+        }
+        var rowView: LinearLayout? = null
+        people.forEachIndexed { i, a ->
+            if (i % perRow == 0) {
+                rowView = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+                grid.addView(rowView)
+            }
+            rowView!!.addView(card(a), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                setMargins(px(4), px(4), px(4), px(4))
+            })
+        }
+        // Pad the last row so the final card doesn't stretch full-width.
+        rowView?.let {
+            val remainder = people.size % perRow
+            if (remainder != 0) repeat(perRow - remainder) { _ ->
+                it.addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f).apply { setMargins(px(4), 0, px(4), 0) })
+            }
+        }
+        return grid
+    }
+
+    private fun card(a: RosterBridge.Attendee): View {
+        val ctx = requireContext()
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(px(8), px(10), px(8), px(10))
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#F4F4F4"))
+                cornerRadius = px(12).toFloat()
+            }
+            alpha = if (a.status == "no-show" || a.status == "cancelled") 0.55f else 1f
+            isClickable = true
+            setOnClickListener { openDetail(a) }
+        }
+        val avatar = ImageView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(px(52), px(52))
+            setBackgroundColor(Color.parseColor("#DDDDDD"))
+            scaleType = ImageView.ScaleType.CENTER_CROP
+        }
+        loadPhotoInto(avatar, a.photo)
+        box.addView(avatar)
+        box.addView(TextView(ctx).apply {
+            text = a.name; textSize = 13f; setTextColor(Color.BLACK); maxLines = 1
+            setPadding(0, px(6), 0, 0)
+        })
+        box.addView(TextView(ctx).apply {
+            text = a.status; textSize = 11f; setTextColor(tint(a.status))
+        })
+        return box
+    }
+
+    private fun tint(status: String): Int = when (status) {
+        "scheduled" -> Color.parseColor("#2E7D32")
+        "completed" -> Color.parseColor("#1565C0")
+        "cancelled" -> Color.parseColor("#B00020")
+        else -> Color.parseColor("#777777")
+    }
+
+    /** Fetch a public avatar to the card, off the main thread. Silent on failure. */
+    private fun loadPhotoInto(view: ImageView, url: String) {
+        if (url.isBlank()) return
+        lifecycleScope.launch {
+            val bmp = withContext(Dispatchers.IO) {
+                runCatching { java.net.URL(url).openStream().use { android.graphics.BitmapFactory.decodeStream(it) } }.getOrNull()
+            }
+            if (isAdded && bmp != null) view.setImageBitmap(bmp)
+        }
+    }
+
+    /* ---------------------------------------------------------------
+     * Attendee detail — their record, a jump to the CRM, and an ink
+     * pad whose handwriting is OCR'd onto their CRM timeline.
+     * ------------------------------------------------------------- */
+
+    private fun openDetail(a: RosterBridge.Attendee) {
+        val ctx = requireContext()
+        val scroll = ScrollView(ctx)
+        val col = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(22), px(18), px(22), px(14))
+        }
+
+        val headRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+        }
+        val avatar = ImageView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(px(60), px(60)).apply { rightMargin = px(12) }
+            setBackgroundColor(Color.parseColor("#DDDDDD"))
+            scaleType = ImageView.ScaleType.CENTER_CROP
+        }
+        loadPhotoInto(avatar, a.photo)
+        headRow.addView(avatar)
+        headRow.addView(LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(ctx).apply { text = a.name; textSize = 18f; setTextColor(Color.BLACK); typeface = Typeface.DEFAULT_BOLD })
+            if (a.email.isNotBlank()) addView(TextView(ctx).apply { text = a.email; textSize = 12f; setTextColor(Color.parseColor("#777777")) })
+            addView(TextView(ctx).apply { text = "${a.clock} · ${a.status}"; textSize = 12f; setTextColor(Color.parseColor("#777777")) })
+        })
+        col.addView(headRow)
+
+        if (a.crmContactId > 0) {
+            col.addView(Button(ctx).apply {
+                text = "Open CRM profile"; isAllCaps = false; textSize = 14f
+                setPadding(0, px(10), 0, px(4))
+                setOnClickListener { openCrmProfile(a) }
+            })
+        }
+
+        col.addView(TextView(ctx).apply {
+            text = "Note (handwritten → their CRM)"
+            textSize = 12f; setTextColor(Color.parseColor("#777777")); setPadding(0, px(10), 0, px(6))
+        })
+
+        val ink = InkPadView(ctx)
+        col.addView(InkPadView.penBar(ctx, ink))
+        col.addView(FrameLayout(ctx).apply {
+            setBackgroundColor(Color.BLACK)
+            setPadding(px(2), px(2), px(2), px(2))
+            addView(ink, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, px(240)))
+        })
+
+        scroll.addView(col)
+
+        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Attendee")
+            .setView(scroll)
+            .setNegativeButton("Close", null)
+            .setPositiveButton("Save to CRM", null)   // overridden below so it doesn't auto-dismiss
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { saveNote(a, ink, dialog) }
+        }
+        showModal(dialog)
+    }
+
+    /** wp-admin FluentCRM subscriber deep link, opened in the system browser (no arbitrary-URL
+     *  embedded pattern exists — SiteWebFragment only serves the fixed forward-facing portals). */
+    private fun openCrmProfile(a: RosterBridge.Attendee) {
+        val site = LedgerWebBridge.config(requireContext()).site.trimEnd('/')
+        if (site.isBlank()) { toast("Site not configured"); return }
+        val url = "$site/wp-admin/admin.php?page=fluentcrm-admin#/subscribers/${a.crmContactId}"
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (e: Exception) {
+            toast("Couldn't open the browser")
+        }
+    }
+
+    private fun saveNote(a: RosterBridge.Attendee, ink: InkPadView, dialog: AlertDialog) {
+        val ctx = requireContext()
+        val bmp: Bitmap? = ink.render()
+        if (bmp == null) { toast("Write a note first"); return }
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) { PanelOcr.recognizeImage(bmp) }.trim()
+            bmp.recycle()
+            if (text.isEmpty()) { toast("Couldn't read the note"); return@launch }
+            val ok = withContext(Dispatchers.IO) { RosterBridge.saveNote(ctx, a.crmContactId, a.email, text) }
+            if (!isAdded) return@launch
+            if (ok) {
+                // Into the rhizome: the person joins the connection graph, linked to the session day.
+                val personUri = if (a.crmContactId > 0) "crm://${a.crmContactId}" else "booking://${a.id}"
+                withContext(Dispatchers.IO) {
+                    ConnectionStore.connect(
+                        ctx, personUri, "ledger://${a.day}/default",
+                        fromLabel = a.name, toLabel = "Session · ${a.day}"
+                    )
+                }
+                // TODO(corpus): Android has no AnnotationCorpus/embedding index yet — when one lands,
+                // add `text` to it here so the session note can rhyme with the rest (iOS parity).
+                toast("Saved to ${a.name}'s CRM")
+                dialog.dismiss()
+            } else {
+                toast("Couldn't save the note")
+            }
+        }
+    }
+
+    /* ---------------------------------------------------------------
+     * Record — an A/V gram for today, exactly like the day page's.
+     * ------------------------------------------------------------- */
+
+    private fun recordForToday() {
+        captureAvGram { att -> persistGramToToday(att) }
+    }
+
+    /** Append a captured A/V gram to today's day JSON (same sink as the day page). */
+    private fun persistGramToToday(att: Attachment) {
+        val ctx = requireContext()
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val root = com.toolsboox.ot.LedgerPaths.documentsRoot(ctx)
+                    val today = LocalDate.now()
+                    val day = calendarDayService.load(root, today, null, Locale.getDefault())
+                    day.avGrams.add(att)
+                    calendarDayService.save(root, today, day)
+                }
+            }
+            if (isAdded) toast("Recorded")
+        }
+    }
+
+    override fun showLoading() {}
+    override fun hideLoading() {}
+}
