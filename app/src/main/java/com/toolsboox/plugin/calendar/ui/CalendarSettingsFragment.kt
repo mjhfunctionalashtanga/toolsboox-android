@@ -558,7 +558,15 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         }
         binding.buttonImportSettings.setOnClickListener { importSettingsLauncher.launch("*/*") }
 
-        binding.buttonTextSize.setOnClickListener { showTextSizeDialog() }
+        // "Import backup" was a dead button (no handler); it now restores a full-ledger backup zip —
+        // exactly what its label says, and the same action that was otherwise hidden on the long-press
+        // of Import settings below. Pairs with "Export backup".
+        binding.buttonRestore.setOnClickListener {
+            backupRestoreLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+        }
+
+        binding.buttonTextSize.setOnClickListener { showLegibilityDialog() }
+        binding.buttonTextSize.text = "Legibility (font & size)"
 
         // FULL ledger backup/restore (data, not just settings): long-press Export = zip the whole
         // Documents tree (every day page, contact, board, clipping) to a file you pick; long-press
@@ -839,50 +847,110 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
      * Here rather than only in the Feed wrench, which is where it lived and is not where anybody
      * would look for it.
      */
-    private fun showTextSizeDialog() {
+    /**
+     * Legibility — the one home for the app's readability, built for two people at once: someone who
+     * wants a clean, small, open layout, and someone with a vision impairment who needs it large. Two
+     * independent size dials (Reading vs Interface) so big reading text never forces giant menus, plus
+     * a font pick (System / Atkinson Hyperlegible / the e-ink Fast faces). A live preview shows the
+     * effect as you change it. The interface tier drives BOTH chrome keys (menus + dialogs) at once,
+     * and the menu/dialog builders re-read these each time they open, so nothing clips — chrome reflows.
+     */
+    private fun showLegibilityDialog() {
         val ctx = requireContext()
-        val prefs = ctx.getSharedPreferences("ledger_a11y", 0)
-        val tiers = listOf("small" to "Small", "medium" to "Medium", "large" to "Large")
-
-        fun row(key: String, title: String): android.widget.LinearLayout {
-            val dp = resources.displayMetrics.density
-            fun px(v: Int) = (v * dp).toInt()
-            val current = prefs.getString(key, "medium")
-            val box = android.widget.LinearLayout(ctx).apply {
-                orientation = android.widget.LinearLayout.VERTICAL
-                setPadding(px(4), px(10), px(4), px(4))
-                addView(android.widget.TextView(ctx).apply {
-                    text = title; textSize = 12f; setTextColor(0xFF8A8A8A.toInt())
-                    letterSpacing = 0.08f
-                })
-            }
-            val group = android.widget.RadioGroup(ctx).apply {
-                orientation = android.widget.RadioGroup.HORIZONTAL
-            }
-            tiers.forEachIndexed { i, (value, label) ->
-                group.addView(android.widget.RadioButton(ctx).apply {
-                    id = View.generateViewId()
-                    text = label
-                    isChecked = value == current
-                    setPadding(0, 0, px(18), 0)
-                    setOnClickListener { prefs.edit().putString(key, value).apply() }
-                })
-            }
-            box.addView(group)
-            return box
-        }
-
         val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val prefs = ctx.getSharedPreferences("ledger_a11y", 0)
+
         val col = android.widget.LinearLayout(ctx).apply {
             orientation = android.widget.LinearLayout.VERTICAL
-            setPadding((20 * dp).toInt(), (8 * dp).toInt(), (20 * dp).toInt(), 0)
-            addView(row("menu_text_size", "MENUS — directories, context menus"))
-            addView(row("modal_text_size", "DIALOGS — questions and cards"))
+            setPadding(px(20), px(8), px(20), 0)
         }
 
+        // Live preview: a sample menu row + a line of body text, redrawn as font/size change.
+        val previewMenu = android.widget.TextView(ctx).apply { text = "☀  Today      ❤  Daily"; setTextColor(0xFF000000.toInt()) }
+        val previewBody = android.widget.TextView(ctx).apply {
+            text = "The quick brown fox reads clearly."
+            setTextColor(0xFF000000.toInt()); setPadding(0, px(6), 0, 0)
+        }
+        col.addView(android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(px(14), px(12), px(14), px(12))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFFF4F4F4.toInt()); cornerRadius = px(10).toFloat()
+            }
+            addView(previewMenu); addView(previewBody)
+        })
+
+        fun interfaceMul() = when (prefs.getString("menu_text_size", "medium")) { "small" -> 0.9f; "large" -> 1.3f; else -> 1.0f }
+        fun refreshPreview() {
+            val tf = com.toolsboox.ot.LedgerFonts.typeface(ctx)
+            previewMenu.typeface = tf; previewBody.typeface = tf
+            previewMenu.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 17f * interfaceMul())
+            previewBody.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f * com.toolsboox.ot.ReadingSize.scale(ctx))
+        }
+
+        fun sectionLabel(title: String) = android.widget.TextView(ctx).apply {
+            text = title; textSize = 12f; setTextColor(0xFF8A8A8A.toInt()); letterSpacing = 0.08f
+            setPadding(0, px(16), 0, px(6))
+        }
+
+        // A wrapping row of selectable chips; the selected one is bold with a solid border.
+        fun chipRow(chips: List<Triple<String, android.graphics.Typeface?, () -> Boolean>>, onPick: (Int) -> Unit): android.view.View {
+            lateinit var container: android.widget.LinearLayout
+            val views = ArrayList<android.widget.TextView>()
+            fun paint() = views.forEachIndexed { i, v ->
+                val on = chips[i].third()
+                v.setTypeface(chips[i].second, if (on) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+                v.setTextColor(if (on) 0xFF000000.toInt() else 0xFF555555.toInt())
+                v.background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = px(8).toFloat(); setColor(if (on) 0x11000000 else 0x00000000)
+                    setStroke(px(1), if (on) 0xFF000000.toInt() else 0xFFCCCCCC.toInt())
+                }
+            }
+            container = android.widget.LinearLayout(ctx).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                chips.forEachIndexed { i, (label, tf, _) ->
+                    addView(android.widget.TextView(ctx).apply {
+                        text = label; textSize = 15f; setPadding(px(12), px(8), px(12), px(8))
+                        setOnClickListener { onPick(i); paint(); refreshPreview() }
+                        views.add(this)
+                    }, android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = px(6) })
+                }
+            }
+            paint()
+            return container
+        }
+
+        // FONT — each chip labelled in its own face so the choice previews itself.
+        col.addView(sectionLabel("FONT"))
+        val fonts = com.toolsboox.ot.LedgerFonts.Choice.values().toList()
+        col.addView(chipRow(
+            fonts.map { c -> Triple(c.label, com.toolsboox.ot.LedgerFonts.typefaceFor(ctx, c)) { com.toolsboox.ot.LedgerFonts.current(ctx) == c } }
+        ) { i -> com.toolsboox.ot.LedgerFonts.set(ctx, fonts[i].id) })
+
+        // READING SIZE — the reading surfaces (books, feed articles, threads, semantic pages).
+        col.addView(sectionLabel("READING SIZE"))
+        val steps = com.toolsboox.ot.ReadingSize.STEPS.toList()
+        val stepLabels = listOf("Default", "Large", "Larger", "X-Large", "Max")
+        col.addView(chipRow(
+            steps.mapIndexed { i, s -> Triple(stepLabels.getOrElse(i) { "${(s * 100).toInt()}%" }, null as android.graphics.Typeface?) { kotlin.math.abs(com.toolsboox.ot.ReadingSize.scale(ctx) - s) < 0.001f } }
+        ) { i -> com.toolsboox.ot.ReadingSize.setScale(ctx, steps[i]) })
+
+        // INTERFACE SIZE — menus AND dialogs together (one Chrome dial, drives both a11y keys).
+        col.addView(sectionLabel("INTERFACE SIZE  ·  menus & dialogs"))
+        val tiers = listOf("small" to "Small", "medium" to "Medium", "large" to "Large")
+        col.addView(chipRow(
+            tiers.map { (value, label) -> Triple(label, null as android.graphics.Typeface?) { (prefs.getString("menu_text_size", "medium")) == value } }
+        ) { i ->
+            val v = tiers[i].first
+            prefs.edit().putString("menu_text_size", v).putString("modal_text_size", v).apply()
+        })
+
+        refreshPreview()
+
         androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle("Text size")
-            .setView(col)
+            .setTitle("Legibility")
+            .setView(android.widget.ScrollView(ctx).apply { addView(col) })
             .setPositiveButton("Done", null)
             .show()
     }

@@ -1106,6 +1106,9 @@ abstract class ScreenFragment : Fragment() {
             list.addView(header); list.addView(children, childLp)
         }
 
+        // Menu text honours the chosen reading font too. SYSTEM is a no-op (leaves rows untouched).
+        com.toolsboox.ot.LedgerFonts.applyTree(root)
+
         dialog.setOnShowListener { onModalShown() }
         dialog.setOnDismissListener { onModalDismissed() }
         dialog.show()

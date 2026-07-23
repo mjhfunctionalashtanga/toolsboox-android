@@ -54,6 +54,11 @@ object ReadingSize {
             val base = (root.getTag(R.id.tag_base_text_size) as? Float)
                 ?: root.textSize.also { root.setTag(R.id.tag_base_text_size, it) }
             root.setTextSize(TypedValue.COMPLEX_UNIT_PX, base * scale)
+            // Honour the chosen reading font here too, so every reading surface picks it up along
+            // with the size. SYSTEM returns null and leaves the view's designed typeface untouched.
+            LedgerFonts.typeface(root.context)?.let {
+                root.setTypeface(it, root.typeface?.style ?: android.graphics.Typeface.NORMAL)
+            }
         }
         if (root is ViewGroup) {
             for (i in 0 until root.childCount) apply(root.getChildAt(i), scale)
