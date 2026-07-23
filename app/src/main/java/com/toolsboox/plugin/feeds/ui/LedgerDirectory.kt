@@ -81,6 +81,8 @@ fun ledgerDirectoryFolders(
         // live in the Garden with Roots and Map — the making surfaces gathered in one place —
         // rather than being listed here as well.
         ScreenFragment.Folder("❤️", "Daily", listOf(
+            // Daily Pile — everything the day collected on one grid, to pick or rhizome outward from.
+            "🗂  Daily Pile" to { nav.navigate(R.id.action_to_daily_pile) },
             "🔖  Intake" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
             "❝  Pickings" to { showPickingsPicker(fragment) },
             "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") },

@@ -103,6 +103,10 @@
             app:destination="@id/SiteWebFragment"/>
 
     <action
+            android:id="@+id/action_to_daily_pile"
+            app:destination="@id/DailyPileFragment"/>
+
+    <action
             android:id="@+id/action_to_text_notes"
             app:destination="@id/TextNotesFragment"/>
 
@@ -251,6 +255,12 @@
                 app:argType="string"
                 app:nullable="true"/>
     </fragment>
+
+    <fragment
+            android:id="@+id/DailyPileFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.DailyPileFragment"
+            android:label="DailyPileFragment"
+            tools:layout="@layout/fragment_daily_pile"/>
 
     <fragment
             android:id="@+id/ReadingLogFragment"
