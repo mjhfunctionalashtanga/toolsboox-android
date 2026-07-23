@@ -93,6 +93,11 @@ class LedgerCorpusService @Inject constructor(
                     }
                 }
         }
+        if (Section.ANNOTATIONS in scope) {
+            // Handwriting captured off the planner pages (roster notes, article margins) — OCR'd once
+            // at save time and kept with provenance by [com.toolsboox.plugin.chat.da.AnnotationCorpus].
+            out += com.toolsboox.plugin.chat.da.AnnotationCorpus.snippets(context)
+        }
         if (Section.SECTIONS in scope) {
             File(context.filesDir, "page-sections").listFiles()
                 ?.filter { it.isFile && it.name.endsWith(".json") }

@@ -27,7 +27,8 @@ object FeedCache {
                 put("id", e.id); put("title", e.title); put("feedTitle", e.feedTitle)
                 put("url", e.url); put("author", e.author ?: JSONObject.NULL)
                 put("content", e.content); put("publishedAt", e.publishedAt)
-                put("starred", e.starred); put("category", e.category ?: JSONObject.NULL)
+                put("starred", e.starred); put("read", e.read)
+                put("category", e.category ?: JSONObject.NULL)
                 put("enclosureImage", e.enclosureImage ?: JSONObject.NULL)
                 put("enclosureAudio", e.enclosureAudio ?: JSONObject.NULL)
             })
@@ -45,7 +46,7 @@ object FeedCache {
                 id = o.optLong("id"), title = o.optString("title"), feedTitle = o.optString("feedTitle"),
                 url = o.optString("url"), author = o.opt("author")?.takeIf { it is String } as String?,
                 content = o.optString("content"), publishedAt = o.optString("publishedAt"),
-                starred = o.optBoolean("starred"),
+                starred = o.optBoolean("starred"), read = o.optBoolean("read"),
                 category = o.opt("category")?.takeIf { it is String } as String?,
                 enclosureImage = o.opt("enclosureImage")?.takeIf { it is String } as String?,
                 enclosureAudio = o.opt("enclosureAudio")?.takeIf { it is String } as String?

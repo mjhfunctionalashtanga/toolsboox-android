@@ -1,11 +1,9 @@
 package com.toolsboox.plugin.calendar.ui
 
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -21,6 +19,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.NavHostFragment
+import com.toolsboox.R
 import com.toolsboox.da.Attachment
 import com.toolsboox.ot.InkPadView
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
@@ -367,17 +366,19 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
         showModal(dialog)
     }
 
-    /** wp-admin FluentCRM subscriber deep link, opened in the system browser (no arbitrary-URL
-     *  embedded pattern exists — SiteWebFragment only serves the fixed forward-facing portals). */
+    /** Open the attendee's FluentCRM record IN-APP: the wp-admin subscriber deep link rendered in the
+     *  persistent-session [SiteWebFragment] WebView (sign in once, cookies stick), matching iOS where
+     *  "Open CRM profile" pushes a SiteWebView. The path rides off the active site's base. */
     private fun openCrmProfile(a: RosterBridge.Attendee) {
-        val site = LedgerWebBridge.config(requireContext()).site.trimEnd('/')
-        if (site.isBlank()) { toast("Site not configured"); return }
-        val url = "$site/wp-admin/admin.php?page=fluentcrm-admin#/subscribers/${a.crmContactId}"
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-        } catch (e: Exception) {
-            toast("Couldn't open the browser")
-        }
+        if (LedgerWebBridge.config(requireContext()).site.isBlank()) { toast("Site not configured"); return }
+        val path = "wp-admin/admin.php?page=fluentcrm-admin#/subscribers/${a.crmContactId}"
+        NavHostFragment.findNavController(this).navigate(
+            R.id.action_to_site_web,
+            androidx.core.os.bundleOf(
+                SiteWebFragment.ARG_PATH to path,
+                SiteWebFragment.ARG_TITLE to "CRM · ${a.name}"
+            )
+        )
     }
 
     private fun saveNote(a: RosterBridge.Attendee, ink: InkPadView, dialog: AlertDialog) {
@@ -398,9 +399,14 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
                         ctx, personUri, "ledger://${a.day}/default",
                         fromLabel = a.name, toLabel = "Session · ${a.day}"
                     )
+                    // Into the roots: the note's text joins the annotation corpus with the person as its
+                    // provenance, so a session observation can rhyme with the rest (iOS parity).
+                    com.toolsboox.plugin.chat.da.AnnotationCorpus.record(
+                        ctx, surface = "crm",
+                        id = "crmnote-${a.id}-${System.currentTimeMillis()}",
+                        uri = personUri, label = a.name, text = text
+                    )
                 }
-                // TODO(corpus): Android has no AnnotationCorpus/embedding index yet — when one lands,
-                // add `text` to it here so the session note can rhyme with the rest (iOS parity).
                 toast("Saved to ${a.name}'s CRM")
                 dialog.dismiss()
             } else {

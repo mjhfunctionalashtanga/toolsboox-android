@@ -32,7 +32,7 @@ import javax.inject.Inject
  * ✧ **Missed Rhizomes** — the Android mirror of the iPad's MissedRhizomesView; a serendipity engine
  * over the feed.
  *
- * It reads the items you walked past (cached, never starred) and, for each, asks the on-device
+ * It reads the items you walked past (cached, still unread, never starred) and, for each, asks the on-device
  * meaning model how deeply it rhymes with your ROOTS — the surfaced material you've actually engaged
  * with (see [SemanticRoots]). The few that rhyme deepest are connections you'd otherwise have lost:
  * something you skipped that speaks straight to what you're already thinking about. Each can become a
@@ -48,10 +48,14 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
     @Inject
     lateinit var calendarDayService: com.toolsboox.plugin.calendar.fi.CalendarDayService
 
+    @Inject
+    lateinit var calendarPatternService: com.toolsboox.plugin.calendar.fi.CalendarPatternService
+
     override val view = R.layout.fragment_semantic_surface
 
     private lateinit var column: LinearLayout
     private lateinit var scroll: ScrollView
+    private var navBar: SemanticNavBar? = null
     private var finds: List<MissedFind> = emptyList()
     private val picked = HashSet<String>()
 
@@ -67,6 +71,8 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         view.findViewById<TextView>(R.id.semantic_title).text = "✧ Missed Rhizomes"
         column = view.findViewById(R.id.semantic_column)
         scroll = view.findViewById(R.id.semantic_scroll)
+        navBar = SemanticNavBar(this, view.findViewById(R.id.semantic_navigator),
+            calendarDayService, calendarPatternService) { documentsRoot() }
         view.findViewById<TextView>(R.id.semantic_close)
             .setOnClickListener { findNavController().popBackStack() }
         load()
@@ -227,9 +233,10 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
     private fun tag(s: CorpusSnippet): String = s.title.ifBlank { s.citation }
 
     private fun discover(ctx: Context, minScore: Double = 0.60, topN: Int = 30): List<MissedFind> {
-        // Everything you walked past: cached, never starred — deduped across the cached views.
-        // (Miniflux read/unread isn't persisted in the offline cache, so "unread" can't be read back
-        //  here; starred is the reliable "you engaged with it" signal, so we exclude those.)
+        // What you genuinely walked past: cached, still UNREAD, never starred — deduped across views.
+        // The Miniflux read flag now rides along in the offline cache ([FeedCache] persists `read`), so
+        // "skipped" is true unread here, not merely "unstarred"; the session read-tracker
+        // ([FeedReadState]) folds in anything opened this run. Read or starred = you engaged with it.
         val cacheDir = File(ctx.filesDir, "feed-cache")
         val lists = cacheDir.listFiles { f -> f.isFile && f.name.startsWith("list-") && f.name.endsWith(".json") }
             ?: return emptyList()
@@ -239,7 +246,9 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         for (lf in lists) {
             val key = lf.name.removePrefix("list-").removeSuffix(".json")
             for (e in FeedCache.loadEntries(ctx, key)) {
-                if (e.starred || e.url.isBlank() || !seen.add(e.url)) continue
+                val engaged = e.starred || e.read ||
+                    com.toolsboox.plugin.feeds.ui.FeedReadState.isRead(e.id)
+                if (engaged || e.url.isBlank() || !seen.add(e.url)) continue
                 val body = strip(e.content)
                 unsurfaced.add(Entry(e.title, e.url, e.feedTitle, body))
             }

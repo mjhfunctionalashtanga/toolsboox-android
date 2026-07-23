@@ -41,6 +41,7 @@ enum class Section(val label: String) {
     MEDIA("A/V grams"),
     SECTIONS("Page sections (OCR)"),
     NOTES("Text notes"),
+    ANNOTATIONS("Handwritten notes"),
     TASKS("Tasks & events");
 
     companion object {

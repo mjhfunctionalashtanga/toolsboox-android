@@ -49,6 +49,16 @@
             android:layout_height="wrap_content"/>
     </LinearLayout>
 
+    <!-- The real Almanac strip (same 1404×140 navigator the day page draws). These surfaces aren't one
+         day, so the date is a place to LEAVE from: step to a day and open it, or tap a period to jump
+         into the calendar. Wired by [com.toolsboox.plugin.calendar.ui.SemanticNavBar], as on Roots. -->
+    <ImageView
+        android:id="@+id/semantic_navigator"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginHorizontal="8dp"
+        android:contentDescription="@null"/>
+
     <ScrollView
         android:id="@+id/semantic_scroll"
         android:layout_width="match_parent"

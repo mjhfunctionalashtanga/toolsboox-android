@@ -38,6 +38,12 @@ class SiteWebFragment @Inject constructor() : ScreenFragment() {
     companion object {
         const val ARG_TARGET = "site_web_target"
 
+        /** An explicit path off the active site's base (e.g. a wp-admin CRM deep link), opened in this
+         *  same in-app WebView instead of one of the fixed forward-facing portals. Mirrors the iOS
+         *  SiteWebTarget with a dynamic `defaultSlug`. When set, [ARG_TARGET] is ignored. */
+        const val ARG_PATH = "site_web_path"
+        const val ARG_TITLE = "site_web_title"
+
         // Mirrors the SiteWebTarget statics in iOS App/SiteWebView.swift. The pref keys are the ones
         // SiteStore.activate() write-throughs (communityPortal/boardsPortal/bookingPortal/…).
         private val TARGETS = mapOf(
@@ -55,14 +61,18 @@ class SiteWebFragment @Inject constructor() : ScreenFragment() {
 
     private lateinit var binding: FragmentSiteWebBinding
     private var target: Target = TARGETS.getValue("community")
+    /** When present, an explicit path off the `site` base wins over the [target] portal. */
+    private var explicitPath: String? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentSiteWebBinding.bind(view)
 
+        explicitPath = arguments?.getString(ARG_PATH)?.takeIf { it.isNotBlank() }
         target = TARGETS[arguments?.getString(ARG_TARGET)] ?: TARGETS.getValue("community")
-        binding.siteWebTitle.text = target.title
+        binding.siteWebTitle.text = if (explicitPath != null)
+            (arguments?.getString(ARG_TITLE)?.takeIf { it.isNotBlank() } ?: "Site") else target.title
 
         binding.siteWebClose.setOnClickListener { findNavController().popBackStack() }
         binding.siteWebReload.setOnClickListener { binding.siteWebView.reload() }
@@ -108,9 +118,18 @@ class SiteWebFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    /** base (communitySite | site, with the other as fallback) + slug (configured | default) + suffix. */
+    /** base (communitySite | site, with the other as fallback) + slug (configured | default) + suffix.
+     *  An [explicitPath] short-circuits this: it rides directly off the `site` base (wp-admin lives on
+     *  the main site, not the community front), so callers can open any same-site page in-app. */
     private fun resolveUrl(): String? {
         val p = prefs()
+        explicitPath?.let { path ->
+            val site = (p.getString("site", "") ?: "").trim()
+                .ifBlank { (p.getString("communitySite", "") ?: "").trim() }
+            if (site.isBlank()) return null
+            val base = if (site.endsWith("/")) site else "$site/"
+            return base + path.trimStart('/')
+        }
         val primaryKey = if (target.usesCommunitySite) "communitySite" else "site"
         val fallbackKey = if (target.usesCommunitySite) "site" else "communitySite"
         val primary = (p.getString(primaryKey, "") ?: "").trim()

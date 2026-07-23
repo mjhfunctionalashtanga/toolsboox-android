@@ -51,10 +51,14 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
     @Inject
     lateinit var calendarDayService: com.toolsboox.plugin.calendar.fi.CalendarDayService
 
+    @Inject
+    lateinit var calendarPatternService: com.toolsboox.plugin.calendar.fi.CalendarPatternService
+
     override val view = R.layout.fragment_semantic_surface
 
     private lateinit var column: LinearLayout
     private lateinit var scroll: ScrollView
+    private var navBar: SemanticNavBar? = null
     private var wins: List<QuickWin> = emptyList()
     private val done = HashSet<String>()
     private var path: List<String> = emptyList()
@@ -73,6 +77,8 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
         view.findViewById<TextView>(R.id.semantic_title).text = "⚡ Quick Wins"
         column = view.findViewById(R.id.semantic_column)
         scroll = view.findViewById(R.id.semantic_scroll)
+        navBar = SemanticNavBar(this, view.findViewById(R.id.semantic_navigator),
+            calendarDayService, calendarPatternService) { documentsRoot() }
         view.findViewById<TextView>(R.id.semantic_close)
             .setOnClickListener { findNavController().popBackStack() }
         view.findViewById<TextView>(R.id.semantic_action).apply {

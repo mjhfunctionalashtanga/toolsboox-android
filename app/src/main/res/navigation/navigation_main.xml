@@ -300,6 +300,14 @@
                 android:name="site_web_target"
                 app:argType="string"
                 app:nullable="true"/>
+        <argument
+                android:name="site_web_path"
+                app:argType="string"
+                android:defaultValue=""/>
+        <argument
+                android:name="site_web_title"
+                app:argType="string"
+                android:defaultValue=""/>
     </fragment>
 
     <fragment
