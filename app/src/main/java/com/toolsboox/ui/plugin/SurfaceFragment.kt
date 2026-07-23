@@ -2972,8 +2972,81 @@ abstract class SurfaceFragment : ScreenFragment() {
                 pendingPlacePoint = PointF(cx, cy); launchImagePicker()
             },
             getString(R.string.reader_capture_voice) to { onRecordAvGram(com.toolsboox.da.Attachment.Kind.AUDIO) },
-            getString(R.string.gram_capture_video) to { onRecordAvGram(com.toolsboox.da.Attachment.Kind.VIDEO) }
+            getString(R.string.gram_capture_video) to { onRecordAvGram(com.toolsboox.da.Attachment.Kind.VIDEO) },
+            "🎨  Generate image…" to { showImageGenDialog(cx, cy) }
         ))
+    }
+
+    /**
+     * Type a prompt, generate an image with the reader's own OpenAI key, and drop it on the current
+     * page as a gram at [cx],[cy]. Mirrors iOS `ImagePromptSheet` + `ImageGen`. A gentle message when
+     * no key is set — image→gram is a bonus for anyone with a key, not a requirement.
+     */
+    private fun showImageGenDialog(cx: Float, cy: Float) {
+        val ctx = context ?: return
+        if (!com.toolsboox.plugin.chat.nw.ImageGen.configured(ctx)) {
+            Toast.makeText(ctx, "Add your OpenAI key in Settings to generate images.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val input = EditText(ctx).apply {
+            hint = "Describe the image…"; minLines = 2; maxLines = 6
+            setHorizontallyScrolling(false)
+        }
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
+        }
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Generate image")
+            .setView(box)
+            .setPositiveButton("Generate") { _, _ ->
+                val prompt = input.text.toString().trim()
+                if (prompt.isNotBlank()) generateImageThenPlace(prompt, cx, cy)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun generateImageThenPlace(prompt: String, cx: Float, cy: Float) {
+        val ctx = context ?: return
+        Toast.makeText(ctx, "Generating image…", Toast.LENGTH_SHORT).show()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.chat.nw.ImageGen.generate(ctx, prompt)
+            }
+            if (!isAdded) return@launch
+            when (outcome) {
+                is com.toolsboox.plugin.chat.nw.ImageGen.Outcome.Ok ->
+                    placeGeneratedImageAt(outcome.bitmap, cx, cy)
+                is com.toolsboox.plugin.chat.nw.ImageGen.Outcome.Err ->
+                    Toast.makeText(requireContext(), outcome.message, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    /** Drop a generated bitmap on the surface as a gram at [cx],[cy], selected so it's ready to move. */
+    private fun placeGeneratedImageAt(bmp: Bitmap, cx: Float, cy: Float) {
+        val max = 1200
+        val longest = maxOf(bmp.width, bmp.height)
+        val fitted = if (longest > max)
+            Bitmap.createScaledBitmap(bmp, bmp.width * max / longest, bmp.height * max / longest, true) else bmp
+        val baos = ByteArrayOutputStream()
+        fitted.compress(Bitmap.CompressFormat.PNG, 100, baos)
+        val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        val w = (CANVAS_WIDTH * 0.42f).coerceAtMost(fitted.width.toFloat())
+        val h = w * fitted.height / fitted.width
+        val element = ImageElement(
+            x = (cx - w / 2f).coerceIn(0f, (CANVAS_WIDTH - w).coerceAtLeast(0f)),
+            y = (cy - h / 2f).coerceIn(0f, (CANVAS_HEIGHT - h).coerceAtLeast(0f)),
+            width = w, height = h, data = base64, sourceLabel = "Generated image"
+        )
+        pushUndo()
+        imageElements.add(element)
+        onImageElementsChanged(imageElements)
+        imageMode = true
+        penState = false
+        selectedImage = element
+        applyStrokes(strokes, true)
     }
 
     /** Record an A/V gram of [kind] for this surface's day. Base: nothing to record onto. */
