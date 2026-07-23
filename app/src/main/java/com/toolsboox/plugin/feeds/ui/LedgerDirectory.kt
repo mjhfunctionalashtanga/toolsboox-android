@@ -77,16 +77,17 @@ fun ledgerDirectoryFolders(
             (fragment as? com.toolsboox.ui.plugin.ReturnAnchorProvider)?.prepareReturnAnchor()
             nav.navigate(R.id.action_to_calendar_day)
         }),
-        // Intake → Pickings → Gratitude. Synthesize and Write continue the ritual, but they now
-        // live in the Garden with Roots and Map — the making surfaces gathered in one place —
-        // rather than being listed here as well.
+        // The daily ritual: Intake → Pickings → Gratitude → Self Executive → Synthesize. Synthesize
+        // closes it (it works the day's gathered pieces), so it lives here — matching iPad — not in
+        // the Garden. (Write stays in the Garden.)
         ScreenFragment.Folder("❤️", "Daily", listOf(
             // Daily Pile — everything the day collected on one grid, to pick or rhizome outward from.
             "🗂  Daily Pile" to { nav.navigate(R.id.action_to_daily_pile) },
-            "🔖  Intake" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
+            "📥  Intake" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
             "❝  Pickings" to { showPickingsPicker(fragment) },
             "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") },
-            "🐘  Self Executive" to { CalendarNavigator.toDayNote(fragment, today, "selfexec") }
+            "🐘  Self Executive" to { CalendarNavigator.toDayNote(fragment, today, "selfexec") },
+            "🔬  Synthesize" to { showSynthPicker(fragment) }
         )),
         // Desk Ledger — the working surfaces: notes, tasks, people, boards, correspondence.
         ScreenFragment.Folder("🗒", "Desk", listOf(
@@ -101,8 +102,10 @@ fun ledgerDirectoryFolders(
             "👤  Contacts" to { nav.navigate(R.id.action_to_rolodex) },
             // Boards = one system, two sources (Local on-device tasks · Site FluentBoards),
             // framed like the RSS Local/Site split. Tasks & Events is the list view of Local.
-            "🗒  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
+            "☑  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
             "📋  Boards · Local" to { nav.navigate(R.id.action_to_kanban) },
+            // Native unified mail (IMAP/SMTP) — email is a working surface, so it lives on the Desk.
+            "✉  Mail" to { nav.navigate(R.id.action_to_mail_inbox) },
             // WordPress publishing on the active site — compose (post/schedule/draft, CPTs, grams as
             // the featured image) and browse/edit/trash posts.
             "🖋  Publish" to { nav.navigate(R.id.action_to_publish) },
@@ -112,7 +115,7 @@ fun ledgerDirectoryFolders(
         // than about capturing more of it. Roots is what keeps coming back, Map is the same
         // material as a picture, and Synthesize and Write are what you do with it once you can
         // see it. They were scattered across the day-page switcher and the Desk.
-        ScreenFragment.Folder("🌱", "Garden", listOf(
+        ScreenFragment.Folder("🪴", "Garden", listOf(
             "🌿  Roots" to { nav.navigate(R.id.action_to_ledger_roots) },
             "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
             // The three semantic action-surfaces: your graph and your meaning-model turned into
@@ -121,7 +124,6 @@ fun ledgerDirectoryFolders(
             "⚡  Quick Wins" to { nav.navigate(R.id.action_to_quick_wins) },
             "🌱  Sprouts" to { nav.navigate(R.id.action_to_sprouts) },
             "✧  Missed Rhizomes" to { nav.navigate(R.id.action_to_missed_rhizomes) },
-            "🔬  Synthesize" to { showSynthPicker(fragment) },
             "✍  Write" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "write") }
         )),
         // Community: the NATIVE people-facing surfaces — your desk's connection to others. The active
@@ -129,12 +131,11 @@ fun ledgerDirectoryFolders(
         // "Site" folder below, so it's clear at a glance which rows are native tools and which are the
         // website rendered in a WebView.
         ScreenFragment.Folder("👥", "Community", listOf(
-            "🌐  Boards · Site" to { nav.navigate(R.id.action_to_site_boards) },
+            "📋  Boards · Site" to { nav.navigate(R.id.action_to_site_boards) },
             "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
             "💬  Messages" to { nav.navigate(R.id.action_to_messages) },
-            // Native unified mail (IMAP/SMTP) and the day's booking roster (tap a person → their CRM,
-            // scribble a note that OCRs onto their CRM timeline).
-            "✉  Mail" to { nav.navigate(R.id.action_to_mail_inbox) },
+            // The day's booking roster (tap a person → their CRM, scribble a note that OCRs onto their
+            // CRM timeline). Mail moved to the Desk — email is a working surface, not a person-surface.
             "🎟  Roster" to { nav.navigate(R.id.action_to_roster) }
         )),
         // Site — the active site's own forward-facing Vue apps in a persistent-session WebView (sign in
@@ -143,7 +144,7 @@ fun ledgerDirectoryFolders(
         // instead of here: the FluentBoards front → "Boards · Site", the booking page → Roster's
         // "Booking page", the FluentCRM admin → Contacts' "CRM". Only genuinely portal-only pages remain.
         ScreenFragment.Folder("🌐", "Site", listOf(
-            "👥  Community portal" to { openSiteWeb(nav, "community") },
+            "🏛  Community portal" to { openSiteWeb(nav, "community") },
             "🎓  Courses" to { openSiteWeb(nav, "courses") },
             "🛟  Support" to { openSiteWeb(nav, "support") },
             "🛍  Shop" to { openSiteWeb(nav, "shop") }
@@ -161,13 +162,13 @@ fun ledgerDirectoryFolders(
         // (asking IS querying the log).
         ScreenFragment.Folder("🕘", "Log", listOf(
             "🕘  Log" to { openHistory(null) },
-            "💬  Ask" to { nav.navigate(R.id.action_to_ledger_chat) }
+            "🔎  Ask" to { nav.navigate(R.id.action_to_ledger_chat) }
         )),
         ScreenFragment.Folder("⚙", "Settings", listOf(
             "⚙  Settings" to { nav.navigate(R.id.action_to_settings) },
             // Sites is configuration, so it belongs here — not buried behind a button deep inside the
             // calendar-settings scroll. Same manager the settings screen opens; one source of truth.
-            "🌐  Sites" to { com.toolsboox.plugin.calendar.ui.SitesSettingsDialog.show(fragment.requireContext()) },
+            "🖥  Sites" to { com.toolsboox.plugin.calendar.ui.SitesSettingsDialog.show(fragment.requireContext()) },
             "🔤  OCR model" to { com.toolsboox.ui.plugin.OcrModel.showPicker(fragment.requireContext()) },
             "☁  Cloud sync" to { nav.navigate(R.id.action_to_cloud) }
         ))
