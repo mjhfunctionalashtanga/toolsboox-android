@@ -26,6 +26,30 @@
             android:layout_height="wrap_content"/>
 
         <Button
+            android:id="@+id/source_local_button"
+            android:text="Local"
+            android:textAllCaps="false"
+            android:textColor="#000000"
+            android:textSize="14sp"
+            android:background="@drawable/dialog_rounded_bg"
+            android:minHeight="48dp"
+            android:layout_marginStart="8dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <Button
+            android:id="@+id/source_crm_button"
+            android:text="CRM"
+            android:textAllCaps="false"
+            android:textColor="#000000"
+            android:textSize="14sp"
+            android:background="@drawable/dialog_rounded_bg"
+            android:minHeight="48dp"
+            android:layout_marginStart="4dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <Button
             android:id="@+id/import_button"
             android:text="Import"
             android:textAllCaps="false"

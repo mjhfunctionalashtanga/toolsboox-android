@@ -6,8 +6,10 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
+import java.net.URLEncoder
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -102,6 +104,44 @@ object RosterBridge {
             }
         } catch (e: Exception) {
             Timber.w(e, "roster fetch failed")
+            emptyList()
+        }
+    }
+
+    /** One FluentCRM contact, as surfaced in the rolodex's CRM view (id, display name, email, avatar). */
+    data class CrmContact(val id: Int, val name: String, val email: String, val photo: String)
+
+    /**
+     * The active site's FluentCRM contacts (name/email LIKE [search]), capped at 200. Empty on any
+     * failure or when the bridge isn't configured — never throws. Blocking; call from Dispatchers.IO.
+     * Mirrors [roster]'s client/timeouts/auth/`.use{}`/guarded-JSON idiom, but the endpoint returns a
+     * bare JSON array of {id,name,email,photo}.
+     */
+    fun crmContacts(context: Context, search: String = ""): List<CrmContact> {
+        val c = LedgerWebBridge.config(context)
+        if (c.site.isBlank() || c.user.isBlank() || c.pass.isBlank()) return emptyList()
+        return try {
+            val q = URLEncoder.encode(search, "UTF-8")
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/crm/contacts?search=$q&limit=200")
+                .header("Authorization", auth(c))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val arr = JSONArray(resp.body?.string() ?: return emptyList())
+                (0 until arr.length()).map { arr.getJSONObject(it) }.mapNotNull { r ->
+                    val id = r.optInt("id", 0)
+                    if (id == 0) return@mapNotNull null
+                    CrmContact(
+                        id = id,
+                        name = r.optString("name", ""),
+                        email = r.optString("email", ""),
+                        photo = r.optString("photo", "").takeIf { it != "null" } ?: "",
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "crm contacts fetch failed")
             emptyList()
         }
     }

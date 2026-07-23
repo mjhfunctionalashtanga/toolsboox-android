@@ -35,6 +35,8 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.toolsboox.R
 import com.toolsboox.databinding.FragmentRolodexBinding
 import com.toolsboox.plugin.calendar.da.v2.Contact
+import com.toolsboox.plugin.calendar.nw.LedgerWebBridge
+import com.toolsboox.plugin.calendar.nw.RosterBridge
 import com.toolsboox.plugin.calendar.ot.ContactStore
 import com.toolsboox.plugin.calendar.ot.DeviceContactImport
 import com.toolsboox.ui.plugin.ScreenFragment
@@ -59,6 +61,18 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
     private lateinit var adapter: ContactAdapter
     private var allContacts: List<Contact> = emptyList()
 
+    /** Which contact source the list is showing — "local" (the synced [ContactStore]) or "crm" (the
+     *  active site's FluentCRM, read through [RosterBridge.crmContacts], display-only). Like the RSS
+     *  Local/Site toggle: the Local path is untouched; CRM overlays a read-only view. */
+    private var source: String = "local"
+    private var crmAll: List<RosterBridge.CrmContact> = emptyList()
+    private var crmById: Map<String, RosterBridge.CrmContact> = emptyMap()
+    private var crmLoading: Boolean = false
+
+    private companion object {
+        const val LOCAL_EMPTY_HINT = "No contacts yet. Tap ＋ to add one."
+    }
+
     private val contactsPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) runImport()
@@ -75,7 +89,7 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentRolodexBinding.bind(view)
 
-        adapter = ContactAdapter(emptyList(), ::showContactDetail)
+        adapter = ContactAdapter(emptyList(), ::onContactRowTap)
         binding.contactsRecycler.layoutManager = LinearLayoutManager(requireContext())
         binding.contactsRecycler.adapter = adapter
         binding.contactsRecycler.addItemDecoration(
@@ -85,13 +99,62 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         binding.addContactButton.setOnClickListener { openEditor(Contact()) }
         binding.importButton.setOnClickListener { startImport() }
         binding.pushButton.setOnClickListener { startPush() }
+        binding.sourceLocalButton.setOnClickListener { setSource("local") }
+        binding.sourceCrmButton.setOnClickListener { setSource("crm") }
         binding.searchField.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = applyFilter()
             override fun afterTextChanged(s: Editable?) {}
         })
 
+        updateSourceButtons()
         load()
+    }
+
+    /** Route a row tap by [source]: local rows open the full contact page; CRM rows open the light
+     *  read-only CRM detail (the transient Contact carries the CRM id as its [Contact.id]). */
+    private fun onContactRowTap(contact: Contact) {
+        if (source == "crm") crmById[contact.id]?.let { showCrmDetail(it) }
+        else showContactDetail(contact)
+    }
+
+    /** Flip the Local/CRM toggle. Local re-renders from the already-loaded store; CRM (re)fetches. */
+    private fun setSource(s: String) {
+        if (source == s) return
+        source = s
+        updateSourceButtons()
+        if (s == "crm") {
+            loadCrm()
+        } else {
+            binding.emptyText.text = LOCAL_EMPTY_HINT
+            applyFilter()
+        }
+    }
+
+    private fun updateSourceButtons() {
+        val localActive = source == "local"
+        binding.sourceLocalButton.alpha = if (localActive) 1f else 0.4f
+        binding.sourceCrmButton.alpha = if (localActive) 0.4f else 1f
+        binding.sourceLocalButton.setTypeface(null, if (localActive) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+        binding.sourceCrmButton.setTypeface(null, if (localActive) android.graphics.Typeface.NORMAL else android.graphics.Typeface.BOLD)
+    }
+
+    /** Fetch the active site's FluentCRM contacts off-main, guarded; render (or a hint) when back. */
+    private fun loadCrm() {
+        crmLoading = true
+        adapter.submit(emptyList())
+        binding.emptyText.text = "Loading…"
+        binding.emptyText.visibility = View.VISIBLE
+        val ctx = requireContext()
+        val q = binding.searchField.text?.toString()?.trim().orEmpty()
+        lifecycleScope.launch {
+            val list = withContext(Dispatchers.IO) { RosterBridge.crmContacts(ctx, q) }
+            if (!isAdded || source != "crm") return@launch
+            crmAll = list
+            crmById = list.associateBy { it.id.toString() }
+            crmLoading = false
+            applyFilter()
+        }
     }
 
     override fun onResume() {
@@ -156,6 +219,7 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
     }
 
     private fun applyFilter() {
+        if (source == "crm") { applyCrmFilter(); return }
         val q = binding.searchField.text?.toString()?.trim()?.lowercase().orEmpty()
         val filtered = if (q.isEmpty()) allContacts else allContacts.filter {
             it.name.lowercase().contains(q) || it.phone.contains(q) ||
@@ -163,6 +227,74 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         }
         adapter.submit(filtered)
         binding.emptyText.visibility = if (filtered.isEmpty()) View.VISIBLE else View.GONE
+    }
+
+    /** Render the CRM view: client-side filter the fetched contacts, map each to a transient, display-
+     *  only [Contact] (org "CRM") so the same [ContactAdapter] draws them — never written to the store. */
+    private fun applyCrmFilter() {
+        val q = binding.searchField.text?.toString()?.trim()?.lowercase().orEmpty()
+        val filtered = if (q.isEmpty()) crmAll else crmAll.filter {
+            it.name.lowercase().contains(q) || it.email.lowercase().contains(q)
+        }
+        val rows = filtered.map { Contact(id = it.id.toString(), name = it.name, email = it.email, org = "CRM") }
+        adapter.submit(rows)
+        binding.emptyText.text =
+            if (crmLoading) "Loading…" else "No CRM contacts, or the site bridge isn't reachable."
+        binding.emptyText.visibility = if (rows.isEmpty()) View.VISIBLE else View.GONE
+    }
+
+    /** A light, read-only look at a FluentCRM contact: name + email, an in-app jump to their CRM
+     *  profile, and a one-tap upsert into the real local rolodex. Nothing here writes to the store
+     *  unless you choose "Save to Contacts". */
+    private fun showCrmDetail(crm: RosterBridge.CrmContact) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(px(20), px(12), px(20), 0)
+        }
+        root.addView(TextView(ctx).apply {
+            text = crm.name.ifBlank { "Unnamed" }; textSize = 20f; setTextColor(0xFF000000.toInt())
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        })
+        if (crm.email.isNotBlank()) root.addView(TextView(ctx).apply {
+            text = crm.email; textSize = 14f; setTextColor(0xFF333333.toInt()); setPadding(0, px(4), 0, 0)
+        })
+        root.addView(TextView(ctx).apply {
+            text = "FluentCRM contact"; textSize = 13f; setTextColor(0xFF888888.toInt()); setPadding(0, px(6), 0, 0)
+        })
+
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setView(ScrollView(ctx).apply { addView(root) })
+            .setPositiveButton("Save to Contacts") { _, _ -> saveCrmToContacts(crm) }
+            .setNeutralButton("Open CRM profile") { _, _ -> openCrmProfile(crm) }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    /** Open the contact's FluentCRM record in-app, exactly as `RosterFragment.openCrmProfile` does:
+     *  the wp-admin subscriber deep link rendered in the persistent-session [SiteWebFragment]. */
+    private fun openCrmProfile(crm: RosterBridge.CrmContact) {
+        if (LedgerWebBridge.config(requireContext()).site.isBlank()) {
+            Toast.makeText(requireContext(), "Site not configured", Toast.LENGTH_SHORT).show(); return
+        }
+        val path = "wp-admin/admin.php?page=fluentcrm-admin#/subscribers/${crm.id}"
+        androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(
+            R.id.action_to_site_web,
+            androidx.core.os.bundleOf(
+                SiteWebFragment.ARG_PATH to path,
+                SiteWebFragment.ARG_TITLE to "CRM · ${crm.name}"
+            )
+        )
+    }
+
+    /** Upsert a CRM contact into the real synced rolodex as a fresh local [Contact]. */
+    private fun saveCrmToContacts(crm: RosterBridge.CrmContact) {
+        val contact = Contact(name = crm.name, email = crm.email, org = "CRM")
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) { ContactStore.upsert(requireContext(), contact) }
+            if (isAdded) Toast.makeText(requireContext(), "Saved to Contacts", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /** The contact "page": header, the tasks/events assigned to this person (gathered across day

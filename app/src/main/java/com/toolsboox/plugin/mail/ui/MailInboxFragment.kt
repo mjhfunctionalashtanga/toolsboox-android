@@ -50,11 +50,20 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
     @Inject
     lateinit var calendarDayService: CalendarDayService
 
+    @Inject
+    lateinit var calendarPatternService: com.toolsboox.plugin.calendar.fi.CalendarPatternService
+
     // Starred (your to-dos) is the default view -- the kept pile. Toggle to see everything that has
     // come in, star what matters, then Clear sweeps the rest.
     private var onlyStarred = true
     private var messages: List<InboxMessage> = emptyList()
     private var refreshing = false
+
+    // Almanac filter — the inbox is browsable by date exactly as the feed is. Day+today is the LIVE
+    // view (all mail, so your to-dos never hide); any other window keeps only mail from that window.
+    private var navBar: com.toolsboox.plugin.calendar.ui.CalendarNavBarHost? = null
+    private var navGranularity = "day"
+    private var navAnchor: LocalDate = LocalDate.now()
 
     private fun toast(s: String) = Toast.makeText(requireContext(), s, Toast.LENGTH_SHORT).show()
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -65,8 +74,21 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         binding.mailClose.setOnClickListener { NavHostFragment.findNavController(this).popBackStack() }
         binding.mailRefresh.setOnClickListener { refresh() }
         binding.mailSettings.setOnClickListener { showAccountsList() }
+        binding.mailClear.setOnClickListener { clearUnstarred() }
         binding.mailToggle.setOnClickListener { onlyStarred = !onlyStarred; updateToggle(); render() }
         updateToggle()
+
+        // Same Almanac strip as the feed: arrows step the window in place, a period tap filters to
+        // that day/week/month — the inbox never leaves for the calendar (it's a filter, not a jump).
+        navBar = com.toolsboox.plugin.calendar.ui.CalendarNavBarHost(
+            requireContext(), binding.mailNavigator, this,
+            onStepDay = { d ->
+                val dir = if (d.isBefore(navAnchor)) -1 else 1
+                navAnchor = stepByGranularity(navAnchor, dir); renderNav(); render()
+            },
+            onSelectPeriod = { g, d -> navGranularity = g; navAnchor = d; renderNav(); render() }
+        )
+        renderNav()
 
         val ctx = requireContext()
         messages = InboxStore.messages(ctx)
@@ -74,11 +96,74 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         if (InboxStore.hasAccounts(ctx)) refresh()
     }
 
-    private fun updateToggle() { binding.mailToggle.text = if (onlyStarred) "★ To-dos" else "✉ All" }
+    private fun updateToggle() {
+        binding.mailToggle.text = if (onlyStarred) "★ To-dos" else "✉ All"
+        // Clear only makes sense while triaging All — it sweeps everything you didn't star.
+        binding.mailClear.visibility = if (onlyStarred) View.GONE else View.VISIBLE
+    }
 
     private fun shown(): List<InboxMessage> {
         val ctx = requireContext()
-        return if (onlyStarred) messages.filter { InboxStore.isStarred(ctx, it.id) } else messages
+        val base = if (onlyStarred) messages.filter { InboxStore.isStarred(ctx, it.id) } else messages
+        return filterByWindow(base)
+    }
+
+    /** Keep only mail whose date falls in the navigator window; day+today is the live view (all). */
+    private fun filterByWindow(list: List<InboxMessage>): List<InboxMessage> {
+        if (navGranularity == "day" && navAnchor == LocalDate.now()) return list
+        val (start, end) = navWindow()
+        return list.filter {
+            val d = java.time.Instant.ofEpochMilli(it.date)
+                .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+            !d.isBefore(start) && d.isBefore(end)
+        }
+    }
+
+    private fun stepByGranularity(date: LocalDate, dir: Int): LocalDate = when (navGranularity) {
+        "week" -> date.plusWeeks(dir.toLong())
+        "month" -> date.plusMonths(dir.toLong())
+        "quarter" -> date.plusMonths(3L * dir)
+        "year" -> date.plusYears(dir.toLong())
+        else -> date.plusDays(dir.toLong())
+    }
+
+    /** [start, end) of the current window (granularity + anchor) — mirrors the feed's navWindow(). */
+    private fun navWindow(): Pair<LocalDate, LocalDate> {
+        val a = navAnchor
+        return when (navGranularity) {
+            "week" -> {
+                val s = a.with(java.time.temporal.WeekFields.of(Locale.getDefault()).dayOfWeek(), 1)
+                s to s.plusWeeks(1)
+            }
+            "month" -> { val s = a.withDayOfMonth(1); s to s.plusMonths(1) }
+            "quarter" -> { val s = a.withDayOfMonth(1).withMonth((a.monthValue - 1) / 3 * 3 + 1); s to s.plusMonths(3) }
+            "year" -> { val s = a.withDayOfYear(1); s to s.plusYears(1) }
+            else -> a to a.plusDays(1)
+        }
+    }
+
+    /** Redraw the Almanac strip for the current anchor (dots for filled days), like the feed does. */
+    private fun renderNav() {
+        val bar = navBar ?: return
+        lifecycleScope.launch {
+            val root = documentsRoot()
+            val loc = Locale.getDefault()
+            val (day, pat) = withContext(Dispatchers.IO) {
+                val cd = runCatching { calendarDayService.load(root, navAnchor, null, loc) }.getOrNull()
+                    ?: com.toolsboox.plugin.calendar.da.v2.CalendarDay(
+                        navAnchor.year, navAnchor.monthValue, navAnchor.dayOfMonth, startHour = null)
+                cd to runCatching { calendarPatternService.load(root, navAnchor, loc) }.getOrNull()
+            }
+            if (isAdded) pat?.let { bar.render(day, it) }
+        }
+    }
+
+    private fun clearUnstarred() {
+        val ctx = context ?: return
+        InboxStore.clearUnstarred(ctx)
+        messages = InboxStore.messages(ctx)
+        render()
+        toast("Cleared — starred mail kept")
     }
 
     /** Pull mail from the configured accounts, then reload the list. Surfaces the first problem gently. */
@@ -118,20 +203,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         }
 
         for (m in list) container.addView(row(m))
-
-        // Clear is for the triage view: sweep out everything you didn't star.
-        if (!onlyStarred) {
-            container.addView(TextView(ctx).apply {
-                text = "🌀  Clear un-starred"
-                textSize = 15f; setTextColor(0xFFB00020.toInt()); setPadding(dp(6), dp(16), dp(6), dp(8))
-                setOnClickListener {
-                    InboxStore.clearUnstarred(ctx)
-                    messages = InboxStore.messages(ctx)
-                    render()
-                    toast("Cleared — starred mail kept")
-                }
-            })
-        }
+        // The Clear sweep lives in the header now (🧹, visible in All), like the feed's Clear.
     }
 
     private fun row(m: InboxMessage): View {

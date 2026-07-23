@@ -104,6 +104,10 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
         bar.addView(barBtn("Today") { date = LocalDate.now(); load() })
         bar.addView(barBtn("›") { step(1) })
         bar.addView(barBtn("↻") { load() })
+        // Booking is a facet of the roster (a roster is just the attendees of an event), so the public
+        // booking page lives here rather than as its own menu row — the member-facing web version of
+        // exactly what this surface manages.
+        bar.addView(barBtn("Booking") { openBookingPage() })
         bar.addView(barBtn("Close") { NavHostFragment.findNavController(this).popBackStack() })
         col.addView(bar)
 
@@ -126,6 +130,15 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
     }
 
     private fun step(days: Int) { date = date.plusDays(days.toLong()); load() }
+
+    /** The member-facing booking page (FluentBooking) in the in-app WebView — the web face of the
+     *  same bookings this roster manages. */
+    private fun openBookingPage() {
+        NavHostFragment.findNavController(this).navigate(
+            R.id.action_to_site_web,
+            android.os.Bundle().apply { putString(SiteWebFragment.ARG_TARGET, "booking") }
+        )
+    }
 
     private fun load() {
         if (!isAdded) return

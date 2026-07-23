@@ -33,6 +33,16 @@
             android:layout_height="wrap_content"/>
 
         <TextView
+            android:id="@+id/mail_clear"
+            android:text="🧹"
+            android:textSize="20sp"
+            android:textColor="#000000"
+            android:visibility="gone"
+            android:padding="8dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <TextView
             android:id="@+id/mail_settings"
             android:text="⚙"
             android:textSize="20sp"
@@ -64,6 +74,15 @@
         android:background="#000000"
         android:layout_width="match_parent"
         android:layout_height="1dp"/>
+
+    <!-- The real Almanac strip: filter the inbox by date exactly as the feed filters articles. Today
+         (day) is the live view (all mail); step or pick a period to see just that window's mail. -->
+    <ImageView
+        android:id="@+id/mail_navigator"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginHorizontal="8dp"
+        android:contentDescription="@null"/>
 
     <TextView
         android:id="@+id/mail_status"

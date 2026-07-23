@@ -98,7 +98,7 @@ fun ledgerDirectoryFolders(
             "📈  Grid Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "grid") },
             "⌱  Sketch Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "sketch") },
             "⌗  Text Notes" to { nav.navigate(R.id.action_to_text_notes) },
-            "👤  Rolodex" to { nav.navigate(R.id.action_to_rolodex) },
+            "👤  Contacts" to { nav.navigate(R.id.action_to_rolodex) },
             // Boards = one system, two sources (Local on-device tasks · Site FluentBoards),
             // framed like the RSS Local/Site split. Tasks & Events is the list view of Local.
             "🗒  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
@@ -139,15 +139,13 @@ fun ledgerDirectoryFolders(
         )),
         // Site — the active site's own forward-facing Vue apps in a persistent-session WebView (sign in
         // once, cookies stick). This is the WEBSITE as members/customers see it, kept apart from the
-        // native tools above. The FluentBoards front is intentionally omitted: the native "Boards ·
-        // Site" in Community is the same backend with a better e-ink UX, so the webview "Board" row
-        // (an exact duplicate) was removed.
+        // native tools above. Portals that ARE a native surface's web face live inside that surface
+        // instead of here: the FluentBoards front → "Boards · Site", the booking page → Roster's
+        // "Booking page", the FluentCRM admin → Contacts' "CRM". Only genuinely portal-only pages remain.
         ScreenFragment.Folder("🌐", "Site", listOf(
             "👥  Community portal" to { openSiteWeb(nav, "community") },
             "🎓  Courses" to { openSiteWeb(nav, "courses") },
-            "📅  Booking" to { openSiteWeb(nav, "booking") },
             "🛟  Support" to { openSiteWeb(nav, "support") },
-            "📇  CRM" to { openSiteWeb(nav, "crm") },
             "🛍  Shop" to { openSiteWeb(nav, "shop") }
         )),
         // Feed Ledger — the RSS reader lenses.
