@@ -118,7 +118,17 @@ fun ledgerDirectoryFolders(
         ScreenFragment.Folder("👥", "Community", listOf(
             "🌐  Boards · Site" to { nav.navigate(R.id.action_to_site_boards) },
             "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
-            "💬  Messages" to { nav.navigate(R.id.action_to_messages) }
+            "💬  Messages" to { nav.navigate(R.id.action_to_messages) },
+            // The active site's own forward-facing Vue apps, in a persistent-session WebView —
+            // FluentCommunity portal / Courses, the FluentBoards front, FluentBooking, FluentSupport,
+            // FluentCRM and the FluentCart storefront. Sign in once and the cookies stick.
+            "👥  Community portal" to { openSiteWeb(nav, "community") },
+            "🎓  Courses" to { openSiteWeb(nav, "courses") },
+            "🗂  Board" to { openSiteWeb(nav, "board") },
+            "📅  Booking" to { openSiteWeb(nav, "booking") },
+            "🛟  Support" to { openSiteWeb(nav, "support") },
+            "📇  CRM" to { openSiteWeb(nav, "crm") },
+            "🛍  Shop" to { openSiteWeb(nav, "shop") }
         )),
         // Feed Ledger — the RSS reader lenses.
         ScreenFragment.Folder("📰", "Feed", listOf(
@@ -140,6 +150,16 @@ fun ledgerDirectoryFolders(
             "🔤  OCR model" to { com.toolsboox.ui.plugin.OcrModel.showPicker(fragment.requireContext()) },
             "☁  Cloud sync" to { nav.navigate(R.id.action_to_cloud) }
         ))
+    )
+}
+
+/** Open one of the active site's forward-facing Vue apps in the persistent-session WebView. */
+private fun openSiteWeb(nav: androidx.navigation.NavController, target: String) {
+    nav.navigate(
+        R.id.action_to_site_web,
+        androidx.core.os.bundleOf(
+            com.toolsboox.plugin.calendar.ui.SiteWebFragment.ARG_TARGET to target
+        )
     )
 }
 

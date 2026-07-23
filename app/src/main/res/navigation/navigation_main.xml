@@ -99,6 +99,10 @@
             app:destination="@id/MessagesFragment"/>
 
     <action
+            android:id="@+id/action_to_site_web"
+            app:destination="@id/SiteWebFragment"/>
+
+    <action
             android:id="@+id/action_to_text_notes"
             app:destination="@id/TextNotesFragment"/>
 
@@ -236,6 +240,17 @@
             android:name="com.toolsboox.plugin.calendar.ui.MessagesFragment"
             android:label="MessagesFragment"
             tools:layout="@layout/fragment_messages"/>
+
+    <fragment
+            android:id="@+id/SiteWebFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.SiteWebFragment"
+            android:label="SiteWebFragment"
+            tools:layout="@layout/fragment_site_web">
+        <argument
+                android:name="site_web_target"
+                app:argType="string"
+                app:nullable="true"/>
+    </fragment>
 
     <fragment
             android:id="@+id/ReadingLogFragment"
