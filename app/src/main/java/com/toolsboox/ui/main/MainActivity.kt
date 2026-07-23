@@ -658,14 +658,123 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     }
 
     /**
+     * The share chooser — a shared item becomes a GRAM (a card with the source clickable back to it)
+     * on the current page or in Pickings, gets filed to read-later, or drops as a text box. Mirrors
+     * the iPad "Add to Ledger" chooser. Which destinations show depends on what was shared.
+     */
+    private fun offerShareDestinations(
+        url: String?, title: String?, leftoverText: String?, sharedText: String?, imageUri: android.net.Uri?
+    ) {
+        val pickings = com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY
+        val preview = (title ?: url ?: leftoverText ?: sharedText)?.trim().orEmpty()
+        val items = mutableListOf<Triple<Int, String, () -> Unit>>()
+
+        if (imageUri != null) {
+            items += Triple(R.drawable.ic_image, "On this page") { openSharedImageOnDay(imageUri) }
+            items += Triple(R.drawable.ic_quote, "To Pickings") {
+                val bmp = decodeSharedImage(imageUri)
+                if (bmp != null) placeGram(bmp, pickings, "", "Shared image", openDay = false)
+                else android.widget.Toast.makeText(this, "Couldn't read that image", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        } else if (url != null) {
+            val t = title ?: url
+            items += Triple(R.drawable.ic_reader_view, "On this page") { renderAndPlaceLink(url, t, "default", openDay = true) }
+            items += Triple(R.drawable.ic_quote, "To Pickings") { renderAndPlaceLink(url, t, pickings, openDay = false) }
+            items += Triple(R.drawable.ic_bookmark, "Later — read / watch / listen") { offerToFileLink(url, title, sharedText) }
+            items += Triple(R.drawable.ic_edit, "As text") {
+                val boxText = wrapForTextBox(listOfNotNull(title, url).joinToString("\n").ifBlank { sharedText?.trim().orEmpty() })
+                if (boxText.isNotBlank()) dropTextOnDay(boxText, url)
+            }
+        } else {
+            val text = wrapForTextBox(listOfNotNull(title, leftoverText).joinToString("\n").ifBlank { sharedText?.trim().orEmpty() })
+            if (text.isBlank()) return
+            items += Triple(R.drawable.ic_edit, "On this page (text)") { dropTextOnDay(text, null) }
+            items += Triple(R.drawable.ic_quote, "To Pickings") {
+                lifecycleScope.launch {
+                    val card = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching { com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(text.take(600), "", "", 1080, 0) }.getOrNull()
+                    }
+                    if (card != null) placeGram(card, pickings, "", "Shared note", openDay = false)
+                }
+            }
+        }
+
+        // Defer to after the first layout — a dialog straight from onResume on a share cold-start can
+        // be swallowed before the window is ready. (Same pattern as offerToFileLink.)
+        binding.fragmentContent.post {
+            val dp = resources.displayMetrics.density
+            val list = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL }
+            val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
+                .setTitle("Add to Ledger")
+                .setView(androidx.core.widget.NestedScrollView(this).apply { addView(list) })
+                .create()
+            if (preview.isNotBlank()) list.addView(android.widget.TextView(this).apply {
+                text = preview.take(140)
+                setPadding((16 * dp).toInt(), (10 * dp).toInt(), (16 * dp).toInt(), (6 * dp).toInt())
+                setTextColor(0xFF666666.toInt()); textSize = 13f
+                maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+            for ((iconRes, itemLabel, action) in items) {
+                val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
+                r.findViewById<android.widget.ImageView>(R.id.go_icon).apply { setImageResource(iconRes); visibility = android.view.View.VISIBLE }
+                r.findViewById<android.widget.TextView>(R.id.go_label).text = itemLabel
+                r.setOnClickListener { dialog.dismiss(); action() }
+                list.addView(r)
+            }
+            dialog.show()
+        }
+    }
+
+    /** Render a shared link into a card and place it as a gram (with provenance) on [pageKey]. */
+    private fun renderAndPlaceLink(url: String, title: String, pageKey: String, openDay: Boolean) {
+        lifecycleScope.launch {
+            val card = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { com.toolsboox.plugin.calendar.ot.LinkCardRenderer.render(url, title, "read") }.getOrNull()
+            }
+            if (card != null) placeGram(card, pageKey, url, title, openDay)
+            else android.widget.Toast.makeText(this@MainActivity, "Couldn't make a card", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Place [bitmap] as a gram (with provenance) on [pageKey]; reload the day when it landed there. */
+    private fun placeGram(bitmap: android.graphics.Bitmap, pageKey: String, sourceLink: String, sourceLabel: String, openDay: Boolean) {
+        lifecycleScope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                        calendarDayService, documentsRoot(), bitmap, java.time.LocalDate.now(), pageKey,
+                        sourceLink = sourceLink, sourceLabel = sourceLabel
+                    )
+                }
+            }
+            if (openDay) {
+                val navOptions = androidx.navigation.navOptions { popUpTo(R.id.CalendarDayFragment) { inclusive = true } }
+                runCatching { binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, null, navOptions) }
+            } else {
+                android.widget.Toast.makeText(this@MainActivity, "Added to Pickings", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /** The pre-existing "shared image onto today's page" behavior — a movable image element. */
+    private fun openSharedImageOnDay(imageUri: android.net.Uri) {
+        val bundle = bundleOf("sharedImageUri" to imageUri.toString())
+        val navOptions = androidx.navigation.navOptions { popUpTo(R.id.CalendarDayFragment) { inclusive = true } }
+        binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle, navOptions)
+    }
+
+    private fun decodeSharedImage(uri: android.net.Uri): android.graphics.Bitmap? = runCatching {
+        contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it) }
+    }.getOrNull()
+
+    /**
      * Activity onResume.
      */
     override fun onResume() {
         super.onResume()
 
-        // Share-to-Ledger (text/link): the shared text lands as a movable text box.
-        // A link lands on today's INTAKE page — nothing is queued on share; dropping
-        // the box onto a panel (THE READ / WATCH / LISTEN / EDUCATE) is what files it.
+        // Share-to-Ledger (text/link): a chooser offers where it lands — a GRAM (a card with the
+        // source clickable) on this page or in Pickings, filed to read/watch/listen, or as a text box.
         if (intent?.action == android.content.Intent.ACTION_SEND && intent?.type == "text/plain") {
             val sharedText = intent?.getStringExtra(android.content.Intent.EXTRA_TEXT)
             val sharedSubject = intent?.getStringExtra(android.content.Intent.EXTRA_SUBJECT)
@@ -674,21 +783,11 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
             val parsed = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.parse(sharedText, sharedSubject)
             Timber.i("Share to ledger (text): url=${parsed.url}")
-            // A shared LINK → offer to file it (read later / watch / listen); plain text
-            // with no link falls back to dropping a movable box on the day page.
-            if (parsed.url != null) {
-                offerToFileLink(parsed.url!!, parsed.title, sharedText)
-            } else {
-                val boxText = wrapForTextBox(
-                    listOfNotNull(parsed.title, parsed.leftoverText).joinToString("\n")
-                        .ifBlank { sharedText?.trim().orEmpty() }
-                )
-                if (boxText.isNotBlank()) dropTextOnDay(boxText, null)
-            }
+            offerShareDestinations(parsed.url, parsed.title, parsed.leftoverText, sharedText, null)
         }
 
-        // Share-to-Ledger target: an image shared from Gallery or any app lands on
-        // today's day page as a movable image element.
+        // Share-to-Ledger target: an image shared from Gallery or any app — same chooser (on this
+        // page as a movable image, or into Pickings as a gram).
         if (intent?.action == android.content.Intent.ACTION_SEND && intent?.type?.startsWith("image/") == true) {
             @Suppress("DEPRECATION")
             val streamUri = intent?.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
@@ -696,16 +795,8 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             intent?.action = null
 
             if (streamUri != null) {
-                Timber.i("Share to ledger: $streamUri")
-                val bundle = bundleOf("sharedImageUri" to streamUri.toString())
-                // Pop any existing day fragment first: on a share cold-start the nav graph has
-                // already created the start-destination day page, and two stacked day fragments
-                // means two SurfaceViews fighting over the window — the stale one can win and
-                // hide the freshly inserted image until the next reload.
-                val navOptions = androidx.navigation.navOptions {
-                    popUpTo(R.id.CalendarDayFragment) { inclusive = true }
-                }
-                binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle, navOptions)
+                Timber.i("Share to ledger (image): $streamUri")
+                offerShareDestinations(null, null, null, null, streamUri)
             }
         }
 

@@ -1356,7 +1356,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
 
         // ── MORE ── the rest of the iPad's set: Pickings, local (no-server) feeds, OPML.
         section("MORE")
-        row("❝  Feed Pickings", true, mode == "pickings") { switchTo("pickings", null) }
+        row("❝  Pickings", true, mode == "pickings") { switchTo("pickings", null) }
         row("📡  Local feeds", true, mode == "local" && localSub == null) { switchToLocal(null) }
         com.toolsboox.plugin.feeds.nw.LocalFeedStore.subscriptions(ctx).forEach { sub ->
             row("·  ${sub.title}", false, mode == "local" && localSub?.id == sub.id) { switchToLocal(sub) }
