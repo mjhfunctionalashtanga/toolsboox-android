@@ -67,19 +67,21 @@ fun ledgerDirectoryFolders(
             action = { com.toolsboox.ui.plugin.LedgerPlayer.showModal(fragment.requireContext()) })
     else null
 
-    // Order per Michael: Today (straight to the page, no submenu) · Daily Ledger · Desk Ledger ·
-    // Feed Ledger · Bookshelf · Ask my Ledger · Ledger Log · Settings.
+    // Order per Michael: Search · Today (straight to the page, no submenu) · Daily Ledger ·
+    // Desk Ledger · Garden · Feed Ledger · Bookshelf · Ledger Log · Community · Sites · Settings.
     return listOfNotNull(
         nowPlaying,
+        // Search — one tap onto the Log/history surface, which carries range/origin/search inside.
+        ScreenFragment.Folder("🔍", "Search", action = { openHistory(null) }),
         // One-tap jump to today's Day page — no submenu. If we're leaving an open article/book,
         // drop a return anchor so the Day page can jump straight back.
         ScreenFragment.Folder("☀️", "Today", action = {
             (fragment as? com.toolsboox.ui.plugin.ReturnAnchorProvider)?.prepareReturnAnchor()
             nav.navigate(R.id.action_to_calendar_day)
         }),
-        // The daily ritual: Intake → Pickings → Gratitude → Self Executive → Synthesize. Synthesize
-        // closes it (it works the day's gathered pieces), so it lives here — matching iPad — not in
-        // the Garden. (Write stays in the Garden.)
+        // The daily ritual: Intake → Pickings → Gratitude → Self Executive → Synthesize → Write.
+        // Synthesize works the day's gathered pieces and Write closes the ritual out — both live here,
+        // matching iPad, rather than in the Garden.
         ScreenFragment.Folder("❤️", "Daily", listOf(
             // Daily Pile — everything the day collected on one grid, to pick or rhizome outward from.
             "🗂  Daily Pile" to { nav.navigate(R.id.action_to_daily_pile) },
@@ -87,67 +89,42 @@ fun ledgerDirectoryFolders(
             "❝  Pickings" to { showPickingsPicker(fragment) },
             "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") },
             "🐘  Self Executive" to { CalendarNavigator.toDayNote(fragment, today, "selfexec") },
-            "🔬  Synthesize" to { showSynthPicker(fragment) }
+            "🔬  Synthesize" to { showSynthPicker(fragment) },
+            "✍  Write" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "write") }
         )),
-        // Desk Ledger — the working surfaces: notes, tasks, people, boards, correspondence.
+        // Desk Ledger — the working surfaces: mail, people, tasks, boards, publishing, notes.
         ScreenFragment.Folder("🗒", "Desk", listOf(
-            // Notes reopens where you last were; Text Notes rides right under it (the two
-            // notes surfaces belong together, not with Text Notes exiled to the bottom).
-            // Desk order (Michael): the two note surfaces, then your people and work,
-            // then the three that need the internet — Fluent-backed — last.
-            "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
-            "📈  Grid Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "grid") },
-            "⌱  Sketch Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "sketch") },
-            "⌗  Text Notes" to { nav.navigate(R.id.action_to_text_notes) },
+            // Desk order (Michael): the internet-backed working surfaces first — mail, people, tasks,
+            // boards, publishing, quick wins — then the four note surfaces together at the end.
+            // Native unified mail (IMAP/SMTP) — email is a working surface, so it lives on the Desk.
+            "✉  Mail" to { nav.navigate(R.id.action_to_mail_inbox) },
             "👤  Contacts" to { nav.navigate(R.id.action_to_rolodex) },
             // Boards = one system, two sources (Local on-device tasks · Site FluentBoards),
             // framed like the RSS Local/Site split. Tasks & Events is the list view of Local.
             "☑  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
             "📋  Boards · Local" to { nav.navigate(R.id.action_to_kanban) },
-            // Native unified mail (IMAP/SMTP) — email is a working surface, so it lives on the Desk.
-            "✉  Mail" to { nav.navigate(R.id.action_to_mail_inbox) },
             // WordPress publishing on the active site — compose (post/schedule/draft, CPTs, grams as
             // the featured image) and browse/edit/trash posts.
             "🖋  Publish" to { nav.navigate(R.id.action_to_publish) },
-            "🗎  Posts" to { nav.navigate(R.id.action_to_posts_browser) }
+            "🗎  Posts" to { nav.navigate(R.id.action_to_posts_browser) },
+            // Quick Wins — the quickest semantic action-surface, now a working-desk row.
+            "⚡  Quick Wins" to { nav.navigate(R.id.action_to_quick_wins) },
+            // The four note surfaces belong together, at the end of the desk. Notes reopens where you
+            // last were.
+            "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
+            "📈  Grid Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "grid") },
+            "⌱  Sketch Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "sketch") },
+            "⌗  Text Notes" to { nav.navigate(R.id.action_to_text_notes) }
         )),
-        // The Garden: the four surfaces that are about what you have already written rather
-        // than about capturing more of it. Roots is what keeps coming back, Map is the same
-        // material as a picture, and Synthesize and Write are what you do with it once you can
-        // see it. They were scattered across the day-page switcher and the Desk.
+        // The Garden: the surfaces that are about what you have already written rather than about
+        // capturing more of it. Roots is what keeps coming back, Map is the same material as a picture,
+        // and Sprouts and Missed Rhizomes are what sprouted or what you skipped that speaks to it.
+        // (Write moved to Daily; Quick Wins moved to the Desk.)
         ScreenFragment.Folder("🪴", "Garden", listOf(
             "🌿  Roots" to { nav.navigate(R.id.action_to_ledger_roots) },
             "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
-            // The three semantic action-surfaces: your graph and your meaning-model turned into
-            // something to DO — the quickest wins, the ideas that sprouted, the feed you skipped
-            // that speaks to what you're already thinking about.
-            "⚡  Quick Wins" to { nav.navigate(R.id.action_to_quick_wins) },
             "🌱  Sprouts" to { nav.navigate(R.id.action_to_sprouts) },
-            "✧  Missed Rhizomes" to { nav.navigate(R.id.action_to_missed_rhizomes) },
-            "✍  Write" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "write") }
-        )),
-        // Community: the NATIVE people-facing surfaces — your desk's connection to others. The active
-        // site's member-facing WEB portals used to be jumbled in here too; they moved to their own
-        // "Site" folder below, so it's clear at a glance which rows are native tools and which are the
-        // website rendered in a WebView.
-        ScreenFragment.Folder("👥", "Community", listOf(
-            "📋  Boards · Site" to { nav.navigate(R.id.action_to_site_boards) },
-            "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
-            "💬  Messages" to { nav.navigate(R.id.action_to_messages) },
-            // The day's booking roster (tap a person → their CRM, scribble a note that OCRs onto their
-            // CRM timeline). Mail moved to the Desk — email is a working surface, not a person-surface.
-            "🎟  Roster" to { nav.navigate(R.id.action_to_roster) }
-        )),
-        // Site — the active site's own forward-facing Vue apps in a persistent-session WebView (sign in
-        // once, cookies stick). This is the WEBSITE as members/customers see it, kept apart from the
-        // native tools above. Portals that ARE a native surface's web face live inside that surface
-        // instead of here: the FluentBoards front → "Boards · Site", the booking page → Roster's
-        // "Booking page", the FluentCRM admin → Contacts' "CRM". Only genuinely portal-only pages remain.
-        ScreenFragment.Folder("🌐", "Site", listOf(
-            "🏛  Community portal" to { openSiteWeb(nav, "community") },
-            "🎓  Courses" to { openSiteWeb(nav, "courses") },
-            "🛟  Support" to { openSiteWeb(nav, "support") },
-            "🛍  Shop" to { openSiteWeb(nav, "shop") }
+            "✧  Missed Rhizomes" to { nav.navigate(R.id.action_to_missed_rhizomes) }
         )),
         // Feed Ledger — the RSS reader lenses. Starred (your RSS stars) and Later (the read-later
         // intake) are DIFFERENT stores — both here, as on iPad, not one standing in for the other.
@@ -165,6 +142,28 @@ fun ledgerDirectoryFolders(
         ScreenFragment.Folder("🕘", "Log", listOf(
             "🕘  Log" to { openHistory(null) },
             "🔎  Ask" to { nav.navigate(R.id.action_to_ledger_chat) }
+        )),
+        // Community: the NATIVE people-facing surfaces — your desk's connection to others. The active
+        // site's member-facing WEB portals live in their own "Sites" folder below, so it's clear at a
+        // glance which rows are native tools and which are the website rendered in a WebView.
+        ScreenFragment.Folder("👥", "Community", listOf(
+            "📋  Boards · Site" to { nav.navigate(R.id.action_to_site_boards) },
+            "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
+            "💬  Messages" to { nav.navigate(R.id.action_to_messages) },
+            // The day's booking roster (tap a person → their CRM, scribble a note that OCRs onto their
+            // CRM timeline). Mail moved to the Desk — email is a working surface, not a person-surface.
+            "🎟  Roster" to { nav.navigate(R.id.action_to_roster) }
+        )),
+        // Sites — the active site's own forward-facing Vue apps in a persistent-session WebView (sign in
+        // once, cookies stick). This is the WEBSITE as members/customers see it, kept apart from the
+        // native tools above. Portals that ARE a native surface's web face live inside that surface
+        // instead of here: the FluentBoards front → "Boards · Site", the booking page → Roster's
+        // "Booking page", the FluentCRM admin → Contacts' "CRM". Only genuinely portal-only pages remain.
+        ScreenFragment.Folder("🌐", "Sites", listOf(
+            "🏛  Community portal" to { openSiteWeb(nav, "community") },
+            "🎓  Courses" to { openSiteWeb(nav, "courses") },
+            "🛟  Support" to { openSiteWeb(nav, "support") },
+            "🛍  Shop" to { openSiteWeb(nav, "shop") }
         )),
         ScreenFragment.Folder("⚙", "Settings", listOf(
             "⚙  Settings" to { nav.navigate(R.id.action_to_settings) },
