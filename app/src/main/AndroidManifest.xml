@@ -131,5 +131,47 @@
                     android:resource="@xml/tasks_notes_widget_info"/>
         </receiver>
 
+        <receiver
+                android:name=".plugin.calendar.widget.MailWidgetProvider"
+                android:label="@string/widget_mail_label"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <action android:name="com.toolsboox.widget.ACTION_REFRESH"/>
+            </intent-filter>
+
+            <meta-data
+                    android:name="android.appwidget.provider"
+                    android:resource="@xml/mail_widget_info"/>
+        </receiver>
+
+        <receiver
+                android:name=".plugin.calendar.widget.FeedWidgetProvider"
+                android:label="@string/widget_feed_label"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <action android:name="com.toolsboox.widget.ACTION_REFRESH"/>
+            </intent-filter>
+
+            <meta-data
+                    android:name="android.appwidget.provider"
+                    android:resource="@xml/feed_widget_info"/>
+        </receiver>
+
+        <receiver
+                android:name=".plugin.calendar.widget.DailyPileWidgetProvider"
+                android:label="@string/widget_daily_pile_label"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <action android:name="com.toolsboox.widget.ACTION_REFRESH"/>
+            </intent-filter>
+
+            <meta-data
+                    android:name="android.appwidget.provider"
+                    android:resource="@xml/daily_pile_widget_info"/>
+        </receiver>
+
     </application>
 </manifest>

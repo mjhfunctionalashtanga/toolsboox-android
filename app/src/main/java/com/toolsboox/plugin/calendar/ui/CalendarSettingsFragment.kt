@@ -540,7 +540,10 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.buttonExportSettings.setOnClickListener {
             try {
                 val json = com.toolsboox.plugin.calendar.ot.SettingsBackup.exportJson(requireContext())
-                val dir = java.io.File(requireContext().cacheDir, "settings").apply { mkdirs() }
+                // Must live under a FileProvider-declared root (res/xml/file_paths.xml). "exports/"
+                // is the declared share-sheet cache dir; "settings/" was never declared, so
+                // getUriForFile threw "Failed to find configured root" and export silently failed.
+                val dir = java.io.File(requireContext().cacheDir, "exports").apply { mkdirs() }
                 val file = java.io.File(dir, "ledger-settings.json").apply { writeText(json) }
                 val uri = androidx.core.content.FileProvider.getUriForFile(
                     requireContext(), "${requireContext().packageName}.fileprovider", file

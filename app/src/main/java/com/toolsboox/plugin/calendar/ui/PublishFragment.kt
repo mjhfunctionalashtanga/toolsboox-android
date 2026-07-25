@@ -16,6 +16,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.NavHostFragment
 import com.toolsboox.R
 import com.toolsboox.databinding.FragmentPublishBinding
+import com.toolsboox.plugin.calendar.nw.SiteStore
 import com.toolsboox.plugin.calendar.nw.WPPublish
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
@@ -67,6 +68,14 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
     private var publishing = false
     private var loaded = false
 
+    // The target site is chosen inline (the SITE row), not in Settings — so a post can go to any
+    // configured site without switching the app's active site for good. We do it by pointing the
+    // active creds at the chosen site while composing (so WPPublish, which reads the active creds,
+    // targets it), then restoring the entry active on exit. [entryActiveId] is that entry value;
+    // [siteTargeted] flips once the picker actually re-points, so an untouched compose restores nothing.
+    private var entryActiveId = ""
+    private var siteTargeted = false
+
     // Kept across re-renders so a picker rebuild never loses what you've typed.
     private var titleField: EditText? = null
     private var bodyField: EditText? = null
@@ -90,7 +99,17 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
         binding = FragmentPublishBinding.bind(view)
         binding.publishClose.setOnClickListener { NavHostFragment.findNavController(this).popBackStack() }
         binding.publishAction.setOnClickListener { go() }
+        entryActiveId = SiteStore.activeId(requireContext())
         load()
+    }
+
+    override fun onDestroyView() {
+        // An inline target-pick is for THIS compose only — return the global active site to what it
+        // was on entry, so choosing where one post lands never silently hijacks the app's active site.
+        if (siteTargeted && entryActiveId.isNotBlank()) {
+            context?.let { runCatching { SiteStore.activate(it, entryActiveId) } }
+        }
+        super.onDestroyView()
     }
 
     private fun load() {
@@ -174,6 +193,19 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
         fun sectionLabel(t: String) = TextView(ctx).apply {
             text = t; textSize = 11f; setTextColor(0xFF888888.toInt())
             setPadding(px(4), px(14), px(4), px(3)); letterSpacing = 0.06f
+        }
+
+        // Site — the target picker. Only shown when there's a choice to make (more than one site);
+        // with a single site there's nothing to pick, and Publish behaves exactly as before.
+        val sites = SiteStore.all(ctx)
+        if (sites.size > 1) {
+            val target = SiteStore.active(ctx)
+            c.addView(sectionLabel("SITE"))
+            c.addView(TextView(ctx).apply {
+                text = "🌐  ${target?.display ?: "Choose a site"}   ▾"; textSize = 16f; setTextColor(0xFF2F6F96.toInt())
+                setPadding(px(8), px(6), px(8), px(6))
+                setOnClickListener { pickSite() }
+            })
         }
 
         // Title
@@ -266,6 +298,45 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
             textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(px(8), px(6), px(8), px(12))
             setOnClickListener { galleryLauncher.launch("image/*") }
         })
+    }
+
+    /** Choose which site this post publishes to. Re-points the active creds at it (so the type list
+     *  and the publish call use the chosen site's url + password) and reloads that site's types/terms;
+     *  onDestroyView restores the entry active site. */
+    private fun pickSite() {
+        val ctx = context ?: return
+        val sites = SiteStore.all(ctx)
+        if (sites.size < 2) return
+        val labels = sites.map { it.display }.toTypedArray()
+        val current = sites.indexOfFirst { it.id == SiteStore.activeId(ctx) }.coerceAtLeast(0)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Publish to…")
+            .setSingleChoiceItems(labels, current) { d, which ->
+                d.dismiss()
+                val chosen = sites[which]
+                if (chosen.id == SiteStore.activeId(ctx)) return@setSingleChoiceItems
+                syncText()
+                SiteStore.activate(ctx, chosen.id)
+                siteTargeted = chosen.id != entryActiveId
+                loadSiteData()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** Refresh the post types + taxonomy for the now-active (chosen) site, preserving typed text.
+     *  Category/tag ids are per-site, so the previous site's selections are cleared — they wouldn't
+     *  map. Featured-media ids are per-site too; a picked image re-uploads on publish, so it stays. */
+    private fun loadSiteData() {
+        val ctx = context ?: return
+        viewLifecycleOwner.lifecycleScope.launch {
+            types = withContext(Dispatchers.IO) { WPPublish.postTypes(ctx) }
+            if (types.isNotEmpty() && types.none { it.restBase == draft.type }) draft.type = types.first().restBase
+            categories = withContext(Dispatchers.IO) { WPPublish.terms(ctx, "categories") }.toMutableList()
+            tags = withContext(Dispatchers.IO) { WPPublish.terms(ctx, "tags") }.toMutableList()
+            draft.categories = emptyList(); draft.tags = emptyList()
+            if (isAdded) render()
+        }
     }
 
     private fun pickType() {

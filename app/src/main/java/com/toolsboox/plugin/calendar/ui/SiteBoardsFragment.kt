@@ -29,8 +29,12 @@ import com.toolsboox.plugin.calendar.nw.LedgerBoards
 import com.toolsboox.plugin.calendar.nw.SiteBoard
 import com.toolsboox.plugin.calendar.nw.SiteBoardCompact
 import com.toolsboox.plugin.calendar.nw.SiteStage
+import com.toolsboox.plugin.calendar.nw.SiteStore
 import com.toolsboox.plugin.calendar.nw.SiteTask
 import com.toolsboox.plugin.calendar.nw.SiteTaskDetail
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import java.util.Locale
@@ -63,6 +67,19 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
     private var openBoard: SiteBoard? = null
     private var pendingBoardId: Int = 0   // deep-link target from the timeline; opened once on load
     private var compact: SiteBoardCompact? = null
+
+    // Multi-site, keyed on SITE the way Mail's inbox is on account: null = every configured site
+    // (the board list aggregates across them, each board tagged with its site — board ids collide
+    // across sites, each FluentBoards starting at 1, so the site is what keeps them apart); a pick
+    // narrows to one. Persisted in the same board prefs. When narrowed, the site is made active and
+    // the existing single-site path (inbox row, columns, moves, comments) runs unchanged.
+    private var siteFilter: String? = null
+    private var sitesOpen = false
+    private var boardRows: List<SiteFetch.SiteBoardRow> = emptyList()   // the aggregate list
+    // The mode is decided once per list load and held, so "up" from an opened board (and a
+    // deep-linked board, which always uses the single-site path) redraws the list it actually built.
+    private var aggregateMode = false
+    private fun allSites() = SiteStore.all(requireContext())
 
     /** The card being dragged and its view, so a drop can reparent + move it. */
     private var dragging: Pair<SiteTask, View>? = null
@@ -120,6 +137,8 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             if (b == null) loadBoards() else loadBoard(b)
         }
         showCovers = boardPrefs().getBoolean("showCovers", true)
+        siteFilter = boardPrefs().getString("site_filter", "")!!.ifBlank { null }
+        sitesOpen = boardPrefs().getBoolean("sites_open", false)
         view.findViewById<Button>(R.id.site_boards_covers).setOnClickListener {
             showCovers = !showCovers
             boardPrefs().edit().putBoolean("showCovers", showCovers).apply()
@@ -145,16 +164,41 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         upButton.visibility = View.GONE
         openBoard = null
         renderMessage("Loading boards…")
+        // Narrowed to a site → make it active so the existing single-site path (inbox row, columns,
+        // card moves, comments) targets it. A blank filter with several sites aggregates instead;
+        // a deep-linked board always uses the single-site path (it targets the active site).
+        aggregateMode = siteFilter == null && allSites().size > 1 && pendingBoardId == 0
+        siteFilter?.let { SiteStore.activate(requireContext(), it) }
         lifecycleScope.launch {
-            val list = withContext(Dispatchers.IO) { LedgerBoards.boards(requireContext()) }
-            boards = list
-            val target = pendingBoardId
-            if (target > 0) {
-                pendingBoardId = 0   // consume — a later "up" returns to the list, not back here
-                val b = boards.firstOrNull { it.id == target }
-                if (b != null) { loadBoard(b); return@launch }
+            if (aggregateMode) {
+                // All sites: fan out the board lists in parallel, each with its own creds, per-site
+                // try/catch so one unreachable site never empties the others.
+                val sites = allSites()
+                val rows = withContext(Dispatchers.IO) {
+                    coroutineScope {
+                        sites.map { s ->
+                            async {
+                                try {
+                                    SiteFetch.boards(s, SiteStore.password(requireContext(), s.id))
+                                        .map { SiteFetch.SiteBoardRow(s, it) }
+                                } catch (e: Exception) { emptyList() }
+                            }
+                        }.awaitAll().flatten()
+                    }
+                }
+                boardRows = rows
+                if (openBoard == null) showList()
+            } else {
+                val list = withContext(Dispatchers.IO) { LedgerBoards.boards(requireContext()) }
+                boards = list
+                val target = pendingBoardId
+                if (target > 0) {
+                    pendingBoardId = 0   // consume — a later "up" returns to the list, not back here
+                    val b = boards.firstOrNull { it.id == target }
+                    if (b != null) { loadBoard(b); return@launch }
+                }
+                if (openBoard == null) showList()
             }
-            if (openBoard == null) showList()
         }
     }
 
@@ -163,24 +207,60 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         upButton.visibility = View.GONE
         openBoard = null
         compact = null
-        if (boards.isEmpty()) {
-            renderMessage("No boards.\n\nSet the site, user and app password under Settings → Community & Boards (Fluent), then refresh with ↻.")
-            return
-        }
         val ctx = requireContext()
         val scroll = ScrollView(ctx)
         val col = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(px(10), px(6), px(10), px(24))
         }
-        // Correspondence Inbox — replies to your shared items become cards on the configured board.
-        val inboxBoardId = com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).boardId
-        if (inboxBoardId > 0) col.addView(inboxRow(inboxBoardId))
-        for (b in boards) {
-            col.addView(boardRow(b))
+        // The site switcher, first — All aggregates every site's boards, a pick narrows to one.
+        col.addView(switcherBar())
+
+        if (aggregateMode) {
+            if (boardRows.isEmpty()) {
+                col.addView(listHint("No boards on any site.\n\nAdd a site + application password (tap 🌐 above), or check Settings → Community & Boards."))
+            } else {
+                // Each board tagged with its site — board ids collide across sites, so the tag is
+                // what tells two "Board 1"s apart. Tapping activates that site, then opens it.
+                for (r in boardRows) col.addView(boardRow(r.board, r.site.display) {
+                    SiteStore.activate(ctx, r.site.id); loadBoard(r.board)
+                })
+            }
+        } else {
+            if (boards.isEmpty()) {
+                col.addView(listHint("No boards.\n\nSet the site, user and app password under Settings → Community & Boards (Fluent), then refresh with ↻."))
+            } else {
+                // Correspondence Inbox — replies to shared items become cards on the configured board
+                // (a per-site concept, so only in the narrowed / single-site view).
+                val inboxBoardId = com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).boardId
+                if (inboxBoardId > 0) col.addView(inboxRow(inboxBoardId))
+                for (b in boards) col.addView(boardRow(b, null) { loadBoard(b) })
+            }
         }
         scroll.addView(col)
         setContent(scroll)
+    }
+
+    /** The shared site switcher (Mail's account-switcher idiom), keyed on site. */
+    private fun switcherBar(): View = SiteSwitcherBar.build(
+        context = requireContext(),
+        sites = allSites(),
+        filter = siteFilter,
+        open = sitesOpen,
+        onToggleOpen = { open ->
+            sitesOpen = open; boardPrefs().edit().putBoolean("sites_open", open).apply(); showList()
+        },
+        onPick = { id ->
+            siteFilter = id
+            boardPrefs().edit().putString("site_filter", id ?: "").apply()
+            loadBoards()
+        },
+        onManage = { SitesSettingsDialog.show(requireContext()) { loadBoards() } },
+    )
+
+    private fun listHint(msg: String) = TextView(requireContext()).apply {
+        text = msg; setTextColor(Color.parseColor("#666666")); textSize = 15f
+        setPadding(px(6), px(16), px(6), px(16))
     }
 
     /** The inbox pull: sync correspondence to the configured board, then open it. */
@@ -224,7 +304,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    private fun boardRow(board: SiteBoard): View {
+    private fun boardRow(board: SiteBoard, siteTag: String?, onClick: () -> Unit): View {
         val ctx = requireContext()
         val row = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -236,7 +316,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = px(8) }
             isClickable = true
-            setOnClickListener { loadBoard(board) }
+            setOnClickListener { onClick() }
         }
         row.addView(TextView(ctx).apply {
             text = board.title
@@ -245,7 +325,9 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         row.addView(TextView(ctx).apply {
             val cards = if (board.taskCount == 1) "1 card" else "${board.taskCount} cards"
             val cols = if (board.stageCount == 1) "1 column" else "${board.stageCount} columns"
-            text = "$cards · $cols"
+            // In the aggregate, name the board's site (each site's ids start at 1, so the site is
+            // the disambiguator); narrowed, the switcher chip already names it.
+            text = if (siteTag != null) "🌐 $siteTag · $cards · $cols" else "$cards · $cols"
             setTextColor(Color.parseColor("#666666")); textSize = 13f
             setPadding(0, px(3), 0, 0)
         })

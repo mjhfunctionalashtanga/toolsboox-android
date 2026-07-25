@@ -7,6 +7,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.widget.RemoteViews
 import com.toolsboox.R
@@ -25,6 +26,9 @@ open class CalendarWidgetProvider : AppWidgetProvider() {
             broadcastUpdate(context, CalendarWidgetProvider::class.java)
             broadcastUpdate(context, ScheduleWidgetProvider::class.java)
             broadcastUpdate(context, TasksNotesWidgetProvider::class.java)
+            broadcastUpdate(context, MailWidgetProvider::class.java)
+            broadcastUpdate(context, FeedWidgetProvider::class.java)
+            broadcastUpdate(context, DailyPileWidgetProvider::class.java)
         }
 
         private fun broadcastUpdate(context: Context, cls: Class<*>) {
@@ -108,6 +112,15 @@ open class CalendarWidgetProvider : AppWidgetProvider() {
         updateWidget(context, appWidgetManager, appWidgetId)
     }
 
+    /**
+     * The bitmap this widget shows. The base widgets crop regions of the real day page
+     * ([WidgetRenderer]); the list widgets (Mail / Feed / Daily Pile) override this to draw
+     * their own e-ink list instead, while inheriting all of the plumbing above — the background
+     * thread, the midnight roll-over, the tap-to-open, and the shared single-ImageView layout.
+     */
+    protected open fun renderBitmap(context: Context, date: LocalDate, widthDp: Int, heightDp: Int): Bitmap =
+        WidgetRenderer.render(context, date, widthDp, heightDp, mode)
+
     protected fun updateWidget(context: Context, manager: AppWidgetManager, widgetId: Int) {
         val views = RemoteViews(context.packageName, R.layout.calendar_widget_layout)
         val today = LocalDate.now()
@@ -116,7 +129,7 @@ open class CalendarWidgetProvider : AppWidgetProvider() {
         val widthDp = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 250)
         val heightDp = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 180)
 
-        val bitmap = WidgetRenderer.render(context, today, widthDp, heightDp, mode)
+        val bitmap = renderBitmap(context, today, widthDp, heightDp)
         views.setImageViewBitmap(R.id.widget_page_image, bitmap)
         views.setOnClickPendingIntent(R.id.widget_root, openAppIntent(context))
 
