@@ -112,6 +112,15 @@ abstract class SurfaceFragment : ScreenFragment() {
         var carriedZoom: Float = 1.0f
 
         /**
+         * Which fragment class last wrote [carriedZoom]. The carry is meant for paging within ONE
+         * surface (the rebuilt fragment is the same class); without the owner check the
+         * process-wide value leaked a day-page zoom into Week/Month/notes, which arrived
+         * pre-zoomed. Only the matching class adopts.
+         */
+        @Volatile
+        var carriedZoomOwner: String? = null
+
+        /**
          * Debounce window for re-applying the Onyx raw-drawing limit rect after a
          * surfaceChanged. On open the surface is resized more than once (toolbar/immersive
          * relayout), and each limit-rect re-apply toggles setRawDrawingEnabled false->true,
@@ -453,7 +462,7 @@ abstract class SurfaceFragment : ScreenFragment() {
     // --- Zoom and pan state ---
     protected var twoFingerGesture = false
     private var zoomScale = 1.0f
-        set(value) { field = value; carriedZoom = value }
+        set(value) { field = value; carriedZoom = value; carriedZoomOwner = javaClass.name }
     private var panX = 0.0f
     private var panY = 0.0f
     private var baseScale = 1.0f
@@ -4620,8 +4629,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                     surfaceSize = Rect(0, 0, width, height)
                     // Take up the zoom the last page was left at. Paging the day surface NAVIGATES,
                     // so the fragment is rebuilt and an instance field can't survive it — the zoom
-                    // was lost on every page turn no matter what the pan state did.
-                    if (carriedZoom > 1.01f && zoomScale <= 1.01f) zoomScale = carriedZoom
+                    // was lost on every page turn no matter what the pan state did. Owner-gated:
+                    // only the same surface class adopts, so a day-page zoom stays on day pages.
+                    if (carriedZoomOwner == javaClass.name && carriedZoom > 1.01f && zoomScale <= 1.01f) zoomScale = carriedZoom
                     updateTransformMatrix()
                     if (zoomScale > 1.01f) refitZoomForPage()
                     // Activate Viwoods T1000 AutoDraw for this surface. The hardware then

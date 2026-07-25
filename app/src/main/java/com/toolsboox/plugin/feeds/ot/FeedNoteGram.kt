@@ -71,21 +71,86 @@ object FeedNoteGram {
     ) {
         val ctx = fragment.requireContext()
         val sel = selection.trim()
+        // With a highlight in hand, the first row is the one-tap keep: the bare passage as a
+        // gram, no note required. The mediums follow for when you have something to add, and
+        // 🔎 hands the passage — or, with nothing highlighted, the whole article — to Ask.
+        val items = mutableListOf<Pair<String, () -> Unit>>()
+        if (sel.isNotBlank()) items.add("❝  Save highlight" to {
+            saveHighlight(fragment, service, root, sel, articleTitle, feedTitle, articleUrl, logEvent)
+        })
+        items.add("✍  Handwriting" to {
+            inkNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl, logEvent)
+        })
+        items.add("⌨  Text" to {
+            textNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl, logEvent)
+        })
+        items.add("🎤  Audio" to {
+            avNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl,
+                Attachment.Kind.AUDIO, captureAv, logEvent)
+        })
+        items.add("🎥  Video" to {
+            avNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl,
+                Attachment.Kind.VIDEO, captureAv, logEvent)
+        })
+        items.add("🔎  Ask about this" to {
+            // selection = null means "the whole article"; the bridge goes straight to the Ask
+            // chat — this chooser stays THE menu, no layered dialogs behind its rows.
+            com.toolsboox.plugin.calendar.ot.AskBridge.askFrom(
+                fragment = fragment, selection = sel.ifBlank { null },
+                title = articleTitle, link = articleUrl, sourceLabel = feedTitle
+            )
+        })
+        items.add("🎓  Educate me" to {
+            // Grams the highlight — or the whole article (its title standing in as the text)
+            // when nothing is selected — to the Educate Me panel.
+            com.toolsboox.plugin.calendar.ot.AskBridge.gramToEducateMe(
+                fragment = fragment, text = sel.ifBlank { articleTitle },
+                title = articleTitle, link = articleUrl, sourceLabel = feedTitle
+            )
+        })
         val b = AlertDialog.Builder(ModalScale.wrap(ctx))
-            .setTitle(if (sel.isNotBlank()) "Highlight + note" else "Note")
-            .setItems(arrayOf("✍  Handwriting", "⌨  Text", "🎤  Audio", "🎥  Video")) { _, which ->
-                when (which) {
-                    0 -> inkNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl, logEvent)
-                    1 -> textNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl, logEvent)
-                    2 -> avNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl,
-                        Attachment.Kind.AUDIO, captureAv, logEvent)
-                    3 -> avNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl,
-                        Attachment.Kind.VIDEO, captureAv, logEvent)
-                }
-            }
+            .setItems(items.map { it.first }.toTypedArray()) { _, which -> items[which].second() }
             .setNegativeButton(android.R.string.cancel, null)
-        if (sel.isNotBlank()) b.setMessage("“${sel.take(400)}”")
+        // The quote preview must NOT ride in via setMessage: AlertDialog shows a message OR an
+        // items list, never both (AlertController.setupContent skips installing the ListView
+        // whenever a message is set) — which is exactly the bug Michael hit: the pen icon
+        // opened "Highlight + note" with the passage, a Cancel, and NO save / note options.
+        // The preview lives in a custom title instead, so the option rows always show.
+        if (sel.isNotBlank()) {
+            val dp = ctx.resources.displayMetrics.density
+            fun px(v: Int) = (v * dp).toInt()
+            b.setCustomTitle(LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(px(20), px(16), px(20), px(4))
+                addView(android.widget.TextView(ctx).apply {
+                    text = "Highlight"; textSize = 18f; setTextColor(0xFF000000.toInt())
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                })
+                addView(android.widget.TextView(ctx).apply {
+                    text = "“${sel.take(280)}”"; textSize = 13f; setTextColor(0xFF444444.toInt())
+                    maxLines = 4; ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(0, px(4), 0, 0)
+                })
+            })
+        } else {
+            b.setTitle("Note")
+        }
         b.show()
+    }
+
+    /** ❝ Save highlight — the bare passage kept as a gram in ONE tap, no note required: the
+     *  quote face with the date·source footer (title · feed stamped, url carried as the gram's
+     *  source link), placed on today's Notes page exactly like an annotated one. The passage
+     *  still earns its Ledger Log line via [logEvent]. */
+    private fun saveHighlight(
+        fragment: ScreenFragment, service: CalendarDayService, root: File, sel: String,
+        articleTitle: String, feedTitle: String, articleUrl: String,
+        logEvent: (String?, String?) -> Unit
+    ) {
+        logEvent(sel, null)
+        placeAsync(fragment, service, root, articleUrl, articleTitle, feedTitle, cardText = sel) {
+            QuoteCardRenderer.render(sel, footer(articleTitle, feedTitle), null, CARD_W, 0)
+        }
     }
 
     /**
@@ -442,6 +507,62 @@ object FeedNoteGram {
             android.graphics.RectF(PAD, PAD, PAD + contentW, PAD + photoH), Paint(Paint.FILTER_BITMAP_FLAG))
         drawFooter(canvas, height, footerText)
         return bmp
+    }
+
+    // --- ★ Grams for stars --------------------------------------------------------------------
+
+    /** The Intake page key — the read-later ink surface star grams land on. */
+    private const val INTAKE_PAGE = "intake"
+
+    /**
+     * Grams for stars: a ★ in the feed list ALSO mints a visual gram onto TODAY's Intake page —
+     * the entry as a link card (kind chip · title · featured image · feed/site), placed as a
+     * movable ImageElement so Michael can arrange the board and write pen notes around it.
+     *
+     * [thumb] is the row's already-loaded thumbnail when the list has one (no re-download);
+     * otherwise [imageUrl] is fetched here, and on any miss the card is text-only — the face
+     * degrades gracefully, the gram still lands. Call OFF the main thread (network + render + a
+     * day-JSON write live here); placement itself serializes under the per-day lock (DayLocks)
+     * inside [PickingsPlacement.place].
+     *
+     * Starring the same entry twice must not stack twins: an intake card already carrying this
+     * sourceLink today wins and nothing is placed. And unstarring deliberately does NOT remove
+     * the gram — once placed, the Intake page is his board (arranged, annotated), not a mirror
+     * of the star state.
+     *
+     * @return true when a gram was placed, false when today's intake already had it.
+     */
+    fun placeStarGram(
+        fragment: ScreenFragment, service: CalendarDayService, root: File,
+        title: String, feedTitle: String, url: String, kind: String,
+        imageUrl: String?, thumb: Bitmap? = null
+    ): Boolean {
+        val today = LocalDate.now()
+        // Dedupe by sourceLink. Read-before-place is unlocked, but stars arrive at human speed
+        // and re-stars route through this same path, so a stale read can't stack twins in practice.
+        if (url.isNotBlank()) {
+            val day = service.load(root, today, null, Locale.getDefault())
+            if (day.imageElements.any { it.page == INTAKE_PAGE && it.sourceLink == url }) return false
+        }
+        val photo = thumb ?: imageUrl?.let { fetchImage(it) }
+        val host = runCatching { java.net.URI(url).host?.removePrefix("www.") }.getOrNull().orEmpty()
+        val face = com.toolsboox.plugin.calendar.ot.LinkCardRenderer.render(
+            url, title, kind, thumb = photo, sourceName = feedTitle)
+        PickingsPlacement.place(
+            service, root, face, today, INTAKE_PAGE,
+            sourceLink = url, sourceLabel = feedTitle.ifBlank { host },
+            cardText = title, sourceFeed = feedTitle
+        )
+        runCatching {
+            fragment.requireActivity().runOnUiThread {
+                runCatching {
+                    android.widget.Toast.makeText(
+                        fragment.requireContext(), "★ → Intake", android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+        return true
     }
 
     // --- Placement ----------------------------------------------------------------------------

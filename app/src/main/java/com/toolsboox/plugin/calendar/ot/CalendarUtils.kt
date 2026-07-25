@@ -73,6 +73,15 @@ class CalendarUtils @Inject constructor() {
         constraintSet.constrainWidth(R.id.spiralLine, ConstraintSet.WRAP_CONTENT)
         constraintSet.constrainHeight(R.id.spiralLine, ConstraintSet.WRAP_CONTENT)
 
+        // The numbered-notes pager floats centered at the top of the paper. Same rule as the
+        // spiral line: a view this cloned set doesn't mention comes back 0×0.
+        val pagerGap = (10 * binding.root.resources.displayMetrics.density).toInt()
+        constraintSet.connect(R.id.notePager, ConstraintSet.TOP, R.id.navigatorImageView, ConstraintSet.BOTTOM, pagerGap)
+        constraintSet.connect(R.id.notePager, ConstraintSet.START, ConstraintSet.PARENT_ID, ConstraintSet.START)
+        constraintSet.connect(R.id.notePager, ConstraintSet.END, ConstraintSet.PARENT_ID, ConstraintSet.END)
+        constraintSet.constrainWidth(R.id.notePager, ConstraintSet.WRAP_CONTENT)
+        constraintSet.constrainHeight(R.id.notePager, ConstraintSet.WRAP_CONTENT)
+
         constraintSet.applyTo(binding.drawingLayout)
     }
 }

@@ -170,7 +170,11 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                     calendarDay.hasLanes = calendarDay.hasLanes or emptyStrokes
 
                     CalendarPatternService.mutex.withLock {
-                        calendarDayService.save(rootPath, currentDate, calendarDay)
+                        // Under the day lock so a background placement's load→mutate→save
+                        // (PickingsPlacement, starred mail) can't interleave with this write.
+                        com.toolsboox.plugin.calendar.ot.DayLocks.withDay(currentDate) {
+                            calendarDayService.save(rootPath, currentDate, calendarDay)
+                        }
                         calendarPatternService.save(rootPath, currentDate, calendarPattern)
                     }
                     CalendarWidgetProvider.refreshAll(fragment.requireContext())

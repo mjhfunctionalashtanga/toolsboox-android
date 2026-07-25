@@ -186,7 +186,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                         val ids = group.map { it.id }.toSet()
                         cd.ledgerItems.removeAll { it.id in ids }
                         // Tombstone so the union merge can't resurrect a deleted item from a synced copy.
-                        ids.forEach { if (it !in cd.deletedElementIds) cd.deletedElementIds.add(it) }
+                        ids.forEach { cd.tombstoneLedgerItem(it) }
 
                         // Also remove the item's ON-PAGE face, or a deleted task keeps showing on the
                         // day page: ink tasks are strokes (by strokeIds), typed tasks are text boxes
@@ -262,8 +262,13 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             // reads as one row here even on days whose file already holds both. The file is left
             // as it is — carry-over collapses the pair for good the next time it runs, and a list
             // that hides a row is recoverable in a way that a save which deletes one is not.
+            // Tombstoned ids are hidden the same way, defensively: a deleted item shouldn't be
+            // in the file at all, but if a pre-tombstone merge left a copy, it must not show.
+            // (Range mode's `d` is synthetic with empty tombstone lists; its gather already
+            // filters through loadLedgerItems.)
+            val dead = ((d?.deletedItemIds ?: emptyList()) + (d?.deletedElementIds ?: emptyList())).toSet()
             val items = com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe
-                .dedupe(d?.ledgerItems ?: emptyList())
+                .dedupe((d?.ledgerItems ?: emptyList()).filterNot { it.id in dead })
                 .sortedWith(
                     // Soonest first. It used to sort by `top` — where the item happens to sit on
                     // the page — which is the order you wrote things in, not the order they

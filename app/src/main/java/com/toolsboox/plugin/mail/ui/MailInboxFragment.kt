@@ -21,6 +21,7 @@ import com.toolsboox.plugin.mail.InboxMessage
 import com.toolsboox.plugin.mail.InboxStore
 import com.toolsboox.plugin.mail.MailAccount
 import com.toolsboox.plugin.mail.MailAccountStore
+import com.toolsboox.plugin.mail.MailMessageTooLarge
 import com.toolsboox.plugin.mail.MailSync
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
@@ -67,6 +68,20 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
     // Whether the ✉ All chip's account dropdown is unfolded (persisted, like the feed drawer's).
     private var accountsOpen = false
 
+    // --- Search: one field, two layers. A submitted query filters the LOADED mail (fetch window +
+    // starred pile) instantly; the 🔎 row under those results asks the servers (IMAP UID SEARCH)
+    // and, once answered, the server matches replace the local ones until the search clears.
+    // On-submit + ✕, not per-keystroke: e-ink pays a full redraw for every filter pass, so the
+    // list changes once, when the reader says go. While a search is active the almanac window,
+    // the To-dos/All chip, and the account chips stand aside (the account filter still narrows —
+    // a narrowed inbox should search narrowed); clearing restores the normal inbox untouched.
+    private var searchQuery = ""
+    private var serverResults: List<InboxMessage>? = null   // null = local layer showing
+    private var serverSearching = false
+    // Stale-result guard: bumped on every submit/clear; a slow server search landing for an old
+    // query checks it and stands down instead of stamping stale rows over a new search.
+    private var searchSeq = 0
+
     // Almanac filter — the inbox is browsable by date exactly as the feed is. Day+today is the LIVE
     // view (all mail, so your to-dos never hide); any other window keeps only mail from that window.
     private var navBar: com.toolsboox.plugin.calendar.ui.CalendarNavBarHost? = null
@@ -86,6 +101,14 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         val uiPrefs = requireContext().getSharedPreferences("ledger_mail_inbox", 0)
         accountFilter = uiPrefs.getString("account_filter", "")!!.ifBlank { null }
         accountsOpen = uiPrefs.getBoolean("accounts_open", false)
+
+        // The search row (Reading Log's field idiom): ⏎ submits, ✕ clears back to the inbox.
+        binding.mailSearchField.setOnEditorActionListener { v, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
+                actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+            ) { submitSearch(v.text.toString()); true } else false
+        }
+        binding.mailSearchClear.setOnClickListener { clearSearch() }
         renderChips()
 
         // Same Almanac strip as the feed: arrows step the window in place, a period tap filters to
@@ -221,12 +244,95 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
     }
 
     private fun shown(): List<InboxMessage> {
+        // A live search overrides the browse filters: server matches once they've landed, the
+        // local layer until then. The almanac window and the To-dos/All split are suspended —
+        // a search means "find it wherever it is", and hiding hits behind a parked date strip
+        // would read as the search failing.
+        if (searchActive()) return serverResults ?: localMatches()
         val ctx = requireContext()
         var base = if (onlyStarred) messages.filter { InboxStore.isStarred(ctx, it.id) } else messages
         // Narrow to one account by ORIGIN (the acct:<id> prefix), not by display label — labels
         // get renamed; the id a message arrived through doesn't.
         accountFilter?.let { id -> base = base.filter { MailSync.accountId(it.id) == id } }
         return filterByWindow(base)
+    }
+
+    // --- The search layers.
+
+    private fun searchActive() = searchQuery.isNotBlank()
+
+    /** Case-insensitive match across everything a loaded message carries that reads as text. */
+    private fun matches(m: InboxMessage, q: String): Boolean =
+        m.subject.contains(q, ignoreCase = true) ||
+            m.fromName.contains(q, ignoreCase = true) ||
+            m.fromEmail.contains(q, ignoreCase = true) ||
+            m.snippet.contains(q, ignoreCase = true) ||
+            m.body.contains(q, ignoreCase = true)
+
+    /** The instant layer: filter the loaded pool — [InboxStore.messages] is already the fetch
+     *  window ∪ the starred pile — honoring only the account narrowing. */
+    private fun localMatches(): List<InboxMessage> {
+        var base = messages
+        accountFilter?.let { id -> base = base.filter { MailSync.accountId(it.id) == id } }
+        return base.filter { matches(it, searchQuery) }
+    }
+
+    private fun submitSearch(raw: String) {
+        val q = raw.trim()
+        if (q.isEmpty()) { clearSearch(); return }
+        searchQuery = q
+        searchSeq += 1                      // an in-flight server search for the old query stands down
+        serverResults = null
+        serverSearching = false
+        binding.mailSearchClear.visibility = View.VISIBLE
+        hideKeyboard()
+        render()
+    }
+
+    /** Back to the normal inbox: field, both layers, and any in-flight server search let go. */
+    private fun clearSearch() {
+        searchQuery = ""
+        searchSeq += 1
+        serverResults = null
+        serverSearching = false
+        binding.mailSearchField.setText("")
+        binding.mailSearchClear.visibility = View.GONE
+        hideKeyboard()
+        render()
+    }
+
+    private fun hideKeyboard() {
+        val imm = context?.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+        imm?.hideSoftInputFromWindow(binding.mailSearchField.windowToken, 0)
+    }
+
+    /** The deep layer: IMAP UID SEARCH per account (the existing session scaffold; results come
+     *  back through the size-probed bounded fetch, so they're real, openable, starrable messages).
+     *  One broken account's error shows briefly; the others' results still land. */
+    private fun runServerSearch() {
+        val ctx = context ?: return
+        val q = searchQuery
+        if (q.isBlank() || serverSearching) return
+        serverSearching = true
+        val seq = searchSeq
+        render()                            // redraw the 🔎 row as its progress state
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val (results, errors) = withContext(Dispatchers.IO) {
+                    MailSync.searchServer(ctx, q, accountFilter)
+                }
+                if (!isAdded || seq != searchSeq) return@launch   // cleared or re-submitted while away
+                serverSearching = false
+                serverResults = results
+                render()
+                if (errors.isNotEmpty()) toast(errors.first())
+            } catch (e: Exception) {
+                if (!isAdded || seq != searchSeq) return@launch
+                serverSearching = false
+                render()
+                toast("Server search failed: ${e.message ?: "unknown error"}")
+            }
+        }
     }
 
     /** True while the Almanac strip scopes the list (anything but day-on-today, the live view). */
@@ -359,11 +465,24 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         container.removeAllViews()
 
         val list = shown()
+        val searching = searchActive()
+
+        // The subtle count line over search results — which layer answered, and how widely.
+        if (searching && list.isNotEmpty()) container.addView(TextView(ctx).apply {
+            val noun = if (list.size == 1) "match" else "matches"
+            text = if (serverResults != null) "${list.size} $noun on the server for \"$searchQuery\""
+            else "${list.size} $noun in loaded mail"
+            textSize = 12f; setTextColor(0xFF666666.toInt()); setPadding(dp(4), 0, dp(4), dp(8))
+        })
+
         if (list.isEmpty()) {
             container.addView(TextView(ctx).apply {
                 // The empty pane names the filter that emptied it — a filtered-empty list that
                 // just says "empty" reads as broken.
                 text = when {
+                    searching && serverResults != null ->
+                        "The server found nothing for \"$searchQuery\". Tap ✕ to go back to the inbox."
+                    searching -> "No matches in loaded mail for \"$searchQuery\"."
                     navFiltered() -> "No mail in ${windowLabel()}. Tap ✕ on the date chip for the live inbox."
                     accountFilter != null -> "No mail from this account yet. Tap the ▾ chip for all accounts."
                     onlyStarred ->
@@ -373,10 +492,20 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
                 }
                 textSize = 15f; setTextColor(0xFF444444.toInt()); setPadding(dp(8), dp(24), dp(8), 0)
             })
-            return
-        }
+        } else for (m in list) container.addView(row(m))
 
-        for (m in list) container.addView(row(m))
+        // Under the local matches (even zero of them): the door to the deep layer. Gone once the
+        // server has answered — the results ARE the server's then, until ✕ clears the search.
+        if (searching && serverResults == null && InboxStore.hasAccounts(ctx)) {
+            container.addView(TextView(ctx).apply {
+                text = if (serverSearching) "🔎 Searching the server…"
+                else "🔎 Search the server for \"$searchQuery\""
+                textSize = 15f
+                setTextColor(if (serverSearching) 0xFF888888.toInt() else 0xFF2F6F96.toInt())
+                setPadding(dp(8), dp(16), dp(8), dp(16))
+                if (!serverSearching) setOnClickListener { runServerSearch() }
+            })
+        }
         // The Clear sweep lives in the header now (🧹, visible in All), like the feed's Clear.
     }
 
@@ -443,6 +572,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
     private fun openMessage(m: InboxMessage) {
         val ctx = requireContext()
         lateinit var dialog: androidx.appcompat.app.AlertDialog   // referenced by the action rows below
+        var cur = m   // the message as shown; the on-demand full fetch swaps the whole body in here
         val col = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(8), dp(18), dp(8)) }
         col.addView(TextView(ctx).apply {
             text = m.subject; textSize = 17f; setTextColor(0xFF000000.toInt())
@@ -452,14 +582,55 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             text = listOf(m.fromName, m.fromEmail).filter { it.isNotBlank() }.joinToString("  ·  ")
             textSize = 12f; setTextColor(0xFF666666.toInt()); setPadding(0, 0, 0, dp(8))
         })
-        col.addView(TextView(ctx).apply {
-            // Never a blank pane: a message whose MIME walk produced nothing readable still says
-            // what it is (the list snippet if we caught one, else plain words) — a silent white
-            // rectangle reads as the app failing, not the message being image-only.
-            text = m.body.ifBlank {
-                m.snippet.ifBlank { "(No readable text in this message — it may be images or attachments only.)" }
-            }
+        // Never a blank pane: a message whose MIME walk produced nothing readable still says
+        // what it is (the list snippet if we caught one, else plain words) — a silent white
+        // rectangle reads as the app failing, not the message being image-only.
+        fun bodyText(msg: InboxMessage) = msg.body.ifBlank {
+            msg.snippet.ifBlank { "(No readable text in this message — it may be images or attachments only.)" }
+        }
+        val bodyView = TextView(ctx).apply {
+            text = bodyText(m)
             textSize = 15f; setTextColor(0xFF000000.toInt()); setTextIsSelectable(true)
+        }
+        col.addView(bodyView)
+        if (m.truncated) col.addView(TextView(ctx).apply {
+            // The fetch was bounded on purpose (the message is large — usually attachments);
+            // say so, or a cut-off body reads as the parser failing. The note is also the door
+            // to the rest: tap it and THIS one message is fetched whole, replaced in place —
+            // plain text-swaps only, single clean redraws, as e-ink wants.
+            textSize = 12f; setTextColor(0xFF666666.toInt()); setPadding(0, dp(10), 0, 0)
+            val note = this
+            fun loadRest() {
+                note.setOnClickListener(null)          // one fetch at a time; no double-taps
+                note.text = "✂ Loading the rest…"
+                lifecycleScope.launch {
+                    try {
+                        // Lands in InboxStore (fetch window + starred pile) inside fetchFull, so
+                        // the full body sticks even if the reader has moved on by the time it comes.
+                        val full = withContext(Dispatchers.IO) { MailSync.fetchFull(ctx, cur) }
+                        cur = full
+                        bodyView.text = bodyText(full)
+                        col.removeView(note)           // whole now — the scissors' job is done
+                        // Server-search results live outside InboxStore's window; swap the full
+                        // body into that layer too or its re-render would show the stale slice.
+                        serverResults = serverResults?.map { if (it.id == full.id) full else it }
+                        if (isAdded) { messages = InboxStore.messages(ctx); render() }
+                    } catch (e: MailMessageTooLarge) {
+                        note.text = "✂ ${e.message}"   // final: no retry — it can never fit
+                    } catch (e: Exception) {
+                        note.text = "✂ Couldn't load the rest (${e.message ?: "fetch failed"}) — tap to retry."
+                        note.setOnClickListener { loadRest() }
+                    }
+                }
+            }
+            if (m.uid != null && MailSync.accountId(m.id) != null) {
+                text = "✂ Large message — tap to load the rest (attachments stay on the server)."
+                setOnClickListener { loadRest() }
+            } else {
+                // No server id to fetch by (a starred mail kept from before UIDs persisted, or a
+                // probe that never parsed one): the honest, un-tappable note.
+                text = "✂ Large message — only the beginning was fetched (attachments stay on the server)."
+            }
         })
 
         // The moves that let a message join the knowledge graph like any other Ledger object, mirroring
@@ -470,8 +641,10 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             setOnClickListener { onClick() }
         }
         // ⁂ is THE connect glyph on Android (Missed Rhizomes / Quick Wins / Daily Pile agree).
-        col.addView(action("⁂  Rhizome — connect & open graph") { dialog.dismiss(); openRhizome(m) })
-        col.addView(action("🧩  Assign to synthesis") { dialog.dismiss(); assignToSynthesis(m) })
+        // Every move takes `cur`, not `m` — after a load-the-rest, what stars / files / connects
+        // must be the whole message, not the stale slice.
+        col.addView(action("⁂  Rhizome — connect & open graph") { dialog.dismiss(); openRhizome(cur) })
+        col.addView(action("🧩  Assign to synthesis") { dialog.dismiss(); assignToSynthesis(cur) })
         // TODO(roots): a "rhymes / roots" action would open the semantic-roots surface seeded from this
         // message, but R.id.action_to_ledger_roots -> LedgerRootsFragment takes NO arguments (confirmed:
         // every call site navigates it bare) and shows the global roots view -- there is no seed hook. Per
@@ -483,9 +656,9 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             .setView(ScrollView(ctx).apply { addView(col) })
             .setPositiveButton("Close", null)
             .setNeutralButton(if (InboxStore.isStarred(ctx, m.id)) "Un-star" else "★ To-do") { _, _ ->
-                if (InboxStore.isStarred(ctx, m.id)) unstar(m) else starToTodo(m)
+                if (InboxStore.isStarred(ctx, m.id)) unstar(cur) else starToTodo(cur)
             }
-        if (canReply) builder.setNegativeButton("Reply…") { _, _ -> showReply(m) }
+        if (canReply) builder.setNegativeButton("Reply…") { _, _ -> showReply(cur) }
         dialog = builder.create()
         dialog.show()
         dialog.window?.setLayout(
@@ -572,18 +745,22 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
     // Star -> to-do: create a task on today's page (like Kanban's add-card), and mark the mail starred.
     private fun starToTodo(m: InboxMessage) {
         val ctx = requireContext()
-        InboxStore.setStarred(ctx, m.id, true)
         val item = LedgerItem(
             id = "li-" + UUID.randomUUID().toString().lowercase(),
             kind = LedgerItem.Kind.TASK, text = m.subject, date = Date(), stage = "todo", source = "email"
         )
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
+                InboxStore.setStarred(ctx, m, true)   // persists the message content; off the main thread
                 val root = documentsRoot()
                 val today = LocalDate.now()
-                val day = calendarDayService.load(root, today, null, Locale.getDefault())
-                day.ledgerItems.add(item)
-                calendarDayService.save(root, today, day)
+                // The open day page's per-pen-up save does the same whole-file load→mutate→save;
+                // unserialized, one of the two writes silently drops the other's items.
+                com.toolsboox.plugin.calendar.ot.DayLocks.withDay(today) {
+                    val day = calendarDayService.load(root, today, null, Locale.getDefault())
+                    day.ledgerItems.add(item)
+                    calendarDayService.save(root, today, day)
+                }
                 runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(ctx, item) }
             }
             if (!isAdded) return@launch
@@ -595,7 +772,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
 
     private fun unstar(m: InboxMessage) {
         val ctx = requireContext()
-        InboxStore.setStarred(ctx, m.id, false)
+        InboxStore.setStarred(ctx, m, false)
         messages = InboxStore.messages(ctx)
         render()
     }

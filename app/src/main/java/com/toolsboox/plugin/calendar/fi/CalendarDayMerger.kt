@@ -41,12 +41,20 @@ object CalendarDayMerger {
             a.deletedElementIds.forEach { add(it.lowercase()) }
             b.deletedElementIds.forEach { add(it.lowercase()) }
         }
+        // Dedicated item tombstones (wire name shared with iOS). Item deletions recorded by
+        // pre-split builds live in deletedElementIds, so the ledgerItems union below honours
+        // BOTH sets — a tombstoned id never survives as a live item, from either side.
+        val itemTombstones = LinkedHashSet<String>().apply {
+            a.deletedItemIds.forEach { add(it.lowercase()) }
+            b.deletedItemIds.forEach { add(it.lowercase()) }
+        }
 
         val merged = newer.deepCopy()
         // Sorted so the output JSON is byte-deterministic across platforms (Swift parity —
         // an unordered set re-ordered every save, which read as a change and re-pushed).
         merged.deletedStrokeIds = tombstones.sorted().toMutableList()
         merged.deletedElementIds = elementTombstones.sorted().toMutableList()
+        merged.deletedItemIds = itemTombstones.sorted().toMutableList()
         // ORDER MATTERS: the NEWER day's copy of a shared id must win. Strokes have no per-stroke
         // timestamp, and a moved element keeps its old one — so on any conflict/tie the first-listed
         // side prevails. Passing (a, b) here was the "my moved strokes flipped back after sync" bug:
@@ -67,11 +75,12 @@ object CalendarDayMerger {
             newer.avGrams.forEach { if (it.id.lowercase() !in elementTombstones) putIfAbsent(it.id, it) }
             older.avGrams.forEach { if (it.id.lowercase() !in elementTombstones) putIfAbsent(it.id, it) }
         }.values.toMutableList()
-        // Tasks/events union by id, but honour tombstones (shared with elements) so a
-        // deleted item stays deleted instead of resurrecting from the other device's copy.
+        // Tasks/events union by id, but honour tombstones — the dedicated item list plus the
+        // element list (where pre-split builds recorded item deletions) — so a deleted item
+        // stays deleted instead of resurrecting from the other device's copy.
         merged.ledgerItems = LinkedHashMap<String, LedgerItem>().apply {
-            newer.ledgerItems.forEach { if (it.id.lowercase() !in elementTombstones) putIfAbsent(it.id, it) }
-            older.ledgerItems.forEach { if (it.id.lowercase() !in elementTombstones) putIfAbsent(it.id, it) }
+            newer.ledgerItems.forEach { if (it.id.lowercase() !in itemTombstones && it.id.lowercase() !in elementTombstones) putIfAbsent(it.id, it) }
+            older.ledgerItems.forEach { if (it.id.lowercase() !in itemTombstones && it.id.lowercase() !in elementTombstones) putIfAbsent(it.id, it) }
         }.values.toMutableList()
 
         val values = LinkedHashMap<String, Map<String, Float?>>()

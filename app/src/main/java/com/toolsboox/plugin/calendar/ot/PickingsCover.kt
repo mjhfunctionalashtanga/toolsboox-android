@@ -1,6 +1,7 @@
 package com.toolsboox.plugin.calendar.ot
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
@@ -9,7 +10,10 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.text.Layout
+import android.text.StaticLayout
 import android.text.TextPaint
+import android.text.TextUtils
 import android.util.Base64
 import com.toolsboox.ot.CardTreatment
 import com.toolsboox.ot.InkMount
@@ -17,6 +21,7 @@ import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import java.io.File
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 
 /**
  * The daily Pickings COVER — the band across the top of the day's default board that makes the
@@ -199,12 +204,17 @@ object PickingsCover {
             color = Color.BLACK; textAlign = Paint.Align.CENTER; textSize = 46f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD); isAntiAlias = true
         }
+        fitTextSize(title, "PICKINGS", w - 20f, 46f, 24f)
         canvas.drawText("PICKINGS", cx, cy + 2f, title)
         val sub = TextPaint().apply {
             color = Color.argb(170, 0, 0, 0); textAlign = Paint.Align.CENTER; textSize = 20f
             typeface = Typeface.MONOSPACE; isAntiAlias = true
         }
-        canvas.drawText("the daily picking · " + date.format(DateTimeFormatter.ofPattern("EEE d MMM")), cx, cy + 34f, sub)
+        // The dateline is longer than the tape at the nominal size — shrink until it sits inside
+        // the strip instead of running off both ends (never clip a glyph mid-stroke).
+        val dateline = "the daily picking · " + date.format(DateTimeFormatter.ofPattern("EEE d MMM"))
+        fitTextSize(sub, dateline, w - 20f, 20f, 13f)
+        canvas.drawText(dateline, cx, cy + 34f, sub)
         canvas.restore()
     }
 
@@ -226,10 +236,12 @@ object PickingsCover {
     /**
      * One recent board as a little taped-down card: white ground, hard rule, a caption strip,
      * and either a real miniature of the board (same-day boards — their strokes and grams are
-     * already in the loaded [calendarDay], so the render is cheap) or a quote-mark face for a
-     * board whose day JSON we won't parse just to decorate a thumbnail.
+     * already in the loaded [calendarDay], so the render is cheap) or an info face — big weekday,
+     * how far back — for a board whose day JSON we won't parse just to decorate a thumbnail.
+     * The ❝ stays, but as a small brand mark in the face's corner, not the whole content.
      */
     private fun drawTile(canvas: Canvas, calendarDay: CalendarDay, r: Recent, rect: RectF, tilt: Float) {
+        val today = LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day)
         canvas.save()
         canvas.rotate(tilt, rect.centerX(), rect.centerY())
 
@@ -242,35 +254,56 @@ object PickingsCover {
         paint.color = 0xFF111111.toInt()
         canvas.drawRect(rect, paint)
 
-        val capH = 56f
+        val capH = 84f
         val art = RectF(rect.left + 8f, rect.top + 8f, rect.right - 8f, rect.bottom - capH)
 
         val strokes = if (r.sameDay) calendarDay.noteStrokes[r.key].orEmpty() else emptyList()
         val images = if (r.sameDay) calendarDay.imageElements.filter { it.page == r.key } else emptyList()
         val hasArt = r.sameDay && (strokes.isNotEmpty() || images.isNotEmpty())
-        if (hasArt) drawBoardArt(canvas, art, strokes, images) else drawQuoteFace(canvas, art)
+        if (hasArt) drawBoardArt(canvas, art, r, strokes, images) else drawInfoFace(canvas, art, r, today)
 
-        // Caption: the board's name, then what it is — counts for a live board, the day otherwise.
+        // Caption: the board's name (wrapping to a second line when it needs one), then what the
+        // board holds — gram count and the newest gram's words for a live board, the day otherwise.
         val hairline = Paint().apply {
             color = Color.argb(120, 0, 0, 0); strokeWidth = 1.2f; style = Paint.Style.STROKE; isAntiAlias = true
         }
-        canvas.drawLine(rect.left, rect.bottom - capH, rect.right, rect.bottom - capH, hairline)
+        val capTop = rect.bottom - capH
+        canvas.drawLine(rect.left, capTop, rect.right, capTop, hairline)
+
+        val pad = 12f
+        val innerW = (rect.width() - 2 * pad).toInt()
         val name = TextPaint().apply {
-            color = Color.BLACK; textSize = 23f
+            color = Color.BLACK; textSize = 22f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD); isAntiAlias = true
         }
-        val label = ellipsize(r.name, name, rect.width() - 24f)
-        canvas.drawText(label, rect.left + 12f, rect.bottom - capH + 26f, name)
+        val nameLayout = layoutOf(r.name.ifBlank { "Pickings" }, name, innerW, maxLines = 2)
+        canvas.save()
+        canvas.translate(rect.left + pad, capTop + 7f)
+        nameLayout.draw(canvas)
+        canvas.restore()
+
         val meta = TextPaint().apply {
-            color = Color.argb(150, 0, 0, 0); textSize = 17f; typeface = Typeface.MONOSPACE; isAntiAlias = true
+            color = Color.argb(150, 0, 0, 0); textSize = 16f; typeface = Typeface.MONOSPACE; isAntiAlias = true
         }
         val metaText =
-            if (r.sameDay) listOfNotNull(
-                images.size.takeIf { it > 0 }?.let { "$it gram" + if (it == 1) "" else "s" },
-                strokes.size.takeIf { it > 0 }?.let { "$it strokes" }
-            ).joinToString(" · ").ifBlank { "today" }
-            else r.date.format(DateTimeFormatter.ofPattern("EEE d MMM"))
-        canvas.drawText(ellipsize(metaText, meta, rect.width() - 24f), rect.left + 12f, rect.bottom - capH + 48f, meta)
+            if (r.sameDay) {
+                val count = when {
+                    images.isNotEmpty() -> "${images.size} gram" + (if (images.size == 1) "" else "s")
+                    strokes.isNotEmpty() -> "${strokes.size} strokes"
+                    else -> "today" // the face already says "nothing picked yet"
+                }
+                val gist = gistOf(images)
+                if (gist.isBlank()) count else "$count · $gist"
+            } else r.date.format(DateTimeFormatter.ofPattern("EEE d MMM"))
+        // A two-line name leaves room for one meta line; a one-line name leaves two.
+        val metaMaxLines = if (nameLayout.lineCount >= 2) 1 else 2
+        val metaTop = capTop + 7f + nameLayout.height + 3f
+        if (metaTop < rect.bottom - meta.textSize) {
+            canvas.save()
+            canvas.translate(rect.left + pad, metaTop)
+            layoutOf(metaText, meta, innerW, metaMaxLines).draw(canvas)
+            canvas.restore()
+        }
 
         // Taped at the top corners — the shared spec, sized to the card it's holding down.
         CardTreatment.drawTape(canvas, rect.left + 14f, rect.top + 2f, -InkMount.TAPE_TILT_DEG, rect.width().toInt())
@@ -279,12 +312,24 @@ object PickingsCover {
     }
 
     /**
+     * What the newest gram SAYS, for the caption: its given title first, then the words a text
+     * card was rendered from, then where it was clipped from. All fields already in memory —
+     * this never opens anything.
+     */
+    private fun gistOf(images: List<com.toolsboox.da.ImageElement>): String {
+        val newest = images.maxByOrNull { it.timestamp } ?: return ""
+        return sequenceOf(newest.mediaTitle, newest.cardText, newest.sourceLabel, newest.sourceFeed)
+            .map { it.replace('\n', ' ').trim() }
+            .firstOrNull { it.isNotBlank() } ?: ""
+    }
+
+    /**
      * A true miniature: the board's content bounds, fitted into the art box. The newest gram is
      * drawn (one decode, from bytes already in memory — never the disk), then the ink over it,
      * so the tile is a picture OF the board rather than a stand-in for it.
      */
     private fun drawBoardArt(
-        canvas: Canvas, art: RectF,
+        canvas: Canvas, art: RectF, r: Recent,
         strokes: List<com.toolsboox.da.Stroke>, images: List<com.toolsboox.da.ImageElement>
     ) {
         var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
@@ -298,7 +343,7 @@ object PickingsCover {
             if (img.x + img.width > maxX) maxX = img.x + img.width
             if (img.y + img.height > maxY) maxY = img.y + img.height
         }
-        if (minX > maxX || minY > maxY) { drawQuoteFace(canvas, art); return }
+        if (minX > maxX || minY > maxY) { drawBrandMark(canvas, art); return }
         val bw = (maxX - minX).coerceAtLeast(1f)
         val bh = (maxY - minY).coerceAtLeast(1f)
         // Contain the bounds, but never blow a lone doodle up past recognisability.
@@ -312,15 +357,16 @@ object PickingsCover {
         canvas.scale(scale, scale)
         canvas.translate(-minX, -minY)
 
-        // One image only — the newest — so four tiles never queue up eight decodes on the
-        // render path. Anything older still shapes the bounds, so the layout stays honest.
+        // One image only — the newest — decoded ONCE per board state and memoized: the cover
+        // redraws on every day-page render, and four tiles re-decoding base64 each time is
+        // exactly the cost the cache exists to remove. Anything older still shapes the bounds,
+        // so the layout stays honest.
         images.maxByOrNull { it.timestamp }?.let { img ->
-            runCatching {
-                val bytes = Base64.decode(img.data, Base64.DEFAULT)
-                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                if (bmp != null) {
+            thumbFor(r.date, r.key, images.size, img, img.width * scale)?.let { bmp ->
+                // runCatching: a cached bitmap can in principle be evicted-and-recycled between
+                // lookup and draw; a lost thumbnail for one frame beats a crash.
+                runCatching {
                     canvas.drawBitmap(bmp, null, RectF(img.x, img.y, img.x + img.width, img.y + img.height), null)
-                    bmp.recycle()
                 }
             }
         }
@@ -339,19 +385,119 @@ object PickingsCover {
         canvas.restore()
     }
 
-    /** The face for a board we won't open just to draw it: the mark of the place, a big quote. */
-    private fun drawQuoteFace(canvas: Canvas, art: RectF) {
-        val glyph = TextPaint().apply {
-            color = Color.argb(120, 0, 0, 0); textAlign = Paint.Align.CENTER; textSize = 96f
+    /**
+     * The face for a board we won't open just to draw it. The old face was a lone giant ❝ —
+     * cute, but it said nothing. Now the quote mark shrinks to a brand mark in the corner and
+     * the face carries the information we DO have without touching disk: which day this board
+     * belongs to (the big weekday — "Thursday, on Friday's page") and how far back that is.
+     * A same-day board with nothing on it says so instead.
+     */
+    private fun drawInfoFace(canvas: Canvas, art: RectF, r: Recent, today: LocalDate) {
+        drawBrandMark(canvas, art)
+        if (r.sameDay) {
+            val hint = TextPaint().apply {
+                color = Color.argb(130, 0, 0, 0); textAlign = Paint.Align.CENTER; textSize = 19f
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.ITALIC); isAntiAlias = true
+            }
+            canvas.drawText("nothing picked yet", art.centerX(), art.centerY() + 7f, hint)
+            return
+        }
+        val weekday = r.date.format(DateTimeFormatter.ofPattern("EEEE"))
+        val big = TextPaint().apply {
+            color = Color.BLACK; textAlign = Paint.Align.CENTER; textSize = 36f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD); isAntiAlias = true
         }
-        canvas.drawText("❝", art.centerX(), art.centerY() + 34f, glyph)
+        fitTextSize(big, weekday, art.width() - 16f, 36f, 20f)
+        canvas.drawText(weekday, art.centerX(), art.centerY() + 2f, big)
+        val sub = TextPaint().apply {
+            color = Color.argb(150, 0, 0, 0); textAlign = Paint.Align.CENTER; textSize = 18f
+            typeface = Typeface.MONOSPACE; isAntiAlias = true
+        }
+        val ago = agoPhrase(r.date, today)
+        fitTextSize(sub, ago, art.width() - 16f, 18f, 13f)
+        canvas.drawText(ago, art.centerX(), art.centerY() + 30f, sub)
     }
 
-    private fun ellipsize(text: String, paint: TextPaint, width: Float): String {
-        if (paint.measureText(text) <= width) return text
-        var t = text
-        while (t.isNotEmpty() && paint.measureText("$t…") > width) t = t.dropLast(1)
-        return "$t…"
+    /** The ❝ as a small corner mark — the place's signature, no longer its whole face. */
+    private fun drawBrandMark(canvas: Canvas, art: RectF) {
+        val glyph = TextPaint().apply {
+            color = Color.argb(110, 0, 0, 0); textAlign = Paint.Align.LEFT; textSize = 32f
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD); isAntiAlias = true
+        }
+        canvas.drawText("❝", art.left + 8f, art.top + 30f, glyph)
+    }
+
+    /** "yesterday", "3 days back", "a week back" — the cover's own vocabulary for distance. */
+    private fun agoPhrase(then: LocalDate, today: LocalDate): String {
+        val d = ChronoUnit.DAYS.between(then, today)
+        return when {
+            d <= 0L -> "today"
+            d == 1L -> "yesterday"
+            d < 7L -> "$d days back"
+            d < 14L -> "a week back"
+            else -> "two weeks back"
+        }
+    }
+
+    // ---- text fitting ---------------------------------------------------------------------------
+
+    /**
+     * A measured, wrapped, END-ellipsized block at the tile's ACTUAL width — StaticLayout does
+     * the measuring, so text can wrap to a second line where the design allows and is never
+     * clipped mid-glyph when it can't.
+     */
+    private fun layoutOf(text: CharSequence, paint: TextPaint, width: Int, maxLines: Int): StaticLayout =
+        StaticLayout.Builder.obtain(text, 0, text.length, paint, width.coerceAtLeast(1))
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setMaxLines(maxLines)
+            .setEllipsize(TextUtils.TruncateAt.END)
+            .setIncludePad(false)
+            .build()
+
+    /** Shrink a single centred line until it fits [width], down to a floor that stays readable. */
+    private fun fitTextSize(paint: TextPaint, text: String, width: Float, max: Float, min: Float) {
+        paint.textSize = max
+        while (paint.textSize > min && paint.measureText(text) > width) paint.textSize -= 1f
+    }
+
+    // ---- thumbnail cache ------------------------------------------------------------------------
+
+    /**
+     * Decoded tile thumbnails, memoized by day + board key + element-count + the newest gram's
+     * identity, so the base64 decode happens once per board STATE rather than once per draw
+     * (the cover redraws with every day-page render — every stroke commit included). Any change
+     * that could alter the face — a gram added, removed, or replaced — changes the key, and the
+     * stale entry ages out of the tiny LRU (recycled on eviction). Failures memoize as null so a
+     * broken payload isn't re-attempted every frame.
+     */
+    private const val THUMB_CACHE_MAX = 8
+    private val thumbCache = object : LinkedHashMap<String, Bitmap?>(THUMB_CACHE_MAX, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap?>): Boolean {
+            val evict = size > THUMB_CACHE_MAX
+            if (evict) eldest.value?.recycle()
+            return evict
+        }
+    }
+
+    private fun thumbFor(
+        date: LocalDate, key: String, count: Int,
+        newest: com.toolsboox.da.ImageElement, targetW: Float
+    ): Bitmap? {
+        val id = newest.gramId?.takeIf { it.isNotBlank() } ?: newest.elementId.toString()
+        val cacheKey = "$date|$key|$count|$id|${newest.timestamp}"
+        synchronized(thumbCache) { if (thumbCache.containsKey(cacheKey)) return thumbCache[cacheKey] }
+        val bmp = runCatching {
+            val bytes = Base64.decode(newest.data, Base64.DEFAULT)
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            // Downsample toward the on-tile size — a full-page gram decoded at full resolution
+            // would hold megabytes hostage to paint a matchbox.
+            var sample = 1
+            val floor = targetW.coerceAtLeast(64f)
+            while (bounds.outWidth / (sample * 2) >= floor) sample *= 2
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+        }.getOrNull()
+        synchronized(thumbCache) { thumbCache[cacheKey] = bmp }
+        return bmp
     }
 }

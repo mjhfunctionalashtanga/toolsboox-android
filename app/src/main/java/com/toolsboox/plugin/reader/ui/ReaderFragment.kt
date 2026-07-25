@@ -132,9 +132,25 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         binding.todayButton.setOnClickListener { showLedgerDirectory() }
         binding.settingsButton.setOnClickListener { openSettings() }
         binding.gotoButton.setOnClickListener { showBookDirectory() }
-        // Drag to move; tap the grip to hide/show the bar (books want a clean page).
-        makeDraggable(binding.readerGrip, binding.readerBar, "reader") { toggleReaderBar() }
-        applyReaderBarCollapse()
+        // Drag to move; tap the grip to fold/turn — the SHARED four-state pill (wide open →
+        // wide folded → tall open → tall folded), replacing the reader's private collapse.
+        // The reader was the one surface whose pill could never turn vertical, and vertical is
+        // exactly the shape that fits the book margin once the modal-size dial slims it: at
+        // Compact a tall pill is ~42dp wide against the reader's ~46dp foliate gutter. The
+        // "reader" key keeps the position you'd already dragged it to; the old collapse pref
+        // seeds the new shared one so a folded bar stays folded across the change.
+        requireContext().getSharedPreferences("ledger_widgets", 0).let { p ->
+            if (!p.contains("reader_collapsed") && p.getBoolean("reader_bar_collapsed", false))
+                p.edit().putBoolean("reader_collapsed", true).apply()
+        }
+        // Folding leaves ☀ today and ✎ highlight showing (grip + the two essentials), as before.
+        cyclePillOnTap(
+            binding.readerGrip, binding.readerBar, "reader",
+            collapsible = listOf(
+                binding.gotoButton, binding.prevButton, binding.nextButton,
+                binding.settingsButton, binding.openButton
+            )
+        )
         setupTapZones()
 
         // Empty-state add-book affordance (visible until a book is open).
@@ -890,20 +906,6 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             .show()
     }
 
-
-    /** Hide/show the reader bar — collapsed leaves just the grip + ✎ highlight. */
-    private fun toggleReaderBar() {
-        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
-        prefs.edit().putBoolean("reader_bar_collapsed", !prefs.getBoolean("reader_bar_collapsed", false)).apply()
-        applyReaderBarCollapse()
-    }
-
-    private fun applyReaderBarCollapse() {
-        val collapsed = requireContext().getSharedPreferences("ledger_widgets", 0)
-            .getBoolean("reader_bar_collapsed", false)
-        for (v in listOf(binding.gotoButton, binding.prevButton, binding.nextButton, binding.settingsButton, binding.openButton))
-            v.visibility = if (collapsed) View.GONE else View.VISIBLE
-    }
 
     override fun showLoading() {}
     override fun hideLoading() {}

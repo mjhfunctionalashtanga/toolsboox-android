@@ -3,4 +3,10 @@
     <!-- Remembers a TextView's unscaled size so reading-size changes stay idempotent
          rather than compounding each time they're applied. -->
     <item name="tag_base_text_size" type="id" />
+    <!-- Same idea for pill/button chrome: the unscaled layout dims + padding, so the
+         modal-size dial sets absolute sizes instead of compounding on re-apply. -->
+    <item name="tag_base_chrome" type="id" />
+    <!-- Marks a pill that already has its touch-delegate layout listener, so re-applying
+         the sizing never stacks a second listener. -->
+    <item name="tag_pill_delegate" type="id" />
 </resources>

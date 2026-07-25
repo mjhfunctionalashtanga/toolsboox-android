@@ -72,8 +72,29 @@ data class CalendarDay(
      * cut image resurrects on the next Drive-sync merge without this (the union sees the
      * other device's surviving copy and re-adds it → "echo image after open/shut").
      */
-    var deletedElementIds: MutableList<String> = mutableListOf()
+    var deletedElementIds: MutableList<String> = mutableListOf(),
+
+    /**
+     * Tombstones for tasks/events the user has deleted, keyed by [LedgerItem.id]. Same purpose
+     * as [deletedStrokeIds] but for the [ledgerItems] id-union merge — without it the other
+     * device's surviving copy re-adds a deleted task on the next sync ("cleared todos keep
+     * coming back"). The wire name `deletedItemIds` is shared with the iOS Ledger, which is
+     * adding the identical field in parallel — do not rename.
+     */
+    var deletedItemIds: MutableList<String> = mutableListOf()
 ) : Calendar {
+
+    /**
+     * Record a user-intent deletion of a ledger item (marking done is NOT deletion). Writes BOTH
+     * tombstone lists: [deletedItemIds] is the canonical field (wire name shared with iOS), and
+     * [deletedElementIds] is kept in lockstep because pre-split builds' merges and carry-over
+     * only honour the element list for ledgerItems — a mixed-version fleet would resurrect the
+     * item otherwise.
+     */
+    fun tombstoneLedgerItem(id: String) {
+        if (id !in deletedItemIds) deletedItemIds.add(id)
+        if (id !in deletedElementIds) deletedElementIds.add(id)
+    }
 
     companion object {
         /**
@@ -115,7 +136,8 @@ data class CalendarDay(
             avGrams = this.avGrams.map { it.copy() }.toMutableList(),
             ledgerItems = this.ledgerItems.map { it.copy(strokeIds = it.strokeIds.toMutableList()) }.toMutableList(),
             deletedStrokeIds = this.deletedStrokeIds.toMutableList(),
-            deletedElementIds = this.deletedElementIds.toMutableList()
+            deletedElementIds = this.deletedElementIds.toMutableList(),
+            deletedItemIds = this.deletedItemIds.toMutableList()
         )
     }
 }

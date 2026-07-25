@@ -223,13 +223,37 @@ abstract class ScreenFragment : Fragment() {
      */
     override fun onResume() {
         super.onResume()
-        (activity as? MainActivity)?.volumeKeyHandler = handler@{ up -> onVolumeKey(up) }
+        val handler: (Boolean) -> Boolean = { up -> onVolumeKey(up) }
+        registeredVolumeKeyHandler = handler
+        (activity as? MainActivity)?.volumeKeyHandler = handler
     }
 
     override fun onPause() {
         super.onPause()
-        (activity as? MainActivity)?.volumeKeyHandler = null
+        // Only clear OUR OWN registration. With reordered transactions (Navigation always uses
+        // them) the INCOMING fragment's onResume runs before the outgoing one's onPause —
+        // FragmentStore.moveToExpectedState walks mAdded (the new fragment, up to RESUMED) before
+        // it tears down removed fragments. So this onPause runs after the next screen has already
+        // registered, and unconditionally nulling here wiped the handler that screen just set:
+        // the keys were dead on arrival on every surface that relied on this base registration
+        // (Roots, Sprouts, the garden lists) and only revived after an activity-level pause/resume.
+        val main = activity as? MainActivity
+        if (main != null && registeredVolumeKeyHandler != null &&
+            main.volumeKeyHandler === registeredVolumeKeyHandler
+        ) main.volumeKeyHandler = null
+        registeredVolumeKeyHandler = null
     }
+
+    /** The lambda THIS fragment registered, so onPause can tell its own registration from a successor's. */
+    private var registeredVolumeKeyHandler: ((Boolean) -> Boolean)? = null
+
+    /**
+     * Entry point for [MainActivity]'s fallback: when no handler is registered at all (a screen
+     * with its own direct registration nulled the seam on the way out), the activity asks the
+     * fragment on screen to page itself. Guarded on [isResumed] so a mid-transaction key can
+     * never page a screen that is leaving.
+     */
+    internal fun dispatchVolumeKey(up: Boolean): Boolean = isResumed && onVolumeKey(up)
 
     /**
      * Page this screen. Return false to let the keys do their normal thing (change the volume).
@@ -286,6 +310,11 @@ abstract class ScreenFragment : Fragment() {
     @android.annotation.SuppressLint("ClickableViewAccessibility")
     protected fun makeDraggable(handle: View, pill: View, key: String, onTap: (() -> Unit)? = null) {
         val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
+        // Every floating pill passes through here, so this is the one seam where the modal-size
+        // dial reaches ALL of them — at Compact a vertical pill slims to margin width and can
+        // park in a reading gutter without covering the text. (The grip is sized separately by
+        // applyGripOrientation, which already scales.)
+        applyPillSizing(pill, skip = handle)
         // NOTE: keys are versioned (`_px`/`_py`). The pill redesign changed each pill's
         // anchored home, so positions saved by earlier builds are meaningless and would
         // strand a pill off-screen — discard them by not reading the old `_tx`/`_ty` keys.
@@ -344,6 +373,91 @@ abstract class ScreenFragment : Fragment() {
                 }
                 else -> false
             }
+        }
+    }
+
+    /**
+     * Size a floating pill from the Modal-size dial — buttons, icon boxes and padding together.
+     *
+     * The dial already drove every floating MENU; the pills it summoned stayed at their XML size,
+     * so Compact never made the one thing that permanently floats over reading surfaces any
+     * smaller. Scaling the geometry here (not just text) is what lets the smallest step keep its
+     * promise: a vertical pill at Compact is ~39-42dp wide — inside the 44dp article gutter and
+     * the ~46dp book-reader margin on a Tab8 — instead of 49-53dp parked over the prose.
+     *
+     * Idempotent: each view's unscaled dims/padding are remembered in a tag the first time it's
+     * seen, so re-applying sets absolute sizes rather than compounding (same trick as
+     * [com.toolsboox.ot.ReadingSize.apply]).
+     *
+     * [skip] is the drag handle: its dims belong to [applyGripOrientation], which scales them
+     * itself and would otherwise fight this over who sized the grip last.
+     */
+    protected fun applyPillSizing(pill: View, skip: View? = null) {
+        val scale = com.toolsboox.ot.ModalScale.sizeScale(requireContext())
+        scaleChrome(pill, scale)
+        if (pill is ViewGroup) {
+            for (i in 0 until pill.childCount) {
+                val c = pill.getChildAt(i)
+                if (c !== skip) scaleChrome(c, scale)
+            }
+        }
+        // Drawn smaller than 44dp → touched at 44-ish anyway: the pill's padding rim fans out to
+        // the nearest button, so the whole slimmed strip stays a target even when the art does not.
+        if (pill is LinearLayout) installPillTouchDelegate(pill, scale)
+        pill.requestLayout()
+    }
+
+    /** Scale one view's fixed layout dims and padding, remembering the unscaled base in a tag. */
+    private fun scaleChrome(v: View, scale: Float) {
+        val base = (v.getTag(R.id.tag_base_chrome) as? IntArray) ?: intArrayOf(
+            v.layoutParams?.width ?: ViewGroup.LayoutParams.WRAP_CONTENT,
+            v.layoutParams?.height ?: ViewGroup.LayoutParams.WRAP_CONTENT,
+            v.paddingLeft, v.paddingTop, v.paddingRight, v.paddingBottom
+        ).also { v.setTag(R.id.tag_base_chrome, it) }
+        fun s(px: Int) = Math.round(px * scale)
+        v.layoutParams?.let { lp ->
+            // Only explicit sizes scale; WRAP_CONTENT/MATCH_PARENT (negative) pass through.
+            if (base[0] > 0) lp.width = s(base[0])
+            if (base[1] > 0) lp.height = s(base[1])
+        }
+        v.setPadding(s(base[2]), s(base[3]), s(base[4]), s(base[5]))
+    }
+
+    /**
+     * Below 1.0 the buttons draw under 44dp, so each visible button's TOUCH rect is widened to
+     * the pill's full cross-section (the padding rim included). Rebuilt on every layout, because
+     * folding/turning the pill moves and hides children. At 1.0+ any delegate is removed.
+     */
+    private fun installPillTouchDelegate(pill: LinearLayout, scale: Float) {
+        if (scale >= 1f) { pill.touchDelegate = null; return }
+        if (pill.getTag(R.id.tag_pill_delegate) != null) return // listener already attached
+        pill.setTag(R.id.tag_pill_delegate, true)
+        pill.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            val vertical = pill.orientation == LinearLayout.VERTICAL
+            val delegates = ArrayList<android.view.TouchDelegate>()
+            for (i in 0 until pill.childCount) {
+                val c = pill.getChildAt(i)
+                if (c.visibility != View.VISIBLE || !c.isClickable) continue
+                val r = android.graphics.Rect(c.left, c.top, c.right, c.bottom)
+                if (vertical) { r.left = 0; r.right = pill.width } else { r.top = 0; r.bottom = pill.height }
+                delegates.add(android.view.TouchDelegate(r, c))
+            }
+            pill.touchDelegate = if (delegates.isEmpty()) null else FanOutTouchDelegate(delegates, pill)
+        }
+    }
+
+    /** One TouchDelegate that tries several — only the one whose rect held the DOWN targets. */
+    private class FanOutTouchDelegate(
+        private val delegates: List<android.view.TouchDelegate>, anchor: View
+    ) : android.view.TouchDelegate(android.graphics.Rect(), anchor) {
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            for (d in delegates) {
+                val copy = MotionEvent.obtain(event)
+                val handled = d.onTouchEvent(copy)
+                copy.recycle()
+                if (handled) return true
+            }
+            return false
         }
     }
 
@@ -560,6 +674,18 @@ abstract class ScreenFragment : Fragment() {
         )
         // A highlight can become a shareable quote card (parity with the iPad annotation composer).
         if (selection.isNotBlank()) options.add("🃏  Create gram" to { shareQuoteCard(selection, sourceTitle) })
+        // Ask/Educate ride every annotation menu: a highlight (or the whole item, when blank)
+        // goes to Ask with provenance, or grams onto the intake sheet's Educate Me panel.
+        options.add("🔎  Ask about this" to {
+            com.toolsboox.plugin.calendar.ot.AskBridge.askFrom(
+                this, selection.ifBlank { null },
+                title = sourceTitle ?: "", link = "", sourceLabel = sourceTitle ?: "")
+        })
+        options.add("🎓  Educate me" to {
+            com.toolsboox.plugin.calendar.ot.AskBridge.gramToEducateMe(
+                this, text = selection.ifBlank { sourceTitle ?: "" },
+                title = sourceTitle ?: "", link = "", sourceLabel = sourceTitle ?: "")
+        })
         options.add(getString(R.string.reader_capture_photo) to { launchAnnCamera() })
         options.add(getString(R.string.reader_capture_upload) to { annGalleryLauncher.launch("image/*") })
         options.add(getString(R.string.reader_capture_voice) to { requestVoiceRecording() })
@@ -771,8 +897,12 @@ abstract class ScreenFragment : Fragment() {
         // From the dimens, not from hard-coded dp — otherwise this silently undoes the
         // large-screen sizing every time a pill is flipped, and the grip alone shrinks back to
         // phone size on a Tab X while the buttons beside it stay large.
-        val short = resources.getDimensionPixelSize(R.dimen.ledger_grip_short)
-        val long = resources.getDimensionPixelSize(R.dimen.ledger_grip_long)
+        //
+        // Times the modal-size dial, matching applyPillSizing on the buttons beside it — at
+        // Compact the whole pill (grip included) slims to reading-margin width.
+        val scale = com.toolsboox.ot.ModalScale.sizeScale(requireContext())
+        val short = Math.round(resources.getDimensionPixelSize(R.dimen.ledger_grip_short) * scale)
+        val long = Math.round(resources.getDimensionPixelSize(R.dimen.ledger_grip_long) * scale)
         grip.layoutParams = grip.layoutParams.apply {
             width = if (vertical) long else short
             height = if (vertical) short else long

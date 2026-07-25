@@ -848,7 +848,6 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         com.toolsboox.plugin.feeds.nw.FeedChapters.attachToPlayer(requireContext(), e)
         // No popup on play — the inline Now Playing card seats in the drawer instead
         // (the auto-modal on top of the card read as two competing surfaces).
-        renderDirectory()
         renderDirectory()   // surface the "▶️ Now Playing" row in the drawer right away
     }
 
@@ -954,9 +953,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 requireContext(), e.title, e.feedTitle.ifBlank { null }, e.imageUrl,
                 listOf(e.title, plain).filter { it.isNotBlank() }.joinToString(". ")
             )
-            renderDirectory()   // seat the inline Now Playing card so it's there when the drawer is
         }
-        renderDirectory()   // the drawer card is the transport; no auto-popup
+        renderDirectory()   // seat the inline Now Playing card; the drawer card is the transport, no auto-popup
     }
 
     private fun buildArticleHtml(e: FeedEntry, content: String = e.content): String {
@@ -965,7 +963,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         return """
             <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
-              body { margin: 24px 28px; color: #000; background: #fff;
+              /* 44px side gutter matches FeedArticleFragment — wide enough that the
+                 vertical pill at its smallest parks in the margin without covering text. */
+              body { margin: 24px 44px; color: #000; background: #fff;
                      font-family: serif; font-size: 18px; line-height: 1.6; }
               h1 { font-size: 24px; line-height: 1.25; }
               .meta { color: #666; font-size: 13px; margin-bottom: 16px; }
@@ -1445,26 +1445,34 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         binding.feedsPill.orientation =
             if (vertical) android.widget.LinearLayout.VERTICAL else android.widget.LinearLayout.HORIZONTAL
         applyGripOrientation(binding.feedsGrip, vertical)
+        // The right-edge nav trio is static (never passes through makeDraggable), so it must
+        // opt into the modal-size dial itself or it stays full-width in the reserved gutter.
+        applyPillSizing(binding.feedsNavPill)
         keepListClearOfPill()
     }
 
     /**
-     * Leave the list room to get out from under the pill.
+     * The vertical strip fits IN the right margin; the rows take the rest.
      *
-     * The star sits at the right-hand end of every row, and a vertical pill parks over exactly
-     * that column — so the one control the list exists to offer was the one the pill covered. A
-     * horizontal pill does the same to the last row.
+     * The right edge carries the paging trio (always vertical) and, when flipped, the main
+     * pill. Rather than letting them park over the row's thumbnail column, the list reserves
+     * exactly the widest strip's width as its end gutter — the strip sits in that margin, and
+     * every row's title/blurb/image get the full remaining width. A horizontal main pill still
+     * gets its clearance at the bottom.
      *
-     * Measured from the pill rather than hard-coded, so it stays right when the pill is flipped,
-     * collapsed or dragged, and `clipToPadding=false` keeps the scroll range whole: rows still
-     * travel the full height, they just come to rest somewhere you can reach them.
+     * Measured from the pills rather than hard-coded, so it stays right when the main pill is
+     * flipped or collapsed (and when the shared pill sizing slims down, the margin narrows with
+     * it). `clipToPadding=false` keeps the scroll range whole: rows still travel the full
+     * height, they just come to rest somewhere you can reach them.
      */
     private fun keepListClearOfPill() {
         binding.feedsPill.post {
             if (!isAdded) return@post
             val vertical = binding.feedsPill.orientation == android.widget.LinearLayout.VERTICAL
-            val gap = (8 * resources.displayMetrics.density).toInt()
-            val end = if (vertical) binding.feedsPill.width + gap else 0
+            val gap = (4 * resources.displayMetrics.density).toInt()
+            val navW = if (binding.feedsNavPill.visibility == View.VISIBLE) binding.feedsNavPill.width else 0
+            val mainW = if (vertical) binding.feedsPill.width else 0
+            val end = maxOf(navW, mainW).let { if (it > 0) it + gap else 0 }
             val bottom = if (vertical) 0 else binding.feedsPill.height + gap
             binding.feedsRecycler.clipToPadding = false
             binding.feedsRecycler.setPaddingRelative(
@@ -1848,7 +1856,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         }
     }
 
-    /** Append a starred article to today's CalendarDay as a ReadingEvent(article). */
+    /** Append a starred article to today's CalendarDay as a ReadingEvent(article) — and mint
+     *  its gram onto today's Intake page. Every newly-starred path (Miniflux, local feed,
+     *  synthetic Later/Pickings row) comes through here, on Dispatchers.IO. */
     private fun logStar(entry: FeedEntry) {
         try {
             val root = documentsRoot()
@@ -1900,6 +1910,18 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         } catch (e: Exception) {
             Timber.w(e, "failed to log starred article")
         }
+        // Grams for stars: the ★ also lands the entry as a movable link-card gram on today's
+        // Intake page — the read-later board Michael arranges and writes pen notes around.
+        // Render + place stay on this IO thread; the row's cached thumbnail is reused when the
+        // list already loaded it; deduped by sourceLink inside (re-stars don't stack twins).
+        runCatching {
+            com.toolsboox.plugin.feeds.ot.FeedNoteGram.placeStarGram(
+                this, calendarDayService, documentsRoot(),
+                title = entry.title, feedTitle = entry.feedTitle, url = entry.url,
+                kind = entry.kind, imageUrl = entry.imageUrl,
+                thumb = entry.imageUrl?.let { FeedThumbCache.get(it) }
+            )
+        }.onFailure { Timber.w(it, "intake gram failed") }
         // Generic, opt-in on-star reactions (webhook-out / in-app synthesis). No-ops unless
         // the user configured them in Feed settings.
         runCatching {

@@ -309,14 +309,22 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
         binding.askButton.isEnabled = false
         binding.answerText.text = getString(R.string.ledger_chat_thinking)
 
+        // Grounding from "Ask about this" (AskBridge): where the item came from and what already
+        // connects to it, riding ahead of the corpus excerpts in the system prompt — the model
+        // sees it, the visible question stays exactly what the reader sent. Deliberately NOT
+        // one-shot like initial_query: it stays in the arguments so follow-up questions in the
+        // same visit keep knowing what "this" is.
+        val askContext = arguments?.getString("ask_context")?.trim()?.takeIf { it.isNotEmpty() }
+
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 val root = documentsRoot()
                 val all = corpusService.gather(root, scope)
                 val hits = corpusService.retrieveHybrid(all, question)
                 val context = corpusService.buildContext(hits)
+                val grounded = if (askContext == null) context else askContext + "\n\n" + context
                 val persona = com.toolsboox.plugin.chat.nw.PersonaStore.activePrompt(requireContext())
-                val answer = chatService.ask(provider, apiKey, model, question, context, persona)
+                val answer = chatService.ask(provider, apiKey, model, question, grounded, persona)
                 Triple(answer, hits.size, all.size)
             }
             val (answer, hitCount, corpusCount) = result

@@ -181,6 +181,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         longPressArmed = false
         longPressFired = true
         val canvasPts = screenToCanvas(longPressDownX, longPressDownY)
+        // A hold landing on a pickings-cover tile is the tile's own gesture (hide it), not
+        // the canvas menu's: this path consumes every still-finger hold on the surface, so
+        // the cover's tap handler downstream never sees one.
+        if (notePage == com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY) {
+            com.toolsboox.plugin.calendar.ot.PickingsCover.tileAt(canvasPts[0], canvasPts[1])?.let { tile ->
+                showPickingsTileHideDialog(tile)
+                return
+            }
+        }
         handleCanvasLongPress(canvasPts[0], canvasPts[1], longPressDownX, longPressDownY)
     }
 
@@ -211,10 +220,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     override fun provideDisableRawInkCapture(): Boolean = notePage == "intake"
 
-    // Exclude the floating nav + tool pills from the raw stylus reader so the stylus
-    // can drag/tap them (and never inks a stray dot over them).
+    // Exclude the floating nav + tool pills (and the notes pager) from the raw stylus reader
+    // so the stylus can drag/tap them (and never inks a stray dot over them).
     override fun provideExcludeViews(): List<View> =
-        if (::binding.isInitialized) listOf(binding.navWidget, binding.toolWidget) else emptyList()
+        if (::binding.isInitialized) listOf(binding.navWidget, binding.toolWidget, binding.notePager) else emptyList()
 
     /**
      * Provide toolbar of drawing's bindings.
@@ -469,22 +478,37 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val kind = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.inferKind(url)
         val label = title.ifBlank { url }
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
+            val fresh = withContext(Dispatchers.IO) {
                 val bmp = com.toolsboox.plugin.calendar.ot.LinkCardRenderer.render(url, title, kind)
-                runCatching {
-                    com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
-                        calendarDayService, documentsRoot(), bmp, currentDate, notePage ?: "default",
-                        sourceLink = url, sourceLabel = label, cardText = title)
+                // The placement is a load-modify-save of the same day file the open page
+                // re-saves wholesale on every pen-up — serialize the cycle, and reload while
+                // still holding the lock so the refresh below can't miss the element just
+                // written. Day files can run tens of MB, so the reload stays off Main too.
+                val reloaded = DayLocks.withDay(currentDate) {
+                    runCatching {
+                        com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                            calendarDayService, documentsRoot(), bmp, currentDate, notePage ?: "default",
+                            sourceLink = url, sourceLabel = label, cardText = title)
+                    }
+                    runCatching {
+                        calendarDayService.load(documentsRoot(), currentDate, null, java.util.Locale.getDefault())
+                    }.getOrNull()
                 }
                 if (alsoFile) runCatching {
                     com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.fileLink(
                         requireContext(), currentDate, kind, url, title.ifBlank { null })
                 }
+                reloaded
             }
-            // Refresh so the new card shows on the page you're on.
-            if (::calendarDay.isInitialized) {
-                val fresh = calendarDayService.load(documentsRoot(), currentDate, null, java.util.Locale.getDefault())
-                calendarDay.imageElements.clear(); calendarDay.imageElements.addAll(fresh.imageElements)
+            // Refresh so the new card shows on the page you're on. Additive, not wholesale:
+            // a pen-up save racing the placement writes the fragment's older imageElements
+            // to disk, so the in-memory list is the surviving truth — fold the placed card
+            // in and let the next save re-persist it.
+            if (::calendarDay.isInitialized && fresh != null) {
+                val have = calendarDay.imageElements.map { it.elementId.toString() }.toSet()
+                fresh.imageElements
+                    .filter { it.elementId.toString() !in have && it.elementId.toString() !in calendarDay.deletedElementIds }
+                    .forEach { calendarDay.imageElements.add(it) }
                 setImageElements(calendarDay.imageElements.filter { it.page == (notePage ?: "default") }.toMutableList())
             }
             showMessage(if (alsoFile) "Placed, and filed to Later." else "Link placed.", binding.root)
@@ -861,11 +885,20 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     val root = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
                         requireContext().getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)!!
                     else java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
-                    val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
-                    day.ledgerItems.add(item)
-                    calendarDayService.save(root, today, day)
+                    // Same-file discipline as the share-in path: the open page re-saves today's
+                    // file wholesale on every pen-up, so this cycle must serialize against it.
+                    DayLocks.withDay(today) {
+                        val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
+                        day.ledgerItems.add(item)
+                        calendarDayService.save(root, today, day)
+                    }
                     runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), item) }
                     withContext(Dispatchers.Main) {
+                        // When the open page IS today, hand its in-memory copy the item too —
+                        // otherwise the next pen-up save overwrites the file without it.
+                        if (today == currentDate && ::calendarDay.isInitialized &&
+                            calendarDay.ledgerItems.none { it.id == item.id }
+                        ) calendarDay.ledgerItems.add(item)
                         android.widget.Toast.makeText(ctx, "Pinned to board", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 }
@@ -954,9 +987,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
         if (orphaned.isNotEmpty()) {
             calendarDay.ledgerItems.removeAll(orphaned)
-            for (item in orphaned) {
-                if (item.id !in calendarDay.deletedElementIds) calendarDay.deletedElementIds.add(item.id)
-            }
+            // Erasing every stroke that produced the item IS deleting it — user intent, so it
+            // gets the full item tombstone (auto-extracted or not), or sync re-adds it.
+            for (item in orphaned) calendarDay.tombstoneLedgerItem(item.id)
             changed = true
         }
         if (changed) {
@@ -1151,6 +1184,17 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.navUp.setOnClickListener { binding.toolbarDrawing.toolbarSwipeUp.performClick() }
         binding.navDown.setOnClickListener { binding.toolbarDrawing.toolbarSwipeDown.performClick() }
 
+        // Numbered-notes pager (numeric notePage only, never the ritual stations): swipes are
+        // two-finger-gated over ink, so these pages were stepped blind through ↑/↓. ‹ › reuse
+        // the stepper's own actions; tapping the page number opens the jump picker.
+        if (notePage?.toIntOrNull() != null) {
+            binding.notePager.visibility = View.VISIBLE
+            binding.notePagerLabel.text = "page $notePage"
+            binding.notePagerPrev.setOnClickListener { binding.toolbarDrawing.toolbarSwipeUp.performClick() }
+            binding.notePagerNext.setOnClickListener { binding.toolbarDrawing.toolbarSwipeDown.performClick() }
+            binding.notePagerLabel.setOnClickListener { showNotePageJump() }
+        }
+
         // Floating tool selector: each button drives the real (hidden) toolbar action,
         // so the Onyx ink wiring is unchanged. The active tool is marked on the pill so
         // you can always tell what the stylus is doing. Long-press the eraser to clear.
@@ -1188,6 +1232,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.goAppsButton.bringToFront()
         binding.toolWidget.bringToFront()
         binding.navWidget.bringToFront()
+        binding.notePager.bringToFront()
 
         // Repositionable pills: drag the grip to move a pill anywhere (persisted).
         // A plain tap on the grip collapses/expands the pill (grip = the obvious handle).
@@ -1206,6 +1251,36 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             binding.navigatorImageView.layoutParams = it
         }
         initializeSurface(true)
+    }
+
+    /**
+     * The pager's jump picker: every numbered page holding content (ink or placed elements),
+     * sorted, plus a "New page" row that lands one past the last.
+     */
+    private fun showNotePageJump() {
+        val ctx = context ?: return
+        val pages = sortedSetOf<Int>()
+        if (::calendarDay.isInitialized) {
+            calendarDay.noteStrokes.filterValues { it.isNotEmpty() }.keys.mapNotNullTo(pages) { it.toIntOrNull() }
+            calendarDay.imageElements.mapNotNullTo(pages) { it.page.toIntOrNull() }
+        }
+        notePage?.toIntOrNull()?.let { pages.add(it) }   // the page you're on always lists
+        val newPage = (pages.maxOrNull() ?: -1) + 1
+        val ordered = pages.toList()
+        val labels = (ordered.map { if (it.toString() == notePage) "page $it  ·  here" else "page $it" }
+            + "＋  New page").toTypedArray()
+        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Jump to page")
+            .setItems(labels) { _, which ->
+                val target = if (which < ordered.size) ordered[which] else newPage
+                if (target.toString() != notePage)
+                    CalendarNavigator.toDayNote(this, currentDate, target.toString())
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        dialog.show()
+        // The rows only exist once the list has laid out; apply the reading font then.
+        dialog.window?.decorView?.let { root -> root.post { com.toolsboox.ot.LedgerFonts.applyTree(root) } }
     }
 
     /**
@@ -1236,7 +1311,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // the ring below keeps the last few, so re-deriving it on each turn was pure cost.
         val ctxForCache = context ?: return
         val cachePrefs = ctxForCache.getSharedPreferences("ledger_spiral_ring", 0)
-        val stamp = currentDate.toString()
+        // The stamp keys to TODAY, not the viewed date: keyed to the page, flipping back
+        // through history re-ran the choose per page turn and pushed stale picks into the
+        // widget's ring.
+        val stamp = LocalDate.now().toString()
         val fresh = cachePrefs.getString("picked_on", "") != stamp
         // The day page only. The band it sits in is drawn by CalendarDayPage between Tasks and
         // Stars & Events; a note page is bare paper, so the line landed in the middle of nothing
@@ -1250,10 +1328,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // Falls THROUGH when the ring is empty. The stamp and the ring live in the same prefs but
         // are not the same fact: a stamp saying "picked today" with nothing behind it drew an
         // empty band all day, with no way out of it.
-        val cached = if (fresh) null else com.toolsboox.plugin.calendar.ot.SpiralRing.next(ctxForCache)
+        // A past page shows what was already picked — the ring's holding — and never
+        // recomputes or pushes; the choose walk and the widget ring belong to today only.
+        val today = currentDate == LocalDate.now()
+        val cached = if (fresh && today) null else com.toolsboox.plugin.calendar.ot.SpiralRing.next(ctxForCache)
         if (cached != null) {
             spiralPick = RootsLine(cached.text, emptyList(), cached.citation)
-        } else {
+        } else if (today) {
             lifecycleScope.launch {
                 val chosen = withContext(Dispatchers.IO) {
                     runCatching {
@@ -1861,6 +1942,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 .extractPanel(strokes, tasksRect, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK, "auto", dueDate())
             val events = com.toolsboox.plugin.calendar.ot.LedgerExtractor
                 .extractPanel(strokes, schedRect, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT, "auto", dueDate())
+            // Deliberately NOT tombstoned: this removal is a refresh, not a deletion — the same
+            // rows come straight back under fresh ids, and tombstoning the old ids would retire
+            // their Quick Wins lineage (same words, tombstone day == the new copies' day) the
+            // moment the user re-extracts. Deleting an auto item for real (erasing its ink, the
+            // list/pile/kanban deletes) goes through tombstoneLedgerItem like any other item.
             calendarDay.ledgerItems.removeAll { it.source == "auto" }
             calendarDay.ledgerItems.addAll(tasks + events)
             calendarPattern.updateDay(calendarDay)
@@ -1939,7 +2025,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             }
         ) + actions + listOf(
             "📋  Copy text" to { copyTextFromSelection(strokes) },
+            "🔎  Ask about this" to { askAboutSelection(strokes) },
             "🎓  Educate me" to { educateFromSelection(strokes) },
+            "🎓  Gram to Educate Me" to { gramSelectionToEducateMe(strokes) },
             "🔍  Find in Ledger" to { findInLedgerFromSelection(strokes) }
         ))
     }
@@ -2272,6 +2360,63 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             )
         }
     }
+
+    /**
+     * Lasso → "Ask about this": OCR the circled ink and hand it to Ask my Ledger through
+     * [com.toolsboox.plugin.calendar.ot.AskBridge] — the chat opens knowing this page is where
+     * it came from and what already connects to it. Unreadable (or keyless-and-unreadable) ink
+     * still goes: a blank selection means "push the whole thing", so the page itself is asked
+     * about rather than the trip being refused.
+     */
+    private fun askAboutSelection(strokes: List<Stroke>) {
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) { selectionText(strokes) }
+            if (!isAdded) return@launch
+            com.toolsboox.plugin.calendar.ot.AskBridge.askFrom(
+                this@CalendarDayFragment, text, selectionPageLabel(),
+                com.toolsboox.ot.LedgerUri.page(currentDate.toString(), notePage ?: "default"),
+                "the Ledger")
+        }
+    }
+
+    /**
+     * Lasso → "Gram to Educate Me": the circled words become a quote-face question gram inside
+     * the intake sheet's EDUCATE ME panel (via [com.toolsboox.plugin.calendar.ot.AskBridge]).
+     * Distinct from "Educate me" above, which LOOKS the term up; this one files the question
+     * itself to study later.
+     */
+    private fun gramSelectionToEducateMe(strokes: List<Stroke>) {
+        showMessage(getString(R.string.ledger_educate_looking_up), binding.root)
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) { selectionText(strokes) }
+            if (!isAdded) return@launch
+            if (text.isNullOrBlank()) { showMessage(R.string.ledger_extract_unreadable, binding.root); return@launch }
+            com.toolsboox.plugin.calendar.ot.AskBridge.gramToEducateMe(
+                this@CalendarDayFragment, text, selectionPageLabel(),
+                com.toolsboox.ot.LedgerUri.page(currentDate.toString(), notePage ?: "default"),
+                "the Ledger")
+        }
+    }
+
+    /** The circled ink as words: vision OCR when a key is set, the on-device ink OCR otherwise —
+     *  the same ladder as create/copy, shared so the Ask rows read handwriting identically. */
+    private suspend fun selectionText(strokes: List<Stroke>): String? {
+        val creds = aiCreds()
+        val read = if (creds != null) {
+            val b = com.toolsboox.plugin.calendar.ot.LedgerExtractor.boundsOf(strokes)
+            val pad = 28f
+            val rect = android.graphics.RectF(b.left - pad, b.top - pad, b.right + pad, b.bottom + pad)
+            val bmp = com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderInk(strokes, rect, 1600)
+            com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third)
+        } else null
+        return (read ?: com.toolsboox.plugin.calendar.ot.LedgerExtractor
+            .extractStrokes(strokes, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK, "lasso", dueDate())?.text)
+            ?.replace(Regex("\\s+"), " ")?.trim()?.ifBlank { null }
+    }
+
+    /** What to call this page as a source: the day, plus the named page when we're on one. */
+    private fun selectionPageLabel(): String =
+        "Ledger · $currentDate" + (notePage?.let { " · $it" } ?: "")
 
     /** Show the looked-up description with an option to open the link; it's already filed to the feed. */
     private fun showEducateResult(term: String, desc: String, url: String) {
@@ -3790,27 +3935,28 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                         return true
                     }
                 }
-                // A HOLD on a tile asks to hide it — the continuity tile ("Thursday on
-                // Friday's page") is automatic, so removal has to be a gesture, not an edit.
-                if (gestureResult == OnGestureListener.NONE && dx < 30f && dy < 30f && dt in 601..2000) {
-                    val p = screenToCanvas(motionEvent.x, motionEvent.y)
-                    com.toolsboox.plugin.calendar.ot.PickingsCover.tileAt(p[0], p[1])?.let { tile ->
-                        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
-                            .setTitle("Hide \"${tile.name.ifBlank { "Pickings" }} · ${tile.date}\" from the cover?")
-                            .setPositiveButton("Hide") { _, _ ->
-                                com.toolsboox.plugin.calendar.ot.PickingsCover.hideTile(requireContext(), tile)
-                                presenter.load(this@CalendarDayFragment, binding, currentDate,
-                                    sharedPreferences.getInt("calendarStartHour", 5), locale)
-                            }
-                            .setNegativeButton(android.R.string.cancel, null)
-                            .show()
-                        return true
-                    }
-                }
+                // A HOLD on a tile is handled by the long-press path ([fireCanvasLongPress]),
+                // which consumes every still-finger hold before this handler runs.
             }
         }
 
         return false
+    }
+
+    /**
+     * A HOLD on a tile asks to hide it — the continuity tile ("Thursday on Friday's page")
+     * is automatic, so removal has to be a gesture, not an edit.
+     */
+    private fun showPickingsTileHideDialog(tile: com.toolsboox.plugin.calendar.ot.PickingsCover.Tile) {
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+            .setTitle("Hide \"${tile.name.ifBlank { "Pickings" }} · ${tile.date}\" from the cover?")
+            .setPositiveButton("Hide") { _, _ ->
+                com.toolsboox.plugin.calendar.ot.PickingsCover.hideTile(requireContext(), tile)
+                presenter.load(this@CalendarDayFragment, binding, currentDate,
+                    sharedPreferences.getInt("calendarStartHour", 5), locale)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun handleIntakeTap(motionEvent: MotionEvent, gestureResult: Int): Boolean {

@@ -40,19 +40,30 @@
         android:paddingHorizontal="14dp" android:paddingTop="6dp"
         android:layout_width="wrap_content" android:layout_height="wrap_content"/>
 
-    <!-- Plain (no-AI) search across the whole Ledger corpus. -->
-    <EditText
-        android:id="@+id/search_field"
-        android:hint="@string/reading_log_search_hint"
-        android:inputType="text"
-        android:imeOptions="actionSearch"
-        android:maxLines="1"
-        android:textSize="16sp"
-        android:paddingHorizontal="14dp"
-        android:paddingVertical="8dp"
+    <!-- Plain (no-AI) search across the whole Ledger corpus; 🔎 Ask hands the query to Ask my Ledger. -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
         android:layout_marginHorizontal="10dp"
         android:layout_marginBottom="6dp"
-        android:layout_width="match_parent" android:layout_height="wrap_content"/>
+        android:layout_width="match_parent" android:layout_height="wrap_content">
+        <EditText
+            android:id="@+id/search_field"
+            android:hint="@string/reading_log_search_hint"
+            android:inputType="text"
+            android:imeOptions="actionSearch"
+            android:maxLines="1"
+            android:textSize="16sp"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="8dp"
+            android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/ask_button"
+            style="?android:attr/borderlessButtonStyle"
+            android:text="@string/reading_log_ask"
+            android:textSize="14sp" android:minWidth="0dp" android:paddingHorizontal="8dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </LinearLayout>
 
     <!-- Scope chips (All · Handwriting · Articles · Tasks · Notes) — search results only. -->
     <HorizontalScrollView

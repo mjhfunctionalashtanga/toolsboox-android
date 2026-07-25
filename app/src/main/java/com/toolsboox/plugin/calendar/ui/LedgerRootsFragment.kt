@@ -54,6 +54,11 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
     /** Held with [corpus] so muting and dismissing re-render from memory instead of re-reading. */
     private var threads: List<Rhizome.Thread> = emptyList()
 
+    /** Terms unmuted on THIS page, this session. An unmuted thread might not win a seat on
+     *  today's board, and a card that vanishes under the finger that just brought it back
+     *  reads as deletion — so these keep their tile until the page is left. */
+    private val unmutedThisSession = mutableSetOf<String>()
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentLedgerRootsBinding.bind(view)
@@ -179,10 +184,28 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
         // actually need for sentences, and the whole thing reads as a board of subjects rather
         // than a list of leftovers.
         //
+        // WHICH eighteen is the day's board, not the all-time top: heat is a static ranking,
+        // so take(18) showed the same biggest threads every day forever. composeBoard() below
+        // mixes hot, mid and quiet bands, rotates within them on a date seed, and demotes what
+        // the last few days already showed. Muted threads no longer eat seats — they sit at the
+        // END of the grid, dimmed, so the unmute tap stays one tap away. A thread unmuted this
+        // session keeps its tile even if it doesn't win a seat, so the card doesn't vanish
+        // under the finger that just brought it back.
+        val epochToday = java.time.LocalDate.now().toEpochDay()
+        val unmuted = threads.filterNot {
+            com.toolsboox.plugin.calendar.ot.RootsMute.isMuted(ctx, it.term)
+        }
+        val board = composeBoard(ctx, unmuted, now, epochToday)
+        val live = board + unmuted.filter { it.term in unmutedThisSession && it !in board }
+        com.toolsboox.plugin.calendar.ot.RootsMute.recordShown(ctx, epochToday, live.map { it.term })
+        val tiles = live + threads.filter {
+            com.toolsboox.plugin.calendar.ot.RootsMute.isMuted(ctx, it.term)
+        }
+
         // Column count comes from the screen, so it stays sensible from a Palma to a Tab X.
         val columns = (resources.configuration.screenWidthDp / 190).coerceIn(2, 6)
         var rowBox: LinearLayout? = null
-        for ((i, t) in threads.take(18).withIndex()) {
+        for ((i, t) in tiles.withIndex()) {
             if (i % columns == 0) {
                 rowBox = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
                 col.addView(rowBox)
@@ -218,43 +241,38 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
                     android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
             }
             card.setOnClickListener {
-                // Answer the tap on the tapped thing, then rebuild. A mute changes nothing the
-                // disk knows about — which threads are live and what crosses between them is
-                // all derivable from what's already in hand — so this used to re-read the
-                // whole ledger for a preference flip, which is why a mute felt slow. Flip
-                // this card, then redraw from memory.
-                val nowMuted = com.toolsboox.plugin.calendar.ot.RootsMute.toggle(ctx, t.term)
-                val label = card.getChildAt(0) as? TextView
-                card.alpha = if (nowMuted) 0.45f else 1f
-                label?.paintFlags = if (nowMuted)
-                    label.paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
-                else label.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG.inv()
-                renderContent()
+                // A mute changes nothing the disk knows about — which threads are live and
+                // what crosses between them is all derivable from what's already in hand — so
+                // this used to re-read the whole ledger for a preference flip, which is why a
+                // mute felt slow. Toggle, then redraw from memory.
+                toggleMute(t.term)
             }
             card.setOnLongClickListener { threadHoldMenu(t); true }
             rowBox?.addView(card)
         }
         // Pad the last row so three cards among four columns don't stretch to fill it.
-        val remainder = threads.take(18).size % columns
+        val remainder = tiles.size % columns
         if (remainder != 0) repeat(columns - remainder) {
             rowBox?.addView(View(ctx).apply {
                 layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
             })
         }
 
-        // Crossings are recomputed from the threads you have NOT muted, so turning off
-        // "2026" and "pressreader" doesn't just tidy the list above — it changes what counts
-        // as a meeting-point below. That is the whole reason muting is worth having: the
-        // junk threads were manufacturing crossings between newspapers.
-        val liveThreads = threads.filterNot {
-            com.toolsboox.plugin.calendar.ot.RootsMute.isMuted(ctx, it.term)
-        }
-        val liveCrossings = Rhizome.crossings(liveThreads)
+        // Crossings come from the DAY'S BOARD, not the all-time thread pool. Two reasons: a
+        // mute changes what counts as a meeting-point (the junk threads were manufacturing
+        // crossings between newspapers), and the board rotating daily means the meeting-points
+        // rotate with it — "where they touch" stays a claim about the threads actually on the
+        // page above. Ties in connectedness are broken by the same date seed, so equally-joined
+        // crossings take turns leading across days instead of the corpus order deciding forever.
+        val liveCrossings = Rhizome.crossings(live)
         if (liveCrossings.isNotEmpty()) {
             col.addView(header(getString(R.string.roots_where_they_touch), top = 18))
             // Most-connected first, minus the ones you've thrown away as junk meeting-points.
             val dismissed = com.toolsboox.plugin.calendar.ot.RootsMute.dismissedCrossings(ctx)
-            for ((idx, terms) in liveCrossings.entries.sortedByDescending { it.value.size }.take(12)) {
+            val rng = kotlin.random.Random(epochToday)
+            val ranked = liveCrossings.entries.toList().shuffled(rng)
+                .sortedByDescending { it.value.size }
+            for ((idx, terms) in ranked.take(12)) {
                 val snip = all.getOrNull(idx) ?: continue
                 if (snip.citation in dismissed) continue
                 // Tombstoned since this corpus was gathered — gone from the next gather, but it
@@ -300,6 +318,75 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
         com.toolsboox.ot.ReadingSize.apply(col)
     }
 
+    /**
+     * The day's board: which threads get the [seats].
+     *
+     * Heat is a static ranking — the biggest thread wins every day forever, which is how one
+     * word held the page for a week. So the board is COMPOSED, not ranked:
+     *
+     *  - **Bands.** The pool (already heat-sorted by [Rhizome.threads], muted excluded by the
+     *    caller) splits into hot (top half of the still-active threads), mid (bottom half),
+     *    and quiet (nothing joined in 45 days — [Rhizome.Thread.isQuiet]). Quiet gets ~3 seats,
+     *    the rest split evenly hot/mid, so the load-bearing threads stay present while the
+     *    middle of the ledger — which the old ranking never reached — gets half the page.
+     *  - **Anchors.** The two hottest active threads always sit. When the biggest thread is
+     *    genuinely the day's material, it appears — the goal is variety, not censorship.
+     *  - **Rotation.** Within each band, order is shuffled on [epochToday] as the seed:
+     *    deterministic per day, so the page holds still across reopens, and different across
+     *    days, so the bands' seats actually rotate.
+     *  - **Demotion.** Threads the last few days' boards showed ([RootsMute.shownBefore])
+     *    sort to the back of their band — more recently shown, further back. A demoted thread
+     *    is never excluded: short bands backfill from the whole pool, and a pool that fits in
+     *    the seats shows whole, so suppression can never empty the surface.
+     *
+     * Pure function of held state + prefs — no disk, no second corpus walk.
+     */
+    private fun composeBoard(
+        ctx: android.content.Context,
+        pool: List<Rhizome.Thread>,
+        now: Long,
+        epochToday: Long,
+        seats: Int = 18
+    ): List<Rhizome.Thread> {
+        if (pool.size <= seats) return pool
+        val lastShown = com.toolsboox.plugin.calendar.ot.RootsMute.shownBefore(ctx, epochToday)
+        val historyDays = com.toolsboox.plugin.calendar.ot.RootsMute.SHOWN_HISTORY_DAYS
+        // Yesterday weighs 5, five days ago weighs 1, never-shown weighs 0.
+        fun penalty(t: Rhizome.Thread): Long {
+            val last = lastShown[t.term.lowercase()] ?: return 0L
+            return (historyDays + 1 - (epochToday - last)).coerceAtLeast(0L)
+        }
+        val rng = kotlin.random.Random(epochToday)
+        // shuffled-then-stable-sorted: penalty groups keep their shuffled order inside.
+        fun rotate(band: List<Rhizome.Thread>) = band.shuffled(rng).sortedBy { penalty(it) }
+
+        val quiet = pool.filter { it.isQuiet(now) }
+        val loud = pool.filterNot { it.isQuiet(now) }
+        val quietSeats = minOf(3, quiet.size)
+        val hotSeats = (seats - quietSeats + 1) / 2
+        val hot = loud.take((loud.size + 1) / 2)
+        val mid = loud.drop(hot.size)
+
+        val board = LinkedHashSet<Rhizome.Thread>()
+        board += (hot.take(2) + rotate(hot.drop(2))).take(hotSeats)
+        board += rotate(mid).take((seats - quietSeats - board.size).coerceAtLeast(0))
+        board += rotate(quiet).take(quietSeats)
+        if (board.size < seats) for (t in rotate(pool)) {
+            if (board.size >= seats) break
+            board += t
+        }
+        return board.toList()
+    }
+
+    /** Flip a term's mute and redraw from memory. Unmutes are remembered for the session so
+     *  the tile survives even when it doesn't win a seat on today's board. */
+    private fun toggleMute(term: String) {
+        val ctx = context ?: return
+        val nowMuted = com.toolsboox.plugin.calendar.ot.RootsMute.toggle(ctx, term)
+        if (nowMuted) unmutedThisSession.remove(term) else unmutedThisSession.add(term)
+        renderContent()
+    }
+
     /** Hold on a meeting-point: the card's verbs in one place, led by the pick. The pick asks
      *  its medium ([com.toolsboox.plugin.feeds.ot.FeedNoteGram] — handwriting, text, audio,
      *  video) with the crossing's words as the quote in hand, and lands on today's Notes page;
@@ -329,10 +416,7 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
                 pickAsGram(t.term, "a thread through your ledger · ${t.size}×")
             },
             "🌿  Where it runs" to { showThread(t) },
-            (if (muted) "🔊  Unmute" else "🔇  Mute") to {
-                com.toolsboox.plugin.calendar.ot.RootsMute.toggle(ctx, t.term)
-                renderContent()
-            }
+            (if (muted) "🔊  Unmute" else "🔇  Mute") to { toggleMute(t.term) }
         ))
     }
 

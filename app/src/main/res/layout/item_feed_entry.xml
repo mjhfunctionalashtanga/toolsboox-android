@@ -4,7 +4,8 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="#FFFFFF"
-    android:paddingHorizontal="16dp"
+    android:paddingStart="16dp"
+    android:paddingEnd="8dp"
     android:paddingVertical="14dp">
 
     <LinearLayout
@@ -25,14 +26,35 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"/>
 
-        <TextView
-            android:id="@+id/entry_meta"
-            android:fontFamily="@font/atkinson_hyperlegible"
-            android:textColor="#666666"
-            android:textSize="12sp"
+        <!-- Star lives INLINE on the meta line (not its own full-height column), so the title
+             and thumbnail get the row's width back. Visually small; the adapter widens its
+             touch target to ~44dp with a TouchDelegate. -->
+        <LinearLayout
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
             android:layout_marginTop="3dp"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"/>
+            android:layout_height="wrap_content">
+
+            <TextView
+                android:id="@+id/entry_star"
+                android:text="☆"
+                android:textColor="#000000"
+                android:textSize="15sp"
+                android:paddingEnd="8dp"
+                android:paddingVertical="2dp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"/>
+
+            <TextView
+                android:id="@+id/entry_meta"
+                android:fontFamily="@font/atkinson_hyperlegible"
+                android:textColor="#666666"
+                android:textSize="12sp"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"/>
+        </LinearLayout>
 
         <TextView
             android:id="@+id/entry_blurb"
@@ -54,14 +76,4 @@
         android:visibility="gone"
         android:contentDescription="@null"
         android:layout_gravity="center_vertical"/>
-
-    <TextView
-        android:id="@+id/entry_star"
-        android:text="☆"
-        android:textColor="#000000"
-        android:textSize="24sp"
-        android:paddingStart="12dp"
-        android:paddingTop="2dp"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"/>
 </LinearLayout>

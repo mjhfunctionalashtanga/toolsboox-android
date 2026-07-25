@@ -210,6 +210,13 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         binding.gramButton.setOnClickListener { captureAvGram { saveGram(it) } }
 
         binding.exportButton.setOnClickListener { promptExport() }
+        // 🔎 Ask — hand the current search text to Ask my Ledger (its initial_query prefills
+        // and asks); blank just opens Ask.
+        binding.askButton.setOnClickListener {
+            val q = binding.searchField.text?.toString()?.trim().orEmpty()
+            val args = if (q.isNotEmpty()) androidx.core.os.bundleOf("initial_query" to q) else null
+            NavHostFragment.findNavController(this).navigate(R.id.action_to_ledger_chat, args)
+        }
         // Debounced (~250ms): search runs off-main once typing settles, not per keystroke.
         binding.searchField.doAfterTextChanged {
             val q = it?.toString().orEmpty()

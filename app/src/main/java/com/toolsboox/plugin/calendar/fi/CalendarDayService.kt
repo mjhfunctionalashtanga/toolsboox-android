@@ -159,18 +159,45 @@ class CalendarDayService @Inject constructor() {
      * strokes/elements simply aren't read. Mirrors iOS `DayLite`. Returns empty on any problem.
      */
     @com.squareup.moshi.JsonClass(generateAdapter = true)
-    data class DayLiteTasks(val ledgerItems: List<com.toolsboox.plugin.calendar.da.v2.LedgerItem> = emptyList())
+    data class DayLiteTasks(
+        val ledgerItems: List<com.toolsboox.plugin.calendar.da.v2.LedgerItem> = emptyList(),
+        // Deletion tombstones ride the same slim decode: deletedItemIds is the dedicated item
+        // list (wire name shared with iOS); deletedElementIds also counts because pre-split
+        // builds recorded item deletions there.
+        val deletedItemIds: List<String> = emptyList(),
+        val deletedElementIds: List<String> = emptyList(),
+    )
 
-    fun loadLedgerItems(item: File): List<com.toolsboox.plugin.calendar.da.v2.LedgerItem> {
-        if (!item.exists() || !item.name.startsWith("day-") || !item.absolutePath.endsWith("-v2.json")) return emptyList()
-        val json = try { item.readText(Charsets.UTF_8) } catch (e: Exception) { return emptyList() }
-        if (json.isBlank()) return emptyList()
+    /** The raw tasks slice of a day file — items AND their deletion tombstones (Quick Wins
+     *  needs both to retire a lineage whose newest copy was deleted). Null on any problem. */
+    fun loadTasksSlice(item: File): DayLiteTasks? {
+        if (!item.exists() || !item.name.startsWith("day-") || !item.absolutePath.endsWith("-v2.json")) return null
+        val json = try { item.readText(Charsets.UTF_8) } catch (e: Exception) { return null }
+        if (json.isBlank()) return null
         return try {
-            moshi.adapter(DayLiteTasks::class.java).fromJson(json)?.ledgerItems ?: emptyList()
+            moshi.adapter(DayLiteTasks::class.java).fromJson(json)
         } catch (e: Exception) {
             Timber.w(e, "Corrupt day file ${item.name} (lite); skipping")
-            emptyList()
+            null
         }
+    }
+
+    /** The slice's tombstoned item ids, lowercased (Android UUIDs are lowercase, iOS UPPERCASE —
+     *  a case-mismatched tombstone silently resurrects the item, same trap as the merge). */
+    fun deadItemIds(slice: DayLiteTasks): Set<String> {
+        val dead = HashSet<String>(slice.deletedItemIds.size + slice.deletedElementIds.size)
+        slice.deletedItemIds.forEach { dead.add(it.lowercase()) }
+        slice.deletedElementIds.forEach { dead.add(it.lowercase()) }
+        return dead
+    }
+
+    fun loadLedgerItems(item: File): List<com.toolsboox.plugin.calendar.da.v2.LedgerItem> {
+        val slice = loadTasksSlice(item) ?: return emptyList()
+        // Defensive: a tombstoned id must never surface as a live item, even when a partial
+        // write or a pre-tombstone merge left the copy in the file alongside its tombstone.
+        val dead = deadItemIds(slice)
+        return if (dead.isEmpty()) slice.ledgerItems
+        else slice.ledgerItems.filter { it.id.lowercase() !in dead }
     }
 
     /**

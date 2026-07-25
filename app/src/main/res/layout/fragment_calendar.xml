@@ -211,6 +211,37 @@
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintStart_toStartOf="parent"/>
 
+        <!-- Numbered-notes pager: ‹  page N  › at the top of the paper (numeric notePage
+             only). Swipes are two-finger-gated over ink, so the numbered pages were stepped
+             blind; the arrows reuse the section stepper's actions and tapping the number
+             opens the jump picker. Declared after the surface (draw order), and like the
+             spiral line it must ALSO be described in CalendarUtils' cloned ConstraintSet or
+             it comes back 0×0. Gone by default; only numeric pages turn it on. -->
+        <LinearLayout
+                android:id="@+id/notePager"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="@drawable/ledger_bar_bg"
+                android:padding="4dp"
+                android:visibility="gone"
+                app:layout_constraintTop_toBottomOf="@id/navigatorImageView"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                android:layout_marginTop="10dp">
+
+            <ImageButton android:id="@+id/notePagerPrev" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+                android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_left"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/toolbar_previous_image"/>
+            <TextView android:id="@+id/notePagerLabel" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:paddingHorizontal="10dp" android:textColor="#000000" android:textSize="16sp"
+                android:fontFamily="@font/atkinson_hyperlegible"/>
+            <ImageButton android:id="@+id/notePagerNext" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+                android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_right"
+                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/toolbar_next_image"/>
+        </LinearLayout>
+
     </androidx.constraintlayout.widget.ConstraintLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

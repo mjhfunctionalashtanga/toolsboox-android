@@ -212,6 +212,25 @@ object SettingsBackup {
                 }
             }
         }
+
+        // Legacy single-provider AI shape ({provider, key, model}, pre per-provider split): the
+        // provider names which per-provider prefs `key`/`model` belong to, so an old backup still
+        // restores a working chat instead of silently dropping the credential.
+        root.optJSONObject("ai")?.let { sec ->
+            val suffix = if (sec.optString("provider") == "openai") "openai" else "anthropic"
+            val chat = fields.first { it.section == "ai" }
+            val key = sec.optString("key")
+            if (key.isNotBlank()) {
+                editor(chat).putString("ledger_chat_api_key_$suffix", key)
+                appliedSections.add("ai")
+            }
+            val model = sec.optString("model")
+            if (model.isNotBlank()) {
+                editor(chat).putString("ledger_chat_model_$suffix", model)
+                appliedSections.add("ai")
+            }
+        }
+
         editors.values.forEach { it.apply() }
         applied.addAll(appliedSections)
 
@@ -297,7 +316,23 @@ object SettingsBackup {
                 if (!applied.contains(key)) applied.add(key)
             }
         }
-        writePassthrough(context, passthrough)
+        // Merge over the existing store, imported keys winning: a partial settings file must not
+        // erase foreign sections (opds, books, ttsOpenAI, …) captured by an earlier import.
+        val carried = readPassthrough(context)
+        val newKeys = passthrough.keys()
+        while (newKeys.hasNext()) {
+            val key = newKeys.next()
+            val nv = passthrough.get(key)
+            val ov = carried.opt(key)
+            if (nv is JSONObject && ov is JSONObject) {
+                val fk = nv.keys()
+                while (fk.hasNext()) {
+                    val field = fk.next()
+                    ov.put(field, nv.get(field))
+                }
+            } else carried.put(key, nv)
+        }
+        writePassthrough(context, carried)
         return applied
     }
 

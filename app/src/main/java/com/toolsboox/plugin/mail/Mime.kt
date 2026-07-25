@@ -13,6 +13,7 @@ data class FetchedMessage(
     val fromEmail: String,
     val date: Long,          // epoch millis
     val body: String,
+    val truncated: Boolean = false,   // oversized on the server; only a bounded slice was fetched
 )
 
 /**

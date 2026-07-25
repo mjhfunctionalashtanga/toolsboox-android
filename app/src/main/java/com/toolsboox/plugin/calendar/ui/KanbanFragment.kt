@@ -545,6 +545,9 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
                 // The ink it was made from stays on the page. Deleting a card is saying you are
                 // done tracking the thing, not that the handwriting never happened.
                 day.ledgerItems.removeAll { it.id == item.id }
+                // Tombstone the id or the sync union (and carry-over) resurrects the card from
+                // the other device's copy — removal alone is what "keeps coming back" was.
+                day.tombstoneLedgerItem(item.id)
                 calendarDayService.save(root, ld, day)
             }
             load()

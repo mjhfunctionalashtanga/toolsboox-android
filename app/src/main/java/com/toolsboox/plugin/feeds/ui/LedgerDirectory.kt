@@ -26,6 +26,56 @@ fun ledgerDirectoryFolders(
     val today = LocalDate.now()
     val locale = Locale.getDefault()
 
+    // Open the hub with the folder CONTAINING the current surface already expanded — on Roots the
+    // Garden folder is open, on Mail the Desk, and so on. Inferred from the calling fragment's type
+    // (every surface passes `this`), so all ~15 call sites get it for free; the explicit
+    // [expandFeedLedger] wins over inference (the feeds back-ladder wants Feed open from the day
+    // page). One folder at most; surfaces that aren't inside any folder (the day page is "Today",
+    // the week/month almanacs) expand nothing. The accordion renders expanded folders in its single
+    // build pass, so there is no post-open toggle to flash the e-ink.
+    val home: String? = if (expandFeedLedger) "Feed" else when (fragment) {
+        is FeedsFragment, is FeedArticleFragment -> "Feed"
+        is com.toolsboox.plugin.calendar.ui.QuickWinsFragment,
+        is com.toolsboox.plugin.mail.ui.MailInboxFragment,
+        is com.toolsboox.plugin.mail.ui.MailComposeFragment,
+        is com.toolsboox.plugin.calendar.ui.RolodexFragment,
+        is com.toolsboox.plugin.calendar.ui.LedgerItemsFragment,
+        is com.toolsboox.plugin.calendar.ui.KanbanFragment,
+        is com.toolsboox.plugin.calendar.ui.PublishFragment,
+        is com.toolsboox.plugin.calendar.ui.PostsBrowserFragment -> "Desk"
+        is com.toolsboox.plugin.calendar.ui.LedgerRootsFragment,
+        is com.toolsboox.plugin.calendar.ui.LedgerMapFragment,
+        is com.toolsboox.plugin.calendar.ui.SproutsFragment,
+        is com.toolsboox.plugin.calendar.ui.MissedRhizomesFragment,
+        is com.toolsboox.plugin.calendar.ui.LedgerRhizomeFragment -> "Garden"
+        is com.toolsboox.plugin.textnotes.ui.TextNotesFragment -> "Notes"
+        is com.toolsboox.plugin.calendar.ui.DailyPileFragment -> "Daily"
+        is com.toolsboox.plugin.reader.ui.ReaderFragment -> "Bookshelf"
+        // ReadingLogFragment serves both Search and History; either way its folder home is Log.
+        is com.toolsboox.plugin.calendar.ui.ReadingLogFragment,
+        is com.toolsboox.plugin.chat.ui.LedgerChatFragment -> "Log"
+        is com.toolsboox.plugin.calendar.ui.SiteBoardsFragment,
+        is com.toolsboox.plugin.calendar.ui.CorrespondenceFragment,
+        is com.toolsboox.plugin.calendar.ui.MessagesFragment,
+        is com.toolsboox.plugin.calendar.ui.RosterFragment -> "Community"
+        is com.toolsboox.plugin.calendar.ui.SiteWebFragment -> "Sites"
+        is com.toolsboox.plugin.calendar.ui.CalendarSettingsFragment,
+        is com.toolsboox.plugin.cloud.ui.CloudFragment -> "Settings"
+        // The day surface hosts many pages: the day grid itself is "Today" (no folder), the
+        // ritual pages live under Daily, and the freeform note pages under Notes. Same key
+        // vocabulary as the fragment's own sectionEmoji()/sectionIcon().
+        is com.toolsboox.plugin.calendar.ui.CalendarDayFragment ->
+            when (val page = fragment.currentNotePage()) {
+                null, "default", com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE -> null
+                "intake", "gratitude", "selfexec", "write" -> "Daily"
+                "grid", "sketch" -> "Notes"
+                else -> if (com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(page) ||
+                    com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(page)) "Daily"
+                else "Notes"   // lined pages ("0", "1", …) and named notebooks
+            }
+        else -> null   // almanac pages (week/month/…), dashboard — no folder to call home
+    }
+
     // Jump to a Feed Ledger view (feed / stars / read / later, optionally by kind) by setting the
     // selection and navigating — the same wiring across every surface.
     fun openFeed(mode: String, kind: String?) {
@@ -59,7 +109,7 @@ fun ledgerDirectoryFolders(
     val bookRows: List<Pair<String, () -> Unit>> =
         recentBooks.ifEmpty { shelf.map { f -> ("📖  " + f.nameWithoutExtension) to { openBook(f) } } } +
         ("📚  All books" to { nav.navigate(R.id.action_to_reader) })
-    val bookshelf = ScreenFragment.Folder("📚", "Bookshelf", bookRows)
+    val bookshelf = ScreenFragment.Folder("📚", "Bookshelf", bookRows, expanded = home == "Bookshelf")
 
     // Read-aloud transport, only while something is playing — reachable from every surface.
     val nowPlaying = if (com.toolsboox.ui.plugin.LedgerPlayer.isActive)
@@ -104,7 +154,7 @@ fun ledgerDirectoryFolders(
                 nav.navigate(R.id.action_to_feeds)
             },
             "📡  Local Feeds" to { openFeed("local", null) }
-        ), expanded = expandFeedLedger),
+        ), expanded = home == "Feed"),
         // Desk Ledger — the working surfaces: mail, people, tasks, boards, publishing, notes.
         ScreenFragment.Folder("🗒", "Desk", listOf(
             // Desk order (Michael, 07-24): Quick Wins leads — the quickest action-surface at the
@@ -122,7 +172,7 @@ fun ledgerDirectoryFolders(
             // the featured image) and browse/edit/trash posts.
             "🖋  Publish" to { nav.navigate(R.id.action_to_publish) },
             "🗎  Posts" to { nav.navigate(R.id.action_to_posts_browser) }
-        )),
+        ), expanded = home == "Desk"),
         // The Garden: the surfaces that are about what you have already written rather than about
         // capturing more of it. Roots is what keeps coming back, Map is the same material as a picture,
         // and Sprouts and Missed Rhizomes are what sprouted or what you skipped that speaks to it.
@@ -132,7 +182,7 @@ fun ledgerDirectoryFolders(
             "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
             "🌱  Sprouts" to { nav.navigate(R.id.action_to_sprouts) },
             "✧  Missed Rhizomes" to { nav.navigate(R.id.action_to_missed_rhizomes) }
-        )),
+        ), expanded = home == "Garden"),
         // Notes as their own door (Michael, 07-24): the four note surfaces out of the Desk into a
         // folder of their own — the named-notes work will grow from here. Notes reopens where you
         // last were.
@@ -141,7 +191,7 @@ fun ledgerDirectoryFolders(
             "📈  Grid Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "grid") },
             "⌱  Jot Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "sketch") },
             "⌗  Text Notes" to { nav.navigate(R.id.action_to_text_notes) }
-        )),
+        ), expanded = home == "Notes"),
         // The daily ritual: Intake → Pickings → Gratitude → Self Executive → Synthesize → Write.
         // Synthesize works the day's gathered pieces and Write closes the ritual out — both live here,
         // matching iPad, rather than in the Garden.
@@ -154,7 +204,7 @@ fun ledgerDirectoryFolders(
             "🐘  Self Executive" to { CalendarNavigator.toDayNote(fragment, today, "selfexec") },
             "🔬  Synthesize" to { showSynthPicker(fragment) },
             "✍  Write" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "write") }
-        )),
+        ), expanded = home == "Daily"),
         bookshelf,
         // Log — the zettelkasten: one screen with range/origin/search inside; Ask lives with it
         // (asking IS querying the log).
@@ -163,7 +213,7 @@ fun ledgerDirectoryFolders(
             // and a distinct name + glyph is what tells you it's the browse-the-past door.
             "🕰  History" to { openHistory(null) },
             "🔎  Ask" to { nav.navigate(R.id.action_to_ledger_chat) }
-        )),
+        ), expanded = home == "Log"),
         // Community: the NATIVE people-facing surfaces — your desk's connection to others. The active
         // site's member-facing WEB portals live in their own "Sites" folder below, so it's clear at a
         // glance which rows are native tools and which are the website rendered in a WebView.
@@ -176,7 +226,7 @@ fun ledgerDirectoryFolders(
             // The day's booking roster (tap a person → their CRM, scribble a note that OCRs onto their
             // CRM timeline). Mail moved to the Desk — email is a working surface, not a person-surface.
             "🎟  Roster" to { nav.navigate(R.id.action_to_roster) }
-        )),
+        ), expanded = home == "Community"),
         // Sites — the active site's own forward-facing Vue apps in a persistent-session WebView (sign in
         // once, cookies stick). This is the WEBSITE as members/customers see it, kept apart from the
         // native tools above. Portals that ARE a native surface's web face live inside that surface
@@ -187,7 +237,7 @@ fun ledgerDirectoryFolders(
             "🎓  Courses" to { openSiteWeb(nav, "courses") },
             "🛟  Support" to { openSiteWeb(nav, "support") },
             "🛍  Shop" to { openSiteWeb(nav, "shop") }
-        )),
+        ), expanded = home == "Sites"),
         ScreenFragment.Folder("⚙", "Settings", listOf(
             // "All settings", not "⚙ Settings" — the folder is already called Settings and wears
             // the gear; a child repeating both read as the same door twice.
@@ -198,7 +248,7 @@ fun ledgerDirectoryFolders(
             "🖥  Site accounts" to { com.toolsboox.plugin.calendar.ui.SitesSettingsDialog.show(fragment.requireContext()) },
             "🔤  OCR model" to { com.toolsboox.ui.plugin.OcrModel.showPicker(fragment.requireContext()) },
             "☁  Cloud sync" to { nav.navigate(R.id.action_to_cloud) }
-        ))
+        ), expanded = home == "Settings")
     )
 }
 

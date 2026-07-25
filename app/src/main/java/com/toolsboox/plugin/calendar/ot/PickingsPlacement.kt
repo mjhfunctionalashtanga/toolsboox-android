@@ -56,27 +56,31 @@ object PickingsPlacement {
         val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
         val w = (CANVAS_W * 0.42f).coerceAtMost(scaled.width.toFloat())
         val h = w * scaled.height / scaled.width
-        val day = service.load(root, date, null, Locale.getDefault())
-        val count = day.imageElements.count { it.page == pageKey }        // grid-stagger new cards
-        // The daily board wears its cover band up top; a card staggered behind the band would sit
-        // under the recent-board tiles and steal their taps. Start the grid below the band there.
-        val yBase = if (pageKey == PickingsStore.DEFAULT_KEY) PickingsCover.CONTENT_TOP + 20f else 120f
-        val x = (60f + (count % 3) * (w + 30f)).coerceIn(0f, (CANVAS_W - w).coerceAtLeast(0f))
-        val y = (yBase + (count / 3) * (h + 30f)).coerceIn(0f, (CANVAS_H - h).coerceAtLeast(0f))
-        day.imageElements.add(ImageElement(
-            x = x, y = y, width = w, height = h, data = base64, page = pageKey,
-            sourceLink = sourceLink, sourceLabel = sourceLabel,
-            mediaKind = media?.kind ?: "",
-            attachmentId = media?.attachmentId ?: "",
-            mediaUrl = media?.url ?: "",
-            durationMs = media?.durationMs ?: 0,
-            mediaTitle = media?.title ?: "",
-            mediaDate = media?.date ?: "",
-            cardText = cardText, sourceFeed = sourceFeed,
-            // The one-decoration contract: this card already wears its CardTreatment in its own
-            // pixels, so a render-time edge (iOS GramEdge) must stand down for it.
-            edgeBaked = treatment))
-        service.save(root, date, day)
+        // Load→mutate→save under the day lock: placements arrive from raw threads (placeAsync)
+        // and race the open day page's per-pen-up save; interleaved writers drop each other's items.
+        DayLocks.withDay(date) {
+            val day = service.load(root, date, null, Locale.getDefault())
+            val count = day.imageElements.count { it.page == pageKey }        // grid-stagger new cards
+            // The daily board wears its cover band up top; a card staggered behind the band would sit
+            // under the recent-board tiles and steal their taps. Start the grid below the band there.
+            val yBase = if (pageKey == PickingsStore.DEFAULT_KEY) PickingsCover.CONTENT_TOP + 20f else 120f
+            val x = (60f + (count % 3) * (w + 30f)).coerceIn(0f, (CANVAS_W - w).coerceAtLeast(0f))
+            val y = (yBase + (count / 3) * (h + 30f)).coerceIn(0f, (CANVAS_H - h).coerceAtLeast(0f))
+            day.imageElements.add(ImageElement(
+                x = x, y = y, width = w, height = h, data = base64, page = pageKey,
+                sourceLink = sourceLink, sourceLabel = sourceLabel,
+                mediaKind = media?.kind ?: "",
+                attachmentId = media?.attachmentId ?: "",
+                mediaUrl = media?.url ?: "",
+                durationMs = media?.durationMs ?: 0,
+                mediaTitle = media?.title ?: "",
+                mediaDate = media?.date ?: "",
+                cardText = cardText, sourceFeed = sourceFeed,
+                // The one-decoration contract: this card already wears its CardTreatment in its own
+                // pixels, so a render-time edge (iOS GramEdge) must stand down for it.
+                edgeBaked = treatment))
+            service.save(root, date, day)
+        }
     }
 
     /** Chooser: today's board · new board · a saved board — then place [bitmap] off the main thread. */
@@ -128,7 +132,7 @@ object PickingsPlacement {
     ) {
         Thread {
             for (b in bitmaps) runCatching { place(service, root, b, date, key, sourceLink, sourceLabel, media, cardText = cardText, sourceFeed = sourceFeed) }
-            val what = if (bitmaps.size > 1) "${bitmaps.size} cards" else "Placed"
+            val what = if (bitmaps.size > 1) "${bitmaps.size} grams" else "Placed"
             // Offer the trip rather than taking it. You were mid-something on the page you
             // circled from, and the usual next move is to put another thing on the same board —
             // so staying is the right default and going is one tap.

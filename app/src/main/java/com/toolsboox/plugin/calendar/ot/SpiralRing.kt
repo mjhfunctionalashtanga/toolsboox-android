@@ -76,7 +76,4 @@ object SpiralRing {
 
     /** How long each entry stays up. Long enough to be read, short enough to change by teatime. */
     private const val TURN_MS = 3 * 60 * 60 * 1000L
-
-    /** What would be shown next, without advancing — for previews and tests. */
-    fun peek(context: Context, now: Long = System.currentTimeMillis()): Entry? = next(context, now)
 }

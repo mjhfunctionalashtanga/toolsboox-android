@@ -66,6 +66,41 @@
         android:layout_width="match_parent"
         android:layout_height="1dp"/>
 
+    <!-- Search — one field, two layers (the Reading Log's field-plus-button row): submit (⏎)
+         filters the LOADED mail (fetch window + starred pile); a row under those results offers
+         the same query to the servers (IMAP SEARCH). On-submit rather than per-keystroke — e-ink
+         pays a full redraw for every filter pass. ✕ clears back to the normal inbox. -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginHorizontal="10dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <EditText
+            android:id="@+id/mail_search_field"
+            android:hint="Search mail…"
+            android:inputType="text"
+            android:imeOptions="actionSearch"
+            android:maxLines="1"
+            android:textSize="16sp"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="8dp"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+
+        <TextView
+            android:id="@+id/mail_search_clear"
+            android:text="✕"
+            android:textSize="18sp"
+            android:textColor="#000000"
+            android:visibility="gone"
+            android:padding="8dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+
     <!-- The real Almanac strip: filter the inbox by date exactly as the feed filters articles. Today
          (day) is the live view (all mail); step or pick a period to see just that window's mail.
          fitXY, like Tasks & Events: the strip's touch map assumes the 1404-wide bitmap spans the

@@ -205,17 +205,20 @@
          refresh, settings, paging AND the article actions ("a second floating modal on the
          feeds list that helps take some of the weight off"). Paging is the high-frequency
          gesture, so it gets the thumb edge; the main pill keeps the occasional controls. -->
+    <!-- The strip lives IN the right margin: tucked to the edge (2dp), slim padding, and the
+         list reserves exactly its width as a gutter (keepListClearOfPill) — rows take all the
+         remaining width instead of running underneath it. -->
     <LinearLayout
         android:id="@+id/feeds_nav_pill"
         android:orientation="vertical"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="end|bottom"
-        android:layout_marginEnd="10dp"
+        android:layout_marginEnd="2dp"
         android:layout_marginBottom="118dp"
         android:gravity="center_horizontal"
         android:background="@drawable/ledger_bar_bg"
-        android:padding="4dp">
+        android:padding="2dp">
         <ImageButton android:id="@+id/feeds_page_up" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>

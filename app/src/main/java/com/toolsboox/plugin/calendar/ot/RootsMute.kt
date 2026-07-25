@@ -54,11 +54,54 @@ object RootsMute {
     fun dismissedCrossings(context: Context): Set<String> =
         prefs(context).getStringSet(KEY_DISMISSED, emptySet())?.toSet() ?: emptySet()
 
-    fun isCrossingDismissed(context: Context, id: String): Boolean = id in dismissedCrossings(context)
-
     fun dismissCrossing(context: Context, id: String) {
         val next = dismissedCrossings(context).toMutableSet()
         next.add(id)
         prefs(context).edit().putStringSet(KEY_DISMISSED, next).apply()
+    }
+
+    // ─── Shown history ────────────────────────────────────────────────────────
+    //
+    // What the Roots board actually put on screen, for the last few days. Not a preference —
+    // bookkeeping, so today's board can DEMOTE what yesterday's already showed instead of
+    // re-offering the same eighteen words forever. Demote, never exclude: a thread shown
+    // yesterday sorts to the back of its band, but when it is genuinely the day's material
+    // (hot enough, or the pool is thin) it still appears. Entries are "epochDay:term".
+
+    private const val KEY_SHOWN = "shown_history"
+
+    /** How many days back a showing still counts against a thread. */
+    const val SHOWN_HISTORY_DAYS = 5
+
+    /**
+     * term (lowercase) → the most recent epoch-day it was on the board, drawn only from days
+     * strictly before [beforeEpochDay]. Today's own showings must not demote today — the page
+     * has to stay stable across reopens within the day.
+     */
+    fun shownBefore(context: Context, beforeEpochDay: Long): Map<String, Long> {
+        val out = HashMap<String, Long>()
+        for (e in prefs(context).getStringSet(KEY_SHOWN, emptySet()).orEmpty()) {
+            val day = e.substringBefore(':').toLongOrNull() ?: continue
+            val term = e.substringAfter(':', "")
+            if (term.isEmpty() || day >= beforeEpochDay) continue
+            val prev = out[term]
+            if (prev == null || day > prev) out[term] = day
+        }
+        return out
+    }
+
+    /**
+     * Record the board for [epochDay]. Replaces any earlier record for the same day — a mute
+     * flip mid-day recomposes the board, and the last composition is the true one — and drops
+     * anything older than [SHOWN_HISTORY_DAYS], so the store stays a few dozen short strings.
+     */
+    fun recordShown(context: Context, epochDay: Long, terms: Collection<String>) {
+        val kept = prefs(context).getStringSet(KEY_SHOWN, emptySet()).orEmpty()
+            .filter {
+                val d = it.substringBefore(':').toLongOrNull()
+                d != null && d != epochDay && epochDay - d in 0..SHOWN_HISTORY_DAYS.toLong()
+            }
+        val next = (kept + terms.map { "$epochDay:${it.lowercase()}" }).toSet()
+        prefs(context).edit().putStringSet(KEY_SHOWN, next).apply()
     }
 }

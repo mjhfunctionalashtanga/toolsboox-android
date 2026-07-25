@@ -21,18 +21,42 @@ object ConnectionStore {
     private val adapter = Moshi.Builder().build()
         .adapter<List<Connection>>(Types.newParameterizedType(List::class.java, Connection::class.java))
 
+    /**
+     * Guards every load→mutate→save cycle so a sync merge on the daemon thread cannot land between
+     * a caller's load and save and silently drop the edge in between. Never held across the network.
+     */
+    private val lock = Any()
+
+    /**
+     * Parsed graph, so the repaint path (renderConnectors on every pen-up / zoom) doesn't re-read
+     * and re-parse the whole file. Written only under [lock]; dropped whenever a save fails so the
+     * next load falls back to disk.
+     */
+    @Volatile
+    private var cache: List<Connection>? = null
+
     private fun file(context: Context) =
         File(context.filesDir, "connections").apply { mkdirs() }.let { File(it, "connections.json") }
 
-    fun loadAll(context: Context): MutableList<Connection> {
+    /** Callers get their own copy — the cached list must not see their in-place edits. */
+    fun loadAll(context: Context): MutableList<Connection> =
+        synchronized(lock) { loadLocked(context).toMutableList() }
+
+    fun saveAll(context: Context, connections: List<Connection>) =
+        synchronized(lock) { saveLocked(context, connections) }
+
+    private fun loadLocked(context: Context): List<Connection> {
+        cache?.let { return it }
         val f = file(context)
-        if (!f.exists()) return mutableListOf()
-        return runCatching { adapter.fromJson(f.readText())?.toMutableList() }.getOrNull() ?: mutableListOf()
+        val parsed = if (!f.exists()) emptyList() else
+            runCatching { adapter.fromJson(f.readText()) }.getOrNull().orEmpty()
+        cache = parsed
+        return parsed
     }
 
-    fun saveAll(context: Context, connections: List<Connection>) {
-        runCatching { file(context).writeText(adapter.toJson(connections)) }
-            .onFailure { Timber.w(it, "connections save failed") }
+    private fun saveLocked(context: Context, connections: List<Connection>) {
+        cache = runCatching { file(context).writeText(adapter.toJson(connections)); connections.toList() }
+            .onFailure { Timber.w(it, "connections save failed") }.getOrNull()
     }
 
     /**
@@ -45,29 +69,34 @@ object ConnectionStore {
         fromLabel: String = "", toLabel: String = ""
     ): Connection? {
         if (from.isBlank() || to.isBlank() || from == to) return null
-        val all = loadAll(context)
-        val edge = Connection.of(from, to, kind, note, fromLabel, toLabel)
-        val existing = all.firstOrNull { it.id == edge.id }
-        val result = if (existing != null) existing.apply {
-            deletedAt = 0L
-            if (note.isNotBlank()) this.note = note
-            // Labels are a snapshot, so a fresh one always beats the stored one.
-            if (fromLabel.isNotBlank()) this.fromLabel = fromLabel
-            if (toLabel.isNotBlank()) this.toLabel = toLabel
-            updated = System.currentTimeMillis()
-        } else edge.also { all.add(it) }
-        saveAll(context, all)
+        val result = synchronized(lock) {
+            val all = loadLocked(context).toMutableList()
+            val edge = Connection.of(from, to, kind, note, fromLabel, toLabel)
+            val existing = all.firstOrNull { it.id == edge.id }
+            val touched = if (existing != null) existing.apply {
+                deletedAt = 0L
+                if (note.isNotBlank()) this.note = note
+                // Labels are a snapshot, so a fresh one always beats the stored one.
+                if (fromLabel.isNotBlank()) this.fromLabel = fromLabel
+                if (toLabel.isNotBlank()) this.toLabel = toLabel
+                updated = System.currentTimeMillis()
+            } else edge.also { all.add(it) }
+            saveLocked(context, all)
+            touched
+        }
         sync(context)
         return result
     }
 
     /** Tombstone an edge. Neither end is touched — that is the point of the edge owning itself. */
     fun disconnect(context: Context, id: String) {
-        val all = loadAll(context)
-        all.firstOrNull { it.id == id }?.apply {
-            deletedAt = System.currentTimeMillis(); updated = deletedAt
+        synchronized(lock) {
+            val all = loadLocked(context).toMutableList()
+            all.firstOrNull { it.id == id }?.apply {
+                deletedAt = System.currentTimeMillis(); updated = deletedAt
+            }
+            saveLocked(context, all)
         }
-        saveAll(context, all)
         sync(context)
     }
 
@@ -85,16 +114,25 @@ object ConnectionStore {
     fun neighbours(context: Context, uri: String): List<String> =
         touching(context, uri).mapNotNull { it.otherEnd(uri) }.distinct()
 
-    /** Round-trip the whole graph through WebDAV so an edge made on one device reaches the others. */
+    /**
+     * Round-trip the whole graph through WebDAV so an edge made on one device reaches the others.
+     *
+     * The pull happens before the lock and the push after it: local state is re-read under the
+     * lock so an edge saved while the pull was in flight makes it into the merge instead of being
+     * overwritten by it.
+     */
     fun sync(context: Context) {
         LedgerSidecarSync.background {
-            val local = loadAll(context)
             val remoteText = LedgerSidecarSync.pull(context, PATH)
-            val merged = if (remoteText.isNullOrBlank()) local else {
-                val remote = runCatching { adapter.fromJson(remoteText) }.getOrNull().orEmpty()
-                Connection.merge(local, remote)
+            val merged = synchronized(lock) {
+                val local = loadLocked(context)
+                val folded = if (remoteText.isNullOrBlank()) local.toMutableList() else {
+                    val remote = runCatching { adapter.fromJson(remoteText) }.getOrNull().orEmpty()
+                    Connection.merge(local, remote)
+                }
+                saveLocked(context, folded)
+                folded
             }
-            saveAll(context, merged)
             LedgerSidecarSync.push(context, PATH, adapter.toJson(merged))
         }
     }

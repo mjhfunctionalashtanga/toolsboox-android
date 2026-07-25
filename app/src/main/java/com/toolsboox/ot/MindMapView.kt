@@ -25,6 +25,21 @@ class MindMapView(context: Context) : View(context) {
     private var degree: Map<String, Int> = emptyMap()
     private val boxes = mutableListOf<Pair<RectF, String>>()
 
+    /**
+     * Vertical pan, in pixels, for the volume keys. The layout fits the whole picture to the
+     * panel, so this is a nudge rather than a scroll: it lets a box clipped at an edge be read,
+     * and it gives the hardware keys the same "page it" meaning they carry everywhere else.
+     * Clamped to one panel each way so the picture can never be paged out of reach.
+     */
+    private var panY = 0f
+
+    /** Shift the picture by [dy] pixels (positive = down). One clean redraw, no animation. */
+    fun panBy(dy: Float) {
+        val limit = height.toFloat().coerceAtLeast(1f)
+        val next = (panY + dy).coerceIn(-limit, limit)
+        if (next != panY) { panY = next; invalidate() }
+    }
+
     private val density = resources.displayMetrics.density
     private fun dp(v: Float) = v * density
 
@@ -52,6 +67,7 @@ class MindMapView(context: Context) : View(context) {
     fun setGraph(nodes: List<MindMap.Placed>, degree: Map<String, Int> = emptyMap()) {
         placed = nodes
         this.degree = degree
+        panY = 0f   // a new picture opens centred — a leftover pan would look like a broken map
         invalidate()
     }
 
@@ -60,7 +76,9 @@ class MindMapView(context: Context) : View(context) {
         if (placed.isEmpty()) return
 
         val cx = width / 2f
-        val cy = height / 2f
+        // Boxes are laid out (and remembered for hit-testing) in already-panned screen space,
+        // so taps keep landing on what the finger sees without any coordinate translation.
+        val cy = height / 2f + panY
         // Leave a margin so the outer ring's boxes stay on the panel rather than half off it.
         val rx = width / 2f - dp(70f)
         val ry = height / 2f - dp(46f)

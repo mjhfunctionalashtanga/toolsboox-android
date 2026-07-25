@@ -46,6 +46,13 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         // out as where its material came from and how it clusters.
         const val ARG_PAGE_DATE = "map_page_date"
         const val ARG_PAGE_KEY = "map_page_key"
+
+        /** Fewer distinct nodes than this and the connection graph isn't a picture yet — the
+         *  word-rhizome weave carries the surface instead. */
+        const val MIN_CONNECTION_NODES = 3
+
+        /** The immediate state while the ledger is read — the surface must never look dead. */
+        private const val WEAVING = "Weaving the map…"
     }
 
     @Inject
@@ -53,6 +60,9 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
 
     @Inject
     lateinit var calendarPatternService: com.toolsboox.plugin.calendar.fi.CalendarPatternService
+
+    @Inject
+    lateinit var corpusService: com.toolsboox.plugin.chat.fi.LedgerCorpusService
 
     override val view = R.layout.fragment_ledger_map
 
@@ -64,6 +74,8 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
     private var edges: List<Connection> = emptyList()
     private var adjacency: Map<String, List<String>> = emptyMap()
     private var labels: Map<String, String> = emptyMap()
+    /** Non-null when the picture is the word-rhizome weave rather than drawn edges. */
+    private var weave: com.toolsboox.plugin.calendar.ot.LedgerMapWeave.Weave? = null
     private var focus: String = ""
     /** Where we have been, so Back walks the map rather than leaving it. */
     private val trail = ArrayDeque<String>()
@@ -108,11 +120,45 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         val pageDate = arguments?.getString(ARG_PAGE_DATE)?.takeIf { it.isNotBlank() }
         if (pageDate != null) {
             loadPageGraph(pageDate, arguments?.getString(ARG_PAGE_KEY).orEmpty())
+            render()
         } else {
-            loadGraph()
-            focus = arguments?.getString(ARG_URI)?.takeIf { it.isNotBlank() } ?: openingFocus()
+            openMap(arguments?.getString(ARG_URI)?.takeIf { it.isNotBlank() })
         }
-        render()
+    }
+
+    /**
+     * First paint of the whole-ledger map, off the main thread.
+     *
+     * The drawn connection graph stays primary when it is a picture worth drawing; when it is
+     * empty or too thin (< [MIN_CONNECTION_NODES] nodes — an imported archive has decades of
+     * material and essentially no edges) the surface weaves the word-rhizome fallback instead of
+     * claiming nothing is connected. Either way the subject line says "Weaving the map…"
+     * immediately, so the screen is never silently dead while a big ledger is read.
+     */
+    private fun openMap(wanted: String?) {
+        binding.mapSubject.text = WEAVING
+        val appCtx = requireContext().applicationContext
+        lifecycleScope.launch {
+            val conn = withContext(Dispatchers.IO) { buildConnectionGraph(appCtx) }
+            if (!isAdded) return@launch
+            if (conn.adjacency.keys.size >= MIN_CONNECTION_NODES) {
+                applyConnections(conn)
+                focus = wanted?.takeIf { it in adjacency } ?: openingFocus()
+                render()
+            } else {
+                showWeave(initialFocus = wanted)
+            }
+        }
+    }
+
+    /** Pan the picture with the hardware keys, by most of the panel like every other surface —
+     *  the map canvas is a custom View, so the ScreenFragment default finds nothing to scroll. */
+    override fun onVolumeKey(up: Boolean): Boolean {
+        if (!volumeKeysPage()) return false
+        if (!::map.isInitialized) return false
+        val step = (map.height * 9 / 10).coerceAtLeast(1)
+        map.panBy(if (up) step.toFloat() else -step.toFloat())
+        return true
     }
 
     /**
@@ -164,6 +210,7 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
 
         adjacency = adj
         labels = names
+        weave = null
         focus = center
     }
 
@@ -182,9 +229,15 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    private fun loadGraph() {
-        val ctx = requireContext()
-        edges = ConnectionStore.loadAll(ctx).filter { !it.isDeleted }
+    /** One built connection graph — pure data, so the build can run on any dispatcher. */
+    private data class ConnGraph(
+        val edges: List<Connection>,
+        val adjacency: Map<String, List<String>>,
+        val labels: Map<String, String>
+    )
+
+    private fun buildConnectionGraph(ctx: android.content.Context): ConnGraph {
+        val edges = ConnectionStore.loadAll(ctx).filter { !it.isDeleted }
 
         val adj = HashMap<String, MutableList<String>>()
         val names = HashMap<String, String>()
@@ -213,8 +266,77 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         // you have, named and tappable, and the long tail stays a walk away instead of noise.
         val deg = adj.mapValues { it.value.distinct().size }
         for (list in adj.values) list.sortByDescending { deg[it] ?: 0 }
-        adjacency = adj
-        labels = names
+        return ConnGraph(edges, adj, names)
+    }
+
+    private fun applyConnections(g: ConnGraph) {
+        edges = g.edges
+        adjacency = g.adjacency
+        labels = g.labels
+        weave = null
+    }
+
+    /** The "My connections" road: load off-main, then draw from the busiest corner. */
+    private fun showConnections() {
+        binding.mapSubject.text = WEAVING
+        val appCtx = requireContext().applicationContext
+        lifecycleScope.launch {
+            val g = withContext(Dispatchers.IO) { buildConnectionGraph(appCtx) }
+            if (!isAdded) return@launch
+            applyConnections(g)
+            trail.clear()
+            focus = openingFocus()
+            render()
+        }
+    }
+
+    /**
+     * The word-rhizome weave: threads ring the centre sized by heat, crossings hang off the
+     * threads they join — [com.toolsboox.plugin.calendar.ot.LedgerMapWeave], the iOS Map's
+     * fallback ported onto the same layout pipeline as the connection graph.
+     *
+     * Cache shape mirrors Roots: a weave already built today paints instantly, then a background
+     * re-build (cheap — the corpus walk underneath is mtime-cached on disk) replaces the picture
+     * only when the ledger actually changed, so reopening is instant and never re-scans decades.
+     */
+    private fun showWeave(initialFocus: String? = null) {
+        val weaveCache = com.toolsboox.plugin.calendar.ot.LedgerMapWeave.Cache
+        val today = java.time.LocalDate.now()
+        val held = weaveCache.weave?.takeIf { weaveCache.day == today && !it.isEmpty }
+        if (held != null) {
+            applyWeave(held, initialFocus)
+            render()
+        } else {
+            binding.mapSubject.text = WEAVING
+        }
+
+        val root = documentsRoot()
+        lifecycleScope.launch {
+            val fresh = withContext(Dispatchers.IO) {
+                runCatching { com.toolsboox.plugin.calendar.ot.LedgerMapWeave.build(corpusService, root) }
+                    .getOrNull()
+            } ?: com.toolsboox.plugin.calendar.ot.LedgerMapWeave.EMPTY
+            if (!isAdded) return@launch
+            weaveCache.day = today
+            weaveCache.weave = fresh
+            // Only repaint if the surface is still showing (or waiting for) THIS weave — the
+            // person may have walked to My connections or an outline while the ledger was read.
+            val stillOnWeave = weave === held || (weave == null && adjacency.isEmpty())
+            if (!stillOnWeave) return@launch
+            // A cached paint the re-build agrees with stays put — no flash for nothing.
+            if (held != null && fresh.adjacency == held.adjacency) return@launch
+            applyWeave(fresh, initialFocus)
+            render()
+        }
+    }
+
+    private fun applyWeave(w: com.toolsboox.plugin.calendar.ot.LedgerMapWeave.Weave, initialFocus: String?) {
+        weave = w
+        adjacency = w.adjacency
+        labels = w.labels
+        edges = emptyList()
+        trail.clear()
+        focus = initialFocus?.takeIf { it in w.adjacency } ?: com.toolsboox.plugin.calendar.ot.LedgerMapWeave.ROOT
     }
 
     /** The most-connected node — the part of the map with something to show. */
@@ -238,17 +360,29 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
     }
 
     private fun render() {
+        val w = weave
         if (adjacency.isEmpty() || focus.isBlank()) {
             map.setGraph(emptyList())
-            binding.mapSubject.text = getString(R.string.map_empty)
+            // "Nothing is connected yet" is only honest when there is genuinely nothing — no
+            // edges AND an empty corpus. A ledger with material but no recurring words yet gets
+            // the truthful version instead.
+            binding.mapSubject.text =
+                if (w != null && !w.corpusIsEmpty)
+                    "Nothing has come back often enough to weave yet — this fills in as the ledger does."
+                else getString(R.string.map_empty)
+            binding.mapHint.text = getString(R.string.map_hint)
             return
         }
         binding.mapSubject.text = labels[focus] ?: LedgerUri.describe(focus)
-        // Each node's connection count rides along so the view can size boxes by weight,
-        // the way the iOS Map sizes its discs — a busy node should LOOK load-bearing.
+        // The weave announces its window on the hint line — a capped map says what it was woven
+        // from rather than silently truncating 24 years to a picture.
+        binding.mapHint.text = w?.subtitle()?.takeIf { it.isNotBlank() } ?: getString(R.string.map_hint)
+        // Each node's weight rides along so the view can size boxes by it, the way the iOS Map
+        // sizes its discs — connection count for drawn edges, thread heat for the weave. A busy
+        // node should LOOK load-bearing.
         map.setGraph(
             MindMap.layout(focus, adjacency) { labels[it] ?: LedgerUri.describe(it) },
-            adjacency.mapValues { it.value.distinct().size })
+            w?.weights ?: adjacency.mapValues { it.value.distinct().size })
     }
 
     /**
@@ -261,7 +395,10 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
     private fun showDrawMenu() {
         showIconMenu(getString(R.string.map_title), listOf(
             // ⁂ is THE connect glyph on Android — the same mark the semantic surfaces wear.
-            "⁂  My connections" to { loadGraph(); focus = openingFocus(); trail.clear(); render() },
+            "⁂  My connections" to { showConnections() },
+            // The weave stays reachable even when drawn edges exist — the words are a different
+            // map of the same ledger, not just the fallback for an unwoven one.
+            "🌿  Word rhizomes" to { showWeave() },
             "✎  Type an outline…" to { showOutlineDialog("") },
             "🧠  Ask for a map…" to { showPersonaMenu() }
         ))
@@ -358,6 +495,7 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         if (root == null) { showMessage(getString(R.string.map_nothing_to_map), binding.root); return }
         adjacency = Markmap.adjacency(nodes)
         labels = Markmap.labels(nodes)
+        weave = null
         trail.clear()
         focus = root
         outline = markdown
@@ -368,6 +506,13 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
      *  everywhere) or open the thing itself — holding used to jump straight to the rhizome,
      *  which was the right single verb until picking existed. */
     private fun nodeHoldMenu(uri: String) {
+        // Weave nodes are synthetic addresses ("weave:…"), not ledger uris — holding one gets
+        // the weave's own menu instead of a rhizome jump that could never resolve.
+        val w = weave
+        if (w != null && com.toolsboox.plugin.calendar.ot.LedgerMapWeave.isWeaveNode(uri)) {
+            weaveHoldMenu(w, uri)
+            return
+        }
         val label = labels[uri] ?: LedgerUri.describe(uri)
         showIconMenu(label.take(80), listOf(
             "⁂  Pick — make it a gram" to {
@@ -389,6 +534,74 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
                 LedgerRhizomeFragment.ARG_LABEL to (labels[uri] ?: LedgerUri.describe(uri))
             )
         )
+    }
+
+    /**
+     * Hold on a weave node. A thread opens everywhere it runs (the same reading Roots gives it);
+     * a crossing gets the usual pair of verbs — pick it as a gram, or open the day it was made on
+     * as an object (the road Roots takes for a crossing). The centre has nothing to hold.
+     */
+    private fun weaveHoldMenu(w: com.toolsboox.plugin.calendar.ot.LedgerMapWeave.Weave, uri: String) {
+        val weaveOt = com.toolsboox.plugin.calendar.ot.LedgerMapWeave
+        when {
+            weaveOt.isThread(uri) -> {
+                val t = w.threadsByTerm[weaveOt.termOf(uri)] ?: return
+                showThreadRun(w, t)
+            }
+            weaveOt.isItem(uri) -> {
+                val snip = weaveOt.itemIndexOf(uri)?.let { w.snippets.getOrNull(it) } ?: return
+                showIconMenu(snip.text.take(80), listOf(
+                    "⁂  Pick — make it a gram" to {
+                        com.toolsboox.plugin.feeds.ot.FeedNoteGram.showForItem(
+                            this, calendarDayService, documentsRoot(),
+                            itemText = snip.text.take(600), originLabel = "from your map"
+                        ) { kind, sink -> captureAvGramDirect(kind, sink) }
+                    },
+                    "⁂  Open rhizome" to {
+                        val day = snip.date.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+                        findNavController().navigate(
+                            R.id.action_to_ledger_rhizome,
+                            androidx.core.os.bundleOf(
+                                LedgerRhizomeFragment.ARG_URI to LedgerUri.page(day.toString()),
+                                LedgerRhizomeFragment.ARG_LABEL to snip.title.ifBlank { snip.citation }
+                            )
+                        )
+                    }
+                ))
+            }
+        }
+    }
+
+    /** Everywhere one thread runs, oldest first — the same reading Roots gives a thread. */
+    private fun showThreadRun(
+        w: com.toolsboox.plugin.calendar.ot.LedgerMapWeave.Weave,
+        thread: com.toolsboox.plugin.calendar.ot.Rhizome.Thread
+    ) {
+        val ctx = context ?: return
+        val dp = resources.displayMetrics.density
+        val col = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((18 * dp).toInt(), (10 * dp).toInt(), (18 * dp).toInt(), (8 * dp).toInt())
+        }
+        for (i in thread.members.sortedBy { w.snippets.getOrNull(it)?.date?.time ?: 0L }) {
+            val snip = w.snippets.getOrNull(i) ?: continue
+            col.addView(TextView(ctx).apply {
+                text = snip.text.take(300).trim() + if (snip.text.length > 300) "…" else ""
+                textSize = 17f; setTextColor(0xFF000000.toInt()); setLineSpacing(0f, 1.25f)
+                setPadding(0, (14 * dp).toInt(), 0, (2 * dp).toInt())
+            })
+            col.addView(TextView(ctx).apply {
+                text = snip.citation
+                textSize = 12f; setTextColor(0xFF999999.toInt())
+            })
+        }
+        val scroll = android.widget.ScrollView(ctx).apply { addView(col) }
+        com.toolsboox.ot.ReadingSize.apply(scroll)
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("🌿  " + thread.term)
+            .setView(scroll)
+            .setNegativeButton(getString(R.string.roots_close), null)
+            .show()
     }
 
     override fun showLoading() {}

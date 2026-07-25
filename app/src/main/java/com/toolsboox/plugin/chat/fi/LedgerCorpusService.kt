@@ -10,7 +10,8 @@ import com.toolsboox.plugin.chat.da.Section
 import com.toolsboox.plugin.chat.nw.EmbeddingIndex
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
-import java.text.SimpleDateFormat
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -26,7 +27,9 @@ class LedgerCorpusService @Inject constructor(
     private val calendarDayService: CalendarDayService,
     @ApplicationContext private val context: Context
 ) {
-    private val dayFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    // Thread-safe, unlike a shared SimpleDateFormat: cite() runs on multiple dispatchers outside
+    // the CorpusCache lock, and a garbled date corrupts the citation identity key.
+    private val dayFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.US)
 
     /**
      * The corpus, remembered.
@@ -484,7 +487,7 @@ class LedgerCorpusService @Inject constructor(
 
     private fun cite(date: Date, kind: String, label: String): String {
         val short = if (label.length > 40) label.take(37) + "…" else label
-        return "${dayFmt.format(date)} · $kind · $short"
+        return "${dayFmt.format(date.toInstant().atZone(ZoneId.systemDefault()))} · $kind · $short"
     }
 
     private fun dayDate(year: Int, month: Int, day: Int): Date {

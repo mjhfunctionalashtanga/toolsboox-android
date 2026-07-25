@@ -36,25 +36,39 @@ object LinkCardRenderer {
         "watch" -> "Watch"; "listen" -> "Listen"; else -> "Read"
     }
 
-    fun render(url: String, title: String, kind: String, W: Int = 1080): Bitmap {
+    /**
+     * [thumb] (optional) is the entry's featured image, drawn full-width between the title and
+     * the source line — the "grams for stars" face. [sourceName] (optional) is the feed or site
+     * name; when present the source line reads "↗ Feed · host" instead of the bare host.
+     */
+    fun render(url: String, title: String, kind: String, thumb: Bitmap? = null,
+               sourceName: String = "", W: Int = 1080): Bitmap {
         val host = runCatching { URI(url).host?.removePrefix("www.") }.getOrNull()?.ifBlank { null } ?: url
         val pad = W * 0.08f
+        val contentW = W - 2 * pad
 
         val titlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color = ink; typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD); textSize = 58f
         }
         val label = title.ifBlank { host }
         val titleLayout = StaticLayout.Builder.obtain(label, 0, label.length, titlePaint,
-            (W - 2 * pad).toInt()).setLineSpacing(10f, 1f).setMaxLines(4)
+            contentW.toInt()).setLineSpacing(10f, 1f).setMaxLines(4)
             .setEllipsize(android.text.TextUtils.TruncateAt.END).build()
 
-        // Height: kind chip + title + host line + padding.
-        val h = (pad + 64f + 28f + titleLayout.height + 40f + 44f + pad).toInt().coerceIn(420, 1200)
+        // Thumb band: scaled to the content width, tall images centre-cropped to a calm cap so
+        // one portrait photo doesn't turn the card into a poster.
+        val thumbH = thumb?.let { (contentW * it.height / it.width.coerceAtLeast(1)).coerceAtMost(620f) } ?: 0f
+        val thumbGap = if (thumb != null) 30f else 0f
+
+        // Height: kind chip + title + thumb + host line + padding.
+        val h = (pad + 64f + 28f + titleLayout.height + thumbH + thumbGap + 40f + 44f + pad)
+            .toInt().coerceIn(420, 1600)
         val bmp = Bitmap.createBitmap(W, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         c.drawColor(paper)
 
-        // Kind chip: glyph + word, up top.
+        // Kind chip: glyph + word, up top. For watch/listen this is the at-a-glance mark the
+        // intake board reads by (▶ WATCH / 🎧 LISTEN).
         val chipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = muted; typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD); textSize = 34f
         }
@@ -65,15 +79,28 @@ object LinkCardRenderer {
         c.save(); c.translate(pad, y); titleLayout.draw(c); c.restore()
         y += titleLayout.height + 30f
 
-        // Divider + host.
+        // Thumbnail: full content width; source rect centre-cropped when the height was capped.
+        if (thumb != null) {
+            val naturalH = contentW * thumb.height / thumb.width.coerceAtLeast(1)
+            val src = if (naturalH > thumbH) {
+                val keep = (thumb.height * thumbH / naturalH).toInt().coerceAtLeast(1)
+                val top = ((thumb.height - keep) / 2).coerceAtLeast(0)
+                android.graphics.Rect(0, top, thumb.width, top + keep)
+            } else null
+            c.drawBitmap(thumb, src,
+                android.graphics.RectF(pad, y, pad + contentW, y + thumbH), Paint(Paint.FILTER_BITMAP_FLAG))
+            y += thumbH + thumbGap
+        }
+
+        // Divider + source: "↗ Feed · host" when the feed's name is known, else the bare host.
         val rulePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = rule; strokeWidth = 2f }
         c.drawLine(pad, y, W - pad, y, rulePaint)
         y += 40f
         val hostPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color = muted; typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.ITALIC); textSize = 34f
         }
-        val hostShown = "↗  " + host
-        c.drawText(ellipsize(hostShown, hostPaint, W - 2 * pad), pad, y, hostPaint)
+        val source = listOf(sourceName.trim(), host).filter { it.isNotBlank() }.distinct().joinToString(" · ")
+        c.drawText(ellipsize("↗  $source", hostPaint, contentW), pad, y, hostPaint)
         return bmp
     }
 

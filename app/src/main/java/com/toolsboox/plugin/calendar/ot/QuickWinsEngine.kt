@@ -62,9 +62,10 @@ object QuickWinsEngine {
 
     /**
      * A cheap fingerprint of the ledger: every day file's name and mtime folded together. Any
-     * save — a check-off, a carry-over, fresh ink that grew a task — moves it, and a moved hash
-     * is the only thing that makes [fresh] re-walk. IO (a directory walk), so call it where
-     * [fresh] is called: off the render path.
+     * save — a check-off, a carry-over, fresh ink that grew a task, a DELETE (tombstones live
+     * in the day file, so writing one rewrites it and moves its mtime) — moves it, and a moved
+     * hash is the only thing that makes [fresh] re-walk. IO (a directory walk), so call it
+     * where [fresh] is called: off the render path.
      */
     fun ledgerHash(root: File): Long {
         val calendarRoot = File(root, "calendar")
@@ -125,12 +126,21 @@ object QuickWinsEngine {
         // resurrecting finished tasks from those historical copies.
         data class Task(val item: LedgerItem, val day: LocalDate)
         val copies = ArrayList<Task>()
+        // Deletion tombstones, gathered by the same slim walk: id (lowercased) → the latest day
+        // whose file tombstones it. Deleting is the OTHER way a lineage ends — carry-over reuses
+        // an id across days and pre-dedupe twins share only their words, so without these a
+        // deleted task's older undone copy becomes "newest surviving" and the task resurrects.
+        val tombstoneDay = HashMap<String, LocalDate>()
         calendarRoot.walkTopDown()
             .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
             .forEach { file ->
                 val day = fileDate(file.name) ?: return@forEach
-                val items = runCatching { calendarDayService.loadLedgerItems(file) }.getOrNull() ?: return@forEach
-                for (li in items) {
+                val slice = runCatching { calendarDayService.loadTasksSlice(file) }.getOrNull() ?: return@forEach
+                for (id in calendarDayService.deadItemIds(slice)) {
+                    val prev = tombstoneDay[id]
+                    if (prev == null || day > prev) tombstoneDay[id] = day
+                }
+                for (li in slice.ledgerItems) {
                     if (li.kind == LedgerItem.Kind.TASK && li.text.trim().isNotEmpty())
                         copies.add(Task(li, day))
                 }
@@ -141,12 +151,19 @@ object QuickWinsEngine {
         // and let each lineage's NEWEST day speak for it. Done there means the task is finished
         // (suppress it); undone there is live, which also lets a task re-created after an old
         // completion count as fresh work. The newest copy is the one Done should save to, so it
-        // becomes the win's sourceDay.
+        // becomes the win's sourceDay. A lineage also retires when its newest event is a
+        // DELETION: tombstoned copies don't count as live, and a tombstone on/after the newest
+        // surviving undone copy's day suppresses the lineage — deleting the newest copy must
+        // not hand the microphone back to an older twin.
         val tasks = copies
             .groupBy { LedgerTaskDedupe.key(it.item.text).ifEmpty { it.item.id } }
             .values.mapNotNull { lineage ->
-                val newestDay = lineage.maxOf { it.day }
-                val newest = lineage.filter { it.day == newestDay }
+                val deletedOn = lineage.mapNotNull { tombstoneDay[it.item.id.lowercase()] }.maxOrNull()
+                val live = lineage.filter { tombstoneDay[it.item.id.lowercase()] == null }
+                if (live.isEmpty()) return@mapNotNull null
+                val newestDay = live.maxOf { it.day }
+                if (deletedOn != null && deletedOn >= newestDay) return@mapNotNull null
+                val newest = live.filter { it.day == newestDay }
                 if (newest.any { it.item.done }) null else newest.first()
             }
         if (tasks.isEmpty()) return emptyList()

@@ -8,8 +8,9 @@ import java.net.Socket
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
-/** An unexpected/negative server response, an auth rejection, a bad config, or a dropped socket. */
-class MailException(message: String) : Exception(message)
+/** An unexpected/negative server response, an auth rejection, a bad config, or a dropped socket.
+ *  Open for the one refusal the UI words differently ([MailMessageTooLarge]). */
+open class MailException(message: String) : Exception(message)
 
 /**
  * A TLS (or plain) line-oriented socket for the mail protocols. IMAP and SMTP are both CRLF line
@@ -78,6 +79,10 @@ class MailConnection(
     /** Exactly [n] bytes (an IMAP literal). */
     fun readBytes(n: Int): ByteArray {
         if (n <= 0) return ByteArray(0)
+        // A broken or hostile server can announce any literal size; allocating it blind is an OOM
+        // on an e-ink tablet. Nothing this client requests can legitimately exceed the cap: the
+        // on-demand full fetch bounds itself first (ImapClient.ON_DEMAND_FETCH_MAX, below this).
+        if (n > MAX_LITERAL) throw MailException("The server announced an oversized response (${n / (1024 * 1024)} MB).")
         val inp = input ?: throw MailException("The connection closed.")
         val out = ByteArray(n)
         var read = 0
@@ -99,5 +104,10 @@ class MailConnection(
     fun sendRaw(data: ByteArray) {
         val o = output ?: throw MailException("The connection closed.")
         o.write(data); o.flush()
+    }
+
+    companion object {
+        /** Hard ceiling on one announced literal; [readBytes] fails past it rather than allocate. */
+        private const val MAX_LITERAL = 32 * 1024 * 1024
     }
 }

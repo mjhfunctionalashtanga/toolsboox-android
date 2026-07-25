@@ -26,6 +26,7 @@ object MailSync {
         }
         val all = ArrayList<InboxMessage>()
         val errors = ArrayList<String>()
+        val okAccounts = HashSet<String>()
         for (a in accounts) {
             val pass = MailAccountStore.password(context, a.id)
             if (a.imapHost.isBlank() || pass.isBlank()) {
@@ -35,23 +36,88 @@ object MailSync {
             try {
                 val client = ImapClient(a.imapHost, a.imapPort.coerceIn(1, 65535), a.imapSSL)
                 val fetched = client.fetchRecent(a.loginName, pass, limit)
-                val label = a.displayName.ifBlank { a.email }
-                fetched.forEach { f ->
-                    all.add(
-                        InboxMessage(
-                            id = "acct:${a.id}:uid:${f.uid}", account = label,
-                            fromName = f.fromName, fromEmail = f.fromEmail, subject = f.subject,
-                            snippet = f.body.replace("\n", " ").take(140),
-                            body = f.body, date = f.date
-                        )
-                    )
-                }
+                fetched.forEach { f -> all.add(toInbox(a, f)) }
+                okAccounts.add(a.id)
             } catch (e: Exception) {
                 errors.add("${a.email.ifBlank { "account" }}: ${e.message ?: "failed"}")
             }
         }
         InboxStore.setFetched(all)
+        // With the window in hand, drop the cleared/read ids that can never resurface — only for
+        // accounts that just fetched cleanly (a failed account keeps all its state).
+        InboxStore.prune(context, okAccounts, all.map { it.id }.toSet())
         return if (errors.isEmpty()) null else errors.joinToString("\n")
+    }
+
+    /** One [FetchedMessage] shaped for the unified inbox. Refresh and server search share this so a
+     *  searched message is a REAL inbox message — same acct:<id>:uid:<uid> id, same typed uid — and
+     *  every flow (open, star-to-todo, reply, load-the-rest) works on it unchanged. */
+    private fun toInbox(a: MailAccount, f: FetchedMessage): InboxMessage = InboxMessage(
+        id = "acct:${a.id}:uid:${f.uid}", account = a.displayName.ifBlank { a.email },
+        fromName = f.fromName, fromEmail = f.fromEmail, subject = f.subject,
+        snippet = f.body.replace("\n", " ").take(140),
+        body = f.body, date = f.date, truncated = f.truncated,
+        // The typed UID (null when the probe fell back to a random one) -- the id embeds it too,
+        // but only this field is safe to fetch by.
+        uid = f.uid.toLongOrNull()
+    )
+
+    /**
+     * Search the SERVERS — the local filter only sees the ~25-per-account window plus the starred
+     * pile; this asks every configured inbox (or just [accountFilter]'s) via IMAP `UID SEARCH`
+     * (subject / from / body text) and pulls the newest matches back through the same size-probed
+     * bounded fetch a refresh uses. Returns the matches (newest first, at most [cap] across
+     * accounts) alongside per-account error lines — one slow or broken account never empties the
+     * others' results. Suspends; each account's search runs on Dispatchers.IO inside [ImapClient].
+     */
+    suspend fun searchServer(
+        context: Context, query: String, accountFilter: String? = null, cap: Int = 30
+    ): Pair<List<InboxMessage>, List<String>> {
+        val accounts = MailAccountStore.all(context)
+            .filter { accountFilter == null || it.id == accountFilter }
+        val all = ArrayList<InboxMessage>()
+        val errors = ArrayList<String>()
+        if (accounts.isEmpty()) return all to listOf("No account to search.")
+        // Split the cap across accounts (each bounded hit is a round-trip on a slow panel's
+        // network) but never so thin an account can't show a real result set.
+        val perAccount = (cap / accounts.size).coerceAtLeast(10)
+        for (a in accounts) {
+            val pass = MailAccountStore.password(context, a.id)
+            if (a.imapHost.isBlank() || pass.isBlank()) {
+                errors.add("${a.email.ifBlank { "account" }}: needs an IMAP host and password")
+                continue
+            }
+            try {
+                val client = ImapClient(a.imapHost, a.imapPort.coerceIn(1, 65535), a.imapSSL)
+                client.search(a.loginName, pass, query, perAccount).forEach { all.add(toInbox(a, it)) }
+            } catch (e: Exception) {
+                errors.add("${a.email.ifBlank { "account" }}: ${e.message ?: "search failed"}")
+            }
+        }
+        return all.sortedByDescending { it.date }.take(cap) to errors
+    }
+
+    /** Fetch a truncated message WHOLE from the account it arrived on -- the tap on the truncation
+     *  note. Returns the completed message and lands it in [InboxStore] (the fetch window, and the
+     *  starred pile if it's kept there), so every surface sees the full body. Throws
+     *  [MailMessageTooLarge] when even the on-demand ceiling can't hold it. */
+    suspend fun fetchFull(context: Context, m: InboxMessage): InboxMessage {
+        val aid = accountId(m.id)
+            ?: throw MailException("This message isn't tied to a configured account.")
+        val uid = m.uid
+            ?: throw MailException("This message carries no server id to fetch by.")
+        val a = MailAccountStore.all(context).firstOrNull { it.id == aid }
+            ?: throw MailException("The account this message arrived on is gone.")
+        val pass = MailAccountStore.password(context, a.id)
+        if (a.imapHost.isBlank() || pass.isBlank()) throw MailException("Add an IMAP host and password for ${a.email}.")
+        val client = ImapClient(a.imapHost, a.imapPort.coerceIn(1, 65535), a.imapSSL)
+        val f = client.fetchFull(a.loginName, pass, uid)     // suspends; IO within
+        val full = m.copy(
+            snippet = f.body.replace("\n", " ").take(140),
+            body = f.body, truncated = false
+        )
+        InboxStore.replace(context, full)
+        return full
     }
 
     /** Reply to a message out the account it arrived on. */

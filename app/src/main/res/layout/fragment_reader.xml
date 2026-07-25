@@ -48,7 +48,8 @@
             android:layout_height="match_parent"/>
     </LinearLayout>
 
-    <!-- Draggable floating nav pill (grip taps to collapse) — matches the day/feed pill:
+    <!-- Draggable floating nav pill (grip taps to fold/turn — the shared four-state cycle,
+         so it can go vertical and sit in the book margin) — matches the day/feed pill:
          ☰ book directory · ▦ Ledger directory · ‹ prev · ✎ highlight · › next · Aa settings. -->
     <LinearLayout
         android:id="@+id/reader_bar"
@@ -61,27 +62,27 @@
         android:background="@drawable/ledger_bar_bg"
         android:padding="4dp">
 
-        <ImageView android:id="@+id/reader_grip" android:layout_width="22dp" android:layout_height="46dp"
+        <ImageView android:id="@+id/reader_grip" android:layout_width="@dimen/ledger_grip_short" android:layout_height="@dimen/ledger_grip_long"
             android:scaleType="fitCenter" android:src="@drawable/ic_grip" android:contentDescription="@null"/>
-        <ImageButton android:id="@+id/today_button" android:layout_width="44dp" android:layout_height="46dp"
+        <ImageButton android:id="@+id/today_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_today"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
-        <ImageButton android:id="@+id/goto_button" android:layout_width="44dp" android:layout_height="46dp"
+        <ImageButton android:id="@+id/goto_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_menu"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
-        <ImageButton android:id="@+id/open_button" android:layout_width="44dp" android:layout_height="46dp"
+        <ImageButton android:id="@+id/open_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_wrench"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_controls"/>
-        <ImageButton android:id="@+id/prev_button" android:layout_width="44dp" android:layout_height="46dp"
+        <ImageButton android:id="@+id/prev_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_left"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
-        <ImageButton android:id="@+id/highlight_button" android:layout_width="44dp" android:layout_height="46dp"
+        <ImageButton android:id="@+id/highlight_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_pencil"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_highlight"/>
-        <ImageButton android:id="@+id/next_button" android:layout_width="44dp" android:layout_height="46dp"
+        <ImageButton android:id="@+id/next_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_right"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
-        <ImageButton android:id="@+id/settings_button" android:layout_width="44dp" android:layout_height="46dp"
+        <ImageButton android:id="@+id/settings_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_text_size"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_aa"/>
     </LinearLayout>

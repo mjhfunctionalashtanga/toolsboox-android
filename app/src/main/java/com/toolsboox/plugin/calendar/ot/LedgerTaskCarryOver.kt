@@ -45,10 +45,15 @@ object LedgerTaskCarryOver {
         }
         if (open.isEmpty()) return false
         val existing = today.ledgerItems.map { it.id }.toSet()
-        // A task the user deleted on `today` is tombstoned by its id. Carry-over MUST honour that
-        // or it silently re-adds the deleted task every time the day reloads — the "won't delete /
-        // keeps reappearing" bug, since a deleted id is no longer in `existing`.
-        val tombstoned = today.deletedElementIds.toSet()
+        // A task the user deleted on `today` is tombstoned by its id — in `deletedItemIds`
+        // (the dedicated list, shared wire name with iOS) and, for deletions recorded by
+        // pre-split builds, `deletedElementIds`. Carry-over MUST honour both or it silently
+        // re-adds the deleted task every time the day reloads — the "won't delete / keeps
+        // reappearing" bug, since a deleted id is no longer in `existing`.
+        val tombstoned = buildSet {
+            addAll(today.deletedItemIds)
+            addAll(today.deletedElementIds)
+        }
         // …and by its WORDS, because the id is exactly what two copies of one task don't share.
         // A task typed on the day page and the same task made from the reading log have different
         // ids, so the id check above waves both through — then carries both forward every day and

@@ -48,18 +48,31 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     var volumeKeyHandler: ((up: Boolean) -> Boolean)? = null
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-        val h = volumeKeyHandler
-        if (h != null && event.action == android.view.KeyEvent.ACTION_DOWN) {
+        if (event.action == android.view.KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 // Boox page-turn buttons emit either volume OR page keycodes depending on device;
                 // accept both so the hardware buttons page everywhere a handler is registered.
                 android.view.KeyEvent.KEYCODE_VOLUME_UP,
-                android.view.KeyEvent.KEYCODE_PAGE_UP -> if (h(true)) return true
+                android.view.KeyEvent.KEYCODE_PAGE_UP -> if (handleVolumeKey(true)) return true
                 android.view.KeyEvent.KEYCODE_VOLUME_DOWN,
-                android.view.KeyEvent.KEYCODE_PAGE_DOWN -> if (h(false)) return true
+                android.view.KeyEvent.KEYCODE_PAGE_DOWN -> if (handleVolumeKey(false)) return true
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    /**
+     * Route a page key: the registered handler when there is one, otherwise ask the fragment on
+     * screen directly. The fallback matters because screens that register a handler of their own
+     * (reader, feeds, day page) null the seam unconditionally in their onPause — and reordered
+     * transactions run that onPause AFTER the next screen's onResume, wiping the registration the
+     * next screen just made. Resolving the resumed fragment at key time can't be clobbered.
+     */
+    private fun handleVolumeKey(up: Boolean): Boolean {
+        volumeKeyHandler?.let { return it(up) }
+        val navHost = supportFragmentManager.primaryNavigationFragment ?: return false
+        val current = navHost.childFragmentManager.fragments.lastOrNull { it.isResumed }
+        return (current as? com.toolsboox.ui.plugin.ScreenFragment)?.dispatchVolumeKey(up) ?: false
     }
 
     /**
@@ -103,11 +116,63 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
      */
     private lateinit var binding: ActivityMainBinding
 
+    /** The pen button's unscaled square and padding (its XML values), captured before any re-size. */
+    private var penButtonBase: IntArray? = null
+
     /**
-     * OnCreate hook.
-     *
-     * @param savedInstanceState the saved state of the instance
+     * Kept as a field: SharedPreferences holds listeners weakly, so an inline lambda would be
+     * collected and the dial would silently stop reaching the button.
      */
+    private val a11yListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == com.toolsboox.ot.ModalScale.SIZE_KEY) applyPenButtonScale()
+    }
+
+    /**
+     * Size the floating pen button from the modal-size dial. The pills get the same treatment in
+     * ScreenFragment.applyPillSizing; this is the one floating control that lives on the activity
+     * instead. At Compact (0.8) the 54dp square draws at ~43dp — inside the 44dp article gutter
+     * and the ~46dp book margin — while a TouchDelegate on its parent keeps the full 54dp square
+     * tappable. Idempotent: scales from the remembered XML base, never from the current size.
+     */
+    private fun applyPenButtonScale() {
+        val v = binding.floatNoteButton
+        val base = penButtonBase ?: intArrayOf(v.layoutParams.width, v.layoutParams.height, v.paddingLeft)
+            .also { penButtonBase = it }
+        val mul = com.toolsboox.ot.ModalScale.sizeScale(this)
+        v.layoutParams = v.layoutParams.apply {
+            width = Math.round(base[0] * mul)
+            height = Math.round(base[1] * mul)
+        }
+        val pad = Math.round(base[2] * mul)
+        v.setPadding(pad, pad, pad, pad)
+        refreshPenTouchDelegate()
+    }
+
+    /**
+     * Keep the pen button's TOUCH at its unscaled square even when drawn smaller. The delegate
+     * rect lives in the parent's coordinates and does NOT follow view translation, so this must
+     * be re-run after every drag and restore — a stale rect would tap where the button used to be.
+     */
+    private fun refreshPenTouchDelegate() {
+        val v = binding.floatNoteButton
+        v.post {
+            val parent = v.parent as? android.view.View ?: return@post
+            val base = penButtonBase ?: return@post
+            val growW = (base[0] - v.width).coerceAtLeast(0)
+            val growH = (base[1] - v.height).coerceAtLeast(0)
+            if ((growW == 0 && growH == 0) || v.visibility != android.view.View.VISIBLE) {
+                parent.touchDelegate = null; return@post
+            }
+            val r = android.graphics.Rect(
+                v.left + v.translationX.toInt() - growW / 2,
+                v.top + v.translationY.toInt() - growH / 2,
+                v.right + v.translationX.toInt() + growW / 2,
+                v.bottom + v.translationY.toInt() + growH / 2
+            )
+            parent.touchDelegate = android.view.TouchDelegate(r, v)
+        }
+    }
+
     /**
      * Make the floating pen-note button draggable: a tap still opens Notes, but a drag repositions
      * it and persists where you put it — so it can move off whatever it's covering (e.g. the feed
@@ -116,10 +181,21 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     @android.annotation.SuppressLint("ClickableViewAccessibility")
     private fun makeFloatButtonDraggable(view: android.view.View) {
         val prefs = getSharedPreferences("MAIN", MODE_PRIVATE)
-        view.post {
-            view.translationX = prefs.getFloat("floatNoteTx", 0f)
-            view.translationY = prefs.getFloat("floatNoteTy", 0f)
-        }
+        // Restore through the same clamp the live drag uses: the persisted translation was saved
+        // against SOME parent size, not necessarily this one, and applied raw it can park the
+        // button off-screen with no handle left to drag it back. Needs the laid-out parent —
+        // re-post until it has dimensions.
+        view.post(object : Runnable {
+            override fun run() {
+                val parent = view.parent as? android.view.View ?: return
+                if (parent.width == 0 || parent.height == 0) { view.post(this); return }
+                view.translationX = prefs.getFloat("floatNoteTx", 0f)
+                    .coerceIn(com.toolsboox.ot.PillBounds.range(view.left, view.right, parent.width))
+                view.translationY = prefs.getFloat("floatNoteTy", 0f)
+                    .coerceIn(com.toolsboox.ot.PillBounds.range(view.top, view.bottom, parent.height))
+                refreshPenTouchDelegate()
+            }
+        })
         var downX = 0f; var downY = 0f; var startTx = 0f; var startTy = 0f; var dragging = false
         val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
         view.setOnTouchListener { v, e ->
@@ -151,6 +227,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                     if (dragging) {
                         prefs.edit().putFloat("floatNoteTx", v.translationX)
                             .putFloat("floatNoteTy", v.translationY).apply()
+                        refreshPenTouchDelegate()
                     } else if (e.eventTime - e.downTime >= 550L) {
                         v.performLongClick()
                     }
@@ -159,6 +236,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                 android.view.MotionEvent.ACTION_UP -> {
                     if (dragging) {
                         prefs.edit().putFloat("floatNoteTx", v.translationX).putFloat("floatNoteTy", v.translationY).apply()
+                        refreshPenTouchDelegate()
                         // Clean the drag's ghost trail off the e-ink panel.
                         try {
                             com.onyx.android.sdk.api.device.epd.EpdController.repaintEveryThing(
@@ -220,6 +298,9 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     private fun applyQuickNoteVisibility() {
         binding.floatNoteButton.visibility =
             if (quickNoteVisible()) android.view.View.VISIBLE else android.view.View.GONE
+        // The touch delegate outlives visibility on its own — a hidden button would keep
+        // swallowing taps in its old corner. Keep the two in step.
+        refreshPenTouchDelegate()
     }
 
     private fun quickNoteAction(): Int =
@@ -310,20 +391,6 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             "year" to d.year.toString(), "month" to d.monthValue.toString(),
             "day" to d.dayOfMonth.toString(), "notePage" to notePage)
         binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle)
-    }
-
-    /** Photo and voice are the same gesture — getting a thing down when there isn't time to write. */
-    private fun showQuickMediaSelector() {
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
-            .setTitle(R.string.quick_note_media)
-            .setItems(
-                arrayOf(
-                    getString(R.string.quick_note_photo),
-                    getString(R.string.quick_note_voice)
-                )
-            ) { _, which -> if (which == 0) startCapture() else requestVoiceGram() }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
     }
 
     private fun runQuickNoteAction(which: Int) {
@@ -557,6 +624,12 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         makeFloatButtonDraggable(binding.floatNoteButton)
         applyQuickNoteFace()
         applyQuickNoteVisibility()
+        // The pen button honours the modal-size dial like every floating pill — at Compact its
+        // drawn square slims to reading-gutter width. Re-applied live when the dial changes
+        // (one relayout, no animation — a single clean e-ink redraw).
+        applyPenButtonScale()
+        getSharedPreferences("ledger_a11y", MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(a11yListener)
 
         firebaseAnalytics = Firebase.analytics
 

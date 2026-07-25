@@ -48,10 +48,6 @@ object LedgerPlayer {
      *  here without the player holding megabytes of text. Blocking; call off the main thread. */
     var transcriptProvider: (() -> String?)? = null
 
-    /** The current item's transcript as plain "[m:ss] line" text, or null when there is none.
-     *  Blocking (first call may fetch + cache) — call on a background thread. */
-    fun transcriptText(): String? = transcriptProvider?.invoke()
-
     /** Index of the chapter the playhead is inside (-1 when chapterless or before the first). */
     fun currentChapterIndex(): Int {
         if (chapters.isEmpty()) return -1

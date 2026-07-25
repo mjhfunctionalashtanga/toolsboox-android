@@ -32,9 +32,17 @@ object ModalScale {
     const val SIZE_KEY = "modal_size"
 
     /**
-     * The modal-size dial as a multiplier: compact 0.85 / standard 1.0 / expanded 1.25, defaulting
+     * The modal-size dial as a multiplier: compact 0.8 / standard 1.0 / expanded 1.25, defaulting
      * to standard. Everything that wants to scale a nav modal as one unit reads THIS so the whole
      * app moves off a single setting.
+     *
+     * Compact is deliberately calibrated to be MARGIN-SIZED on the reading surfaces: the floating
+     * pills and the pen button take this multiplier on their geometry (button dims, padding —
+     * see ScreenFragment.applyPillSizing / MainActivity.applyPenButtonScale), and at 0.8 a
+     * vertical pill comes out at ~39-42dp total and the pen button at ~43dp, inside the narrowest
+     * reading gutter (44dp in the article view's CSS, ~46dp in the book reader's foliate margins
+     * on a Tab8). Don't nudge this up without re-checking that arithmetic — "fits in the margin"
+     * is the promise the smallest step makes.
      */
     fun sizeScale(context: Context): Float =
         when (context.getSharedPreferences("ledger_a11y", 0).getString(SIZE_KEY, "standard")) {

@@ -126,8 +126,11 @@ class DailyPileFragment @Inject constructor() : ScreenFragment() {
             calendarDayService.load(documentsRoot(), date, null, Locale.getDefault())
         }.getOrNull()
 
+        // Defensive: a tombstoned item shouldn't be in the file at all, but if a pre-tombstone
+        // merge left a copy alongside its tombstone, the pile must not resurrect it.
+        val dead = (day?.deletedItemIds.orEmpty() + day?.deletedElementIds.orEmpty()).toSet()
         for (item in day?.ledgerItems.orEmpty()) {
-            if (item.text.isBlank()) continue
+            if (item.text.isBlank() || item.id in dead) continue
             out.add(Piece("task-${item.id}",
                 if (item.kind == LedgerItem.Kind.EVENT) Kind.EVENT else Kind.TASK,
                 item.text, LedgerUri.task(item.id)))
@@ -382,7 +385,7 @@ class DailyPileFragment @Inject constructor() : ScreenFragment() {
         val cd = calendarDayService.load(root, date, null, Locale.getDefault())
         val item = cd.ledgerItems.firstOrNull { it.id == itemId } ?: return false
         cd.ledgerItems.removeAll { it.id == itemId }
-        if (itemId !in cd.deletedElementIds) cd.deletedElementIds.add(itemId)
+        cd.tombstoneLedgerItem(itemId)
 
         val strokeIds = item.strokeIds.toSet()
         if (strokeIds.isNotEmpty()) {
