@@ -28,7 +28,16 @@ data class IntakePageData(
      * ("notes"/"quotes"/"image1"/"image2") → value (text, or a base64/data ref for images).
      * Additive to the flat *Typed fields above so existing link capture is untouched.
      */
-    var sections: MutableMap<String, MutableMap<String, String>> = mutableMapOf()
+    var sections: MutableMap<String, MutableMap<String, String>> = mutableMapOf(),
+    /**
+     * Presentation metadata per saved link — URL → {"title"/"excerpt"/"image" → value} — so a
+     * Later row can show what the thing IS (title + excerpt + thumbnail) instead of a bare URL.
+     * Filled from the matching feed entry at save time, or from a best-effort og: fetch for
+     * links saved from the open web. Same nested-string-map shape as [sections], and the same
+     * discipline as edgeBaked: a new field with a default, so a day file written before it
+     * existed (or by iOS) decodes fine and simply renders the plain way.
+     */
+    var linkMeta: MutableMap<String, MutableMap<String, String>> = mutableMapOf()
 ) {
     /** Read a structured section (empty if unset). */
     fun sectionFor(kindKey: String, section: String): String =

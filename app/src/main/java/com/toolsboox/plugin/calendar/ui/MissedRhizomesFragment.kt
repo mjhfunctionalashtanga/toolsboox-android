@@ -64,7 +64,9 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
 
     private data class MissedFind(
         val id: String, val entryTitle: String, val entryUrl: String, val feedName: String,
-        val quote: String, val rootTag: String, val rootText: String, val score: Double
+        val quote: String, val rootTag: String, val rootText: String, val score: Double,
+        // The day the skipped thing was published — what a date filter on this surface means.
+        val published: LocalDate?
     )
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -72,8 +74,14 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         view.findViewById<TextView>(R.id.semantic_title).text = "✧ Missed Rhizomes"
         column = view.findViewById(R.id.semantic_column)
         scroll = view.findViewById(R.id.semantic_scroll)
+        // The strip FILTERS the finds in place — a period tap scopes to what was published then,
+        // the carets step it, and nothing about a date ever navigates away from here.
         navBar = SemanticNavBar(this, view.findViewById(R.id.semantic_navigator),
-            calendarDayService, calendarPatternService) { documentsRoot() }
+            calendarDayService, calendarPatternService,
+            onFilter = { _, _ -> if (isAdded) render() }) { documentsRoot() }
+        // The ▦ hub, top-left as everywhere — the same directory accordion the feed carries.
+        view.findViewById<android.widget.ImageButton>(R.id.semantic_hub_button)
+            .setOnClickListener { showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this)) }
         view.findViewById<TextView>(R.id.semantic_close)
             .setOnClickListener { findNavController().popBackStack() }
         load()
@@ -83,7 +91,9 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         val ctx = context ?: return
         column.removeAllViews()
         column.addView(hint("Listening for what you missed…"))
-        lifecycleScope.launch {
+        // The view's scope: the discovery exists only to fill this column, so back-navigation
+        // cancels it instead of ghost-rendering into a dead view.
+        viewLifecycleOwner.lifecycleScope.launch {
             val found = withContext(Dispatchers.IO) { runCatching { discover(ctx) }.getOrNull() ?: emptyList() }
             if (!isAdded) return@launch
             finds = found
@@ -93,14 +103,28 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
 
     private fun render() {
         column.removeAllViews()
-        if (finds.isEmpty()) {
+        val win = navBar?.window()
+        // A find whose feed never said WHEN stays in every window: an unknown date is not a date
+        // outside the period, and filtering to a year shouldn't silently disappear the undated.
+        val shown = if (win == null) finds else finds.filter {
+            it.published == null ||
+                (!it.published.isBefore(win.first) && it.published.isBefore(win.second))
+        }
+        if (shown.isEmpty()) {
+            // Two different kinds of nothing. A filtered period with no finds is normal and should
+            // say WHICH period came up empty — a bare blank here reads as broken — while a feed
+            // that hasn't rhymed with anything yet needs the longer explanation.
             column.addView(hint(
-                "Nothing in the feed you skipped rhymes deeply with your roots yet. Let more feed " +
-                "collect, or add an embeddings key in Settings so the meaning model can compare them."))
+                if (win != null)
+                    "No missed rhizomes for ${navBar?.periodLabel()}. The carets step to the next " +
+                    "period; tapping the period again brings back everything."
+                else
+                    "Nothing in the feed you skipped rhymes deeply with your roots yet. Let more feed " +
+                    "collect, or add an embeddings key in Settings so the meaning model can compare them."))
             com.toolsboox.ot.ReadingSize.apply(scroll)
             return
         }
-        for (f in finds) column.addView(card(f))
+        for (f in shown) column.addView(card(f))
         com.toolsboox.ot.ReadingSize.apply(scroll)
     }
 
@@ -112,16 +136,8 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
 
     private fun card(f: MissedFind): View {
         val ctx = requireContext()
-        val box = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(0xFFFFFFFF.toInt()); setStroke(dp(1), 0xFFBBBBBB.toInt()); cornerRadius = dp(10).toFloat()
-            }
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(dp(3), dp(4), dp(3), dp(5)) }
-        }
+        // The shared semantic-card ground — one drawer for all three surfaces (SemanticCards).
+        val box = com.toolsboox.ot.SemanticCards.card(ctx)
         box.addView(TextView(ctx).apply {
             text = "YOU SKIPPED"
             textSize = 11f; setTextColor(0xFF999999.toInt()); letterSpacing = 0.08f
@@ -169,21 +185,50 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         actions.addView(View(ctx).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })
         actions.addView(actionButton(if (f.id in picked) "✓ Picked" else "⚗ Make picking") { makePicking(f) })
         box.addView(actions)
+        // Hold the card for the fuller menu: pick it as a gram in your medium of choice, or
+        // throw it out of the corpus for good.
+        box.setOnLongClickListener { holdMenu(f); true }
         return box
     }
 
-    private fun actionButton(label: String, onClick: () -> Unit) = TextView(requireContext()).apply {
-        text = label
-        textSize = 14f; setTextColor(0xFF000000.toInt())
-        setPadding(dp(10), dp(6), dp(10), dp(6))
-        background = android.graphics.drawable.GradientDrawable().apply {
-            setColor(0x11000000); cornerRadius = dp(8).toFloat()
-        }
-        (layoutParams as? LinearLayout.LayoutParams
-            ?: LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                .also { layoutParams = it }).setMargins(0, 0, dp(8), 0)
-        setOnClickListener { onClick() }
+    /** The hold menu — the card's verbs plus the two that don't fit on a chip strip: the pick
+     *  that asks its medium, and the permanent removal. */
+    private fun holdMenu(f: MissedFind) {
+        showIconMenu(f.entryTitle.take(80), listOf(
+            "⁂  Pick — make it a gram" to { pickAsGram(f) },
+            "⚗  Make picking" to { makePicking(f) },
+            "⁂  Rhizome" to { openRhizome(f) },
+            "📖  Read" to { openEntry(f) },
+            "🗑  Remove from corpus" to { removeFromCorpus(f) }
+        ))
     }
+
+    /** The pick, the way it works everywhere now: the skipped passage becomes the quote in hand
+     *  and [com.toolsboox.plugin.feeds.ot.FeedNoteGram] asks which medium carries your note —
+     *  handwriting, text, audio or video — before the card lands on today's Notes page. Saving
+     *  with nothing added still makes the plain quote gram; the pick itself is enough. */
+    private fun pickAsGram(f: MissedFind) {
+        com.toolsboox.plugin.feeds.ot.FeedNoteGram.showForItem(
+            this, calendarDayService, documentsRoot(),
+            itemText = f.quote.take(600),
+            originLabel = listOf(f.entryTitle, f.feedName).filter { it.isNotBlank() }
+                .joinToString(" · ").take(80),
+            sourceUrl = f.entryUrl
+        ) { kind, sink -> captureAvGramDirect(kind, sink) }
+    }
+
+    /** Stronger than skipping past it again: tombstone the entry so no future discovery run can
+     *  re-offer it. The softer dismissals stay where they were; this is for actual junk. */
+    private fun removeFromCorpus(f: MissedFind) {
+        lifecycleScope.launch(Dispatchers.IO) { runCatching { corpusService.exclude(f.entryUrl) } }
+        finds = finds.filterNot { it.id == f.id }
+        render()
+        showMessage("Removed — it won't be offered again", requireView())
+    }
+
+    // The shared chip: solid 1dp black stroke so the verb reads on e-ink (SemanticCards).
+    private fun actionButton(label: String, onClick: () -> Unit) =
+        com.toolsboox.ot.SemanticCards.actionChip(requireContext(), label, onClick)
 
     // MARK: - Actions
 
@@ -242,7 +287,27 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         val lists = cacheDir.listFiles { f -> f.isFile && f.name.startsWith("list-") && f.name.endsWith(".json") }
             ?: return emptyList()
         val seen = HashSet<String>()
-        data class Entry(val title: String, val url: String, val feed: String, val body: String)
+        data class Entry(
+            val title: String, val url: String, val feed: String, val body: String,
+            val published: LocalDate?
+        )
+        // The cache stamps entries with whatever the feed said: Miniflux hands over RFC 3339,
+        // Later rows a bare date — but a LOCAL subscription passes the raw RSS pubDate through
+        // untouched, which is usually RFC 1123 ("Wed, 23 Jul 2026 …"). That last shape parsed to
+        // null here, and a null date vanished under every filter — the whole of "no missed
+        // rhizomes in 2026". So: try each shape the cache actually holds, then the first ten
+        // characters as a date of last resort.
+        fun published(raw: String): LocalDate? =
+            runCatching {
+                java.time.OffsetDateTime.parse(raw)
+                    .atZoneSameInstant(java.time.ZoneId.systemDefault()).toLocalDate()
+            }.getOrNull()
+                ?: runCatching {
+                    java.time.ZonedDateTime.parse(raw, java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME)
+                        .withZoneSameInstant(java.time.ZoneId.systemDefault()).toLocalDate()
+                }.getOrNull()
+                ?: runCatching { LocalDate.parse(raw) }.getOrNull()
+                ?: runCatching { LocalDate.parse(raw.take(10)) }.getOrNull()
         val unsurfaced = ArrayList<Entry>()
         for (lf in lists) {
             val key = lf.name.removePrefix("list-").removeSuffix(".json")
@@ -250,8 +315,10 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
                 val engaged = e.starred || e.read ||
                     com.toolsboox.plugin.feeds.ui.FeedReadState.isRead(e.id)
                 if (engaged || e.url.isBlank() || !seen.add(e.url)) continue
+                // Thrown out by hand ("Remove from corpus") — tombstoned, never re-offered.
+                if (corpusService.isExcluded(e.url)) continue
                 val body = strip(e.content)
-                unsurfaced.add(Entry(e.title, e.url, e.feedTitle, body))
+                unsurfaced.add(Entry(e.title, e.url, e.feedTitle, body, published(e.publishedAt)))
             }
         }
         if (unsurfaced.isEmpty()) return emptyList()
@@ -285,7 +352,8 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
             out.add(MissedFind(
                 id = e.url, entryTitle = e.title, entryUrl = e.url, feedName = e.feed,
                 quote = bestSentence(e.body, b.first.text) ?: e.body.take(220),
-                rootTag = tag(b.first), rootText = b.first.text.take(200), score = b.second))
+                rootTag = tag(b.first), rootText = b.first.text.take(200), score = b.second,
+                published = e.published))
         }
         return out.sortedByDescending { it.score }.take(topN)
     }

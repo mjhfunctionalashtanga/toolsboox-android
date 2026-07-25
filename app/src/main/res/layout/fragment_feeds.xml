@@ -17,6 +17,16 @@
         android:gravity="center_vertical"
         android:paddingHorizontal="8dp" android:paddingTop="6dp"
         android:layout_width="match_parent" android:layout_height="wrap_content">
+        <!-- ▦ hub first, then the RSS drawer button, then the strip — the same top-left hub
+             door the day page has, so feeds isn't a room without the house key. -->
+        <ImageButton
+            android:id="@+id/feeds_hub_button"
+            android:src="@drawable/ic_bar_sections"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter" android:padding="3dp"
+            android:layout_marginEnd="4dp"
+            android:contentDescription="@string/go_to_title"
+            android:layout_width="32dp" android:layout_height="32dp"/>
         <ImageButton
             android:id="@+id/ledger_button"
             android:src="@drawable/ic_feed"
@@ -25,16 +35,32 @@
             android:layout_marginEnd="4dp"
             android:contentDescription="@string/feeds_title"
             android:layout_width="32dp" android:layout_height="32dp"/>
+        <!-- fitXY, like Tasks & Events: the strip's touch map assumes the 1404-wide bitmap spans
+             the whole view — the default fitCenter letterboxed it, so taps landed off-slot. -->
         <ImageView
             android:id="@+id/navigatorImageView"
             android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="56dp"
+            android:scaleType="fitXY"
             android:contentDescription="@null"/>
         <Button
             android:id="@+id/view_toggle_button"
             android:visibility="gone"
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
     </LinearLayout>
+
+    <!-- The active window, named plainly ("Week 30 · Jul 20–26") whenever the strip is parked off
+         today — the strip alone never said WHAT it was filtering to. Tap = back to the live feed. -->
+    <TextView
+        android:id="@+id/feeds_window_label"
+        android:visibility="gone"
+        android:textColor="#000000"
+        android:textStyle="bold"
+        android:textSize="14sp"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="4dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
 
     <!-- Row below the timeline: directory drawer | list -->
     <LinearLayout
@@ -154,14 +180,18 @@
             android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
             <WebView android:id="@+id/article_web"
                 android:layout_width="match_parent" android:layout_height="match_parent"/>
-            <!-- Touch pagination (like the book reader): tap the lower band — left = page up,
-                 right = page down. Upper area stays scrollable/selectable. -->
+            <!-- Page-turn zones: bottom CORNERS only, like thumbing a paper page (same fix as
+                 the book reader). The old full-width 200dp band swallowed every touch in the
+                 lower band — links couldn't pop their save-to-Later/gram menu and text couldn't
+                 be selected there. Corners are the smallest defensible patch; the center stays
+                 live for the content. Left = page up, right = page down. -->
             <LinearLayout android:id="@+id/article_tap_zones"
                 android:orientation="horizontal"
-                android:layout_width="match_parent" android:layout_height="200dp"
+                android:layout_width="match_parent" android:layout_height="120dp"
                 android:layout_gravity="bottom">
                 <View android:id="@+id/article_tap_left"
                     android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"/>
+                <Space android:layout_width="0dp" android:layout_weight="2" android:layout_height="1dp"/>
                 <View android:id="@+id/article_tap_right"
                     android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"/>
             </LinearLayout>
@@ -170,6 +200,32 @@
     </LinearLayout>
     </LinearLayout>
 </LinearLayout>
+
+    <!-- The paging trio in its own pill on the right edge — the one pill had taken on
+         refresh, settings, paging AND the article actions ("a second floating modal on the
+         feeds list that helps take some of the weight off"). Paging is the high-frequency
+         gesture, so it gets the thumb edge; the main pill keeps the occasional controls. -->
+    <LinearLayout
+        android:id="@+id/feeds_nav_pill"
+        android:orientation="vertical"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end|bottom"
+        android:layout_marginEnd="10dp"
+        android:layout_marginBottom="118dp"
+        android:gravity="center_horizontal"
+        android:background="@drawable/ledger_bar_bg"
+        android:padding="4dp">
+        <ImageButton android:id="@+id/feeds_page_up" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
+        <ImageButton android:id="@+id/feeds_goto" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_menu"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+        <ImageButton android:id="@+id/feeds_page_down" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
+            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
+    </LinearLayout>
 
     <!-- Persistent floating nav pill (grip = tap to collapse), matching the day/article/
          almanac pills: ‹ page-up · ☰ directory (center) · › page-down over the list. -->
@@ -193,22 +249,13 @@
         <ImageButton android:id="@+id/settings_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_wrench"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_settings"/>
-        <ImageButton android:id="@+id/feeds_page_up" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
-            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
-        <ImageButton android:id="@+id/feeds_goto" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
-            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_menu"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
-        <ImageButton android:id="@+id/feeds_page_down" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
-            android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
         <!-- Article actions (shown only while reading an article in-pane). -->
         <ImageButton android:id="@+id/feeds_star" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_star"
             android:visibility="gone"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_view_starred"/>
         <ImageButton android:id="@+id/feeds_note" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
-            android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_go_notes"
+            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_pencil"
             android:visibility="gone"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
         <ImageButton android:id="@+id/feeds_parsed" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
@@ -224,19 +271,12 @@
             android:visibility="gone"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_add_later"/>
         <!-- Shrunk article drawer (shown only when the pill is shrunk while reading):
-             ⏫ last article · ‹ page up · › page down · ⏬ next article. -->
+             ⏫ last article · ⏬ next article. The ‹ › pair left this pill 07-24 — paging
+             lives in the side nav pill and the corner tap zones; twice was clutter. -->
         <ImageButton android:id="@+id/feeds_dw_prev" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up2"
             android:visibility="gone"
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_prev_article"/>
-        <ImageButton android:id="@+id/feeds_dw_pgup" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
-            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_left"
-            android:visibility="gone"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
-        <ImageButton android:id="@+id/feeds_dw_pgdn" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
-            android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_right"
-            android:visibility="gone"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
         <ImageButton android:id="@+id/feeds_dw_next" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down2"
             android:visibility="gone"

@@ -1,18 +1,47 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- A read-and-wander page shared by the three semantic action-surfaces — Quick Wins, Sprouts and
-     Missed Rhizomes. Same shape as fragment_ledger_roots: a title line with a Close, then a column
-     of cards that scrolls on e-ink. Each fragment fills the column differently; the frame is one. -->
+     Missed Rhizomes. Same shape as fragment_ledger_roots: the Almanac strip on top, a title line
+     with a Close, then a column of cards that scrolls on e-ink. Each fragment fills the column
+     differently; the frame is one. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:orientation="vertical"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#FFFFFF">
 
+    <!-- The real Almanac strip (same 1404×140 navigator the day page draws), FIRST — every other
+         dated surface (Roots, Feed, Tasks & Events) leads with the strip, and these pages stacking
+         a big bold title over it read as a second, stale headline. Wired by
+         [com.toolsboox.plugin.calendar.ui.SemanticNavBar]: on Sprouts and Missed Rhizomes it
+         FILTERS the surface in place; on Quick Wins it stays a place to leave from.
+         The ▦ hub sits top-left of it — the same house key feeds and the day page carry, so the
+         garden isn't a room you can only leave through Back. -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp" android:paddingTop="6dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content">
+        <ImageButton
+            android:id="@+id/semantic_hub_button"
+            android:src="@drawable/ic_bar_sections"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter" android:padding="3dp"
+            android:layout_marginEnd="4dp"
+            android:contentDescription="@string/go_to_title"
+            android:layout_width="32dp" android:layout_height="32dp"/>
+        <ImageView
+            android:id="@+id/semantic_navigator"
+            android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="52dp"
+            android:scaleType="fitXY"
+            android:contentDescription="@null"/>
+    </LinearLayout>
+
     <LinearLayout
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingHorizontal="14dp"
-        android:paddingTop="12dp"
+        android:paddingTop="8dp"
         android:paddingBottom="6dp"
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
@@ -48,16 +77,6 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"/>
     </LinearLayout>
-
-    <!-- The real Almanac strip (same 1404×140 navigator the day page draws). These surfaces aren't one
-         day, so the date is a place to LEAVE from: step to a day and open it, or tap a period to jump
-         into the calendar. Wired by [com.toolsboox.plugin.calendar.ui.SemanticNavBar], as on Roots. -->
-    <ImageView
-        android:id="@+id/semantic_navigator"
-        android:layout_width="match_parent"
-        android:layout_height="52dp"
-        android:layout_marginHorizontal="8dp"
-        android:contentDescription="@null"/>
 
     <ScrollView
         android:id="@+id/semantic_scroll"

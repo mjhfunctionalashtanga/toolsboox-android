@@ -29,17 +29,21 @@
             android:layout_width="wrap_content" android:layout_height="wrap_content"/>
     </LinearLayout>
 
-    <!-- Capy-style page-turn zones over the lower band (upper text stays selectable for
-         highlights): tap left = previous page, tap right = next page. Toggled in ☰ → Reading. -->
+    <!-- Page-turn zones: bottom CORNERS only, like thumbing a paper page. The old full-width
+         220dp band swallowed every touch in the lower third — links couldn't pop their
+         save-to-Later/gram menu, text couldn't be selected, highlights couldn't start there.
+         Corners are the smallest defensible patch; the center stays live for the content.
+         Toggled in ☰ → Reading. -->
     <LinearLayout
         android:id="@+id/tap_zones"
         android:orientation="horizontal"
         android:layout_width="match_parent"
-        android:layout_height="220dp"
+        android:layout_height="120dp"
         android:layout_gravity="bottom"
         android:visibility="gone">
         <View android:id="@+id/reader_tap_left" android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="match_parent"/>
+        <Space android:layout_width="0dp" android:layout_weight="2" android:layout_height="1dp"/>
         <View android:id="@+id/reader_tap_right" android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="match_parent"/>
     </LinearLayout>

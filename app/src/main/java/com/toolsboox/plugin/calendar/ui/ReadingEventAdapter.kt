@@ -22,7 +22,10 @@ enum class LogOrigin(val label: String, val mark: String) {
     FEED("Feed", "📰"),
     /** Correspondence — "the Ledger writing back": community replies, and any reading
      *  event flagged as correspondence (source starts with "↩"). Never a feed. */
-    REPLY("Reply", "↩")
+    REPLY("Reply", "↩"),
+    /** OCR'd handwriting — page sections and off-planner annotations from the corpus.
+     *  Only search produces these rows; the browse walk doesn't carry them. */
+    INK("Handwriting", "✍")
 }
 
 /** One row in the Notes & Annotations log, flattened from a reading event or an AV gram. */
@@ -40,7 +43,15 @@ data class LogItem(
     /** The day page this item lives on — the rhizome edge back to its home. */
     val day: java.time.LocalDate? = null,
     /** Starred — filterable via the Log's ★ toggle and shown as a ★ title prefix. */
-    val starred: Boolean = false
+    val starred: Boolean = false,
+    /** The note page this item lives on (OCR section / planner text), so opening it lands on the
+     *  right SURFACE of its day, not just the day. [ReadingLogFragment.PAGEKEY_TEXT_NOTES] routes
+     *  to the Text Notes screen instead. */
+    val pageKey: String? = null,
+    /** Group header drawn above this row ("Matches", "Related — semantic") — search results only. */
+    val header: String? = null,
+    /** The corpus citation for a corpus-surfaced row — the key "Remove from corpus" tombstones. */
+    val citation: String? = null
 )
 
 /**
@@ -53,12 +64,16 @@ class ReadingEventAdapter(
     private val onLong: (LogItem) -> Unit = {}
 ) : RecyclerView.Adapter<ReadingEventAdapter.Holder>() {
 
+    /** The live query — rows bold its tokens so the eye lands on WHY each result is here. */
+    var highlight: String = ""
+
     fun submit(list: List<LogItem>) {
         items = list
         notifyDataSetChanged()
     }
 
     class Holder(view: View) : RecyclerView.ViewHolder(view) {
+        val header: TextView = view.findViewById(R.id.event_header)
         val mark: TextView = view.findViewById(R.id.event_mark)
         val title: TextView = view.findViewById(R.id.event_title)
         val meta: TextView = view.findViewById(R.id.event_meta)
@@ -75,14 +90,19 @@ class ReadingEventAdapter(
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val e = items[position]
+        holder.header.visibility = if (e.header == null) View.GONE else View.VISIBLE
+        holder.header.text = e.header ?: ""
         holder.mark.text = e.origin.mark
-        holder.title.text = if (e.starred) "★ ${e.title}" else e.title
+        val title = if (e.starred) "★ ${e.title}" else e.title
+        holder.title.text = if (highlight.isBlank()) title
+            else com.toolsboox.plugin.calendar.ot.LedgerSearch.emphasize(highlight, title)
         // A voice memo advertises itself with a ▶ chip in the meta line.
         holder.meta.text = if (e.audioPath != null)
             listOf("▶ Voice memo", e.meta).filter { it.isNotBlank() }.joinToString("  ·  ")
         else e.meta
         holder.excerpt.visibility = if (e.body.isBlank()) View.GONE else View.VISIBLE
-        holder.excerpt.text = e.body
+        holder.excerpt.text = if (highlight.isBlank()) e.body
+            else com.toolsboox.plugin.calendar.ot.LedgerSearch.emphasize(highlight, e.body)
 
         val path = e.imagePath
         if (path != null && java.io.File(path).exists()) {

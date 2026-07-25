@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:background="#FFFFFF"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- Everything actionable rides the TOP bar — the palm rule: a hand resting on the lower
+         half of an e-ink slab must never send (or lose) an email. Same plain-TextView glyph
+         idiom as the inbox header. -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="10dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <TextView
+            android:id="@+id/mail_compose_title"
+            android:text="Compose"
+            android:textColor="#000000"
+            android:textStyle="bold"
+            android:textSize="18sp"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"/>
+
+        <TextView
+            android:id="@+id/mail_compose_send"
+            android:text="➤ Send"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#000000"
+            android:padding="8dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <TextView
+            android:id="@+id/mail_compose_discard"
+            android:text="✕"
+            android:textSize="20sp"
+            android:textColor="#000000"
+            android:padding="8dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <View
+        android:background="#000000"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"/>
+
+    <!-- The sending account. One account = a plain statement; several = a tappable chooser
+         (the ▾ appears in code). Defaults to the inbox's account filter, so a narrowed inbox
+         and its compose agree on which door the mail goes out. -->
+    <TextView
+        android:id="@+id/mail_compose_from"
+        android:textSize="13sp"
+        android:textColor="#000000"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="8dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+    <!-- To: autocompletes from the rolodex ("Name <address>"); the address is parsed back out
+         of the angle brackets at send time, so picking a person and typing a bare address both
+         work. -->
+    <AutoCompleteTextView
+        android:id="@+id/mail_compose_to"
+        android:hint="To — a name from your rolodex, or an address"
+        android:textSize="15sp"
+        android:textColor="#000000"
+        android:textColorHint="#888888"
+        android:inputType="textEmailAddress"
+        android:singleLine="true"
+        android:layout_marginHorizontal="14dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+    <EditText
+        android:id="@+id/mail_compose_subject"
+        android:hint="Subject"
+        android:textSize="15sp"
+        android:textColor="#000000"
+        android:textColorHint="#888888"
+        android:inputType="text"
+        android:singleLine="true"
+        android:layout_marginHorizontal="14dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+    <!-- The body takes the rest of the page — a writing surface, not a slot. gravity=top so the
+         first line starts where the eye does, not vertically centered in the void. -->
+    <EditText
+        android:id="@+id/mail_compose_body"
+        android:hint="Write…"
+        android:gravity="top"
+        android:textSize="15sp"
+        android:textColor="#000000"
+        android:textColorHint="#888888"
+        android:inputType="textMultiLine|textCapSentences"
+        android:background="@null"
+        android:padding="14dp"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"/>
+</LinearLayout>

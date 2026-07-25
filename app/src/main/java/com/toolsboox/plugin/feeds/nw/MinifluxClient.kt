@@ -135,6 +135,60 @@ class MinifluxClient @Inject constructor() {
         Result.Err("Network error: ${e.message}")
     }
 
+    // ---- Subscription management (the paste-a-YouTube-link flow) ---------------------------
+
+    /** GET /v1/categories → (id, title) pairs, for landing a new feed in the right lens. */
+    fun categories(baseUrl: String, token: String): Result<List<Pair<Long, String>>> = try {
+        val req = Request.Builder().url("${normalize(baseUrl)}/v1/categories")
+            .addHeader("X-Auth-Token", token).get().build()
+        client.newCall(req).execute().use { resp ->
+            val body = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) Result.Err("Miniflux error ${resp.code}")
+            else {
+                val arr = JSONArray(body)
+                Result.Ok((0 until arr.length()).mapNotNull { i ->
+                    arr.optJSONObject(i)?.let { it.optLong("id") to it.optString("title") }
+                })
+            }
+        }
+    } catch (e: Exception) {
+        Result.Err("Network error: ${e.message}")
+    }
+
+    /** POST /v1/categories {title} → the new category's id. */
+    fun createCategory(baseUrl: String, token: String, title: String): Result<Long> =
+        post("${normalize(baseUrl)}/v1/categories", token, JSONObject().put("title", title).toString())
+            .let { r ->
+                when (r) {
+                    is Result.Ok -> Result.Ok(JSONObject(r.value).optLong("id"))
+                    is Result.Err -> r
+                }
+            }
+
+    /** POST /v1/feeds {feed_url, category_id} → the new feed's id. This is how a pasted
+     *  YouTube link becomes a real server-side subscription, not just a local one. */
+    fun createFeed(baseUrl: String, token: String, feedUrl: String, categoryId: Long?): Result<Long> {
+        val payload = JSONObject().put("feed_url", feedUrl)
+        if (categoryId != null) payload.put("category_id", categoryId)
+        return post("${normalize(baseUrl)}/v1/feeds", token, payload.toString()).let { r ->
+            when (r) {
+                is Result.Ok -> Result.Ok(JSONObject(r.value).optLong("feed_id"))
+                is Result.Err -> r
+            }
+        }
+    }
+
+    private fun post(url: String, token: String, payload: String): Result<String> = try {
+        val req = Request.Builder().url(url).addHeader("X-Auth-Token", token)
+            .post(payload.toRequestBody(json)).build()
+        client.newCall(req).execute().use { resp ->
+            val body = resp.body?.string().orEmpty()
+            if (resp.isSuccessful) Result.Ok(body) else Result.Err("Miniflux error ${resp.code}")
+        }
+    } catch (e: Exception) {
+        Result.Err("Network error: ${e.message}")
+    }
+
     private fun put(url: String, token: String, payload: String): Result<Unit> = try {
         val req = Request.Builder().url(url).addHeader("X-Auth-Token", token)
             .put(payload.toRequestBody(json)).build()
@@ -177,7 +231,10 @@ class MinifluxClient @Inject constructor() {
                 read = e.optString("status") == "read",
                 category = feed?.optJSONObject("category")?.optString("title")?.ifBlank { null },
                 enclosureImage = enclosureImage,
-                enclosureAudio = enclosureAudio
+                enclosureAudio = enclosureAudio,
+                // The feed's XML address — the way back to the Podcasting 2.0 tags
+                // (chapters/transcripts) the Miniflux API itself never surfaces.
+                feedUrl = feed?.optString("feed_url")?.ifBlank { null }
             )
         }
         return out

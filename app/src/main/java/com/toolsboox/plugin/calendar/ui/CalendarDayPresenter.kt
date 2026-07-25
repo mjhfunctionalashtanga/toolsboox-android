@@ -119,8 +119,14 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                             calendarEvents = calendarDay.events
                         }
                     } else {
+                        // The refill rebuilds today from the device calendar — but "journal-"
+                        // events are written by the iPhone's From-your-day picker straight into
+                        // the day file (no device-calendar twin), so they must ride through or
+                        // a same-day Boox render (and its save) would silently drop them.
+                        val journalEvents = calendarDay.events.filter { it.id.startsWith("journal-") }
                         calendarDay.events.clear()
                         calendarDay.events.addAll(calendarEvents)
+                        calendarDay.events.addAll(journalEvents)
                     }
 
                     withContext(Dispatchers.Main) { fragment.renderPage(calendarDay, calendarPattern, calendarEvents) }

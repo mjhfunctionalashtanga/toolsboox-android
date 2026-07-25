@@ -448,7 +448,7 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
                     .setTitle(item.text.ifBlank { "Card" })
                     .setItems(arrayOf(
                         "✎  Edit the words…",
-                        "🕸  Its rhizome",
+                        "⁂  Its rhizome",
                         "⬆  Send to web board",
                         "🗑  Delete"
                     )) { _, which ->

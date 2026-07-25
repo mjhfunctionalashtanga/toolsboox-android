@@ -79,6 +79,17 @@
             android:background="?attr/selectableItemBackgroundBorderless"/>
     </LinearLayout>
 
+    <!-- The real Almanac strip, same as Mail and the Feed: notes are day-anchored, so the strip
+         travels between days (arrows step; a period tap retunes the arrows' stride). fitXY so the
+         1404-wide bitmap spans the view and the touch map lands on the drawn slots. -->
+    <ImageView
+        android:id="@+id/text_notes_navigator"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginHorizontal="8dp"
+        android:scaleType="fitXY"
+        android:contentDescription="@null"/>
+
     <EditText
         android:id="@+id/text_notes_title"
         android:layout_width="match_parent"

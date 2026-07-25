@@ -62,10 +62,24 @@ class SproutsFragment @Inject constructor() : ScreenFragment() {
 
     private data class Sprout(
         val id: String, val aText: String, val aTag: String,
-        val bText: String, val bTag: String, val score: Double
+        val bText: String, val bTag: String, val score: Double,
+        // When each leg was made — a crossing belongs to a filtered period if EITHER of the
+        // things that crossed was made inside it.
+        val aDate: LocalDate?, val bDate: LocalDate?,
+        // Each leg's citation — the corpus key a "remove from corpus" tombstones, so junk can be
+        // thrown out by the leg that is junk rather than both at once.
+        val aCite: String = "", val bCite: String = ""
     ) {
         val line: String get() = "$aText  ⇄  $bText"
         val noteBody: String get() = "$aText\n— $aTag\n\n⇄ rhymes with:\n\n$bText\n— $bTag"
+
+        fun inWindow(start: LocalDate, end: LocalDate): Boolean {
+            // A crossing with no dated leg stays in every window — an unknown date is not a date
+            // outside the period, so a broad filter must not silently disappear the undated.
+            val known = listOfNotNull(aDate, bDate)
+            if (known.isEmpty()) return true
+            return known.any { !it.isBefore(start) && it.isBefore(end) }
+        }
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -73,8 +87,14 @@ class SproutsFragment @Inject constructor() : ScreenFragment() {
         view.findViewById<TextView>(R.id.semantic_title).text = "🌱 Sprouts"
         column = view.findViewById(R.id.semantic_column)
         scroll = view.findViewById(R.id.semantic_scroll)
+        // The strip FILTERS the harvest in place — a period tap scopes to that period, the carets
+        // step it, and nothing about a date ever navigates away from Sprouts.
         navBar = SemanticNavBar(this, view.findViewById(R.id.semantic_navigator),
-            calendarDayService, calendarPatternService) { documentsRoot() }
+            calendarDayService, calendarPatternService,
+            onFilter = { _, _ -> if (isAdded) render() }) { documentsRoot() }
+        // The ▦ hub, top-left as everywhere — the same directory accordion the feed carries.
+        view.findViewById<android.widget.ImageButton>(R.id.semantic_hub_button)
+            .setOnClickListener { showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this)) }
         view.findViewById<TextView>(R.id.semantic_close)
             .setOnClickListener { findNavController().popBackStack() }
         load()
@@ -84,7 +104,9 @@ class SproutsFragment @Inject constructor() : ScreenFragment() {
         val ctx = context ?: return
         column.removeAllViews()
         column.addView(hint("Letting the day's ideas sprout…"))
-        lifecycleScope.launch {
+        // The view's scope: the grow exists only to fill this column, so back-navigation
+        // cancels it instead of ghost-rendering into a dead view.
+        viewLifecycleOwner.lifecycleScope.launch {
             val found = withContext(Dispatchers.IO) { runCatching { grow(ctx) }.getOrNull() ?: emptyList() }
             if (!isAdded) return@launch
             sprouts = found
@@ -94,11 +116,20 @@ class SproutsFragment @Inject constructor() : ScreenFragment() {
 
     private fun render() {
         column.removeAllViews()
-        val shown = sprouts.filter { it.id !in taken }
+        val alive = sprouts.filter { it.id !in taken }
+        val win = navBar?.window()
+        val shown = if (win == null) alive else alive.filter { it.inWindow(win.first, win.second) }
         if (shown.isEmpty()) {
+            // Two different kinds of nothing. A filtered period with no sprouts is normal and
+            // should say WHICH period came up empty — a bare blank here reads as broken — while
+            // a corpus that hasn't crossed anything yet needs the longer explanation.
             column.addView(hint(
-                "No two things you kept rhyme deeply enough to sprout an idea yet. Let the roots grow, " +
-                "or add an embeddings key in Settings so the meaning model can cross them."))
+                if (win != null)
+                    "No sprouts for ${navBar?.periodLabel()}. The carets step to the next " +
+                    "period; tapping the period again brings back everything."
+                else
+                    "No two things you kept rhyme deeply enough to sprout an idea yet. Let the roots grow, " +
+                    "or add an embeddings key in Settings so the meaning model can cross them."))
             com.toolsboox.ot.ReadingSize.apply(scroll)
             return
         }
@@ -130,16 +161,8 @@ class SproutsFragment @Inject constructor() : ScreenFragment() {
 
     private fun card(s: Sprout): View {
         val ctx = requireContext()
-        val box = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(0xFFFFFFFF.toInt()); setStroke(dp(1), 0xFFBBBBBB.toInt()); cornerRadius = dp(10).toFloat()
-            }
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(dp(3), dp(4), dp(3), dp(5)) }
-        }
+        // The shared semantic-card ground — one drawer for all three surfaces (SemanticCards).
+        val box = com.toolsboox.ot.SemanticCards.card(ctx)
         box.addView(leg(s.aText, s.aTag))
         box.addView(LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
@@ -164,21 +187,56 @@ class SproutsFragment @Inject constructor() : ScreenFragment() {
         actions.addView(View(ctx).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })
         actions.addView(actionButton("🌿 Pick") { pick(s) })
         box.addView(actions)
+        // Hold the card for the fuller menu: pick it as a gram in your medium of choice, or
+        // throw a junk leg out of the corpus for good.
+        box.setOnLongClickListener { holdMenu(s); true }
         return box
     }
 
-    private fun actionButton(label: String, onClick: () -> Unit) = TextView(requireContext()).apply {
-        text = label
-        textSize = 14f; setTextColor(0xFF000000.toInt())
-        setPadding(dp(10), dp(6), dp(10), dp(6))
-        background = android.graphics.drawable.GradientDrawable().apply {
-            setColor(0x11000000); cornerRadius = dp(8).toFloat()
-        }
-        (layoutParams as? LinearLayout.LayoutParams
-            ?: LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                .also { layoutParams = it }).setMargins(0, 0, dp(8), 0)
-        setOnClickListener { onClick() }
+    /** The hold menu — the chips' verbs plus the two that don't fit on a strip: the pick that
+     *  asks its medium, and per-leg removal from the corpus. Removal is BY LEG on purpose: a
+     *  crossing is usually junk because ONE of its legs is boilerplate, and the other may be a
+     *  perfectly good note that deserves better company. */
+    private fun holdMenu(s: Sprout) {
+        val items = mutableListOf(
+            "⁂  Pick — make it a gram" to { pickAsGram(s) },
+            "☀  To Daily" to { bringToDaily(s) },
+            "✎  To Desk" to { bringToDesk(s) },
+            "🌿  Pick to Pickings" to { pick(s) },
+            "🗑  Remove “${s.aText.take(28)}…” from corpus" to { removeLeg(s.aCite) }
+        )
+        if (s.bCite != s.aCite)
+            items += "🗑  Remove “${s.bText.take(28)}…” from corpus" to { removeLeg(s.bCite) }
+        showIconMenu(s.line.take(80), items)
     }
+
+    /** The pick, the way it works everywhere now: the crossing becomes the quote in hand and
+     *  [com.toolsboox.plugin.feeds.ot.FeedNoteGram] asks which medium carries your note —
+     *  handwriting, text, audio or video — before the card lands on today's Notes page. Saving
+     *  with nothing added still makes the plain quote gram; the pick itself is enough. */
+    private fun pickAsGram(s: Sprout) {
+        val ctx = context ?: return
+        retire(ctx, s)
+        com.toolsboox.plugin.feeds.ot.FeedNoteGram.showForItem(
+            this, calendarDayService, documentsRoot(),
+            itemText = s.line.take(600),
+            originLabel = "✧ ${s.aTag} ⇄ ${s.bTag}".take(80)
+        ) { kind, sink -> captureAvGramDirect(kind, sink) }
+    }
+
+    /** Tombstone one leg: every sprout standing on it comes down now, and the corpus never
+     *  indexes it again — stronger than the rest cooldown, which only postpones. */
+    private fun removeLeg(cite: String) {
+        if (cite.isBlank()) return
+        lifecycleScope.launch(Dispatchers.IO) { runCatching { corpusService.exclude(cite) } }
+        sprouts = sprouts.filterNot { it.aCite == cite || it.bCite == cite }
+        render()
+        showMessage("Removed from the corpus — it won't be crossed again", requireView())
+    }
+
+    // The shared chip: solid 1dp black stroke so the verb reads on e-ink (SemanticCards).
+    private fun actionButton(label: String, onClick: () -> Unit) =
+        com.toolsboox.ot.SemanticCards.actionChip(requireContext(), label, onClick)
 
     // MARK: - Take actions
 
@@ -243,12 +301,15 @@ class SproutsFragment @Inject constructor() : ScreenFragment() {
             .let { Spiral.dedupe(it) { s -> s.text } }
         if (corpus.isEmpty()) return emptyList()
         val crossings = SemanticRoots.meaningCrossings(ctx, corpus, cap = 260, topN = 40, minScore = 0.60)
+        fun day(d: Date?): LocalDate? = d?.toInstant()
+            ?.atZone(java.time.ZoneId.systemDefault())?.toLocalDate()
         return crossings.mapNotNull { c ->
             val a = c.a.text.take(200).trim()
             val b = c.b.text.take(200).trim()
             val id = "${a.take(24)}|${b.take(24)}"
             if (SproutRestStore.isResting(ctx, id)) return@mapNotNull null
-            Sprout(id, a, tag(c.a), b, tag(c.b), c.score)
+            Sprout(id, a, tag(c.a), b, tag(c.b), c.score, day(c.a.date), day(c.b.date),
+                c.a.citation, c.b.citation)
         }
     }
 

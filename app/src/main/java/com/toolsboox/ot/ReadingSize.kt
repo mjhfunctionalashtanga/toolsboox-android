@@ -17,14 +17,27 @@ import com.toolsboox.R
  */
 object ReadingSize {
 
-    private const val PREFS = "MAIN"
+    // The scale predates the shared appearance store and grew up in "MAIN" — alone among the
+    // legibility keys, which all live in "ledger_a11y". That split was harmless day to day and a
+    // trap for anything that migrates or exports the store. Home is now ledger_a11y; the first
+    // read copies an old MAIN value forward once, and writes only ever land in the new store.
+    private const val PREFS = "ledger_a11y"
+    private const val LEGACY_PREFS = "MAIN"
     private const val KEY = "reading_scale"
 
     /** The steps offered, in order. 1.0 is whatever the screen was designed at. */
     val STEPS = floatArrayOf(1.0f, 1.15f, 1.35f, 1.6f, 1.9f)
 
-    fun scale(context: Context): Float =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getFloat(KEY, 1.0f)
+    fun scale(context: Context): Float {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.contains(KEY)) return prefs.getFloat(KEY, 1.0f)
+        // One-time copy-forward from the legacy MAIN store, so a reader who had sized their
+        // text up keeps that size across the move without ever noticing it happened.
+        val legacy = context.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE)
+        val value = legacy.getFloat(KEY, 1.0f)
+        if (legacy.contains(KEY)) prefs.edit().putFloat(KEY, value).apply()
+        return value
+    }
 
     fun setScale(context: Context, value: Float) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putFloat(KEY, value).apply()

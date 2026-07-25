@@ -22,7 +22,7 @@ import java.util.UUID
 object LedgerTaskCarryOver {
 
     // Tasks-section geometry of the Default day page (mirrors CalendarTaskCarryOver / CalendarDayPage).
-    private const val CEW = 600f
+    private const val CEW = 645f  // in lockstep with CalendarDayPage.cew (widened 07-24)
     private const val CEH = 50f
     private const val LO = 20f
     private val TO = (1872f - 35 * CEH) / 2f

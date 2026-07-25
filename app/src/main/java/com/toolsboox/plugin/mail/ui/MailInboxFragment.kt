@@ -59,6 +59,14 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
     private var messages: List<InboxMessage> = emptyList()
     private var refreshing = false
 
+    // Which account the unified list is narrowed to (null = every account). Persisted, so the
+    // inbox reopens the way it was left — the unified view stays the default, the narrowing a
+    // choice that survives the trip away.
+    private var accountFilter: String? = null
+
+    // Whether the ✉ All chip's account dropdown is unfolded (persisted, like the feed drawer's).
+    private var accountsOpen = false
+
     // Almanac filter — the inbox is browsable by date exactly as the feed is. Day+today is the LIVE
     // view (all mail, so your to-dos never hide); any other window keeps only mail from that window.
     private var navBar: com.toolsboox.plugin.calendar.ui.CalendarNavBarHost? = null
@@ -75,8 +83,10 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         binding.mailRefresh.setOnClickListener { refresh() }
         binding.mailSettings.setOnClickListener { showAccountsList() }
         binding.mailClear.setOnClickListener { clearUnstarred() }
-        binding.mailToggle.setOnClickListener { onlyStarred = !onlyStarred; updateToggle(); render() }
-        updateToggle()
+        val uiPrefs = requireContext().getSharedPreferences("ledger_mail_inbox", 0)
+        accountFilter = uiPrefs.getString("account_filter", "")!!.ifBlank { null }
+        accountsOpen = uiPrefs.getBoolean("accounts_open", false)
+        renderChips()
 
         // Same Almanac strip as the feed: arrows step the window in place, a period tap filters to
         // that day/week/month — the inbox never leaves for the calendar (it's a filter, not a jump).
@@ -84,9 +94,9 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             requireContext(), binding.mailNavigator, this,
             onStepDay = { d ->
                 val dir = if (d.isBefore(navAnchor)) -1 else 1
-                navAnchor = stepByGranularity(navAnchor, dir); renderNav(); render()
+                navAnchor = stepByGranularity(navAnchor, dir); renderNav(); renderChips(); render()
             },
-            onSelectPeriod = { g, d -> navGranularity = g; navAnchor = d; renderNav(); render() }
+            onSelectPeriod = { g, d -> navGranularity = g; navAnchor = d; renderNav(); renderChips(); render() }
         )
         renderNav()
 
@@ -96,16 +106,147 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         if (InboxStore.hasAccounts(ctx)) refresh()
     }
 
-    private fun updateToggle() {
-        binding.mailToggle.text = if (onlyStarred) "★ To-dos" else "✉ All"
+    /**
+     * The state chips under the Almanac strip: To-dos / All, the per-account filter, and — when
+     * the strip is parked off today — the active window, named plainly. Selected = solid black
+     * chip with white text: bold-vs-regular was easy to miss, and any gray wash dithers away on
+     * an e-ink panel; black-on-white inverted is the one treatment a Boox can't lose.
+     */
+    private fun renderChips() {
+        val ctx = context ?: return
+        val row = binding.mailChips
+        row.removeAllViews()
+
+        fun chip(label: String, selected: Boolean, onClick: () -> Unit) {
+            row.addView(TextView(ctx).apply {
+                text = label; textSize = 14f
+                setPadding(dp(14), dp(7), dp(14), dp(7))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = dp(16).toFloat()
+                    setStroke(dp(1), 0xFF000000.toInt())
+                    setColor(if (selected) 0xFF000000.toInt() else 0xFFFFFFFF.toInt())
+                }
+                setTextColor(if (selected) 0xFFFFFFFF.toInt() else 0xFF000000.toInt())
+                if (selected) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { setMargins(0, 0, dp(8), 0) }
+                setOnClickListener { onClick() }
+            })
+        }
+
+        chip("★ To-dos", onlyStarred) {
+            if (!onlyStarred) { onlyStarred = true; renderChips(); render() }
+        }
+
+        // ✉ All is the accordion header for the accounts (feed-drawer idiom: ▸/▾ caret; one tap
+        // does BOTH — show the unified inbox and unfold the account rows; a second folds them).
+        val accounts = MailAccountStore.all(ctx)
+        val allLabel = if (accounts.isEmpty()) "✉ All" else "✉ All  " + (if (accountsOpen) "▾" else "▸")
+        chip(allLabel, !onlyStarred) {
+            if (accounts.isNotEmpty()) accountsOpen = !accountsOpen || onlyStarred
+            onlyStarred = false
+            ctx.getSharedPreferences("ledger_mail_inbox", 0).edit()
+                .putBoolean("accounts_open", accountsOpen).apply()
+            renderChips(); render()
+        }
+
+        // The filter's face while the dropdown is folded: one selected chip naming the account,
+        // so a narrowed inbox is never a surprise. Tapping it unfolds the rows to change it.
+        val current = accounts.firstOrNull { it.id == accountFilter }
+        if (current != null && !accountsOpen) chip("@ ${current.display}", true) {
+            accountsOpen = true
+            ctx.getSharedPreferences("ledger_mail_inbox", 0).edit().putBoolean("accounts_open", true).apply()
+            renderChips()
+        }
+
+        // The window filter, named so there's no guessing what the strip has scoped to.
+        if (navFiltered()) chip("🗓 ${windowLabel()}  ✕", true) {
+            navGranularity = "day"; navAnchor = LocalDate.now()
+            renderNav(); renderChips(); render()
+        }
+
+        // ✎ a fresh email — mail that isn't a reply now has a door from mail itself, not just
+        // from a quick win. Never "selected": it's a verb chip, not a filter.
+        chip("✎ Compose", false) {
+            NavHostFragment.findNavController(this).navigate(R.id.action_to_mail_compose)
+        }
+
         // Clear only makes sense while triaging All — it sweeps everything you didn't star.
         binding.mailClear.visibility = if (onlyStarred) View.GONE else View.VISIBLE
+
+        renderAccountRows(accounts)
+    }
+
+    /** The unfolded account rows under the chip strip: "All accounts" + one row per inbox,
+     *  indented inside the accent outline like every accordion dropdown in the app. Tapping a
+     *  row narrows (or widens) the unified list; the choice is kept for next time. */
+    private fun renderAccountRows(accounts: List<MailAccount>) {
+        val ctx = context ?: return
+        val panel = binding.mailAccounts
+        panel.removeAllViews()
+        if (!accountsOpen || accounts.isEmpty()) { panel.visibility = View.GONE; return }
+        panel.visibility = View.VISIBLE
+        panel.background = android.graphics.drawable.GradientDrawable().apply {
+            setColor(android.graphics.Color.TRANSPARENT)
+            setStroke(dp(1), com.toolsboox.ot.LedgerTheme.accent(ctx))
+            cornerRadius = dp(8).toFloat()
+        }
+        panel.setPadding(dp(2), dp(2), dp(2), dp(4))
+
+        fun accountRow(label: String, selected: Boolean, onClick: () -> Unit) {
+            panel.addView(TextView(ctx).apply {
+                text = label; textSize = 14f
+                setPadding(dp(24), dp(8), dp(10), dp(8))
+                if (selected) {
+                    // Same can't-miss-it treatment as the chips: solid black, white text.
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        setColor(0xFF000000.toInt()); cornerRadius = dp(8).toFloat()
+                    }
+                    setTextColor(0xFFFFFFFF.toInt())
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                } else setTextColor(0xFF000000.toInt())
+                setOnClickListener { onClick() }
+            })
+        }
+
+        fun pick(id: String?) {
+            accountFilter = id
+            ctx.getSharedPreferences("ledger_mail_inbox", 0).edit()
+                .putString("account_filter", id ?: "").apply()
+            renderChips(); render()
+        }
+        accountRow("✉  All accounts", accountFilter == null) { pick(null) }
+        for (a in accounts) accountRow("@  ${a.display}", accountFilter == a.id) { pick(a.id) }
     }
 
     private fun shown(): List<InboxMessage> {
         val ctx = requireContext()
-        val base = if (onlyStarred) messages.filter { InboxStore.isStarred(ctx, it.id) } else messages
+        var base = if (onlyStarred) messages.filter { InboxStore.isStarred(ctx, it.id) } else messages
+        // Narrow to one account by ORIGIN (the acct:<id> prefix), not by display label — labels
+        // get renamed; the id a message arrived through doesn't.
+        accountFilter?.let { id -> base = base.filter { MailSync.accountId(it.id) == id } }
         return filterByWindow(base)
+    }
+
+    /** True while the Almanac strip scopes the list (anything but day-on-today, the live view). */
+    private fun navFiltered(): Boolean = !(navGranularity == "day" && navAnchor == LocalDate.now())
+
+    /** The active window, named plainly for the chip and the empty state: "Week 30 · Jul 20–26". */
+    private fun windowLabel(): String {
+        val loc = Locale.getDefault()
+        val md = java.time.format.DateTimeFormatter.ofPattern("MMM d", loc)
+        val (start, end) = navWindow()
+        return when (navGranularity) {
+            "week" -> {
+                val wk = navAnchor.get(java.time.temporal.WeekFields.of(loc).weekOfWeekBasedYear())
+                "Week $wk · ${start.format(md)}–${end.minusDays(1).format(md)}"
+            }
+            "month" -> navAnchor.format(java.time.format.DateTimeFormatter.ofPattern("MMMM yyyy", loc))
+            "quarter" -> "Q${(navAnchor.monthValue - 1) / 3 + 1} ${navAnchor.year}"
+            "year" -> "${navAnchor.year}"
+            else -> navAnchor.format(java.time.format.DateTimeFormatter.ofPattern("EEE · MMM d", loc))
+        }
     }
 
     /** Keep only mail whose date falls in the navigator window; day+today is the live view (all). */
@@ -145,7 +286,10 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
     /** Redraw the Almanac strip for the current anchor (dots for filled days), like the feed does. */
     private fun renderNav() {
         val bar = navBar ?: return
-        lifecycleScope.launch {
+        // The view's scope: this exists only to draw the strip, so back-navigation cancels it
+        // instead of ghost-rendering into a dead view. (The writes below keep the fragment's
+        // scope — a star or a filing must land even if the reader has already moved on.)
+        viewLifecycleOwner.lifecycleScope.launch {
             val root = documentsRoot()
             val loc = Locale.getDefault()
             val (day, pat) = withContext(Dispatchers.IO) {
@@ -154,16 +298,36 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
                         navAnchor.year, navAnchor.monthValue, navAnchor.dayOfMonth, startHour = null)
                 cd to runCatching { calendarPatternService.load(root, navAnchor, loc) }.getOrNull()
             }
-            if (isAdded) pat?.let { bar.render(day, it) }
+            // A missing/failed pattern must not kill the strip: render() with an empty pattern
+            // rather than skip — an unrendered CalendarNavBarHost never sets its currentDay, and
+            // a nav bar with no currentDay swallows every touch. That was the silent way the
+            // date filter could "render once, then no-op" on a fresh year.
+            val safePat = pat ?: com.toolsboox.plugin.calendar.da.v1.CalendarPattern(navAnchor.year, loc).fill()
+            if (isAdded) bar.render(day, safePat)
         }
     }
 
+    /**
+     * The Clear sweep, now with a held breath: it sweeps only what's actually ON SCREEN (the All
+     * list as narrowed by account and window — never mail you weren't looking at), and the
+     * snackbar's Undo puts the whole sweep back until it lapses.
+     */
     private fun clearUnstarred() {
         val ctx = context ?: return
-        InboxStore.clearUnstarred(ctx)
+        val swept = shown().filter { !InboxStore.isStarred(ctx, it.id) }.map { it.id }
+        if (swept.isEmpty()) { toast("Nothing to clear — it's all starred"); return }
+        InboxStore.clear(ctx, swept)
         messages = InboxStore.messages(ctx)
         render()
-        toast("Cleared — starred mail kept")
+        com.google.android.material.snackbar.Snackbar.make(
+            binding.root, "Cleared ${swept.size} — starred mail kept",
+            com.google.android.material.snackbar.Snackbar.LENGTH_LONG
+        ).setAction("Undo") {
+            // The app context outlives the fragment; the sweep must be reversible even if the
+            // reader has already wandered off this screen.
+            InboxStore.restore(ctx.applicationContext, swept)
+            if (isAdded) { messages = InboxStore.messages(ctx); render() }
+        }.show()
     }
 
     /** Pull mail from the configured accounts, then reload the list. Surfaces the first problem gently. */
@@ -174,14 +338,18 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         refreshing = true
         binding.mailStatus.text = "Fetching…"
         binding.mailStatus.visibility = View.VISIBLE
-        lifecycleScope.launch {
-            val problem = MailSync.refresh(ctx)          // suspends; fetch runs on Dispatchers.IO within
-            if (!isAdded) return@launch
-            messages = InboxStore.messages(ctx)
-            refreshing = false
-            binding.mailStatus.visibility = View.GONE
-            render()
-            if (problem != null) toast(problem.split("\n").first())
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val problem = MailSync.refresh(ctx)      // suspends; fetch runs on Dispatchers.IO within
+                if (!isAdded) return@launch
+                messages = InboxStore.messages(ctx)
+                binding.mailStatus.visibility = View.GONE
+                render()
+                if (problem != null) toast(problem.split("\n").first())
+            } finally {
+                // Also on cancellation — a wedged flag here would refuse every future refresh.
+                refreshing = false
+            }
         }
     }
 
@@ -193,10 +361,16 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         val list = shown()
         if (list.isEmpty()) {
             container.addView(TextView(ctx).apply {
-                text = if (onlyStarred)
-                    "No starred mail yet. Open a message and star it to make a to-do, or switch to All."
-                else if (InboxStore.hasAccounts(ctx)) "Inbox empty."
-                else "No accounts yet. Tap the gear to add one — until then a few samples show here."
+                // The empty pane names the filter that emptied it — a filtered-empty list that
+                // just says "empty" reads as broken.
+                text = when {
+                    navFiltered() -> "No mail in ${windowLabel()}. Tap ✕ on the date chip for the live inbox."
+                    accountFilter != null -> "No mail from this account yet. Tap the ▾ chip for all accounts."
+                    onlyStarred ->
+                        "No starred mail yet. Open a message and star it to make a to-do, or switch to All."
+                    InboxStore.hasAccounts(ctx) -> "Inbox empty."
+                    else -> "No accounts yet. Tap the gear to add one — until then a few samples show here."
+                }
                 textSize = 15f; setTextColor(0xFF444444.toInt()); setPadding(dp(8), dp(24), dp(8), 0)
             })
             return
@@ -211,23 +385,28 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         val unread = !InboxStore.isRead(ctx, m.id)
         val starred = InboxStore.isStarred(ctx, m.id)
 
+        // Unread must survive monochrome: the old 5%-gray row tint was invisible on a Boox
+        // panel, so unread is bold text PLUS a solid black dot on the sender line — a signal
+        // with actual contrast. The tint is gone rather than darkened; a gray wash behind
+        // body text is exactly what e-ink dithers into mud.
         val card = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(10), dp(10), dp(10), dp(10))
-            setBackgroundColor(if (unread) 0xFFF3F3F3.toInt() else 0xFFFFFFFF.toInt())
+            setBackgroundColor(0xFFFFFFFF.toInt())
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(0, 0, 0, dp(6)) }
         }
 
-        // Star toggle on the left -- tap it to make (or unmake) a to-do without opening the message.
+        // The star rides the RIGHT edge, same as every feed row: one edge, one gesture, everywhere
+        // — the star is how anything (article or email) graduates out of the passing stream, so
+        // the thumb should never have to hunt for it. Big and black-on-white for e-ink.
         val star = TextView(ctx).apply {
             text = if (starred) "★" else "☆"
-            textSize = 20f; setTextColor(if (starred) 0xFFE0A500.toInt() else 0xFF999999.toInt())
-            setPadding(0, 0, dp(12), 0); gravity = Gravity.CENTER_VERTICAL
+            textSize = 24f; setTextColor(if (starred) 0xFF000000.toInt() else 0xFF777777.toInt())
+            setPadding(dp(14), 0, dp(4), 0); gravity = Gravity.CENTER_VERTICAL
             setOnClickListener { if (starred) unstar(m) else starToTodo(m) }
         }
-        card.addView(star)
 
         val col = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -235,7 +414,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         }
         val head = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
         head.addView(TextView(ctx).apply {
-            text = m.fromName.ifBlank { m.fromEmail }
+            text = (if (unread) "●  " else "") + m.fromName.ifBlank { m.fromEmail }
             textSize = 14f; setTextColor(0xFF000000.toInt())
             if (unread) setTypeface(typeface, android.graphics.Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -254,6 +433,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
         })
         card.addView(col)
+        card.addView(star)
 
         card.setOnClickListener { InboxStore.markRead(ctx, m.id); openMessage(m) }
         return card
@@ -273,7 +453,13 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             textSize = 12f; setTextColor(0xFF666666.toInt()); setPadding(0, 0, 0, dp(8))
         })
         col.addView(TextView(ctx).apply {
-            text = m.body; textSize = 15f; setTextColor(0xFF000000.toInt()); setTextIsSelectable(true)
+            // Never a blank pane: a message whose MIME walk produced nothing readable still says
+            // what it is (the list snippet if we caught one, else plain words) — a silent white
+            // rectangle reads as the app failing, not the message being image-only.
+            text = m.body.ifBlank {
+                m.snippet.ifBlank { "(No readable text in this message — it may be images or attachments only.)" }
+            }
+            textSize = 15f; setTextColor(0xFF000000.toInt()); setTextIsSelectable(true)
         })
 
         // The moves that let a message join the knowledge graph like any other Ledger object, mirroring
@@ -283,7 +469,8 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             text = label; textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, dp(14), 0, dp(2))
             setOnClickListener { onClick() }
         }
-        col.addView(action("🕸  Rhizome — connect & open graph") { dialog.dismiss(); openRhizome(m) })
+        // ⁂ is THE connect glyph on Android (Missed Rhizomes / Quick Wins / Daily Pile agree).
+        col.addView(action("⁂  Rhizome — connect & open graph") { dialog.dismiss(); openRhizome(m) })
         col.addView(action("🧩  Assign to synthesis") { dialog.dismiss(); assignToSynthesis(m) })
         // TODO(roots): a "rhymes / roots" action would open the semantic-roots surface seeded from this
         // message, but R.id.action_to_ledger_roots -> LedgerRootsFragment takes NO arguments (confirmed:
@@ -503,12 +690,18 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
                 MailAccountStore.upsert(ctx, a)
                 MailAccountStore.setPassword(ctx, a.id, password.text.toString())
                 toast("Saved")
+                renderChips()   // a first/renamed account changes the account-filter chip
                 refresh()
             }
             .setNegativeButton("Cancel", null)
         if (exists) builder.setNeutralButton("Delete") { _, _ ->
             MailAccountStore.delete(ctx, a.id); toast("Account deleted")
-            messages = InboxStore.messages(ctx); render()
+            if (accountFilter == a.id) {
+                // Never leave the list narrowed to an account that no longer exists.
+                accountFilter = null
+                ctx.getSharedPreferences("ledger_mail_inbox", 0).edit().putString("account_filter", "").apply()
+            }
+            messages = InboxStore.messages(ctx); renderChips(); render()
         }
         val dialog = builder.create()
         dialog.show()

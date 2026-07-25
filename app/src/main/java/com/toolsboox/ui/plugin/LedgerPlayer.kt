@@ -28,11 +28,69 @@ object LedgerPlayer {
     var subtitle: String? = null; private set
     var image: Bitmap? = null; private set
 
+    /** Monotonic playback-session token: bumped on every start/stop so background lookups
+     *  (chapter/transcript resolves racing the network) can tell "still my track" from
+     *  "the listener moved on" and lose quietly. */
+    var session: Long = 0L; private set
+
+    /** Chapters for the CURRENT item (Podcasting 2.0 tag or description timestamps — one shape,
+     *  see FeedChapters). Set by whoever started playback once resolved; empty = plain track. */
+    var chapters: List<com.toolsboox.plugin.feeds.da.Chapter> = emptyList(); private set
+
+    /** Hand the current item its chapter list (main thread). The transport listeners re-render,
+     *  which is how the Now Playing card's chapter row appears the moment the resolve lands. */
+    fun setChapters(list: List<com.toolsboox.plugin.feeds.da.Chapter>) {
+        chapters = list
+        notifyChange()
+    }
+
+    /** Lazy transcript hook for the current item — Ask/search reach the episode's words through
+     *  here without the player holding megabytes of text. Blocking; call off the main thread. */
+    var transcriptProvider: (() -> String?)? = null
+
+    /** The current item's transcript as plain "[m:ss] line" text, or null when there is none.
+     *  Blocking (first call may fetch + cache) — call on a background thread. */
+    fun transcriptText(): String? = transcriptProvider?.invoke()
+
+    /** Index of the chapter the playhead is inside (-1 when chapterless or before the first). */
+    fun currentChapterIndex(): Int {
+        if (chapters.isEmpty()) return -1
+        val pos = positionMs / 1000
+        var idx = -1
+        for (i in chapters.indices) if (chapters[i].startSec <= pos) idx = i else break
+        return idx
+    }
+
+    /** The playing chapter's title, for the transport's "where am I" line. */
+    val currentChapterTitle: String?
+        get() = chapters.getOrNull(currentChapterIndex())?.title
+
+    /** Jump to the next chapter start (audio only — chapters are clock-addressed). */
+    fun chapterNext() {
+        val i = currentChapterIndex()
+        chapters.getOrNull(i + 1)?.let { seekTo(it.startSec * 1000) }
+    }
+
+    /** Back one chapter, radio-style: well into a chapter returns to ITS start; near its start
+     *  (≤3s, i.e. "I just got here") goes to the previous one. */
+    fun chapterPrev() {
+        val i = currentChapterIndex()
+        val cur = chapters.getOrNull(i) ?: return
+        val intoMs = positionMs - cur.startSec * 1000
+        val target = if (intoMs > 3000) cur else chapters.getOrNull(i - 1) ?: cur
+        seekTo(target.startSec * 1000)
+    }
+
     /** Real-audio backend (podcasts, voice memos). Null when idle or when TTS is the source. */
     private var media: android.media.MediaPlayer? = null
 
-    /** The currently-open modal listens here so its controls track the real playback state. */
-    var onChange: (() -> Unit)? = null
+    /** Whoever is showing transport controls listens here so they track the real playback state.
+     *  A list, not a single slot: the drawer's inline Now Playing card and the modal can both be
+     *  alive at once, and neither should silently unhook the other. */
+    private val listeners = mutableListOf<() -> Unit>()
+    fun addListener(l: () -> Unit) { listeners += l }
+    fun removeListener(l: () -> Unit) { listeners -= l }
+    private fun notifyChange() { listeners.toList().forEach { it() } }
 
     /** File extensions the player treats as audiobooks/audio (vs e-books that open in the reader). */
     fun isAudioFile(name: String): Boolean =
@@ -45,26 +103,48 @@ object LedgerPlayer {
     val isSpeaking: Boolean get() = tts?.isSpeaking == true
     val isPaused: Boolean get() = tts?.isPaused == true
 
+    /** True while the real-audio backend (podcast/voice memo) owns the transport; false = TTS. */
+    val isMediaSource: Boolean get() = media != null
+
+    // Progress, for an inline transport that shows WHERE you are, not just that something plays.
+    // Audio reports milliseconds; TTS has no clock, so it reports chunk (≈paragraph) counts —
+    // callers render whichever pair is meaningful. MediaPlayer throws if queried before prepare,
+    // hence the runCatching guards.
+    val positionMs: Int get() = media?.let { m -> runCatching { m.currentPosition }.getOrDefault(0) } ?: 0
+    val durationMs: Int get() = media?.let { m -> runCatching { m.duration }.getOrDefault(0) } ?: 0
+    val ttsChunkIndex: Int get() = tts?.chunkIndex ?: 0
+    val ttsChunkCount: Int get() = tts?.chunkCount ?: 0
+
+    /** Absolute seek (audio only — TTS moves in chunks via [skipForward]/[skipBack]). */
+    fun seekTo(ms: Int) {
+        media?.let { m ->
+            runCatching { m.seekTo(ms.coerceIn(0, m.duration.coerceAtLeast(0))) }
+            notifyChange()
+        }
+    }
+
     private fun engine(context: Context): LedgerTts =
         tts ?: LedgerTts(context.applicationContext).also { e ->
-            e.onStateChange = { main.post { onChange?.invoke() } }
+            e.onStateChange = { main.post { notifyChange() } }
             tts = e
         }
 
     /** Start reading [text] aloud (TTS backend), tagging it with metadata for the control modal. */
     fun start(context: Context, title: String?, subtitle: String?, imageUrl: String?, text: String) {
         stopMedia()
+        newSession()
         this.title = title?.takeIf { it.isNotBlank() }
         this.subtitle = subtitle?.takeIf { it.isNotBlank() }
         this.image = null
         loadImage(imageUrl)
         engine(context).apply { speak(text); setRate(speed) }   // carry the chosen speed to the new read
-        onChange?.invoke()
+        notifyChange()
     }
 
     /** Play a real audio file/stream (podcast enclosure, voice memo) through the same transport. */
     fun startAudio(context: Context, title: String?, subtitle: String?, imageUrl: String?, source: String) {
         tts?.stop(); stopMedia()
+        newSession()
         this.title = title?.takeIf { it.isNotBlank() }
         this.subtitle = subtitle?.takeIf { it.isNotBlank() }
         this.image = null
@@ -74,25 +154,25 @@ object LedgerPlayer {
                 setDataSource(source)
                 setOnPreparedListener { mp ->
                     runCatching { mp.playbackParams = mp.playbackParams.setSpeed(speed) }  // carry chosen speed
-                    mp.start(); main.post { onChange?.invoke() }
+                    mp.start(); main.post { notifyChange() }
                 }
-                setOnCompletionListener { stopMedia(); main.post { onChange?.invoke() } }
-                setOnErrorListener { _, _, _ -> stopMedia(); main.post { onChange?.invoke() }; true }
+                setOnCompletionListener { stopMedia(); main.post { notifyChange() } }
+                setOnErrorListener { _, _, _ -> stopMedia(); main.post { notifyChange() }; true }
                 prepareAsync()
             }
         }.onFailure { Timber.w(it, "audio start failed"); stopMedia() }
-        onChange?.invoke()
+        notifyChange()
     }
 
     /** Play/pause toggle — dispatches to whichever backend is active. */
     fun toggle() {
-        media?.let { m -> runCatching { if (m.isPlaying) m.pause() else m.start() }; onChange?.invoke(); return }
+        media?.let { m -> runCatching { if (m.isPlaying) m.pause() else m.start() }; notifyChange(); return }
         val e = tts ?: return
         when {
             e.isPaused -> e.resume()
             e.isSpeaking -> e.pause()
         }
-        onChange?.invoke()
+        notifyChange()
     }
 
     /** Playback speed / speech rate, cycled from the transport. */
@@ -117,31 +197,40 @@ object LedgerPlayer {
             }
         }
         tts?.setRate(s)
-        onChange?.invoke()
+        notifyChange()
     }
 
     /** Skip forward: audio by [seconds] (default 30s); TTS jumps one chunk forward. */
     fun skipForward(seconds: Int = 30) {
         media?.let { seekBy(it, seconds * 1000); return }
-        tts?.skip(1); onChange?.invoke()
+        tts?.skip(1); notifyChange()
     }
 
     /** Skip back: audio by [seconds] (default 30s); TTS jumps one chunk back. */
     fun skipBack(seconds: Int = 30) {
         media?.let { seekBy(it, -seconds * 1000); return }
-        tts?.skip(-1); onChange?.invoke()
+        tts?.skip(-1); notifyChange()
     }
 
     private fun seekBy(m: android.media.MediaPlayer, delta: Int) {
         runCatching { m.seekTo((m.currentPosition + delta).coerceIn(0, m.duration.coerceAtLeast(0))) }
-        onChange?.invoke()
+        notifyChange()
     }
 
     fun stop() {
         tts?.stop()
         stopMedia()
+        newSession()
         title = null; subtitle = null; image = null
-        onChange?.invoke()
+        notifyChange()
+    }
+
+    /** New track (or silence): whatever chapter/transcript state belonged to the last one is
+     *  stale now, and any in-flight resolve for it must find a different session number. */
+    private fun newSession() {
+        session++
+        chapters = emptyList()
+        transcriptProvider = null
     }
 
     private fun stopMedia() {
@@ -155,7 +244,7 @@ object LedgerPlayer {
             val bmp = runCatching {
                 java.net.URL(url).openStream().use { BitmapFactory.decodeStream(it) }
             }.onFailure { Timber.w(it, "player image load failed") }.getOrNull()
-            if (bmp != null) main.post { image = bmp; onChange?.invoke() }
+            if (bmp != null) main.post { image = bmp; notifyChange() }
         }.apply { isDaemon = true }.start()
     }
 
@@ -243,8 +332,9 @@ object LedgerPlayer {
         speedBtn.setOnClickListener { cycleSpeed(); refresh() }
         stopBtn.setOnClickListener { stop(); dialog.dismiss() }
 
-        onChange = { main.post { refresh() } }
-        dialog.setOnDismissListener { onChange = null }
+        val listener = { main.post { refresh() }; Unit }
+        addListener(listener)
+        dialog.setOnDismissListener { removeListener(listener) }
         dialog.show()
     }
 }

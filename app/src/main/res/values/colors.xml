@@ -14,4 +14,18 @@
 
     <color name="starColor">@color/colorPrimary</color>
 
+    <!--
+        Ledger appearance palette (light values). These are the only colours that flip in dark mode:
+        a matching set of the SAME names lives in values-night/colors.xml. The rest of the app stays
+        monochrome by design and is deliberately left untouched. All solids — e-ink wants no gradients.
+
+        ledgerAccent is a neutral light-mode default; the live per-vibe accent comes from
+        LedgerTheme.accent(ctx) at runtime, not from this resource.
+    -->
+    <color name="ledgerAccent">#1E5FA8</color>
+    <color name="ledgerPaper">#F4F4F4</color>
+    <color name="ledgerBackdrop">#FFFFFF</color>
+    <color name="ledgerFg">#000000</color>
+    <color name="ledgerMuted">#7A7A7A</color>
+
 </resources>

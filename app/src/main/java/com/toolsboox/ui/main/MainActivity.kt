@@ -196,7 +196,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         val QUICK_NOTE_LABELS = arrayOf(
             "Notes — where you left off",
             "Grid Notes",
-            "Sketch Notes",
+            "Jot Notes",
             "Text Notes",
             "Capture a photo",
             "Record a voice gram"
@@ -256,37 +256,51 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
      * single tap and only a change of style needs the hold.
      */
     private fun showQuickNoteSelector() {
+        // A SLIDE-OUT tray, not a dialog (Michael: "instead of having a popup to select from,
+        // have a slide out from the modal that gives those same options and then tucks back in").
+        // The glyph row unfurls anchored beside the pen button — no title, no cancel, no dimmed
+        // page — and any outside tap tucks it away. No animation: one clean e-ink redraw.
         val dp = resources.displayMetrics.density
-        fun px(v: Int) = (v * dp).toInt()
         val current = quickNoteAction()
+        val mul = com.toolsboox.ot.ModalScale.sizeScale(this)
+        fun px(v: Int) = (v * dp * mul).toInt()
+        val glyphSize = 26f * mul
+        lateinit var popup: android.widget.PopupWindow
         val row = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER
-            setPadding(px(10), px(14), px(10), px(14))
+            setPadding(px(8), px(6), px(8), px(6))
+            background = androidx.core.content.ContextCompat.getDrawable(
+                this@MainActivity, R.drawable.dialog_rounded_bg)
         }
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
-            .setTitle(R.string.quick_note_selector_title)
-            .setView(android.widget.HorizontalScrollView(this).apply { addView(row); isHorizontalScrollBarEnabled = false })
-            .setNegativeButton(android.R.string.cancel, null)
-            .create()
         quickNoteGlyphs.forEachIndexed { i, glyph ->
             row.addView(android.widget.TextView(this).apply {
                 text = glyph
-                textSize = 30f
+                textSize = glyphSize
                 gravity = android.view.Gravity.CENTER
-                setPadding(px(16), px(10), px(16), px(10))
-                // The current style reads as selected; the rest are quieter.
+                setPadding(px(12), px(8), px(12), px(8))
                 setTextColor(if (i == current) 0xFF000000.toInt() else 0xFF999999.toInt())
                 if (i == current) setBackgroundResource(R.drawable.tool_active_bg)
                 contentDescription = QUICK_NOTE_LABELS.getOrElse(i) { "" }
                 setOnClickListener {
-                    dialog.dismiss()
+                    popup.dismiss()
                     setQuickNoteAction(i)   // remember it — a tap returns here next time
                     runQuickNoteAction(i)   // …and go there now
                 }
             })
         }
-        dialog.show()
+        com.toolsboox.ot.LedgerFonts.applyTree(row)
+        popup = android.widget.PopupWindow(row,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
+            isOutsideTouchable = true
+            elevation = 10f
+        }
+        // Unfurl to the RIGHT of the pen button, vertically centred on it.
+        val anchor = binding.floatNoteButton
+        row.measure(android.view.View.MeasureSpec.UNSPECIFIED, android.view.View.MeasureSpec.UNSPECIFIED)
+        popup.showAsDropDown(anchor, anchor.width + px(6),
+            -(anchor.height + row.measuredHeight) / 2)
     }
 
     /** Jump to today's page for a given note-page key (grid/sketch), from the pen-button menu. */
@@ -526,6 +540,9 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // (The saved light/dark scheme is applied in BaseApplication.onCreate — before any activity
+        // exists. Applying it here, after super.onCreate, forced a wrong-scheme first frame plus a
+        // full recreate on every cold launch.)
         // Bound the re-creatable caches (article copies, later media, temp shots) —
         // daily, off-main, never touching user media or day JSONs.
         com.toolsboox.ot.CacheJanitor.runDaily(this)
@@ -763,8 +780,34 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle, navOptions)
     }
 
+    /**
+     * Decode a shared image DOWNSAMPLED, never full-size. A 12MP camera share decoded whole is a
+     * ~48MB bitmap — enough to OOM a Palma — and whatever lands here gets base64'd into the day
+     * JSON by the gram placement path, so oversized pixels become permanent oversized JSON (the
+     * known media-bloat problem). Bounds first, then a power-of-two sample that brings the longest
+     * edge inside 2048px, then a JPEG ~85 round-trip: the lossy pass smooths sensor noise, which
+     * is what lets the placement path's PNG re-encode actually compress a photograph.
+     */
     private fun decodeSharedImage(uri: android.net.Uri): android.graphics.Bitmap? = runCatching {
-        contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it) }
+        val maxEdge = 2048
+        // Pass 1: bounds only — no pixels allocated yet.
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+        // Smallest power of two that lands the longest edge inside maxEdge.
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxEdge) sample *= 2
+        // Pass 2: the real decode at the computed sample.
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        val decoded = contentResolver.openInputStream(uri)?.use {
+            android.graphics.BitmapFactory.decodeStream(it, null, opts)
+        } ?: return@runCatching null
+        // Pass 3: the JPEG round-trip that keeps the eventual day-JSON payload sane.
+        val baos = java.io.ByteArrayOutputStream()
+        if (!decoded.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, baos)) return@runCatching decoded
+        val settled = android.graphics.BitmapFactory.decodeByteArray(baos.toByteArray(), 0, baos.size())
+        if (settled != null && settled !== decoded) decoded.recycle()
+        settled ?: decoded
     }.getOrNull()
 
     /**

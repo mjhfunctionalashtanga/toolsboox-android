@@ -27,7 +27,13 @@ object AvGrams {
         att: Attachment,
         date: LocalDate = LocalDate.now(),
         title: String = "",
-        pageKey: String = PickingsStore.DEFAULT_KEY
+        pageKey: String = PickingsStore.DEFAULT_KEY,
+        // Where the recording came from, when it was made ABOUT something — a feed article you
+        // spoke a note over, say. Rides on the placed card so tapping it can jump back to the
+        // origin, exactly like an image gram's provenance. Defaults keep every existing caller
+        // (a recording made in the open is its own origin) unchanged.
+        sourceLink: String = "",
+        sourceLabel: String = ""
     ): Boolean {
         if (!blob.exists()) return false
 
@@ -54,7 +60,10 @@ object AvGrams {
         return try {
             PickingsPlacement.place(
                 service, root, poster, date, pageKey,
-                sourceLabel = (if (isVideo) "🎥 Video gram · " else "🎤 Audio gram · ") + date,
+                sourceLink = sourceLink,
+                sourceLabel = sourceLabel.ifBlank {
+                    (if (isVideo) "🎥 Video gram · " else "🎤 Audio gram · ") + date
+                },
                 media = PickingsPlacement.MediaRef(
                     kind = if (isVideo) "video" else "audio",
                     attachmentId = att.id,

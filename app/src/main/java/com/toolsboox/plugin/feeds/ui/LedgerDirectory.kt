@@ -71,14 +71,77 @@ fun ledgerDirectoryFolders(
     // Desk Ledger · Garden · Feed Ledger · Bookshelf · Ledger Log · Community · Sites · Settings.
     return listOfNotNull(
         nowPlaying,
-        // Search — one tap onto the Log/history surface, which carries range/origin/search inside.
-        ScreenFragment.Folder("🔍", "Search", action = { openHistory(null) }),
+        // Search — one tap onto the Log/history surface, arriving ready to type: the one field
+        // that searches the whole Ledger, OCR/text layer and semantic layer both.
+        ScreenFragment.Folder("🔍", "Search", action = {
+            ReadingLogSelection.focusSearch = true
+            openHistory(null)
+        }),
         // One-tap jump to today's Day page — no submenu. If we're leaving an open article/book,
         // drop a return anchor so the Day page can jump straight back.
         ScreenFragment.Folder("☀️", "Today", action = {
             (fragment as? com.toolsboox.ui.plugin.ReturnAnchorProvider)?.prepareReturnAnchor()
             nav.navigate(R.id.action_to_calendar_day)
         }),
+        // Feed Ledger — the RSS reader lenses. Starred (your RSS stars) and Later (the read-later
+        // intake) are DIFFERENT stores — both here, as on iPad, not one standing in for the other.
+        ScreenFragment.Folder("📰", "Feed", listOf(
+            "📰  All" to { openFeed("feed", null) },
+            "📖  The Read" to { openFeed("feed", "read") },
+            "📺  The Watch" to { openFeed("feed", "watch") },
+            "🎧  The Listen" to { openFeed("feed", "listen") },
+            "⭐  Starred" to { openFeed("stars", null) },
+            "🔖  Later" to { openFeed("later", null) },
+            // The rest of the feed drawer's views, here too so the hub and the drawer agree
+            // (they're sidebar rows on iPad). "pickings" and "local" ride the same one-shot
+            // FeedSelection mode the lens rows use; Smart Feeds are each their own saved
+            // search, so that row lands on the list with the drawer open — the smart rows
+            // live there, one tap away, without duplicating the fragment's private wiring.
+            "❝  Feed Pickings" to { openFeed("pickings", null) },
+            "#  Smart Feeds" to {
+                FeedSelection.filterFeedTitle = null
+                FeedSelection.openDirectory = true
+                nav.navigate(R.id.action_to_feeds)
+            },
+            "📡  Local Feeds" to { openFeed("local", null) }
+        ), expanded = expandFeedLedger),
+        // Desk Ledger — the working surfaces: mail, people, tasks, boards, publishing, notes.
+        ScreenFragment.Folder("🗒", "Desk", listOf(
+            // Desk order (Michael, 07-24): Quick Wins leads — the quickest action-surface at the
+            // top — then the internet-backed working surfaces. The note surfaces moved to their
+            // own Notes folder below.
+            "⚡  Quick Wins" to { nav.navigate(R.id.action_to_quick_wins) },
+            // Native unified mail (IMAP/SMTP) — email is a working surface, so it lives on the Desk.
+            "✉  Mail" to { nav.navigate(R.id.action_to_mail_inbox) },
+            "👤  Contacts" to { nav.navigate(R.id.action_to_rolodex) },
+            // Boards = one system, two sources (Local on-device tasks · Site FluentBoards),
+            // framed like the RSS Local/Site split. Tasks & Events is the list view of Local.
+            "☑  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
+            "📋  Boards · Local" to { nav.navigate(R.id.action_to_kanban) },
+            // WordPress publishing on the active site — compose (post/schedule/draft, CPTs, grams as
+            // the featured image) and browse/edit/trash posts.
+            "🖋  Publish" to { nav.navigate(R.id.action_to_publish) },
+            "🗎  Posts" to { nav.navigate(R.id.action_to_posts_browser) }
+        )),
+        // The Garden: the surfaces that are about what you have already written rather than about
+        // capturing more of it. Roots is what keeps coming back, Map is the same material as a picture,
+        // and Sprouts and Missed Rhizomes are what sprouted or what you skipped that speaks to it.
+        // (Write moved to Daily; Quick Wins moved to the Desk.)
+        ScreenFragment.Folder("🪴", "Garden", listOf(
+            "🌿  Roots" to { nav.navigate(R.id.action_to_ledger_roots) },
+            "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
+            "🌱  Sprouts" to { nav.navigate(R.id.action_to_sprouts) },
+            "✧  Missed Rhizomes" to { nav.navigate(R.id.action_to_missed_rhizomes) }
+        )),
+        // Notes as their own door (Michael, 07-24): the four note surfaces out of the Desk into a
+        // folder of their own — the named-notes work will grow from here. Notes reopens where you
+        // last were.
+        ScreenFragment.Folder("✒", "Notes", listOf(
+            "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
+            "📈  Grid Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "grid") },
+            "⌱  Jot Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "sketch") },
+            "⌗  Text Notes" to { nav.navigate(R.id.action_to_text_notes) }
+        )),
         // The daily ritual: Intake → Pickings → Gratitude → Self Executive → Synthesize → Write.
         // Synthesize works the day's gathered pieces and Write closes the ritual out — both live here,
         // matching iPad, rather than in the Garden.
@@ -92,62 +155,22 @@ fun ledgerDirectoryFolders(
             "🔬  Synthesize" to { showSynthPicker(fragment) },
             "✍  Write" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "write") }
         )),
-        // Desk Ledger — the working surfaces: mail, people, tasks, boards, publishing, notes.
-        ScreenFragment.Folder("🗒", "Desk", listOf(
-            // Desk order (Michael): the internet-backed working surfaces first — mail, people, tasks,
-            // boards, publishing, quick wins — then the four note surfaces together at the end.
-            // Native unified mail (IMAP/SMTP) — email is a working surface, so it lives on the Desk.
-            "✉  Mail" to { nav.navigate(R.id.action_to_mail_inbox) },
-            "👤  Contacts" to { nav.navigate(R.id.action_to_rolodex) },
-            // Boards = one system, two sources (Local on-device tasks · Site FluentBoards),
-            // framed like the RSS Local/Site split. Tasks & Events is the list view of Local.
-            "☑  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
-            "📋  Boards · Local" to { nav.navigate(R.id.action_to_kanban) },
-            // WordPress publishing on the active site — compose (post/schedule/draft, CPTs, grams as
-            // the featured image) and browse/edit/trash posts.
-            "🖋  Publish" to { nav.navigate(R.id.action_to_publish) },
-            "🗎  Posts" to { nav.navigate(R.id.action_to_posts_browser) },
-            // Quick Wins — the quickest semantic action-surface, now a working-desk row.
-            "⚡  Quick Wins" to { nav.navigate(R.id.action_to_quick_wins) },
-            // The four note surfaces belong together, at the end of the desk. Notes reopens where you
-            // last were.
-            "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
-            "📈  Grid Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "grid") },
-            "⌱  Sketch Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "sketch") },
-            "⌗  Text Notes" to { nav.navigate(R.id.action_to_text_notes) }
-        )),
-        // The Garden: the surfaces that are about what you have already written rather than about
-        // capturing more of it. Roots is what keeps coming back, Map is the same material as a picture,
-        // and Sprouts and Missed Rhizomes are what sprouted or what you skipped that speaks to it.
-        // (Write moved to Daily; Quick Wins moved to the Desk.)
-        ScreenFragment.Folder("🪴", "Garden", listOf(
-            "🌿  Roots" to { nav.navigate(R.id.action_to_ledger_roots) },
-            "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
-            "🌱  Sprouts" to { nav.navigate(R.id.action_to_sprouts) },
-            "✧  Missed Rhizomes" to { nav.navigate(R.id.action_to_missed_rhizomes) }
-        )),
-        // Feed Ledger — the RSS reader lenses. Starred (your RSS stars) and Later (the read-later
-        // intake) are DIFFERENT stores — both here, as on iPad, not one standing in for the other.
-        ScreenFragment.Folder("📰", "Feed", listOf(
-            "📰  All" to { openFeed("feed", null) },
-            "📖  The Read" to { openFeed("feed", "read") },
-            "📺  The Watch" to { openFeed("feed", "watch") },
-            "🎧  The Listen" to { openFeed("feed", "listen") },
-            "⭐  Starred" to { openFeed("stars", null) },
-            "🔖  Later" to { openFeed("later", null) }
-        ), expanded = expandFeedLedger),
         bookshelf,
         // Log — the zettelkasten: one screen with range/origin/search inside; Ask lives with it
         // (asking IS querying the log).
         ScreenFragment.Folder("🕘", "Log", listOf(
-            "🕘  Log" to { openHistory(null) },
+            // "History", not "Log" — the child shares the folder's name and Search's destination,
+            // and a distinct name + glyph is what tells you it's the browse-the-past door.
+            "🕰  History" to { openHistory(null) },
             "🔎  Ask" to { nav.navigate(R.id.action_to_ledger_chat) }
         )),
         // Community: the NATIVE people-facing surfaces — your desk's connection to others. The active
         // site's member-facing WEB portals live in their own "Sites" folder below, so it's clear at a
         // glance which rows are native tools and which are the website rendered in a WebView.
         ScreenFragment.Folder("👥", "Community", listOf(
-            "📋  Boards · Site" to { nav.navigate(R.id.action_to_site_boards) },
+            // 🗃 (not 📋) so the two Boards doors don't wear the same icon when the Desk and
+            // Community folders are open together — Local keeps the card, Site gets the file box.
+            "🗃  Boards · Site" to { nav.navigate(R.id.action_to_site_boards) },
             "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
             "💬  Messages" to { nav.navigate(R.id.action_to_messages) },
             // The day's booking roster (tap a person → their CRM, scribble a note that OCRs onto their
@@ -166,10 +189,13 @@ fun ledgerDirectoryFolders(
             "🛍  Shop" to { openSiteWeb(nav, "shop") }
         )),
         ScreenFragment.Folder("⚙", "Settings", listOf(
-            "⚙  Settings" to { nav.navigate(R.id.action_to_settings) },
-            // Sites is configuration, so it belongs here — not buried behind a button deep inside the
-            // calendar-settings scroll. Same manager the settings screen opens; one source of truth.
-            "🖥  Sites" to { com.toolsboox.plugin.calendar.ui.SitesSettingsDialog.show(fragment.requireContext()) },
+            // "All settings", not "⚙ Settings" — the folder is already called Settings and wears
+            // the gear; a child repeating both read as the same door twice.
+            "⚙  All settings" to { nav.navigate(R.id.action_to_settings) },
+            // Site accounts is configuration, so it belongs here — not buried behind a button deep
+            // inside the calendar-settings scroll. Same manager the settings screen opens; one source
+            // of truth. ("Site accounts", not "Sites" — that label is the web-portals folder above.)
+            "🖥  Site accounts" to { com.toolsboox.plugin.calendar.ui.SitesSettingsDialog.show(fragment.requireContext()) },
             "🔤  OCR model" to { com.toolsboox.ui.plugin.OcrModel.showPicker(fragment.requireContext()) },
             "☁  Cloud sync" to { nav.navigate(R.id.action_to_cloud) }
         ))

@@ -52,10 +52,18 @@ object LedgerFonts {
         Choice.values().firstOrNull { it.id == id } ?: Choice.SYSTEM
 
     /**
-     * The [Typeface] for the stored choice, or null for [Choice.SYSTEM] (and on any load failure).
-     * A null return means "leave the view's typeface alone".
+     * The [Typeface] that should actually be drawn — null means "leave the view's typeface alone".
+     *
+     * Resolution goes through [LedgerTheme.effectiveFontId], which is where the one rule lives:
+     * an explicit pick always wins, and only while the stored choice is still "system" does the
+     * current vibe's default face step in (terminal → mono, and so on). A vibe whose own face is
+     * "system" resolves to null here, exactly as before the vibes existed.
+     *
+     * [current] deliberately stays the STORED choice: the settings chips select against it, so
+     * "System" must read as selected even while a vibe is quietly supplying the face.
      */
-    fun typeface(context: Context): Typeface? = typefaceFor(context, current(context))
+    fun typeface(context: Context): Typeface? =
+        typefaceFor(context, choiceById(LedgerTheme.effectiveFontId(context)))
 
     /** As [typeface] but for a specific [choice] — used when previewing a face the reader hasn't kept. */
     fun typefaceFor(context: Context, choice: Choice): Typeface? {

@@ -114,7 +114,19 @@ class CalendarDayPageNotes : Creator {
                 return
             }
             if (PickingsStore.isPickings(notePage)) {
-                drawPickingsPage(canvas)
+                if (notePage == PickingsStore.DEFAULT_KEY) {
+                    // The DAILY board opens on its cover: the classic template first (its
+                    // full-page white fill would wipe anything under it), compressed to start
+                    // below the band, then the cover band drawn over the cleared top.
+                    drawPickingsPage(canvas, panelTop = PickingsCover.CONTENT_TOP)
+                    PickingsCover.draw(context, canvas, calendarDay)
+                } else {
+                    // A named board keeps the full-height classic page — and must drop the
+                    // cover's recorded tap zones, so a stale rectangle can't open a board
+                    // from a page that doesn't show any.
+                    PickingsCover.clear()
+                    drawPickingsPage(canvas)
+                }
                 return
             }
             if (notePage == "intake") {
@@ -203,6 +215,11 @@ class CalendarDayPageNotes : Creator {
             canvas.drawText("☀︎ SELF EXECUTIVE", 1404f / 2f, 56f, titleCenter)
 
             // One cell of the grid: header, prompt, and its rows evenly filling the height.
+            //
+            // Marked up on the 07-24 worksheet: the label used to sit two-thirds down its slot
+            // with a single line beside it, so the hand wrote in the dead space ABOVE the label
+            // ("move these up"). Now the prompt leads its slot and the writing lines flow out
+            // from it — one beside the label, the rest filling the slot below, evenly.
             fun cell(cx: Float, cy: Float, cw: Float, ch: Float, head: String, sub: String, rows: List<String>) {
                 canvas.drawRoundRect(android.graphics.RectF(cx, cy, cx + cw, cy + ch), 12f, 12f, cellBorder)
                 val px = cx + 20f
@@ -212,13 +229,18 @@ class CalendarDayPageNotes : Creator {
                 val avail = ch - 104f
                 val rh = avail / rows.size
                 rows.forEachIndexed { i, label ->
-                    val ry = top + i * rh + rh * 0.66f
-                    if (label.isNotEmpty()) {
+                    val slotTop = top + i * rh
+                    val ry = slotTop + minOf(34f, rh * 0.5f)
+                    val lx = if (label.isNotEmpty()) {
                         canvas.drawText(label, px, ry, labelP)
-                        val lx = px + labelP.measureText(label) + 14f
-                        canvas.drawLine(lx, ry + 6f, cx + cw - 20f, ry + 6f, writeLine)
-                    } else {
-                        canvas.drawLine(px, ry + 6f, cx + cw - 20f, ry + 6f, writeLine)
+                        px + labelP.measureText(label) + 14f
+                    } else px
+                    canvas.drawLine(lx, ry + 6f, cx + cw - 20f, ry + 6f, writeLine)
+                    // Fill what's left of the slot with follow-on lines at the same rhythm.
+                    var fy = ry + 56f
+                    while (fy < slotTop + rh - 14f) {
+                        canvas.drawLine(px, fy + 6f, cx + cw - 20f, fy + 6f, writeLine)
+                        fy += 56f
                     }
                 }
             }
@@ -400,8 +422,12 @@ class CalendarDayPageNotes : Creator {
          * Draw the Pickings page: a NOTES writing zone, a QUOTES writing zone, and two
          * dashed image boxes below. Strokes save under the "pickings" notePage key, so the
          * sync can route this page to michaeljoelhall.com (journal CPT) + mjh.yoga /notes/.
+         *
+         * [panelTop] lets the DAILY board's cover band push the writing panels down without
+         * touching anything below them — the image boxes hang off panelBottom either way, so
+         * a named board (default 60f) and the covered daily board share every line but the top.
          */
-        private fun drawPickingsPage(canvas: Canvas) {
+        private fun drawPickingsPage(canvas: Canvas, panelTop: Float = 60f) {
             canvas.drawRect(0f, 0f, 1404f, 1872f, Creator.fillWhite)
 
             val robotBold = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
@@ -429,7 +455,6 @@ class CalendarDayPageNotes : Creator {
             val lineSpacing = 60f
 
             // Two tall writing panels side by side, NOTES (left) + QUOTES (right). No title — bigger boxes.
-            val panelTop = 60f
             val panelBottom = 1150f
             canvas.drawText("NOTES", left, panelTop - 14f, headerPaint)
             canvas.drawRect(left, panelTop, colMidR, panelBottom, panelBorder)
@@ -449,8 +474,8 @@ class CalendarDayPageNotes : Creator {
             val boxTop = imgHeaderY + 18f
             val boxSize = colMidR - left
             val boxBottom = boxTop + boxSize
-            canvas.drawText("IMAGE 1", left, imgHeaderY, headerPaint)
-            canvas.drawText("IMAGE 2", colMidL, imgHeaderY, headerPaint)
+            canvas.drawText("BASKET 1", left, imgHeaderY, headerPaint)
+            canvas.drawText("BASKET 2", colMidL, imgHeaderY, headerPaint)
             canvas.drawRect(left, boxTop, colMidR, boxBottom, dashedBorder)
             canvas.drawRect(colMidL, boxTop, right, boxBottom, dashedBorder)
         }

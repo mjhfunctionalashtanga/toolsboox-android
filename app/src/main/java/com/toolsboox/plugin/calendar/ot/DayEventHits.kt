@@ -20,7 +20,7 @@ import java.time.ZoneId
  */
 object DayEventHits {
 
-    private const val CEW = 600f
+    private const val CEW = 645f  // keep in step with CalendarDayPage.cew
     private const val CEH = 50f
     private const val LO = 20f
     private val TO = (1872f - 35 * CEH) / 2f

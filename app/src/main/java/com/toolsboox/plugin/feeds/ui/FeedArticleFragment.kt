@@ -80,12 +80,24 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         }
         binding.articleWeb.setOnLongClickListener {
             val hit = binding.articleWeb.hitTestResult
-            val isLink = hit.type == android.webkit.WebView.HitTestResult.SRC_ANCHOR_TYPE ||
-                hit.type == android.webkit.WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE
             val url = hit.extra
-            if (isLink && !url.isNullOrBlank() && url.startsWith("http")) {
-                showLinkMenu(url); true
-            } else false
+            when {
+                url.isNullOrBlank() || !url.startsWith("http") -> false
+                // A bare picture held: it becomes a photo gram for this article ("a cute photo gram").
+                hit.type == android.webkit.WebView.HitTestResult.IMAGE_TYPE -> {
+                    val a = entry
+                    com.toolsboox.plugin.feeds.ot.FeedNoteGram.showImageMenu(
+                        this, calendarDayService, documentsRoot(), url,
+                        a?.title.orEmpty(), a?.feedTitle.orEmpty(), a?.url.orEmpty())
+                    true
+                }
+                // An image that is ALSO a link keeps its link menu, with the photo-gram option added.
+                hit.type == android.webkit.WebView.HitTestResult.SRC_ANCHOR_TYPE -> { showLinkMenu(url); true }
+                hit.type == android.webkit.WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE -> {
+                    showLinkMenu(url, imageUrl = url); true
+                }
+                else -> false
+            }
         }
 
         // Floating nav pill: grip drags/collapses; ‹ › page, ⌃ ⌄ step articles, ✎ annotate.
@@ -151,22 +163,35 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
      * ☰ pulls up the directory as an overlay — WITHOUT leaving the article. Picking a feed view
      * returns to the list in that mode; the Ledger sections (almanac/history/…) navigate away.
      */
-    /** Link tapped in the article → Open / Add to Later / Copy (moved off long-press so holding can select). */
-    private fun showLinkMenu(url: String) {
+    /** Link tapped in the article → Open / Add to Later / Copy (moved off long-press so holding can
+     *  select). When the held thing was an image-anchor, [imageUrl] adds the photo-gram option. */
+    private fun showLinkMenu(url: String, imageUrl: String? = null) {
+        val items = mutableListOf("🌐  Open", "🔖  Save to Later List", "📋  Copy link")
+        if (imageUrl != null) items.add(com.toolsboox.plugin.feeds.ot.FeedNoteGram.photoGramLabel(requireContext()))
         androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(url)
-            .setItems(arrayOf("🌐  Open", "🔖  Save to Later List", "📋  Copy link")) { _, which ->
+            .setItems(items.toTypedArray()) { _, which ->
                 when (which) {
                     0 -> startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
                     1 -> {
+                        // A link the reader already knows carries its own presentation — title,
+                        // excerpt, featured image — so the Later row shows the thing, not the URL.
+                        val known = (listOfNotNull(entry) + FeedSelection.list).firstOrNull { it.url == url }
                         com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.fileLink(
-                            requireContext(), java.time.LocalDate.now(), "read", url, null)
+                            requireContext(), java.time.LocalDate.now(), "read", url,
+                            known?.title, excerpt = known?.blurb, image = known?.imageUrl)
                         showMessage("Saved to Later List", binding.root)
                     }
                     2 -> {
                         val cb = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                         cb.setPrimaryClip(android.content.ClipData.newPlainText("link", url))
                         showMessage("Link copied", binding.root)
+                    }
+                    3 -> {
+                        val a = entry
+                        com.toolsboox.plugin.feeds.ot.FeedNoteGram.savePhotoGram(
+                            this, calendarDayService, documentsRoot(), imageUrl ?: url,
+                            a?.title.orEmpty(), a?.feedTitle.orEmpty(), a?.url.orEmpty())
                     }
                 }
             }.show()
@@ -232,8 +257,10 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                 val e = entry
                 val u = e?.url?.takeIf { it.isNotBlank() }
                 if (u != null) {
+                    // The open article IS the known entry — save its blurb + featured image along.
                     com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.fileLink(
-                        requireContext(), java.time.LocalDate.now(), "read", u, e.title)
+                        requireContext(), java.time.LocalDate.now(), "read", u, e.title,
+                        excerpt = e.blurb, image = e.imageUrl)
                     showMessage("Saved to Later List", binding.root)
                 } else showMessage("No link on this article", binding.root)
             },
@@ -259,7 +286,8 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         ) { raw ->
             val player = com.toolsboox.ui.plugin.LedgerPlayer
             player.start(requireContext(), e?.title, e?.feedTitle?.ifBlank { null }, e?.imageUrl, unquoteJs(raw))
-            player.showModal(requireContext())
+            // No auto-popup on TTS start — the transport lives in the feeds drawer card and
+            // the explicit "Player…" menu row; a modal jumping up mid-read was the wonk.
         }
     }
 
@@ -293,6 +321,12 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
     private fun showEntry(e: FeedEntry) {
         entry = e
         parsed = false
+        // Synthetic rows (Later/Pickings, negative ids) have no Miniflux entry to star and no
+        // day-file lineage to annotate - the buttons sat there visibly dead ("for good reason",
+        // as Michael put it). Dead controls hide instead.
+        val real = e.id > 0
+        binding.artStar.visibility = if (real) View.VISIBLE else View.GONE
+        binding.artAnnotate.visibility = if (real) View.VISIBLE else View.GONE
         binding.articleWeb.loadDataWithBaseURL(articleBaseUrl(e), buildHtml(e, e.content), "text/html", "UTF-8", null)
         updateStar()
         updateParse()
@@ -414,17 +448,24 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    /** Highlight → annotate: read the current selection, then open the shared capture menu
-     *  (note / photo / upload / voice), mirroring the book reader. Works with no selection. */
+    /** Highlight → annotate: read the current selection, then choose the note's MEDIUM. A saved
+     *  note IS a gram — [com.toolsboox.plugin.feeds.ot.FeedNoteGram] places it on today's Notes
+     *  page, same shared flow as the in-pane reader. Works with no selection. */
     private fun annotate(e: FeedEntry) {
         binding.articleWeb.evaluateJavascript(
             "(function(){var s=window.getSelection&&window.getSelection();return s?s.toString():'';})()"
         ) { raw ->
-            captureAnnotation(unquoteJs(raw).trim(), e.title) { selection, note, attachment ->
-                lifecycleScope.launch {
-                    withContext(Dispatchers.IO) { logEvent(e, excerpt = selection, note = note, attachment = attachment) }
+            com.toolsboox.plugin.feeds.ot.FeedNoteGram.show(
+                this, calendarDayService, documentsRoot(),
+                selection = unquoteJs(raw).trim(),
+                articleTitle = e.title, feedTitle = e.feedTitle, articleUrl = e.url,
+                captureAv = { kind, sink -> captureAvGramDirect(kind, sink) },
+                logEvent = { excerpt, note ->
+                    lifecycleScope.launch {
+                        withContext(Dispatchers.IO) { logEvent(e, excerpt = excerpt, note = note) }
+                    }
                 }
-            }
+            )
         }
     }
 

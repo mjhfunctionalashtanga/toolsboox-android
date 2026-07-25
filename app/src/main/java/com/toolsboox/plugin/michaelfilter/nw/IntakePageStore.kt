@@ -103,6 +103,14 @@ object IntakePageStore {
             for (sk in (ls.keys + rs.keys)) merged[sk] = ls[sk]?.takeIf { it.isNotBlank() } ?: rs[sk].orEmpty()
             m.sections[k] = merged
         }
+        // Link metadata unions the same way: every URL either side knows about, local value wins
+        // per field when both filled one in (it's the device the save happened on).
+        for (u in (local.linkMeta.keys + remote.linkMeta.keys)) {
+            val lm = local.linkMeta[u] ?: mutableMapOf(); val rm = remote.linkMeta[u] ?: mutableMapOf()
+            val merged = mutableMapOf<String, String>()
+            for (mk in (lm.keys + rm.keys)) merged[mk] = lm[mk]?.takeIf { it.isNotBlank() } ?: rm[mk].orEmpty()
+            m.linkMeta[u] = merged
+        }
         return m
     }
 
@@ -135,16 +143,86 @@ object IntakePageStore {
      * File a shared link into a panel (read|watch|listen|educate): append it to that
      * day's typed content, persist, and dispatch (which enqueues it to the pipeline and
      * makes it show up in the Notes & Annotations log). Used by the share-to-file flow.
+     *
+     * [excerpt] and [image] are the link's presentation metadata — pass them when the caller
+     * already knows the thing (a feed entry being saved carries its own blurb + featured
+     * image). When neither is given, a best-effort og: fetch fills them in the background,
+     * so a link saved from the open web still renders informative and attractive in the
+     * Later list — and a fetch that fails leaves today's plain behavior untouched.
      */
-    fun fileLink(context: Context, date: LocalDate, kind: String, url: String, title: String?) {
+    fun fileLink(context: Context, date: LocalDate, kind: String, url: String, title: String?,
+                 excerpt: String? = null, image: String? = null) {
         val data = load(context, date)
         val entry = listOfNotNull(title?.trim()?.takeIf { it.isNotEmpty() }, url.trim()).joinToString(" — ")
         val existing = data.typedFor(kind).trim()
         data.setTypedFor(kind, if (existing.isEmpty()) entry else "$existing\n$entry")
+        writeMeta(data, url, title, excerpt, image)
         save(context, date, data)
         dispatch(context, date, data)
         publish(context, kind, url, title ?: "")
         cacheArticle(context, url)
+        if (excerpt.isNullOrBlank() && image.isNullOrBlank()) fetchLinkMeta(context, date, url)
+    }
+
+    /** The saved presentation metadata for a filed [url] on [date]'s page (null when none). */
+    fun linkMeta(data: com.toolsboox.plugin.michaelfilter.da.IntakePageData, url: String): Map<String, String>? =
+        data.linkMeta[url.trim()]?.takeIf { it.values.any { v -> v.isNotBlank() } }
+
+    /** Attach presentation metadata to an already-filed link (the add-to-Later path writes its
+     *  typed line itself and only needs this half). */
+    fun rememberLinkMeta(context: Context, date: LocalDate, url: String,
+                         title: String?, excerpt: String?, image: String?) {
+        if (title.isNullOrBlank() && excerpt.isNullOrBlank() && image.isNullOrBlank()) return
+        val data = load(context, date)
+        writeMeta(data, url, title, excerpt, image)
+        save(context, date, data)
+    }
+
+    private fun writeMeta(data: com.toolsboox.plugin.michaelfilter.da.IntakePageData,
+                          url: String, title: String?, excerpt: String?, image: String?) {
+        if (title.isNullOrBlank() && excerpt.isNullOrBlank() && image.isNullOrBlank()) return
+        val meta = data.linkMeta.getOrPut(url.trim()) { mutableMapOf() }
+        title?.trim()?.takeIf { it.isNotBlank() }?.let { meta["title"] = it }
+        excerpt?.trim()?.takeIf { it.isNotBlank() }?.let { meta["excerpt"] = it.take(200) }
+        image?.trim()?.takeIf { it.startsWith("http") }?.let { meta["image"] = it }
+    }
+
+    /**
+     * Best-effort og:title / og:description / og:image for a link filed with no known entry —
+     * one lightweight fetch at save time, background, fail-silent. Whatever the page offers is
+     * merged into the day's linkMeta; a page that offers nothing changes nothing.
+     */
+    private fun fetchLinkMeta(context: Context, date: LocalDate, url: String) {
+        if (!url.startsWith("http")) return
+        Thread {
+            runCatching {
+                val req = okhttp3.Request.Builder().url(url)
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 11) LedgerReader/1.0")
+                    .get().build()
+                okHttp.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@Thread
+                    // The og: tags live in <head>; the first 64K is plenty and keeps this light.
+                    val head = resp.body?.source()?.let { s ->
+                        s.request(65536); s.buffer.snapshot().utf8()
+                    }.orEmpty()
+                    fun og(prop: String): String? =
+                        Regex("""<meta[^>]+(?:property|name)=["']og:$prop["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                            .find(head)?.groupValues?.get(1)
+                            ?: Regex("""<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']og:$prop["']""", RegexOption.IGNORE_CASE)
+                                .find(head)?.groupValues?.get(1)
+                    val title = og("title")
+                    val desc = og("description")
+                    val image = og("image")
+                    if (title.isNullOrBlank() && desc.isNullOrBlank() && image.isNullOrBlank()) return@Thread
+                    val decoded = fun(s: String?): String? = s?.let {
+                        android.text.Html.fromHtml(it, android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim()
+                    }
+                    val data = load(context, date)
+                    writeMeta(data, url, decoded(title), decoded(desc), image)
+                    save(context, date, data)
+                }
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     // ------------------------------------------------------------------

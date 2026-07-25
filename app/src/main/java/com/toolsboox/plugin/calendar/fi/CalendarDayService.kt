@@ -199,6 +199,37 @@ class CalendarDayService @Inject constructor() {
     }
 
     /**
+     * A slim decode for the CORPUS gather (Ask, Roots, Sprouts, Missed Rhizomes, the Map):
+     * exactly what the corpus quotes — dates, reading events, typed text, A/V gram names,
+     * tasks, device events — and none of what it doesn't. The stroke arrays and the base64
+     * image payloads that dominate a day file's bytes are skipped by Moshi's reader instead
+     * of being materialised, so walking a year of days no longer pays for a year of media.
+     */
+    @com.squareup.moshi.JsonClass(generateAdapter = true)
+    data class DayLiteCorpus(
+        val year: Int = 0,
+        val month: Int = 1,
+        val day: Int = 1,
+        val events: List<com.toolsboox.plugin.calendar.da.v1.CalendarEvent> = emptyList(),
+        val readingEvents: List<com.toolsboox.plugin.calendar.da.v2.ReadingEvent> = emptyList(),
+        val textElements: List<com.toolsboox.da.TextElement> = emptyList(),
+        val avGrams: List<com.toolsboox.da.Attachment> = emptyList(),
+        val ledgerItems: List<com.toolsboox.plugin.calendar.da.v2.LedgerItem> = emptyList(),
+    )
+
+    fun loadCorpusSlice(item: File): DayLiteCorpus? {
+        if (!item.exists() || !item.name.startsWith("day-") || !item.absolutePath.endsWith("-v2.json")) return null
+        val json = try { item.readText(Charsets.UTF_8) } catch (e: Exception) { return null }
+        if (json.isBlank()) return null
+        return try {
+            moshi.adapter(DayLiteCorpus::class.java).fromJson(json)
+        } catch (e: Exception) {
+            Timber.w(e, "Corrupt day file ${item.name} (corpus-lite); skipping")
+            null
+        }
+    }
+
+    /**
      * Convert the data class to JSON.
      *
      * @param calendarDay the calendar day

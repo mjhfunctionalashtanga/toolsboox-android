@@ -93,7 +93,7 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
 
         map = MindMapView(requireContext()).apply {
             onNodeTap = { uri -> if (uri != focus) { trail.addLast(focus); focus = uri; render() } }
-            onNodeHold = { uri -> openRhizome(uri) }
+            onNodeHold = { uri -> nodeHoldMenu(uri) }
         }
         binding.mapCanvas.addView(
             map,
@@ -102,12 +102,15 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             )
         )
 
+        // The contract in one line, before anything is deduced from a diagram.
+        binding.mapHint.text = getString(R.string.map_hint)
+
         val pageDate = arguments?.getString(ARG_PAGE_DATE)?.takeIf { it.isNotBlank() }
         if (pageDate != null) {
             loadPageGraph(pageDate, arguments?.getString(ARG_PAGE_KEY).orEmpty())
         } else {
             loadGraph()
-            focus = arguments?.getString(ARG_URI)?.takeIf { it.isNotBlank() } ?: busiest()
+            focus = arguments?.getString(ARG_URI)?.takeIf { it.isNotBlank() } ?: openingFocus()
         }
         render()
     }
@@ -203,6 +206,13 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             names[e.from] = name(e.from, e.fromLabel)
             names[e.to] = name(e.to, e.toLabel)
         }
+        // Every neighbour list heaviest-first. The layout can only seat MAX_INNER around the
+        // focus, and it seats them in list order — unsorted, the first paint was whichever ten
+        // edges happened to be recorded first, which is how a map of your own material manages
+        // to open looking arbitrary. Sorted, the ring IS the top-N: the most-connected things
+        // you have, named and tappable, and the long tail stays a walk away instead of noise.
+        val deg = adj.mapValues { it.value.distinct().size }
+        for (list in adj.values) list.sortByDescending { deg[it] ?: 0 }
         adjacency = adj
         labels = names
     }
@@ -211,6 +221,22 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
     private fun busiest(): String =
         adjacency.maxByOrNull { it.value.distinct().size }?.key.orEmpty()
 
+    /**
+     * Where the map opens: TODAY's corner when today has connections worth seeing, else the
+     * busiest node. A map that opens on today answers "what is my current material touching?"
+     * before you have touched anything; only when today hasn't woven yet does it fall back to
+     * the strongest cluster overall — and either way the first paint is a named, tappable
+     * middle, not an arbitrary corner.
+     */
+    private fun openingFocus(): String {
+        val today = java.time.LocalDate.now().toString()
+        val todays = adjacency.entries
+            .filter { it.key.contains(today) }
+            .maxByOrNull { it.value.distinct().size }
+        if (todays != null && todays.value.distinct().size >= 2) return todays.key
+        return busiest()
+    }
+
     private fun render() {
         if (adjacency.isEmpty() || focus.isBlank()) {
             map.setGraph(emptyList())
@@ -218,7 +244,11 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             return
         }
         binding.mapSubject.text = labels[focus] ?: LedgerUri.describe(focus)
-        map.setGraph(MindMap.layout(focus, adjacency) { labels[it] ?: LedgerUri.describe(it) })
+        // Each node's connection count rides along so the view can size boxes by weight,
+        // the way the iOS Map sizes its discs — a busy node should LOOK load-bearing.
+        map.setGraph(
+            MindMap.layout(focus, adjacency) { labels[it] ?: LedgerUri.describe(it) },
+            adjacency.mapValues { it.value.distinct().size })
     }
 
     /**
@@ -230,7 +260,8 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
      */
     private fun showDrawMenu() {
         showIconMenu(getString(R.string.map_title), listOf(
-            "🕸  My connections" to { loadGraph(); focus = busiest(); trail.clear(); render() },
+            // ⁂ is THE connect glyph on Android — the same mark the semantic surfaces wear.
+            "⁂  My connections" to { loadGraph(); focus = openingFocus(); trail.clear(); render() },
             "✎  Type an outline…" to { showOutlineDialog("") },
             "🧠  Ask for a map…" to { showPersonaMenu() }
         ))
@@ -331,6 +362,23 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         focus = root
         outline = markdown
         render()
+    }
+
+    /** Hold on a node: the node's name up top, then pick it as a gram (the medium chooser, as
+     *  everywhere) or open the thing itself — holding used to jump straight to the rhizome,
+     *  which was the right single verb until picking existed. */
+    private fun nodeHoldMenu(uri: String) {
+        val label = labels[uri] ?: LedgerUri.describe(uri)
+        showIconMenu(label.take(80), listOf(
+            "⁂  Pick — make it a gram" to {
+                com.toolsboox.plugin.feeds.ot.FeedNoteGram.showForItem(
+                    this, calendarDayService, documentsRoot(),
+                    itemText = label.take(600), originLabel = "from your map",
+                    sourceUrl = uri
+                ) { kind, sink -> captureAvGramDirect(kind, sink) }
+            },
+            "⁂  Open rhizome" to { openRhizome(uri) }
+        ))
     }
 
     private fun openRhizome(uri: String) {

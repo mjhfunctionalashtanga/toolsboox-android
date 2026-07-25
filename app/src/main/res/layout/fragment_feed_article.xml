@@ -9,17 +9,22 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"/>
 
-    <!-- Capy-style tap zones over the lower quarter: L/R = page back/forward; double = prev/
-         next article; triple L = feed list, triple R = next feed. Toggled in the ☰ menu. -->
+    <!-- Page-turn zones: bottom CORNERS only, like thumbing a paper page (same fix as the book
+         reader). The old full-width 230dp band swallowed every touch in the lower quarter —
+         links couldn't pop their save-to-Later/gram menu, text couldn't be selected there.
+         Corners are the smallest defensible patch; the center stays live for the content.
+         L/R = page back/forward; double = prev/next article; triple L = feed list, triple R =
+         next feed. Toggled in the ☰ menu. -->
     <LinearLayout
         android:id="@+id/tap_zones"
         android:orientation="horizontal"
         android:layout_width="match_parent"
-        android:layout_height="230dp"
+        android:layout_height="120dp"
         android:layout_gravity="bottom"
         android:visibility="gone">
         <View android:id="@+id/tap_left" android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="match_parent"/>
+        <Space android:layout_width="0dp" android:layout_weight="2" android:layout_height="1dp"/>
         <View android:id="@+id/tap_right" android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="match_parent"/>
     </LinearLayout>

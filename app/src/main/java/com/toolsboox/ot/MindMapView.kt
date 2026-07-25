@@ -21,13 +21,17 @@ class MindMapView(context: Context) : View(context) {
     var onNodeHold: ((String) -> Unit)? = null
 
     private var placed: List<MindMap.Placed> = emptyList()
+    /** Connection count per uri — how many edges each node carries; sizes its box. */
+    private var degree: Map<String, Int> = emptyMap()
     private val boxes = mutableListOf<Pair<RectF, String>>()
 
     private val density = resources.displayMetrics.density
     private fun dp(v: Float) = v * density
 
+    // Solid black, like everything else here — the old mid-gray edge sat under a "pure black
+    // on white" header and washed out on the panel it was built for.
     private val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; color = 0xFF9A9A9A.toInt(); strokeWidth = dp(1.5f)
+        style = Paint.Style.STROKE; color = Color.BLACK; strokeWidth = dp(1.5f)
     }
     private val boxFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL; color = Color.WHITE
@@ -39,8 +43,15 @@ class MindMapView(context: Context) : View(context) {
         color = Color.BLACK; textAlign = Paint.Align.CENTER
     }
 
-    fun setGraph(nodes: List<MindMap.Placed>) {
+    /**
+     * [degree] is each node's connection count. The iOS Map swells a disc with its weight
+     * (MapView.nodeRadius: focus fixed, inner nodes grow with degree, outer dots stay small);
+     * boxes can't swell a radius, so here weight reads as a heavier rule and larger type on
+     * the inner ring — the busy nodes look load-bearing, e-ink-simple, no fills.
+     */
+    fun setGraph(nodes: List<MindMap.Placed>, degree: Map<String, Int> = emptyMap()) {
         placed = nodes
+        this.degree = degree
         invalidate()
     }
 
@@ -66,10 +77,18 @@ class MindMapView(context: Context) : View(context) {
             canvas.drawLine(px(parent), py(parent), px(p), py(p), edgePaint)
         }
 
+        // Normalise weight within THIS picture, so the busiest node on any map reads full-size.
+        val maxDeg = placed.filter { it.depth == 1 }
+            .maxOfOrNull { degree[it.uri] ?: 0 }?.coerceAtLeast(1) ?: 1
+
         for (p in placed) {
             val focus = p.depth == 0
-            textPaint.textSize = dp(if (focus) 15f else if (p.depth == 1) 13f else 11.5f)
-            textPaint.isFakeBoldText = focus
+            // 0…1 importance for the inner ring — the box's rule and type grow with it. The
+            // spread is deliberately wide (11.5→15.5sp, hairline→3dp): the first cut was subtle
+            // enough to disappear into e-ink's grey, and a weight you can't see isn't a weight.
+            val w1 = if (p.depth == 1) (degree[p.uri] ?: 0).toFloat() / maxDeg else 0f
+            textPaint.textSize = dp(if (focus) 15f else if (p.depth == 1) 11.5f + 4f * w1 else 11.5f)
+            textPaint.isFakeBoldText = focus || w1 >= 0.75f
 
             val maxW = dp(if (focus) 190f else 150f)
             val label = ellipsize(p.label, maxW)
@@ -83,7 +102,7 @@ class MindMapView(context: Context) : View(context) {
             val box = RectF(x - w / 2f, y - h / 2f, x + w / 2f, y + h / 2f)
             val r = dp(6f)
             canvas.drawRoundRect(box, r, r, boxFill)
-            boxLine.strokeWidth = dp(if (focus) 3f else 1.6f)
+            boxLine.strokeWidth = dp(if (focus) 3.5f else if (p.depth == 1) 1f + 2f * w1 else 1.4f)
             canvas.drawRoundRect(box, r, r, boxLine)
 
             val baseline = y - (textPaint.descent() + textPaint.ascent()) / 2f

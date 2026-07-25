@@ -147,7 +147,9 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
         renderLoading()
         val ctx = requireContext()
         val target = dateStr
-        lifecycleScope.launch {
+        // The view's scope: the fetch exists only to draw this roster, so back-navigation
+        // cancels it instead of ghost-rendering into a dead view.
+        viewLifecycleOwner.lifecycleScope.launch {
             val list = withContext(Dispatchers.IO) { RosterBridge.roster(ctx, target) }
             if (!isAdded || target != dateStr) return@launch
             attendees = list
@@ -305,7 +307,7 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
     /** Fetch a public avatar to the card, off the main thread. Silent on failure. */
     private fun loadPhotoInto(view: ImageView, url: String) {
         if (url.isBlank()) return
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             val bmp = withContext(Dispatchers.IO) {
                 runCatching {
                     // Bounded: a slow/hung avatar host must not pin an IO thread (one fires per card).

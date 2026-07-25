@@ -1,19 +1,16 @@
 <resources>
     <!--
-        Large e-ink panels: Boox Note (1404x1872 @300dpi -> ~749dp) and Tab X (1650x2200 @212dpi
-        -> ~1245dp). Both draw the page at roughly 1.1x where a Palma draws it at 0.59x, so the
-        furniture needs to grow with it or it reads as a phone's controls stranded on a desk-sized
-        page.
-
-        1.6x, which lands a pill button at about 98px on a Tab X against the Palma's 120px — close
-        enough to feel like the same app, without the pills eating a page that finally has room.
+        Mid-size e-ink panels — the Tab Mini C (1404x1872 @300dpi -> ~749dp) lands HERE, not in
+        the big-panel bucket: its high dpi makes a dp physically large, so the old shared 1.6x
+        set put 139px pill buttons on a 7.8" screen ("shrink the hamburger itself" - Michael,
+        on device). Near-base sizes read right at this density; the 13" set lives in sw900dp.
     -->
-    <dimen name="ledger_toolbar_width">64dp</dimen>
-    <dimen name="ledger_toolbar_button">64dp</dimen>
-    <dimen name="ledger_pill_button">74dp</dimen>
-    <dimen name="ledger_pill_button_padding">14dp</dimen>
-    <dimen name="ledger_grip_short">35dp</dimen>
-    <dimen name="ledger_grip_long">74dp</dimen>
-    <dimen name="ledger_navigator_height">76dp</dimen>
-    <dimen name="ledger_nav_button">70dp</dimen>
+    <dimen name="ledger_toolbar_width">44dp</dimen>
+    <dimen name="ledger_toolbar_button">44dp</dimen>
+    <dimen name="ledger_pill_button">45dp</dimen>
+    <dimen name="ledger_pill_button_padding">9dp</dimen>
+    <dimen name="ledger_grip_short">24dp</dimen>
+    <dimen name="ledger_grip_long">50dp</dimen>
+    <dimen name="ledger_navigator_height">60dp</dimen>
+    <dimen name="ledger_nav_button">44dp</dimen>
 </resources>

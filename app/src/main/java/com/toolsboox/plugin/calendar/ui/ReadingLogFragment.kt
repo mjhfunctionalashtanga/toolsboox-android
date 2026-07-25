@@ -54,9 +54,15 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     @Inject
     lateinit var miniflux: com.toolsboox.plugin.feeds.nw.MinifluxClient
 
+    @Inject
+    lateinit var corpusService: com.toolsboox.plugin.chat.fi.LedgerCorpusService
+
     companion object {
         /** The synthesis basket — survives navigation within the session. */
         val basket = mutableListOf<LogItem>()
+
+        /** Sentinel pageKey: this item lives on the Text Notes screen, not a day-note surface. */
+        const val PAGEKEY_TEXT_NOTES = "::text-notes"
     }
 
     override val view = R.layout.fragment_reading_log
@@ -89,6 +95,30 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     private var allItems: List<LogItem> = emptyList()
     private var lastShown: List<LogItem> = emptyList()
     private var searchQuery: String = ""
+
+    // --- Search state — the two engines' pools, kept apart so chips re-filter without re-searching.
+
+    /** The coarse search scopes — light chips over both engines' results. */
+    private enum class SearchScope(val label: String, val origins: Set<LogOrigin>?) {
+        ALL("All", null),
+        HANDWRITING("Handwriting", setOf(LogOrigin.INK)),
+        ARTICLES("Articles", setOf(LogOrigin.READ, LogOrigin.WATCH, LogOrigin.LISTEN,
+            LogOrigin.FEED, LogOrigin.REPLY, LogOrigin.BOOK)),
+        TASKS("Tasks", setOf(LogOrigin.TASK)),
+        NOTES("Notes", setOf(LogOrigin.NOTE, LogOrigin.PICKING, LogOrigin.CARD, LogOrigin.AV))
+    }
+    private var searchScope = SearchScope.ALL
+
+    /** Debounce: a keystroke schedules the search 250ms out; the next keystroke reschedules. */
+    private val searchDebounce = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** Stale-result guard: bumped per search; a slower layer landing late checks it and stands down. */
+    private var searchSeq = 0
+
+    /** The text engine's hits (exact/fuzzy word matches) and the semantic engine's extras. */
+    private var textHits: List<LogItem> = emptyList()
+    private var semanticHits: List<LogItem> = emptyList()
+    private var semanticPending = false
 
     private fun filterPrefs() = requireContext().getSharedPreferences("ledger_log_filters", android.content.Context.MODE_PRIVATE)
 
@@ -180,9 +210,25 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         binding.gramButton.setOnClickListener { captureAvGram { saveGram(it) } }
 
         binding.exportButton.setOnClickListener { promptExport() }
+        // Debounced (~250ms): search runs off-main once typing settles, not per keystroke.
         binding.searchField.doAfterTextChanged {
             val q = it?.toString().orEmpty()
-            if (q != searchQuery) { searchQuery = q; load() }
+            if (q == searchQuery) return@doAfterTextChanged
+            searchQuery = q
+            searchDebounce.removeCallbacksAndMessages(null)
+            searchDebounce.postDelayed({ if (isAdded) load() }, 250)
+        }
+        buildScopeChips()
+
+        // The hub's 🔍 Search row lands here wanting to TYPE — hand it the keyboard.
+        if (ReadingLogSelection.focusSearch) {
+            ReadingLogSelection.focusSearch = false
+            binding.searchField.requestFocus()
+            binding.searchField.post {
+                (requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                    as? android.view.inputmethod.InputMethodManager)
+                    ?.showSoftInput(binding.searchField, 0)
+            }
         }
 
         // Floating nav pill: ‹ up · ☀ today-then-menu · down ›.
@@ -306,12 +352,14 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     }
 
     private fun load() {
+        // Typing turns the Log into THE search: both engines, all time. Blank = browse the window.
+        if (searchQuery.isNotBlank()) { runSearch(); return }
+        binding.scopeRowScroll.visibility = View.GONE
+        adapter.highlight = ""
         binding.progress.visibility = View.VISIBLE
         binding.emptyText.visibility = View.GONE
-        // A live search scans the whole corpus (all time); browsing honors the period window.
-        val searching = searchQuery.isNotBlank()
-        val start = if (searching) null else windowStart()
-        val end = if (searching) null else windowEnd()
+        val start = windowStart()
+        val end = windowEnd()
         lifecycleScope.launch {
             allItems = withContext(Dispatchers.IO) { gather(start, end) }
             binding.progress.visibility = View.INVISIBLE
@@ -320,14 +368,8 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     }
 
     private fun applyFilter() {
-        val q = searchQuery.trim().lowercase()
         val filtered = allItems.filter { item ->
-            (origins.isEmpty() || item.origin in origins) &&
-                (!starredOnly || item.starred) &&
-                (q.isEmpty() ||
-                    item.title.lowercase().contains(q) ||
-                    item.meta.lowercase().contains(q) ||
-                    item.body.lowercase().contains(q))
+            (origins.isEmpty() || item.origin in origins) && (!starredOnly || item.starred)
         }
         val shown = when (sortMode) {
             "old" -> filtered.sortedBy { it.millis }
@@ -338,6 +380,181 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         adapter.submit(shown)
         lastShown = shown
         binding.emptyText.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
+    }
+
+    // MARK: - Search: one field, two engines, merged results.
+
+    /**
+     * The search proper. Two engines answer the same query:
+     *
+     *  TEXT — the whole OCR/text layer: everything the browse walk carries (highlights, tasks,
+     *  planner text, grams, intake) PLUS the corpus layers the walk doesn't — OCR'd page sections,
+     *  handwritten annotations, typed Text Notes, and FULL cached feed-article text — matched
+     *  case/diacritic-insensitively, every word of the query somewhere in the item.
+     *
+     *  SEMANTIC — [LedgerCorpusService.retrieveHybrid] over the same cached corpus, the very call
+     *  Ask grounds on: the query embeds once, cosine against the vector cache, so "grief" finds
+     *  the highlight about mourning that never used the word.
+     *
+     * The text layer paints first (it's local and fast); the semantic layer streams in beneath it
+     * as "Related — semantic" when the embeddings come back. [searchSeq] guards both landings.
+     */
+    private fun runSearch() {
+        val seq = ++searchSeq
+        val q = searchQuery
+        binding.scopeRowScroll.visibility = View.VISIBLE
+        binding.progress.visibility = View.VISIBLE
+        binding.emptyText.visibility = View.GONE
+        adapter.highlight = q
+        semanticHits = emptyList()
+        semanticPending = true
+        // Grabbed on main while surely attached — the IO layers below must not requireContext().
+        val appCtx = requireContext().applicationContext
+        lifecycleScope.launch {
+            val toks = com.toolsboox.plugin.calendar.ot.LedgerSearch.tokens(q)
+            // Text layer: the log's own items (all time) + the corpus-only layers.
+            val text = withContext(Dispatchers.IO) {
+                val local = gather(null, null).filter {
+                    com.toolsboox.plugin.calendar.ot.LedgerSearch.matches(
+                        toks, it.title + " " + it.meta + " " + it.body)
+                }
+                local + corpusTextHits(toks)
+            }
+            if (seq != searchSeq || !isAdded) return@launch
+            allItems = text
+            textHits = dedupe(text)
+            paintSearch()
+            // Semantic layer: embeddings need a key and a few letters to mean anything.
+            val related = if (toks.sumOf { it.length } >= 3) {
+                withContext(Dispatchers.IO) { semanticRelated(appCtx, q, toks) }
+            } else emptyList()
+            if (seq != searchSeq || !isAdded) return@launch
+            semanticHits = related
+            semanticPending = false
+            binding.progress.visibility = View.INVISIBLE
+            paintSearch()
+        }
+    }
+
+    /** Merge the two engines' pools under their headers, chip-filtered, and show them. */
+    private fun paintSearch() {
+        fun scoped(items: List<LogItem>) = searchScope.origins?.let { o -> items.filter { it.origin in o } } ?: items
+        val toks = com.toolsboox.plugin.calendar.ot.LedgerSearch.tokens(searchQuery)
+        val matches = scoped(textHits).sortedWith(
+            // Title hits outrank body hits; recency breaks ties — relevance without a scoreboard.
+            compareByDescending<LogItem> {
+                com.toolsboox.plugin.calendar.ot.LedgerSearch.matches(toks, it.title)
+            }.thenByDescending { it.millis })
+        val related = scoped(semanticHits)
+        val shown = ArrayList<LogItem>(matches.size + related.size)
+        matches.forEachIndexed { i, it ->
+            shown += if (i == 0) it.copy(header = "MATCHES · ${matches.size}") else it
+        }
+        related.forEachIndexed { i, it ->
+            shown += if (i == 0) it.copy(header = "RELATED — SEMANTIC") else it
+        }
+        adapter.submit(shown)
+        lastShown = shown
+        if (!semanticPending) binding.progress.visibility = View.INVISIBLE
+        binding.emptyText.visibility = if (shown.isEmpty() && !semanticPending) View.VISIBLE else View.GONE
+    }
+
+    /** The corpus layers the browse walk does NOT carry, text-matched: OCR'd page sections,
+     *  handwritten annotations, Text Notes, and full cached feed-article text. Rides the corpus
+     *  service's mtime cache, so after the first walk this is an in-memory filter. */
+    private fun corpusTextHits(toks: List<String>): List<LogItem> {
+        val sections = setOf(
+            com.toolsboox.plugin.chat.da.Section.SECTIONS,
+            com.toolsboox.plugin.chat.da.Section.ANNOTATIONS,
+            com.toolsboox.plugin.chat.da.Section.NOTES,
+            com.toolsboox.plugin.chat.da.Section.FEED
+        )
+        return runCatching { corpusService.gather(documentsRoot(), sections) }
+            .getOrDefault(emptyList())
+            .filter { com.toolsboox.plugin.calendar.ot.LedgerSearch.matches(
+                toks, it.title + " " + it.source + " " + it.text) }
+            .map { snippetItem(it, toks) }
+    }
+
+    /** The semantic engine: the full corpus through the same hybrid retrieval Ask uses, minus
+     *  anything the text layer already shows. Empty without an embeddings key — never mislabel
+     *  keyword fallback as semantic. Blocking (network) — call on IO. */
+    private fun semanticRelated(ctx: android.content.Context, q: String, toks: List<String>): List<LogItem> {
+        com.toolsboox.plugin.chat.nw.EmbeddingIndex.apiKey(ctx) ?: return emptyList()
+        val already = textHits.map { itemKey(it) }.toHashSet()
+        return runCatching {
+            val all = corpusService.gather(documentsRoot())
+            corpusService.retrieveHybrid(all, q, 24)
+        }.getOrDefault(emptyList())
+            .map { snippetItem(it, toks) }
+            .filter { itemKey(it) !in already }
+    }
+
+    /** One corpus snippet → one log row, its body windowed around the match, its origin and
+     *  pageKey set so the row is a DOOR (see [goToSource]) and the scope chips can sort it.
+     *  The snippet's citation rides along — the key "Remove from corpus" tombstones. */
+    private fun snippetItem(s: com.toolsboox.plugin.chat.da.CorpusSnippet, toks: List<String>): LogItem {
+        val day = s.date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate()
+        val body = com.toolsboox.plugin.calendar.ot.LedgerSearch.window(s.text, toks)
+        val (origin, pageKey) = when (s.section) {
+            com.toolsboox.plugin.chat.da.Section.SECTIONS -> LogOrigin.INK to s.source.takeIf { it.isNotBlank() }
+            com.toolsboox.plugin.chat.da.Section.ANNOTATIONS -> LogOrigin.INK to null
+            com.toolsboox.plugin.chat.da.Section.NOTES -> LogOrigin.NOTE to PAGEKEY_TEXT_NOTES
+            com.toolsboox.plugin.chat.da.Section.FEED -> LogOrigin.FEED to null
+            com.toolsboox.plugin.chat.da.Section.PLANNER -> LogOrigin.NOTE to s.source.takeIf { it.isNotBlank() }
+            com.toolsboox.plugin.chat.da.Section.BOOKS -> LogOrigin.BOOK to null
+            com.toolsboox.plugin.chat.da.Section.ARTICLES -> LogOrigin.READ to null
+            com.toolsboox.plugin.chat.da.Section.MEDIA -> LogOrigin.AV to null
+            com.toolsboox.plugin.chat.da.Section.TASKS -> LogOrigin.TASK to null
+        }
+        val meta = if (s.section == com.toolsboox.plugin.chat.da.Section.FEED)
+            listOf(s.source, s.citation).filter { it.isNotBlank() }.joinToString(" · ")
+        else s.citation
+        return LogItem(origin, s.title, meta, body, null, s.date.time,
+            day = day, pageKey = pageKey, citation = s.citation)
+    }
+
+    /** The identity a thing keeps across both engines: folded title + its day. */
+    private fun itemKey(i: LogItem): String {
+        val t = com.toolsboox.plugin.calendar.ot.LedgerSearch.fold(
+            i.title.removePrefix("★ ").take(80)).folded
+        return t + "|" + (i.day ?: java.time.Instant.ofEpochMilli(i.millis)
+            .atZone(ZoneId.systemDefault()).toLocalDate())
+    }
+
+    private fun dedupe(items: List<LogItem>): List<LogItem> {
+        val seen = HashSet<String>()
+        return items.filter { seen.add(itemKey(it)) }
+    }
+
+    /** The scope chips: plain text toggles (e-ink friendly), redrawn in place on tap. */
+    private fun buildScopeChips() {
+        val ctx = requireContext()
+        fun px(v: Int) = (v * resources.displayMetrics.density).toInt()
+        binding.scopeRow.removeAllViews()
+        val chips = mutableListOf<android.widget.TextView>()
+        for (s in SearchScope.values()) {
+            val tv = android.widget.TextView(ctx).apply {
+                textSize = 14f
+                setPadding(px(12), px(5), px(12), px(5))
+                setOnClickListener {
+                    searchScope = s
+                    chips.forEach { c -> restyleChip(c, (c.tag as SearchScope) == s) }
+                    if (searchQuery.isNotBlank()) paintSearch()
+                }
+                tag = s
+                text = s.label
+            }
+            restyleChip(tv, s == searchScope)
+            chips.add(tv)
+            binding.scopeRow.addView(tv)
+        }
+    }
+
+    private fun restyleChip(tv: android.widget.TextView, on: Boolean) {
+        tv.setTextColor(if (on) android.graphics.Color.WHITE else android.graphics.Color.BLACK)
+        tv.setBackgroundColor(if (on) android.graphics.Color.BLACK else android.graphics.Color.TRANSPARENT)
+        tv.setTypeface(null, if (on) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
     }
 
     /** Export the currently-shown highlights & annotations as Markdown or CSV. */
@@ -685,6 +902,28 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 android.widget.Toast.makeText(ctx, "Basket emptied", android.widget.Toast.LENGTH_SHORT).show()
             })
         }
+        // ⁂ Pick — the item becomes a GRAM through the same medium chooser every pick uses
+        // (handwriting / text / audio / video), landing on today's Notes page as a placed card.
+        rows.add("⁂  Pick — make it a gram" to {
+            val quote = listOf(item.title.removePrefix("★ "), item.body)
+                .filter { it.isNotBlank() }.joinToString("\n\n")
+            com.toolsboox.plugin.feeds.ot.FeedNoteGram.showForItem(
+                this, calendarDayService, documentsRoot(),
+                itemText = quote.take(600),
+                originLabel = (item.origin.label + (item.day?.let { " · $it" } ?: "")).take(80),
+                sourceUrl = item.url.orEmpty()
+            ) { kind, sink -> captureAvGramDirect(kind, sink) }
+        })
+        // A corpus-surfaced result can be thrown out of the corpus for good — tombstoned, so no
+        // re-gather on any surface (search, Roots, Ask…) brings it back.
+        item.citation?.let { c ->
+            rows.add("🗑  Remove from corpus" to {
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) { runCatching { corpusService.exclude(c) } }
+                    if (isAdded) load()
+                }
+            })
+        }
         rows.add("❝  Send to today's Pickings" to {
             lifecycleScope.launch(Dispatchers.IO) {
                 val today = LocalDate.now()
@@ -882,8 +1121,23 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
 
     /** Navigate to wherever a log item came from: article link, book, or the day page. */
     private fun goToSource(item: LogItem) {
-        val date = java.time.Instant.ofEpochMilli(item.millis)
+        val date = item.day ?: java.time.Instant.ofEpochMilli(item.millis)
             .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        // A pageKey is the most precise door — the exact note SURFACE of its day (an OCR'd
+        // section's page, a planner text's page), or the Text Notes screen for a typed note.
+        item.pageKey?.let { pk ->
+            if (pk == PAGEKEY_TEXT_NOTES) {
+                NavHostFragment.findNavController(this).navigate(R.id.action_to_text_notes)
+            } else {
+                CalendarNavigator.toDayNote(this, date, pk)
+            }
+            return
+        }
+        // A corpus feed hit knows its title but not its URL (the corpus doesn't carry links);
+        // the offline feed cache does — look it up there and open the in-pane reader.
+        if (item.origin == LogOrigin.FEED && item.url.isNullOrBlank()) {
+            openFeedByTitle(item, date); return
+        }
         when (item.origin) {
             LogOrigin.PICKING -> CalendarNavigator.toDayNote(this, date, "pickings")
             LogOrigin.AV -> CalendarNavigator.toDayPage(this, date, CalendarDay.DEFAULT_STYLE)
@@ -911,6 +1165,34 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
+    /** Find a corpus-surfaced article's URL in the offline feed cache by title, then open the
+     *  in-pane reader on it; falls back to the day page when the cache no longer holds it. */
+    private fun openFeedByTitle(item: LogItem, date: LocalDate) {
+        lifecycleScope.launch {
+            val entry = withContext(Dispatchers.IO) {
+                val cacheDir = File(requireContext().filesDir, "feed-cache")
+                cacheDir.listFiles()
+                    ?.filter { it.isFile && it.name.startsWith("list-") && it.name.endsWith(".json") }
+                    ?.asSequence()
+                    ?.mapNotNull { f -> runCatching { org.json.JSONArray(f.readText()) }.getOrNull() }
+                    ?.flatMap { arr -> (0 until arr.length()).mapNotNull { arr.optJSONObject(it) } }
+                    ?.firstOrNull { it.optString("title").trim() == item.title.trim() }
+                    ?.let { o ->
+                        com.toolsboox.plugin.feeds.da.FeedEntry(
+                            id = 0L, title = o.optString("title"),
+                            feedTitle = o.optString("feedTitle"), url = o.optString("url"),
+                            author = null, content = "",
+                            publishedAt = o.optString("publishedAt"), starred = false
+                        )
+                    }
+            }
+            if (entry != null && entry.url.isNotBlank()) {
+                com.toolsboox.plugin.feeds.ui.FeedSelection.pendingInPaneEntry = entry
+                NavHostFragment.findNavController(this@ReadingLogFragment).navigate(R.id.action_to_feeds)
+            } else CalendarNavigator.toDayPage(this@ReadingLogFragment, date, CalendarDay.DEFAULT_STYLE)
+        }
+    }
+
     /** Play a captured voice memo through the shared player — same transport + modal as everything
      *  else, and it keeps playing if you leave the log. Tapping again while active opens the modal. */
     private fun toggleAudio(path: String) {
@@ -934,6 +1216,13 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         // The shared LedgerPlayer intentionally keeps playing after you leave the log.
     }
 
+    override fun onDestroyView() {
+        // A debounced search still in flight must not land on a torn-down view.
+        searchDebounce.removeCallbacksAndMessages(null)
+        searchSeq++
+        super.onDestroyView()
+    }
+
 
     override fun showLoading() {}
     override fun hideLoading() {}
@@ -942,4 +1231,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
 /** Preset origin for the annotations log, set from the History menu before navigating. */
 object ReadingLogSelection {
     var origin: LogOrigin? = null
+
+    /** Set by the hub's 🔍 Search row: land with the search field focused, keyboard up. */
+    var focusSearch = false
 }

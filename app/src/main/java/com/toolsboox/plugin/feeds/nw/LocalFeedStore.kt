@@ -94,7 +94,12 @@ object LocalFeedStore {
                     id = -(abs((s.url + link).hashCode().toLong()) % 1_000_000_000L) - 1000L,
                     title = it.title.ifBlank { link }, feedTitle = s.title, url = link,
                     author = it.author.ifBlank { null }, content = it.content,
-                    publishedAt = it.date, starred = star.contains(link), category = "local"
+                    publishedAt = it.date, starred = star.contains(link), category = "local",
+                    // The podcast layer: episode file + art straight from the parse, and the
+                    // sub's own URL so FeedChapters can walk back to the 2.0 tags.
+                    enclosureImage = it.enclosureImage.ifBlank { null },
+                    enclosureAudio = it.enclosureAudio.ifBlank { null },
+                    feedUrl = s.url
                 ))
             }
         }

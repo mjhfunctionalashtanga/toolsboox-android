@@ -58,8 +58,11 @@ object PickingsPlacement {
         val h = w * scaled.height / scaled.width
         val day = service.load(root, date, null, Locale.getDefault())
         val count = day.imageElements.count { it.page == pageKey }        // grid-stagger new cards
+        // The daily board wears its cover band up top; a card staggered behind the band would sit
+        // under the recent-board tiles and steal their taps. Start the grid below the band there.
+        val yBase = if (pageKey == PickingsStore.DEFAULT_KEY) PickingsCover.CONTENT_TOP + 20f else 120f
         val x = (60f + (count % 3) * (w + 30f)).coerceIn(0f, (CANVAS_W - w).coerceAtLeast(0f))
-        val y = (120f + (count / 3) * (h + 30f)).coerceIn(0f, (CANVAS_H - h).coerceAtLeast(0f))
+        val y = (yBase + (count / 3) * (h + 30f)).coerceIn(0f, (CANVAS_H - h).coerceAtLeast(0f))
         day.imageElements.add(ImageElement(
             x = x, y = y, width = w, height = h, data = base64, page = pageKey,
             sourceLink = sourceLink, sourceLabel = sourceLabel,
@@ -69,7 +72,10 @@ object PickingsPlacement {
             durationMs = media?.durationMs ?: 0,
             mediaTitle = media?.title ?: "",
             mediaDate = media?.date ?: "",
-            cardText = cardText, sourceFeed = sourceFeed))
+            cardText = cardText, sourceFeed = sourceFeed,
+            // The one-decoration contract: this card already wears its CardTreatment in its own
+            // pixels, so a render-time edge (iOS GramEdge) must stand down for it.
+            edgeBaked = treatment))
         service.save(root, date, day)
     }
 

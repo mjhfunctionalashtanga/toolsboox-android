@@ -1,0 +1,10 @@
+<!-- Clipboard-ish file box (🗃) — Boards · Site's glyph, so the two Boards doors (Local keeps
+     📋/ic_card) don't wear one icon across the open Desk + Community folders. 2dp round strokes,
+     no fill, like the rest of the line-art set. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:strokeColor="#FF000000" android:strokeWidth="2" android:fillColor="#00000000"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M6,20.5 h12 a1,1 0 0 0 1,-1 V6 a1,1 0 0 0 -1,-1 h-2.5 M8.5,5 H6 a1,1 0 0 0 -1,1 v13.5 a1,1 0 0 0 1,1 M9,3.5 h6 v3 h-6 z M9,11 h6 M9,15 h4"/>
+</vector>

@@ -31,6 +31,7 @@ object FeedCache {
                 put("category", e.category ?: JSONObject.NULL)
                 put("enclosureImage", e.enclosureImage ?: JSONObject.NULL)
                 put("enclosureAudio", e.enclosureAudio ?: JSONObject.NULL)
+                put("feedUrl", e.feedUrl ?: JSONObject.NULL)
             })
         }
         runCatching { listFile(context, key).writeText(arr.toString()) }
@@ -49,7 +50,8 @@ object FeedCache {
                 starred = o.optBoolean("starred"), read = o.optBoolean("read"),
                 category = o.opt("category")?.takeIf { it is String } as String?,
                 enclosureImage = o.opt("enclosureImage")?.takeIf { it is String } as String?,
-                enclosureAudio = o.opt("enclosureAudio")?.takeIf { it is String } as String?
+                enclosureAudio = o.opt("enclosureAudio")?.takeIf { it is String } as String?,
+                feedUrl = o.opt("feedUrl")?.takeIf { it is String } as String?
             )
         }
     }.getOrDefault(emptyList())
@@ -64,19 +66,52 @@ object FeedCache {
         val f = contentFile(context, id); if (f.exists()) f.readText() else null
     }.getOrNull()
 
+    // MARK: - Podcast sidecars (chapters + transcript pointers, per entry)
+
+    private fun podFile(context: Context, id: Long) = File(dir(context), "pod-$id.json")
+    private fun transcriptFile(context: Context, id: Long) = File(dir(context), "transcript-$id.txt")
+
+    /**
+     * The per-entry podcast metadata blob [FeedChapters] resolves: {"source", "chapters":
+     * [{"start","title"}], "chaptersUrl", "transcriptUrl", "transcriptType"}. Small JSON,
+     * absent-tolerant — a missing/garbled file just means "resolve again"; an EXISTING file
+     * with an empty chapter list means "we looked, there are none" and stops the re-looking.
+     */
+    fun savePodMeta(context: Context, id: Long, meta: JSONObject) {
+        runCatching { podFile(context, id).writeText(meta.toString()) }
+    }
+
+    fun loadPodMeta(context: Context, id: Long): JSONObject? = runCatching {
+        val f = podFile(context, id)
+        if (f.exists()) JSONObject(f.readText()) else null
+    }.getOrNull()
+
+    /** The fetched transcript, already normalised to plain "[m:ss] line" text. */
+    fun saveTranscript(context: Context, id: Long, text: String) {
+        runCatching { transcriptFile(context, id).writeText(text) }
+    }
+
+    fun loadTranscript(context: Context, id: Long): String? = runCatching {
+        val f = transcriptFile(context, id); if (f.exists()) f.readText() else null
+    }.getOrNull()
+
     // MARK: - Janitor
 
-    private const val MAX_CONTENT_FILES = 400
+    // Matched to iOS (prefetch 400 / cap 800 / 60-day age) so both devices keep the same
+    // offline depth. Parsed articles are small HTML; 800 stays well clear of the disk.
+    private const val MAX_CONTENT_FILES = 800
     private const val MAX_AGE_DAYS = 60L
 
     /**
-     * Prune old parsed-article HTML. Every refresh can add up to ~60 content-<id>.html
-     * files and nothing ever removed them (the `.versions` disk-fill lesson): cap by age
-     * AND count, oldest first. Cheap (one listFiles) — call opportunistically after a
-     * refresh, off the main thread.
+     * Prune old parsed-article HTML and podcast sidecars. Every refresh can add up to ~400
+     * content-<id>.html files (now plus pod-/transcript- sidecars) and nothing ever removed
+     * them (the `.versions` disk-fill lesson): cap by age AND count, oldest first. Cheap
+     * (one listFiles) — call opportunistically after a refresh, off the main thread.
      */
     fun prune(context: Context) = runCatching {
-        val files = dir(context).listFiles { f -> f.name.startsWith("content-") } ?: return@runCatching
+        val files = dir(context).listFiles { f ->
+            f.name.startsWith("content-") || f.name.startsWith("pod-") || f.name.startsWith("transcript-")
+        } ?: return@runCatching
         val cutoff = System.currentTimeMillis() - MAX_AGE_DAYS * 24 * 3600 * 1000
         val sorted = files.sortedBy { it.lastModified() }
         var live = sorted.size

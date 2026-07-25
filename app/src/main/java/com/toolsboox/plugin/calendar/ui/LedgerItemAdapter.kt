@@ -168,7 +168,7 @@ class LedgerItemAdapter(
         holder.itemView.setOnLongClickListener {
             val ctx = holder.itemView.context
             androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-                .setItems(arrayOf("🗂  Open card", "🕸  Its rhizome", "☑  Select rows…")) { _, which ->
+                .setItems(arrayOf("🗂  Open card", "⁂  Its rhizome", "☑  Select rows…")) { _, which ->
                     when (which) {
                         0 -> onOpenCard(e)
                         1 -> onShowRhizome(e)

@@ -81,5 +81,13 @@ data class ImageElement(
     var decorative: Boolean = false,
     // Free to stretch: width and height resize independently instead of keeping aspect. True for
     // simple shapes — a box you can make tall and thin — false for photos, which want their shape.
-    var distortable: Boolean = false
+    var distortable: Boolean = false,
+    // THE ONE-DECORATION CONTRACT. True when a card treatment (mat/edge/tape/polaroid) is already
+    // BAKED into [data]'s pixels — set by PickingsPlacement when it applies CardTreatment, and by
+    // any "Shapes & cute cuts" frame on either platform. A renderer that draws its own edge at
+    // render time (iOS GramEdge today; Android if it ever grows one) must resolve to OFF for an
+    // element carrying this flag, so a gram never wears baked tape AND a drawn frame at once —
+    // the "too busy" stack the audit named. New field with a default → absent in old JSON decodes
+    // as false and nothing already placed changes.
+    var edgeBaked: Boolean = false
 )

@@ -24,15 +24,6 @@
             android:layout_weight="1"/>
 
         <TextView
-            android:id="@+id/mail_toggle"
-            android:text="★ To-dos"
-            android:textSize="15sp"
-            android:textColor="#000000"
-            android:padding="8dp"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"/>
-
-        <TextView
             android:id="@+id/mail_clear"
             android:text="🧹"
             android:textSize="20sp"
@@ -76,13 +67,44 @@
         android:layout_height="1dp"/>
 
     <!-- The real Almanac strip: filter the inbox by date exactly as the feed filters articles. Today
-         (day) is the live view (all mail); step or pick a period to see just that window's mail. -->
+         (day) is the live view (all mail); step or pick a period to see just that window's mail.
+         fitXY, like Tasks & Events: the strip's touch map assumes the 1404-wide bitmap spans the
+         whole view — the default fitCenter letterboxed it, so taps landed on the wrong slots. -->
     <ImageView
         android:id="@+id/mail_navigator"
         android:layout_width="match_parent"
         android:layout_height="52dp"
         android:layout_marginHorizontal="8dp"
+        android:scaleType="fitXY"
         android:contentDescription="@null"/>
+
+    <!-- The state chips: To-dos / All, the per-account filter, and (when the strip is off today)
+         the active window — solid black when selected, because gray washes vanish on e-ink. -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/mail_chips"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="6dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </HorizontalScrollView>
+
+    <!-- The ✉ All chip's dropdown: the configured accounts, one row each, in the same accordion
+         idiom as the rest of the app (▸/▾ on the header, indented children, accent outline).
+         Tap the chip → unified inbox AND this list; tap an account → just that inbox. -->
+    <LinearLayout
+        android:id="@+id/mail_accounts"
+        android:orientation="vertical"
+        android:visibility="gone"
+        android:layout_marginHorizontal="12dp"
+        android:layout_marginBottom="4dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
 
     <TextView
         android:id="@+id/mail_status"

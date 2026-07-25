@@ -249,9 +249,9 @@ class CalendarWeekFragment @Inject constructor() : SurfaceFragment() {
         // Text Notes, …). The week page reuses the day layout but never wired this, so its only "menu"
         // was the date-strip navigator — hence "the old menu pops out on weeks".
         //
-        // It was then wired to `showSectionMenu()`, which is the OLD nine-row list, so the week page
-        // still opened last generation's drawer while every other surface opened the accordion. Same
-        // call the day page makes, so there is now one directory rather than two that drift apart.
+        // Wired to the same accordion directory the day page opens, so there is one directory
+        // rather than two that drift apart. (The old nine-row section list it briefly pointed at
+        // has since been deleted.)
         binding.goAppsButton.visibility = View.VISIBLE
         binding.goAppsButton.setOnClickListener {
             showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))

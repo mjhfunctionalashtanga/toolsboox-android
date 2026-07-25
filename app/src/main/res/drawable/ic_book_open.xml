@@ -1,0 +1,10 @@
+<!-- Open book (📖) — its own glyph so The Read / recent books stop borrowing the closed-book
+     ic_book that Bookshelf (📚) wears. Stroke style matches the ic_reader_view line-art set:
+     2dp, round caps, no fill (crisp on e-ink, no gray dither). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:strokeColor="#FF000000" android:strokeWidth="2" android:fillColor="#00000000"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M12,6.5 C10.2,5 7.5,4.5 3,4.5 v13.5 c4.5,0 7.2,0.5 9,2 c1.8,-1.5 4.5,-2 9,-2 V4.5 c-4.5,0 -7.2,0.5 -9,2 z M12,6.5 v13.5"/>
+</vector>

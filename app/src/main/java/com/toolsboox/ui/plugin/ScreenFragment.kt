@@ -77,12 +77,12 @@ abstract class ScreenFragment : Fragment() {
         // The modal's own measurements, in the same units as the layouts they came from, so the
         // scale above moves the BOX as well as the type. Text that grows inside a fixed box only
         // ellipsizes, which reads as the setting doing nothing.
-        private const val TITLE_SP = 24f        // dialog_go_to's go_to_title
-        private const val ROW_SP = 18f          // item_go_to's go_label
-        private const val ICON_DP = 26f         // item_go_to's go_icon, square
+        private const val TITLE_SP = 20f        // dialog_go_to's go_to_title
+        private const val ROW_SP = 16f          // item_go_to's go_label
+        private const val ICON_DP = 22f         // item_go_to's go_icon, square
         private const val ICON_MENU_DP = 340f   // showIconMenu's card
-        private const val GO_MODAL_DP = 200f    // showGoModal's narrower card
-        private const val ACCORDION_DP = 380f   // showAccordion's left drawer
+        private const val GO_MODAL_DP = 170f    // showGoModal's narrower card
+        private const val ACCORDION_DP = 320f   // showAccordion's left drawer
 
         // Error-bar debounce (see showError): same message within 30s stays quiet.
         private var lastErrorResId = 0
@@ -365,8 +365,8 @@ abstract class ScreenFragment : Fragment() {
         navGoto.setImageResource(iconRes)
         // First tap → jump to the present period; a second tap (already on the present
         // period) brings down the Ledger directory. The accordion, not the old nine-row
-        // `showSectionMenu()` list — this pill is on every almanac page, so that one call was most
-        // of why last generation's drawer still appeared to be alive.
+        // section list (since deleted) — this pill is on every almanac page, so that one call
+        // was most of why last generation's drawer still appeared to be alive.
         navGoto.setOnClickListener {
             if (isAtPresent()) showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
             else onHome()
@@ -839,23 +839,35 @@ abstract class ScreenFragment : Fragment() {
         dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
 
         fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-        val textScale = menuTextScale()
+        // ONE dial: Modal size. Stacking the menu dial on top (times the system font scale
+        // underneath) shrank the words while the box's chrome held — "text shrinking and
+        // shrinking" inside modals that stayed huge. The Interface dial still governs the
+        // wrapped stock dialogs; these floating menus follow Modal size alone.
+        val textScale = com.toolsboox.ot.ModalScale.sizeScale(requireContext())
+        // Group headers carry the vibe's accent — a solid, so it stays a crisp gray on a
+        // monochrome Boox rather than dithering. The rows themselves stay black.
+        val accent = com.toolsboox.ot.LedgerTheme.accent(requireContext())
         for ((header, items) in groups) {
             val tv = TextView(requireContext())
             tv.text = header.uppercase()
-            tv.setTextColor(0xFF8A8A8A.toInt()); tv.textSize = 11f * textScale; tv.letterSpacing = 0.08f
+            tv.setTextColor(accent); tv.textSize = 11f * textScale; tv.letterSpacing = 0.08f
             tv.setPadding(dp(14), dp(10), dp(14), dp(2))
             list.addView(tv)
             for (item in items) {
                 val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
                 r.findViewById<TextView>(R.id.go_label).apply {
                     text = applyRowIcon(r, "${item.emoji}  ${item.label}")
-                    textSize = 18f * textScale
+                    textSize = ROW_SP * textScale
                 }
+                scaleRowIcon(r, textScale)
+                scaleRowPadding(r, textScale)
                 r.setOnClickListener { dialog.dismiss(); item.action() }
                 list.addView(r)
             }
         }
+
+        // Menu text honours the chosen reading font too. SYSTEM is a no-op (leaves rows untouched).
+        com.toolsboox.ot.LedgerFonts.applyTree(root)
 
         dialog.setOnShowListener { onModalShown() }
         dialog.setOnDismissListener { onModalDismissed() }
@@ -881,7 +893,10 @@ abstract class ScreenFragment : Fragment() {
      */
     private val emojiIcons: Map<String, Int> by lazy {
         mapOf(
-            "📰" to R.drawable.ic_feed, "⭐" to R.drawable.ic_starred, "📖" to R.drawable.ic_book,
+            // One glyph, one drawable: 📚/📖/🎓 and 🗒/🗎 used to collapse onto ic_book and
+            // ic_reader_view, so four different doors in an open accordion wore the same icon
+            // and the icons stopped carrying information. Each book-ish emoji now has its own.
+            "📰" to R.drawable.ic_feed, "⭐" to R.drawable.ic_starred, "📖" to R.drawable.ic_book_open,
             "📺" to R.drawable.ic_tv, "🎧" to R.drawable.ic_headphones, "🔖" to R.drawable.ic_bookmark,
             "🗂" to R.drawable.ic_folder, "🕓" to R.drawable.ic_clock, "🕘" to R.drawable.ic_clock,
             "📆" to R.drawable.ic_calendar_today, "📅" to R.drawable.ic_calendar_today,
@@ -897,8 +912,10 @@ abstract class ScreenFragment : Fragment() {
             "📌" to R.drawable.ic_pin, "🛰" to R.drawable.ic_send, "🖊" to R.drawable.ic_pencil,
             "🃏" to R.drawable.ic_card, "👆" to R.drawable.ic_toolbar_hand_touch,
             "🔄" to R.drawable.ic_toolbar_rotate, "🔀" to R.drawable.ic_swap, "🎯" to R.drawable.ic_refresh,
-            "🎓" to R.drawable.ic_book, "🗎" to R.drawable.ic_reader_view, "🗒" to R.drawable.ic_reader_view,
-            "📋" to R.drawable.ic_card,
+            "🎓" to R.drawable.ic_grad_cap, "🗎" to R.drawable.ic_reader_view, "🗒" to R.drawable.ic_note_page,
+            // 📋 stays the card (Boards · Local); 🗃 is Boards · Site's file box; 🕰 is the Log
+            // folder's History child — distinct from the 🕘/🕓 clock the folder itself wears.
+            "📋" to R.drawable.ic_card, "🗃" to R.drawable.ic_clipboard, "🕰" to R.drawable.ic_history,
             "❤" to R.drawable.ic_heart, "📝" to R.drawable.ic_go_notes, "✍" to R.drawable.ic_edit,
             "🔬" to R.drawable.ic_swap, "🧠" to R.drawable.ic_swap
         )
@@ -935,9 +952,10 @@ abstract class ScreenFragment : Fragment() {
         return label
     }
 
-    /** Draw [glyph] into a bitmap the size of the icon slot — any character, pixel-aligned. */
+    /** Draw [glyph] into a bitmap for the icon slot — any character, pixel-aligned. Rendered at
+     *  2× the base slot so fitCenter always DOWNscales (crisp at every modal-size step). */
     private fun drawGlyphIcon(icon: ImageView, glyph: String) {
-        val size = (26 * resources.displayMetrics.density).toInt().coerceAtLeast(24)
+        val size = (52 * resources.displayMetrics.density).toInt().coerceAtLeast(48)
         val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(bmp)
         val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
@@ -1001,6 +1019,20 @@ abstract class ScreenFragment : Fragment() {
     }
 
     /**
+     * Scale a row's VERTICAL padding with the dial too. Text and width already followed it, but
+     * item_go_to's fixed 14dp top+bottom meant 28dp of dead height per row at every setting —
+     * so a long menu stayed a long menu and Compact read as "nothing changed" on device.
+     */
+    private fun scaleRowPadding(row: View, scale: Float) {
+        val d = resources.displayMetrics.density
+        val v = (12 * scale * d).toInt()
+        row.setPadding(row.paddingLeft, v, row.paddingRight, v)
+        // The row must hold its icon AND its text with clear air — a row sized by text alone
+        // crowded the glyph against the label ("needs to leave enough room", on device).
+        row.minimumHeight = ((ICON_DP + 26) * scale * d).toInt()
+    }
+
+    /**
      * A modal shown over a drawing surface must PAUSE the Onyx hardware pen, or the stylus taps
      * fall through to the ink layer and the popup "freezes". Drawing fragments override
      * [onModalShown]/[onModalDismissed]; elsewhere these are no-ops. Route every popover through
@@ -1050,13 +1082,16 @@ abstract class ScreenFragment : Fragment() {
             return s
         }
 
-        val textScale = menuTextScale()
+        // ONE dial: Modal size (see showGoModal for why the menu dial no longer stacks here).
+        val textScale = com.toolsboox.ot.ModalScale.sizeScale(requireContext())
         for (folder in folders) {
             val header = layoutInflater.inflate(R.layout.item_go_to, list, false)
             val hasIcon = setRowEmojiIcon(header, folder.emoji)
             val glyph = if (!hasIcon && folder.emoji.isNotBlank()) folder.emoji else ""
             val headerLabel = header.findViewById<TextView>(R.id.go_label)
-            headerLabel.textSize = 18f * textScale
+            headerLabel.textSize = ROW_SP * textScale
+            scaleRowIcon(header, textScale)
+            scaleRowPadding(header, textScale)
 
             // A leaf entry (has [action]) is a plain tappable row — no caret, no children.
             if (folder.action != null) {
@@ -1066,10 +1101,12 @@ abstract class ScreenFragment : Fragment() {
                 continue
             }
 
-            // An outline frames the expanded dropdown for clarity.
+            // An outline frames the expanded dropdown for clarity — in the vibe's accent, and as
+            // a SOLID: the old 40%-black stroke was exactly the translucent gray that dithers
+            // into mud on e-ink.
             val outline = android.graphics.drawable.GradientDrawable().apply {
                 setColor(Color.TRANSPARENT)
-                setStroke(dp(1), 0x66000000)
+                setStroke(dp(1), com.toolsboox.ot.LedgerTheme.accent(requireContext()))
                 cornerRadius = dp(8).toFloat()
             }
             val children = LinearLayout(requireContext()).apply {
@@ -1094,9 +1131,11 @@ abstract class ScreenFragment : Fragment() {
                 val r = layoutInflater.inflate(R.layout.item_go_to, children, false)
                 val text = applyRowIcon(r, label)
                 r.findViewById<TextView>(R.id.go_label).apply {
-                    this.text = text; textSize = 18f * textScale
+                    this.text = text; textSize = ROW_SP * textScale
                     setPadding(dp(24), paddingTop, paddingRight, paddingBottom)
                 }
+                scaleRowIcon(r, textScale)
+                scaleRowPadding(r, textScale)
                 r.setOnClickListener { dialog.dismiss(); action() }
                 children.addView(r)
             }
@@ -1136,35 +1175,6 @@ abstract class ScreenFragment : Fragment() {
     }
 
     /**
-     * The section switcher — the same "go to a surface" list the day page offers, so the almanac
-     * pages open THIS instead of the old ledger-directory drawer. Uses CalendarNavigator (works
-     * from any fragment) and the global feed/AV nav actions, so it's safe to call anywhere.
-     */
-    protected fun showSectionMenu() {
-        val nav = com.toolsboox.plugin.calendar.CalendarNavigator
-        val today = java.time.LocalDate.now()
-        val locale = java.util.Locale.getDefault()
-        fun go(action: Int) = androidx.navigation.Navigation.findNavController(requireView()).navigate(action)
-        showGoModal(
-            listOf(
-                // Same set, same ritual order as the day page's switcher (Intake → Pickings →
-                // Gratitude → Synthesize → Write); Notes lives on the floating pen button.
-                "" to listOf(
-                    GoItem("☀︎", "Day") { nav.toDayPage(this, today, com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE) },
-                    GoItem("🔖", "Intake") { nav.toDayNote(this, today, "intake") },
-                    GoItem("❝", "Pickings") { nav.toDayNote(this, today, "pickings") },
-                    GoItem("🙏", "Gratitude") { nav.toDayNote(this, today, "gratitude") },
-                    GoItem("🎯", "Self Executive") { nav.toDayNote(this, today, "selfexec") },
-                    GoItem("📰", "Feed") { go(com.toolsboox.R.id.action_to_feeds) },
-                    GoItem("🎬", "AV") { go(com.toolsboox.R.id.action_to_reading_log) },
-                    GoItem("📆", "Almanac") { nav.toWeekPage(this, today, locale) }
-                )
-            ),
-            anchorTop = false
-        )
-    }
-
-    /**
      * A directory popover (top-left, iPad-style) grouping labelled rows under headers —
      * used for the hamburger menus on Bookshelf/Feed to list the actual books/feeds plus
      * the surfaces to jump to. Each row is (label, action).
@@ -1184,20 +1194,6 @@ abstract class ScreenFragment : Fragment() {
             }
         }
         showAccordion(folders)
-    }
-
-    /**
-     * Persistent "Go to" surfaces menu, available on every screen (day, Bookshelf, Feed,
-     * Ask). Lets you jump between the Ledger surfaces from anywhere.
-     */
-    protected fun showSurfacesMenu() {
-        val nav = androidx.navigation.fragment.NavHostFragment.findNavController(this)
-        showIconMenu(getString(R.string.go_to_title), listOf(
-            "📅 Day" to { nav.navigate(R.id.action_to_calendar_day) },
-            "📚 Bookshelf" to { nav.navigate(R.id.action_to_reader) },
-            "📰 Feed Ledger" to { nav.navigate(R.id.action_to_feeds) },
-            "💬 Ask my Ledger" to { nav.navigate(R.id.action_to_ledger_chat) },
-        ))
     }
 
     /**

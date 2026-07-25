@@ -22,26 +22,43 @@
         <item name="android:layout_height">wrap_content</item>
     </style>
 
-    <style name="LedgerAlertDialog.Small" parent="Theme.AppCompat.Light.Dialog.Alert"/>
-    <style name="LedgerAlertDialog.Medium" parent="Theme.AppCompat.Light.Dialog.Alert"/>
-    <style name="LedgerAlertDialog.Large" parent="Theme.AppCompat.Light.Dialog.Alert"/>
+    <!-- Dialogs stay LIGHT cards even in Dark scheme (the full dark-dialog pass is deferred —
+         e-ink regression risk). But with App.Theme on DayNight, dialog views built from the
+         ACTIVITY context inherit near-white text colours in Dark mode and vanished on the light
+         card. Pinning the dialog theme's text colours dark keeps every dialog self-consistent. -->
+    <style name="LedgerAlertDialog" parent="Theme.AppCompat.Light.Dialog.Alert">
+        <item name="android:textColorPrimary">#DE000000</item>
+        <item name="android:textColorSecondary">#8A000000</item>
+    </style>
+    <style name="LedgerAlertDialog.Small"/>
+    <style name="LedgerAlertDialog.Medium"/>
+    <style name="LedgerAlertDialog.Large"/>
 
     <!-- One overlay per text-size tier: ModalScale picks the matching one, so the BOX narrows or
-         widens with the setting instead of sitting at one fixed width nobody chose. -->
-    <style name="LedgerModalOverlay.Small" parent="">
+         widens with the setting instead of sitting at one fixed width nobody chose.
+         The base overlay also pins text colours DARK: custom dialog views inflated from the
+         wrapped context otherwise inherit the Dark scheme's near-white textColorPrimary and
+         disappear against the light dialog card. -->
+    <style name="LedgerModalOverlay" parent="">
+        <item name="android:textColorPrimary">#DE000000</item>
+        <item name="android:textColorSecondary">#8A000000</item>
+    </style>
+    <style name="LedgerModalOverlay.Small">
         <item name="alertDialogTheme">@style/LedgerAlertDialog.Small</item>
         <item name="android:alertDialogTheme">@style/LedgerAlertDialog.Small</item>
     </style>
-    <style name="LedgerModalOverlay.Medium" parent="">
+    <style name="LedgerModalOverlay.Medium">
         <item name="alertDialogTheme">@style/LedgerAlertDialog.Medium</item>
         <item name="android:alertDialogTheme">@style/LedgerAlertDialog.Medium</item>
     </style>
-    <style name="LedgerModalOverlay.Large" parent="">
+    <style name="LedgerModalOverlay.Large">
         <item name="alertDialogTheme">@style/LedgerAlertDialog.Large</item>
         <item name="android:alertDialogTheme">@style/LedgerAlertDialog.Large</item>
     </style>
 
-    <style name="App.Theme" parent="Theme.AppCompat.Light.NoActionBar">
+    <!-- DayNight so the values-night colour resources activate when the scheme (LedgerTheme) asks
+         for dark. AppCompatDelegate's night mode, set at startup, drives which side is shown. -->
+    <style name="App.Theme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="colorPrimary">@color/colorPrimary</item>
         <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
         <item name="colorAccent">@color/colorAccent</item>

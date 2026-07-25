@@ -51,6 +51,9 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
     /** Held so a thread row can list its members without re-reading the whole ledger. */
     private var corpus: List<CorpusSnippet> = emptyList()
 
+    /** Held with [corpus] so muting and dismissing re-render from memory instead of re-reading. */
+    private var threads: List<Rhizome.Thread> = emptyList()
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentLedgerRootsBinding.bind(view)
@@ -88,14 +91,25 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     /**
-     * Rebuild the page. [silent] keeps the current content on screen while the recompute runs,
-     * instead of flashing "Reading the roots…" — a mute or a hide changes one thing, and clearing
-     * the whole pane to a spinner for it reads as the page reloading out from under you.
+     * Rebuild the page.
+     *
+     * Reading the roots means walking every day JSON in the ledger plus the cached feed —
+     * that is the whole of why this page was slow, and it is IO the page was re-doing on
+     * every single open. So: the last session's answer (held in [RootsCache], per day) goes
+     * on screen IMMEDIATELY, and the full re-read runs behind it, re-rendering only if the
+     * ledger actually changed since. First open of a day still reads cold — there is nothing
+     * to show yet — but every open after that paints before the disk is touched.
      */
-    private fun load(silent: Boolean = false) {
+    private fun load() {
         val ctx = context ?: return
         val col = binding.rootsColumn
-        if (!silent) {
+        val today = java.time.LocalDate.now()
+        val cached = RootsCache.day == today && RootsCache.threads.isNotEmpty()
+        if (cached) {
+            corpus = RootsCache.corpus
+            threads = RootsCache.threads
+            renderContent()
+        } else {
             col.removeAllViews()
             col.addView(TextView(ctx).apply {
                 text = getString(R.string.roots_loading)
@@ -109,161 +123,237 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
                     val all = corpusService.gather(documentsRoot(), Spiral.SCOPE)
                         .filter { Spiral.isSubstantial(it.text) }
                         .let { Spiral.dedupe(it) { s -> s.text } }
-                    val threads = Rhizome.threads(
+                    // The all-threads crossings that used to be computed here went straight in
+                    // the bin — the page only ever shows crossings of the UNMUTED threads,
+                    // recomputed in renderContent(). Threads are enough to carry out.
+                    all to Rhizome.threads(
                         all.map { it.text + " " + it.title }, all.map { it.date.time })
-                    Triple(all, threads, Rhizome.crossings(threads))
                 }.getOrNull()
             }
             if (!isAdded || result == null) return@launch
-            val (all, threads, crossings) = result
+            val (all, fresh) = result
+            val changed = all.size != corpus.size || fresh != threads
+            RootsCache.day = today
+            RootsCache.corpus = all
+            RootsCache.threads = fresh
+            // A cached paint that the re-read agrees with stays put — no flash for nothing.
+            if (cached && !changed) return@launch
             corpus = all
-            col.removeAllViews()
+            threads = fresh
+            renderContent()
+        }
+    }
 
-            if (threads.isEmpty()) {
-                col.addView(TextView(ctx).apply {
-                    text = getString(R.string.roots_empty)
-                    textSize = 14f; setTextColor(0xFF666666.toInt()); setLineSpacing(0f, 1.15f)
-                    setPadding(0, dp(10), 0, 0)
-                })
-                com.toolsboox.ot.ReadingSize.apply(col)
-                return@launch
-            }
+    /**
+     * Draw the page from the held [corpus] and [threads] — pure memory, no disk. Muting a thread
+     * and hiding a crossing land here, because everything they change (which threads are live,
+     * which crossings exist between them, which are dismissed) is derivable from what's already
+     * in hand; re-reading the whole ledger for a preference flip was most of why a mute felt slow.
+     */
+    private fun renderContent() {
+        val ctx = context ?: return
+        val col = binding.rootsColumn
+        val threads = this.threads
+        val all = this.corpus
+        col.removeAllViews()
 
-            val now = System.currentTimeMillis()
-            col.addView(header(getString(R.string.roots_what_comes_back), top = 4))
-
-            // Threads as CARDS across the width, not a column of one-word rows.
-            //
-            // A thread is a short word — "internet", "july", "said" — so a vertical list of them
-            // is a thin ribbon down the left with the whole page empty beside it. That is wasteful
-            // on any screen and absurd on a Tab X. Laid out as tiles, the same eighteen threads
-            // occupy a few rows instead of eighteen, the crossings below get the space they
-            // actually need for sentences, and the whole thing reads as a board of subjects rather
-            // than a list of leftovers.
-            //
-            // Column count comes from the screen, so it stays sensible from a Palma to a Tab X.
-            val columns = (resources.configuration.screenWidthDp / 190).coerceIn(2, 6)
-            var rowBox: LinearLayout? = null
-            for ((i, t) in threads.take(18).withIndex()) {
-                if (i % columns == 0) {
-                    rowBox = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
-                    col.addView(rowBox)
-                }
-                val card = LinearLayout(ctx).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(dp(12), dp(10), dp(12), dp(10))
-                    background = android.graphics.drawable.GradientDrawable().apply {
-                        setColor(0xFFFFFFFF.toInt())
-                        setStroke(dp(1), 0xFFBBBBBB.toInt())
-                        cornerRadius = dp(8).toFloat()
-                    }
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                        .apply { setMargins(dp(3), dp(3), dp(3), dp(3)) }
-                }
-                card.addView(TextView(ctx).apply {
-                    // A quiet thread is one worth picking back up, so it says so rather than
-                    // merely sorting lower.
-                    text = t.term
-                    textSize = 19f; setTextColor(0xFF000000.toInt())
-                    maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-                })
-                card.addView(TextView(ctx).apply {
-                    text = "${t.size}×" + (if (t.spanDays > 0) " · ${t.spanDays}d" else "") +
-                        (if (t.isQuiet(now)) " · quiet" else "")
-                    textSize = 12f; setTextColor(0xFF777777.toInt())
-                    maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-                })
-                // Tap MUTES. That is the action worth putting first: the top of this list is
-                // mostly datelines and clipping plumbing, and the person reading it is the only
-                // one who can tell "practice" from "units" — so saying so should cost one tap.
-                // Hold to see where a thread actually runs.
-                val muted = com.toolsboox.plugin.calendar.ot.RootsMute.isMuted(ctx, t.term)
-                if (muted) {
-                    card.alpha = 0.45f
-                    (card.getChildAt(0) as? TextView)?.paintFlags =
-                        android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
-                }
-                card.setOnClickListener {
-                    // Answer the tap on the tapped thing, THEN do the slow part. Muting used to
-                    // reload the whole page before anything changed on screen, so a tap looked
-                    // like nothing had happened until the crossings finished recomputing off disk
-                    // — long enough that you couldn't tell mute from a missed tap. Flip this card
-                    // now; recompute after.
-                    val nowMuted = com.toolsboox.plugin.calendar.ot.RootsMute.toggle(ctx, t.term)
-                    val label = card.getChildAt(0) as? TextView
-                    card.alpha = if (nowMuted) 0.45f else 1f
-                    label?.paintFlags = if (nowMuted)
-                        label.paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
-                    else label.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG.inv()
-                    load(silent = true)
-                }
-                card.setOnLongClickListener { showThread(t); true }
-                rowBox?.addView(card)
-            }
-            // Pad the last row so three cards among four columns don't stretch to fill it.
-            val remainder = threads.take(18).size % columns
-            if (remainder != 0) repeat(columns - remainder) {
-                rowBox?.addView(View(ctx).apply {
-                    layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
-                })
-            }
-
-            // Crossings are recomputed from the threads you have NOT muted, so turning off
-            // "2026" and "pressreader" doesn't just tidy the list above — it changes what counts
-            // as a meeting-point below. That is the whole reason muting is worth having: the
-            // junk threads were manufacturing crossings between newspapers.
-            val liveThreads = threads.filterNot {
-                com.toolsboox.plugin.calendar.ot.RootsMute.isMuted(ctx, it.term)
-            }
-            val liveCrossings = Rhizome.crossings(liveThreads)
-            if (liveCrossings.isNotEmpty()) {
-                col.addView(header(getString(R.string.roots_where_they_touch), top = 18))
-                // Most-connected first, minus the ones you've thrown away as junk meeting-points.
-                val dismissed = com.toolsboox.plugin.calendar.ot.RootsMute.dismissedCrossings(ctx)
-                for ((idx, terms) in liveCrossings.entries.sortedByDescending { it.value.size }.take(12)) {
-                    val snip = all.getOrNull(idx) ?: continue
-                    if (snip.citation in dismissed) continue
-                    val row = LinearLayout(ctx).apply {
-                        orientation = LinearLayout.VERTICAL
-                        setPadding(dp(13), dp(12), dp(13), dp(12))
-                        background = android.graphics.drawable.GradientDrawable().apply {
-                            setColor(0xFFFFFFFF.toInt())
-                            setStroke(dp(1), 0xFFBBBBBB.toInt())
-                            cornerRadius = dp(8).toFloat()
-                        }
-                        layoutParams = LinearLayout.LayoutParams(
-                            LinearLayout.LayoutParams.MATCH_PARENT,
-                            LinearLayout.LayoutParams.WRAP_CONTENT
-                        ).apply { setMargins(dp(3), dp(3), dp(3), dp(5)) }
-                    }
-                    row.addView(TextView(ctx).apply {
-                        // Black, not the old blue: on an e-ink panel a mid-blue renders as a grey
-                        // smudge, which is less legible than the body text it is meant to lead.
-                        text = terms.joinToString("  ✕  ")
-                        textSize = 17f; setTextColor(0xFF000000.toInt())
-                    })
-                    // The WORDS first, the provenance under them and small. The date used to lead
-                    // every crossing, which put the least interesting fact — when — above the thing
-                    // the crossing exists to show you, which is what.
-                    row.addView(TextView(ctx).apply {
-                        text = snip.text.take(240).trim() + if (snip.text.length > 240) "…" else ""
-                        textSize = 17f; setTextColor(0xFF000000.toInt()); setLineSpacing(0f, 1.25f)
-                        setPadding(0, dp(2), 0, dp(3))
-                    })
-                    row.addView(TextView(ctx).apply {
-                        text = snip.citation
-                        textSize = 12f; setTextColor(0xFF999999.toInt())
-                    })
-                    // Tap a meeting-point to read the whole of it and step to where it lives — it
-                    // was inert, which is a strange thing for the one card on the page whose entire
-                    // job is to say "there is more here than fits". Hold to open its rhizome.
-                    row.setOnClickListener { openCrossing(snip, terms) }
-                    row.setOnLongClickListener { openCrossingRhizome(snip); true }
-                    col.addView(row)
-                }
-            }
-
+        if (threads.isEmpty()) {
+            col.addView(TextView(ctx).apply {
+                text = getString(R.string.roots_empty)
+                textSize = 14f; setTextColor(0xFF666666.toInt()); setLineSpacing(0f, 1.15f)
+                setPadding(0, dp(10), 0, 0)
+            })
             com.toolsboox.ot.ReadingSize.apply(col)
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        col.addView(header(getString(R.string.roots_what_comes_back), top = 4))
+
+        // Threads as CARDS across the width, not a column of one-word rows.
+        //
+        // A thread is a short word — "internet", "july", "said" — so a vertical list of them
+        // is a thin ribbon down the left with the whole page empty beside it. That is wasteful
+        // on any screen and absurd on a Tab X. Laid out as tiles, the same eighteen threads
+        // occupy a few rows instead of eighteen, the crossings below get the space they
+        // actually need for sentences, and the whole thing reads as a board of subjects rather
+        // than a list of leftovers.
+        //
+        // Column count comes from the screen, so it stays sensible from a Palma to a Tab X.
+        val columns = (resources.configuration.screenWidthDp / 190).coerceIn(2, 6)
+        var rowBox: LinearLayout? = null
+        for ((i, t) in threads.take(18).withIndex()) {
+            if (i % columns == 0) {
+                rowBox = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+                col.addView(rowBox)
+            }
+            val card = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = com.toolsboox.ot.SemanticCards.cardBackground(ctx)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    .apply { setMargins(dp(3), dp(3), dp(3), dp(3)) }
+            }
+            card.addView(TextView(ctx).apply {
+                // A quiet thread is one worth picking back up, so it says so rather than
+                // merely sorting lower.
+                text = t.term
+                textSize = 19f; setTextColor(0xFF000000.toInt())
+                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+            card.addView(TextView(ctx).apply {
+                text = "${t.size}×" + (if (t.spanDays > 0) " · ${t.spanDays}d" else "") +
+                    (if (t.isQuiet(now)) " · quiet" else "")
+                textSize = 12f; setTextColor(0xFF777777.toInt())
+                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+            // Tap MUTES. That is the action worth putting first: the top of this list is
+            // mostly datelines and clipping plumbing, and the person reading it is the only
+            // one who can tell "practice" from "units" — so saying so should cost one tap.
+            // Hold to see where a thread actually runs.
+            val muted = com.toolsboox.plugin.calendar.ot.RootsMute.isMuted(ctx, t.term)
+            if (muted) {
+                card.alpha = 0.45f
+                (card.getChildAt(0) as? TextView)?.paintFlags =
+                    android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
+            }
+            card.setOnClickListener {
+                // Answer the tap on the tapped thing, then rebuild. A mute changes nothing the
+                // disk knows about — which threads are live and what crosses between them is
+                // all derivable from what's already in hand — so this used to re-read the
+                // whole ledger for a preference flip, which is why a mute felt slow. Flip
+                // this card, then redraw from memory.
+                val nowMuted = com.toolsboox.plugin.calendar.ot.RootsMute.toggle(ctx, t.term)
+                val label = card.getChildAt(0) as? TextView
+                card.alpha = if (nowMuted) 0.45f else 1f
+                label?.paintFlags = if (nowMuted)
+                    label.paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
+                else label.paintFlags and android.graphics.Paint.STRIKE_THRU_TEXT_FLAG.inv()
+                renderContent()
+            }
+            card.setOnLongClickListener { threadHoldMenu(t); true }
+            rowBox?.addView(card)
+        }
+        // Pad the last row so three cards among four columns don't stretch to fill it.
+        val remainder = threads.take(18).size % columns
+        if (remainder != 0) repeat(columns - remainder) {
+            rowBox?.addView(View(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+            })
+        }
+
+        // Crossings are recomputed from the threads you have NOT muted, so turning off
+        // "2026" and "pressreader" doesn't just tidy the list above — it changes what counts
+        // as a meeting-point below. That is the whole reason muting is worth having: the
+        // junk threads were manufacturing crossings between newspapers.
+        val liveThreads = threads.filterNot {
+            com.toolsboox.plugin.calendar.ot.RootsMute.isMuted(ctx, it.term)
+        }
+        val liveCrossings = Rhizome.crossings(liveThreads)
+        if (liveCrossings.isNotEmpty()) {
+            col.addView(header(getString(R.string.roots_where_they_touch), top = 18))
+            // Most-connected first, minus the ones you've thrown away as junk meeting-points.
+            val dismissed = com.toolsboox.plugin.calendar.ot.RootsMute.dismissedCrossings(ctx)
+            for ((idx, terms) in liveCrossings.entries.sortedByDescending { it.value.size }.take(12)) {
+                val snip = all.getOrNull(idx) ?: continue
+                if (snip.citation in dismissed) continue
+                // Tombstoned since this corpus was gathered — gone from the next gather, but it
+                // must not linger on screen until then either.
+                if (corpusService.isExcluded(snip.citation)) continue
+                val row = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(13), dp(12), dp(13), dp(12))
+                    background = com.toolsboox.ot.SemanticCards.cardBackground(ctx)
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { setMargins(dp(3), dp(3), dp(3), dp(5)) }
+                }
+                row.addView(TextView(ctx).apply {
+                    // Black, not the old blue: on an e-ink panel a mid-blue renders as a grey
+                    // smudge, which is less legible than the body text it is meant to lead.
+                    text = terms.joinToString("  ✕  ")
+                    textSize = 17f; setTextColor(0xFF000000.toInt())
+                })
+                // The WORDS first, the provenance under them and small. The date used to lead
+                // every crossing, which put the least interesting fact — when — above the thing
+                // the crossing exists to show you, which is what.
+                row.addView(TextView(ctx).apply {
+                    text = snip.text.take(240).trim() + if (snip.text.length > 240) "…" else ""
+                    textSize = 17f; setTextColor(0xFF000000.toInt()); setLineSpacing(0f, 1.25f)
+                    setPadding(0, dp(2), 0, dp(3))
+                })
+                row.addView(TextView(ctx).apply {
+                    text = snip.citation
+                    textSize = 12f; setTextColor(0xFF999999.toInt())
+                })
+                // Tap a meeting-point to read the whole of it and step to where it lives — it
+                // was inert, which is a strange thing for the one card on the page whose entire
+                // job is to say "there is more here than fits". Hold for the fuller menu: pick
+                // it as a gram in your medium of choice, open its rhizome, or throw it out.
+                row.setOnClickListener { openCrossing(snip, terms) }
+                row.setOnLongClickListener { crossingHoldMenu(snip, terms); true }
+                col.addView(row)
+            }
+        }
+
+        com.toolsboox.ot.ReadingSize.apply(col)
+    }
+
+    /** Hold on a meeting-point: the card's verbs in one place, led by the pick. The pick asks
+     *  its medium ([com.toolsboox.plugin.feeds.ot.FeedNoteGram] — handwriting, text, audio,
+     *  video) with the crossing's words as the quote in hand, and lands on today's Notes page;
+     *  saving with nothing added still makes the plain quote gram. "Hide" stays the soft local
+     *  no; "Remove from corpus" is the hard one — tombstoned, never indexed again. */
+    private fun crossingHoldMenu(snip: CorpusSnippet, terms: List<String>) {
+        showIconMenu(snip.text.take(80), listOf(
+            "⁂  Pick — make it a gram" to { pickAsGram(snip.text, terms.joinToString("  ✕  ")) },
+            "📖  Read it whole" to { openCrossing(snip, terms) },
+            "🕸  Open rhizome" to { openCrossingRhizome(snip) },
+            "→  Synthesize" to { sendCrossingToSynth(snip, terms) },
+            "🗑  Hide here" to {
+                com.toolsboox.plugin.calendar.ot.RootsMute.dismissCrossing(requireContext(), snip.citation)
+                renderContent()
+            },
+            "🗑  Remove from corpus" to { removeFromCorpus(snip.citation) }
+        ))
+    }
+
+    /** Hold on a thread tile: what the tap can't offer — the term as a pickable object, the
+     *  places it runs, and the mute spelled out. */
+    private fun threadHoldMenu(t: Rhizome.Thread) {
+        val ctx = context ?: return
+        val muted = com.toolsboox.plugin.calendar.ot.RootsMute.isMuted(ctx, t.term)
+        showIconMenu("🌿  " + t.term, listOf(
+            "⁂  Pick — make it a gram" to {
+                pickAsGram(t.term, "a thread through your ledger · ${t.size}×")
+            },
+            "🌿  Where it runs" to { showThread(t) },
+            (if (muted) "🔊  Unmute" else "🔇  Mute") to {
+                com.toolsboox.plugin.calendar.ot.RootsMute.toggle(ctx, t.term)
+                renderContent()
+            }
+        ))
+    }
+
+    /** The shared pick seam for this page — item text in, medium chooser up, gram on today. */
+    private fun pickAsGram(itemText: String, originLabel: String) {
+        com.toolsboox.plugin.feeds.ot.FeedNoteGram.showForItem(
+            this, calendarDayService, documentsRoot(),
+            itemText = itemText.take(600), originLabel = originLabel.take(80)
+        ) { kind, sink -> captureAvGramDirect(kind, sink) }
+    }
+
+    /** Tombstone a crossing's snippet: it leaves this page now and the corpus for good — no
+     *  re-gather, on any surface, brings it back. */
+    private fun removeFromCorpus(citation: String) {
+        lifecycleScope.launch {
+            // Tombstone first, THEN redraw — renderContent asks isExcluded, so drawing before
+            // the exclusion lands would show the thing being removed one last time.
+            withContext(Dispatchers.IO) { runCatching { corpusService.exclude(citation) } }
+            if (!isAdded) return@launch
+            renderContent()
+            showMessage("Removed from the corpus — it won't be indexed again", requireView())
         }
     }
 
@@ -317,7 +407,8 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
             // nothing together. It stays in the corpus; it just stops being offered here.
             .setNegativeButton("🗑 Hide") { _, _ ->
                 com.toolsboox.plugin.calendar.ot.RootsMute.dismissCrossing(requireContext(), snip.citation)
-                load(silent = true)
+                // A dismissal is a preference, not new material — redraw from memory.
+                renderContent()
             }
             .show()
     }
@@ -483,8 +574,21 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
             .show()
     }
 
-    // Reading the ledger is fast enough that a spinner would only flash; the column says
-    // "Reading the roots…" until it has something, which is the same information without the churn.
+    // The column says "Reading the roots…" until it has something (and, after the first read of
+    // the day, opens straight onto the cached roots) — a spinner would only add churn.
     override fun showLoading() {}
     override fun hideLoading() {}
+}
+
+/**
+ * The last full read of the roots, kept for the session so reopening the page paints before the
+ * disk is touched. Keyed by day — a new day is new material by definition — and kept honest
+ * within the day by the background re-read in [LedgerRootsFragment.load], which replaces it (and
+ * the screen) only when the ledger actually changed. Deliberately NOT persisted: the corpus walk
+ * is the expensive thing, and it happens exactly once per process per open-day either way.
+ */
+private object RootsCache {
+    var day: java.time.LocalDate? = null
+    var corpus: List<CorpusSnippet> = emptyList()
+    var threads: List<Rhizome.Thread> = emptyList()
 }

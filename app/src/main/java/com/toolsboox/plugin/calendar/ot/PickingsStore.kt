@@ -41,6 +41,24 @@ object PickingsStore {
         return pages
     }
 
+    /**
+     * Only the boards the index actually RECORDS for [date] — nothing invented. Empty when the day
+     * has no index file at all, which keeps "no boards were ever made here" distinguishable from
+     * [list]'s "the default board exists in principle". The daily cover leans on that difference:
+     * it walks back through past days looking for boards someone really touched, and fabricating
+     * a default for every silent day would make each morning look like fourteen.
+     */
+    fun listSaved(context: Context, date: LocalDate): List<PickingPage> {
+        val f = fileFor(context, date)
+        if (!f.exists()) return emptyList()
+        return runCatching {
+            val arr = JSONArray(f.readText())
+            (0 until arr.length()).map {
+                val o = arr.getJSONObject(it); PickingPage(o.optString("key"), o.optString("name"))
+            }
+        }.getOrDefault(emptyList())
+    }
+
     fun save(context: Context, date: LocalDate, pages: List<PickingPage>) {
         runCatching {
             val arr = JSONArray()

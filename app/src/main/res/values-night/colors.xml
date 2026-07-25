@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Dark-scheme colours. Same names as values/colors.xml, so a night configuration substitutes
+        these automatically once App.Theme became DayNight.
+
+        The app is monochrome-by-design: light is black-on-white. Dark is the clean inverse —
+        near-white on near-black — which keeps the strong, gradient-free contrast e-ink wants. Only
+        the core chrome names are inverted here; the many inline hex literals scattered through
+        individual dialogs are deliberately left alone (a full colour refactor is out of scope), so
+        some one-off dialog surfaces will still read light. The primary menus/backgrounds, which are
+        driven by these named colours and the theme's textColor items, invert correctly.
+
+        Without at least fgColor/bgColor here, Dark mode would force black text onto a dark window
+        (App.Theme pins textColorPrimary to fgColor), i.e. unreadable — so these overrides are what
+        make the Dark scheme legible rather than decorative.
+    -->
+
+    <!-- Core chrome: the monochrome base, inverted. -->
+    <color name="colorPrimary">#F2F2F2</color>
+    <color name="colorPrimaryDark">#0B0B0B</color>
+    <color name="colorAccent">#F2F2F2</color>
+
+    <color name="fgColor">#F2F2F2</color>
+    <color name="widgetColor">#2A2A2A</color>
+    <color name="bgColor">#0B0B0B</color>
+
+    <!--
+        Ledger appearance palette (dark values). High-contrast, e-ink-safe solids: near-white fg on a
+        near-black backdrop, a dark-gray "paper" tile, a mid-gray muted tone. No gradients, no shadows.
+        ledgerAccent is only a fallback; the live accent is resolved per-vibe by LedgerTheme.accent(ctx).
+    -->
+    <color name="ledgerAccent">#6AA6E0</color>
+    <color name="ledgerPaper">#1C1C1C</color>
+    <color name="ledgerBackdrop">#0B0B0B</color>
+    <color name="ledgerFg">#F2F2F2</color>
+    <color name="ledgerMuted">#9A9A9A</color>
+</resources>

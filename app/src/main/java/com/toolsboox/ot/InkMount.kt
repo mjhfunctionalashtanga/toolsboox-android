@@ -18,6 +18,17 @@ import android.widget.LinearLayout
  */
 object InkMount {
 
+    // THE ONE TAPE SPEC. Three drawers used to each invent their own tape (this view mount,
+    // CardTreatment's baked strips, iOS's GramEdge/baked frames); now they all draw this one:
+    // an opaque white strip with a thin black rule, tilted about ±20°, 40:14 proportions.
+    // Opaque on purpose — a translucent strip is exactly the alpha the rule below forbids.
+    // View code and bitmap code can't share a draw function, so the LOOK is shared as numbers:
+    // consume these anywhere a tape is drawn, on either medium.
+    /** The tilt of a tape strip, degrees — one leans left (−), its partner right (+). */
+    const val TAPE_TILT_DEG = 20f
+    /** Width over height of a strip (the mount's 40dp × 14dp, kept proportional when scaled). */
+    const val TAPE_ASPECT = 40f / 14f
+
     /**
      * Wrap [child] in the mount. [taped] adds the two corner tape strips (off for
      * small thumbnails, where they'd crowd the image).
@@ -42,8 +53,8 @@ object InkMount {
             setPadding(px(12), px(11), px(12), 0)
             addView(mat)
         }
-        holder.addView(tape(context, -20f), tapeParams(context, start = true))
-        holder.addView(tape(context, 20f), tapeParams(context, start = false))
+        holder.addView(tape(context, -TAPE_TILT_DEG), tapeParams(context, start = true))
+        holder.addView(tape(context, TAPE_TILT_DEG), tapeParams(context, start = false))
         return holder
     }
 

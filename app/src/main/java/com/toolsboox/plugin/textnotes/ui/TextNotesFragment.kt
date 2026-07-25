@@ -6,18 +6,24 @@ import android.os.Looper
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.View
+import androidx.lifecycle.lifecycleScope
 import com.toolsboox.R
 import com.toolsboox.databinding.FragmentTextNotesBinding
 import com.toolsboox.plugin.textnotes.TextNote
 import com.toolsboox.plugin.textnotes.TextNotesStore
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import javax.inject.Inject
 
 /**
  * Text Notes — multiple titled notes per day, each instantly saved. Pick/switch notes via "≡ Notes",
- * add with "＋". Title + body autosave (debounced) to disk; WebDAV backup on leave.
+ * add with "＋". Title + body autosave (debounced) to disk; WebDAV backup on leave. The Almanac
+ * strip up top travels the days the way Mail and the Feed do — notes ARE date-anchored, so the
+ * strip is the natural way to reach last Tuesday's page.
  */
 @AndroidEntryPoint
 class TextNotesFragment @Inject constructor() : ScreenFragment() {
@@ -32,6 +38,18 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
         binding.textNotesEdit.text?.let { com.toolsboox.ot.MarkdownHighlight.apply(it) }
     }
 
+    @Inject
+    lateinit var calendarDayService: com.toolsboox.plugin.calendar.fi.CalendarDayService
+
+    @Inject
+    lateinit var calendarPatternService: com.toolsboox.plugin.calendar.fi.CalendarPatternService
+
+    // The Almanac strip (same CalendarNavBarHost Mail hosts). Notes live one day per page, so a
+    // period tap doesn't FILTER here — it retunes the arrows' stride (tap Week, and ‹ › walk a
+    // week at a time), while the tapped day itself is where the editor lands.
+    private var navBar: com.toolsboox.plugin.calendar.ui.CalendarNavBarHost? = null
+    private var navGranularity = "day"
+
     private var notes: MutableList<TextNote> = mutableListOf()
     private var current: Int = 0
     private var suppressWatch = false
@@ -43,6 +61,21 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
 
         binding.textNotesPrev.setOnClickListener { goToDate(date.minusDays(1)) }
         binding.textNotesNext.setOnClickListener { goToDate(date.plusDays(1)) }
+
+        navBar = com.toolsboox.plugin.calendar.ui.CalendarNavBarHost(
+            requireContext(), binding.textNotesNavigator, this,
+            onStepDay = { d ->
+                // The arrows stride by the chosen granularity (a day by default; a week/month/…
+                // after a period tap) — quick travel without leaving the notes.
+                val dir = if (d.isBefore(date)) -1 else 1
+                goToDate(stepByGranularity(date, dir))
+            },
+            onSelectPeriod = { g, d ->
+                navGranularity = g
+                if (d != date) goToDate(d) else renderNav()
+            }
+        )
+        renderNav()
 
         val watcher = object : TextWatcher {
             override fun afterTextChanged(s: Editable?) {
@@ -120,6 +153,35 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
         TextNotesStore.sync(requireContext(), date, null)
         date = target
         loadDay()
+        renderNav()
+    }
+
+    private fun stepByGranularity(d: LocalDate, dir: Int): LocalDate = when (navGranularity) {
+        "week" -> d.plusWeeks(dir.toLong())
+        "month" -> d.plusMonths(dir.toLong())
+        "quarter" -> d.plusMonths(3L * dir)
+        "year" -> d.plusYears(dir.toLong())
+        else -> d.plusDays(dir.toLong())
+    }
+
+    /** Redraw the Almanac strip for the current day (dots for filled pages), Mail's exact pattern:
+     *  view-scoped so back-navigation cancels the draw, and a missing pattern falls back to an
+     *  empty one — an unrendered strip never sets its day, and a day-less strip ignores touch. */
+    private fun renderNav() {
+        val bar = navBar ?: return
+        viewLifecycleOwner.lifecycleScope.launch {
+            val root = documentsRoot()
+            val loc = java.util.Locale.getDefault()
+            val (day, pat) = withContext(Dispatchers.IO) {
+                val cd = runCatching { calendarDayService.load(root, date, null, loc) }.getOrNull()
+                    ?: com.toolsboox.plugin.calendar.da.v2.CalendarDay(
+                        date.year, date.monthValue, date.dayOfMonth, startHour = null)
+                val p = runCatching { calendarPatternService.load(root, date, loc) }.getOrNull()
+                    ?: com.toolsboox.plugin.calendar.da.v1.CalendarPattern(date.year, loc).fill()
+                cd to p
+            }
+            if (isAdded) bar.render(day, pat)
+        }
     }
 
     private fun showNote(index: Int) {

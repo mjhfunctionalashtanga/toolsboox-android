@@ -23,6 +23,44 @@ import com.toolsboox.ui.plugin.ScreenFragment
 object ModalScale {
 
     /**
+     * The modal-SIZE key (distinct from `modal_text_size`, which drives the dialog fontScale).
+     *
+     * This is the one dial that scales a whole nav modal as a UNIT — its type AND its box — so the
+     * page-switcher, the directory, and the temporal nav strip all grow or shrink together. Stored
+     * by the settings chips as "compact"/"standard"/"expanded"; read back here as a float.
+     */
+    const val SIZE_KEY = "modal_size"
+
+    /**
+     * The modal-size dial as a multiplier: compact 0.85 / standard 1.0 / expanded 1.25, defaulting
+     * to standard. Everything that wants to scale a nav modal as one unit reads THIS so the whole
+     * app moves off a single setting.
+     */
+    fun sizeScale(context: Context): Float =
+        when (context.getSharedPreferences("ledger_a11y", 0).getString(SIZE_KEY, "standard")) {
+            // Recalibrated TWICE on the Tab Mini C (07-24). The first pass shrank the dial —
+            // and text kept "shrinking and shrinking" while boxes stayed huge, because THREE
+            // scales stacked (system font scale x menu dial x this). The real fix removed the
+            // stacking (nav modals now read this dial alone, over smaller base sizes), so the
+            // dial itself returns to honest steps.
+            "compact" -> 0.8f
+            "expanded" -> 1.25f
+            else -> 1.0f
+        }
+
+    /**
+     * The temporal strip keeps the OLD dial mapping: its 1404-wide footprint and slot geometry
+     * were tuned at 1.0 and Michael's resize complaint was about the floating modals, not the
+     * strip. Shrinking the strip's type 28% as a side effect would break what already works.
+     */
+    fun stripScale(context: Context): Float =
+        when (context.getSharedPreferences("ledger_a11y", 0).getString(SIZE_KEY, "standard")) {
+            "compact" -> 0.85f
+            "expanded" -> 1.25f
+            else -> 1f
+        }
+
+    /**
      * [context] re-themed at the user's modal text size, or [context] itself at Medium, where
      * there is nothing to change and the extra wrapper would only cost an allocation.
      */

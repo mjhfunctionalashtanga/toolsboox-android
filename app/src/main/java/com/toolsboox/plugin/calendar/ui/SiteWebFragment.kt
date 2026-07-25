@@ -63,6 +63,8 @@ class SiteWebFragment @Inject constructor() : ScreenFragment() {
     private var target: Target = TARGETS.getValue("community")
     /** When present, an explicit path off the `site` base wins over the [target] portal. */
     private var explicitPath: String? = null
+    /** Enabled only while the WebView has history, so system back walks pages before popping. */
+    private var webBackCallback: androidx.activity.OnBackPressedCallback? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -79,6 +81,18 @@ class SiteWebFragment @Inject constructor() : ScreenFragment() {
         binding.siteWebBack.setOnClickListener {
             if (binding.siteWebView.canGoBack()) binding.siteWebView.goBack()
         }
+
+        // System back walks the WEB history first — popping the whole fragment mid-login or
+        // mid-checkout threw away the session's page trail. Enablement tracks canGoBack() (updated
+        // in onPageFinished below); when the trail is empty the callback stays disabled and back
+        // pops the fragment as before.
+        val webBack = object : androidx.activity.OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                binding.siteWebView.goBack()
+            }
+        }
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, webBack)
+        webBackCallback = webBack
 
         // Persistent cookies so a one-time WP login sticks across visits and app restarts.
         CookieManager.getInstance().setAcceptCookie(true)
@@ -106,6 +120,27 @@ class SiteWebFragment @Inject constructor() : ScreenFragment() {
         web.webViewClient = object : android.webkit.WebViewClient() {
             override fun onPageFinished(v: WebView, url: String?) {
                 if (::binding.isInitialized) binding.siteWebBack.alpha = if (v.canGoBack()) 1f else 0.3f
+                webBackCallback?.isEnabled = v.canGoBack()
+            }
+
+            /** http(s) stays in the portal; everything else (mailto:, tel:, intent:, payment-app
+             *  schemes…) hands off to whatever the device has for it instead of erroring in-view. */
+            override fun shouldOverrideUrlLoading(
+                v: WebView, request: android.webkit.WebResourceRequest
+            ): Boolean {
+                val uri = request.url ?: return false
+                if (uri.scheme in listOf("http", "https")) return false
+                return try {
+                    startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri))
+                    true
+                } catch (e: Exception) {
+                    // The view's own context: this can fire while the fragment is detaching.
+                    android.widget.Toast.makeText(
+                        v.context, "Nothing on this device opens ${uri.scheme}: links",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                    true
+                }
             }
         }
 
@@ -158,6 +193,7 @@ class SiteWebFragment @Inject constructor() : ScreenFragment() {
     override fun hideLoading() {}
 
     override fun onDestroyView() {
+        webBackCallback = null
         if (::binding.isInitialized) binding.siteWebView.destroy()
         super.onDestroyView()
     }

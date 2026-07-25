@@ -62,21 +62,6 @@
                 app:layout_constraintStart_toStartOf="parent"
                 android:layout_marginStart="4dp"/>
 
-        <ImageButton
-                android:id="@+id/goSectionsButton"
-                android:layout_width="@dimen/ledger_nav_button"
-                android:layout_height="@dimen/ledger_nav_button"
-                android:padding="10dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/ic_bar_sections"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:contentDescription="@string/go_group_day"
-                android:visibility="gone"
-                app:layout_constraintTop_toTopOf="@id/navigatorImageView"
-                app:layout_constraintBottom_toBottomOf="@id/navigatorImageView"
-                app:layout_constraintEnd_toEndOf="@id/navigatorImageView"
-                android:layout_marginEnd="2dp"/>
-
         <!-- Floating nav widget (day page only): ‹ prev-date · ↑↓ sections · next-date ›.
              Overlays the page (does not shift it). Hidden by default. -->
         <LinearLayout

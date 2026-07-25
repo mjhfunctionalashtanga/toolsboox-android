@@ -250,6 +250,8 @@
     <string name="calendar_day_notes">Notes</string>
     <string name="calendar_day_notes_events">Stars &amp; Events (%d)</string>
     <string name="calendar_day_notes_events_ex">Stars &amp; Events (%d+)</string>
+    <string name="calendar_day_quick_wins">⚡ Quick Wins</string>
+    <string name="calendar_day_quick_wins_events">⚡ Quick Wins · Events (%d)</string>
     <string name="calendar_day_all_day">All day event</string>
 
     <string name="calendar_health_day_start_it">Start it!</string>
@@ -474,6 +476,7 @@
     <string name="map_needs_key">Add your AI key in Settings to ask for a map.</string>
     <string name="map_nothing_to_map">Nothing to map yet.</string>
     <string name="map_empty">Nothing is connected yet. Connect a few things and the map draws itself.</string>
+    <string name="map_hint">Your ledger as connections — tap a node to walk, hold to pick or open it.</string>
     <string name="rhizome_menu">🕸  Its rhizome</string>
     <string name="calendar_settings_button_text_size">Text size…</string>
     <string name="rhizome_cannot_open">Nothing here can open %1$s</string>

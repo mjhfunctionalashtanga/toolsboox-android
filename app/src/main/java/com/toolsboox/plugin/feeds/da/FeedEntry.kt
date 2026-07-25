@@ -24,7 +24,11 @@ data class FeedEntry(
     /** First image enclosure URL (podcast/video art), used when the content has no inline image. */
     val enclosureImage: String? = null,
     /** First audio enclosure URL (the podcast episode's .mp3/.m4a), used to play the real audio. */
-    val enclosureAudio: String? = null
+    val enclosureAudio: String? = null,
+    /** The feed's own XML URL (Miniflux `feed.feed_url` / the local sub's URL). The Podcasting 2.0
+     *  layer (chapters/transcripts) lives in that XML and nowhere in the Miniflux API — this is
+     *  the address [com.toolsboox.plugin.feeds.nw.FeedChapters] goes back to for it. */
+    val feedUrl: String? = null
 ) {
     /** The playable audio URL for this entry: the audio enclosure, else the entry URL if it looks
      *  like a direct audio file. Null when there's nothing to play as audio. */
@@ -66,4 +70,16 @@ data class FeedEntry(
     /** Plain-text blurb for the list row. */
     val blurb: String
         get() = HtmlText.toPlain(content).take(180)
+
+    /** The YouTube video id when this entry IS a YouTube video (watch/shorts/live/youtu.be/embed
+     *  URL, or a yt:video guid via an embed in the content) — what The Watch's skinned article
+     *  view builds its thumbnail + tap-to-play embed around. Null for everything else. */
+    val youTubeId: String?
+        get() {
+            val u = url
+            Regex("""(?:youtube(?:-nocookie)?\.com/(?:watch\?[^#]*\bv=|shorts/|live/|embed/)|youtu\.be/)([A-Za-z0-9_\-]{6,})""")
+                .find(u)?.let { return it.groupValues[1].take(16) }
+            return Regex("""youtube(?:-nocookie)?\.com/embed/([A-Za-z0-9_\-]{6,})""")
+                .find(content)?.groupValues?.get(1)?.take(16)
+        }
 }

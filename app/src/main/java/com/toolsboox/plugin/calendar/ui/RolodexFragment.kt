@@ -69,8 +69,12 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
     private var crmById: Map<String, RosterBridge.CrmContact> = emptyMap()
     private var crmLoading: Boolean = false
 
-    private companion object {
-        const val LOCAL_EMPTY_HINT = "No contacts yet. Tap ＋ to add one."
+    companion object {
+        /** Deep-link: open straight onto this contact's detail page — the day page's "call…"
+         *  quick wins arrive here with the person already in hand, so the number is one glance
+         *  away instead of a search away. */
+        const val ARG_CONTACT_ID = "contactId"
+        private const val LOCAL_EMPTY_HINT = "No contacts yet. Tap ＋ to add one."
     }
 
     private val contactsPermission =
@@ -109,6 +113,17 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
 
         updateSourceButtons()
         load()
+
+        // Deep-linked arrival: open the named contact's page over the list. One-shot — the
+        // argument is cleared so closing the detail leaves you on the plain rolodex, not in
+        // a loop of the same person.
+        arguments?.getString(ARG_CONTACT_ID)?.takeIf { it.isNotBlank() }?.let { id ->
+            arguments?.remove(ARG_CONTACT_ID)
+            lifecycleScope.launch {
+                val contact = withContext(Dispatchers.IO) { ContactStore.get(requireContext(), id) }
+                if (isAdded && contact != null) showContactDetail(contact)
+            }
+        }
     }
 
     /** Route a row tap by [source]: local rows open the full contact page; CRM rows open the light
@@ -318,6 +333,12 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         if (line.isNotBlank()) root.addView(label(line, 14f, color = 0xFF333333.toInt()).apply { setPadding(0, px(4), 0, 0) })
         if (contact.birthday.isNotBlank()) root.addView(label("🎂 ${contact.birthday}", 14f).apply { setPadding(0, px(4), 0, 0) })
 
+        // ✉ straight to a prefilled compose — "write to this person" starts here as often as it
+        // starts from a quick win. Built now, wired after the dialog exists (it has to dismiss it).
+        val composeRow = if (contact.email.isBlank()) null else
+            label("✉  Compose email", 14f, color = 0xFF2F6F96.toInt()).apply { setPadding(0, px(8), 0, 0) }
+        composeRow?.let { root.addView(it) }
+
         // Tasks & Events (gathered off-main).
         root.addView(label("Tasks & Events", 13f, bold = true, color = 0xFF888888.toInt()).apply { setPadding(0, px(16), 0, px(4)) })
         val tasksBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
@@ -377,6 +398,17 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
             .setNegativeButton("Close", null)
             .create()
         dialog.show()
+
+        composeRow?.setOnClickListener {
+            dialog.dismiss()
+            androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(
+                R.id.action_to_mail_compose,
+                androidx.core.os.bundleOf(
+                    com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_TO_EMAIL to contact.email,
+                    com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_TO_NAME to contact.name
+                )
+            )
+        }
 
         lifecycleScope.launch {
             val (items, elements) = withContext(Dispatchers.IO) {

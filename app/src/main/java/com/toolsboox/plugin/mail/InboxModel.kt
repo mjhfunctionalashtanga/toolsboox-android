@@ -57,11 +57,15 @@ object InboxStore {
         return base.filter { !cleared.contains(it.id) }.sortedByDescending { it.date }
     }
 
-    /** Sweep out everything currently in the inbox that you didn't star -- the "clear" pass after
-     *  triage. Starred mail (your to-dos) stays. */
-    fun clearUnstarred(c: Context) {
-        val toClear = messages(c).filter { !isStarred(c, it.id) }.map { it.id }
+    /** Sweep the given (already-triaged) messages out of the inbox -- the "clear" pass. The caller
+     *  decides WHAT to sweep (what's on screen, minus stars); this just records it. */
+    fun clear(c: Context, toClear: Collection<String>) {
         val cl = ids(c, CLEARED); cl.addAll(toClear); setIds(c, CLEARED, cl)
+    }
+
+    /** Bring a swept set back -- the Clear snackbar's Undo. */
+    fun restore(c: Context, toRestore: Collection<String>) {
+        val cl = ids(c, CLEARED); cl.removeAll(toRestore.toSet()); setIds(c, CLEARED, cl)
     }
 
     private fun seeds(): List<InboxMessage> {

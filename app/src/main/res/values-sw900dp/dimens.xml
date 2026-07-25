@@ -1,0 +1,15 @@
+<resources>
+    <!--
+        True large panels (Tab X: 1650x2200 @212dpi -> ~1245dp). 1.6x lands a pill button at
+        about 98px there - the same physical feel as the base set on a Palma. The Mini C used
+        to inherit this set by accident of sw600dp; it now has its own (see values-sw600dp).
+    -->
+    <dimen name="ledger_toolbar_width">64dp</dimen>
+    <dimen name="ledger_toolbar_button">64dp</dimen>
+    <dimen name="ledger_pill_button">74dp</dimen>
+    <dimen name="ledger_pill_button_padding">14dp</dimen>
+    <dimen name="ledger_grip_short">35dp</dimen>
+    <dimen name="ledger_grip_long">74dp</dimen>
+    <dimen name="ledger_navigator_height">76dp</dimen>
+    <dimen name="ledger_nav_button">70dp</dimen>
+</resources>

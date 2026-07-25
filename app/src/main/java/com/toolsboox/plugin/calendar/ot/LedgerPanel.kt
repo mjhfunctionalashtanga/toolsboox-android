@@ -42,15 +42,12 @@ data class LedgerPanel(
             }
             null, "default", "0" -> listOf(
                 // These select which ink gets OCR'd, so they have to be where the columns are
-                // actually DRAWN. The right-hand two weren't: the tasks and notes column runs
-                // x 670..1270 (lo + cew + 50 … lo + 2*cew + 50), and both were declared
-                // 684..1384 — starting 14 past the left edge, so ink written hard against it was
-                // never read, and running 114 past the right edge over blank paper. The schedule
-                // rect was right, which is why this went unnoticed.
-                LedgerPanel("schedule", "Schedules", Kind.TEXT, RectF(20f, 60f, 620f, 1810f)),
+                // actually DRAWN: the columns widened to cew=645 on 07-24, so the right pair runs
+                // x 715..1360 (lo + cew + 50 … lo + 2*cew + 50) and Schedules ends at 665.
+                LedgerPanel("schedule", "Schedules", Kind.TEXT, RectF(20f, 60f, 665f, 1810f)),
                 // Bottom is the grid's last line (13*ceh), where the Roots band begins.
-                LedgerPanel("tasks", "Tasks", Kind.TEXT, RectF(670f, 60f, 1270f, 711f)),
-                LedgerPanel("notes", "Notes", Kind.TEXT, RectF(670f, 1011f, 1270f, 1811f))
+                LedgerPanel("tasks", "Tasks", Kind.TEXT, RectF(715f, 60f, 1360f, 711f)),
+                LedgerPanel("notes", "Notes", Kind.TEXT, RectF(715f, 1011f, 1360f, 1811f))
             )
             else -> listOf(
                 // Any other named note page is a single full-page writing panel.

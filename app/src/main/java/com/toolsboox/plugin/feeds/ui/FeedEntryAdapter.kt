@@ -61,7 +61,10 @@ class FeedEntryAdapter(
         val isRead = e.read || FeedReadState.isRead(e.id)
 
         // Row tier: Small / Medium / Large scales the text and the featured thumbnail together.
-        val scale = when (textTier) { "small" -> 0.85f; "large" -> 1.3f; else -> 1f }
+        // Ladder recalibrated on the Tab Mini C (07-24): every tier read too small at reading
+        // distance — Small was squinting, Medium barely better, Large nearly right. The whole
+        // ladder steps up: Small ≈ the old Medium, Medium ≈ the old Large, Large a notch past it.
+        val scale = when (textTier) { "small" -> 1.0f; "large" -> 1.45f; else -> 1.25f }
         holder.title.textSize = 16f * scale
         holder.meta.textSize = 12f * scale
         holder.blurb.textSize = 14f * scale
@@ -86,6 +89,11 @@ class FeedEntryAdapter(
 
         holder.blurb.text = e.blurb
         holder.star.text = if (e.starred) "★" else "☆"
+        // The glyph, not the vibe: reading faces (Fast Mono et al.) draw ★ hollow or substitute
+        // it, so a starred row read as unstarred on device. System face keeps the fill solid;
+        // the unstarred outline goes quiet gray so the contrast states are unmistakable.
+        holder.star.typeface = android.graphics.Typeface.DEFAULT
+        holder.star.setTextColor(if (e.starred) 0xFF000000.toInt() else 0xFF9A9A9A.toInt())
         holder.itemView.setOnClickListener { onOpen(e) }   // fragment marks read per the user's setting
         holder.star.setOnClickListener { onStar(e) }
         bindImage(holder.image, e.imageUrl)

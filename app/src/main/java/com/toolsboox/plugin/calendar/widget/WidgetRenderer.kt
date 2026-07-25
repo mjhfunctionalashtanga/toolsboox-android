@@ -33,7 +33,7 @@ object WidgetRenderer {
     const val CW = 1404f
     const val CH = 1872f
 
-    private const val cew = 600f
+    private const val cew = 645f  // in lockstep with CalendarDayPage.cew (widened 07-24; third copy found the hard way)
     private const val ceh = 50f
     private const val lo = 20f
     private val to = (CH - 35 * ceh) / 2f
@@ -94,7 +94,7 @@ object WidgetRenderer {
     private fun compositeSchedule(fullBitmap: Bitmap): Bitmap {
         val splitY = (to + 17 * ceh).toInt() // 911
         val xLeft = 0
-        val xRight = (lo + cew + 20f).toInt() // 640
+        val xRight = (lo + cew + 20f).toInt() // 685
         val halfW = xRight - xLeft
 
         val topH = splitY
@@ -132,8 +132,8 @@ object WidgetRenderer {
         val tasksBot = (to + 17 * ceh).toInt()          // 911
         val notesTop = (to + 18 * ceh).toInt()          // 961
         val notesBot = (to + 35 * ceh).toInt()          // 1811
-        val xLeft = (lo + cew + 30f).toInt()            // 650
-        val xRight = (lo + 2 * cew + 70f).toInt()       // 1290
+        val xLeft = (lo + cew + 30f).toInt()            // 695
+        val xRight = (lo + 2 * cew + 70f).toInt()       // 1380
 
         val halfW = xRight - xLeft
         val halfH = tasksBot - tasksTop  // 850

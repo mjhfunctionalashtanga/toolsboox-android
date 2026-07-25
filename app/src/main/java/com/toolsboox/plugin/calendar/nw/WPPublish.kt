@@ -64,8 +64,8 @@ object WPPublish {
         var featuredMedia: Int = 0,
     )
 
-    /** Result of a create/update. */
-    data class SaveResult(val ok: Boolean, val id: Int?, val link: String?)
+    /** Result of a create/update. [error] carries WP's own words when the site refused the save. */
+    data class SaveResult(val ok: Boolean, val id: Int?, val link: String?, val error: String? = null)
 
     // MARK: - Config (active WP site)
 
@@ -175,6 +175,36 @@ object WPPublish {
         }
     }
 
+    /** A media-library upload the caller wants the ADDRESS of, not just an id. */
+    data class MediaUpload(val id: Int, val url: String)
+
+    /**
+     * Upload a PNG to the media library and keep WP's `source_url` — the asset-export path, where
+     * the point is a URL you can paste into Canva/a post/anywhere. Same wire as [uploadMedia]
+     * (raw POST /media, Content-Disposition filename, app-password Basic auth); null on failure.
+     */
+    fun uploadMediaAsset(context: Context, png: ByteArray, filename: String): MediaUpload? {
+        val b = base(context) ?: return null
+        val safe = filename.removeSuffix(".png").ifBlank { "gram" }
+            .replace(Regex("[^A-Za-z0-9_-]"), "-").take(64).ifBlank { "gram" }
+        val body = png.toRequestBody("image/png".toMediaType())
+        return try {
+            client.newCall(
+                Request.Builder().url(b + "media").post(body)
+                    .header("Authorization", auth(context))
+                    .header("Content-Disposition", "attachment; filename=\"$safe.png\"")
+                    .build()
+            ).execute().use { r ->
+                val o = try { JSONObject(r.body?.string() ?: return null) } catch (e: Exception) { return null }
+                val id = o.optInt("id", 0)
+                if (id <= 0) return null
+                MediaUpload(id, o.optString("source_url", ""))
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "wp uploadMediaAsset failed"); null
+        }
+    }
+
     // MARK: - Lifecycle
 
     /** Create ([id] == null) or update ([id] != null) a post. */
@@ -197,12 +227,26 @@ object WPPublish {
             ).execute().use { r ->
                 val text = r.body?.string() ?: ""
                 val o = try { JSONObject(text) } catch (e: Exception) { null }
-                SaveResult(r.isSuccessful, o?.optInt("id", 0)?.takeIf { it > 0 }, o?.optString("link", null))
+                SaveResult(
+                    r.isSuccessful, o?.optInt("id", 0)?.takeIf { it > 0 }, o?.optString("link", null),
+                    if (r.isSuccessful) null else wpErrorMessage(o),
+                )
             }
         } catch (e: Exception) {
             Timber.w(e, "wp save failed"); SaveResult(false, null, null)
         }
     }
+
+    /**
+     * WP error bodies say exactly what went wrong (`{"code":…,"message":"You cannot edit this post
+     * because it is in the Trash…"}`); parsing and discarding that left every failure looking like a
+     * bad password. Pull the human sentence out so a toast can say the real reason. Null when the
+     * body isn't a WP error shape.
+     */
+    fun wpErrorMessage(o: JSONObject?): String? =
+        o?.optString("message", "")?.takeIf { it.isNotBlank() }
+            // WP renders these with entities and the odd tag; flatten to a plain sentence.
+            ?.let { decodeHtml(it).replace(Regex("<[^>]+>"), "").trim() }?.takeIf { it.isNotBlank() }
 
     /** Recent posts of a [type] (rest_base), filtered by [statuses]. Empty on any failure. */
     fun list(context: Context, type: String, statuses: List<String>, search: String = ""): List<WpPost> {
@@ -247,16 +291,23 @@ object WPPublish {
         )
     }
 
-    /** Trash a post (WordPress soft-deletes to the trash by default). */
-    fun trash(context: Context, type: String, id: Int): Boolean {
-        val b = base(context) ?: return false
+    /** Trash a post (WordPress soft-deletes to the trash by default). Null on success; on refusal,
+     *  WP's own message (falling back to a generic line) so the browser can show the real reason. */
+    fun trash(context: Context, type: String, id: Int): String? {
+        val b = base(context) ?: return "No active site configured"
         return try {
             client.newCall(
                 Request.Builder().url(b + "$type/$id").delete()
                     .header("Authorization", auth(context)).build()
-            ).execute().use { it.isSuccessful }
+            ).execute().use { r ->
+                if (r.isSuccessful) null
+                else {
+                    val o = try { JSONObject(r.body?.string() ?: "") } catch (e: Exception) { null }
+                    wpErrorMessage(o) ?: "Couldn't trash (HTTP ${r.code})"
+                }
+            }
         } catch (e: Exception) {
-            Timber.w(e, "wp trash failed"); false
+            Timber.w(e, "wp trash failed"); e.message ?: "Couldn't reach the site"
         }
     }
 
@@ -277,5 +328,19 @@ object WPPublish {
     fun isoLocal(millis: Long): String {
         val fmt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", java.util.Locale.US)
         return fmt.format(java.util.Date(millis))
+    }
+
+    /**
+     * The other half of the [isoLocal] round trip: WP's `date` comes back site-local with NO offset
+     * ("yyyy-MM-dd'T'HH:mm:ss"), and the schedule picker displays in the device zone — so parse it
+     * as device-local. When the zones match (the normal case) an untouched post re-saves to the same
+     * wall-clock time instead of silently re-timing to whatever the picker defaulted to.
+     */
+    fun parseWpDate(date: String): Long? = try {
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
+        fmt.isLenient = false
+        fmt.parse(date.take(19))?.time
+    } catch (e: Exception) {
+        null
     }
 }

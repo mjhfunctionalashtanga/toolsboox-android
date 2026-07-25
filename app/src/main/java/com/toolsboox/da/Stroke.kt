@@ -26,6 +26,12 @@ data class Stroke(
         /** Calligraphy: per-point pressure-variable width, baked to match the Onyx fountain nib. */
         const val STYLE_CALLIGRAPHY = 1
 
+        /** Fountain: pressure-variable width alone — no directional broad-nib, just a soft swell. */
+        const val STYLE_FOUNTAIN = 2
+
+        /** Marker: a wide, flat, slightly translucent band — the chisel tip of a notes app. */
+        const val STYLE_MARKER = 3
+
         /**
          * Deep copy of strokes.
          *

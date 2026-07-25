@@ -1,5 +1,6 @@
 package com.toolsboox.plugin.calendar.ot
 
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
@@ -9,7 +10,9 @@ import android.graphics.Typeface
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.util.Base64
 import com.toolsboox.ot.Creator
+import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import com.toolsboox.plugin.michaelfilter.da.IntakePageData
 
 /**
@@ -22,6 +25,11 @@ import com.toolsboox.plugin.michaelfilter.da.IntakePageData
  * text renders in place and is dispatched to the mjh.yoga intake endpoint via
  * IntakePageStore. Aesthetic matches the Pickings page (mono headers, thin
  * rules, dashed boxes, plenty of white).
+ *
+ * Below the panels, "today's picks": one quiet row of small thumbnails — what
+ * got gram'd and pick'd today, across every page of the day — so the later
+ * list shows the day's gathering at a glance. Each thumbnail is a door to the
+ * page that holds it.
  */
 class CalendarDayPageIntake : Creator {
 
@@ -37,7 +45,10 @@ class CalendarDayPageIntake : Creator {
         private const val row1Top = 60f
         private const val row1Bottom = 900f
         private const val row2Top = 985f
-        private const val row2Bottom = 1825f
+        // Was 1825; the bottom band now belongs to the "today's picks" strip. The panels'
+        // typed strips and OCR zones all derive from [panels], so they move in lockstep —
+        // there is no second copy of this layout for a hit-test to disagree with.
+        private const val row2Bottom = 1680f
 
         // Height of the tap-to-type strip at the bottom of each panel.
         private const val typedStripHeight = 190f
@@ -76,13 +87,106 @@ class CalendarDayPageIntake : Creator {
             }?.kindKey
         }
 
+        // ---- today's picks strip -----------------------------------------------------------
+
+        /** The strip's geometry: one row of small squares under the LISTEN/EDUCATE panels. */
+        private const val picksTitleY = 1728f
+        private const val picksThumbTop = 1742f
+        private const val picksThumbSize = 120f
+        private const val picksThumbGap = 16f
+        private const val MAX_PICKS = 8
+
+        /** A drawn thumbnail and where it landed, so a tap can open the page that holds the
+         *  gram — recorded at draw time, the PickingsCover/DayEventHits discipline. */
+        data class Pick(val pageKey: String, val rect: RectF)
+
+        @Volatile
+        private var picks: List<Pick> = emptyList()
+
+        /** The pick under a canvas-space point, or null. */
+        fun pickAt(x: Float, y: Float): Pick? = picks.firstOrNull { it.rect.contains(x, y) }
+
+        /**
+         * Draw the strip: newest grams first, each decoded SMALL — bounds first, then an
+         * inSampleSize that lands near thumbnail size — because a day's grams are full-page
+         * base64 PNGs and eight full decodes on the render path would make the page turn drag.
+         * One decode per tile, recycled as soon as it's on the canvas (the PickingsCover rule).
+         */
+        private fun drawPicksStrip(canvas: Canvas, calendarDay: CalendarDay?) {
+            if (calendarDay == null) {
+                picks = emptyList()
+                return
+            }
+            val titlePaint = TextPaint().apply {
+                color = Color.argb(150, 0, 0, 0); textAlign = Paint.Align.LEFT; textSize = 24f
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD); isAntiAlias = true
+            }
+            canvas.drawText("today's picks", left, picksTitleY, titlePaint)
+
+            // Every page of the day feeds the strip — day page grams, notes "0", pickings
+            // boards — newest first. Stickers stay out: decoration is not a picking.
+            val grams = calendarDay.imageElements
+                .filter { !it.decorative && it.data.isNotBlank() }
+                .sortedByDescending { it.timestamp }
+                .take(MAX_PICKS)
+
+            if (grams.isEmpty()) {
+                picks = emptyList()
+                val dashed = Paint().apply {
+                    color = Color.argb(90, 0, 0, 0); strokeWidth = 1.5f; style = Paint.Style.STROKE
+                    pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f); isAntiAlias = true
+                }
+                val slot = RectF(left, picksThumbTop, left + 3 * (picksThumbSize + picksThumbGap), picksThumbTop + picksThumbSize)
+                canvas.drawRect(slot, dashed)
+                val hint = TextPaint().apply {
+                    color = Color.argb(120, 0, 0, 0); textAlign = Paint.Align.CENTER; textSize = 22f
+                    typeface = Typeface.create(Typeface.MONOSPACE, Typeface.ITALIC); isAntiAlias = true
+                }
+                canvas.drawText("grams you pick today land here", slot.centerX(), slot.centerY() + 8f, hint)
+                return
+            }
+
+            val border = Paint().apply {
+                color = Color.argb(170, 0, 0, 0); strokeWidth = 2f; style = Paint.Style.STROKE; isAntiAlias = true
+            }
+            val recorded = mutableListOf<Pick>()
+            grams.forEachIndexed { i, img ->
+                val l = left + i * (picksThumbSize + picksThumbGap)
+                val rect = RectF(l, picksThumbTop, l + picksThumbSize, picksThumbTop + picksThumbSize)
+                runCatching {
+                    val bytes = Base64.decode(img.data, Base64.DEFAULT)
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                    var sample = 1
+                    while (bounds.outWidth / (sample * 2) >= picksThumbSize &&
+                        bounds.outHeight / (sample * 2) >= picksThumbSize
+                    ) sample *= 2
+                    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+                    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return@runCatching
+                    // Center-crop into the square, so a wide card reads as a card, not a sliver.
+                    val side = minOf(bmp.width, bmp.height)
+                    val src = android.graphics.Rect(
+                        (bmp.width - side) / 2, (bmp.height - side) / 2,
+                        (bmp.width - side) / 2 + side, (bmp.height - side) / 2 + side
+                    )
+                    canvas.drawBitmap(bmp, src, rect, null)
+                    bmp.recycle()
+                }
+                canvas.drawRect(rect, border)
+                recorded.add(Pick(img.page, rect))
+            }
+            picks = recorded
+        }
+
         /**
          * Draw the intake page template with the typed panel texts in place.
          *
          * @param canvas the canvas
          * @param intakeData the typed content of the day
+         * @param calendarDay the loaded day, feeding the "today's picks" strip (null — the
+         *        notes-preview fallback — draws the panels only and clears the strip's taps)
          */
-        fun drawPage(canvas: Canvas, intakeData: IntakePageData) {
+        fun drawPage(canvas: Canvas, intakeData: IntakePageData, calendarDay: CalendarDay? = null) {
             canvas.drawRect(0f, 0f, 1404f, 1872f, Creator.fillWhite)
 
             val monoBold = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
@@ -148,6 +252,8 @@ class CalendarDayPageIntake : Creator {
                     canvas.restore()
                 }
             }
+
+            drawPicksStrip(canvas, calendarDay)
         }
     }
 }

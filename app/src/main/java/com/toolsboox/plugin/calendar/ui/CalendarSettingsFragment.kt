@@ -881,10 +881,17 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             addView(previewMenu); addView(previewBody)
         })
 
-        fun interfaceMul() = when (prefs.getString("menu_text_size", "medium")) { "small" -> 0.9f; "large" -> 1.3f; else -> 1.0f }
+        // The real tiers from ScreenFragment.tier — the preview must not flatter. It briefly used
+        // 0.9/1.3 while the chrome used 0.85/1.25, so what you saw was almost what you got.
+        fun interfaceMul() = when (prefs.getString("menu_text_size", "medium")) { "small" -> 0.85f; "large" -> 1.25f; else -> 1.0f }
         fun refreshPreview() {
-            val tf = com.toolsboox.ot.LedgerFonts.typeface(ctx)
+            // The face that would actually be used: the reader's own pick, or the vibe's default when
+            // they're still on "system" — so picking a vibe previews its font as well as its accent.
+            val effective = com.toolsboox.ot.LedgerFonts.choiceById(com.toolsboox.ot.LedgerTheme.effectiveFontId(ctx))
+            val tf = com.toolsboox.ot.LedgerFonts.typefaceFor(ctx, effective)
             previewMenu.typeface = tf; previewBody.typeface = tf
+            // The menu sample carries the vibe's accent, so a theme pick shows its colour at once.
+            previewMenu.setTextColor(com.toolsboox.ot.LedgerTheme.accent(ctx))
             previewMenu.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 17f * interfaceMul())
             previewBody.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f * com.toolsboox.ot.ReadingSize.scale(ctx))
         }
@@ -894,9 +901,15 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             setPadding(0, px(16), 0, px(6))
         }
 
-        // A wrapping row of selectable chips; the selected one is bold with a solid border.
-        fun chipRow(chips: List<Triple<String, android.graphics.Typeface?, () -> Boolean>>, onPick: (Int) -> Unit): android.view.View {
-            lateinit var container: android.widget.LinearLayout
+        // Selectable chips, chunked into rows of [perRow] — a single weighted row sharded ten vibe
+        // names into 2-character columns. [swatches] draws an accent dot before a chip's label
+        // (the vibe picker), so a theme shows its colour before it's picked.
+        fun chipRow(
+            chips: List<Triple<String, android.graphics.Typeface?, () -> Boolean>>,
+            perRow: Int = chips.size,
+            swatches: List<Int?>? = null,
+            onPick: (Int) -> Unit
+        ): android.view.View {
             val views = ArrayList<android.widget.TextView>()
             fun paint() = views.forEachIndexed { i, v ->
                 val on = chips[i].third()
@@ -904,28 +917,55 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 v.setTextColor(if (on) 0xFF000000.toInt() else 0xFF555555.toInt())
                 v.background = android.graphics.drawable.GradientDrawable().apply {
                     cornerRadius = px(8).toFloat(); setColor(if (on) 0x11000000 else 0x00000000)
-                    setStroke(px(1), if (on) 0xFF000000.toInt() else 0xFFCCCCCC.toInt())
+                    // The selected chip's ring wears the vibe's accent — read fresh on every
+                    // repaint, so tapping a new vibe re-rings its own row in the new colour.
+                    setStroke(px(1), if (on) com.toolsboox.ot.LedgerTheme.accent(ctx) else 0xFFCCCCCC.toInt())
                 }
             }
-            container = android.widget.LinearLayout(ctx).apply {
-                orientation = android.widget.LinearLayout.HORIZONTAL
-                chips.forEachIndexed { i, (label, tf, _) ->
-                    addView(android.widget.TextView(ctx).apply {
-                        text = label; textSize = 15f; setPadding(px(12), px(8), px(12), px(8))
+            val outer = android.widget.LinearLayout(ctx).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+            }
+            chips.indices.chunked(perRow).forEach { rowIdx ->
+                val row = android.widget.LinearLayout(ctx).apply {
+                    orientation = android.widget.LinearLayout.HORIZONTAL
+                }
+                for (i in rowIdx) {
+                    val (label, _, _) = chips[i]
+                    row.addView(android.widget.TextView(ctx).apply {
+                        text = label; textSize = 15f; maxLines = 1
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                        gravity = android.view.Gravity.CENTER
+                        setPadding(px(10), px(8), px(10), px(8))
+                        swatches?.getOrNull(i)?.let { c ->
+                            val dot = android.graphics.drawable.GradientDrawable().apply {
+                                shape = android.graphics.drawable.GradientDrawable.OVAL
+                                setColor(c); setSize(px(10), px(10))
+                            }
+                            setCompoundDrawablesWithIntrinsicBounds(dot, null, null, null)
+                            compoundDrawablePadding = px(6)
+                        }
                         setOnClickListener { onPick(i); paint(); refreshPreview() }
                         views.add(this)
-                    }, android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = px(6) })
+                    }, android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                        .apply { rightMargin = px(6); bottomMargin = px(6) })
                 }
+                // Pad the last row so its chips keep the same width as full rows.
+                repeat(perRow - rowIdx.size) {
+                    row.addView(android.view.View(ctx),
+                        android.widget.LinearLayout.LayoutParams(0, 1, 1f).apply { rightMargin = px(6) })
+                }
+                outer.addView(row)
             }
             paint()
-            return container
+            return outer
         }
 
         // FONT — each chip labelled in its own face so the choice previews itself.
         col.addView(sectionLabel("FONT"))
         val fonts = com.toolsboox.ot.LedgerFonts.Choice.values().toList()
         col.addView(chipRow(
-            fonts.map { c -> Triple(c.label, com.toolsboox.ot.LedgerFonts.typefaceFor(ctx, c)) { com.toolsboox.ot.LedgerFonts.current(ctx) == c } }
+            fonts.map { c -> Triple(c.label, com.toolsboox.ot.LedgerFonts.typefaceFor(ctx, c)) { com.toolsboox.ot.LedgerFonts.current(ctx) == c } },
+            perRow = 2
         ) { i -> com.toolsboox.ot.LedgerFonts.set(ctx, fonts[i].id) })
 
         // READING SIZE — the reading surfaces (books, feed articles, threads, semantic pages).
@@ -945,6 +985,37 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             val v = tiers[i].first
             prefs.edit().putString("menu_text_size", v).putString("modal_text_size", v).apply()
         })
+
+        // THEME — the vibe: an accent colour plus a default reading face (used only while the font is
+        // still "System"). Selecting re-tints the preview immediately; the chrome catches up on reopen.
+        col.addView(sectionLabel("THEME"))
+        val vibes = com.toolsboox.ot.LedgerTheme.ALL
+        col.addView(chipRow(
+            vibes.map { v -> Triple(v.name, null as android.graphics.Typeface?) { com.toolsboox.ot.LedgerTheme.current(ctx).id == v.id } },
+            perRow = 3,
+            // Dialogs are light cards even in Dark scheme, so the light accent is the legible one.
+            swatches = vibes.map { it.accentLight }
+        ) { i -> com.toolsboox.ot.LedgerTheme.setTheme(ctx, vibes[i].id) })
+
+        // MODE — light / dark / follow-system. This flips the whole app's colour resources, so it takes
+        // a recreate to redraw the chrome; the dialog is torn down with it, which is fine (choice is saved).
+        col.addView(sectionLabel("MODE  ·  light & dark"))
+        val schemes = listOf(0 to "System", 1 to "Light", 2 to "Dark")
+        col.addView(chipRow(
+            schemes.map { (n, label) -> Triple(label, null as android.graphics.Typeface?) { com.toolsboox.ot.LedgerTheme.scheme(ctx) == n } }
+        ) { i ->
+            com.toolsboox.ot.LedgerTheme.setScheme(ctx, schemes[i].first)
+            com.toolsboox.ot.LedgerTheme.applyNightMode(ctx)
+            requireActivity().recreate()
+        })
+
+        // MODAL SIZE — how large dialogs sit. The scale logic itself lives elsewhere (ModalScale side);
+        // here we only persist the choice under "modal_size" (compact / standard / expanded).
+        col.addView(sectionLabel("MODAL SIZE  ·  dialogs"))
+        val modalSizes = listOf("compact" to "Compact", "standard" to "Standard", "expanded" to "Expanded")
+        col.addView(chipRow(
+            modalSizes.map { (value, label) -> Triple(label, null as android.graphics.Typeface?) { (prefs.getString("modal_size", "standard")) == value } }
+        ) { i -> prefs.edit().putString("modal_size", modalSizes[i].first).apply() })
 
         refreshPreview()
 

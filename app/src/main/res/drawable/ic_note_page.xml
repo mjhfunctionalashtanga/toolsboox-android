@@ -1,0 +1,9 @@
+<!-- Spiral-note page (🗒) — the Desk folder's glyph, split off from ic_reader_view so the
+     folder and the 🗎 Posts row stop sharing an icon. Folded-corner page, 2dp round strokes. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:strokeColor="#FF000000" android:strokeWidth="2" android:fillColor="#00000000"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M6,3.5 h8.5 L19,8 v12.5 h-13 z M14.5,3.5 V8 h4.5 M9,12 h6 M9,16 h6"/>
+</vector>

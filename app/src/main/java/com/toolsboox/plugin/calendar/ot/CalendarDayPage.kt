@@ -28,7 +28,7 @@ class CalendarDayPage {
 
     companion object {
         // Cell width
-        private const val cew = 600.0f
+        private const val cew = 645.0f  // widened 07-24: the old 600 left a ~200px dead band right of Tasks ("margin far greater than it needs")
 
         // Cell height
         private const val ceh = 50.0f
@@ -87,6 +87,24 @@ class CalendarDayPage {
             return true
         }
 
+        /** A drawn quick-win row and where it landed, so a tap can go straight to the doing —
+         *  recorded at draw time, hit-tested on tap, exactly the PickingsCover/DayEventHits
+         *  discipline: the panel is pixels, and a second guess at its layout would drift. */
+        data class WinRow(val win: QuickWinsEngine.Win, val rect: android.graphics.RectF)
+
+        @Volatile
+        private var winRows: List<WinRow> = emptyList()
+
+        /** The quick win under a canvas-space point, or null. */
+        fun winAt(x: Float, y: Float): QuickWinsEngine.Win? =
+            winRows.firstOrNull { it.rect.contains(x, y) }?.win
+
+        /** Forget the recorded rows — called when a page without the panel is drawn, so a stale
+         *  rectangle can't send a tap on some other page off to a task. */
+        fun clearWinRows() {
+            winRows = emptyList()
+        }
+
         /**
          * Draw the daily template of calendar plugin.
          *
@@ -94,14 +112,15 @@ class CalendarDayPage {
          * @param canvas the canvas
          * @param calendarDay data class
          * @param calendarEvents the list of calendar events
+         * @param quickWins the parked quick wins (today only; empty when cold or on other days)
          */
         fun drawPage(
-            context: Context, canvas: Canvas, calendarDay: CalendarDay, calendarEvents: List<CalendarEvent>
+            context: Context, canvas: Canvas, calendarDay: CalendarDay, calendarEvents: List<CalendarEvent>,
+            quickWins: List<QuickWinsEngine.Win> = emptyList()
         ) {
             val schedulesText = context.getString(R.string.calendar_day_schedules)
             val tasksText = context.getString(R.string.calendar_day_tasks)
             val rootsText = context.getString(R.string.calendar_day_roots)
-            val notesText = context.getString(R.string.calendar_day_notes)
             val allDayText = context.getString(R.string.calendar_day_all_day)
             val locale = calendarDay.locale
 
@@ -194,27 +213,30 @@ class CalendarDayPage {
                 }
             }
 
-            // Reading Ledger: today's book highlights + article stars (synced from the
-            // iPad / logged in the reader) shown here so they're visible on the Boox, not
-            // just preserved through sync. "★" marks the row; the excerpt is the title.
-            // A cached featured thumbnail (warmed by the fragment) makes the row a tiny card.
-            val notesThumb = mutableListOf<String?>()
-            repeat(notesTitle.size) { notesThumb.add(null) }
-            if (notesTitle.size < 8) {
-                calendarDay.readingEvents.takeLast(8 - notesTitle.size).forEach {
-                    val label = it.excerpt?.takeIf { e -> e.isNotBlank() } ?: it.title
-                    // Row 1: ★ + title. Row 2: the feed/site it came from (time on the right).
-                    notesTitle.add("★  $label")
-                    notesLeft.add(it.source ?: "")
-                    notesRight.add(DateFormat.getTimeFormat(context).format(it.date))
-                    notesThumb.add(starThumbPath(context, it.image))
+            // Quick Wins: the stars that used to fill these rows already surface in the feeds,
+            // so the rows go to the system's shortest paths to victory instead — the same wins
+            // the ⚡ surface computes, read from QuickWinsEngine's parked answer (never computed
+            // here; the render path must not wait on a file walk or the network). "⚡" marks the
+            // row; a tap goes straight to the doing — mail, rolodex, or the task's home day.
+            // Book reading-progress rows and outside events keep their places above.
+            val winStart = notesTitle.size
+            val rowWins = mutableListOf<QuickWinsEngine.Win>()
+            if (notesTitle.size < 7) {
+                quickWins.take(minOf(6, 7 - notesTitle.size)).forEach { w ->
+                    // Row 1: ⚡ + the task. Row 2: why it's a win (its day rides on the right).
+                    notesTitle.add("⚡  ${w.text}")
+                    notesLeft.add(w.reasons.joinToString("  ·  "))
+                    notesRight.add(
+                        w.sourceDay.format(DateTimeFormatter.ofPattern("MMM d"))
+                    )
+                    rowWins.add(w)
                 }
             }
 
-            val notesCalsText = if (notesTitle.size > 8) {
-                context.getString(R.string.calendar_day_notes_events_ex).format(notesTitle.size)
+            val notesCalsText = if (outside.isEmpty()) {
+                context.getString(R.string.calendar_day_quick_wins)
             } else {
-                context.getString(R.string.calendar_day_notes_events).format(notesTitle.size)
+                context.getString(R.string.calendar_day_quick_wins_events).format(outside.size)
             }
 
             // Schedules grid
@@ -302,13 +324,10 @@ class CalendarDayPage {
                 Creator.lineDefaultBlack
             )
 
-            // Notes title
+            // Quick Wins title (carries the outside-event count when there are any — those
+            // events still live in these rows; only the stars moved out).
             canvas.drawRect(lo + cew + 50.0f, to + 18 * ceh, lo + 2 * cew + 50.0f, to + 19 * ceh, Creator.fillGrey80)
-            if (outside.isEmpty()) {
-                canvas.drawText(notesText, lo + cew + 60.0f, to + 19 * ceh - 10.0f, Creator.textDefaultWhite)
-            } else {
-                canvas.drawText(notesCalsText, lo + cew + 60.0f, to + 19 * ceh - 10.0f, Creator.textDefaultWhite)
-            }
+            canvas.drawText(notesCalsText, lo + cew + 60.0f, to + 19 * ceh - 10.0f, Creator.textDefaultWhite)
             // Notes grid
             canvas.drawLine(
                 lo + cew + 50.0f,
@@ -365,21 +384,13 @@ class CalendarDayPage {
                 canvas.drawCircle(px(nowH), py(temps[nowH]), 6.0f, dot)
             }
 
-            // Calendar events (shifted one slot down to sit under the weather/moon line).
-            // Star rows with a cached featured image render as a tiny card: 86px thumb + title.
+            // Panel rows (shifted one slot down to sit under the weather/moon line): reading
+            // progress, then outside events, then the quick wins. Each win's row rectangle is
+            // recorded as it is drawn, so the fragment's tap can never disagree with a pixel.
+            val recorded = mutableListOf<WinRow>()
             for (i in 0..6) {
                 if (i < notesTitle.size) {
-                    var textX = lo + cew + 60.0f
-                    val thumb = notesThumb.getOrNull(i)?.let { p ->
-                        runCatching { android.graphics.BitmapFactory.decodeFile(p) }.getOrNull()
-                    }
-                    if (thumb != null) {
-                        val top = to + (21 + i * 2) * ceh + 7.0f
-                        val dst = android.graphics.RectF(textX, top, textX + 86.0f, top + 86.0f)
-                        canvas.drawBitmap(thumb, null, dst, null)
-                        canvas.drawRect(dst, Creator.lineDefaultGrey50)
-                        textX += 100.0f
-                    }
+                    val textX = lo + cew + 60.0f
                     Creator.drawEllipsizedText(
                         canvas, notesTitle[i], Creator.textDefaultBlack,
                         textX, to + (22 + i * 2) * ceh - 10.0f, cew - (textX - lo - cew - 60.0f)
@@ -392,23 +403,17 @@ class CalendarDayPage {
                         notesRight[i], lo + cew + 40.0f + cew, to + (23 + i * 2) * ceh - 10.0f,
                         Creator.textSmallBlackRight
                     )
+                    if (i >= winStart) {
+                        rowWins.getOrNull(i - winStart)?.let { w ->
+                            recorded.add(WinRow(w, android.graphics.RectF(
+                                lo + cew + 50.0f, to + (21 + i * 2) * ceh,
+                                lo + 2 * cew + 50.0f, to + (23 + i * 2) * ceh
+                            )))
+                        }
+                    }
                 }
             }
-        }
-
-        /** Cached thumbnail path for a star's featured image, or null when absent / not yet warmed. */
-        fun starThumbPath(context: Context, imageUrl: String?): String? {
-            if (imageUrl.isNullOrBlank()) return null
-            val dir = java.io.File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS), "star-thumbs")
-            val f = java.io.File(dir, com.toolsboox.ot.CryptoUtils.md5Hash(imageUrl.toByteArray()) + ".png")
-            return if (f.exists()) f.absolutePath else null
-        }
-
-        /** Where a star's thumbnail should be cached (whether or not it exists yet). */
-        fun starThumbFile(context: Context, imageUrl: String): java.io.File {
-            val dir = java.io.File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS), "star-thumbs")
-            dir.mkdirs()
-            return java.io.File(dir, com.toolsboox.ot.CryptoUtils.md5Hash(imageUrl.toByteArray()) + ".png")
+            winRows = recorded
         }
 
         private fun drawEventLane(canvas: Canvas, startHour: Int, lane: MutableList<CalendarEvent>, llo: Float, lw: Float) {

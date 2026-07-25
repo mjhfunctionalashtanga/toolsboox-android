@@ -184,6 +184,13 @@ abstract class SurfaceFragment : ScreenFragment() {
         // ballpoint widths are untouched.
         private const val CALLIGRAPHY_WIDTH_SCALE = 0.72f
 
+        // Marker nib bake: how much wider than the chosen base width the band is, and how
+        // translucent. 165/255 keeps ink underneath legible (the highlighter color already
+        // proves alpha bakes fine on the panel) while still reading as marker, not a fat
+        // ballpoint. Tunable.
+        private const val MARKER_WIDTH_FACTOR = 2.2f
+        private const val MARKER_ALPHA = 165
+
         /** Pasted images: downscale the longest side to this on import, and place at this fraction of page width. */
         private const val IMAGE_MAX_DIM = 1400
         private const val IMAGE_PLACE_FRACTION = 0.6f
@@ -253,14 +260,33 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** Always-on gestures: a circle around ink auto-lassos it; a scribble over ink auto-erases it. */
     private var autoGesturesEnabled = true
 
+    /**
+     * The pen's nib, as a [Stroke] ink-style constant. The full notes suite: ballpoint
+     * (STYLE_NORMAL), fountain (pressure swell), calligraphy (directional broad nib), and
+     * marker (wide translucent band). Persisted as "penStyle"; the old "calligraphyMode"
+     * boolean pref is still written for anything that reads it, and is the migration source
+     * when "penStyle" has never been set.
+     */
+    private var penStyle = Stroke.STYLE_NORMAL
+
     /** When true the pen lays down pressure-variable calligraphy ink (live via the Onyx fountain nib). */
-    private var calligraphyMode = false
+    private val calligraphyMode: Boolean get() = penStyle == Stroke.STYLE_CALLIGRAPHY
+
+    /** The ink style the current nib commits to a [Stroke]. */
+    private fun penStrokeStyle(): Int = penStyle
+
+    private fun setPenStyle(style: Int) {
+        penStyle = style
+        sharedPreferences.edit()
+            .putInt("penStyle", style)
+            .putBoolean("calligraphyMode", style == Stroke.STYLE_CALLIGRAPHY)
+            .apply()
+    }
 
     /** Read/write the pen style (ballpoint vs calligraphy) for the floating pen picker. */
     protected fun penIsCalligraphy(): Boolean = calligraphyMode
     protected fun setPenCalligraphy(on: Boolean) {
-        calligraphyMode = on
-        sharedPreferences.edit().putBoolean("calligraphyMode", on).apply()
+        setPenStyle(if (on) Stroke.STYLE_CALLIGRAPHY else Stroke.STYLE_NORMAL)
     }
 
     /** Image insert/manipulate mode (toolbar image button): select, move, resize, delete pasted images. */
@@ -604,6 +630,15 @@ abstract class SurfaceFragment : ScreenFragment() {
     private val commitVisualRunnable = Runnable { applyStrokes(strokes, false) }
 
     /**
+     * Viwoods hardware-ink hand-off repaint (~900ms after pen-up, once the native overlay
+     * self-clears). Reads the LIVE stroke list at fire time on purpose: the old form captured
+     * a deep-copy snapshot at pen-up and applied THAT — applyStrokes replaces the whole list,
+     * so any stroke written inside the 900ms window was rolled back to the stale snapshot and
+     * then persisted without it. Write A, write B quickly, watch B vanish — for good.
+     */
+    private val viwoodsHandoffRunnable = Runnable { applyStrokes(strokes, true) }
+
+    /**
      * Pen or eraser state.
      */
     private var penState: Boolean = true
@@ -743,7 +778,12 @@ abstract class SurfaceFragment : ScreenFragment() {
         // Restore the single-finger-gestures preference, then sync the toolbar icon.
         singleFingerGesturesEnabled = sharedPreferences.getBoolean("singleFingerGesturesEnabled", false)
         autoGesturesEnabled = sharedPreferences.getBoolean("autoGesturesEnabled", true)
-        calligraphyMode = sharedPreferences.getBoolean("calligraphyMode", false)
+        // "penStyle" is the pen's nib; migrate from the old boolean pref on first read.
+        penStyle = sharedPreferences.getInt(
+            "penStyle",
+            if (sharedPreferences.getBoolean("calligraphyMode", false)) Stroke.STYLE_CALLIGRAPHY
+            else Stroke.STYLE_NORMAL
+        )
         if (singleFingerGesturesEnabled)
             provideToolbarDrawing().toolbarHandTouch.setImageResource(R.drawable.ic_toolbar_hand_draw)
         else
@@ -953,14 +993,50 @@ abstract class SurfaceFragment : ScreenFragment() {
                 .setNegativeButton(R.string.cancel) { dialog, _ ->
                     dialog.cancel()
                 }
-            builder.create().show()
+            // Through showModal: this confirm sits over the ink surface (eraser long-press),
+            // and an unrouted dialog leaves the hardware pen live underneath — the stylus tap
+            // on OK/Cancel paints instead of tapping and the dialog reads as frozen.
+            showModal(builder.create())
         }
 
-        // Fold "trash" into the eraser: hide the standalone trash button and clear the
-        // page via a long-press on the eraser instead.
+        // Fold "trash" into the eraser — and give the hold a SLIDE-OUT tray instead of jumping
+        // straight to the clear confirm (Michael: "set the erase button to object erase or pixel
+        // erase and include clear page in that, too, as a slide out"). Object = the whole-stroke
+        // eraser; Pixel = the procrastinator eraser (its standalone button stays hidden); Clear
+        // page keeps its are-you-sure. The tray pauses the hardware pen like any modal over ink.
         provideToolbarDrawing().toolbarTrash.visibility = View.GONE
-        provideToolbarDrawing().toolbarEraser.setOnLongClickListener {
-            provideToolbarDrawing().toolbarTrash.performClick(); true
+        provideToolbarDrawing().toolbarEraser.setOnLongClickListener { eraserBtn ->
+            val ctx = requireContext()
+            val dp = ctx.resources.displayMetrics.density
+            val mul = com.toolsboox.ot.ModalScale.sizeScale(ctx)
+            fun px(v: Int) = (v * dp * mul).toInt()
+            lateinit var popup: android.widget.PopupWindow
+            fun trayRow(label: String, act: () -> Unit) = TextView(ctx).apply {
+                text = label; textSize = 15f * mul
+                setTextColor(android.graphics.Color.BLACK)
+                setPadding(px(14), px(10), px(14), px(10))
+                setOnClickListener { popup.dismiss(); act() }
+            }
+            val col = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                background = androidx.core.content.ContextCompat.getDrawable(ctx, R.drawable.dialog_rounded_bg)
+                addView(trayRow("\u25FB  Object erase") { provideToolbarDrawing().toolbarEraser.performClick() })
+                addView(trayRow("\u2592  Pixel erase") { provideToolbarDrawing().toolbarProcrastinator.performClick() })
+                addView(trayRow("\uD83D\uDDD1  Clear page\u2026") { provideToolbarDrawing().toolbarTrash.performClick() })
+            }
+            com.toolsboox.ot.LedgerFonts.applyTree(col)
+            popup = android.widget.PopupWindow(col,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
+                isOutsideTouchable = true; elevation = 10f
+                setOnDismissListener { onModalDismissed() }
+            }
+            onModalShown()
+            col.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+            // Unfurl LEFT of the toolbar pill (the pill hugs the right edge), centred on the button.
+            popup.showAsDropDown(eraserBtn, -(col.measuredWidth + px(6)),
+                -(eraserBtn.height + col.measuredHeight) / 2)
+            true
         }
 
         provideToolbarDrawing().toolbarSwitchSide.setOnClickListener {
@@ -1289,8 +1365,15 @@ abstract class SurfaceFragment : ScreenFragment() {
      * Distinct from [rawInkPausedForMenu], which says the pen is currently parked and can be
      * cleared by whoever parks it. This says "there is a dialog in front of the canvas", and
      * while that is true nothing may re-arm the pen underneath it.
+     *
+     * A DEPTH, not a boolean: dialogs stack (the clippings picker long-press opens a manage
+     * dialog and dismisses the picker; Edit-in-ink can sit under a nested confirm). With a
+     * boolean, the FIRST dismiss in the stack cleared the flag and scheduled the resume, so
+     * the pen came back to life under the dialog still on screen — its next tap was taken as
+     * ink and the dialog read as frozen. The pen may only resume when the LAST one is gone.
      */
-    private var modalShowing = false
+    private var modalDepth = 0
+    private val modalShowing: Boolean get() = modalDepth > 0
     private val resumeRawInkRunnable = Runnable { resumeRawInkNow() }
     /**
      * Raw hardware ink must stay OFF whenever a lasso/selection/paste or a popover menu is up —
@@ -1316,7 +1399,7 @@ abstract class SurfaceFragment : ScreenFragment() {
 
     /** A popover is showing over the canvas → pause the hardware pen so its taps register. */
     override fun onModalShown() {
-        modalShowing = true
+        modalDepth++
         // Cancel any resume already in flight.
         //
         // Tapping a lasso chip runs exitSelectionMode(deferRawResume = true), which clears the
@@ -1348,7 +1431,9 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     override fun onModalDismissed() {
-        modalShowing = false
+        modalDepth = (modalDepth - 1).coerceAtLeast(0)
+        // Another dialog is still up (nested/stacked modals) — its own dismiss will resume.
+        if (modalDepth > 0) return
         // Deferred and forced: past the dismissing tap so its ACTION_UP can't land on a
         // re-enabled raw session and paint a stray dot (the same mechanism CUT documents below),
         // and past the selection guard so the pen never stays dead after a lasso menu.
@@ -2667,7 +2752,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         // Decoration doesn't join the graph, so it isn't offered the graph's verbs.
         if (!element.decorative) {
             actions.add(LedgerContextMenu.Item("🔗 Connect to…") { onImageConnect(element) })
-            actions.add(LedgerContextMenu.Item("🕸 Its rhizome…") { onImageRhizome(element) })
+            actions.add(LedgerContextMenu.Item("⁂ Its rhizome…") { onImageRhizome(element) })
             actions.add(LedgerContextMenu.Item("🔬 Synthesize group…") { onImageSynthesizeGroup(element) })
         }
         groups.add(actions + listOf(
@@ -2720,7 +2805,8 @@ abstract class SurfaceFragment : ScreenFragment() {
             setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0)
             addView(input)
         }
-        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Through showModal — pauses the hardware pen so stylus taps land on the dialog.
+        showModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Edit the card's words")
             .setView(android.widget.ScrollView(ctx).apply { addView(box) })
             .setPositiveButton("Save") { _, _ ->
@@ -2731,10 +2817,11 @@ abstract class SurfaceFragment : ScreenFragment() {
                     return@setPositiveButton
                 }
                 element.cardText = next
-                transformImageElement(element, preserveAspect = true) { face }
+                // The re-drawn face comes back CardTreatment'd (see CalendarDayFragment.renderCard).
+                transformImageElement(element, preserveAspect = true, bakesEdge = true) { face }
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create())
     }
 
     /** Delete an image element off the page, undoably. */
@@ -2802,7 +2889,138 @@ abstract class SurfaceFragment : ScreenFragment() {
                 Toast.makeText(requireContext(), "Line art saved to Clippings", Toast.LENGTH_SHORT).show()
             }
         })
+        send.add(LedgerContextMenu.Item("🎁 Export asset…") { exportGramAsset(element, pressX, pressY) })
         showLedgerMenu(pressX, pressY, "SEND / SAVE", listOf(send))
+    }
+
+    /**
+     * "🎁 Export asset" — a gram is a media asset, so hand it out as one: the stored bitmap at its
+     * FULL stored resolution (never the on-screen scale), rotation applied so it looks exactly like
+     * the page, a clean ~24px transparent margin, written to a temp PNG. Two destinations: the
+     * system share sheet (Canva / Descript / anything installed) or the ACTIVE site's WP media
+     * library over wp/v2 — on success the returned media URL lands on the clipboard.
+     */
+    private fun exportGramAsset(element: ImageElement, pressX: Float, pressY: Float) {
+        val ctx = context ?: return
+        val items = mutableListOf(
+            LedgerContextMenu.Item("↗ Share (Canva, Descript…)") { shareGramAsset(element) }
+        )
+        if (com.toolsboox.plugin.calendar.nw.WPPublish.configured(ctx))
+            items.add(LedgerContextMenu.Item("→ Site media library") { uploadGramAsset(element) })
+        // The webhook destination exists only once a URL is set; setup rides here too, since the
+        // star webhook's settings dialog lives in the feeds pane and this one belongs to grams.
+        if (com.toolsboox.plugin.calendar.nw.AssetWebhook.configured(ctx))
+            items.add(LedgerContextMenu.Item("⚡ Webhook") { webhookGramAsset(element) })
+        items.add(LedgerContextMenu.Item("⚙ Webhook setup…") { configureAssetWebhook() })
+        showLedgerMenu(pressX, pressY, "EXPORT ASSET", listOf(items))
+    }
+
+    /** WP media URLs from uploads completed THIS session, so a webhook fired after a media-library
+     *  export of the same gram can carry `mediaUrl` (see AssetWebhook). */
+    private val assetUploadUrls = mutableMapOf<UUID, String>()
+
+    /** POST the export PNG to the configured asset webhook — fire-and-forget, toast either way. */
+    private fun webhookGramAsset(element: ImageElement) {
+        val ctx = context ?: return
+        viewLifecycleOwner.lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                val bmp = com.toolsboox.plugin.calendar.ot.AssetExport.render(element)
+                    ?: return@withContext false
+                com.toolsboox.plugin.calendar.nw.AssetWebhook.post(
+                    ctx,
+                    com.toolsboox.plugin.calendar.ot.AssetExport.pngBytes(bmp),
+                    com.toolsboox.plugin.calendar.ot.AssetExport.filename(element),
+                    title = element.mediaTitle.ifBlank { element.sourceLabel }.ifBlank { element.cardText.take(80) },
+                    date = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date()),
+                    sourceLabel = element.sourceLabel,
+                    sourceLink = element.sourceLink,
+                    mediaUrl = assetUploadUrls[element.elementId],
+                )
+            }
+            Toast.makeText(ctx, if (ok) "Sent to webhook" else "Webhook failed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Set (or clear) the asset webhook URL + optional shared secret — mirrors the star webhook rows. */
+    private fun configureAssetWebhook() {
+        val ctx = context ?: return
+        val dp = resources.displayMetrics.density
+        val urlIn = EditText(ctx).apply {
+            setText(com.toolsboox.plugin.calendar.nw.AssetWebhook.url(ctx))
+            hint = "https://… (POST exported assets here)"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+        }
+        val secretIn = EditText(ctx).apply {
+            setText(com.toolsboox.plugin.calendar.nw.AssetWebhook.secret(ctx))
+            hint = "Shared secret (optional)"
+        }
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((20 * dp).toInt(), (8 * dp).toInt(), (20 * dp).toInt(), 0)
+            addView(urlIn); addView(secretIn)
+        }
+        showModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Asset webhook")
+            .setView(android.widget.ScrollView(ctx).apply { addView(box) })
+            .setPositiveButton("Save") { _, _ ->
+                com.toolsboox.plugin.calendar.nw.AssetWebhook.save(
+                    ctx, urlIn.text.toString(), secretIn.text.toString())
+                Toast.makeText(ctx, "Saved", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create())
+    }
+
+    /** Render + write the export PNG off the main thread, then hand it to the system share sheet. */
+    private fun shareGramAsset(element: ImageElement) {
+        val ctx = context ?: return
+        viewLifecycleOwner.lifecycleScope.launch {
+            val file = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.ot.AssetExport.render(element)?.let {
+                    com.toolsboox.plugin.calendar.ot.AssetExport.writeTemp(
+                        ctx, it, com.toolsboox.plugin.calendar.ot.AssetExport.filename(element))
+                }
+            }
+            if (file == null) {
+                Toast.makeText(ctx, "Couldn't render the asset", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                ctx, "${ctx.packageName}.fileprovider", file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(intent, "Export asset"))
+        }
+    }
+
+    /** Upload the export PNG to the active site's media library; the media URL goes to the clipboard. */
+    private fun uploadGramAsset(element: ImageElement) {
+        val ctx = context ?: return
+        Toast.makeText(ctx, "Uploading…", Toast.LENGTH_SHORT).show()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.ot.AssetExport.render(element)?.let {
+                    com.toolsboox.plugin.calendar.nw.WPPublish.uploadMediaAsset(
+                        ctx, com.toolsboox.plugin.calendar.ot.AssetExport.pngBytes(it),
+                        com.toolsboox.plugin.calendar.ot.AssetExport.filename(element))
+                }
+            }
+            if (result == null) {
+                Toast.makeText(ctx, "Upload failed", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            if (result.url.isNotBlank()) {
+                assetUploadUrls[element.elementId] = result.url
+                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("Media URL", result.url))
+                Toast.makeText(ctx, "In the media library — URL copied:\n${result.url}", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(ctx, "In the media library (id ${result.id})", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private fun showImageAddMenu(cx: Float, cy: Float, pressX: Float, pressY: Float) {
@@ -2848,9 +3066,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                     LedgerContextMenu.Item("✂ Scalloped edge") { transformImageElement(element) { scallopedEdgeBitmap(it) } }
                 ),
                 listOf(
-                    LedgerContextMenu.Item("🖼 Polaroid frame") { transformImageElement(element, preserveAspect = true) { polaroidBitmap(it, tape = false) } },
-                    LedgerContextMenu.Item("🖼 Polaroid + tape") { transformImageElement(element, preserveAspect = true) { polaroidBitmap(it, tape = true) } },
-                    LedgerContextMenu.Item("➰ Tape corners") { transformImageElement(element, preserveAspect = true) { tapeBitmap(it) } }
+                    LedgerContextMenu.Item("🖼 Polaroid frame") { transformImageElement(element, preserveAspect = true, bakesEdge = true) { polaroidBitmap(it, tape = false) } },
+                    LedgerContextMenu.Item("🖼 Polaroid + tape") { transformImageElement(element, preserveAspect = true, bakesEdge = true) { polaroidBitmap(it, tape = true) } },
+                    LedgerContextMenu.Item("➰ Tape corners") { transformImageElement(element, preserveAspect = true, bakesEdge = true) { tapeBitmap(it) } }
                 )
             )
         )
@@ -2876,7 +3094,8 @@ abstract class SurfaceFragment : ScreenFragment() {
                 return@launch
             }
             val labels = spaces.map { (if (it.privacy == "public") "🌐  " else "🔒  ") + it.title }.toTypedArray()
-            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            // Through showModal — the picker opens over the ink page from a gram's menu.
+            showModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                 .setTitle("Post to space")
                 .setItems(labels) { _, which ->
                     val space = spaces[which]
@@ -2893,7 +3112,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                     }
                 }
                 .setNegativeButton("Cancel", null)
-                .show()
+                .create())
         }
     }
 
@@ -2907,11 +3126,12 @@ abstract class SurfaceFragment : ScreenFragment() {
     private fun pickContact(onPick: (String?) -> Unit) {
         val contacts = com.toolsboox.plugin.calendar.ot.ContactStore.list(requireContext())
         val names = (listOf("None") + contacts.map { it.name.ifBlank { "Unnamed" } }).toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+        // Through showModal — reachable from an object's menu over the ink page.
+        showModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle("Assign to contact")
             .setItems(names) { _, which -> onPick(if (which == 0) null else contacts[which - 1].id) }
             .setNegativeButton("Cancel", null)
-            .show()
+            .create())
     }
 
     /**
@@ -3017,7 +3237,8 @@ abstract class SurfaceFragment : ScreenFragment() {
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
         }
-        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Through showModal — typed over the ink page, so the pen must be parked first.
+        showModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Generate image")
             .setView(box)
             .setPositiveButton("Generate") { _, _ ->
@@ -3025,7 +3246,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 if (prompt.isNotBlank()) generateImageThenPlace(prompt, cx, cy)
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create())
     }
 
     private fun generateImageThenPlace(prompt: String, cx: Float, cy: Float) {
@@ -3190,25 +3411,29 @@ abstract class SurfaceFragment : ScreenFragment() {
             cell.setOnClickListener { dialog.dismiss(); placeClippingAt(c, cx, cy) }
             // Long-press: manage — rename (label follows the clip everywhere) or delete.
             cell.setOnLongClickListener {
-                androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                // Nested dialogs, all through showModal: the manage menu shows and the picker
+                // dismisses in the same breath, which is exactly the stacking the modalDepth
+                // counter exists for — with a boolean, the picker's dismiss re-armed the pen
+                // under the still-open manage menu.
+                showModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                     .setTitle(c.label.ifBlank { "Clipping" })
                     .setItems(arrayOf("✎  Rename", "🗑  Delete")) { _, which ->
                         if (which == 0) {
                             val input = EditText(ctx).apply { hint = "Name"; setText(c.label); setSingleLine() }
                             val pad = px(16)
                             val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input) }
-                            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                            showModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                                 .setTitle("Rename clipping").setView(box)
                                 .setPositiveButton("Save") { _, _ ->
                                     com.toolsboox.plugin.calendar.ot.ClippingsStore.rename(ctx, c.id, input.text.toString().trim())
                                 }
-                                .setNegativeButton("Cancel", null).show()
+                                .setNegativeButton("Cancel", null).create())
                         } else {
                             com.toolsboox.plugin.calendar.ot.ClippingsStore.delete(ctx, c.id)
                             Toast.makeText(ctx, "Clipping deleted", Toast.LENGTH_SHORT).show()
                         }
                     }
-                    .setNegativeButton("Cancel", null).show()
+                    .setNegativeButton("Cancel", null).create())
                 dialog.dismiss(); true
             }
             grid.addView(cell)
@@ -3218,7 +3443,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             .setView(android.widget.ScrollView(ctx).apply { addView(grid) })
             .setNegativeButton("Close", null)
             .create()
-        dialog.show()
+        showModal(dialog)
     }
 
     /** Place a saved clipping onto the surface at [cx],[cy], selected for immediate move/resize.
@@ -3244,7 +3469,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         // clipping's lineage; a copy stamped onto a page does not inherit it.
         val element = ImageElement(
             x = pxp, y = pyp, width = w, height = h, data = base64,
-            decorative = true
+            decorative = true,
+            // CardTreatment is baked into these pixels — the one-decoration contract tells the
+            // iPad's GramEdge to leave them alone (see ImageElement.edgeBaked).
+            edgeBaked = true
         )
         pushUndo()
         imageElements.add(element)
@@ -3266,7 +3494,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                     LedgerContextMenu.Item("Move — drag it") { enterTextBoxManipulation(element) },
                     LedgerContextMenu.Item("Synthesize…") { onSynthesizeText(element) },
                     LedgerContextMenu.Item("🔗 Connect to…") { onTextConnect(element) },
-                    LedgerContextMenu.Item("🕸 Its rhizome…") { onTextRhizome(element) },
+                    LedgerContextMenu.Item("⁂ Its rhizome…") { onTextRhizome(element) },
                     LedgerContextMenu.Item(if (element.contactId.isNullOrBlank()) "Assign to contact…" else "Contact…") {
                         pickContact { id ->
                             element.contactId = id
@@ -3394,7 +3622,8 @@ abstract class SurfaceFragment : ScreenFragment() {
         editText.layoutParams = params
         container.addView(editText)
 
-        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Through showModal — pauses the hardware pen so stylus taps land on the dialog.
+        showModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(R.string.calendar_text_dialog_title)
             .setView(container)
             .setPositiveButton(R.string.ok) { dialog, _ ->
@@ -3409,7 +3638,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 dialog.dismiss()
             }
             .setNegativeButton(R.string.cancel) { dialog, _ -> dialog.cancel() }
-            .create().show()
+            .create())
         editText.requestFocus()
     }
 
@@ -3490,13 +3719,14 @@ abstract class SurfaceFragment : ScreenFragment() {
         val pad = InkOverImageView(ctx, src)
         val dm = resources.displayMetrics
         // Size the pad to the gram's aspect, capped so the dialog buttons stay on screen.
-        val maxH = (dm.heightPixels * 0.68f).toInt()
+        val maxH = (dm.heightPixels * 0.62f).toInt()
         val padW = (dm.widthPixels * 0.88f).toInt()
         val padH = (padW.toFloat() * src.height / src.width).toInt()
             .coerceAtLeast((240 * dm.density).toInt()).coerceAtMost(maxH)
         val box = android.widget.LinearLayout(ctx).apply {
             orientation = android.widget.LinearLayout.VERTICAL
             val p = (8 * dm.density).toInt(); setPadding(p, p / 2, p, 0)
+            addView(penEditToolBar(ctx, pad))
             addView(pad, android.widget.LinearLayout.LayoutParams(
                 android.widget.LinearLayout.LayoutParams.MATCH_PARENT, padH))
         }
@@ -3509,23 +3739,129 @@ abstract class SurfaceFragment : ScreenFragment() {
             }
             .setNeutralButton("Clear", null)
             .setNegativeButton("Cancel", null)
-            .show()
+            .create()
+        // Through showModal: THE punch-list freeze ("pen touching the edit-in-ink menu freezes
+        // the device"). Unrouted, the Onyx raw session kept consuming the stylus under the
+        // dialog, so pen taps on Done/Clear/Cancel — and on the pad itself — never arrived.
+        showModal(dialog)
         // Keep the dialog open on Clear — re-bind after show().
         dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { pad.clear() }
     }
 
-    /** The gram drawn fit-to-view with a live ink layer on top. composite() bakes the ink into
-     *  a copy of the bitmap at native resolution (stroke width scales with the bitmap). */
-    private class InkOverImageView(context: android.content.Context, private val src: Bitmap) : View(context) {
-        private val paths = mutableListOf<android.graphics.Path>()
-        private var current: android.graphics.Path? = null
-        private val dst = RectF()
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = android.graphics.Color.BLACK; style = Paint.Style.STROKE
-            strokeWidth = 4f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    /**
+     * The pen bar above the Edit-in-ink pad: undo, the page palette, white-out, a width cycle,
+     * and a stroke-eraser toggle. Mirrors the main canvas's inks (black/red/blue/green) plus
+     * WHITE — over an image, white is the correction fluid — the palette-and-eraser Michael
+     * asked for. Same visual grammar as [com.toolsboox.ot.InkPadView.penBar]: the active ink
+     * is the underlined one, the eraser inverts while armed.
+     */
+    private fun penEditToolBar(ctx: Context, pad: InkOverImageView): LinearLayout {
+        val dp = ctx.resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val accent = 0xFF2F6F96.toInt()
+
+        val bar = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(px(2), px(2), px(2), px(6))
         }
 
+        val swatches = mutableListOf<TextView>()
+        lateinit var eraserBtn: TextView
+        fun refreshActive() {
+            swatches.forEach { sw ->
+                sw.paintFlags = if (!pad.eraserMode && (sw.tag as Int) == pad.penColor)
+                    Paint.UNDERLINE_TEXT_FLAG else 0
+            }
+            // Armed eraser = plain inversion, the pressed-state grammar of the ledger menus.
+            eraserBtn.setBackgroundColor(if (pad.eraserMode) Color.BLACK else Color.TRANSPARENT)
+            eraserBtn.setTextColor(if (pad.eraserMode) Color.WHITE else accent)
+        }
+
+        bar.addView(TextView(ctx).apply {
+            text = "↶"; textSize = 20f; setTextColor(accent); setPadding(px(4), 0, px(12), 0)
+            setOnClickListener { pad.undo() }
+        })
+
+        fun swatch(color: Int): TextView = TextView(ctx).apply {
+            tag = color
+            text = "●"; textSize = 22f; setPadding(px(5), 0, px(5), 0)
+            // White ink needs an outline to exist against the dialog; ring glyph carries it.
+            if (color == Color.WHITE) { text = "◍"; setTextColor(Color.BLACK) } else setTextColor(color)
+            setOnClickListener {
+                pad.penColor = color
+                pad.eraserMode = false
+                refreshActive()
+            }
+        }
+        for (color in intArrayOf(Color.BLACK, Color.RED, Color.BLUE, Color.rgb(0, 128, 0), Color.WHITE)) {
+            swatches.add(swatch(color).also { bar.addView(it) })
+        }
+
+        bar.addView(android.widget.Space(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+        })
+
+        // Fine ↔ medium ↔ bold cycle, same ladder as the reply pads.
+        val widths = floatArrayOf(2.5f, 4f, 7f)
+        var widthIdx = 1
+        bar.addView(TextView(ctx).apply {
+            text = "✒ width"; textSize = 14f; setTextColor(accent); setPadding(px(8), 0, px(8), 0)
+            setOnClickListener { widthIdx = (widthIdx + 1) % widths.size; pad.penWidth = widths[widthIdx] }
+        })
+
+        eraserBtn = TextView(ctx).apply {
+            text = " ⌫ erase "; textSize = 14f; setPadding(px(8), px(2), px(8), px(2))
+            setOnClickListener {
+                pad.eraserMode = !pad.eraserMode
+                refreshActive()
+            }
+        }
+        bar.addView(eraserBtn)
+
+        refreshActive()
+        return bar
+    }
+
+    /** The gram drawn fit-to-view with a live ink layer on top. composite() bakes the ink into
+     *  a copy of the bitmap at native resolution (stroke width scales with the bitmap).
+     *
+     *  Each stroke carries its own colour and width (so the pen bar's palette works the way it
+     *  does on the reply pads), and keeps its raw points alongside the Path — a Path can be
+     *  drawn but not asked where it went, and the stroke-eraser needs to ask. */
+    private class InkOverImageView(context: android.content.Context, private val src: Bitmap) : View(context) {
+
+        private class InkStroke(
+            val path: android.graphics.Path,
+            val points: MutableList<PointF>,
+            val color: Int,
+            val width: Float,
+        )
+
+        private val strokes = mutableListOf<InkStroke>()
+        private var current: InkStroke? = null
+        private val dst = RectF()
+
+        var penColor: Int = android.graphics.Color.BLACK
+        var penWidth: Float = 4f
+
+        /**
+         * Stroke-eraser: while armed, dragging removes every WHOLE stroke the drag passes
+         * near, live, as the nib crosses it — the same whole-stroke rule as the page eraser.
+         * Only strokes drawn in this session are erasable; ink already baked into the bitmap
+         * is pixels, not strokes (white ink is the correction fluid for those).
+         */
+        var eraserMode: Boolean = false
+
         init { setBackgroundColor(android.graphics.Color.WHITE) }
+
+        private fun paintFor(color: Int, w: Float) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            style = Paint.Style.STROKE
+            strokeWidth = w
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
 
         override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
             // Fit-center the gram; ink coordinates are captured in view space over this rect.
@@ -3534,14 +3870,40 @@ abstract class SurfaceFragment : ScreenFragment() {
             dst.set((w - dw) / 2f, (h - dh) / 2f, (w + dw) / 2f, (h + dh) / 2f)
         }
 
+        /** Remove every stroke with a point within reach of (x,y). True if anything went. */
+        private fun eraseAt(x: Float, y: Float): Boolean {
+            val reach = 22f * resources.displayMetrics.density / 2f   // finger-friendly, pen-precise
+            val before = strokes.size
+            strokes.removeAll { s ->
+                s.points.any { p -> hypot(p.x - x, p.y - y) <= reach + s.width / 2f }
+            }
+            return strokes.size != before
+        }
+
         @android.annotation.SuppressLint("ClickableViewAccessibility")
         override fun onTouchEvent(event: MotionEvent): Boolean {
+            if (eraserMode) {
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE ->
+                        if (eraseAt(event.x, event.y)) invalidate()
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> current = null
+                }
+                return true
+            }
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    current = android.graphics.Path().also { it.moveTo(event.x, event.y); paths.add(it) }
+                    current = InkStroke(
+                        android.graphics.Path().also { it.moveTo(event.x, event.y) },
+                        mutableListOf(PointF(event.x, event.y)), penColor, penWidth
+                    ).also { strokes.add(it) }
                 }
-                MotionEvent.ACTION_MOVE -> current?.lineTo(event.x, event.y)
-                MotionEvent.ACTION_UP -> current = null
+                MotionEvent.ACTION_MOVE -> current?.let {
+                    it.path.lineTo(event.x, event.y)
+                    it.points.add(PointF(event.x, event.y))
+                }
+                // CANCEL keeps the ink too — same rule as the page surface: what was
+                // laid down stays laid down; only the capture state resets.
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> current = null
             }
             invalidate()
             return true
@@ -3550,14 +3912,20 @@ abstract class SurfaceFragment : ScreenFragment() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             canvas.drawBitmap(src, null, dst, null)
-            for (p in paths) canvas.drawPath(p, paint)
+            for (s in strokes) canvas.drawPath(s.path, paintFor(s.color, s.width))
         }
 
-        fun clear() { paths.clear(); current = null; invalidate() }
+        fun clear() { strokes.clear(); current = null; invalidate() }
+
+        fun undo() {
+            if (strokes.isNotEmpty()) {
+                strokes.removeAt(strokes.size - 1); current = null; invalidate()
+            }
+        }
 
         /** The gram with the ink baked in at native resolution, or null when nothing was drawn. */
         fun composite(): Bitmap? {
-            if (paths.isEmpty() || dst.width() <= 0f) return null
+            if (strokes.isEmpty() || dst.width() <= 0f) return null
             val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
             val c = Canvas(out)
             c.drawBitmap(src, 0f, 0f, null)
@@ -3566,10 +3934,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                 postTranslate(-dst.left, -dst.top)
                 postScale(scale, scale)
             }
-            val inkPaint = Paint(paint).apply { strokeWidth = paint.strokeWidth * scale }
-            for (p in paths) {
-                val scaled = android.graphics.Path(p).apply { transform(m) }
-                c.drawPath(scaled, inkPaint)
+            for (s in strokes) {
+                val scaled = android.graphics.Path(s.path).apply { transform(m) }
+                c.drawPath(scaled, paintFor(s.color, s.width * scale))
             }
             return out
         }
@@ -3602,7 +3969,8 @@ abstract class SurfaceFragment : ScreenFragment() {
             setPadding(pad, pad / 2, pad, 0)
             addView(input)
         }
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Through showModal — pauses the hardware pen so stylus taps land on the dialog.
+        showModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Name this gram")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
@@ -3613,7 +3981,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 applyStrokes(strokes, true)
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create())
     }
 
     private fun setGramWidth(element: ImageElement, width: Float) {
@@ -3627,7 +3995,8 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     private fun transformImageElement(
-        element: ImageElement, preserveAspect: Boolean = false, transform: (Bitmap) -> Bitmap
+        element: ImageElement, preserveAspect: Boolean = false, bakesEdge: Boolean = false,
+        transform: (Bitmap) -> Bitmap
     ) {
         val bmp = bitmapForElement(element) ?: return
         val out = transform(bmp)
@@ -3636,6 +4005,9 @@ abstract class SurfaceFragment : ScreenFragment() {
         pushUndo()
         seedGramId(element)
         element.data = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        // A frame baked into the pixels claims the one-decoration slot (ImageElement.edgeBaked):
+        // the iPad's render-time GramEdge steps aside instead of framing the frame.
+        if (bakesEdge) element.edgeBaked = true
         // Frames change the aspect ratio — grow the placed box to match so the
         // polaroid isn't squashed into the photo's old proportions.
         if (preserveAspect && out.width > 0) {
@@ -3950,9 +4322,15 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
         root.addView(widthRow)
 
-        // Style row: normal pen vs. calligraphy (pressure-variable fountain nib).
-        var selCalligraphy = calligraphyMode
-        val styleLabels = arrayOf("Pen", "✒ Calligraphy")
+        // Style row: the full notes suite of nibs. Ballpoint (uniform), fountain (pressure
+        // swell), calligraphy (directional broad nib), marker (wide translucent band). Each is
+        // a real ink style on the committed stroke, not just a live-preview flavour, so pages
+        // round-trip through save/reload keeping their character.
+        val styleValues = intArrayOf(
+            Stroke.STYLE_NORMAL, Stroke.STYLE_FOUNTAIN, Stroke.STYLE_CALLIGRAPHY, Stroke.STYLE_MARKER
+        )
+        var selStyle = styleValues.indexOf(penStyle).coerceAtLeast(0)
+        val styleLabels = arrayOf("Pen", "🖋 Fountain", "✒ Calligraphy", "🖍 Marker")
         val styleRow = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
         val styleItems = styleLabels.indices.map { i ->
             val label = TextView(ctx).apply {
@@ -3966,8 +4344,8 @@ abstract class SurfaceFragment : ScreenFragment() {
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, itemSize).apply {
                     setMargins(itemMargin, itemMargin, itemMargin, itemMargin)
                 }
-                background = ringDrawable((i == 1) == selCalligraphy, GradientDrawable.RECTANGLE)
-                setPadding((12 * dp).toInt(), 0, (12 * dp).toInt(), 0)
+                background = ringDrawable(i == selStyle, GradientDrawable.RECTANGLE)
+                setPadding((10 * dp).toInt(), 0, (10 * dp).toInt(), 0)
                 addView(label, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.MATCH_PARENT).apply { gravity = Gravity.CENTER })
                 isClickable = true
             }.also { styleRow.addView(it) }
@@ -3975,15 +4353,20 @@ abstract class SurfaceFragment : ScreenFragment() {
         styleItems.forEachIndexed { i, item ->
             item.setOnTouchListener { v, e ->
                 if (e.actionMasked == MotionEvent.ACTION_DOWN) {
-                    selCalligraphy = (i == 1)
-                    styleItems.forEachIndexed { j, c -> c.background = ringDrawable((j == 1) == selCalligraphy, GradientDrawable.RECTANGLE) }
+                    selStyle = i
+                    styleItems.forEachIndexed { j, c -> c.background = ringDrawable(j == selStyle, GradientDrawable.RECTANGLE) }
                     applyLivePrefs()
                     v.performClick()
                 }
                 true
             }
         }
-        root.addView(styleRow)
+        // Four nibs outgrow a narrow panel's dialog — let the row scroll sideways rather than clip.
+        root.addView(android.widget.HorizontalScrollView(ctx).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(styleRow)
+        })
 
         // Live-apply: every tapped option takes effect immediately (pen, hardware
         // preview, prefs, toolbar tint). Exactly what the old OK button did.
@@ -3994,8 +4377,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         applyLivePrefs = {
             paint.color = colorValues[selColor]
             paint.strokeWidth = widthValues[selWidth]
-            calligraphyMode = selCalligraphy
-            sharedPreferences.edit().putBoolean("calligraphyMode", calligraphyMode).apply()
+            setPenStyle(styleValues[selStyle])
             val opaqueColor = Color.rgb(Color.red(paint.color), Color.green(paint.color), Color.blue(paint.color))
             provideToolbarDrawing().toolbarPen.background.setTint(
                 if (opaqueColor == Color.BLACK) Color.GRAY else opaqueColor
@@ -4010,21 +4392,20 @@ abstract class SurfaceFragment : ScreenFragment() {
             applyStrokeStyle()
         }
 
-        // Pause the raw-ink session while the modal is up. With the session live,
-        // the Onyx EPD layer keeps priority on the EMR stylus for the surface
-        // below, which made stylus taps on the dialog feel sluggish. Paused, the
-        // stylus dispatches to the dialog window like any other pointer. The
-        // dismiss listener re-applies the final selection (persisting it exactly
-        // as OK used to) and restores the hardware pen with the NEW settings.
-        touchHelper?.setRawDrawingEnabled(false)
-        touchHelper?.isRawDrawingRenderEnabled = false
-
+        // Pause the raw-ink session while the modal is up — via the SHARED modal discipline
+        // (onModalShown/onModalDismissed), not a private toggle pair. With the session live,
+        // the Onyx EPD layer keeps priority on the EMR stylus for the surface below, which
+        // made stylus taps on the dialog feel sluggish. The old private dismiss handler also
+        // re-armed the pen unconditionally — even under a live lasso selection or a stacked
+        // dialog — which is exactly the class of bug the shared path already guards against.
+        // The dismiss listener re-applies the final selection (persisting it exactly as OK
+        // used to); the forced resume then restores the hardware pen with the NEW settings.
         val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setView(root).create()
         dialog.setCanceledOnTouchOutside(true)
+        dialog.setOnShowListener { onModalShown() }
         dialog.setOnDismissListener {
             applyLiveSelection()
-            touchHelper?.setRawDrawingEnabled(true)
-            touchHelper?.isRawDrawingRenderEnabled = true
+            onModalDismissed()
         }
         dialog.show()
     }
@@ -4068,7 +4449,8 @@ abstract class SurfaceFragment : ScreenFragment() {
                 dialog.cancel()
             }
 
-        builder.create().show()
+        // Through showModal — pauses the hardware pen so stylus taps land on the dialog.
+        showModal(builder.create())
         editText.requestFocus()
     }
 
@@ -4356,6 +4738,16 @@ abstract class SurfaceFragment : ScreenFragment() {
         val h = pendingLimitHeight
         if (w <= 0 || h <= 0) return
         if (w == appliedLimitWidth && h == appliedLimitHeight) return
+        // Never cold-start the reader while a stroke is IN FLIGHT (pen is down: lastPoint set).
+        // setRawDrawingEnabled(false) mid-stroke wipes the live overlay ink — the piece being
+        // written simply vanishes from under the nib and doesn't come back until the post-pen-up
+        // bake. The debounce window can land mid-stroke when a relayout races a fast writer, so
+        // wait it out and try again after the pen lifts.
+        if (lastPoint != null) {
+            provideSurfaceView().removeCallbacks(applyLimitRectRunnable)
+            provideSurfaceView().postDelayed(applyLimitRectRunnable, LIMIT_RECT_DEBOUNCE_MS)
+            return
+        }
         th.setRawDrawingEnabled(false)
         th.setLimitRect(Rect(0, 0, w, h), rawExcludeRects())
         if (!inkSuppressed) {   // limit-rect re-apply must not re-arm the pen mid-lasso
@@ -4425,10 +4817,15 @@ abstract class SurfaceFragment : ScreenFragment() {
     protected fun effectivePenWidth(): Float =
         paint.strokeWidth * (if (calligraphyMode) CALLIGRAPHY_WIDTH_SCALE else 1f)
 
-    /** Put the Onyx hardware overlay into the live stroke style that matches the current pen. */
+    /** Put the Onyx hardware overlay into the live stroke style that matches the current nib. */
     private fun applyStrokeStyle() {
         touchHelper?.setStrokeStyle(
-            if (calligraphyMode) TouchHelper.STROKE_STYLE_FOUNTAIN else TouchHelper.STROKE_STYLE_PENCIL
+            when (penStyle) {
+                Stroke.STYLE_CALLIGRAPHY -> TouchHelper.STROKE_STYLE_FOUNTAIN
+                Stroke.STYLE_FOUNTAIN -> TouchHelper.STROKE_STYLE_NEO_BRUSH   // pressure-soft live preview
+                Stroke.STYLE_MARKER -> TouchHelper.STROKE_STYLE_MARKER
+                else -> TouchHelper.STROKE_STYLE_PENCIL
+            }
         )
     }
 
@@ -4473,6 +4870,35 @@ abstract class SurfaceFragment : ScreenFragment() {
         strokePaint.strokeJoin = savedJoin
     }
 
+    /**
+     * Bake a fountain stroke: width swells with pressure alone — no directional nib. The Onyx
+     * pen's pressure range is narrow, so the swell is deliberately gentle (a soft breathing
+     * line, not a brush); segments share the calligraphy renderer's round-cap continuity.
+     */
+    private fun drawFountainPath(targetCanvas: Canvas, strokePaint: Paint, stroke: Stroke) {
+        val points = stroke.strokePoints
+        strokePaint.color = stroke.color
+        val savedCap = strokePaint.strokeCap
+        val savedJoin = strokePaint.strokeJoin
+        strokePaint.strokeCap = Paint.Cap.ROUND
+        strokePaint.strokeJoin = Paint.Join.ROUND
+        val base = stroke.strokeWidth
+        if (points.size == 1) {
+            strokePaint.strokeWidth = base
+            targetCanvas.drawPoint(points[0].x, points[0].y, strokePaint)
+        } else {
+            for (i in 0 until points.size - 1) {
+                val a = points[i]
+                val b = points[i + 1]
+                val pAvg = ((a.p + b.p) / 2f).coerceIn(0f, 1f)
+                strokePaint.strokeWidth = (base * (0.55f + 0.9f * pAvg)).coerceAtLeast(1f)
+                targetCanvas.drawLine(a.x, a.y, b.x, b.y, strokePaint)
+            }
+        }
+        strokePaint.strokeCap = savedCap
+        strokePaint.strokeJoin = savedJoin
+    }
+
     private fun drawStrokePath(targetCanvas: Canvas, strokePaint: Paint, stroke: Stroke) {
         val points = stroke.strokePoints
         if (points.isEmpty()) return
@@ -4480,8 +4906,26 @@ abstract class SurfaceFragment : ScreenFragment() {
             drawCalligraphyPath(targetCanvas, strokePaint, stroke)
             return
         }
+        if (stroke.inkStyle == Stroke.STYLE_FOUNTAIN) {
+            drawFountainPath(targetCanvas, strokePaint, stroke)
+            return
+        }
+        if (stroke.inkStyle == Stroke.STYLE_MARKER) {
+            // Marker rides the normal Bézier path below, just wider and translucent — unless
+            // the color already carries its own alpha (the highlighter ink), which stays as-is.
+            strokePaint.color = if (Color.alpha(stroke.color) < 255) stroke.color
+            else Color.argb(MARKER_ALPHA, Color.red(stroke.color), Color.green(stroke.color), Color.blue(stroke.color))
+            strokePaint.strokeWidth = stroke.strokeWidth * MARKER_WIDTH_FACTOR
+            drawSmoothedPath(targetCanvas, strokePaint, points)
+            return
+        }
         strokePaint.color = stroke.color
         strokePaint.strokeWidth = stroke.strokeWidth
+        drawSmoothedPath(targetCanvas, strokePaint, points)
+    }
+
+    /** The shared smoothed-path bake: color/width already set on [strokePaint] by the caller. */
+    private fun drawSmoothedPath(targetCanvas: Canvas, strokePaint: Paint, points: List<StrokePoint>) {
         // Round cap/join so segment ends and direction changes read smooth, not angular.
         val savedCap = strokePaint.strokeCap
         val savedJoin = strokePaint.strokeJoin
@@ -4561,7 +5005,12 @@ abstract class SurfaceFragment : ScreenFragment() {
         // lets us post the committed strokes while the reader stays open and warm.
         touchHelper?.isRawDrawingRenderEnabled = false
         provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
-        touchHelper?.isRawDrawingRenderEnabled = true
+        // …but never re-arm the render flag under a menu/lasso/modal. The deferred post-pen-up
+        // bake (commitVisualRunnable) can land AFTER a popover has paused the pen, and blindly
+        // flipping the flag back on here was one of the "silently defeats the pause" paths the
+        // inkSuppressed doc warns about — the next stylus tap on the menu painted instead of
+        // tapping. resumeRawInkNow re-enables it when the pause actually ends.
+        if (!inkSuppressed) touchHelper?.isRawDrawingRenderEnabled = true
     }
 
     /**
@@ -4680,6 +5129,13 @@ abstract class SurfaceFragment : ScreenFragment() {
         val actionDown = listOf(MotionEvent.ACTION_DOWN, 211).contains(motionEvent.action)
         val actionMove = listOf(MotionEvent.ACTION_MOVE, 213).contains(motionEvent.action)
         val actionUp = listOf(MotionEvent.ACTION_UP, 212).contains(motionEvent.action)
+        // The system can steal a stroke mid-air: palm rejection, a parent view deciding the
+        // gesture was a swipe, a window losing focus — any of them ends the stream with CANCEL
+        // instead of UP. The old code had no case for it, so the half-written stroke sat in
+        // stylusPointList: never committed (the ink you'd already seen on the overlay vanished
+        // at the next redraw), and its leftover points were PREPENDED to the next stroke —
+        // possibly on a different page. One of the "pieces disappear while writing" holes.
+        val actionCancel = motionEvent.action == MotionEvent.ACTION_CANCEL
 
         // "Pen writes, finger manages": while element-manipulation mode is active,
         // FINGER (and injected UNKNOWN) events route through the same handling path
@@ -5183,6 +5639,8 @@ abstract class SurfaceFragment : ScreenFragment() {
                 onMoveDrawing(touchPoints)
             } else if (actionUp) {
                 onEndDrawing(strokePoint, erasing, toolTypeFinger)
+            } else if (actionCancel) {
+                onCancelDrawing(strokePoint, erasing)
             } else {
                 if (!actions.contains("${motionEvent.action}")) actions.add("${motionEvent.action}")
                 if (!buttons.contains("${motionEvent.buttonState}")) buttons.add("${motionEvent.buttonState}")
@@ -5433,8 +5891,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideSurfaceView().removeCallbacks(viwoodsLivePostRunnable)
         viwoodsLivePostScheduled = false
         // Cancel a pending deferred re-bake so it can't fire mid-stroke (the bake toggles
-        // render + posts the canvas, which would interrupt the live stroke).
+        // render + posts the canvas, which would interrupt the live stroke). Same for the
+        // Viwoods hand-off repaint — mid-stroke it would paint over the live overlay.
         provideSurfaceView().removeCallbacks(commitVisualRunnable)
+        provideSurfaceView().removeCallbacks(viwoodsHandoffRunnable)
         lastPoint = touchPoint
         firstPointTimestamp = Instant.now().toEpochMilli()
         touchPoint.t = 0L
@@ -5656,7 +6116,7 @@ abstract class SurfaceFragment : ScreenFragment() {
 
             val stroke = Stroke(
                 UUID.randomUUID(), firstPointTimestamp, stylusPointList.toList(), paint.color, effectivePenWidth(),
-                if (calligraphyMode) Stroke.STYLE_CALLIGRAPHY else Stroke.STYLE_NORMAL
+                penStrokeStyle()
             )
             strokes.add(stroke)
             strokesToAdd.add(stroke)
@@ -5674,8 +6134,10 @@ abstract class SurfaceFragment : ScreenFragment() {
                     // Hardware ink: the native overlay shows the stroke then self-clears ~800ms
                     // after pen-up. Repaint our committed strokes just after, for a seamless
                     // hand-off from the fast (1-bit) overlay to the quality (GL16) layer.
-                    val snapshot = Stroke.listDeepCopy(strokes)
-                    Handler(Looper.getMainLooper()).postDelayed({ applyStrokes(snapshot, true) }, 900)
+                    // Cancellable + reads the live list at fire time — see [viwoodsHandoffRunnable]
+                    // for the stale-snapshot stroke-loss this replaces.
+                    provideSurfaceView().removeCallbacks(viwoodsHandoffRunnable)
+                    provideSurfaceView().postDelayed(viwoodsHandoffRunnable, 900)
                 } else {
                     // Software fallback: partial lockCanvas posts don't form a stable buffer,
                     // so repaint immediately to persist the completed mark.
@@ -5704,6 +6166,43 @@ abstract class SurfaceFragment : ScreenFragment() {
             }
         }
 
+        lastPoint = null
+        stylusPointList.clear()
+    }
+
+    /**
+     * The stroke ended with ACTION_CANCEL, not ACTION_UP — the system took it (palm rejection,
+     * a parent intercepting, focus loss). The ink already laid down is the user's writing, so
+     * COMMIT it exactly as a pen-up would: dropping it here is data loss they watched happen.
+     * Two deliberate differences from [onEndDrawing]: no gesture classification (a stroke the
+     * system aborted must never be read as a scribble-erase or a lasso), and the ERASER path
+     * deletes nothing (a cancelled erase pass is an abort, not a command — destruction needs a
+     * real pen-up). Either way the capture state is cleared, so leftover points can never be
+     * prepended to the next stroke on this or any other page.
+     */
+    private fun onCancelDrawing(touchPoint: StrokePoint, erasing: Boolean) {
+        Timber.i("onCancelDrawing (${touchPoint.x}/${touchPoint.y})")
+        if (penState && !erasing && stylusPointList.isNotEmpty()) {
+            touchPoint.t = Instant.now().toEpochMilli() - firstPointTimestamp
+            stylusPointList.add(touchPoint)
+            pushUndo()
+            val stroke = Stroke(
+                UUID.randomUUID(), firstPointTimestamp, stylusPointList.toList(), paint.color, effectivePenWidth(),
+                penStrokeStyle()
+            )
+            strokes.add(stroke)
+            strokesToAdd.add(stroke)
+            // Viwoods: settle the live preview exactly as pen-up does, so the coalesced live
+            // post can't repaint the dead preview over the committed ink.
+            if (viwoodsInk != null) {
+                provideSurfaceView().removeCallbacks(viwoodsLivePostRunnable)
+                viwoodsLivePostScheduled = false
+                viwoodsInk?.onStrokeEnd()
+                applyStrokes(strokes, true)
+                onStrokeChanged(strokes)
+            }
+            convertStrokes()
+        }
         lastPoint = null
         stylusPointList.clear()
     }

@@ -52,7 +52,7 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
         binding.postsCompose.setOnClickListener {
             NavHostFragment.findNavController(this).navigate(R.id.action_to_publish)
         }
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             val ctx = context ?: return@launch
             types = withContext(Dispatchers.IO) { WPPublish.postTypes(ctx) }
             if (types.none { it.restBase == type }) types.firstOrNull()?.let { type = it.restBase }
@@ -76,11 +76,17 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
         binding.postsContainer.let { c ->
             // keep controls (index 0..1), clear list below by re-render after fetch
         }
-        lifecycleScope.launch {
-            val statuses = filters.first { it.key == filterKey }.statuses
-            posts = withContext(Dispatchers.IO) { WPPublish.list(ctx, type, statuses) }
-            loading = false
-            if (isAdded) render()
+        // The view's scope: this exists only to draw the list, and a back-navigation mid-fetch
+        // should cancel the render rather than ghost-write into a dead view.
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val statuses = filters.first { it.key == filterKey }.statuses
+                posts = withContext(Dispatchers.IO) { WPPublish.list(ctx, type, statuses) }
+                if (isAdded) { loading = false; render() }
+            } finally {
+                // Also on cancellation — a wedged flag here would refuse every future reload.
+                loading = false
+            }
         }
     }
 
@@ -196,10 +202,10 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
         androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setMessage("Move “${p.title.ifBlank { "(no title)" }}” to Trash?")
             .setPositiveButton("Trash") { _, _ ->
-                lifecycleScope.launch {
-                    val ok = withContext(Dispatchers.IO) { WPPublish.trash(ctx, p.type, p.id) }
-                    android.widget.Toast.makeText(ctx, if (ok) "Trashed" else "Couldn't trash", android.widget.Toast.LENGTH_SHORT).show()
-                    if (ok) reload()
+                viewLifecycleOwner.lifecycleScope.launch {
+                    val err = withContext(Dispatchers.IO) { WPPublish.trash(ctx, p.type, p.id) }
+                    android.widget.Toast.makeText(ctx, err ?: "Trashed", android.widget.Toast.LENGTH_SHORT).show()
+                    if (err == null) reload()
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)

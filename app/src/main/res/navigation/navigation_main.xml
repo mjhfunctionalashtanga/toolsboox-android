@@ -33,10 +33,6 @@
             app:destination="@id/CloudFragment"/>
 
     <action
-            android:id="@+id/action_to_michaelfilter_intake"
-            app:destination="@id/MichaelFilterIntakeFragment"/>
-
-    <action
             android:id="@+id/action_to_ledger_chat"
             app:destination="@id/LedgerChatFragment"/>
 
@@ -135,6 +131,10 @@
             app:destination="@id/MailInboxFragment"/>
 
     <action
+            android:id="@+id/action_to_mail_compose"
+            app:destination="@id/MailComposeFragment"/>
+
+    <action
             android:id="@+id/action_to_text_notes"
             app:destination="@id/TextNotesFragment"/>
 
@@ -191,9 +191,6 @@
             android:label="FeedsFragment"
             tools:layout="@layout/fragment_feeds">
 
-        <action
-                android:id="@+id/action_to_feed_article"
-                app:destination="@id/FeedArticleFragment"/>
         <action
                 android:id="@+id/action_to_dashboard"
                 app:destination="@id/DashboardFragment"
@@ -340,6 +337,18 @@
             android:label="MailInboxFragment"
             tools:layout="@layout/fragment_mail_inbox"/>
 
+    <!-- Standalone compose — mail that isn't a reply. Arrives blank (the inbox's ✎ chip) or
+         prefilled (a "write that email" quick win, a contact page) via the three arguments. -->
+    <fragment
+            android:id="@+id/MailComposeFragment"
+            android:name="com.toolsboox.plugin.mail.ui.MailComposeFragment"
+            android:label="MailComposeFragment"
+            tools:layout="@layout/fragment_mail_compose">
+        <argument android:name="to_email" app:argType="string" android:defaultValue=""/>
+        <argument android:name="to_name" app:argType="string" android:defaultValue=""/>
+        <argument android:name="subject" app:argType="string" android:defaultValue=""/>
+    </fragment>
+
     <fragment
             android:id="@+id/ReadingLogFragment"
             android:name="com.toolsboox.plugin.calendar.ui.ReadingLogFragment"
@@ -350,36 +359,6 @@
                 android:id="@+id/action_to_calendar_day"
                 app:destination="@id/CalendarDayFragment"
                 app:popUpTo="@id/CalendarDayFragment"
-                app:popUpToInclusive="true"/>
-    </fragment>
-
-    <fragment
-            android:id="@+id/MichaelFilterIntakeFragment"
-            android:name="com.toolsboox.plugin.michaelfilter.ui.MichaelFilterIntakeFragment"
-            android:label="MichaelFilterIntakeFragment"
-            tools:layout="@layout/fragment_michaelfilter_intake">
-
-        <argument
-                android:name="url"
-                app:argType="string"
-                app:nullable="true"/>
-        <argument
-                android:name="title"
-                app:argType="string"
-                app:nullable="true"/>
-        <argument
-                android:name="kind"
-                app:argType="string"
-                app:nullable="true"/>
-        <argument
-                android:name="text"
-                app:argType="string"
-                app:nullable="true"/>
-
-        <action
-                android:id="@+id/action_to_dashboard"
-                app:destination="@id/DashboardFragment"
-                app:popUpTo="@id/DashboardFragment"
                 app:popUpToInclusive="true"/>
     </fragment>
 

@@ -1,0 +1,9 @@
+<!-- Mortarboard (🎓) — Courses used to render as ic_book, indistinguishable from the
+     Bookshelf doors in an open accordion. Same 2dp round-stroke language as ic_reader_view. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:strokeColor="#FF000000" android:strokeWidth="2" android:fillColor="#00000000"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M12,4.5 L2,9.5 l10,5 l10,-5 z M6.5,12 v4 c0,1.6 2.6,3 5.5,3 s5.5,-1.4 5.5,-3 v-4 M22,9.5 v5"/>
+</vector>

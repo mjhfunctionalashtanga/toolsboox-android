@@ -26,6 +26,7 @@
             android:contentDescription="@string/go_to_title"
             android:layout_width="32dp" android:layout_height="32dp"/>
         <ImageView
+            android:scaleType="fitXY"
             android:id="@+id/navigatorImageView"
             android:layout_width="0dp" android:layout_weight="1"
             android:layout_height="56dp"
@@ -52,6 +53,20 @@
         android:layout_marginHorizontal="10dp"
         android:layout_marginBottom="6dp"
         android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+    <!-- Scope chips (All · Handwriting · Articles · Tasks · Notes) — search results only. -->
+    <HorizontalScrollView
+        android:id="@+id/scope_row_scroll"
+        android:scrollbars="none"
+        android:visibility="gone"
+        android:layout_marginHorizontal="10dp"
+        android:layout_marginBottom="4dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content">
+        <LinearLayout
+            android:id="@+id/scope_row"
+            android:orientation="horizontal"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </HorizontalScrollView>
 
     <ProgressBar
         android:id="@+id/progress"

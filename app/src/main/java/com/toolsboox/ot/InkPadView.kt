@@ -22,13 +22,17 @@ import android.view.View
  */
 class InkPadView(context: Context) : View(context) {
 
-    private class Stroke(val path: Path, val color: Int, val strokeWidth: Float)
+    private class Stroke(val path: Path, val color: Int, val strokeWidth: Float,
+                         val points: MutableList<Pair<Float, Float>> = mutableListOf())
 
     private val strokes = mutableListOf<Stroke>()
     private var current: Path? = null
 
     var penColor: Int = Color.BLACK
     var penWidth: Float = 4f
+
+    /** Stroke eraser: while on, touches delete whole strokes they cross instead of drawing. */
+    var eraseMode: Boolean = false
 
     init {
         setBackgroundColor(Color.WHITE)
@@ -43,14 +47,36 @@ class InkPadView(context: Context) : View(context) {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (eraseMode) {
+            if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE) {
+                eraseAt(event.x, event.y)
+            }
+            return true
+        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN ->
-                current = Path().also { it.moveTo(event.x, event.y); strokes.add(Stroke(it, penColor, penWidth)) }
-            MotionEvent.ACTION_MOVE -> current?.lineTo(event.x, event.y)
+                current = Path().also {
+                    it.moveTo(event.x, event.y)
+                    strokes.add(Stroke(it, penColor, penWidth).apply { points.add(event.x to event.y) })
+                }
+            MotionEvent.ACTION_MOVE -> {
+                current?.lineTo(event.x, event.y)
+                strokes.lastOrNull()?.points?.add(event.x to event.y)
+            }
             MotionEvent.ACTION_UP -> current = null
         }
         invalidate()
         return true
+    }
+
+    /** Delete any stroke passing within a fingertip of (x, y) — whole strokes, like the page's
+     *  scribble eraser: partial-path surgery isn't worth it on a note-sized pad. */
+    private fun eraseAt(x: Float, y: Float) {
+        val r = 24f * resources.displayMetrics.density / 2.5f
+        val hit = strokes.filter { st -> st.points.any { (px, py) ->
+            val dx = px - x; val dy = py - y; dx * dx + dy * dy < r * r
+        } }
+        if (hit.isNotEmpty()) { strokes.removeAll(hit); invalidate() }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -131,8 +157,18 @@ class InkPadView(context: Context) : View(context) {
 
             var widthIdx = 1
             bar.addView(android.widget.TextView(context).apply {
-                text = "✒ width"; textSize = 14f; setTextColor(ACCENT); setPadding(px(8), 0, px(4), 0)
+                text = "\u2712 width"; textSize = 14f; setTextColor(ACCENT); setPadding(px(8), 0, px(4), 0)
                 setOnClickListener { widthIdx = (widthIdx + 1) % WIDTHS.size; pad.penWidth = WIDTHS[widthIdx] }
+            })
+
+            // Stroke eraser: inverted while armed, the pressed-state grammar the page tools use.
+            bar.addView(android.widget.TextView(context).apply {
+                text = " \u25E8 erase "; textSize = 14f; setTextColor(ACCENT); setPadding(px(10), px(2), px(6), px(2))
+                setOnClickListener {
+                    pad.eraseMode = !pad.eraseMode
+                    if (pad.eraseMode) { setBackgroundColor(0xFF000000.toInt()); setTextColor(Color.WHITE) }
+                    else { setBackgroundColor(0x00000000); setTextColor(ACCENT) }
+                }
             })
 
             return bar

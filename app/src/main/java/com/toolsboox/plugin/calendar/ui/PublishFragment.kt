@@ -62,6 +62,8 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
     private var statusChoice = "draft"          // draft | publish | future | private
     private var scheduleMillis = System.currentTimeMillis() + 3_600_000L
     private var editing: WPPublish.WpPost? = null
+    /** The opened post sits in the site's Trash: Save becomes Restore, and the banner says so. */
+    private var trashed = false
     private var publishing = false
     private var loaded = false
 
@@ -73,7 +75,7 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
             if (uri == null) return@registerForActivityResult
             val ctx = context ?: return@registerForActivityResult
-            lifecycleScope.launch {
+            viewLifecycleOwner.lifecycleScope.launch {
                 val bmp = withContext(Dispatchers.IO) {
                     try {
                         ctx.contentResolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it) }
@@ -95,11 +97,12 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
         val ctx = context ?: return
         val argType = arguments?.getString(ARG_TYPE)
         val argId = arguments?.getInt(ARG_POST_ID, 0) ?: 0
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             if (!argType.isNullOrBlank() && argId > 0) {
                 val post = withContext(Dispatchers.IO) { WPPublish.getPost(ctx, argType, argId) }
                 if (post != null) {
                     editing = post
+                    trashed = post.status == "trash"
                     draft.type = post.type
                     draft.title = post.title
                     draft.content = post.content
@@ -107,6 +110,10 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
                     draft.tags = post.tags
                     draft.featuredMedia = post.featuredMedia
                     statusChoice = if (post.status in listOf("draft", "publish", "future", "private")) post.status else "draft"
+                    // Keep the post's OWN publish time. Not parsing it left scheduleMillis at the
+                    // now+1h default, so opening a scheduled post and tapping Save silently re-timed
+                    // it — an untouched post must round-trip to the same wall-clock time.
+                    WPPublish.parseWpDate(post.date)?.let { scheduleMillis = it }
                 }
             }
             // Seed from a gram / page (one-shot).
@@ -138,8 +145,22 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
         val c = binding.publishContainer
         c.removeAllViews()
 
-        binding.publishAction.text = when (statusChoice) {
-            "publish" -> "Publish"; "future" -> "Schedule"; else -> "Save"
+        binding.publishAction.text = when {
+            trashed -> "Restore"
+            statusChoice == "publish" -> "Publish"
+            statusChoice == "future" -> "Schedule"
+            else -> "Save"
+        }
+
+        // A trashed post can't just be edited in place — saving asks WP to pull it OUT of the
+        // trash into the chosen status, and if the site refuses, its own words show in the toast.
+        if (trashed) {
+            c.addView(TextView(ctx).apply {
+                text = "🗑  This post is in the Trash. ${binding.publishAction.text} moves it back to “${
+                    when (statusChoice) { "publish" -> "Published"; "future" -> "Scheduled"; "private" -> "Private"; else -> "Draft" }
+                }”."
+                textSize = 13f; setTextColor(0xFFB00020.toInt()); setPadding(px(4), px(10), px(4), px(2))
+            })
         }
 
         if (!WPPublish.configured(ctx)) {
@@ -318,7 +339,7 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
             .setPositiveButton("Create") { _, _ ->
                 val name = input.text.toString().trim()
                 if (name.isBlank()) { pickTerms(taxonomy); return@setPositiveButton }
-                lifecycleScope.launch {
+                viewLifecycleOwner.lifecycleScope.launch {
                     val term = withContext(Dispatchers.IO) { WPPublish.createTerm(ctx, taxonomy, name) }
                     if (term != null) {
                         val listRef = if (taxonomy == "categories") categories else tags
@@ -336,6 +357,7 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
     }
 
     private fun successLabel(): String = when {
+        trashed -> "Restored"
         editing != null -> "Updated"
         statusChoice == "publish" -> "Published"
         statusChoice == "future" -> "Scheduled"
@@ -350,26 +372,34 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
         if (!WPPublish.configured(ctx)) { toast("Set an active site in Settings"); return }
         publishing = true
         binding.publishAction.isEnabled = false
-        lifecycleScope.launch {
-            val img = image
-            if (img != null) {
-                val png = withContext(Dispatchers.IO) {
-                    val baos = ByteArrayOutputStream(); img.compress(Bitmap.CompressFormat.PNG, 100, baos); baos.toByteArray()
+        // The view's scope, not the fragment's: everything after the save renders into this view,
+        // and a ghost render after back-navigation is worse than an abandoned upload.
+        viewLifecycleOwner.lifecycleScope.launch {
+            val res = try {
+                val img = image
+                if (img != null) {
+                    val png = withContext(Dispatchers.IO) {
+                        val baos = ByteArrayOutputStream(); img.compress(Bitmap.CompressFormat.PNG, 100, baos); baos.toByteArray()
+                    }
+                    val mediaId = withContext(Dispatchers.IO) { WPPublish.uploadMedia(ctx, png, draft.title) }
+                    if (mediaId != null) draft.featuredMedia = mediaId
                 }
-                val mediaId = withContext(Dispatchers.IO) { WPPublish.uploadMedia(ctx, png, draft.title) }
-                if (mediaId != null) draft.featuredMedia = mediaId
+                draft.status = statusChoice
+                draft.dateIso = if (statusChoice == "future") WPPublish.isoLocal(scheduleMillis) else null
+                withContext(Dispatchers.IO) { WPPublish.save(ctx, draft, editing?.id) }
+            } finally {
+                // Also on cancellation — a wedged flag here would refuse every future save.
+                publishing = false
             }
-            draft.status = statusChoice
-            draft.dateIso = if (statusChoice == "future") WPPublish.isoLocal(scheduleMillis) else null
-            val res = withContext(Dispatchers.IO) { WPPublish.save(ctx, draft, editing?.id) }
-            publishing = false
             if (!isAdded) return@launch
             binding.publishAction.isEnabled = true
             if (res.ok) {
                 toast(successLabel())
                 NavHostFragment.findNavController(this@PublishFragment).popBackStack()
             } else {
-                toast("Couldn't publish — check the site & app password")
+                // WP usually says exactly why (trashed post, invalid date, missing capability…);
+                // the password hint is only the guess of last resort.
+                toast(res.error ?: "Couldn't publish — check the site & app password")
             }
         }
     }

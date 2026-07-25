@@ -4,15 +4,15 @@
         for most people and ignored the setting entirely. These are narrower and they move with
         the dial, so "Small" is a compact selector and "Large" is still readable at arm's length.
     -->
-    <style name="LedgerAlertDialog.Small" parent="Theme.AppCompat.Light.Dialog.Alert">
+    <style name="LedgerAlertDialog.Small" parent="LedgerAlertDialog">
         <item name="windowFixedWidthMajor">340dp</item>
         <item name="windowFixedWidthMinor">340dp</item>
     </style>
-    <style name="LedgerAlertDialog.Medium" parent="Theme.AppCompat.Light.Dialog.Alert">
+    <style name="LedgerAlertDialog.Medium" parent="LedgerAlertDialog">
         <item name="windowFixedWidthMajor">420dp</item>
         <item name="windowFixedWidthMinor">420dp</item>
     </style>
-    <style name="LedgerAlertDialog.Large" parent="Theme.AppCompat.Light.Dialog.Alert">
+    <style name="LedgerAlertDialog.Large" parent="LedgerAlertDialog">
         <item name="windowFixedWidthMajor">520dp</item>
         <item name="windowFixedWidthMinor">520dp</item>
     </style>

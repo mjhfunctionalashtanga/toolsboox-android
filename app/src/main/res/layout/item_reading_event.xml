@@ -8,6 +8,16 @@
     android:paddingHorizontal="16dp"
     android:paddingVertical="12dp">
 
+    <!-- Search-group header ("Matches" / "Related — semantic"), gone outside a search. -->
+    <TextView
+        android:id="@+id/event_header"
+        android:textSize="12sp"
+        android:textColor="#777777"
+        android:letterSpacing="0.08"
+        android:paddingBottom="8dp"
+        android:visibility="gone"
+        android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
     <LinearLayout
         android:orientation="horizontal"
         android:layout_width="match_parent"

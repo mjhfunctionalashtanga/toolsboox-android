@@ -26,9 +26,16 @@ object Mime {
     data class Parsed(val headers: Map<String, String>, val text: String)
 
     fun parse(data: ByteArray): Parsed {
-        val raw = latinOrUtf8(data)
+        // The raw message rides through as ISO-8859-1 — a byte-TRANSPARENT carrier (latin-1 maps
+        // all 256 byte values 1:1 onto chars), so each part can recover its ORIGINAL bytes and
+        // decode them by its own declared charset. Decoding the whole message as UTF-8 up front
+        // looked fine on Gmail but quietly replaced every non-UTF-8 byte with U+FFFD before the
+        // part charsets ever had a say — the charset was decided once, at the wrong layer.
+        val raw = String(data, Charsets.ISO_8859_1)
         val (headBlock, body) = splitHeadersBody(raw)
-        val headers = parseHeaders(headBlock)
+        // Header values may carry raw UTF-8 bytes (sloppy senders skip encoded-words); lift them
+        // out of the carrier so From/Subject read right without touching the body bytes.
+        val headers = parseHeaders(headBlock).mapValues { (_, v) -> fromCarrier(v) }
         val text = extractText(headers, body).trim()
         return Parsed(headers, text)
     }
@@ -82,14 +89,21 @@ object Mime {
                     when {
                         pct.contains("multipart/") -> {
                             val nested = extractText(phs, pb)
-                            if (nested.isNotEmpty()) return nested
+                            if (nested.isNotBlank()) return nested
                         }
                         pct.contains("text/plain") -> {
                             val t = decodeBody(phs, pb)
-                            if (t.trim().isNotEmpty()) return t
+                            if (t.isNotBlank()) return t
                         }
-                        pct.contains("text/html") && htmlFallback == null -> {
-                            htmlFallback = stripHtml(decodeBody(phs, pb))
+                        pct.contains("text/html") -> {
+                            // Keep the first html part that strips to something READABLE. Locking
+                            // in whichever html part came first meant an empty lead-in part (a
+                            // tracking shell, a bare wrapper div) blanked the whole message even
+                            // when the next html part held all the text.
+                            if (htmlFallback.isNullOrBlank()) {
+                                val h = stripHtml(decodeBody(phs, pb)).trim()
+                                if (h.isNotBlank()) htmlFallback = h
+                            }
                         }
                     }
                 }
@@ -104,7 +118,9 @@ object Mime {
     private fun splitMultipart(body: String, boundary: String): List<String> {
         val delim = "--$boundary"
         val parts = ArrayList<String>()
-        for (chunk in body.split(delim)) {
+        // Everything before the FIRST delimiter is the preamble ("This is a multi-part message
+        // in MIME format.") — never a part, so it must never be mistaken for the body.
+        for (chunk in body.split(delim).drop(1)) {
             var c = chunk
             if (c.startsWith("\r\n")) c = c.substring(2) else if (c.startsWith("\n")) c = c.substring(1)
             if (c.startsWith("--") || c.trim().isEmpty()) continue
@@ -113,16 +129,18 @@ object Mime {
         return parts
     }
 
-    /** Decode a single part's body per its Content-Transfer-Encoding + charset. */
+    /** Decode a single part's body per its Content-Transfer-Encoding + charset. The part rides in
+     *  as carrier text (ISO-8859-1 chars ≡ original bytes), so ISO_8859_1 here RECOVERS bytes —
+     *  it is not a guess about the part's language. */
     private fun decodeBody(headers: Map<String, String>, body: String): String {
         val cte = (headers["content-transfer-encoding"] ?: "").lowercase()
         val charset = param(headers["content-type"] ?: "", "charset")?.lowercase()
         val bytes: ByteArray = when (cte) {
             "base64" -> try {
                 Base64.getMimeDecoder().decode(body.filter { !it.isWhitespace() })
-            } catch (e: Exception) { body.toByteArray(Charsets.UTF_8) }
+            } catch (e: Exception) { body.toByteArray(Charsets.ISO_8859_1) }
             "quoted-printable" -> decodeQuotedPrintable(body)
-            else -> return decodeCharset(body.toByteArray(Charsets.UTF_8), charset)   // 7bit/8bit/binary: already text
+            else -> body.toByteArray(Charsets.ISO_8859_1)   // 7bit/8bit/binary: the original bytes
         }
         return decodeCharset(bytes, charset)
     }
@@ -131,7 +149,7 @@ object Mime {
 
     fun decodeQuotedPrintable(s: String): ByteArray {
         val out = ByteArrayOutputStream()
-        val chars = s.toByteArray(Charsets.UTF_8)
+        val chars = s.toByteArray(Charsets.ISO_8859_1)   // carrier chars back to their bytes
         var i = 0
         while (i < chars.size) {
             val b = chars[i].toInt() and 0xFF
@@ -160,19 +178,35 @@ object Mime {
     }
 
     private fun decodeCharset(data: ByteArray, charset: String?): String {
-        if (charset == null) return latinOrUtf8(data)
+        val name = charset?.trim()?.trim('"')
+        if (name.isNullOrBlank()) return utf8OrLatin1(data)
         return try {
             when {
-                charset.contains("utf-8") -> String(data, Charsets.UTF_8)
-                charset.contains("iso-8859-1") || charset.contains("latin1") -> String(data, Charsets.ISO_8859_1)
-                charset.contains("windows-1252") || charset.contains("cp1252") -> String(data, charset("windows-1252"))
-                else -> latinOrUtf8(data)
+                // Mislabeled "utf-8" is common enough that a strict decode with a latin-1 net
+                // beats trusting the label outright.
+                name.contains("utf-8") -> utf8OrLatin1(data)
+                // Any charset the platform knows (gb2312, shift_jis, koi8-r, iso-2022-jp…) —
+                // the old three-name whitelist quietly mangled everything else.
+                java.nio.charset.Charset.isSupported(name) ->
+                    String(data, java.nio.charset.Charset.forName(name))
+                else -> utf8OrLatin1(data)
             }
-        } catch (e: Exception) { latinOrUtf8(data) }
+        } catch (e: Exception) { utf8OrLatin1(data) }
     }
 
-    private fun latinOrUtf8(data: ByteArray): String =
-        try { String(data, Charsets.UTF_8) } catch (e: Exception) { String(data, Charsets.ISO_8859_1) }
+    /** Strict UTF-8 or honest latin-1 — never U+FFFD confetti. The old `String(data, UTF_8)`
+     *  NEVER throws (the constructor substitutes malformed input), so its latin-1 "fallback" was
+     *  dead code and every non-UTF-8 byte rendered as �. A REPORTing decoder actually falls back. */
+    private fun utf8OrLatin1(data: ByteArray): String = try {
+        Charsets.UTF_8.newDecoder()
+            .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+            .decode(java.nio.ByteBuffer.wrap(data)).toString()
+    } catch (e: Exception) { String(data, Charsets.ISO_8859_1) }
+
+    /** Lift a header value out of the byte-transparent carrier: its latin-1 chars ARE the raw
+     *  bytes, which are usually ASCII or raw UTF-8 from senders who skip encoded-words. */
+    private fun fromCarrier(s: String): String = utf8OrLatin1(s.toByteArray(Charsets.ISO_8859_1))
 
     /** A key="value" / key=value parameter from a header value (content-type, etc.). */
     private fun param(header: String, key: String): String? {
