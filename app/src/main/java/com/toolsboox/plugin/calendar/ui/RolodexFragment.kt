@@ -339,6 +339,18 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
             label("✉  Compose email", 14f, color = 0xFF2F6F96.toInt()).apply { setPadding(0, px(8), 0, 0) }
         composeRow?.let { root.addView(it) }
 
+        // The universal menu's two rows, on a person like on everything else. The contact's
+        // `contact://` address and their name ride as provenance, so asking about a person pulls
+        // every connection edge already touching them (tasks assigned, grams linked) into the
+        // grounding — AskBridge matches by label as well as by uri. Wired after the dialog
+        // exists, like composeRow (they have to dismiss it).
+        val askRow = label("🔎  Ask about this", 14f, color = 0xFF2F6F96.toInt())
+            .apply { setPadding(0, px(8), 0, 0) }
+        root.addView(askRow)
+        val educateRow = label("🎓  Educate me", 14f, color = 0xFF2F6F96.toInt())
+            .apply { setPadding(0, px(8), 0, 0) }
+        root.addView(educateRow)
+
         // Tasks & Events (gathered off-main).
         root.addView(label("Tasks & Events", 13f, bold = true, color = 0xFF888888.toInt()).apply { setPadding(0, px(16), 0, px(4)) })
         val tasksBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
@@ -398,6 +410,22 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
             .setNegativeButton("Close", null)
             .create()
         dialog.show()
+
+        val who = contact.name.ifBlank { "Unnamed" }
+        askRow.setOnClickListener {
+            dialog.dismiss()   // Ask navigates away; a dialog left under the trip would greet the return
+            com.toolsboox.plugin.calendar.ot.AskBridge.askFrom(
+                this, selection = null, title = who,
+                link = com.toolsboox.ot.LedgerUri.contact(contact.id), sourceLabel = who
+            )
+        }
+        educateRow.setOnClickListener {
+            dialog.dismiss()   // so the "🎓 → Educate Me" snackbar isn't hidden behind the page
+            com.toolsboox.plugin.calendar.ot.AskBridge.gramToEducateMe(
+                this, text = who, title = who,
+                link = com.toolsboox.ot.LedgerUri.contact(contact.id), sourceLabel = who
+            )
+        }
 
         composeRow?.setOnClickListener {
             dialog.dismiss()

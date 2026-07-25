@@ -34,7 +34,11 @@ class LedgerItemAdapter(
     /** Long-press → open the card behind the row, so a task isn't a dead end of text. */
     private val onOpenCard: (LedgerItem) -> Unit = {},
     /** Long-press → everything this task joins, asked from the task's own end. */
-    private val onShowRhizome: (LedgerItem) -> Unit = {}
+    private val onShowRhizome: (LedgerItem) -> Unit = {},
+    /** Long-press → send the task to Ask my Ledger with its provenance (the universal menu's 🔎). */
+    private val onAsk: (LedgerItem) -> Unit = {},
+    /** Long-press → mint the task as a question gram on the intake sheet's Educate Me panel (🎓). */
+    private val onEducate: (LedgerItem) -> Unit = {}
 ) : RecyclerView.Adapter<LedgerItemAdapter.Holder>() {
 
     /** Ids of read-only rows (dated Site cards folded into the timeline): inert to
@@ -168,11 +172,17 @@ class LedgerItemAdapter(
         holder.itemView.setOnLongClickListener {
             val ctx = holder.itemView.context
             androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-                .setItems(arrayOf("🗂  Open card", "⁂  Its rhizome", "☑  Select rows…")) { _, which ->
+                .setItems(arrayOf(
+                    "🗂  Open card", "⁂  Its rhizome",
+                    "🔎  Ask about this", "🎓  Educate me",
+                    "☑  Select rows…"
+                )) { _, which ->
                     when (which) {
                         0 -> onOpenCard(e)
                         1 -> onShowRhizome(e)
-                        2 -> startSelection(e)
+                        2 -> onAsk(e)
+                        3 -> onEducate(e)
+                        4 -> startSelection(e)
                     }
                 }
                 .setNegativeButton(android.R.string.cancel, null)

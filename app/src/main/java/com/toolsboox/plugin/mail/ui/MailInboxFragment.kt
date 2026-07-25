@@ -645,6 +645,21 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         // must be the whole message, not the stale slice.
         col.addView(action("⁂  Rhizome — connect & open graph") { dialog.dismiss(); openRhizome(cur) })
         col.addView(action("🧩  Assign to synthesis") { dialog.dismiss(); assignToSynthesis(cur) })
+        // 🖍 The universal annotation menu, on mail like on everything: text selected in the body
+        // rides as the highlight (select-then-annotate, the reader's move); nothing selected means
+        // "annotate the whole message". captureAnnotation already carries note / gram / photo /
+        // voice AND the Ask-about-this + Educate-me rows, so mail gets the full menu for free.
+        // The dialog stays open — like the reader, you annotate and you're still on the thing.
+        col.addView(action("🖍  Annotate…") {
+            val selection = if (bodyView.hasSelection()) {
+                val a = bodyView.selectionStart.coerceAtLeast(0)
+                val b = bodyView.selectionEnd.coerceAtLeast(0)
+                bodyView.text.subSequence(minOf(a, b), maxOf(a, b)).toString().trim()
+            } else ""
+            captureAnnotation(selection, cur.subject.ifBlank { null }) { sel, note, attachment ->
+                logMailAnnotation(cur, sel, note, attachment)
+            }
+        })
         // TODO(roots): a "rhymes / roots" action would open the semantic-roots surface seeded from this
         // message, but R.id.action_to_ledger_roots -> LedgerRootsFragment takes NO arguments (confirmed:
         // every call site navigates it bare) and shows the global roots view -- there is no seed hook. Per
@@ -710,6 +725,48 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
+    /**
+     * Append a mail annotation (highlighted passage, note, and/or media) to today's CalendarDay —
+     * the exact move ReaderFragment.logHighlight makes for a book, with mail provenance instead:
+     * a [com.toolsboox.plugin.calendar.da.v2.ReadingEvent] whose title is the subject, source the
+     * sender, and url the message's `mail://` address (the same address its rhizome edges use).
+     *
+     * Kind stays [ReadingEvent.Kind.ARTICLE] rather than a new MAIL value: the enum is
+     * wire-compatible with iOS and older builds, and a Moshi enum adapter fails the WHOLE day
+     * JSON on an unknown name — the `mail://` url is the honest discriminator instead.
+     */
+    private fun logMailAnnotation(
+        m: InboxMessage, text: String?, note: String?, attachment: com.toolsboox.da.Attachment?
+    ) {
+        // The fragment's own scope, not the view's — the write must land even if the reader has
+        // already closed the message and moved on (the renderNav comment's same distinction).
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching {
+                val root = documentsRoot()
+                val today = LocalDate.now()
+                // Same per-day serialization as the star path — this is one more background
+                // whole-file load→mutate→save racing the open day page's per-pen-up save.
+                com.toolsboox.plugin.calendar.ot.DayLocks.withDay(today) {
+                    val day = calendarDayService.load(root, today, null, Locale.getDefault())
+                    day.readingEvents.add(
+                        com.toolsboox.plugin.calendar.da.v2.ReadingEvent(
+                            id = "mailann-${UUID.randomUUID()}",
+                            kind = com.toolsboox.plugin.calendar.da.v2.ReadingEvent.Kind.ARTICLE,
+                            date = Date(),
+                            title = m.subject.ifBlank { m.fromName.ifBlank { m.fromEmail } },
+                            source = m.fromName.ifBlank { m.fromEmail }.ifBlank { null },
+                            url = "mail://${m.id}",
+                            excerpt = text?.ifBlank { null },
+                            note = note?.ifBlank { null },
+                            attachments = attachment?.let { mutableListOf(it) }
+                        )
+                    )
+                    calendarDayService.save(root, today, day)
+                }
+            }.onFailure { timber.log.Timber.w(it, "failed to log mail annotation") }
+        }
+    }
+
     /** A plain reply, sent out the account the message arrived on (via SMTP). */
     private fun showReply(m: InboxMessage) {
         val ctx = requireContext()
@@ -743,6 +800,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
     }
 
     // Star -> to-do: create a task on today's page (like Kanban's add-card), and mark the mail starred.
+    // Grams for stars, mail edition: the same star ALSO mints a link-face gram onto today's Intake.
     private fun starToTodo(m: InboxMessage) {
         val ctx = requireContext()
         val item = LedgerItem(
@@ -750,7 +808,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             kind = LedgerItem.Kind.TASK, text = m.subject, date = Date(), stage = "todo", source = "email"
         )
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
+            val placedGram = withContext(Dispatchers.IO) {
                 InboxStore.setStarred(ctx, m, true)   // persists the message content; off the main thread
                 val root = documentsRoot()
                 val today = LocalDate.now()
@@ -762,12 +820,48 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
                     calendarDayService.save(root, today, day)
                 }
                 runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(ctx, item) }
+                runCatching { placeMailStarGram(root, m, today) }.getOrDefault(false)
             }
             if (!isAdded) return@launch
-            toast("Starred — added to your to-dos")
+            toast(if (placedGram) "★ → to-do + Intake" else "Starred — added to your to-dos")
             messages = InboxStore.messages(ctx)
             render()
         }
+    }
+
+    /**
+     * Grams for stars, mail edition — mirrors FeedNoteGram.placeStarGram: starring a message mints
+     * a movable link-face gram onto TODAY's Intake page, so the mail sits on the board like a
+     * starred article does. The face is rendered by [LinkCardRenderer] wearing the ✉ MAIL chip,
+     * the subject as its title, and "sender · date" on the source line (the render's url stays blank —
+     * a `mail://` address is no host to print; the address rides sourceLink instead, so tapping
+     * the gram can resolve the message and dedupe works).
+     *
+     * Starring the same message twice must not stack twins: an intake gram already carrying this
+     * sourceLink today wins. And unstarring deliberately does NOT remove the gram — once placed,
+     * the Intake page is his board, not a mirror of the star state. Call OFF the main thread.
+     *
+     * @return true when a gram was placed, false when today's intake already had it.
+     */
+    private fun placeMailStarGram(root: java.io.File, m: InboxMessage, today: LocalDate): Boolean {
+        val mailUri = "mail://${m.id}"
+        // Dedupe by sourceLink. Read-before-place is unlocked, but stars arrive at human speed
+        // and re-stars route through this same path, so a stale read can't stack twins in practice.
+        val day = calendarDayService.load(root, today, null, Locale.getDefault())
+        if (day.imageElements.any { it.page == "intake" && it.sourceLink == mailUri }) return false
+        val sender = m.fromName.ifBlank { m.fromEmail }.ifBlank { "Unknown sender" }
+        val dateLabel = java.time.Instant.ofEpochMilli(m.date)
+            .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+            .format(java.time.format.DateTimeFormatter.ofPattern("MMM d", Locale.getDefault()))
+        val face = com.toolsboox.plugin.calendar.ot.LinkCardRenderer.render(
+            url = "", title = m.subject.ifBlank { "(no subject)" }, kind = "mail",
+            sourceName = "$sender · $dateLabel"
+        )
+        com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+            calendarDayService, root, face, today, pageKey = "intake",
+            sourceLink = mailUri, sourceLabel = sender, cardText = m.subject
+        )
+        return true
     }
 
     private fun unstar(m: InboxMessage) {

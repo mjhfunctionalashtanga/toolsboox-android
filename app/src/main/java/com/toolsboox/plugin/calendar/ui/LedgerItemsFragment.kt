@@ -74,7 +74,8 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         binding = FragmentLedgerItemsBinding.bind(view)
 
         adapter = LedgerItemAdapter(emptyList(), emptyMap(), ::persist, ::onEnterSelection, ::updateSelectionBar,
-            onOpenCard = ::openCard, onShowRhizome = ::showRhizome)
+            onOpenCard = ::openCard, onShowRhizome = ::showRhizome,
+            onAsk = ::askAboutItem, onEducate = ::educateFromItem)
         binding.itemsRecycler.layoutManager = LinearLayoutManager(requireContext())
         binding.itemsRecycler.adapter = adapter
         binding.itemsRecycler.addItemDecoration(DividerItemDecoration(requireContext(), DividerItemDecoration.VERTICAL))
@@ -300,7 +301,9 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                         )
                     }
                 },
-                onOpenCard = ::openCard
+                onOpenCard = ::openCard,
+                onShowRhizome = ::showRhizome,
+                onAsk = ::askAboutItem, onEducate = ::educateFromItem
             )
             binding.itemsRecycler.adapter = adapter
             attachSwipeToDelete()
@@ -914,6 +917,30 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 LedgerRhizomeFragment.ARG_URI to uri,
                 LedgerRhizomeFragment.ARG_LABEL to item.text.ifBlank { "(handwritten)" }
             )
+        )
+    }
+
+    /** 🔎 The universal menu's Ask, from a task's own end: the task's words go to Ask my Ledger
+     *  with its `task://` address riding as provenance, so every edge already touching the task
+     *  (who it's for, the page it came off) joins the grounding. This list holds events too —
+     *  they share the row menu and the `task://` scheme, so only the label differs. */
+    private fun askAboutItem(item: LedgerItem) {
+        val text = item.text.ifBlank { "(handwritten)" }
+        com.toolsboox.plugin.calendar.ot.AskBridge.askFrom(
+            this, selection = text, title = text,
+            link = com.toolsboox.ot.LedgerUri.task(item.id),
+            sourceLabel = if (item.kind == LedgerItem.Kind.EVENT) "an event" else "a task"
+        )
+    }
+
+    /** 🎓 The universal menu's Educate me: the task becomes a question gram on the intake sheet's
+     *  Educate Me panel, carrying the same `task://` provenance. */
+    private fun educateFromItem(item: LedgerItem) {
+        val text = item.text.ifBlank { "(handwritten)" }
+        com.toolsboox.plugin.calendar.ot.AskBridge.gramToEducateMe(
+            this, text = text, title = text,
+            link = com.toolsboox.ot.LedgerUri.task(item.id),
+            sourceLabel = if (item.kind == LedgerItem.Kind.EVENT) "an event" else "a task"
         )
     }
 

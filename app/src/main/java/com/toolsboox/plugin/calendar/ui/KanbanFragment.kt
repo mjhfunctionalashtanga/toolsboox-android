@@ -449,14 +449,18 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
                     .setItems(arrayOf(
                         "✎  Edit the words…",
                         "⁂  Its rhizome",
+                        "🔎  Ask about this",
+                        "🎓  Educate me",
                         "⬆  Send to web board",
                         "🗑  Delete"
                     )) { _, which ->
                         when (which) {
                             0 -> editCardWords(item)
                             1 -> showCardRhizome(item)
-                            2 -> sendToWeb(item)
-                            3 -> confirmDeleteCard(item)
+                            2 -> askAboutCard(item)
+                            3 -> educateFromCard(item)
+                            4 -> sendToWeb(item)
+                            5 -> confirmDeleteCard(item)
                         }
                     }
                     .setNegativeButton("Close", null)
@@ -512,6 +516,26 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    /** 🔎 The universal menu's Ask, from the board: the card's words go to Ask my Ledger with its
+     *  `task://` address as provenance, so its existing edges join the grounding. */
+    private fun askAboutCard(item: LedgerItem) {
+        val text = item.text.ifBlank { "(handwritten)" }
+        com.toolsboox.plugin.calendar.ot.AskBridge.askFrom(
+            this, selection = text, title = text,
+            link = com.toolsboox.ot.LedgerUri.task(item.id), sourceLabel = "a task"
+        )
+    }
+
+    /** 🎓 The universal menu's Educate me: the card becomes a question gram on the intake sheet's
+     *  Educate Me panel, same `task://` provenance. */
+    private fun educateFromCard(item: LedgerItem) {
+        val text = item.text.ifBlank { "(handwritten)" }
+        com.toolsboox.plugin.calendar.ot.AskBridge.gramToEducateMe(
+            this, text = text, title = text,
+            link = com.toolsboox.ot.LedgerUri.task(item.id), sourceLabel = "a task"
+        )
     }
 
     private fun showCardRhizome(item: LedgerItem) {

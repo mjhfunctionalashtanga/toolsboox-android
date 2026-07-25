@@ -29,11 +29,12 @@ object LinkCardRenderer {
     fun kindGlyph(kind: String): String = when (kind) {
         "watch" -> "▶"
         "listen" -> "🎧"
+        "mail" -> "✉"
         else -> "🔖"
     }
 
     private fun kindWord(kind: String): String = when (kind) {
-        "watch" -> "Watch"; "listen" -> "Listen"; else -> "Read"
+        "watch" -> "Watch"; "listen" -> "Listen"; "mail" -> "Mail"; else -> "Read"
     }
 
     /**
