@@ -404,12 +404,14 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         }
     }
 
-    /** The original behaviour: back to the page you were last writing on. */
+    /** The note button opens TODAY's note on your last page index. It used to reopen `last_note_date`
+     *  — but that only updates when you land on a NOTES page, so once you'd written on (say) Friday it
+     *  stayed stuck there: sitting on Monday's day page never refreshed it, and the button kept
+     *  throwing you back to Friday. "Today's note" is what you actually want from the quick button; the
+     *  page INDEX (which numbered note page) still carries over. */
     private fun openLastNotePage() {
         val p = getSharedPreferences("ledger_notes", 0)
-        val date = runCatching {
-            java.time.LocalDate.parse(p.getString("last_note_date", "") ?: "")
-        }.getOrNull() ?: java.time.LocalDate.now()
+        val date = java.time.LocalDate.now()
         val bundle = bundleOf(
             "year" to "${date.year}", "month" to "${date.monthValue}", "day" to "${date.dayOfMonth}",
             "notePage" to (p.getString("last_note_page", "0") ?: "0")
