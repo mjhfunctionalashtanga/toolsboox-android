@@ -351,33 +351,45 @@ class CalendarDayPage {
             // space" rule. Each line's rect is recorded as it's drawn (the winRows discipline) so a
             // finger tap resolves against the pixels and never a second guess at the layout.
             run {
-                val gTop = to + 16.5f * ceh                    // the divider between the two bands
+                // The ⚡ Quick Wins glimpse draws in ITS OWN section below the Quick Wins title bar
+                // (row 19+) — no longer carved out of the Roots band above (that split the band). One
+                // line per win with a CATEGORY glyph (✉ email · ☎ call · ☐ task) instead of a ⚡ that
+                // just ate space, in the SAME Atkinson face as the Roots doors so the two harmonise.
+                val gTop = to + 19f * ceh
                 val left = lo + cew + 50.0f
                 val right = lo + 2 * cew + 50.0f
                 val textX = lo + cew + 60.0f
+                val winPaint = android.text.TextPaint(Creator.textDefaultBlack).apply {
+                    com.toolsboox.ot.LedgerFonts
+                        .typefaceFor(context, com.toolsboox.ot.LedgerFonts.Choice.ATKINSON)
+                        ?.let { typeface = it }
+                }
+                fun winGlyph(t: String): String = when {
+                    Regex("(?i)\\b(e-?mail|mail|reply|write|send|draft|inbox)\\b").containsMatchIn(t) -> "✉"
+                    Regex("(?i)\\b(call|phone|ring|dial|text|voicemail)\\b").containsMatchIn(t) -> "☎"
+                    else -> "☐"
+                }
                 when {
-                    // Still cooking (null): a quiet ellipsis, not an apology — the GardenDoors "…".
+                    // Still cooking (null): a quiet ellipsis, not an apology.
                     quickWinsGlimpse == null -> {
-                        canvas.drawLine(left, gTop, right, gTop, Creator.lineDefaultGrey50)
-                        canvas.drawText("⚡  …", textX, gTop + 34.0f, Creator.textSmallBlack)
+                        canvas.drawText("…", textX, gTop + 34.0f, winPaint)
                         glimpseRows = emptyList()
                     }
-                    // A win or two to show: divider, then a compact ⚡ line each.
+                    // A win or two: ONE line each, its category glyph, in the doors' font.
                     quickWinsGlimpse.isNotEmpty() -> {
-                        canvas.drawLine(left, gTop, right, gTop, Creator.lineDefaultGrey50)
-                        val rowH = (18.0f - 16.5f) * ceh / 2.0f     // two compact rows in the 1.5-row slice
+                        val rowH = ceh
                         val recorded = mutableListOf<GlimpseRow>()
                         quickWinsGlimpse.take(2).forEachIndexed { i, ln ->
                             val top = gTop + i * rowH
                             Creator.drawEllipsizedText(
-                                canvas, "⚡  ${ln.text}", Creator.textDefaultBlack,
-                                textX, top + 30.0f, right - textX - 10.0f
+                                canvas, "${winGlyph(ln.text)}  ${ln.text}", winPaint,
+                                textX, top + 34.0f, right - textX - 10.0f
                             )
                             recorded.add(GlimpseRow(ln, android.graphics.RectF(left, top, right, top + rowH)))
                         }
                         glimpseRows = recorded
                     }
-                    // Computed, nothing qualifies: leave the slice as empty paper (no stray divider).
+                    // Computed, nothing qualifies: leave it empty.
                     else -> glimpseRows = emptyList()
                 }
             }

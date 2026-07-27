@@ -1824,10 +1824,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         20f + 645f + 60f,                       // lo + cew + 60 — the text inset the panels use
         (1872f - 35 * 50f) / 2f + 14 * 50f,     // to + 14*ceh, under the title bar
         20f + 2 * 645f + 50f - 10f,             // lo + 2*cew + 50, less a hair of right margin
-        // to + 16.5*ceh — the band's TOP slice: the bottom 1.5 rows (down to the 18*ceh closing
-        // rule) belong to the ⚡ Quick Wins glimpse CalendarDayPage draws there, so the GardenDoors
-        // lines and the glimpse split the band's height without overlapping.
-        (1872f - 35 * 50f) / 2f + 16.5f * 50f
+        // to + 18*ceh — the doors now own the WHOLE Roots band (rows 14→18). The ⚡ Quick Wins
+        // glimpse moved OUT to its own section below the row-18 title bar (it was splitting the band).
+        (1872f - 35 * 50f) / 2f + 18f * 50f
     )
 
     /**
