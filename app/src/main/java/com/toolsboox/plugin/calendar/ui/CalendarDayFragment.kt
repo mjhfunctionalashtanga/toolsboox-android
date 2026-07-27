@@ -1592,7 +1592,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 findNavController().navigate(R.id.action_to_sprouts)
             com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_MISSED ->
                 findNavController().navigate(R.id.action_to_missed_rhizomes)
-            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_TAG ->
+            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_TAG,
+            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_TAG2 ->
                 findNavController().navigate(R.id.action_to_seeds)
             else -> findNavController().navigate(R.id.action_to_ledger_roots)
         }
@@ -1726,6 +1727,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         if (rooted == null) gardenDoors?.tag?.let { doors += "🌰" to it }
         gardenDoors?.sprout?.let { doors += "🌱" to it }
         gardenDoors?.missed?.let { doors += "⁂" to it }
+        // Thin day: fill an open slot with the runner-up hot tag (take(lines) below caps it) so the
+        // band reads full instead of leaving a gap.
+        gardenDoors?.tag2?.let { doors += "🌰" to it }
 
         val text = android.text.SpannableStringBuilder()
         if (doors.isEmpty()) {

@@ -48,9 +48,15 @@ object InkMount {
         }
         if (!taped) return mat
 
-        // The tape needs room to overhang the mat's top corners.
+        // The tape needs room to overhang the mat's top corners — and must NOT be clipped there.
+        // Each strip is rotated ±20°, so its far corners swing past its 40×14 box and above the
+        // mat's top edge into the padding; the default clipToPadding/clipChildren was cutting those
+        // ends off ("the tape doesn't show all the way"). Turn both off and keep enough headroom
+        // that the whole strip stays inside the holder's bounds (so a clipping parent can't cut it).
         val holder = FrameLayout(context).apply {
-            setPadding(px(12), px(11), px(12), 0)
+            clipChildren = false
+            clipToPadding = false
+            setPadding(px(14), px(14), px(14), 0)
             addView(mat)
         }
         holder.addView(tape(context, -TAPE_TILT_DEG), tapeParams(context, start = true))

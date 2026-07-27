@@ -90,7 +90,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 binding.articleWeb.scrollBy(0, if (up) -step else step)
             } else {
                 val step = (binding.feedsRecycler.height * 9 / 10).coerceAtLeast(1)
-                binding.feedsRecycler.smoothScrollBy(0, if (up) -step else step)
+                // E-ink: the list must JUMP a page, never smooth-scroll (which ghosts/smears).
+                binding.feedsRecycler.scrollBy(0, if (up) -step else step)
             }
             true
         }
@@ -206,9 +207,25 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         cyclePillOnTap(
             binding.feedsGrip, binding.feedsPill, "feeds_pill", "feeds_pill_vertical",
             alsoOnTap = {
-                // While an article is open the pill is a reading drawer, and shrinking it is the
-                // more useful answer to a tap than turning it.
-                if (currentArticle != null) { pillShrunk = !pillShrunk; applyArticlePill(); true } else false
+                // While an article is open, the grip CYCLES the reading modal: full-horizontal →
+                // full-vertical → slim drawer → back. This gives the vertical flip by the handle (like
+                // the other pills) without losing the slim shrunk drawer.
+                if (currentArticle != null) {
+                    val vertical = prefs().getBoolean("feeds_pill_vertical", false)
+                    when {
+                        !pillShrunk && !vertical -> {
+                            prefs().edit().putBoolean("feeds_pill_vertical", true).apply()
+                            applyFeedsPillOrientation()
+                        }
+                        !pillShrunk && vertical -> { pillShrunk = true; applyArticlePill() }
+                        else -> {
+                            pillShrunk = false
+                            prefs().edit().putBoolean("feeds_pill_vertical", false).apply()
+                            applyFeedsPillOrientation(); applyArticlePill()
+                        }
+                    }
+                    true
+                } else false
             }
         )
 
@@ -822,20 +839,24 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val shrunk = inArticle && pillShrunk
         val fullArticle = inArticle && !shrunk
         fun vis(b: Boolean) = if (b) View.VISIBLE else View.GONE
-        // List/full controls collapse away in the slim drawer.
+        // Main-pill controls collapse away in the slim drawer.
         binding.refreshButton.visibility = vis(!shrunk)
         binding.settingsButton.visibility = vis(!shrunk)
-        binding.feedsGoto.visibility = vis(!shrunk)
-        // ↑/↓ page-nav is present in every mode.
+        // The side nav pill (↑ ☰ ↓ — the "day picker") is INDEPENDENT of the main pill's shrunk
+        // state: minimizing the reader modal must NOT take the day picker with it (Michael). So its
+        // three buttons stay put in every mode.
+        binding.feedsGoto.visibility = View.VISIBLE
         binding.feedsPageUp.visibility = View.VISIBLE
         binding.feedsPageDown.visibility = View.VISIBLE
-        // ↑/↓ list-paging carrots hide in the shrunk drawer (the drawer has its own ‹ › page nav).
-        binding.feedsPageUp.visibility = vis(!shrunk); binding.feedsPageDown.visibility = vis(!shrunk)
         // Article actions only in the full article view.
         binding.feedsStar.visibility = vis(fullArticle); binding.feedsNote.visibility = vis(fullArticle)
+        // Filled star when the open article is starred (parity with the standalone reader).
+        binding.feedsStar.setImageResource(
+            if (currentArticle?.starred == true) R.drawable.ic_starred else R.drawable.ic_star)
         binding.feedsParsed.visibility = vis(fullArticle); binding.feedsTts.visibility = vis(fullArticle)
         binding.feedsLater.visibility = vis(fullArticle)
-        // The shrunk drawer's own four controls.
+        // Article jump (⏫ last / ⏬ next article) lives ONLY in the slim shrunk drawer. On the full
+        // modal it read as stray double-carrots that "don't go anywhere", so it stays with its drawer.
         binding.feedsDwPrev.visibility = vis(shrunk); binding.feedsDwNext.visibility = vis(shrunk)
     }
 
@@ -1736,8 +1757,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     setTextColor(0xFF000000.toInt())
                     if (header || selected) setTypeface(typeface, android.graphics.Typeface.BOLD)
                     if (selected) paintFlags = paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
-                    setPadding(dpPx(indent), dpPx(7), dpPx(8), dpPx(7))
-                    maxLines = 1
+                    // Narrow Palma drawer: pull the indent in and let a long feed name WRAP to a
+                    // second line instead of truncating — no marquee (its constant repaint ghosts
+                    // on e-ink), just two static lines that stay readable.
+                    setPadding(dpPx((indent - 6).coerceAtLeast(4)), dpPx(7), dpPx(6), dpPx(7))
+                    maxLines = 2
                     ellipsize = android.text.TextUtils.TruncateAt.END
                     isClickable = true
                     setOnClickListener {
@@ -1853,7 +1877,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             // stars aren't silently missing from the Notes / Ledger Log.
             if (!entry.starred) lifecycleScope.launch(Dispatchers.IO) { logStar(entry) }
             showMessage(if (entry.starred) R.string.feeds_unstarred else R.string.feeds_starred)
-            refresh()
+            reflectStar(entry, !entry.starred)
             return
         }
         if (entry.id <= 0) {
@@ -1861,7 +1885,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             // the Ledger corpus only — never send a synthetic id to the server.
             if (!entry.starred) lifecycleScope.launch(Dispatchers.IO) { logStar(entry) }
             showMessage(if (entry.starred) R.string.feeds_unstarred else R.string.feeds_starred)
-            refresh()
+            reflectStar(entry, !entry.starred)
             return
         }
         val p = prefs()
@@ -1879,7 +1903,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     // Newly starred → log to today's Ledger so it joins the corpus + sync.
                     if (!wasStarred) withContext(Dispatchers.IO) { logStar(entry) }
                     showMessage(if (wasStarred) R.string.feeds_unstarred else R.string.feeds_starred)
-                    refresh()
+                    reflectStar(entry, !wasStarred)
                 }
                 is com.toolsboox.plugin.feeds.nw.MinifluxClient.Result.Err -> {
                     android.widget.Toast.makeText(
@@ -1888,6 +1912,20 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     ).show()
                 }
             }
+        }
+    }
+
+    /** Reflect a star LOCALLY — flip the model + repaint the single row, and never call
+     *  refresh(): that reloads the feed and closes any open in-pane article, which is what
+     *  kicked you out of what you were reading when you starred it. Counts don't change on a
+     *  star (unread membership is unchanged), so the drawer is left untouched — no e-ink flash. */
+    private fun reflectStar(entry: FeedEntry, nowStarred: Boolean) {
+        allEntries = allEntries.map { if (it.id == entry.id) it.copy(starred = nowStarred) else it }
+        adapter.setStarred(entry.id, nowStarred)
+        if (currentArticle?.id == entry.id) {
+            currentArticle = currentArticle?.copy(starred = nowStarred)
+            // Reflect the filled/hollow star on the reader toolbar immediately.
+            binding.feedsStar.setImageResource(if (nowStarred) R.drawable.ic_starred else R.drawable.ic_star)
         }
     }
 

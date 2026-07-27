@@ -49,7 +49,7 @@
                     android:scaleType="fitCenter"
                     android:background="@drawable/dialog_rounded_bg"
                     android:contentDescription="Notes"
-                    android:elevation="10dp"/>
+                    android:elevation="0dp"/>
 
         </FrameLayout>
 

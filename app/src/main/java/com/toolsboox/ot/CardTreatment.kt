@@ -40,7 +40,9 @@ object CardTreatment {
      */
     fun card(src: Bitmap, tape: Boolean = true): Bitmap {
         val side = (src.width * 0.05f).coerceAtLeast(12f)
-        val overhang = if (tape) (src.width * 0.06f).coerceAtLeast(16f) else 0f
+        // Room for the FULL tape: drawTape's strip is ~0.13·width wide and, rotated 20°, its far
+        // corner reaches ~0.14·width from the card corner. The old 0.06 clipped those ends off.
+        val overhang = if (tape) (src.width * 0.14f).coerceAtLeast(34f) else 0f
         val out = Bitmap.createBitmap(
             (src.width + side * 2 + overhang * 2).toInt(),
             (src.height + side * 2 + overhang).toInt(),
@@ -73,7 +75,9 @@ object CardTreatment {
         val side = (src.width * 0.06f).coerceAtLeast(14f)
         val chin = (src.width * 0.22f).coerceAtLeast(48f)
         // Room for the tape to hang past the frame's top corners.
-        val overhang = if (tape) (src.width * 0.06f).coerceAtLeast(16f) else 0f
+        // Room for the FULL tape: drawTape's strip is ~0.13·width wide and, rotated 20°, its far
+        // corner reaches ~0.14·width from the card corner. The old 0.06 clipped those ends off.
+        val overhang = if (tape) (src.width * 0.14f).coerceAtLeast(34f) else 0f
         val out = Bitmap.createBitmap(
             (src.width + side * 2 + overhang * 2).toInt(),
             (src.height + side + chin + overhang).toInt(),
@@ -102,7 +106,7 @@ object CardTreatment {
 
     /** Just the tape, no frame — two strips across the image's top corners. */
     fun tapeOnly(src: Bitmap): Bitmap {
-        val overhang = (src.width * 0.06f).coerceAtLeast(16f)
+        val overhang = (src.width * 0.14f).coerceAtLeast(34f)   // full tape width — see card()
         val out = Bitmap.createBitmap(
             (src.width + overhang * 2).toInt(), (src.height + overhang).toInt(),
             Bitmap.Config.ARGB_8888

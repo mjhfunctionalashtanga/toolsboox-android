@@ -68,6 +68,16 @@ class FeedEntryAdapter(
     /** The currently shown list (for paging in the article reader). */
     fun current(): List<FeedEntry> = items
 
+    /** Flip one row's star IN PLACE. Starring used to route through refresh(), which reloads the
+     *  feed and closes any open in-pane article — so a star kicked you out of what you were
+     *  reading. This repaints just the one row (no scroll reset, no pane teardown). */
+    fun setStarred(id: Long, starred: Boolean) {
+        val i = items.indexOfFirst { it.id == id }
+        if (i < 0) return
+        items = items.toMutableList().also { it[i] = it[i].copy(starred = starred) }
+        notifyItemChanged(i)
+    }
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
         val v = LayoutInflater.from(parent.context).inflate(R.layout.item_feed_entry, parent, false)
         return Holder(v)

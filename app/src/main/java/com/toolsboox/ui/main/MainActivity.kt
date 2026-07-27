@@ -375,7 +375,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
             isOutsideTouchable = true
-            elevation = 10f
+            elevation = 0f   // flat e-ink modal — no drop shadow (matches the app's other surfaces)
         }
         // Unfurl to the RIGHT of the pen button, vertically centred on it.
         val anchor = binding.floatNoteButton

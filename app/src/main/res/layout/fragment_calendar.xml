@@ -77,17 +77,17 @@
                 android:layout_marginEnd="14dp"
                 android:layout_marginBottom="18dp">
 
-            <ImageView android:id="@+id/navGrip" android:layout_width="@dimen/ledger_grip_short" android:layout_height="@dimen/ledger_pill_button"
+            <ImageView android:id="@+id/navGrip" android:layout_width="@dimen/ledger_grip_short" android:layout_height="30dp"
                 android:scaleType="fitCenter" android:src="@drawable/ic_grip"
                 android:contentDescription="@null"/>
-            <ImageButton android:id="@+id/navUp" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
-                android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
+            <ImageButton android:id="@+id/navUp" android:layout_width="30dp" android:layout_height="30dp"
+                android:padding="5dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_group_day"/>
-            <ImageButton android:id="@+id/navGoto" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
-                android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_today"
+            <ImageButton android:id="@+id/navGoto" android:layout_width="30dp" android:layout_height="30dp"
+                android:padding="7dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_today"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
-            <ImageButton android:id="@+id/navDown" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
-                android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
+            <ImageButton android:id="@+id/navDown" android:layout_width="30dp" android:layout_height="30dp"
+                android:padding="5dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_group_day"/>
             <ImageButton android:id="@+id/navExpand" android:visibility="gone"
                 android:layout_width="0dp" android:layout_height="0dp" android:src="@drawable/ic_nav_left"
@@ -121,26 +121,26 @@
                 android:layout_marginStart="14dp"
                 android:layout_marginBottom="18dp">
 
-            <ImageView android:id="@+id/toolGrip" android:layout_width="@dimen/ledger_grip_short" android:layout_height="@dimen/ledger_pill_button"
+            <ImageView android:id="@+id/toolGrip" android:layout_width="@dimen/ledger_grip_short" android:layout_height="30dp"
                 android:scaleType="fitCenter" android:src="@drawable/ic_grip"
                 android:contentDescription="@null"/>
-            <ImageButton android:id="@+id/toolPen" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
-                android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_pen"
+            <ImageButton android:id="@+id/toolPen" android:layout_width="30dp" android:layout_height="30dp"
+                android:padding="4dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_pen"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_pen"/>
-            <ImageButton android:id="@+id/toolEraser" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
-                android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_eraser"
+            <ImageButton android:id="@+id/toolEraser" android:layout_width="30dp" android:layout_height="30dp"
+                android:padding="4dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_eraser"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_eraser"/>
-            <ImageButton android:id="@+id/toolLasso" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
-                android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_lasso"
+            <ImageButton android:id="@+id/toolLasso" android:layout_width="30dp" android:layout_height="30dp"
+                android:padding="4dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_lasso"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_lasso"/>
-            <ImageButton android:id="@+id/toolUndo" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
-                android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_undo"
+            <ImageButton android:id="@+id/toolUndo" android:layout_width="30dp" android:layout_height="30dp"
+                android:padding="4dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_undo"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="Undo"/>
-            <ImageButton android:id="@+id/toolRedo" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
-                android:padding="8dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_redo"
+            <ImageButton android:id="@+id/toolRedo" android:layout_width="30dp" android:layout_height="30dp"
+                android:padding="4dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_redo"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="Redo"/>
-            <ImageButton android:id="@+id/toolGear" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
-                android:padding="11dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_wrench"
+            <ImageButton android:id="@+id/toolGear" android:layout_width="30dp" android:layout_height="30dp"
+                android:padding="7dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_wrench"
                 android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_settings"/>
             <ImageButton android:id="@+id/toolExpand" android:visibility="gone"
                 android:layout_width="0dp" android:layout_height="0dp" android:src="@drawable/ic_nav_left"

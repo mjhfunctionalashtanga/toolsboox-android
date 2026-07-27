@@ -7,14 +7,14 @@
     -->
     <dimen name="ledger_toolbar_width">44dp</dimen>
     <dimen name="ledger_toolbar_button">44dp</dimen>
-    <dimen name="ledger_pill_button">45dp</dimen>
-    <dimen name="ledger_pill_button_padding">9dp</dimen>
-    <dimen name="ledger_grip_short">24dp</dimen>
-    <!-- Equal to ledger_pill_button, like the other buckets (46/46, 74/74): the grip's long side
-         spans the pill's cross-section, so anything larger than the buttons makes the GRIP the
-         widest thing in a vertical pill — 5dp of pill width for nothing, and exactly the 5dp
-         that kept the Compact pill from fitting a 44dp reading gutter. -->
-    <dimen name="ledger_grip_long">45dp</dimen>
+    <!-- Day-page pills hardcode a 30dp button (tightened on-device), and the grip's long side
+         must EQUAL the button or it renders wider than the icon and sits uncentered on the Tab —
+         so this whole set matches the base 30/18 grip. "Near-base sizes read right at this
+         density" (above); the old 45s put a 45·scale grip beside a 30·scale button. -->
+    <dimen name="ledger_pill_button">30dp</dimen>
+    <dimen name="ledger_pill_button_padding">7dp</dimen>
+    <dimen name="ledger_grip_short">18dp</dimen>
+    <dimen name="ledger_grip_long">30dp</dimen>
     <dimen name="ledger_navigator_height">60dp</dimen>
     <dimen name="ledger_nav_button">44dp</dimen>
 </resources>

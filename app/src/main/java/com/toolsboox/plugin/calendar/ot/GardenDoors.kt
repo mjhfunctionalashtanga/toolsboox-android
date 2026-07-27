@@ -54,6 +54,12 @@ object GardenDoors {
     const val KIND_SPROUT = "sprout"
     const val KIND_MISSED = "missed"
     const val KIND_TAG = "tag"
+    /** The runner-up hot tag — a plain fill door that only rides when a slot would otherwise sit
+     *  empty, so a thin day's Roots band still reads full instead of showing a gap. */
+    const val KIND_TAG2 = "tag2"
+    /** Parked-answer schema; bump when the door SET changes (added tag2) so a day parked under the
+     *  old shape re-cooks instead of showing a warm cache missing the new door. */
+    private const val SCHEMA_VERSION = 2
 
     /** The rising door: a `#tag` that JUST graduated Seed→Sprout, and the synthesis it invites. */
     const val KIND_ROOTED = "rooted"
@@ -70,7 +76,8 @@ object GardenDoors {
     )
 
     data class Doors(
-        val sprout: Door?, val missed: Door?, val tag: Door? = null, val rooted: Door? = null
+        val sprout: Door?, val missed: Door?, val tag: Door? = null,
+        val tag2: Door? = null, val rooted: Door? = null
     )
 
     private const val PREFS = "ledger_garden_doors"
@@ -94,6 +101,7 @@ object GardenDoors {
     fun cachedFor(context: Context, day: LocalDate): Doors? {
         val p = prefs(context)
         if (p.getString("day", "") != day.toString()) return null
+        if (p.getInt("schema", 0) < SCHEMA_VERSION) return null   // parked under the old shape → re-cook
         fun door(kind: String): Door? {
             val text = p.getString("$kind.text", "").orEmpty()
             if (text.isBlank()) return null
@@ -104,7 +112,7 @@ object GardenDoors {
                 p.getString("$kind.url", "").orEmpty()
             )
         }
-        return Doors(door(KIND_SPROUT), door(KIND_MISSED), door(KIND_TAG), door(KIND_ROOTED))
+        return Doors(door(KIND_SPROUT), door(KIND_MISSED), door(KIND_TAG), door(KIND_TAG2), door(KIND_ROOTED))
     }
 
     /** Blank one door for the rest of the day — after "Remove from corpus", the removed thing
@@ -134,15 +142,17 @@ object GardenDoors {
         // Graph-only — needs neither the corpus nor a key, so it stands even when the two
         // rhyme-doors fail soft on a thin ledger or a missing embeddings key.
         val tag = runCatching { tagDoor(context) }.getOrNull()
+        val tag2 = runCatching { secondTagDoor(context, tag?.key) }.getOrNull()   // fills an open slot on a thin day
         // The rising door leads when a promotion is fresh AND hasn't led lately (novelty). Its
         // last-resort form is allowed to re-show only when it would otherwise be the day's ONLY
         // door — a lone signal is never swallowed by its own novelty rule.
         var rooted = runCatching { risingDoor(context, day, allowRecentlyShown = false) }.getOrNull()
         if (rooted == null && tag == null && sprout == null && missed == null)
             rooted = runCatching { risingDoor(context, day, allowRecentlyShown = true) }.getOrNull()
-        val doors = Doors(sprout, missed, tag, rooted)
+        val doors = Doors(sprout, missed, tag, tag2, rooted)
         prefs(context).edit()
             .putString("day", day.toString())
+            .putInt("schema", SCHEMA_VERSION)
             .putString("${KIND_SPROUT}.text", doors.sprout?.text ?: "")
             .putString("${KIND_SPROUT}.origin", doors.sprout?.origin ?: "")
             .putString("${KIND_SPROUT}.key", doors.sprout?.key ?: "")
@@ -155,6 +165,10 @@ object GardenDoors {
             .putString("${KIND_TAG}.origin", doors.tag?.origin ?: "")
             .putString("${KIND_TAG}.key", doors.tag?.key ?: "")
             .putString("${KIND_TAG}.url", "")
+            .putString("${KIND_TAG2}.text", doors.tag2?.text ?: "")
+            .putString("${KIND_TAG2}.origin", doors.tag2?.origin ?: "")
+            .putString("${KIND_TAG2}.key", doors.tag2?.key ?: "")
+            .putString("${KIND_TAG2}.url", "")
             .putString("${KIND_ROOTED}.text", doors.rooted?.text ?: "")
             .putString("${KIND_ROOTED}.origin", doors.rooted?.origin ?: "")
             .putString("${KIND_ROOTED}.key", doors.rooted?.key ?: "")
@@ -282,6 +296,35 @@ object GardenDoors {
         return Door(
             KIND_TAG,
             if (rhyme != null) "$lead  ·  rhymes with $rhyme" else lead,
+            origin = "${hot.info.occurrences.size}× across your pages",
+            key = LedgerTags.tagUri(hot.info.tag)
+        )
+    }
+
+    /** The runner-up hot tag as a plain fill door (no rhyme) — same scoring as [tagDoor] but the
+     *  SECOND-best, skipping the key the primary tag door already took. Only fills an open Roots slot
+     *  on a thin day (see bandText's ordering); null when there's no clear second tag. */
+    private fun secondTagDoor(context: Context, excludingKey: String?): Door? {
+        val tags = LedgerTags.list(context)
+        if (tags.size < 2) return null
+        val today = LocalDate.now()
+        val now = System.currentTimeMillis()
+        data class Hot(val info: LedgerTags.TagInfo, val score: Double, val taking: Boolean)
+        val hot = tags.mapNotNull { info ->
+            if (excludingKey != null && LedgerTags.tagUri(info.tag) == excludingKey) return@mapNotNull null
+            val lastSeen = info.occurrences.maxByOrNull { it.first }?.first ?: return@mapNotNull null
+            val seenDaysAgo = ChronoUnit.DAYS.between(lastSeen, today).coerceAtLeast(0L)
+            if (seenDaysAgo > 21) return@mapNotNull null
+            val createdDaysAgo = if (info.created > 0L) (now - info.created) / 86_400_000L else Long.MAX_VALUE
+            val isNew = createdDaysAgo in 0..14
+            val heft = minOf(info.occurrences.size, 12)
+            val taking = isNew && info.occurrences.size >= 2
+            val score = (22 - seenDaysAgo) + heft * 1.5 + (if (taking) 6.0 else 0.0)
+            Hot(info, score, taking)
+        }.maxByOrNull { it.score } ?: return null
+        return Door(
+            KIND_TAG2,
+            if (hot.taking) "#${hot.info.tag} is taking root" else "#${hot.info.tag}",
             origin = "${hot.info.occurrences.size}× across your pages",
             key = LedgerTags.tagUri(hot.info.tag)
         )
