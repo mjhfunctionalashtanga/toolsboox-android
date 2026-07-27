@@ -1195,7 +1195,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // the stepper's own actions; tapping the page number opens the jump picker.
         if (notePage?.toIntOrNull() != null) {
             binding.notePager.visibility = View.VISIBLE
-            binding.notePagerLabel.text = "page $notePage"
+            binding.notePagerLabel.text = ((notePage?.toIntOrNull() ?: 0) + 1).toString()   // 1-indexed, matches the header
             binding.notePagerPrev.setOnClickListener { binding.toolbarDrawing.toolbarSwipeUp.performClick() }
             binding.notePagerNext.setOnClickListener { binding.toolbarDrawing.toolbarSwipeDown.performClick() }
             binding.notePagerLabel.setOnClickListener { showNotePageJump() }

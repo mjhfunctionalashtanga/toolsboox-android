@@ -411,7 +411,9 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     private fun openLastNotePage() {
         val p = getSharedPreferences("ledger_notes", 0)
         val nav = binding.fragmentContent.findNavController()
-        if (p.getBoolean("on_note_page", false)) {
+        // Live check — are we ACTUALLY on the note surface right now? (The scratch note is its own
+        // nav destination.) A persisted flag went stale and flipped to the schedule unexpectedly.
+        if (nav.currentDestination?.id == R.id.CalendarScratchFragment) {
             // Second tap — you're on your note → open that day's day page.
             val d = runCatching { java.time.LocalDate.parse(p.getString("current_view_date", "") ?: "") }
                 .getOrNull() ?: java.time.LocalDate.now()

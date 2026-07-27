@@ -160,8 +160,10 @@ class CalendarDayPageNotes : Creator {
 
             // Title in the top margin so this freeform surface reads as "NOTES" — distinct from the
             // "WRITE" page (post-Synthesize), which shares this same ruled template.
+            // Just "NOTES" / "WRITE" — the page number rides the inline ‹ N › pager next to it, so
+            // "· Page N" here would double up.
             canvas.drawText(
-                (if (notePage == "write") "WRITE" else "NOTES") + "  ·  Page ${page + 1}",
+                if (notePage == "write") "WRITE" else "NOTES",
                 lo, to - 16.0f, Creator.textDefaultBlack)
 
             canvas.drawText("${page + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)
