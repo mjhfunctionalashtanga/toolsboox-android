@@ -25,6 +25,8 @@ data class FeedEntry(
     val enclosureImage: String? = null,
     /** First audio enclosure URL (the podcast episode's .mp3/.m4a), used to play the real audio. */
     val enclosureAudio: String? = null,
+    /** Transcript enclosure URL (RSS podcast:transcript) when the feed surfaces one — best-effort. */
+    val enclosureTranscript: String? = null,
     /** The feed's own XML URL (Miniflux `feed.feed_url` / the local sub's URL). The Podcasting 2.0
      *  layer (chapters/transcripts) lives in that XML and nowhere in the Miniflux API — this is
      *  the address [com.toolsboox.plugin.feeds.nw.FeedChapters] goes back to for it. */
@@ -35,6 +37,10 @@ data class FeedEntry(
     val audioUrl: String?
         get() = enclosureAudio?.takeIf { it.startsWith("http") }
             ?: url.takeIf { u -> listOf(".mp3", ".m4a", ".m4b", ".aac", ".ogg", ".opus").any { u.lowercase().substringBefore('?').endsWith(it) } }
+
+    /** The episode's transcript URL, when the feed shipped one. */
+    val transcriptUrl: String?
+        get() = enclosureTranscript?.takeIf { it.startsWith("http") }
 
     /** Read / Watch / Listen lens. Primary signal is the Miniflux category's leading emoji
      *  (📖 / 📺 / 🎧, per the shared grammar with the iPad); falls back to a media heuristic. */

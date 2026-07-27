@@ -274,8 +274,24 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                     else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             }
         )
-        val all = fixed.take(1) + readItems + fixed.drop(1)
+        val transcriptItems: List<Pair<String, () -> Unit>> =
+            entry?.transcriptUrl?.let { url -> listOf("📄  Transcript" to { showTranscript(url) }) } ?: emptyList()
+        val all = fixed.take(1) + readItems + transcriptItems + fixed.drop(1)
         showIconMenu(null, all)
+    }
+
+    /** Fetch + show the episode transcript (parity with the iPad). Off-thread fetch, then a
+     *  scrollable dialog. Only offered when the feed shipped a transcript. */
+    private fun showTranscript(url: String) {
+        showMessage("Loading transcript…", binding.root)
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) { com.toolsboox.plugin.feeds.nw.TranscriptLoader.fetch(url) }
+            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+                .setTitle(entry?.title?.take(60) ?: "Transcript")
+                .setMessage(text ?: "Couldn't load the transcript.")
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+        }
     }
 
     /** Read the article aloud via the process-wide player (keeps playing after you leave). */

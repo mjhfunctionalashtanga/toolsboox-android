@@ -219,6 +219,18 @@ class MinifluxClient @Inject constructor() {
                     .firstOrNull { it.optString("mime_type").startsWith("audio", true) }
                     ?.optString("url")?.ifBlank { null }
             }
+            // Transcript enclosure (RSS podcast:transcript) when Miniflux happens to surface one —
+            // VTT/SRT by mime, or a .vtt/.srt URL. Best-effort (often stripped; see feedUrl note).
+            val enclosureTranscript = encs?.let { arr ->
+                (0 until arr.length()).asSequence().mapNotNull { arr.optJSONObject(it) }
+                    .firstOrNull {
+                        val m = it.optString("mime_type").lowercase()
+                        val u = it.optString("url").lowercase()
+                        m == "text/vtt" || m.contains("subrip") || m == "text/srt" ||
+                            u.endsWith(".vtt") || u.endsWith(".srt") ||
+                            ((m == "text/html" || m == "text/plain") && u.contains("transcript"))
+                    }?.optString("url")?.ifBlank { null }
+            }
             out += FeedEntry(
                 id = e.optLong("id"),
                 title = e.optString("title"),
@@ -232,6 +244,7 @@ class MinifluxClient @Inject constructor() {
                 category = feed?.optJSONObject("category")?.optString("title")?.ifBlank { null },
                 enclosureImage = enclosureImage,
                 enclosureAudio = enclosureAudio,
+                enclosureTranscript = enclosureTranscript,
                 // The feed's XML address — the way back to the Podcasting 2.0 tags
                 // (chapters/transcripts) the Miniflux API itself never surfaces.
                 feedUrl = feed?.optString("feed_url")?.ifBlank { null }
