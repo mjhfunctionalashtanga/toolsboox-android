@@ -109,7 +109,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentFeedsBinding.bind(view)
 
-        adapter = FeedEntryAdapter(emptyList(), onOpen = ::openEntry, onStar = ::toggleStar)
+        adapter = FeedEntryAdapter(emptyList(), onOpen = ::openEntry, onStar = ::toggleStar,
+                                   onLongPress = ::markAboveAsRead)
         // Text-size tier lives in the shared a11y prefs (set from the wrench). Migrate the
         // short-lived boolean toggle if it was flipped on.
         val a11y = requireContext().getSharedPreferences("ledger_a11y", 0)
@@ -466,6 +467,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     allEntries = result.value
                     com.toolsboox.plugin.feeds.nw.FeedCache.saveEntries(requireContext(), cacheKey(), result.value)
                     prefetchParsed(url, token, result.value)   // download readable (parsed) versions offline
+                    // Auto-keep the latest audio episodes offline (parity with the iPad's keep-latest;
+                    // podcast-app behaviour, no star). Newest-first; the count cap trims the rest.
+                    com.toolsboox.plugin.feeds.nw.LaterMedia.keepRecent(
+                        requireContext(), result.value.mapNotNull { it.audioUrl })
                     // Opportunistic janitor — parsed HTML accrued forever (the .versions lesson).
                     val appCtx = requireContext().applicationContext
                     lifecycleScope.launch(Dispatchers.IO) {
@@ -512,11 +517,21 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // requireContext() mid-loop on a detached fragment is a crash, not a cache miss.
         val appCtx = requireContext().applicationContext
         lifecycleScope.launch(Dispatchers.IO) {
+            var bypassBudget = 30   // pre-unlock at most N paywall stubs per sweep (mirrors iOS)
             for (e in entries.take(400)) {
                 if (com.toolsboox.plugin.feeds.nw.FeedCache.loadContent(appCtx, e.id) != null) continue
                 val res = runCatching { miniflux.fetchContent(url, token, e.id) }.getOrNull()
-                if (res is MinifluxClient.Result.Ok && res.value.isNotBlank()) {
-                    com.toolsboox.plugin.feeds.nw.FeedCache.saveContent(appCtx, e.id, res.value)
+                var content = if (res is MinifluxClient.Result.Ok) res.value else ""
+                // Pre-unlock a paywalled stub through the bypass ahead of time, so the reader has the
+                // full article offline. Bounded + gentle so a big sweep doesn't hammer archive.today.
+                if (bypassBudget > 0 && e.url.isNotBlank() &&
+                    com.toolsboox.plugin.feeds.nw.PaywallBypass.looksTruncated(content.ifBlank { null })) {
+                    bypassBudget--
+                    com.toolsboox.plugin.feeds.nw.PaywallBypass.readable(e.url)?.let { content = it }
+                    runCatching { Thread.sleep(400) }
+                }
+                if (content.isNotBlank()) {
+                    com.toolsboox.plugin.feeds.nw.FeedCache.saveContent(appCtx, e.id, content)
                 }
             }
         }
@@ -1425,6 +1440,26 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
 
     /** How opening/scrolling marks entries read: "open" (default) · "scroll" · "off". */
     private fun markReadMode(): String = prefs().getString("feeds_mark_read", "open") ?: "open"
+
+    /** Long-press a row → mark every article ABOVE it read (the common reader gesture; parity with
+     *  the iPad's "Mark above as read" context item). Confirmed first, because on e-ink a long-press
+     *  can be accidental and this is a bulk change. Marks the same "above" set the scroll-mode
+     *  handler does — everything before this row in the current list. */
+    private fun markAboveAsRead(entry: FeedEntry) {
+        val list = adapter.current()
+        val idx = list.indexOfFirst { it.id == entry.id }
+        if (idx <= 0) return
+        val above = list.take(idx).filterNot { FeedReadState.isRead(it.id) }
+        if (above.isEmpty()) return
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+            .setTitle("Mark ${above.size} above as read?")
+            .setPositiveButton("Mark read") { _, _ ->
+                above.forEach { markEntryRead(it, notify = false) }
+                adapter.notifyDataSetChanged()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
 
     /** Mark one entry read: locally (greys the row) + on Miniflux (durable). Idempotent. */
     private fun markEntryRead(entry: FeedEntry, notify: Boolean = true) {

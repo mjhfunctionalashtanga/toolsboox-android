@@ -44,6 +44,24 @@ object LaterMedia {
 
     private const val MAX_BYTES = 1_500L * 1024 * 1024   // ~1.5 GB of podcasts
     private const val MAX_AGE_DAYS = 45L
+    private const val KEEP_LATEST_DEFAULT = 8
+
+    /** Most-recent audio episodes to keep offline (parity with the iPad's per-surface cap). */
+    fun keepLimit(context: Context): Int =
+        context.getSharedPreferences("feeds", 0).getInt("offline_keep_latest", KEEP_LATEST_DEFAULT).coerceIn(3, 20)
+
+    /** Auto-keep the latest episodes offline (podcast-app behaviour, no star): download the newest
+     *  [max] URLs not already cached, then prune older ones back to the cap. `urls` newest-first. */
+    fun keepRecent(context: Context, urls: List<String>, max: Int = keepLimit(context)) {
+        var taken = 0
+        for (u in urls) {
+            if (taken >= max) break
+            if (u.isBlank()) continue
+            taken++
+            if (!isDownloaded(context, u)) download(context, u)
+        }
+        prune(context)
+    }
 
     /** Janitor: failed downloads leaked .part files forever and finished episodes never
      *  aged out — cap by age, then by total size (oldest first). */
@@ -62,5 +80,10 @@ object LaterMedia {
                 f.delete()
             } else break
         }
+        // Count cap: keep only the most-recent N episodes (parity with the iPad's per-surface cap).
+        dir(context).listFiles()?.filter { it.isFile && !it.name.endsWith(".part") }
+            ?.sortedByDescending { it.lastModified() }
+            ?.drop(keepLimit(context))
+            ?.forEach { it.delete() }
     }.let {}
 }

@@ -24,7 +24,8 @@ import java.util.concurrent.Executors
 class FeedEntryAdapter(
     private var items: List<FeedEntry>,
     private val onOpen: (FeedEntry) -> Unit,
-    private val onStar: (FeedEntry) -> Unit
+    private val onStar: (FeedEntry) -> Unit,
+    private val onLongPress: (FeedEntry) -> Unit = {}
 ) : RecyclerView.Adapter<FeedEntryAdapter.Holder>() {
 
     /** Accessibility: row text + thumbnail size tier — "small" | "medium" | "large" (wrench). */
@@ -121,6 +122,7 @@ class FeedEntryAdapter(
         holder.star.textSize = 14f * scale
         holder.star.contentDescription = if (e.starred) "Unstar" else "Star"
         holder.itemView.setOnClickListener { onOpen(e) }   // fragment marks read per the user's setting
+        holder.itemView.setOnLongClickListener { onLongPress(e); true }   // → mark everything above read
         holder.star.setOnClickListener { onStar(e) }
         // …while its TOUCH target grows to ≥44dp via a TouchDelegate on the row: taps in the
         // halo land on the star (toggle), taps anywhere else on the row still open the entry.

@@ -78,10 +78,17 @@ object CalendarDayMerger {
         // Tasks/events union by id, but honour tombstones — the dedicated item list plus the
         // element list (where pre-split builds recorded item deletions) — so a deleted item
         // stays deleted instead of resurrecting from the other device's copy.
+        //
+        // `done` is MONOTONIC (parity with iOS `unionLedgerItems`): once a task is checked off on
+        // ANY device it stays checked. Newer-wins-wholesale otherwise re-opened completed tasks
+        // whenever the other device's day merely got a newer timestamp (opening it is enough) — the
+        // "to-dos keep reappearing" bug. `done` has no per-item clock to arbitrate by, so OR it
+        // across both copies of an id; both platforms apply this identically so convergence holds.
+        val doneAnywhere = (newer.ledgerItems + older.ledgerItems).filter { it.done }.map { it.id }.toSet()
         merged.ledgerItems = LinkedHashMap<String, LedgerItem>().apply {
             newer.ledgerItems.forEach { if (it.id.lowercase() !in itemTombstones && it.id.lowercase() !in elementTombstones) putIfAbsent(it.id, it) }
             older.ledgerItems.forEach { if (it.id.lowercase() !in itemTombstones && it.id.lowercase() !in elementTombstones) putIfAbsent(it.id, it) }
-        }.values.toMutableList()
+        }.values.map { if (it.id in doneAnywhere && !it.done) it.copy(done = true) else it }.toMutableList()
 
         val values = LinkedHashMap<String, Map<String, Float?>>()
         values.putAll(older.calendarValues)
