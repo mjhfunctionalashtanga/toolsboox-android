@@ -344,55 +344,11 @@ class CalendarDayPage {
                 Creator.lineDefaultBlack
             )
 
-            // ⚡ Quick Wins glimpse — the top one or two shortest paths to victory, parked by
-            // QuickWinsGlimpse and drawn in the BOTTOM slice of the Roots band (rows 16.5..18). The
-            // GardenDoors lines above it are a view the fragment holds to rows 14..16.5, so the two
-            // bands share the band's height without overlapping — the "coordinate the vertical
-            // space" rule. Each line's rect is recorded as it's drawn (the winRows discipline) so a
-            // finger tap resolves against the pixels and never a second guess at the layout.
-            run {
-                // The ⚡ Quick Wins glimpse draws in ITS OWN section below the Quick Wins title bar
-                // (row 19+) — no longer carved out of the Roots band above (that split the band). One
-                // line per win with a CATEGORY glyph (✉ email · ☎ call · ☐ task) instead of a ⚡ that
-                // just ate space, in the SAME Atkinson face as the Roots doors so the two harmonise.
-                val gTop = to + 19f * ceh
-                val left = lo + cew + 50.0f
-                val right = lo + 2 * cew + 50.0f
-                val textX = lo + cew + 60.0f
-                val winPaint = android.text.TextPaint(Creator.textDefaultBlack).apply {
-                    com.toolsboox.ot.LedgerFonts
-                        .typefaceFor(context, com.toolsboox.ot.LedgerFonts.Choice.ATKINSON)
-                        ?.let { typeface = it }
-                }
-                fun winGlyph(t: String): String = when {
-                    Regex("(?i)\\b(e-?mail|mail|reply|write|send|draft|inbox)\\b").containsMatchIn(t) -> "✉"
-                    Regex("(?i)\\b(call|phone|ring|dial|text|voicemail)\\b").containsMatchIn(t) -> "☎"
-                    else -> "☐"
-                }
-                when {
-                    // Still cooking (null): a quiet ellipsis, not an apology.
-                    quickWinsGlimpse == null -> {
-                        canvas.drawText("…", textX, gTop + 34.0f, winPaint)
-                        glimpseRows = emptyList()
-                    }
-                    // A win or two: ONE line each, its category glyph, in the doors' font.
-                    quickWinsGlimpse.isNotEmpty() -> {
-                        val rowH = ceh
-                        val recorded = mutableListOf<GlimpseRow>()
-                        quickWinsGlimpse.take(2).forEachIndexed { i, ln ->
-                            val top = gTop + i * rowH
-                            Creator.drawEllipsizedText(
-                                canvas, "${winGlyph(ln.text)}  ${ln.text}", winPaint,
-                                textX, top + 34.0f, right - textX - 10.0f
-                            )
-                            recorded.add(GlimpseRow(ln, android.graphics.RectF(left, top, right, top + rowH)))
-                        }
-                        glimpseRows = recorded
-                    }
-                    // Computed, nothing qualifies: leave it empty.
-                    else -> glimpseRows = emptyList()
-                }
-            }
+            // The compact ⚡ glimpse was REMOVED. On Android the Quick Wins already render as the
+            // panel rows below (reading · outside · wins), and the weather/temp line sits directly
+            // under the Quick Wins title — leaving no clear space for a separate peek without running
+            // over it. The doors now own the WHOLE Roots band above; the wins live in the panel rows.
+            glimpseRows = emptyList()
 
             // Quick Wins title (carries the outside-event count when there are any — those
             // events still live in these rows; only the stars moved out).
