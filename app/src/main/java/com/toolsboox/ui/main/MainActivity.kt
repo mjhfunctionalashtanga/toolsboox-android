@@ -404,19 +404,27 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         }
     }
 
-    /** The note button opens TODAY's note on your last page index. It used to reopen `last_note_date`
-     *  — but that only updates when you land on a NOTES page, so once you'd written on (say) Friday it
-     *  stayed stuck there: sitting on Monday's day page never refreshed it, and the button kept
-     *  throwing you back to Friday. "Today's note" is what you actually want from the quick button; the
-     *  page INDEX (which numbered note page) still carries over. */
+    /** Note button, two-tap toggle:
+     *  • not on a note → resume the last note page you were writing on;
+     *  • already on that note → flip to that day's page ("days").
+     *  The view state (on-note? which date?) is recorded by CalendarDayFragment on every load. */
     private fun openLastNotePage() {
         val p = getSharedPreferences("ledger_notes", 0)
-        val date = java.time.LocalDate.now()
-        val bundle = bundleOf(
-            "year" to "${date.year}", "month" to "${date.monthValue}", "day" to "${date.dayOfMonth}",
-            "notePage" to (p.getString("last_note_page", "0") ?: "0")
-        )
-        binding.fragmentContent.findNavController().navigate(R.id.action_to_scratch, bundle)
+        val nav = binding.fragmentContent.findNavController()
+        if (p.getBoolean("on_note_page", false)) {
+            // Second tap — you're on your note → open that day's day page.
+            val d = runCatching { java.time.LocalDate.parse(p.getString("current_view_date", "") ?: "") }
+                .getOrNull() ?: java.time.LocalDate.now()
+            nav.navigate(R.id.action_to_calendar_day, bundleOf(
+                "year" to "${d.year}", "month" to "${d.monthValue}", "day" to "${d.dayOfMonth}"))
+        } else {
+            // First tap — back to the last note page you were on.
+            val date = runCatching { java.time.LocalDate.parse(p.getString("last_note_date", "") ?: "") }
+                .getOrNull() ?: java.time.LocalDate.now()
+            nav.navigate(R.id.action_to_scratch, bundleOf(
+                "year" to "${date.year}", "month" to "${date.monthValue}", "day" to "${date.dayOfMonth}",
+                "notePage" to (p.getString("last_note_page", "0") ?: "0")))
+        }
     }
 
     private fun toast(m: String) = android.widget.Toast.makeText(this, m, android.widget.Toast.LENGTH_SHORT).show()

@@ -1044,6 +1044,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
         calendarStyle = arguments?.getString("calendarStyle") ?: CalendarDay.DEFAULT_STYLE
         notePage = arguments?.getString("notePage")
+        // What the note button toggles against: whether THIS view is a free-form NOTE page (numeric)
+        // and which date it's on — so tap 1 resumes your note and tap 2 flips to that day's page.
+        requireContext().getSharedPreferences("ledger_notes", 0).edit()
+            .putBoolean("on_note_page", notePage?.toIntOrNull() != null)
+            .putString("current_view_date", currentDate.toString())
+            .apply()
         // "Notes" entries reopen this exact page later (numeric pages only).
         notePage?.let { CalendarNavigator.rememberNoteLocation(requireContext(), currentDate, it) }
 
