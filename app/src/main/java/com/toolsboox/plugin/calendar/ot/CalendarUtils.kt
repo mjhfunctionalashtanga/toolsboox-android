@@ -73,12 +73,14 @@ class CalendarUtils @Inject constructor() {
         constraintSet.constrainWidth(R.id.spiralLine, ConstraintSet.WRAP_CONTENT)
         constraintSet.constrainHeight(R.id.spiralLine, ConstraintSet.WRAP_CONTENT)
 
-        // The numbered-notes pager floats centered at the top of the paper. Same rule as the
-        // spiral line: a view this cloned set doesn't mention comes back 0×0.
+        // The numbered-notes pager hugs the TOP-LEFT corner — centered at the top it sat over the
+        // writing (and is excluded from ink capture, so you couldn't write there). The right edge is
+        // taken by the nav/tool pills, so left is the free corner. Same 0×0 rule as the spiral line.
         val pagerGap = (10 * binding.root.resources.displayMetrics.density).toInt()
+        val pagerInset = (6 * binding.root.resources.displayMetrics.density).toInt()
         constraintSet.connect(R.id.notePager, ConstraintSet.TOP, R.id.navigatorImageView, ConstraintSet.BOTTOM, pagerGap)
-        constraintSet.connect(R.id.notePager, ConstraintSet.START, ConstraintSet.PARENT_ID, ConstraintSet.START)
-        constraintSet.connect(R.id.notePager, ConstraintSet.END, ConstraintSet.PARENT_ID, ConstraintSet.END)
+        constraintSet.connect(R.id.notePager, ConstraintSet.START, ConstraintSet.PARENT_ID, ConstraintSet.START, pagerInset)
+        constraintSet.clear(R.id.notePager, ConstraintSet.END)
         constraintSet.constrainWidth(R.id.notePager, ConstraintSet.WRAP_CONTENT)
         constraintSet.constrainHeight(R.id.notePager, ConstraintSet.WRAP_CONTENT)
 

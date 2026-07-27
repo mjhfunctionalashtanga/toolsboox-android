@@ -228,7 +228,7 @@
                 android:visibility="gone"
                 app:layout_constraintTop_toBottomOf="@id/navigatorImageView"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintEnd_toEndOf="parent"
+                android:layout_marginStart="6dp"
                 android:layout_marginTop="10dp">
 
             <ImageButton android:id="@+id/notePagerPrev" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
