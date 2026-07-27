@@ -1263,6 +1263,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * The pager's jump picker: every numbered page holding content (ink or placed elements),
      * sorted, plus a "New page" row that lands one past the last.
      */
+    /** Navigate notes by DATE: a date picker that opens the same note page on the chosen day. */
+    private fun showNoteDatePicker() {
+        val d = currentDate
+        android.app.DatePickerDialog(requireContext(), { _, y, m, day ->
+            CalendarNavigator.toDayNote(this, java.time.LocalDate.of(y, m + 1, day), notePage ?: "0")
+        }, d.year, d.monthValue - 1, d.dayOfMonth).show()
+    }
+
     private fun showNotePageJump() {
         val ctx = context ?: return
         val pages = sortedSetOf<Int>()
@@ -1273,14 +1281,19 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         notePage?.toIntOrNull()?.let { pages.add(it) }   // the page you're on always lists
         val newPage = (pages.maxOrNull() ?: -1) + 1
         val ordered = pages.toList()
-        val labels = (ordered.map { if (it.toString() == notePage) "page $it  ·  here" else "page $it" }
-            + "＋  New page").toTypedArray()
+        val labels = (ordered.map { if (it.toString() == notePage) "Page ${it + 1}  ·  here" else "Page ${it + 1}" }
+            + "＋  New page" + "📅  Go to a date…").toTypedArray()
         val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle("Jump to page")
+            .setTitle("Jump to")
             .setItems(labels) { _, which ->
-                val target = if (which < ordered.size) ordered[which] else newPage
-                if (target.toString() != notePage)
-                    CalendarNavigator.toDayNote(this, currentDate, target.toString())
+                when {
+                    which < ordered.size -> {
+                        val target = ordered[which]
+                        if (target.toString() != notePage) CalendarNavigator.toDayNote(this, currentDate, target.toString())
+                    }
+                    which == ordered.size -> CalendarNavigator.toDayNote(this, currentDate, newPage.toString())
+                    else -> showNoteDatePicker()   // navigate notes BY DATE
+                }
             }
             .setNegativeButton(android.R.string.cancel, null)
             .create()
