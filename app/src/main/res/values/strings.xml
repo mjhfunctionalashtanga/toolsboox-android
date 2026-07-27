@@ -423,6 +423,8 @@
     <string name="eraser_clear_page">Clear page</string>
     <string name="reading_log_title">Ledger Log</string>
     <string name="reading_log_empty">Nothing in your Ledger Log for this range yet. Highlight in a book, star an article, or capture an AV gram — they land here.</string>
+    <string name="notes_tags_title">Notes &amp; Tags</string>
+    <string name="notes_tags_empty">No note pages or #tags in this period yet. Write on a Notes page — or add a #tag — and the day turns up here.</string>
     <string name="reading_log_export">Export highlights</string>
     <string name="reading_log_search_hint">Search your Ledger…</string>
     <string name="reading_log_ask">🔎 Ask</string>

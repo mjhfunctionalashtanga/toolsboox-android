@@ -46,10 +46,11 @@ fun ledgerDirectoryFolders(
         is com.toolsboox.plugin.calendar.ui.LedgerRootsFragment,
         is com.toolsboox.plugin.calendar.ui.LedgerMapFragment,
         is com.toolsboox.plugin.calendar.ui.SproutsFragment,
+        is com.toolsboox.plugin.calendar.ui.SeedsFragment,
         is com.toolsboox.plugin.calendar.ui.MissedRhizomesFragment,
         is com.toolsboox.plugin.calendar.ui.LedgerRhizomeFragment -> "Garden"
-        is com.toolsboox.plugin.textnotes.ui.TextNotesFragment -> "Notes"
-        is com.toolsboox.plugin.calendar.ui.DailyPileFragment -> "Daily"
+        is com.toolsboox.plugin.textnotes.ui.TextNotesFragment,
+        is com.toolsboox.plugin.calendar.ui.NotesTagsFragment -> "Notes"
         is com.toolsboox.plugin.reader.ui.ReaderFragment -> "Bookshelf"
         // ReadingLogFragment serves both Search and History; either way its folder home is Log.
         is com.toolsboox.plugin.calendar.ui.ReadingLogFragment,
@@ -65,12 +66,15 @@ fun ledgerDirectoryFolders(
         // ritual pages live under Daily, and the freeform note pages under Notes. Same key
         // vocabulary as the fragment's own sectionEmoji()/sectionIcon().
         is com.toolsboox.plugin.calendar.ui.CalendarDayFragment ->
-            when (val page = fragment.currentNotePage()) {
+            // Fold a "#n" sub-page (write#1, grid#2) onto its base so it calls the same folder home
+            // as its base page — the sub-page tail only matters to the pager, never to the hub.
+            when (val page = fragment.currentNotePage()?.substringBefore('#')) {
                 null, "default", com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE -> null
-                "intake", "gratitude", "selfexec", "write" -> "Daily"
+                "intake", "write" -> "Flow"
+                "gratitude", "selfexec" -> "Garden"
                 "grid", "sketch" -> "Notes"
                 else -> if (com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(page) ||
-                    com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(page)) "Daily"
+                    com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(page)) "Flow"
                 else "Notes"   // lined pages ("0", "1", …) and named notebooks
             }
         else -> null   // almanac pages (week/month/…), dashboard — no folder to call home
@@ -117,8 +121,10 @@ fun ledgerDirectoryFolders(
             action = { com.toolsboox.ui.plugin.LedgerPlayer.showModal(fragment.requireContext()) })
     else null
 
-    // Order per Michael: Search · Today (straight to the page, no submenu) · Daily Ledger ·
-    // Desk Ledger · Garden · Feed Ledger · Bookshelf · Ledger Log · Community · Sites · Settings.
+    // Order per Michael: Search · Today (straight to the page, no submenu) · Feed · Flow ·
+    // Desk · Garden · Notes · Bookshelf · Ledger Log · Community · Sites · Settings.
+    // Flow sits directly under Feed: the world comes in through Feed, then Flow is where you
+    // catch and make from it (Intake → Pickings → Synthesize → Write).
     return listOfNotNull(
         nowPlaying,
         // Search — one tap onto the Log/history surface, arriving ready to type: the one field
@@ -155,6 +161,17 @@ fun ledgerDirectoryFolders(
             },
             "📡  Local Feeds" to { openFeed("local", null) }
         ), expanded = home == "Feed"),
+        // Flow — the daily catch→make spine, right under Feed. Intake is the day's catch
+        // (Email/Read/Watch/Listen grams, one per starred item); moving a gram into its Pickings
+        // is where it becomes something; Synthesize works the gathered pieces and Write closes it
+        // out. (Was "Daily"; Daily Pile is retired — Intake takes its place. Gratitude and Self
+        // Executive moved to the Garden.)
+        ScreenFragment.Folder("⤳", "Flow", listOf(
+            "📥  Intake" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
+            "❝  Pickings" to { showPickingsPicker(fragment) },
+            "🔬  Synthesize" to { showSynthPicker(fragment) },
+            "✍  Write" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "write") }
+        ), expanded = home == "Flow"),
         // Desk Ledger — the working surfaces: mail, people, tasks, boards, publishing, notes.
         ScreenFragment.Folder("🗒", "Desk", listOf(
             // Desk order (Michael, 07-24): Quick Wins leads — the quickest action-surface at the
@@ -173,15 +190,20 @@ fun ledgerDirectoryFolders(
             "🖋  Publish" to { nav.navigate(R.id.action_to_publish) },
             "🗎  Posts" to { nav.navigate(R.id.action_to_posts_browser) }
         ), expanded = home == "Desk"),
-        // The Garden: the surfaces that are about what you have already written rather than about
-        // capturing more of it. Roots is what keeps coming back, Map is the same material as a picture,
-        // and Sprouts and Missed Rhizomes are what sprouted or what you skipped that speaks to it.
-        // (Write moved to Daily; Quick Wins moved to the Desk.)
+        // The Garden: the surfaces about what you've already written rather than capturing more of
+        // it. Gratitude and Self Executive settle here — reflective, not capture — moved out of Flow.
+        // Roots is what keeps coming back, Map is the same material as a picture, and Sprouts and
+        // Missed Rhizomes are what sprouted or what you skipped that speaks to it.
         ScreenFragment.Folder("🪴", "Garden", listOf(
+            "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") },
+            "🐘  Self Executive" to { CalendarNavigator.toDayNote(fragment, today, "selfexec") },
             "🌿  Roots" to { nav.navigate(R.id.action_to_ledger_roots) },
-            "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
+            // Seeds sits just before Sprouts — the lifecycle is Seed → (roots form) → Sprout: a
+            // #tag still finding its roots network lives here until it recurs enough to sprout.
+            "🌰  Seeds" to { nav.navigate(R.id.action_to_seeds) },
             "🌱  Sprouts" to { nav.navigate(R.id.action_to_sprouts) },
-            "✧  Missed Rhizomes" to { nav.navigate(R.id.action_to_missed_rhizomes) }
+            "✧  Missed Rhizomes" to { nav.navigate(R.id.action_to_missed_rhizomes) },
+            "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) }
         ), expanded = home == "Garden"),
         // Notes as their own door (Michael, 07-24): the four note surfaces out of the Desk into a
         // folder of their own — the named-notes work will grow from here. Notes reopens where you
@@ -190,21 +212,15 @@ fun ledgerDirectoryFolders(
             "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
             "📈  Grid Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "grid") },
             "⌱  Jot Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "sketch") },
-            "⌗  Text Notes" to { nav.navigate(R.id.action_to_text_notes) }
+            "⌗  Text Notes" to { nav.navigate(R.id.action_to_text_notes) },
+            // #hashtags harvested off note pages → jump to any page a tag appears on. No naming.
+            "#  Tags" to { showTagIndex(fragment) },
+            // Notes & Tags — a period-filtered list ("it's like Feeds") of the days that hold note
+            // content and/or #tags, the Almanac nav as its filter. Opens at this week around today.
+            "🗓  Notes & Tags" to {
+                com.toolsboox.plugin.calendar.ui.NotesTagsFragment.open(fragment, today, "week")
+            }
         ), expanded = home == "Notes"),
-        // The daily ritual: Intake → Pickings → Gratitude → Self Executive → Synthesize → Write.
-        // Synthesize works the day's gathered pieces and Write closes the ritual out — both live here,
-        // matching iPad, rather than in the Garden.
-        ScreenFragment.Folder("❤️", "Daily", listOf(
-            // Daily Pile — everything the day collected on one grid, to pick or rhizome outward from.
-            "🗂  Daily Pile" to { nav.navigate(R.id.action_to_daily_pile) },
-            "📥  Intake" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
-            "❝  Pickings" to { showPickingsPicker(fragment) },
-            "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") },
-            "🐘  Self Executive" to { CalendarNavigator.toDayNote(fragment, today, "selfexec") },
-            "🔬  Synthesize" to { showSynthPicker(fragment) },
-            "✍  Write" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "write") }
-        ), expanded = home == "Daily"),
         bookshelf,
         // Log — the zettelkasten: one screen with range/origin/search inside; Ask lives with it
         // (asking IS querying the log).
@@ -277,6 +293,43 @@ fun showPickingsPicker(fragment: ScreenFragment) {
                 which == pages.size -> promptNewPicking(fragment)
                 else -> promptRenamePicking(fragment)
             }
+        }
+        .setNegativeButton("Close", null)
+        .show()
+}
+
+/** The tag index: every #tag harvested off note pages → the pages it appears on, for jump-nav. */
+fun showTagIndex(fragment: ScreenFragment) {
+    val ctx = fragment.requireContext()
+    val tags = com.toolsboox.plugin.calendar.ot.LedgerTags.list(ctx)
+    if (tags.isEmpty()) {
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Tags")
+            .setMessage("No #tags yet. Write #something on a page — it's harvested when the page's ink is captured.")
+            .setPositiveButton("Close", null)
+            .show()
+        return
+    }
+    val labels = tags.map { "#${it.tag}  ·  ${it.occurrences.size}" }.toTypedArray()
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle("Tags")
+        .setItems(labels) { _, which -> showTagPages(fragment, tags[which]) }
+        .setNegativeButton("Close", null)
+        .show()
+}
+
+/** One tag's pages, newest first — tap to jump straight to that day's page, landing on the tag's
+ *  mark (the capture zone it was written in) when the occurrence recorded one. A ✎ marks the ones
+ *  that will zoom to the mark; legacy occurrences with no rect just open the page. */
+private fun showTagPages(fragment: ScreenFragment, tag: com.toolsboox.plugin.calendar.ot.LedgerTags.TagInfo) {
+    val ctx = fragment.requireContext()
+    val occ = tag.occurrences.sortedByDescending { it.first }
+    val labels = occ.map { "${if (it.third != null) "✎  " else ""}${it.first}  ·  ${it.second}" }.toTypedArray()
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle("#${tag.tag}")
+        .setItems(labels) { _, which ->
+            val (date, page, rect) = occ[which]
+            CalendarNavigator.toDayNote(fragment, date, page, rect)
         }
         .setNegativeButton("Close", null)
         .show()

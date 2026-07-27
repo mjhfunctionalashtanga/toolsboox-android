@@ -31,6 +31,9 @@ object LedgerUri {
     const val SCHEME_CLIPPING = "clipping"
     const val SCHEME_BOOK = "book"
 
+    /** A handwritten `#hashtag`, first-class in the rhizome — `tag://<tag>` (see LedgerTags). */
+    const val SCHEME_TAG = "tag"
+
     /**
      * A parsed address. [body] is everything between the scheme and the fragment; [fragment] is
      * the part after '#', which for a ledger page is an element id.
@@ -48,6 +51,9 @@ object LedgerUri {
         val isElement: Boolean get() = !fragment.isNullOrBlank()
 
         val isWeb: Boolean get() = scheme == "http" || scheme == "https"
+
+        /** True for a `tag://` address — the tag's name is the whole [body]. */
+        val isTag: Boolean get() = scheme == SCHEME_TAG
 
         override fun toString(): String =
             "$scheme://$body" + if (fragment.isNullOrBlank()) "" else "#$fragment"
@@ -94,6 +100,7 @@ object LedgerUri {
                 val page = ref.pageKey.takeUnless { it == "default" }
                 (ref.date ?: "a day") + if (page != null) " · $page" else ""
             }
+            SCHEME_TAG -> "#" + ref.body
             SCHEME_TASK -> "a task"
             SCHEME_CONTACT -> "a contact"
             SCHEME_CLIPPING -> "a clipping"

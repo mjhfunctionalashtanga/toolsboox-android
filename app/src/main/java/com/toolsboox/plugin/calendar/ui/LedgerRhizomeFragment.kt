@@ -13,6 +13,7 @@ import com.toolsboox.plugin.calendar.CalendarNavigator
 import com.toolsboox.plugin.calendar.da.v2.Connection
 import com.toolsboox.plugin.calendar.ot.ConnectionStore
 import com.toolsboox.plugin.calendar.ot.ContactStore
+import com.toolsboox.plugin.calendar.ot.LedgerTags
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -132,8 +133,13 @@ class LedgerRhizomeFragment @Inject constructor() : ScreenFragment() {
         val column = binding.rhizomeColumn
         column.removeAllViews()
 
+        val tagRef = LedgerUri.parse(uri)?.takeIf { it.isTag }
         val edges = if (uri.isBlank()) emptyList() else ConnectionStore.touching(ctx, uri)
-        if (edges.isEmpty()) {
+        // A tag's rhizome is a real mini-map: its pages (the edges) AND its related tags (the tags
+        // it keeps sharing a page with — co-occurrence, read live from LedgerTags, not the store).
+        val related = tagRef?.let { LedgerTags.relatedTags(ctx, it.body) }.orEmpty()
+
+        if (edges.isEmpty() && related.isEmpty()) {
             column.addView(TextView(ctx).apply {
                 // Say what would make one rather than just reporting a zero.
                 text = getString(R.string.rhizome_empty)
@@ -156,8 +162,55 @@ class LedgerRhizomeFragment @Inject constructor() : ScreenFragment() {
             val other = edge.otherEnd(uri) ?: continue
             column.addView(rowView(other, edge, contacts, px = ::px))
         }
+        // The tag web, under its own faint heading — the one relation the connection store doesn't
+        // carry, so it earns the single heading the rest of the card deliberately does without.
+        if (related.isNotEmpty()) {
+            column.addView(sectionLabel(ctx, "Related tags", px = ::px))
+            for ((tag, shared) in related) {
+                column.addView(relatedTagRow(LedgerTags.tagUri(tag), "#$tag", shared, px = ::px))
+            }
+        }
         ReadingSize.apply(binding.rhizomeScroll)
         capHeight()
+    }
+
+    /** A faint one-line heading, used only to fence off the tag web from the plain connections. */
+    private fun sectionLabel(ctx: android.content.Context, text: String, px: (Int) -> Int): View =
+        TextView(ctx).apply {
+            this.text = text
+            textSize = 11f; setTextColor(0xFF8A8A8A.toInt())
+            setPadding(0, px(16), 0, px(4))
+        }
+
+    /**
+     * One related tag: the tag, and in faint words how many pages it shares with this one. Tap or
+     * hold both walk to ITS rhizome — a tag's only destination is its own mini-map, so there is no
+     * separate "open the thing" to offer.
+     */
+    private fun relatedTagRow(tagUri: String, name: String, shared: Int, px: (Int) -> Int): View {
+        val ctx = requireContext()
+        return LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(0, px(9), 0, px(9))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            addView(TextView(ctx).apply {
+                text = "🏷  $name"
+                textSize = 15f; setTextColor(0xFF000000.toInt())
+                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                layoutParams = LinearLayout.LayoutParams(0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            addView(TextView(ctx).apply {
+                text = if (shared == 1) "1 shared page" else "$shared shared pages"
+                textSize = 11f; setTextColor(0xFF8A8A8A.toInt())
+                setPadding(px(10), 0, 0, 0)
+            })
+            setOnClickListener { walkTo(tagUri, name) }
+            setOnLongClickListener { walkTo(tagUri, name); true }
+        }
     }
 
     /** One connection, one line: what it is, and in faint words how it is joined. */
@@ -182,6 +235,7 @@ class LedgerRhizomeFragment @Inject constructor() : ScreenFragment() {
             LedgerUri.SCHEME_CONTACT -> "👤"
             LedgerUri.SCHEME_CLIPPING -> "🖼"
             LedgerUri.SCHEME_BOOK -> "📖"
+            LedgerUri.SCHEME_TAG -> "🏷"
             else -> if (ref?.isWeb == true) "🌐" else "↪"
         }
         // Which way the edge points is a fact about the relation, so it is kept rather than
@@ -254,6 +308,9 @@ class LedgerRhizomeFragment @Inject constructor() : ScreenFragment() {
                 findNavController().navigate(R.id.action_to_rolodex)
             ref.scheme == LedgerUri.SCHEME_TASK ->
                 findNavController().navigate(R.id.action_to_ledger_items)
+            // A tag's "thing itself" IS its rhizome — the mini-map of its pages and related tags —
+            // so tapping one walks there rather than trying to open a page a tag doesn't have.
+            ref.isTag -> walkTo(other, label)
             ref.isWeb -> runCatching {
                 startActivity(android.content.Intent(
                     android.content.Intent.ACTION_VIEW, android.net.Uri.parse(other)))

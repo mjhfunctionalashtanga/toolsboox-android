@@ -1,6 +1,7 @@
 package com.toolsboox.plugin.calendar.nw
 
 import android.graphics.Bitmap
+import android.graphics.RectF
 import android.util.Base64
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -94,6 +95,70 @@ object VisionOcr {
     private fun looksLikeRefusal(text: String): Boolean {
         val head = text.take(120).lowercase()
         return REFUSAL_MARKERS.any { head.contains(it) }
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Tag word-boxes — approximate location of each #hashtag, FROM the vision LLM.
+    // The model already reads the handwriting; a vision model can also point at WHERE it
+    // read a word. We ask only for the boxes of #hashtags (cheap, small reply) and use them
+    // to record a tag at its WORD rect instead of the whole capture zone, for a tighter Tags
+    // jump. Approximate on purpose (no OCR dependency) — the harvest falls back to the zone
+    // rect for any tag the model can't place, so this never lands worse than zone-level.
+    // ---------------------------------------------------------------------------------
+
+    private const val TAGBOX_PROMPT =
+        "This image is a handwritten note that may contain #hashtags (a # written before a word). " +
+            "For EACH #hashtag you can read, give its APPROXIMATE bounding box, normalized to THIS " +
+            "image with the TOP-LEFT corner as origin and every value between 0.0 and 1.0. " +
+            "Reply with ONLY this JSON array, nothing else:\n" +
+            "[{\"tag\": \"#example\", \"x\": 0.0, \"y\": 0.0, \"w\": 0.0, \"h\": 0.0}]\n" +
+            "x,y = the word's top-left corner; w,h = its width and height (all 0.0-1.0). " +
+            "Include only #hashtags. If there are none, reply with []."
+
+    /** A valid tag word (letter start, then word chars) — mirrors the body of LedgerTags.HASHTAG. */
+    private val TAG_WORD = Regex("""[\p{L}][\p{L}\p{N}_-]{1,40}""")
+
+    /**
+     * Ask the vision model for each `#hashtag`'s approximate NORMALIZED box (0..1, top-left origin,
+     * relative to [bitmap]). Returns a map of tag (case-folded, no leading '#') → RectF(l,t,r,b) in
+     * 0..1. Tolerant JSON like the other structured calls: an empty map on no key, request failure,
+     * a non-array reply, or any per-entry parse problem — the caller then falls back to the zone rect.
+     */
+    fun recognizeTagBoxes(bitmap: Bitmap, provider: String, apiKey: String, model: String): Map<String, RectF> {
+        val raw = recognizeWithPrompt(bitmap, provider, apiKey, model, TAGBOX_PROMPT) ?: return emptyMap()
+        val cleaned = raw.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+        val arr = runCatching { JSONArray(cleaned) }.getOrNull() ?: return emptyMap()
+        val out = HashMap<String, RectF>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val tag = o.optString("tag", "").trim().removePrefix("#").lowercase()
+            if (!TAG_WORD.matches(tag)) continue
+            val rect = boxFrom(o) ?: continue
+            // If the model lists a tag twice, keep the larger box (more likely the whole word).
+            val prev = out[tag]
+            if (prev == null || rect.width() * rect.height() > prev.width() * prev.height()) out[tag] = rect
+        }
+        return out
+    }
+
+    /** Normalized RectF from either {x,y,w,h} or {l,t,r,b}; clamped to 0..1, null if not positive-area. */
+    private fun boxFrom(o: JSONObject): RectF? {
+        val l: Float; val t: Float; val r: Float; val b: Float
+        if (o.has("w") || o.has("h")) {
+            val x = o.optDouble("x", Double.NaN); val y = o.optDouble("y", Double.NaN)
+            val w = o.optDouble("w", Double.NaN); val h = o.optDouble("h", Double.NaN)
+            if (x.isNaN() || y.isNaN() || w.isNaN() || h.isNaN()) return null
+            l = x.toFloat(); t = y.toFloat(); r = (x + w).toFloat(); b = (y + h).toFloat()
+        } else {
+            val ll = o.optDouble("l", Double.NaN); val tt = o.optDouble("t", Double.NaN)
+            val rr = o.optDouble("r", Double.NaN); val bb = o.optDouble("b", Double.NaN)
+            if (ll.isNaN() || tt.isNaN() || rr.isNaN() || bb.isNaN()) return null
+            l = ll.toFloat(); t = tt.toFloat(); r = rr.toFloat(); b = bb.toFloat()
+        }
+        val cl = l.coerceIn(0f, 1f); val ct = t.coerceIn(0f, 1f)
+        val cr = r.coerceIn(0f, 1f); val cb = b.coerceIn(0f, 1f)
+        if (cr <= cl || cb <= ct) return null
+        return RectF(cl, ct, cr, cb)
     }
 
     private fun recognizeWithPrompt(bitmap: Bitmap, provider: String, apiKey: String, model: String, prompt: String): String? {

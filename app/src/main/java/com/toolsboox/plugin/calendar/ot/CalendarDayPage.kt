@@ -105,6 +105,23 @@ class CalendarDayPage {
             winRows = emptyList()
         }
 
+        /** A drawn quick-wins GLIMPSE line and where it landed. Same record-at-draw discipline as
+         *  [WinRow]: the glimpse sits in the bottom slice of the Roots band (its own pixels), so a
+         *  tap resolves against the rectangle recorded when it was drawn, never a second guess. */
+        data class GlimpseRow(val line: QuickWinsGlimpse.Line, val rect: android.graphics.RectF)
+
+        @Volatile
+        private var glimpseRows: List<GlimpseRow> = emptyList()
+
+        /** The glimpse line under a canvas-space point, or null. */
+        fun glimpseAt(x: Float, y: Float): QuickWinsGlimpse.Line? =
+            glimpseRows.firstOrNull { it.rect.contains(x, y) }?.line
+
+        /** Forget the recorded glimpse rows — the [clearWinRows] rule, for the same reason. */
+        fun clearGlimpseRows() {
+            glimpseRows = emptyList()
+        }
+
         /**
          * Draw the daily template of calendar plugin.
          *
@@ -113,10 +130,13 @@ class CalendarDayPage {
          * @param calendarDay data class
          * @param calendarEvents the list of calendar events
          * @param quickWins the parked quick wins (today only; empty when cold or on other days)
+         * @param quickWinsGlimpse the parked glimpse lines: null = still cooking (draw a quiet "…"),
+         *   empty = nothing qualifies (draw nothing), the lines otherwise. Today only.
          */
         fun drawPage(
             context: Context, canvas: Canvas, calendarDay: CalendarDay, calendarEvents: List<CalendarEvent>,
-            quickWins: List<QuickWinsEngine.Win> = emptyList()
+            quickWins: List<QuickWinsEngine.Win> = emptyList(),
+            quickWinsGlimpse: List<QuickWinsGlimpse.Line>? = emptyList()
         ) {
             val schedulesText = context.getString(R.string.calendar_day_schedules)
             val tasksText = context.getString(R.string.calendar_day_tasks)
@@ -323,6 +343,44 @@ class CalendarDayPage {
                 lo + cew + 50.0f, to + 18 * ceh, lo + 2 * cew + 50.0f, to + 18 * ceh,
                 Creator.lineDefaultBlack
             )
+
+            // ⚡ Quick Wins glimpse — the top one or two shortest paths to victory, parked by
+            // QuickWinsGlimpse and drawn in the BOTTOM slice of the Roots band (rows 16.5..18). The
+            // GardenDoors lines above it are a view the fragment holds to rows 14..16.5, so the two
+            // bands share the band's height without overlapping — the "coordinate the vertical
+            // space" rule. Each line's rect is recorded as it's drawn (the winRows discipline) so a
+            // finger tap resolves against the pixels and never a second guess at the layout.
+            run {
+                val gTop = to + 16.5f * ceh                    // the divider between the two bands
+                val left = lo + cew + 50.0f
+                val right = lo + 2 * cew + 50.0f
+                val textX = lo + cew + 60.0f
+                when {
+                    // Still cooking (null): a quiet ellipsis, not an apology — the GardenDoors "…".
+                    quickWinsGlimpse == null -> {
+                        canvas.drawLine(left, gTop, right, gTop, Creator.lineDefaultGrey50)
+                        canvas.drawText("⚡  …", textX, gTop + 34.0f, Creator.textSmallBlack)
+                        glimpseRows = emptyList()
+                    }
+                    // A win or two to show: divider, then a compact ⚡ line each.
+                    quickWinsGlimpse.isNotEmpty() -> {
+                        canvas.drawLine(left, gTop, right, gTop, Creator.lineDefaultGrey50)
+                        val rowH = (18.0f - 16.5f) * ceh / 2.0f     // two compact rows in the 1.5-row slice
+                        val recorded = mutableListOf<GlimpseRow>()
+                        quickWinsGlimpse.take(2).forEachIndexed { i, ln ->
+                            val top = gTop + i * rowH
+                            Creator.drawEllipsizedText(
+                                canvas, "⚡  ${ln.text}", Creator.textDefaultBlack,
+                                textX, top + 30.0f, right - textX - 10.0f
+                            )
+                            recorded.add(GlimpseRow(ln, android.graphics.RectF(left, top, right, top + rowH)))
+                        }
+                        glimpseRows = recorded
+                    }
+                    // Computed, nothing qualifies: leave the slice as empty paper (no stray divider).
+                    else -> glimpseRows = emptyList()
+                }
+            }
 
             // Quick Wins title (carries the outside-event count when there are any — those
             // events still live in these rows; only the stars moved out).

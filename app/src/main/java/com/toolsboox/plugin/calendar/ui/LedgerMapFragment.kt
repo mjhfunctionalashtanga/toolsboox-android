@@ -17,6 +17,8 @@ import com.toolsboox.plugin.calendar.CalendarNavigator
 import com.toolsboox.plugin.calendar.da.v2.Connection
 import com.toolsboox.plugin.calendar.ot.ConnectionStore
 import com.toolsboox.plugin.calendar.ot.ContactStore
+import com.toolsboox.plugin.calendar.ot.LedgerTags
+import timber.log.Timber
 import com.toolsboox.ui.plugin.ScreenFragment
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
@@ -50,6 +52,11 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         /** Fewer distinct nodes than this and the connection graph isn't a picture yet — the
          *  word-rhizome weave carries the surface instead. */
         const val MIN_CONNECTION_NODES = 3
+
+        /** How many tag↔tag co-occurrence edges the map draws, hottest (most shared pages) first.
+         *  The tag↔page edges ride the connection store unbounded; only the derived tag web is
+         *  capped, so a ledger with a dense tag vocabulary stays a picture rather than a hairball. */
+        const val MAX_TAG_COOCCURRENCE_EDGES = 48
 
         /** The immediate state while the ledger is read — the surface must never look dead. */
         private const val WEAVING = "Weaving the map…"
@@ -259,6 +266,25 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             names[e.from] = name(e.from, e.fromLabel)
             names[e.to] = name(e.to, e.toLabel)
         }
+
+        // Tags are already nodes here — LedgerTags writes a tag↔page edge for every occurrence, so
+        // a `#tag` arrives in the loop above like any other end and the radial layout sizes it by
+        // heft (its degree = the pages it tags). The ONE relation the connection store does not hold
+        // is tag↔tag: two tags that share a page. We derive it cheaply and add it so the tag web is
+        // visible — a light edge between #ashtanga and #backbends when they keep landing together.
+        val cooc = runCatching { LedgerTags.coOccurrences(ctx) }.getOrNull().orEmpty()
+        val shownCooc = cooc.take(MAX_TAG_COOCCURRENCE_EDGES)
+        if (cooc.size > shownCooc.size) {
+            Timber.i("Map: %d tag co-occurrence edges, drawing hottest %d", cooc.size, shownCooc.size)
+        }
+        for ((a, b, _) in shownCooc) {
+            val ua = LedgerTags.tagUri(a); val ub = LedgerTags.tagUri(b)
+            adj.getOrPut(ua) { mutableListOf() }.add(ub)
+            adj.getOrPut(ub) { mutableListOf() }.add(ua)
+            names.putIfAbsent(ua, "#$a")
+            names.putIfAbsent(ub, "#$b")
+        }
+
         // Every neighbour list heaviest-first. The layout can only seat MAX_INNER around the
         // focus, and it seats them in list order — unsorted, the first paint was whichever ten
         // edges happened to be recorded first, which is how a map of your own material manages

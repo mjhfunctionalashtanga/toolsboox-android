@@ -17,6 +17,11 @@ import android.view.View
  */
 class MindMapView(context: Context) : View(context) {
 
+    companion object {
+        /** A node whose uri starts with this is a `#tag` — drawn with the inset chip rule. */
+        private const val TAG_PREFIX = "tag://"
+    }
+
     var onNodeTap: ((String) -> Unit)? = null
     var onNodeHold: ((String) -> Unit)? = null
 
@@ -56,6 +61,11 @@ class MindMapView(context: Context) : View(context) {
     }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.BLACK; textAlign = Paint.Align.CENTER
+    }
+    // A tag node wears a second, inset rule — a chip frame — so a `#tag` reads as a tag and not a
+    // page at a glance. Hairline black, no fill: the only e-ink-safe way to say "different kind".
+    private val tagLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; color = Color.BLACK; strokeWidth = dp(1f)
     }
 
     /**
@@ -122,6 +132,15 @@ class MindMapView(context: Context) : View(context) {
             canvas.drawRoundRect(box, r, r, boxFill)
             boxLine.strokeWidth = dp(if (focus) 3.5f else if (p.depth == 1) 1f + 2f * w1 else 1.4f)
             canvas.drawRoundRect(box, r, r, boxLine)
+            // Tag nodes get the inset chip rule. Size still tracks heft through the shared degree
+            // weighting above (a tag on many pages carries a high degree, so it draws big and bold
+            // like any load-bearing node); the frame is what marks it as a tag rather than a page.
+            if (p.uri.startsWith(TAG_PREFIX)) {
+                val inset = dp(3f)
+                val inner = RectF(box.left + inset, box.top + inset, box.right - inset, box.bottom - inset)
+                val ir = (r - inset).coerceAtLeast(dp(2f))
+                canvas.drawRoundRect(inner, ir, ir, tagLine)
+            }
 
             val baseline = y - (textPaint.descent() + textPaint.ascent()) / 2f
             canvas.drawText(label, x, baseline, textPaint)

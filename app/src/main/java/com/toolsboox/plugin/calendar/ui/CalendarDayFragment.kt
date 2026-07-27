@@ -158,6 +158,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private var quickWinsShown: List<QuickWinsEngine.Win> = emptyList()
     private var quickWinsCooking = false
 
+    // The ⚡ Quick Wins glimpse in the Roots band's bottom slice — the same parked-answer shape as
+    // above, keyed to its own prefs by QuickWinsGlimpse. null = still cooking (the template draws a
+    // quiet "…"); empty = nothing qualifies. The render path never computes it; the background walk
+    // re-earns it and the page re-renders only when the top wins would actually change.
+    private var quickWinsGlimpseShown: List<QuickWinsGlimpse.Line>? = emptyList()
+    private var quickWinsGlimpseCooking = false
+
     // Finger long-press tracking ("pen writes, finger manages" element menu).
     private val longPressHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var longPressDownX: Float = 0f
@@ -212,6 +219,35 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * prev/next day arrows within the current page group.
      */
     fun currentNotePage(): String? = notePage
+
+    /**
+     * Sub-page key convention: a named note surface (write / grid / sketch) may hold multiple
+     * sub-pages, keyed "<base>" for the first and "<base>#<n>" for n≥1 (e.g. write, write#1,
+     * write#2). [baseNotePage] strips the "#n" tail so a sub-page behaves like its base at every
+     * site that switches on the page string (icon, folder home, ritual stepping, template) — the
+     * ONLY place the tail matters is paging. [notePageSubIndex] is the sub-page number (0 for base).
+     * Numeric notes ("0", "1", …) carry no "#" and are unaffected.
+     */
+    private fun baseNotePage(page: String?): String? = page?.substringBefore('#')
+
+    private fun notePageSubIndex(page: String?): Int =
+        page?.substringAfter('#', "")?.toIntOrNull() ?: 0
+
+    /** The named note bases that own an inline ‹ N › sub-page pager (like the numeric notes do). */
+    private fun isSubPageableBase(base: String?): Boolean =
+        base == "write" || base == "grid" || base == "sketch"
+
+    /**
+     * Whether the current surface is a NOTES page for the almanac-as-filter interception: the
+     * numbered note pages plus the write / grid / sketch note pages (and their #n sub-pages) — NOT
+     * the plain day (null / Default) and NOT the ritual Flow/Garden stations (intake, pickings,
+     * gratitude, selfexec, synthesize), which keep the ordinary almanac navigation.
+     */
+    private fun isNotesTagSurface(page: String?): Boolean {
+        if (page == null || page == CalendarDay.DEFAULT_STYLE || page == "default") return false
+        val base = baseNotePage(page)
+        return isSubPageableBase(base) || page.toIntOrNull() != null
+    }
 
     /**
      * The intake page needs normal Android touch over the surface for its
@@ -306,7 +342,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /** Grid Notes snaps dragged objects to its 50px grid; other pages don't snap. */
-    override fun snapStep(): Float = if (notePage == "grid") 50f else 0f
+    override fun snapStep(): Float = if (baseNotePage(notePage) == "grid") 50f else 0f
 
     /** This page's element address, for the connection graph. */
     private fun elementUri(elementId: java.util.UUID): String =
@@ -599,6 +635,39 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
     }
 
+    /** What the Quick Wins glimpse may draw RIGHT NOW: QuickWinsGlimpse's parked lines, today only.
+     *  null while still cooking (the template shows a quiet "…"); empty on other days and when the
+     *  ledger yields no wins. Today-only for the GardenDoors reason — a "do this next" is only ever
+     *  today's, and paging back must not re-earn it. */
+    private fun quickWinsGlimpseForPanel(): List<QuickWinsGlimpse.Line>? =
+        if (currentDate == LocalDate.now())
+            QuickWinsGlimpse.cachedFor(requireContext(), currentDate)
+        else emptyList()
+
+    /** Re-earn the parked glimpse in the background — QuickWinsGlimpse.compute reads through
+     *  [QuickWinsEngine.fresh], which memoises by day + ledger-hash, so the glimpse rides the SAME
+     *  walk the panel already pays for (whoever asks first pays; the other reads) — no parallel
+     *  wins system. Re-renders only when the top lines would actually change, sparing an e-ink flash. */
+    private fun warmQuickWinsGlimpse(events: List<CalendarEvent>) {
+        if (currentDate != LocalDate.now() || quickWinsGlimpseCooking) return
+        quickWinsGlimpseCooking = true
+        val ctx = requireContext().applicationContext
+        val root = documentsRoot()
+        val day = currentDate
+        lifecycleScope.launch {
+            val lines = withContext(Dispatchers.IO) {
+                runCatching {
+                    QuickWinsGlimpse.compute(ctx, corpusService, calendarDayService, root, day)
+                }.onFailure { Timber.w(it, "quick wins glimpse: compute failed") }.getOrNull()
+            }
+            quickWinsGlimpseCooking = false
+            if (!isAdded || lines == null) return@launch
+            if (day == currentDate && notePage == null && lines != quickWinsGlimpseShown) {
+                runCatching { renderPage(calendarDay, calendarPattern, events) }
+            }
+        }
+    }
+
     // ------------------------------------------------------------------
     // The Synthesize engines — the pressure chamber of the Timeline.
     // Page-level (long-press empty canvas on the Synthesize page): the day's gathered
@@ -615,7 +684,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 }
             }
         ))
-        return when (notePage) {
+        return when (baseNotePage(notePage)) {
             "write" -> listOf(listOf(
                 com.toolsboox.ot.LedgerContextMenu.Item("→  Share essay…") { shareEssay() }
             ))
@@ -820,6 +889,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      *  surface in the feeds now. */
     override fun onCanvasSingleTap(cx: Float, cy: Float): Boolean {
         if (notePage != null) return false
+        // The Roots-band glimpse sits in its own slice above the panel; a tap there opens the ⚡
+        // Quick Wins surface — where each win carries its ✧ Path to victory — matching how
+        // openGardenDoor routes a band door to the surface that owns it.
+        if (com.toolsboox.plugin.calendar.ot.CalendarDayPage.glimpseAt(cx, cy) != null) {
+            findNavController().navigate(R.id.action_to_quick_wins)
+            return true
+        }
         val win = com.toolsboox.plugin.calendar.ot.CalendarDayPage.winAt(cx, cy) ?: return false
         goToWin(win)
         return true
@@ -1085,7 +1161,23 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         )
 
         binding.navigatorImageView.setOnTouchListener { view, motionEvent ->
-            CalendarDayNavigator.onTouchEvent(view, motionEvent, this@CalendarDayFragment, calendarDay)
+            // On a NOTES surface (write / grid / sketch / numbered note page — NOT the plain day and
+            // NOT a ritual Flow/Garden station) the almanac strip becomes a FILTER: tapping a period
+            // slot opens the period-scoped "Notes & Tags" list for that level instead of jumping to
+            // the Week/Month/… almanac. The plain day page and the ritual pages keep the almanac
+            // behaviour unchanged (onSelectPeriod stays null for them). Bounded to this handler.
+            if (isNotesTagSurface(notePage)) {
+                CalendarDayNavigator.onTouchEvent(
+                    view, motionEvent, this@CalendarDayFragment, calendarDay,
+                    onSelectPeriod = { level, date ->
+                        // The day slot still means "go to the day page"; the period slots open the list.
+                        if (level == "day") CalendarNavigator.toDayPage(this@CalendarDayFragment, date)
+                        else NotesTagsFragment.open(this@CalendarDayFragment, date, level)
+                    }
+                )
+            } else {
+                CalendarDayNavigator.onTouchEvent(view, motionEvent, this@CalendarDayFragment, calendarDay)
+            }
         }
 
         binding.surfaceView.setOnHoverListener { _, motionEvent ->
@@ -1132,7 +1224,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         fun stepStation(): String? = when {
             com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(notePage) -> "pickings"
             com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage) -> "synthesize"
-            else -> notePage
+            // A named sub-page (write#2) folds onto its base for the ritual step — write#2's ↑/↓
+            // walk write's neighbours (synthesize ↔ write ↔ "0"), same as the base page.
+            else -> baseNotePage(notePage)
         }
         binding.toolbarDrawing.toolbarSwipeUp.setOnClickListener {
             if (notePage != null) {
@@ -1144,7 +1238,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     "synthesize" -> CalendarNavigator.toDayNote(this, currentDate, "selfexec")
                     "write" -> CalendarNavigator.toDayNote(this, currentDate, "synthesize")
                     else -> {
-                        val page = notePage!!.toIntOrNull() ?: 0
+                        val page = baseNotePage(notePage)?.toIntOrNull() ?: 0
                         if (page == 0) {
                             CalendarNavigator.toDayNote(this, currentDate, "write")
                         } else {
@@ -1166,7 +1260,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     "synthesize" -> CalendarNavigator.toDayNote(this, currentDate, "write")
                     "write" -> CalendarNavigator.toDayNote(this, currentDate, "0")
                     else -> {
-                        val page = notePage!!.toIntOrNull() ?: 0
+                        val page = baseNotePage(notePage)?.toIntOrNull() ?: 0
                         CalendarNavigator.toDayNote(this, currentDate, "${page + 1}")
                     }
                 }
@@ -1190,15 +1284,36 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.navUp.setOnClickListener { binding.toolbarDrawing.toolbarSwipeUp.performClick() }
         binding.navDown.setOnClickListener { binding.toolbarDrawing.toolbarSwipeDown.performClick() }
 
-        // Numbered-notes pager (numeric notePage only, never the ritual stations): swipes are
-        // two-finger-gated over ink, so these pages were stepped blind through ↑/↓. ‹ › reuse
-        // the stepper's own actions; tapping the page number opens the jump picker.
+        // Inline ‹ N › pager. Two families carry it, never the ritual stations:
+        //  • Numeric notes ("0","1",…): ‹ › reuse the stepper's ↑/↓ (which walk the numeric tail),
+        //    and tapping the number opens the jump picker.
+        //  • The named write / grid / sketch surfaces: these get their OWN sub-page series keyed
+        //    "<base>#<n>". Their ‹ › must NOT run through the stepper (that walks sections) — next
+        //    always EXTENDS to the next sub-page, prev floors at the base. The number is subIndex+1.
+        val pagerBase = baseNotePage(notePage)
         if (notePage?.toIntOrNull() != null) {
             binding.notePager.visibility = View.VISIBLE
             binding.notePagerLabel.text = ((notePage?.toIntOrNull() ?: 0) + 1).toString()   // 1-indexed, matches the header
             binding.notePagerPrev.setOnClickListener { binding.toolbarDrawing.toolbarSwipeUp.performClick() }
             binding.notePagerNext.setOnClickListener { binding.toolbarDrawing.toolbarSwipeDown.performClick() }
             binding.notePagerLabel.setOnClickListener { showNotePageJump() }
+        } else if (isSubPageableBase(pagerBase)) {
+            val base = pagerBase!!
+            val sub = notePageSubIndex(notePage)
+            binding.notePager.visibility = View.VISIBLE
+            binding.notePagerLabel.text = (sub + 1).toString()
+            binding.notePagerPrev.setOnClickListener {
+                if (sub > 0) {
+                    val target = if (sub - 1 == 0) base else "$base#${sub - 1}"
+                    CalendarNavigator.toDayNote(this, currentDate, target)
+                }
+            }
+            binding.notePagerNext.setOnClickListener {
+                CalendarNavigator.toDayNote(this, currentDate, "$base#${sub + 1}")
+            }
+            // No numeric jump picker for these — the series is a simple linear extend/back.
+            binding.notePagerLabel.setOnClickListener(null)
+            binding.notePagerLabel.isClickable = false
         }
 
         // Floating tool selector: each button drives the real (hidden) toolbar action,
@@ -1422,8 +1537,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      *  empty page rather than an apology. One place decides, so the pick paths can't disagree. */
     private fun refreshBandVisibility() {
         if (!isAdded || currentNotePage() != null) return
-        val any = spiralPick != null || gardenDoors?.sprout != null ||
-            gardenDoors?.missed != null || gardenDoorsCooking
+        val any = spiralPick != null || gardenDoors?.rooted != null || gardenDoors?.tag != null ||
+            gardenDoors?.sprout != null || gardenDoors?.missed != null || gardenDoorsCooking
         binding.spiralLine.visibility = if (any) View.VISIBLE else View.GONE
         if (any) positionSpiralLine()
     }
@@ -1470,11 +1585,47 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private fun openGardenDoor(door: Any?) {
         val gd = door as? com.toolsboox.plugin.calendar.ot.GardenDoors.Door
         when (gd?.kind) {
+            // The rising door names a move — "weave a synthesis?" — so its tap STARTS that move:
+            // a fresh named Synthesis page for the tag, pre-seeded with the pages it took root on.
+            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_ROOTED -> weaveRootedSynthesis(gd)
             com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_SPROUT ->
                 findNavController().navigate(R.id.action_to_sprouts)
             com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_MISSED ->
                 findNavController().navigate(R.id.action_to_missed_rhizomes)
+            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_TAG ->
+                findNavController().navigate(R.id.action_to_seeds)
             else -> findNavController().navigate(R.id.action_to_ledger_roots)
+        }
+    }
+
+    /**
+     * Tap the rising door → begin the synthesis it invites. The rooted `#tag` is exactly ripe to
+     * weave, so this opens a fresh named [SynthPageStore] page titled with the tag and pre-seeds it
+     * with the tag's rhyme and the pages it took root on — the material to pull together — then
+     * lands you on it to work. Reuses the existing synthesis seam ([SynthPageStore.add] +
+     * [placeTextBoxes] + the day-note surface), never a parallel one. Off-render, cheap: the
+     * occurrences and rhyme are graph reads already in prefs.
+     */
+    private fun weaveRootedSynthesis(gd: com.toolsboox.plugin.calendar.ot.GardenDoors.Door) {
+        val ctx = context ?: return
+        val tag = gd.key.removePrefix("tag://").ifBlank { return }
+        lifecycleScope.launch {
+            val seed = withContext(Dispatchers.IO) {
+                val page = com.toolsboox.plugin.calendar.ot.SynthPageStore.add(ctx, "#$tag", currentDate)
+                val occ = com.toolsboox.plugin.calendar.ot.LedgerTags.pagesFor(ctx, tag)
+                val rhyme = com.toolsboox.plugin.calendar.ot.LedgerTags
+                    .relatedTags(ctx, tag).firstOrNull()?.first
+                val lines = buildList {
+                    add("Synthesize #$tag — it just took root.")
+                    if (rhyme != null) add("Rhymes with #$rhyme — what's the through-line?")
+                    for ((date, pageKey, _) in occ.take(8)) add("• $date · $pageKey")
+                }
+                page.key to lines
+            }
+            if (!isAdded) return@launch
+            placeTextBoxes(seed.second, seed.first, refresh = false)
+            showMessage("Started a synthesis for #$tag — the pages it rooted on are on the page.", binding.root)
+            CalendarNavigator.toDayNote(this@CalendarDayFragment, currentDate, seed.first)
         }
     }
 
@@ -1486,11 +1637,19 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val text = gd?.text ?: root?.snippet ?: return
         val origin = gd?.origin?.ifBlank { null }
             ?: root?.citation?.substringAfter("· ", "")?.trim().orEmpty()
+        // The surface a door leads to. For the rising door, tap already STARTS the synthesis, so the
+        // hold-menu's surface is the tag's own bed (Seeds) rather than re-running the weave.
         val surfaceLabel = when (gd?.kind) {
+            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_ROOTED -> "🌰  Open Seeds"
             com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_SPROUT -> "🌱  Open Sprouts"
             com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_MISSED -> "✧  Open Missed Rhizomes"
+            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_TAG -> "🌰  Open Seeds"
             else -> "🌿  Open Roots"
         }
+        val surfaceAction: () -> Unit =
+            if (gd?.kind == com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_ROOTED)
+                { { findNavController().navigate(R.id.action_to_seeds) } }
+            else { { openGardenDoor(door) } }
         showIconMenu(text.take(80), listOf(
             "⁂  Pick — make it a gram" to {
                 com.toolsboox.plugin.feeds.ot.FeedNoteGram.showForItem(
@@ -1500,7 +1659,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     sourceUrl = gd?.url.orEmpty()
                 ) { kind, sink -> captureAvGramDirect(kind, sink) }
             },
-            surfaceLabel to { openGardenDoor(door) },
+            surfaceLabel to surfaceAction,
             "🗑  Remove from corpus" to { removeGardenDoor(door) }
         ))
     }
@@ -1519,8 +1678,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             }
             if (!isAdded) return@launch
             if (gd != null) {
-                gardenDoors = if (gd.kind == com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_SPROUT)
-                    gardenDoors?.copy(sprout = null) else gardenDoors?.copy(missed = null)
+                gardenDoors = when (gd.kind) {
+                    com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_ROOTED -> gardenDoors?.copy(rooted = null)
+                    com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_SPROUT -> gardenDoors?.copy(sprout = null)
+                    com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_TAG -> gardenDoors?.copy(tag = null)
+                    else -> gardenDoors?.copy(missed = null)
+                }
             } else {
                 // A fresh choice, now that the gather refuses this one.
                 ctx.getSharedPreferences("ledger_spiral_ring", 0).edit().putString("picked_on", "").apply()
@@ -1551,7 +1714,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     private fun bandText(lines: Int, charsPerLine: Int): CharSequence {
         val doors = ArrayList<Pair<String, Any>>()
+        // The rising door LEADS — a `#tag` that just took root is the one thing that MOVED today, so
+        // it takes the top slot when a fresh promotion exists. It is the sharp form of the tag door
+        // (same rising-tag family, same 🌰), so when it shows, the perennial tag door steps down —
+        // one 🌰 line, not two — and the band varies day to day instead of repeating the steady best.
+        val rooted = gardenDoors?.rooted
+        rooted?.let { doors += "🌰" to it }
         spiralPick?.let { doors += "🌿" to it }
+        // The hot tag rides behind the root — the graph-grounded door that stands even without
+        // embeddings — but only when no fresher rooted door has already spoken for that family.
+        if (rooted == null) gardenDoors?.tag?.let { doors += "🌰" to it }
         gardenDoors?.sprout?.let { doors += "🌱" to it }
         gardenDoors?.missed?.let { doors += "⁂" to it }
 
@@ -1648,7 +1820,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         20f + 645f + 60f,                       // lo + cew + 60 — the text inset the panels use
         (1872f - 35 * 50f) / 2f + 14 * 50f,     // to + 14*ceh, under the title bar
         20f + 2 * 645f + 50f - 10f,             // lo + 2*cew + 50, less a hair of right margin
-        (1872f - 35 * 50f) / 2f + 18 * 50f      // to + 18*ceh, the closing rule
+        // to + 16.5*ceh — the band's TOP slice: the bottom 1.5 rows (down to the 18*ceh closing
+        // rule) belong to the ⚡ Quick Wins glimpse CalendarDayPage draws there, so the GardenDoors
+        // lines and the glimpse split the band's height without overlapping.
+        (1872f - 35 * 50f) / 2f + 16.5f * 50f
     )
 
     /**
@@ -1771,40 +1946,56 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /**
-     * The sunshine's sections switcher: pick a section and land on its TODAY page; the
-     * center emoji then adopts that section (Day/Intake/Gratitude/Pickings/Notes all show
-     * their glyph on the pill). Feed / Bookshelf / Ask / Log open their own surfaces.
+     * The sunshine's sections switcher, folder-aware: the CURRENT folder's sections first, then
+     * jump-links to the sibling folders — mirroring the hub's taxonomy so the two never drift. On a
+     * Flow/day page that's "On this day" (Day · Intake · Pickings · Synthesize · Write); on a Garden
+     * page (Gratitude / Self Executive) it's the Garden's own surfaces. Landing on a section adopts
+     * its glyph on the pill; the sibling links open their folder's head.
      */
-    private fun showSectionSwitcher() = showGoModal(
-        listOf(
+    private fun showSectionSwitcher() {
+        val onGarden = currentNotePage() in listOf("gratitude", "selfexec")
+        val currentFolder = if (onGarden) "Garden" else "Flow"
+
+        val sections: Pair<String, List<GoItem>> = if (onGarden) {
+            "Garden" to buildList {
+                add(GoItem("🙏", "Gratitude") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "gratitude") })
+                add(GoItem("🐘", "Self Executive") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "selfexec") })
+                add(GoItem("🌿", "Roots") { findNavController().navigate(R.id.action_to_ledger_roots) })
+                add(GoItem("🌱", "Sprouts") { findNavController().navigate(R.id.action_to_sprouts) })
+                add(GoItem("✧", "Missed Rhizomes") { findNavController().navigate(R.id.action_to_missed_rhizomes) })
+                add(GoItem("🗺", "Map") { findNavController().navigate(R.id.action_to_ledger_map) })
+            }
+        } else {
             getString(R.string.go_group_day) to buildList {
-                // The daily flow in ritual order: Intake → Pickings → Gratitude → Self Executive
-                // → Synthesize → Write. Mid-flow, a ⚡ fast-lane to the next step rides on top.
-                ritualNextStep()?.let { (page, glyph, label) ->
+                // The Flow flow in ritual order: Intake → Pickings → Synthesize → Write. Mid-flow,
+                // a ⚡ fast-lane to the next step rides on top.
+                ritualNextStep()?.let { (page, _, label) ->
                     add(GoItem("⚡", "Next · $label") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), page) })
                 }
                 add(GoItem("☀︎", "Day") { CalendarNavigator.toDayPage(this@CalendarDayFragment, LocalDate.now(), CalendarDay.DEFAULT_STYLE) })
                 add(GoItem("🔖", "Intake") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
                 add(GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "pickings") })
-                add(GoItem("🙏", "Gratitude") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "gratitude") })
-                add(GoItem("🐘", "Self Executive") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "selfexec") })
-                // Straight to TODAY's synthesis and Write — no date picker in between; the hub's
-                // Daily folder keeps the topic-page picker for when a specific synthesis matters.
                 add(GoItem("🔬", "Synthesize") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "synthesize") })
                 add(GoItem("✍", "Write") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "write") })
-                // Notes lives on the floating pen button (tap = last location, hold = Text
-                // Notes) — off this modal per the field notes, one entry point not two.
-                add(GoItem("📰", "Feed") { findNavController().navigate(R.id.action_to_feeds) })
-                add(GoItem("📚", "Bookshelf") { findNavController().navigate(R.id.action_to_reader) })
-                add(GoItem("💬", "Ask") { findNavController().navigate(R.id.action_to_ledger_chat) })
-                add(GoItem("🕘", "Log") {
-                    ReadingLogSelection.origin = null
-                    findNavController().navigate(R.id.action_to_reading_log)
-                })
             }
-        ),
-        anchorTop = false
-    )
+        }
+
+        // Sibling folders: the other top-level doors (current one dropped), each opening its head.
+        val siblings = buildList {
+            add(GoItem("⤳", "Flow") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
+            add(GoItem("📰", "Feed") { findNavController().navigate(R.id.action_to_feeds) })
+            add(GoItem("🗒", "Desk") { findNavController().navigate(R.id.action_to_quick_wins) })
+            add(GoItem("🪴", "Garden") { findNavController().navigate(R.id.action_to_ledger_roots) })
+            add(GoItem("📚", "Bookshelf") { findNavController().navigate(R.id.action_to_reader) })
+            add(GoItem("💬", "Ask") { findNavController().navigate(R.id.action_to_ledger_chat) })
+            add(GoItem("🕘", "Log") {
+                ReadingLogSelection.origin = null
+                findNavController().navigate(R.id.action_to_reading_log)
+            })
+        }.filter { it.label != currentFolder }
+
+        showGoModal(listOf(sections, "Go to" to siblings), anchorTop = false)
+    }
 
     /** The next station of the daily ritual after the page we're on, or null off-flow. */
     private fun ritualNextStep(): Triple<String, String, String>? = when (currentNotePage()) {
@@ -1891,7 +2082,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // outline) with the writing prompt also reachable from Write — so it doesn't clutter every
         // other page. "View tasks & events" left the wrench (it's in the ▦ hub).
         val onSynth = com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage)
-        val onWrite = notePage == "write"
+        val onWrite = baseNotePage(notePage) == "write"
         val tools = buildList {
             // "Add text" / "Add image" left the wrench: hold-to-add (long-press on the page, bare
             // canvas or over an image) already offers "Text box" and "Add media…" everywhere, so
@@ -2897,6 +3088,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     val text = com.toolsboox.plugin.calendar.nw.VisionOcr.recognize(bmp, creds.first, creds.second, creds.third)
                     if (text.isNullOrBlank()) continue
                     values[zone.id] = text
+                    // Harvest #hashtags from THIS zone's text. The bitmap was rendered from the whole
+                    // zone rect, so a normalized tag box maps back through zone.rect; any tag the model
+                    // can't place falls back to the zone rect (never worse than zone-level).
+                    harvestTags(ctx, date, pageKey, text, bmp, zone.rect, zone.rect, creds)
                     val prompt = zone.aiPrompt
                     if (prompt != null) {
                         val r = com.toolsboox.plugin.chat.nw.LedgerChatService()
@@ -2983,6 +3178,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 values["__sig.${zone.id}"] = zoneSig
                 any = true
                 values[zone.id] = text
+                // Harvest #hashtags from THIS zone's text. Here the bitmap was rendered from the ink
+                // BOUNDS (not the whole zone), so a normalized tag box maps back through `bounds`; the
+                // zone rect is the fallback for any tag the model can't place.
+                harvestTags(appCtx, date, pageKey, text, bmp, bounds, zone.rect, creds)
                 val prompt = zone.aiPrompt
                 if (prompt != null) {
                     val r = com.toolsboox.plugin.chat.nw.LedgerChatService()
@@ -2992,7 +3191,42 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             }
             // Signatures are written per zone as each is read, so an unreadable zone still counts
             // as "seen" and isn't retried on every page-leave. Save only if something moved.
-            if (any) com.toolsboox.plugin.calendar.ot.SectionStore.save(appCtx, pageKey, date, values)
+            if (any) {
+                com.toolsboox.plugin.calendar.ot.SectionStore.save(appCtx, pageKey, date, values)
+            }
+        }
+    }
+
+    /**
+     * Record a zone's `#tags` at an (approximate) WORD rect instead of the whole zone. Runs only when
+     * [text] actually contains a tag (the extra vision call is skipped — and free — otherwise), and
+     * REUSES the already-rendered zone [bitmap] rather than re-rendering. The model returns each tag's
+     * normalized box (0..1, top-left origin) relative to [bitmap]; [renderRect] is the design-space
+     * rect that bitmap covers (the zone rect on manual capture, the ink bounds on auto-capture), so a
+     * box maps to design space as left = renderRect.left + b.left*renderRect.width, etc. Any tag the
+     * model doesn't box falls back to [zoneRect] — so this never lands worse than today's zone-level.
+     * Android boxes are LLM-estimated (approximate); iOS records exact Apple Vision boxes; both feed
+     * the same occurrence rect → focusOnRect jump.
+     */
+    private fun harvestTags(
+        ctx: android.content.Context, date: java.time.LocalDate, pageKey: String,
+        text: String, bitmap: android.graphics.Bitmap,
+        renderRect: android.graphics.RectF, zoneRect: android.graphics.RectF,
+        creds: Triple<String, String, String>
+    ) {
+        val tags = com.toolsboox.plugin.calendar.ot.LedgerTags.extract(text)
+        if (tags.isEmpty()) return
+        val boxes = com.toolsboox.plugin.calendar.nw.VisionOcr
+            .recognizeTagBoxes(bitmap, creds.first, creds.second, creds.third)
+        for (tag in tags) {
+            val nb = boxes[tag]
+            val wordRect = if (nb != null) android.graphics.RectF(
+                renderRect.left + nb.left * renderRect.width(),
+                renderRect.top + nb.top * renderRect.height(),
+                renderRect.left + nb.right * renderRect.width(),
+                renderRect.top + nb.bottom * renderRect.height()
+            ) else zoneRect
+            com.toolsboox.plugin.calendar.ot.LedgerTags.recordTag(ctx, date, pageKey, tag, wordRect)
         }
     }
 
@@ -3503,7 +3737,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     /** The emoji for the section currently on screen (drives the bottom pill button). */
     /** Monochrome section glyph for the pill centre (high-contrast on e-ink). */
     @androidx.annotation.DrawableRes
-    private fun sectionIcon(): Int = when (currentNotePage()) {
+    private fun sectionIcon(): Int = when (baseNotePage(currentNotePage())) {
         null, "default", CalendarDay.DEFAULT_STYLE -> R.drawable.ic_nav_today
         "pickings" -> R.drawable.ic_quote
         "gratitude" -> R.drawable.ic_heart
@@ -3516,7 +3750,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         else -> if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(currentNotePage())) R.drawable.ic_swap else R.drawable.ic_pencil
     }
 
-    private fun sectionEmoji(): String = when (currentNotePage()) {
+    private fun sectionEmoji(): String = when (baseNotePage(currentNotePage())) {
         // Text-presentation sun (VS15) renders as a solid black glyph — high contrast on e-ink,
         // unlike the washed-out yellow colour emoji. Base glyphs (no VS16) throughout, so the
         // pill's glyph matches the monochrome icons the modals render for the same sections.
@@ -3672,9 +3906,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             // A notes page shows no Quick Wins rows — drop the recorded rectangles so a stale
             // one can't send a tap on this page off to a task (the PickingsCover.clear rule).
             CalendarDayPage.clearWinRows()
+            CalendarDayPage.clearGlimpseRows()
             if (notePage == "intake") {
-                // Intake page: draw the template with the day's typed panel texts in place,
-                // plus the "today's picks" strip of what got gram'd today.
+                // Intake page: four quarters, each a grid of just its own grams (Email / Read /
+                // Watch / Listen). No typing — the grams are the content; tap one to open it.
                 val intakeData = IntakePageStore.load(requireContext(), currentDate).also { intakePageData = it }
                 CalendarDayPageIntake.drawPage(templateCanvas, intakeData, calendarDay)
             } else {
@@ -3687,8 +3922,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             binding.toolbarDrawing.toolbarProcrastinator.visibility = View.VISIBLE
             val calendarStrokes = calendarDay.calendarStrokes[calendarStyle] ?: listOf()
             quickWinsShown = quickWinsForPanel()
-            CalendarDayPage.drawPage(this.requireContext(), templateCanvas, calendarDay, calendarEvents, quickWinsShown)
+            quickWinsGlimpseShown = quickWinsGlimpseForPanel()
+            CalendarDayPage.drawPage(
+                this.requireContext(), templateCanvas, calendarDay, calendarEvents,
+                quickWinsShown, quickWinsGlimpseShown
+            )
             warmQuickWins(calendarEvents)
+            warmQuickWinsGlimpse(calendarEvents)
             applyStrokes(Stroke.listDeepCopy(calendarStrokes), true)
         }
         // The template was just drawn into templateBitmap; force the ImageView to repaint so
@@ -3698,6 +3938,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         // A picker/camera result may have arrived before this load finished.
         consumeDeferredImageInsert()
+
+        // Tag → mark: if we arrived from the Tags index with a focus rect, zoom/center that capture
+        // zone once on this first render. Posted so the surface has been sized. Legacy occurrences
+        // carry no rect, so pendingFocusRect stays null and the page opens unfocused, as before.
+        CalendarNavigator.pendingFocusRect?.let { rect ->
+            CalendarNavigator.pendingFocusRect = null
+            provideSurfaceView().post { if (isAdded) focusOnRect(rect) }
+        }
 
         // Wipe any stale Onyx hardware ink overlay from a fast previous page turn so it can't
         // ghost over this freshly rendered page ("overlapping strokes when paging quickly").
@@ -4004,17 +4252,26 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     dx < 30f && dy < 30f && dt in 1..600
                 ) {
                     val canvasPts = screenToCanvas(motionEvent.x, motionEvent.y)
-                    CalendarDayPageIntake.typedZoneAt(canvasPts[0], canvasPts[1])?.let { kindKey ->
-                        showIntakeTypedDialog(kindKey)
+                    val cx = canvasPts[0]; val cy = canvasPts[1]
+                    fun intakeElement(id: String) = calendarDay.imageElements.firstOrNull {
+                        it.elementId.toString().lowercase() == id
+                    }
+                    // The ✓-corner graduates the gram into its own Pickings page (or opens that page
+                    // once graduated). Checked before the body so the corner wins the tap.
+                    CalendarDayPageIntake.cornerAt(cx, cy)?.let { gram ->
+                        intakeElement(gram.elementId)?.let { el ->
+                            if (el.graduatedTo.isBlank()) graduateIntakeGram(el)
+                            else CalendarNavigator.toDayNote(this, currentDate, el.graduatedTo)
+                        }
                         return true
                     }
-                    // The "today's picks" strip: a thumbnail is a door to the page that holds
-                    // the gram — resolved against the rectangles the strip recorded at draw time.
-                    CalendarDayPageIntake.pickAt(canvasPts[0], canvasPts[1])?.let { pick ->
-                        if (pick.pageKey.isBlank() || pick.pageKey == "default")
-                            CalendarNavigator.toDayPage(this, currentDate)
-                        else
-                            CalendarNavigator.toDayNote(this, currentDate, pick.pageKey)
+                    // A tap on the gram body: open its Pickings page if graduated, else its source.
+                    CalendarDayPageIntake.gramAt(cx, cy)?.let { gram ->
+                        intakeElement(gram.elementId)?.let { el ->
+                            if (el.graduatedTo.isNotBlank())
+                                CalendarNavigator.toDayNote(this, currentDate, el.graduatedTo)
+                            else onImageSource(el)
+                        }
                         return true
                     }
                 }
@@ -4025,54 +4282,51 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /**
-     * Show the typed-text dialog of an intake panel; on OK, store the text,
-     * render it in place and dispatch new URLs / educate notes to the queue.
-     *
-     * @param kindKey the panel kind (read|watch|listen|educate)
+     * Graduate an intake gram into its own Pickings page: make a board named for the gram, place a
+     * copy of its face there (where the object's further pickings then accumulate), and stamp the
+     * intake gram with that board key — so it wears a ✓ and becomes a link into the board.
      */
-    private fun showIntakeTypedDialog(kindKey: String) {
+    private fun graduateIntakeGram(element: com.toolsboox.da.ImageElement) {
         val ctx = context ?: return
-        val data = intakePageData ?: IntakePageStore.load(ctx, currentDate).also { intakePageData = it }
-        val panelTitle = CalendarDayPageIntake.panels.firstOrNull { it.kindKey == kindKey }?.title ?: kindKey
-
-        val editText = EditText(ctx)
-        editText.hint = getString(R.string.michaelfilter_intake_typed_dialog_hint)
-        editText.setSingleLine(false)
-        editText.setLines(5)
-        editText.setText(data.typedFor(kindKey))
-        editText.setSelection(editText.text?.length ?: 0)
-
-        val container = FrameLayout(ctx)
-        val params = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT
-        )
-        val margin = (16 * resources.displayMetrics.density).toInt()
-        params.setMargins(margin, 0, margin, 0)
-        editText.layoutParams = params
-        container.addView(editText)
-
-        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle(panelTitle)
-            .setView(container)
-            .setPositiveButton(R.string.ok) { dialog, _ ->
-                data.setTypedFor(kindKey, editText.text.toString())
-                IntakePageStore.save(ctx, currentDate, data)
-                val queued = IntakePageStore.dispatch(ctx, currentDate, data)
-
-                CalendarDayPageIntake.drawPage(templateCanvas, data, calendarDay)
-                binding.templateImageView.invalidate()
-
-                if (queued > 0) {
-                    showMessage(getString(R.string.michaelfilter_intake_queued_count, queued), binding.root)
-                }
-                dialog.dismiss()
+        lifecycleScope.launch {
+            val boardKey = withContext(Dispatchers.IO) {
+                runCatching {
+                    val root = documentsRoot()
+                    val name = element.cardText.ifBlank { element.sourceLabel }
+                        .ifBlank { "Picking" }.take(40)
+                    val board = com.toolsboox.plugin.calendar.ot.PickingsStore.add(ctx, currentDate, name)
+                    // A copy of the gram's face onto the new board (already treated → no second tape).
+                    val bytes = android.util.Base64.decode(element.data, android.util.Base64.DEFAULT)
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { bmp ->
+                        com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                            calendarDayService, root, bmp, currentDate, board.key,
+                            sourceLink = element.sourceLink, sourceLabel = element.sourceLabel,
+                            treatment = false, cardText = element.cardText, sourceFeed = element.sourceFeed
+                        )
+                    }
+                    // Persist the graduation on the intake gram.
+                    DayLocks.withDay(currentDate) {
+                        val day = calendarDayService.load(root, currentDate, null, java.util.Locale.getDefault())
+                        day.imageElements.firstOrNull { it.elementId == element.elementId }
+                            ?.graduatedTo = board.key
+                        calendarDayService.save(root, currentDate, day)
+                    }
+                    board.key
+                }.getOrNull()
             }
-            .setNegativeButton(R.string.cancel) { dialog, _ ->
-                dialog.cancel()
+            if (!isAdded) return@launch
+            if (boardKey == null) {
+                showMessage("Couldn't graduate that gram", binding.root)
+                return@launch
             }
-            .create().show()
-        editText.requestFocus()
+            // Reflect it immediately: stamp the in-memory gram and redraw the intake page's ✓.
+            element.graduatedTo = boardKey
+            CalendarDayPageIntake.drawPage(
+                templateCanvas, com.toolsboox.plugin.michaelfilter.da.IntakePageData(), calendarDay
+            )
+            binding.templateImageView.invalidate()
+            showMessage("Picked into its own board — tap ✓ to open it", binding.root)
+        }
     }
 
     /**

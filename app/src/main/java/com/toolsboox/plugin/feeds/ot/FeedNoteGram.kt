@@ -551,7 +551,10 @@ object FeedNoteGram {
         PickingsPlacement.place(
             service, root, face, today, INTAKE_PAGE,
             sourceLink = url, sourceLabel = feedTitle.ifBlank { host },
-            cardText = title, sourceFeed = feedTitle
+            cardText = title, sourceFeed = feedTitle,
+            // Tag the gram with its quarter (read/watch/listen) so the Intake page can draw it in
+            // its own panel; the Email quarter uses the legacy "educate" key.
+            intakeKind = kind
         )
         runCatching {
             fragment.requireActivity().runOnUiThread {

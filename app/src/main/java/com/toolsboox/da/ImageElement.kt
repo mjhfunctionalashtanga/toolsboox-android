@@ -89,5 +89,16 @@ data class ImageElement(
     // element carrying this flag, so a gram never wears baked tape AND a drawn frame at once —
     // the "too busy" stack the audit named. New field with a default → absent in old JSON decodes
     // as false and nothing already placed changes.
-    var edgeBaked: Boolean = false
+    var edgeBaked: Boolean = false,
+    // Which Intake quarter this gram belongs to when it sits on the "intake" page: "read" / "watch" /
+    // "listen" / "educate" (the fourth quarter shows as EMAIL but keeps the legacy "educate" storage
+    // key). Empty for grams that aren't intake-filed. Lets the Intake page draw each quarter as a
+    // grid of just its own kind. New field with a default → backward-compatible; older intake grams
+    // decode as untagged and simply don't slot into a quarter. Mirrors iOS.
+    var intakeKind: String = "",
+    // When an intake gram has GRADUATED into a Pickings page, this holds that board's page key. The
+    // gram then wears a ✓ on its corner and, on the intake page, becomes a link INTO that board
+    // (where the object's further pickings accumulate) rather than opening its raw source. Empty =
+    // not yet graduated. New field with a default → backward-compatible. Mirrors iOS.
+    var graduatedTo: String = ""
 )

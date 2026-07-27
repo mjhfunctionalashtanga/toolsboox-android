@@ -47,6 +47,10 @@ class MailComposeFragment @Inject constructor() : ScreenFragment() {
         const val ARG_TO_EMAIL = "to_email"
         const val ARG_TO_NAME = "to_name"
         const val ARG_SUBJECT = "subject"
+
+        /** Optional pre-written body — how a Quick Win's "path to victory" arrives with the letter
+         *  already drafted, ready to review and send. */
+        const val ARG_BODY = "body"
     }
 
     private fun toast(s: String) = Toast.makeText(requireContext(), s, Toast.LENGTH_SHORT).show()
@@ -76,6 +80,8 @@ class MailComposeFragment @Inject constructor() : ScreenFragment() {
                 binding.mailComposeTo.setText(if (toName.isBlank()) toEmail else "$toName <$toEmail>")
             arguments?.getString(ARG_SUBJECT)?.takeIf { it.isNotBlank() }
                 ?.let { binding.mailComposeSubject.setText(it) }
+            arguments?.getString(ARG_BODY)?.takeIf { it.isNotBlank() }
+                ?.let { binding.mailComposeBody.setText(it) }
         }
 
         // The rolodex feeds the To field: every contact with an address, shown as "Name <addr>"

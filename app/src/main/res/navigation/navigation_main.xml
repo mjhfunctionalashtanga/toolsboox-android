@@ -48,6 +48,10 @@
             android:id="@+id/action_to_reading_log"
             app:destination="@id/ReadingLogFragment"/>
 
+    <action
+            android:id="@+id/action_to_notes_tags"
+            app:destination="@id/NotesTagsFragment"/>
+
     <!-- Scratch ink surface (same fragment as the day page, but a DISTINCT destination so Back
          pops it and returns to the previous screen instead of collapsing to the start dest). -->
     <action
@@ -83,6 +87,10 @@
             app:destination="@id/SproutsFragment"/>
 
     <action
+            android:id="@+id/action_to_seeds"
+            app:destination="@id/SeedsFragment"/>
+
+    <action
             android:id="@+id/action_to_missed_rhizomes"
             app:destination="@id/MissedRhizomesFragment"/>
 
@@ -109,10 +117,6 @@
     <action
             android:id="@+id/action_to_site_web"
             app:destination="@id/SiteWebFragment"/>
-
-    <action
-            android:id="@+id/action_to_daily_pile"
-            app:destination="@id/DailyPileFragment"/>
 
     <action
             android:id="@+id/action_to_roster"
@@ -253,6 +257,12 @@
             tools:layout="@layout/fragment_semantic_surface"/>
 
     <fragment
+            android:id="@+id/SeedsFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.SeedsFragment"
+            android:label="SeedsFragment"
+            tools:layout="@layout/fragment_semantic_surface"/>
+
+    <fragment
             android:id="@+id/MissedRhizomesFragment"
             android:name="com.toolsboox.plugin.calendar.ui.MissedRhizomesFragment"
             android:label="MissedRhizomesFragment"
@@ -309,12 +319,6 @@
     </fragment>
 
     <fragment
-            android:id="@+id/DailyPileFragment"
-            android:name="com.toolsboox.plugin.calendar.ui.DailyPileFragment"
-            android:label="DailyPileFragment"
-            tools:layout="@layout/fragment_daily_pile"/>
-
-    <fragment
             android:id="@+id/RosterFragment"
             android:name="com.toolsboox.plugin.calendar.ui.RosterFragment"
             android:label="RosterFragment"/>
@@ -354,6 +358,19 @@
             android:name="com.toolsboox.plugin.calendar.ui.ReadingLogFragment"
             android:label="ReadingLogFragment"
             tools:layout="@layout/fragment_reading_log">
+
+        <action
+                android:id="@+id/action_to_calendar_day"
+                app:destination="@id/CalendarDayFragment"
+                app:popUpTo="@id/CalendarDayFragment"
+                app:popUpToInclusive="true"/>
+    </fragment>
+
+    <fragment
+            android:id="@+id/NotesTagsFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.NotesTagsFragment"
+            android:label="NotesTagsFragment"
+            tools:layout="@layout/fragment_notes_tags">
 
         <action
                 android:id="@+id/action_to_calendar_day"

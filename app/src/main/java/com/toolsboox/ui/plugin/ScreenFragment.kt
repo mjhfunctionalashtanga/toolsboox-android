@@ -1047,7 +1047,9 @@ abstract class ScreenFragment : Fragment() {
             // folder's History child — distinct from the 🕘/🕓 clock the folder itself wears.
             "📋" to R.drawable.ic_card, "🗃" to R.drawable.ic_clipboard, "🕰" to R.drawable.ic_history,
             "❤" to R.drawable.ic_heart, "📝" to R.drawable.ic_go_notes, "✍" to R.drawable.ic_edit,
-            "🔬" to R.drawable.ic_swap, "🧠" to R.drawable.ic_swap
+            "🔬" to R.drawable.ic_swap, "🧠" to R.drawable.ic_swap,
+            // Flow (the daily catch→make spine) wears the hierarchy/flow-chart glyph.
+            "⤳" to R.drawable.ic_flowchart
         )
     }
 

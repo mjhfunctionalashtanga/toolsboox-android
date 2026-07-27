@@ -109,6 +109,11 @@ class CalendarDayPageNotes : Creator {
          * @param notePage current notePage
          */
         fun drawPage(context: Context, canvas: Canvas, calendarDay: CalendarDay, template: Int, notePage: String) {
+            // Sub-page key convention: "write" / "write#1" / "write#2" (same for grid, sketch) all
+            // draw the base surface's template — the "#n" tail only distinguishes storage + paging,
+            // never the look. Normalise to the base before any template switch below.
+            val base = notePage.substringBefore('#')
+            val subIndex = notePage.substringAfter('#', "").toIntOrNull() ?: 0
             if (notePage == "gratitude") {
                 drawGratitudePage(canvas)
                 return
@@ -139,11 +144,11 @@ class CalendarDayPageNotes : Creator {
                 drawBrainstormPage(canvas)
                 return
             }
-            if (notePage == "grid") {
+            if (base == "grid") {
                 drawGridNotesPage(canvas)
                 return
             }
-            if (notePage == "sketch") {
+            if (base == "sketch") {
                 // Sketch Notes: the same light dot grid as the synthesize whiteboard — dots stay
                 // out of the way of a drawing far better than rules or a full grid do.
                 drawBrainstormPage(canvas)
@@ -154,7 +159,9 @@ class CalendarDayPageNotes : Creator {
                 return
             }
 
-            val page = notePage.toIntOrNull() ?: 0
+            // Numeric notes carry the page number in their key; the named write surface carries it
+            // in the "#n" sub-index. Either way `page` is the 0-based number the header shows +1.
+            val page = base.toIntOrNull() ?: subIndex
 
             canvas.drawRect(0.0f, 0.0f, 1404.0f, 1872.0f, Creator.fillWhite)
 
@@ -163,10 +170,26 @@ class CalendarDayPageNotes : Creator {
             // Just "NOTES" / "WRITE" — the page number rides the inline ‹ N › pager next to it, so
             // "· Page N" here would double up.
             canvas.drawText(
-                if (notePage == "write") "WRITE" else "NOTES",
+                if (base == "write") "WRITE" else "NOTES",
                 lo, to - 16.0f, Creator.textDefaultBlack)
 
             canvas.drawText("${page + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)
+
+            // Page one carries the day's #tags in its top margin — the lightweight index, on the
+            // page itself, so a glance shows what the day is about without naming anything.
+            if (page == 0) {
+                val tags = LedgerTags.tagsFor(context, LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day))
+                if (tags.isNotEmpty()) {
+                    val tagPaint = TextPaint().apply {
+                        color = Color.argb(170, 0, 0, 0); textSize = 24f
+                        typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD); isAntiAlias = true
+                    }
+                    val line = tags.joinToString("   ") { "#$it" }
+                    val shown = android.text.TextUtils.ellipsize(
+                        line, tagPaint, cew - 240f, android.text.TextUtils.TruncateAt.END)
+                    canvas.drawText(shown, 0, shown.length, lo + 210f, to - 16.0f, tagPaint)
+                }
+            }
 
             if (template == 0) {
                 // Roomier rule than the 50px day-grid: real handwriting needs ~65px lines

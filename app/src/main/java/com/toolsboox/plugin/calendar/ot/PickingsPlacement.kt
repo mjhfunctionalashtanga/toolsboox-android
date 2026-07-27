@@ -38,7 +38,8 @@ object PickingsPlacement {
     fun place(
         service: CalendarDayService, root: File, bitmap: Bitmap, date: LocalDate, pageKey: String,
         sourceLink: String = "", sourceLabel: String = "", media: MediaRef? = null,
-        treatment: Boolean = true, cardText: String = "", sourceFeed: String = ""
+        treatment: Boolean = true, cardText: String = "", sourceFeed: String = "",
+        intakeKind: String = ""
     ) {
         val longest = maxOf(bitmap.width, bitmap.height)
         val fitted = if (longest > MAX_DIM) {
@@ -75,7 +76,7 @@ object PickingsPlacement {
                 durationMs = media?.durationMs ?: 0,
                 mediaTitle = media?.title ?: "",
                 mediaDate = media?.date ?: "",
-                cardText = cardText, sourceFeed = sourceFeed,
+                cardText = cardText, sourceFeed = sourceFeed, intakeKind = intakeKind,
                 // The one-decoration contract: this card already wears its CardTreatment in its own
                 // pixels, so a render-time edge (iOS GramEdge) must stand down for it.
                 edgeBaked = treatment))

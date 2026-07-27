@@ -12,11 +12,14 @@ import com.toolsboox.ot.LedgerUri
 import com.toolsboox.plugin.calendar.da.v2.Connection
 import com.toolsboox.plugin.calendar.da.v2.LedgerItem
 import com.toolsboox.plugin.calendar.ot.ConnectionStore
+import com.toolsboox.plugin.calendar.ot.ContactStore
 import com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe
+import com.toolsboox.plugin.calendar.ot.PathToVictoryEngine
 import com.toolsboox.plugin.calendar.ot.PickingsPlacement
 import com.toolsboox.plugin.calendar.ot.PickingsStore
 import com.toolsboox.plugin.calendar.ot.QuickWinsEngine
 import com.toolsboox.plugin.calendar.ot.QuoteCardRenderer
+import com.toolsboox.plugin.mail.ui.MailComposeFragment
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +50,9 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
     lateinit var corpusService: com.toolsboox.plugin.chat.fi.LedgerCorpusService
 
     @Inject
+    lateinit var chatService: com.toolsboox.plugin.chat.nw.LedgerChatService
+
+    @Inject
     lateinit var calendarDayService: com.toolsboox.plugin.calendar.fi.CalendarDayService
 
     @Inject
@@ -61,6 +67,7 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
     private val done = HashSet<String>()
     private var path: List<String> = emptyList()
     private var thinking = false
+    private var drafting = false
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -80,8 +87,11 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
             .setOnClickListener { showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this)) }
         view.findViewById<TextView>(R.id.semantic_close)
             .setOnClickListener { findNavController().popBackStack() }
+        // The top action now SEQUENCES the whole board: order the visible wins' paths by expediency
+        // (fastest-to-done first). The generative per-win "path to victory" — the one that pre-writes
+        // the email or the task list — lives on each card's ✧ Path chip.
         view.findViewById<TextView>(R.id.semantic_action).apply {
-            text = "✧ Path to victory"
+            text = "⇅ Sequence"
             visibility = View.VISIBLE
             setOnClickListener { narratePath() }
         }
@@ -159,6 +169,7 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
         val actions = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(10), 0, 0)
         }
+        actions.addView(actionButton("✧ Path") { generatePath(w) })
         actions.addView(actionButton("✓ Done") { markDone(w) })
         actions.addView(actionButton("⁂ Rhizome") { openRhizome(w) })
         actions.addView(View(ctx).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })
@@ -246,6 +257,137 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
             }
         }
         showMessage("Grabbed into today's pickings", requireView())
+    }
+
+    // MARK: - ✧ Path to victory (generate → preview → execute), per single win.
+
+    /**
+     * Draft ONE win's concrete path: the Ledger classifies it (an email to send, or a small task
+     * list with subtasks/dates/assignees) and returns ready-to-go artifacts. We only preview here —
+     * nothing is created or sent until the reader confirms in [showPlanPreview].
+     */
+    private fun generatePath(w: QuickWinsEngine.Win) {
+        if (drafting) return
+        val ctx = context ?: return
+        val creds = com.toolsboox.plugin.chat.nw.AiCreds.get(ctx)
+        if (creds == null) { showMessage("Add an AI key in Settings to draft a path", requireView()); return }
+        drafting = true
+        showMessage("Drafting the path…", requireView())
+        val (provider, key, model) = creds
+        // If the win is assigned, resolve the contact so an email path arrives already addressed.
+        val contact = w.contactId?.let { runCatching { ContactStore.get(ctx, it) }.getOrNull() }
+        viewLifecycleOwner.lifecycleScope.launch {
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    PathToVictoryEngine.ask(
+                        chatService, provider, key, model,
+                        winText = w.text, reasons = w.reasons, companions = w.companions,
+                        assigneeName = contact?.name, assigneeEmail = contact?.email
+                    )
+                }
+            } finally {
+                drafting = false
+            }
+            if (!isAdded) return@launch
+            when (result) {
+                is PathToVictoryEngine.Result.Ok -> showPlanPreview(w, result.plan)
+                is PathToVictoryEngine.Result.Err -> showMessage(result.message, requireView())
+            }
+        }
+    }
+
+    /** Show the drafted path — the email it will write, or the task list it will create — with a
+     *  Make-it-happen confirm. Read-only until confirmed. */
+    private fun showPlanPreview(w: QuickWinsEngine.Win, plan: PathToVictoryEngine.Plan) {
+        val ctx = context ?: return
+        val content = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(10), dp(18), dp(8))
+        }
+        fun label(text: String) = content.addView(TextView(ctx).apply {
+            this.text = text
+            textSize = 12f; setTextColor(0xFF777777.toInt()); letterSpacing = 0.06f
+            setPadding(0, dp(12), 0, dp(2))
+        })
+        fun body(text: String, size: Float = 16f) = content.addView(TextView(ctx).apply {
+            this.text = text
+            textSize = size; setTextColor(0xFF000000.toInt()); setLineSpacing(0f, 1.2f)
+            setPadding(0, dp(2), 0, dp(2))
+        })
+
+        if (plan.summary.isNotBlank()) body("✧  ${plan.summary}", 15f)
+
+        val confirmLabel: String
+        when (plan.shape) {
+            PathToVictoryEngine.Shape.EMAIL -> {
+                confirmLabel = "Open in Compose"
+                val e = plan.email
+                if (e == null) { body("(no email drafted)") }
+                else {
+                    label("TO");      body(if (e.toName.isBlank()) e.to.ifBlank { "(you'll address it)" }
+                                           else "${e.toName} <${e.to}>", 15f)
+                    label("SUBJECT"); body(e.subject.ifBlank { "(none)" }, 15f)
+                    label("EMAIL IT WILL WRITE"); body(e.body)
+                }
+            }
+            PathToVictoryEngine.Shape.TASKS -> {
+                confirmLabel = "Create tasks"
+                label("TASK LIST IT WILL CREATE")
+                for (t in plan.tasks) {
+                    val meta = buildString {
+                        t.date?.let { append("  ·  $it") }
+                        t.assignee?.takeIf { it.isNotBlank() }?.let { append("  ·  $it") }
+                    }
+                    body("• ${t.text}$meta", 15f)
+                    for (s in t.subtasks) body("      ↳ $s", 14f)
+                }
+            }
+            PathToVictoryEngine.Shape.STEPS -> {
+                confirmLabel = "Create as tasks"
+                label("STEPS IT WILL SET UP")
+                plan.steps.forEachIndexed { i, s -> body("${i + 1}.  $s", 15f) }
+            }
+        }
+
+        val scrollView = ScrollView(ctx).apply { addView(content) }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("✧  Path to victory")
+            .setView(scrollView)
+            .setPositiveButton(confirmLabel) { _, _ -> executePlan(w, plan) }
+            .setNegativeButton(getString(R.string.roots_close), null)
+            .create()
+        com.toolsboox.ot.ReadingSize.apply(scrollView)
+        dialog.show()
+    }
+
+    /** The deliberate act: an email path opens Compose pre-filled; a task/step path writes the
+     *  tasks + subtasks into the ledger through the same store every task surface uses. */
+    private fun executePlan(w: QuickWinsEngine.Win, plan: PathToVictoryEngine.Plan) {
+        val ctx = context ?: return
+        if (plan.shape == PathToVictoryEngine.Shape.EMAIL && plan.email != null) {
+            val e = plan.email
+            findNavController().navigate(
+                R.id.action_to_mail_compose,
+                androidx.core.os.bundleOf(
+                    MailComposeFragment.ARG_TO_EMAIL to e.to,
+                    MailComposeFragment.ARG_TO_NAME to e.toName,
+                    MailComposeFragment.ARG_SUBJECT to e.subject,
+                    MailComposeFragment.ARG_BODY to e.body
+                )
+            )
+            return
+        }
+        // Tasks / steps: write into the ledger, then refresh so any that landed on today surface.
+        lifecycleScope.launch {
+            val n = withContext(Dispatchers.IO) {
+                runCatching {
+                    PathToVictoryEngine.executeTasks(ctx, calendarDayService, documentsRoot(), plan)
+                }.getOrDefault(0)
+            }
+            if (!isAdded) return@launch
+            showMessage(if (n > 0) "Set up — $n task${if (n == 1) "" else "s"} ready" else "Nothing to create", requireView())
+            load()
+        }
     }
 
     private fun narratePath() {

@@ -18,6 +18,13 @@ import java.util.*
 object CalendarNavigator {
 
     /**
+     * One-shot: a design-space (1404×1872) zone rect to zoom/center on the day page's FIRST render
+     * after navigation — the "tag → land on its mark" jump. Set by [toDayNote] (null clears it, so
+     * an ordinary navigation never inherits a stale focus) and consumed once by the day fragment.
+     */
+    var pendingFocusRect: android.graphics.RectF? = null
+
+    /**
      * Navigate to the settings of calendar.
      *
      * @param fragment the fragment
@@ -68,8 +75,10 @@ object CalendarNavigator {
      * @param fragment the fragment
      * @param localDate the local date
      * @param notePage navigate to the note page
+     * @param focusRect optional design-space zone rect to zoom/center on first render (tag → mark)
      */
-    fun toDayNote(fragment: ScreenFragment, localDate: LocalDate, notePage: String) {
+    fun toDayNote(fragment: ScreenFragment, localDate: LocalDate, notePage: String, focusRect: android.graphics.RectF? = null) {
+        pendingFocusRect = focusRect
         val year = localDate.year
         val month = localDate.monthValue
         val day = localDate.dayOfMonth

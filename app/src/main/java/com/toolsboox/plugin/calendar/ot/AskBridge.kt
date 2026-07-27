@@ -195,8 +195,9 @@ object AskBridge {
      * Drop a rendered question gram inside the intake sheet's EDUCATE ME panel.
      *
      * Geometry comes from the SAME [CalendarDayPageIntake.panels] the sheet draws and hit-tests
-     * with, so there is no second copy of the layout to drift: the usable area is the "educate"
-     * panel rect minus its tap-to-type strip ([CalendarDayPageIntake.Companion.IntakePanel.typedRect]).
+     * with, so there is no second copy of the layout to drift: the usable area is the whole EMAIL
+     * quarter rect (the tap-to-type strip is gone — the quarter is a pure gram grid now, and the
+     * Intake page re-lays these out itself; this stored geometry only seeds a sane initial spot).
      * Grams grid-stagger 2-up inside it (the PickingsPlacement discipline, scaled to a panel),
      * wrapping into a slightly-offset pile after six so a busy day reads as a stack, not a spill.
      *
@@ -210,8 +211,8 @@ object AskBridge {
         sourceLink: String, sourceLabel: String, cardText: String
     ) {
         val panel = CalendarDayPageIntake.panels.first { it.kindKey == "educate" }
-        // Usable zone: the panel above its dashed tap-to-type strip.
-        val inner = RectF(panel.rect.left, panel.rect.top, panel.rect.right, panel.typedRect.top)
+        // Usable zone: the whole EMAIL quarter (no more tap-to-type strip).
+        val inner = RectF(panel.rect)
         val treated = CardTreatment.card(bitmap)
         val baos = ByteArrayOutputStream()
         treated.compress(Bitmap.CompressFormat.PNG, 100, baos)
@@ -245,6 +246,8 @@ object AskBridge {
                 ImageElement(
                     x = x, y = y, width = w, height = h, data = base64, page = "intake",
                     sourceLink = sourceLink, sourceLabel = sourceLabel, cardText = cardText,
+                    // The EMAIL quarter's storage key, so an Educate-me question-gram slots into it.
+                    intakeKind = "educate",
                     // Wears its CardTreatment in its own pixels — render-time edges stand down.
                     edgeBaked = true
                 )

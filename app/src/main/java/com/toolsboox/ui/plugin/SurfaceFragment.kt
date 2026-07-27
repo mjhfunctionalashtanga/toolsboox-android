@@ -1547,6 +1547,37 @@ abstract class SurfaceFragment : ScreenFragment() {
         applyStrokes(strokes, true)
     }
 
+    /**
+     * Zoom in and CENTER a design-space (1404×1872) rect on the surface — the "tag → land on its
+     * mark" jump lands here with the capture zone the tag was written in.
+     *
+     * ZONE-level, deliberately: [com.toolsboox.plugin.calendar.nw.VisionOcr] returns text per ZONE,
+     * not per-word bounding boxes, so the finest honest target is the whole band/zone the tag was
+     * harvested from — we center and magnify that, not the exact glyph.
+     * TODO(word-boxes): when the OCR returns word rects, the caller can pass a word-tight rect here
+     * for exact-glyph landing; this math is already rect-agnostic and needs no change.
+     */
+    fun focusOnRect(rect: RectF) {
+        val sw = surfaceSize.width().toFloat()
+        val sh = surfaceSize.height().toFloat()
+        if (sw <= 0f || sh <= 0f || rect.width() <= 0f || rect.height() <= 0f) return
+
+        baseScale = minOf(sw / CANVAS_WIDTH.toFloat(), sh / CANVAS_HEIGHT.toFloat())
+        // Fill the height with the zone (a quarter-page band → ~4×), but cap so we neither exceed
+        // the pinch ceiling nor over-magnify a small zone into pixels, and always zoom in a little.
+        val heightFit = sh / (rect.height() * baseScale)
+        zoomScale = heightFit.coerceIn(1.5f, minOf(MAX_ZOOM, 2.5f))
+
+        // Center (cx,cy): screenCenter = c·totalScale + (surface − CANVAS·totalScale)/2 + pan,
+        // so pan = totalScale·(CANVAS/2 − c). updateTransformMatrix clamps it to the page edges.
+        val totalScale = baseScale * zoomScale
+        panX = totalScale * (CANVAS_WIDTH / 2f - rect.centerX())
+        panY = totalScale * (CANVAS_HEIGHT / 2f - rect.centerY())
+
+        updateTransformMatrix()
+        applyStrokes(strokes, true)
+    }
+
     private fun updateTransformMatrix() {
         val sw = surfaceSize.width().toFloat()
         val sh = surfaceSize.height().toFloat()
