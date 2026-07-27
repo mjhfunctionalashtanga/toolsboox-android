@@ -39,9 +39,9 @@
     -->
     <dimen name="ledger_toolbar_width">40dp</dimen>
     <dimen name="ledger_toolbar_button">40dp</dimen>
-    <dimen name="ledger_pill_button">46dp</dimen>
-    <dimen name="ledger_pill_button_padding">9dp</dimen>
-    <dimen name="ledger_grip_short">22dp</dimen>
+    <dimen name="ledger_pill_button">38dp</dimen>
+    <dimen name="ledger_pill_button_padding">7dp</dimen>
+    <dimen name="ledger_grip_short">18dp</dimen>
     <dimen name="ledger_grip_long">46dp</dimen>
     <dimen name="ledger_navigator_height">50dp</dimen>
     <dimen name="ledger_nav_button">44dp</dimen>
