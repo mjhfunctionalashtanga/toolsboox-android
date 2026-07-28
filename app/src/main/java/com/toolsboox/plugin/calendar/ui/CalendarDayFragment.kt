@@ -2357,7 +2357,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     private fun applyWidgetOrientation() {
         val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
-        val narrow = resources.configuration.screenWidthDp < 520
+        // The same fallback every other pill uses: the shape you last chose, and only a
+        // screen-width guess before you have ever chosen one. Two copies of this rule would drift.
+        val narrow = pillDefaultVertical()
         for ((key, pair) in listOf(
             "nav" to (binding.navWidget to binding.navGrip),
             "tool" to (binding.toolWidget to binding.toolGrip)
@@ -2486,7 +2488,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private fun togglePill(which: String) {
         val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
         val key = "${which}_collapsed"
-        val narrow = resources.configuration.screenWidthDp < 520
+        val narrow = pillDefaultVertical()
         val before = prefs.getBoolean("${which}_vertical", narrow)
         // Shared with every other pill's handle — folds, then turns, one change per tap.
         val (_, after) = advancePillState(key, "${which}_vertical", narrow)

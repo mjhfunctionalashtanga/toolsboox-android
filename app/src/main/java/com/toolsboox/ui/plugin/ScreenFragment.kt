@@ -77,6 +77,9 @@ abstract class ScreenFragment : Fragment() {
         // The modal's own measurements, in the same units as the layouts they came from, so the
         // scale above moves the BOX as well as the type. Text that grows inside a fixed box only
         // ellipsizes, which reads as the setting doing nothing.
+        /** The pill shape you last chose, used as the default for a surface that has none yet. */
+        private const val PILL_LAST_VERTICAL = "pill_last_vertical"
+
         private const val TITLE_SP = 20f        // dialog_go_to's go_to_title
         private const val ROW_SP = 16f          // item_go_to's go_label
         private const val ICON_DP = 22f         // item_go_to's go_icon, square
@@ -850,6 +853,9 @@ abstract class ScreenFragment : Fragment() {
         prefs.edit()
             .putBoolean(collapseKey, nextCollapsed)
             .putBoolean(verticalKey, nextVertical)
+            // Remember the SHAPE you last chose, so a surface you haven't set yet opens the way
+            // the one before it looked rather than guessing from screen width.
+            .putBoolean(PILL_LAST_VERTICAL, nextVertical)
             .apply()
         return nextCollapsed to nextVertical
     }
@@ -860,10 +866,32 @@ abstract class ScreenFragment : Fragment() {
      * [collapsible] are the views that disappear when it folds — the grip itself never does, or
      * there would be nothing left to tap.
      */
+    /**
+     * The layout a pill takes when this surface has no opinion of its own yet.
+     *
+     * Every surface keeps its own `<key>_vertical` preference, which is right — you may want the
+     * feed pill upright and the day pill along the bottom. But the FIRST time a surface is opened
+     * it had no preference, so it fell back to a screen-width guess and could come up the opposite
+     * way round from the one you were just looking at. Michael: "Books modal should be horizontal
+     * if the other model before it was horizontal, same same vertical."
+     *
+     * So the fallback is now the last layout you CHOSE anywhere, and the width guess only applies
+     * before you have ever flipped one. Once a surface has its own setting it keeps it — inheriting
+     * would mean flipping the feed pill silently re-flipped the reader's.
+     */
+    /** The pill fallback, for callers that build their own pills rather than using
+     *  [cyclePillOnTap] — the day page's nav/tool widgets. One rule, one place. */
+    protected fun pillDefaultVertical(): Boolean =
+        lastChosenVertical(resources.configuration.screenWidthDp < 520)
+
+    private fun lastChosenVertical(default: Boolean): Boolean =
+        requireContext().getSharedPreferences("ledger_widgets", 0)
+            .let { if (it.contains(PILL_LAST_VERTICAL)) it.getBoolean(PILL_LAST_VERTICAL, default) else default }
+
     protected fun cyclePillOnTap(
         grip: View, pill: View, key: String, verticalKey: String = "${key}_vertical",
         collapsible: List<View> = emptyList(),
-        defaultVertical: Boolean = resources.configuration.screenWidthDp < 520,
+        defaultVertical: Boolean = lastChosenVertical(resources.configuration.screenWidthDp < 520),
         alsoOnTap: (() -> Boolean)? = null
     ) {
         // Default: everything in the pill folds away except the handle. Naming the children at
