@@ -179,14 +179,18 @@ class CalendarDayPageNotes : Creator {
             if (page == 0) {
                 val tags = LedgerTags.tagsFor(context, LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day))
                 if (tags.isNotEmpty()) {
+                    // RIGHT-aligned in the top margin: the left of this strip is now occupied by the
+                    // header label AND the floating ‹ N › note pager (the almanac-nav directory), so
+                    // the tags hug the RIGHT edge to clear both instead of overlapping the paginator.
                     val tagPaint = TextPaint().apply {
                         color = Color.argb(170, 0, 0, 0); textSize = 24f
                         typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD); isAntiAlias = true
+                        textAlign = Paint.Align.RIGHT
                     }
                     val line = tags.joinToString("   ") { "#$it" }
                     val shown = android.text.TextUtils.ellipsize(
                         line, tagPaint, cew - 240f, android.text.TextUtils.TruncateAt.END)
-                    canvas.drawText(shown, 0, shown.length, lo + 210f, to - 16.0f, tagPaint)
+                    canvas.drawText(shown, 0, shown.length, lo + cew - 10.0f, to - 16.0f, tagPaint)
                 }
             }
 
