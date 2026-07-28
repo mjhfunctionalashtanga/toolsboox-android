@@ -1463,6 +1463,73 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         }
     }
 
+    /**
+     * A HOLD on a folder row in the left-hand directory — a lens, a category, or a single feed.
+     *
+     * "Clear" beside the VIEWS chips acts on the list AS DISPLAYED, which means emptying one
+     * category meant first drilling into it. A folder is a thing in its own right, so it gets its
+     * own gesture: hold it, and the option is right there for that folder and nothing else. The
+     * menu itself is the deliberate second step (a hold on e-ink can be accidental), so choosing
+     * the row does the thing — no second confirm, and an Undo that reaches both sides.
+     */
+    private fun showFolderHoldMenu(label: String, entries: List<FeedEntry>) {
+        val unread = entries.filterNot { it.read || FeedReadState.isRead(it.id) }
+        val items = arrayOf(
+            if (unread.isEmpty()) "✓  Nothing unread here" else "✓  Mark all as read  ·  ${unread.size}"
+        )
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+            .setTitle(label)
+            .setItems(items) { _, _ -> if (unread.isNotEmpty()) markFolderRead(label, unread) }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * Mark every unread entry of one folder read — locally first (so the rows grey out and the
+     * drawer's counts drop at once, and so synthetic rows with no server side still clear), then
+     * in ONE batched Miniflux call for the entries that really live there. Undoable.
+     */
+    private fun markFolderRead(label: String, unread: List<FeedEntry>) {
+        val ids = unread.map { it.id }
+        val idSet = ids.toSet()
+        // Only real Miniflux entries have positive ids — Later / Pickings / local-feed rows are
+        // synthetic and negative, and a small synthetic id would address someone ELSE's entry.
+        val serverIds = ids.filter { it > 0 }
+        ids.forEach { FeedReadState.mark(it) }
+        allEntries = allEntries.map { if (it.id in idSet) it.copy(read = true) else it }
+        adapter.submit(adapter.current().map { if (it.id in idSet) it.copy(read = true) else it })
+        renderDirectory()
+
+        val p = prefs()
+        val url = p.getString(KEY_URL, "").orEmpty()
+        val token = p.getString(KEY_TOKEN, "").orEmpty()
+        val onServer = serverIds.isNotEmpty() && url.isNotBlank() && token.isNotBlank()
+        lifecycleScope.launch {
+            if (onServer) {
+                val res = withContext(Dispatchers.IO) { miniflux.setStatus(url, token, serverIds, "read") }
+                if (res is MinifluxClient.Result.Err) {
+                    android.widget.Toast.makeText(
+                        requireContext(), "⚠ Mark-read didn't reach Miniflux — ${res.message}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                    return@launch
+                }
+            }
+            com.google.android.material.snackbar.Snackbar.make(
+                binding.root, "Marked ${ids.size} read in “$label”",
+                com.google.android.material.snackbar.Snackbar.LENGTH_LONG
+            ).setAction("Undo") {
+                ids.forEach { FeedReadState.unmark(it) }
+                lifecycleScope.launch {
+                    if (onServer) withContext(Dispatchers.IO) { miniflux.setStatus(url, token, serverIds, "unread") }
+                    refresh()
+                }
+            }.show()
+            // Reload so an Unread view drops them and the counts come back from the source.
+            refresh()
+        }
+    }
+
     /** How opening/scrolling marks entries read: "open" (default) · "scroll" · "off". */
     private fun markReadMode(): String = prefs().getString("feeds_mark_read", "open") ?: "open"
 
@@ -1615,7 +1682,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // counts. The full tree (lenses, categories, Later, local, OPML…) lives in the accordion
         // drawer (☰) — one directory style; this pane is a quick filter, toggled by the RSS button.
         val ctx = requireContext()
-        fun row(label: String, bold: Boolean, selected: Boolean, onClick: () -> Unit) {
+        fun row(
+            label: String, bold: Boolean, selected: Boolean,
+            onLongPress: (() -> Unit)? = null, onClick: () -> Unit
+        ) {
             val tv = android.widget.TextView(ctx).apply {
                 text = label
                 textSize = if (bold) 15f else 13.5f
@@ -1635,6 +1705,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     if (binding.articlePane.visibility == View.VISIBLE) closeArticlePane()
                     onClick()
                 }
+                if (onLongPress != null) setOnLongClickListener { onLongPress(); true }
             }
             container.addView(tv)
         }
@@ -1770,7 +1841,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val composable = mode in setOf("feed", "read", "both", "edition", "stars", "later")
         fun lensRow(emoji: String, title: String, lens: String) {
             val open = lensOpen == lens
-            row("$emoji  ${if (open) "▾" else "▸"}  $title", true, kindFilter == lens) {
+            row(
+                "$emoji  ${if (open) "▾" else "▸"}  $title", true, kindFilter == lens,
+                onLongPress = { showFolderHoldMenu(title, allEntries.filter { it.kind == lens }) }
+            ) {
                 // Redraw the drawer NOW (refresh()'s re-render is async and skips some error
                 // paths), then retune the right panel.
                 if (open) {
@@ -1798,7 +1872,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 }
                 setPadding(dpPx(2), dpPx(2), dpPx(2), dpPx(4))
             }
-            fun subRow(label: String, indent: Int, header: Boolean, selected: Boolean, onClick: () -> Unit) {
+            fun subRow(
+                label: String, indent: Int, header: Boolean, selected: Boolean,
+                onLongPress: (() -> Unit)? = null, onClick: () -> Unit
+            ) {
                 box.addView(android.widget.TextView(ctx).apply {
                     text = label
                     textSize = if (header) 13.5f else 12.5f
@@ -1816,6 +1893,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                         if (binding.articlePane.visibility == View.VISIBLE) closeArticlePane()
                         onClick()
                     }
+                    // A HOLD on a folder is the folder's own gesture: mark everything in it read.
+                    if (onLongPress != null) setOnLongClickListener { onLongPress(); true }
                 })
             }
             // The categories fold too, same dual gesture one level down ("those feed lists
@@ -1838,7 +1917,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 val unread = inCat.count { !it.read }
                 val cOpen = catOpen == c
                 val caret = if (cOpen) "▾" else "▸"
-                subRow(if (unread > 0) "$caret  $unread · $c" else "$caret  $c", 24, true, false) {
+                subRow(
+                    if (unread > 0) "$caret  $unread · $c" else "$caret  $c", 24, true, false,
+                    onLongPress = { showFolderHoldMenu(c, inCat) }
+                ) {
                     if (cOpen) {
                         // Fold only — the right panel stays where the reader left it.
                         a11y.edit().putString("feeds_cat_open_$lens", "").apply()
@@ -1855,7 +1937,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     .distinct().sortedBy { it.lowercase() }) {
                     val inFeed = inCat.filter { it.feedTitle == f }
                     val fu = inFeed.count { !it.read }
-                    subRow(if (fu > 0) "$fu · $f" else f, 44, false, slimFeedFilter == f) {
+                    subRow(
+                        if (fu > 0) "$fu · $f" else f, 44, false, slimFeedFilter == f,
+                        onLongPress = { showFolderHoldMenu(f, inFeed) }
+                    ) {
                         slimFeedFilter = f
                         renderDirectory()
                         adapter.submit(filterByNavDay(inFeed))

@@ -180,6 +180,9 @@ object FeedReadState {
     private val read = java.util.Collections.synchronizedSet(HashSet<Long>())
     fun isRead(id: Long) = read.contains(id)
     fun mark(id: Long) { read.add(id) }
+    /** Undo a local mark — the "Mark all as read" snackbar's Undo has to reach this side too,
+     *  or the rows stay greyed after the server has already been put back to unread. */
+    fun unmark(id: Long) { read.remove(id) }
 }
 
 /** Tiny async image loader for feed thumbnails — memory-cached, off-thread, no extra deps.
