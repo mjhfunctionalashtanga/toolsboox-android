@@ -725,6 +725,268 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         )
     }
 
+    /**
+     * Send the whole page to be read and tagged.
+     *
+     * The material is what the page carries in WORDS — its typed boxes and the card text on its
+     * grams. Handwriting that hasn't been captured contributes nothing, which is honest: the model
+     * can only read what has actually been read.
+     *
+     * A Pickings board goes in as a BOARD, so the prompt asks what the collection is about rather
+     * than what any one card says — the tag that names a gathering is the one worth having.
+     */
+    /**
+     * The typed Write surface: a title, a Markdown body, and the way out.
+     *
+     * A dialog rather than a whole screen, because that is this codebase's modal idiom and because
+     * a full-screen editor on e-ink buys nothing a large dialog doesn't. Ink and text don't convert
+     * into one another — the strokes stay in the day file and the draft in its own store, so
+     * leaving one for the other and coming back finds both as they were. A conversion would have to
+     * guess, and guessing loses work.
+     */
+    /**
+     * What you posted on THIS day, out of the Field Ledger archive — and the two things you can do
+     * with one.
+     *
+     * Each post also JOINS its day in the connection graph, which is the half that makes the
+     * archive *inform* the tags rather than sit beside them: `journal://<id>` ↔ the day's page is an
+     * edge in the same graph tags live in, so a post from 2011 is a node the rhizome walks, and
+     * anything tagged on that day is one hop from what you posted then. `connect` derives edge ids
+     * from their endpoints, so revisiting a day is idempotent and the synced sidecar doesn't grow.
+     *
+     * An archive post IS a gram — a face with a source behind it is the whole gram contract — so it
+     * goes where grams go: onto a Pickings board to keep, or into Star Sort to be triaged with
+     * everything else that came in.
+     */
+    /**
+     * A card face for an archive post: its words, its date, and where it came from.
+     *
+     * Drawn here rather than reaching into the feed plugin's private card builder — that one is
+     * wired to an article and a pad, and prising it apart for one caller would leave two things to
+     * keep in step. [com.toolsboox.ot.CardTreatment.card] then gives it the same paper and tape
+     * every other placed card wears, so an archive post sits on a board looking like its neighbours.
+     */
+    private fun archiveCardFace(item: com.toolsboox.plugin.calendar.ot.JournalItem): android.graphics.Bitmap {
+        val w = 760
+        val pad = 44f
+        val words = item.title.ifBlank { item.dateString }
+        val body = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFF000000.toInt(); textSize = 34f
+            typeface = android.graphics.Typeface.create(android.graphics.Typeface.SERIF, android.graphics.Typeface.NORMAL)
+        }
+        val foot = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFF666666.toInt(); textSize = 22f
+            typeface = android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.NORMAL)
+        }
+        val layout = android.text.StaticLayout.Builder
+            .obtain(words, 0, words.length, body, (w - pad * 2).toInt())
+            .setMaxLines(8).setEllipsize(android.text.TextUtils.TruncateAt.END).build()
+        val h = (pad * 2 + layout.height + 44).toInt().coerceAtLeast(200)
+        val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(bmp)
+        c.drawColor(0xFFFFFFFF.toInt())
+        c.save(); c.translate(pad, pad); layout.draw(c); c.restore()
+        c.drawText("${item.dateString}  ·  Field Ledger", pad, h - pad / 2, foot)
+        return com.toolsboox.ot.CardTreatment.card(bmp)
+    }
+
+    private fun showDayArchive() {
+        val ctx = context ?: return
+        showMessage("Reading the archive…", binding.root)
+        lifecycleScope.launch {
+            val found = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.ot.JournalCorpus.refreshIfStale(ctx)
+                com.toolsboox.plugin.calendar.ot.JournalCorpus.itemsOn(ctx, currentDate)
+            }
+            if (!isAdded) return@launch
+            if (found.isEmpty()) {
+                showMessage("Nothing posted on this day.", binding.root); return@launch
+            }
+            val dayUri = "ledger://$currentDate/default"
+            withContext(Dispatchers.IO) {
+                for (item in found) {
+                    com.toolsboox.plugin.calendar.ot.ConnectionStore.connect(
+                        ctx, com.toolsboox.ot.LedgerUri.journal(item.id), dayUri,
+                        fromLabel = item.title.ifBlank { "archive post" }, toLabel = item.dateString)
+                }
+            }
+            val labels = found.map { "📓  ${it.title.ifBlank { it.dateString }}" }.toTypedArray()
+            showModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                .setTitle("Posted on $currentDate")
+                .setItems(labels) { _, which -> archiveItemActions(found[which]) }
+                .setNegativeButton(android.R.string.cancel, null)
+                .create())
+        }
+    }
+
+    private fun archiveItemActions(item: com.toolsboox.plugin.calendar.ot.JournalItem) {
+        val ctx = context ?: return
+        val rows = arrayOf("🌐  Open the post", "❝  Make it a picking", "★  Send to Star Sort", "🏷  Tag…")
+        showModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle(item.title.ifBlank { item.dateString })
+            .setItems(rows) { _, which ->
+                when (which) {
+                    0 -> runCatching {
+                        startActivity(android.content.Intent(
+                            android.content.Intent.ACTION_VIEW, android.net.Uri.parse(item.permalink)))
+                    }
+                    1 -> placeArchiveGram(item, com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY, "")
+                    2 -> placeArchiveGram(item, CalendarDayPageIntake.INTAKE_PAGE, "read")
+                    else -> com.toolsboox.ot.TagPicker.show(
+                        ctx, com.toolsboox.ot.LedgerUri.journal(item.id),
+                        item.title.ifBlank { item.dateString },
+                        showModal = { showModal(it) })
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create())
+    }
+
+    /** Render an archive post as a card face and file it — the shared placement path, not a fork. */
+    private fun placeArchiveGram(
+        item: com.toolsboox.plugin.calendar.ot.JournalItem, boardKey: String, intakeKind: String
+    ) {
+        val appCtx = requireContext().applicationContext
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val face = archiveCardFace(item)
+                    com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                        calendarDayService, com.toolsboox.ot.LedgerPaths.documentsRoot(appCtx), face,
+                        currentDate, boardKey,
+                        sourceLink = item.permalink, sourceLabel = item.dateString,
+                        treatment = false, cardText = item.title, intakeKind = intakeKind)
+                    true
+                }.getOrDefault(false)
+            }
+            if (!isAdded) return@launch
+            showMessage(if (ok) "Placed." else "Couldn't place that.", binding.root)
+            if (ok) presenter.load(this@CalendarDayFragment, binding, currentDate,
+                sharedPreferences.getInt("calendarStartHour", 5), locale)
+        }
+    }
+
+    private fun showWriteTextEditor() {
+        val ctx = context ?: return
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val pageKey = notePage ?: "write"
+        val existing = com.toolsboox.plugin.calendar.ot.WriteDraftStore.draft(ctx, currentDate, pageKey)
+
+        val titleIn = android.widget.EditText(ctx).apply {
+            hint = "Title"; setSingleLine(); textSize = 20f
+            setText(existing?.title.orEmpty())
+        }
+        val bodyIn = android.widget.EditText(ctx).apply {
+            hint = "Write in Markdown…"
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            setText(existing?.markdown.orEmpty())
+            textSize = 16f
+            minLines = 14
+            isVerticalScrollBarEnabled = true
+        }
+        val col = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(16), px(8), px(16), px(8))
+            addView(titleIn)
+            addView(bodyIn, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, (420 * dp).toInt()))
+        }
+
+        fun persist() {
+            val title = titleIn.text.toString().trim()
+            val md = bodyIn.text.toString()
+            com.toolsboox.plugin.calendar.ot.WriteDraftStore.put(ctx, currentDate, pageKey, title, md)
+            // Tags go through `record` — a Write page IS a ledger page, so its tags belong in the
+            // tag index as openable rows rather than only as graph edges.
+            com.toolsboox.plugin.calendar.ot.LedgerTags.record(
+                ctx, currentDate, pageKey, title + "\n" + md)
+        }
+
+        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Write")
+            .setView(android.widget.ScrollView(ctx).apply { addView(col) })
+            .setPositiveButton("Save") { _, _ -> persist(); showMessage("Saved.", binding.root) }
+            .setNeutralButton("Send…") { _, _ -> persist(); shareEssay() }
+            .setNegativeButton("Cancel", null)
+            .create()
+        showModal(dialog)
+    }
+
+    private fun suggestTagsForPage() {
+        val ctx = context ?: return
+        val creds = aiCreds() ?: return
+        val pageKey = notePage ?: "default"
+        val uri = "ledger://$currentDate/$pageKey"
+
+        val parts = mutableListOf<String>()
+        if (::calendarDay.isInitialized) {
+            calendarDay.textElements.filter { it.pageKey == pageKey && it.text.isNotBlank() }
+                .forEach { parts.add(it.text) }
+            calendarDay.imageElements.filter { it.page == pageKey && it.cardText.isNotBlank() }
+                .forEach { parts.add(it.cardText) }
+        }
+        val text = parts.joinToString("\n\n")
+        if (text.isBlank()) { showMessage("Nothing written here to read yet.", binding.root); return }
+
+        val subject = if (com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(pageKey)) {
+            val name = runCatching {
+                com.toolsboox.plugin.calendar.ot.PickingsStore.list(ctx, currentDate)
+                    .firstOrNull { it.key == pageKey }?.name
+            }.getOrNull() ?: "Pickings"
+            com.toolsboox.plugin.calendar.ot.TagSuggest.Subject.Board(name)
+        } else {
+            com.toolsboox.plugin.calendar.ot.TagSuggest.Subject.Page(pageKey)
+        }
+
+        showMessage("Reading the page…", binding.root)
+        lifecycleScope.launch {
+            val found = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.ot.TagSuggest.suggest(
+                    ctx, text, subject, creds.first, creds.second, creds.third)
+            }
+            if (!isAdded) return@launch
+            if (found.isEmpty()) { showMessage("No tags suggested.", binding.root); return@launch }
+            showTagSuggestions(uri, pageKey, found)
+        }
+    }
+
+    /**
+     * Review what the model proposed, then apply what you agree with.
+     *
+     * A review step rather than silent autotagging: these tags are how the ledger names its own
+     * material, and a name applied without being read is a name you don't know you have. Everything
+     * arrives ticked so agreeing is quick — but the yes is yours.
+     */
+    private fun showTagSuggestions(
+        uri: String, label: String,
+        found: List<com.toolsboox.plugin.calendar.ot.TagSuggest.Suggestion>
+    ) {
+        val ctx = context ?: return
+        val labels = found.map { s ->
+            "#${s.tag}" + (if (s.isNew) "  (new)" else "") +
+                (if (s.why.isNotBlank()) "\n${s.why}" else "")
+        }.toTypedArray()
+        val checked = BooleanArray(found.size) { true }
+        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Suggested tags")
+            .setMultiChoiceItems(labels, checked) { _, which, isChecked -> checked[which] = isChecked }
+            .setPositiveButton("Apply") { _, _ ->
+                found.forEachIndexed { i, s ->
+                    if (checked[i]) {
+                        // A PAGE gets a page occurrence, so it lists in the tag index as a row you
+                        // can open — not just an edge in the graph.
+                        com.toolsboox.plugin.calendar.ot.LedgerTags.record(
+                            ctx, currentDate, label, "#${s.tag}")
+                    }
+                }
+                showMessage("Tagged.", binding.root)
+            }
+            .setNegativeButton("Not now", null)
+            .create()
+        showModal(dialog)
+    }
+
     override fun extraCreationGroups(cx: Float, cy: Float): List<List<com.toolsboox.ot.LedgerContextMenu.Item>> {
         val ctx = context ?: return emptyList()
         // Every making surface gets the way to reach BACKWARD for material you already gathered.
@@ -735,7 +997,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         )) else emptyList()
         // Tag the PAGE itself — a Pickings board, a synthesis, or the day. Distinct from tagging
         // the grams on it: a board's tag names what the COLLECTION is about.
-        val tagPage = listOf(listOf(
+        val tagPage = listOf(listOfNotNull(
+            if (aiCreds() != null) com.toolsboox.ot.LedgerContextMenu.Item("✨  Suggest tags…") {
+                suggestTagsForPage()
+            } else null,
             com.toolsboox.ot.LedgerContextMenu.Item("🏷  Tag this page…") {
                 com.toolsboox.ot.TagPicker.show(
                     ctx, "ledger://$currentDate/${notePage ?: "default"}",
@@ -752,11 +1017,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         ))
         return bring + tagPage + when (baseNotePage(notePage)) {
             "write" -> listOf(listOf(
+                // Hand or text, per Write sub-page. Neither converts the other.
+                com.toolsboox.ot.LedgerContextMenu.Item("⌨  Write in text…") { showWriteTextEditor() },
                 com.toolsboox.ot.LedgerContextMenu.Item("→  Share essay…") { shareEssay() }
             ))
-            // Any other note page (pickings, notes, gratitude) is a SELECTION BASKET: copy a few
-            // cards/quotes onto it, then run an engine on just this page's gathering.
-            null -> emptyList()
+            // The day page: what you POSTED on this day, out of the archive. It belongs here and
+            // not on a making surface — this is the day's own record, not material for a page.
+            null -> listOf(listOf(
+                com.toolsboox.ot.LedgerContextMenu.Item("📓  Posted this day…") { showDayArchive() }
+            ))
             else -> listOf(listOf(
                 com.toolsboox.ot.LedgerContextMenu.Item("⚗  Synthesize this page…") {
                     com.toolsboox.plugin.calendar.ot.SynthEngines.pick(ctx, "Synthesize this page") { e ->
@@ -885,7 +1154,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         android.widget.Toast.makeText(ctx, "Sending…", android.widget.Toast.LENGTH_SHORT).show()
         lifecycleScope.launch(Dispatchers.IO) {
             val png = pagePng()
-            val text = currentTextElements().filter { it.text.isNotBlank() }.joinToString("\n\n") { it.text.trim() }
+            // A TYPED Write page leaves as HTML, converted from its Markdown at the moment it
+            // goes — the only moment the HTML matters. A handwritten one leaves as it always did.
+            val draft = com.toolsboox.plugin.calendar.ot.WriteDraftStore
+                .draft(ctx, currentDate, notePage ?: "write")
+            val text = if (draft != null && draft.markdown.isNotBlank())
+                com.toolsboox.plugin.calendar.ot.MarkdownHtml.html(draft.markdown)
+            else currentTextElements().filter { it.text.isNotBlank() }.joinToString("\n\n") { it.text.trim() }
             val status = com.toolsboox.plugin.calendar.nw.LedgerEssay.send(site, user, pass, dest, title, tags, text, to, png)
             withContext(Dispatchers.Main) {
                 android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
