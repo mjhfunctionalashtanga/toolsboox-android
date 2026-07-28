@@ -81,6 +81,10 @@ object InboxStore {
     fun isRead(c: Context, id: String) = ids(c, READ).contains(id)
     fun isReplied(c: Context, id: String) = ids(c, REPLIED).contains(id)
 
+    /** True for a synthetic sent row — its id prefix, so the bulk-clear guard can skip it without a
+     *  file read. Sent rows are keep-forever (see [recordSent]); this is how the UI keeps them. */
+    fun isSent(id: String) = id.startsWith("sent:")
+
     fun setStarred(c: Context, m: InboxMessage, v: Boolean) {
         val s = ids(c, STAR); if (v) s.add(m.id) else s.remove(m.id); setIds(c, STAR, s)
         if (v) { val cl = ids(c, CLEARED); if (cl.remove(m.id)) setIds(c, CLEARED, cl) }  // starring rescues from a prior clear
@@ -107,6 +111,35 @@ object InboxStore {
             val kept = loadReplied(c)
             if (kept.none { it.id == id }) { kept.add(msg); saveReplied(c, kept) }
         }
+    }
+
+    /** Record an OUTGOING reply into the sent pile — a keep-forever event that MIRRORS the replied
+     *  pile, but for the text YOU wrote. A synthetic [InboxMessage] carrying your sending identity
+     *  (the account the reply goes out AS: display name, from-address), the `Re:` subject, and the
+     *  reply body is appended to its own kept pile (`files/mail/sent.json`), so your own words outlive
+     *  the fetch window and a restart and stay searchable forever. Sent rows persist purely via this
+     *  pile — they carry no live account window and no id set, so nothing ever prunes them. Call OFF
+     *  the main thread (it writes a file). */
+    fun recordSent(c: Context, original: InboxMessage, replyText: String) {
+        // The from-identity is the account the reply is sent AS — resolved exactly as MailSync.sendReply
+        // resolves it (accountId embedded in the original's id → the configured account). If that can't
+        // be resolved, fall back to the original's account label and a best-effort self name.
+        val aid = MailSync.accountId(original.id)
+        val a = if (aid != null) MailAccountStore.all(c).firstOrNull { it.id == aid } else null
+        val subject = if (original.subject.lowercase().startsWith("re:")) original.subject else "Re: ${original.subject}"
+        val msg = InboxMessage(
+            id = "sent:${aid ?: "unknown"}:${java.util.UUID.randomUUID()}",
+            account = a?.display ?: original.account,
+            fromName = a?.displayName ?: "Me",
+            fromEmail = a?.email ?: "",
+            subject = subject,
+            snippet = replyText.replace("\n", " ").take(140),
+            body = replyText,
+            date = System.currentTimeMillis()
+        )
+        val kept = loadSent(c)
+        kept.add(msg)
+        saveSent(c, kept)
     }
 
     /** Swap one message's content in place (the on-demand full fetch landing): the in-memory
@@ -157,11 +190,12 @@ object InboxStore {
         return (kf + rest).sortedByDescending { it.date }
     }
 
-    /** The keep-forever pile: persisted starred and replied bodies, unioned and deduped by id. */
+    /** The keep-forever pile: persisted starred, replied, and sent bodies, unioned and deduped by id. */
     private fun keepForeverPile(c: Context): List<InboxMessage> {
         val out = loadStarred(c)
         val seen = out.map { it.id }.toMutableSet()
         for (m in loadReplied(c)) if (seen.add(m.id)) out.add(m)
+        for (m in loadSent(c)) if (seen.add(m.id)) out.add(m)
         return out
     }
 
@@ -273,6 +307,40 @@ object InboxStore {
             repliedFile(c).writeText(arr.toString())
         } catch (e: Exception) {
             Timber.w(e, "replied mail save failed")
+        }
+    }
+
+    // The sent-content store: exact mirror of the starred/replied piles above, a separate JSON array
+    // so the OUTGOING reply text you wrote is kept forever and searchable alongside the mail you got.
+
+    private fun sentFile(c: Context): File =
+        File(c.filesDir, "mail").apply { mkdirs() }.let { File(it, "sent.json") }
+
+    @Volatile private var sentCache: List<InboxMessage>? = null
+
+    private fun loadSent(c: Context): MutableList<InboxMessage> {
+        sentCache?.let { return it.toMutableList() }
+        val f = sentFile(c)
+        val list = if (!f.exists()) mutableListOf() else try {
+            val arr = JSONArray(f.readText())
+            (0 until arr.length()).map { InboxMessage.fromJson(arr.getJSONObject(it)) }
+                .filter { it.id.isNotBlank() }.toMutableList()
+        } catch (e: Exception) {
+            Timber.w(e, "sent mail read failed")
+            mutableListOf<InboxMessage>()
+        }
+        sentCache = list.toList()
+        return list
+    }
+
+    private fun saveSent(c: Context, list: List<InboxMessage>) {
+        sentCache = list.toList()
+        try {
+            val arr = JSONArray()
+            list.forEach { arr.put(it.toJson()) }
+            sentFile(c).writeText(arr.toString())
+        } catch (e: Exception) {
+            Timber.w(e, "sent mail save failed")
         }
     }
 

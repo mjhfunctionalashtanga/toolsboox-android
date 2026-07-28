@@ -443,9 +443,12 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
      */
     private fun clearUnstarred() {
         val ctx = context ?: return
-        // Keep-forever mail is never bulk-swept: starred OR replied-to both stay (the per-row
-        // long-press Delete is the deliberate override for any single message).
-        val swept = shown().filter { !InboxStore.isStarred(ctx, it.id) && !InboxStore.isReplied(ctx, it.id) }.map { it.id }
+        // Keep-forever mail is never bulk-swept: starred, replied-to, OR sent all stay (the per-row
+        // long-press Delete is the deliberate override for any single message). A sent row lives only
+        // in its file-backed pile, so if it were swept into CLEARED nothing would ever un-clear it.
+        val swept = shown().filter {
+            !InboxStore.isStarred(ctx, it.id) && !InboxStore.isReplied(ctx, it.id) && !InboxStore.isSent(it.id)
+        }.map { it.id }
         if (swept.isEmpty()) { toast("Nothing to clear — it's all kept"); return }
         InboxStore.clear(ctx, swept)
         messages = InboxStore.messages(ctx)
@@ -834,8 +837,11 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
                     catch (e: Exception) { e.message ?: "Send failed" }
                     // A sent reply is a keep-forever event: the mail you answered persists its body and
                     // never prunes, exactly like a star. Recorded off the main thread (it writes a file).
+                    // The reply text you wrote also persists to its own sent pile, so your outgoing
+                    // words are kept forever and searchable alongside the mail you received.
                     if (err == null) withContext(Dispatchers.IO) {
                         InboxStore.markReplied(ctx.applicationContext, m.id)
+                        InboxStore.recordSent(ctx.applicationContext, m, text)
                     }
                     if (!isAdded) return@launch          // send outlives the fragment; toast needs it attached
                     if (err == null) messages = InboxStore.messages(ctx)   // reflect the new keep-forever row
