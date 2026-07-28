@@ -98,11 +98,22 @@ object NowPlayingCard {
         }
 
         val bar = PositionBar(context)
-        // Tap-to-seek is cheap on real audio (x-fraction × duration); TTS has no clock to land on.
+        // Tap AND DRAG to seek on real audio (x-fraction × duration); TTS has no clock to land on.
+        // ACTION_DOWN asks the parent scroll NOT to intercept so a horizontal slide isn't stolen as
+        // a vertical scroll — that's why the bar felt un-draggable.
         bar.setOnTouchListener { v, ev ->
-            if (ev.action == MotionEvent.ACTION_UP && player.isMediaSource && v.width > 0) {
-                val total = player.durationMs
-                if (total > 0) player.seekTo(((ev.x / v.width) * total).toInt())
+            if (!player.isMediaSource || v.width <= 0) return@setOnTouchListener false
+            val total = player.durationMs
+            if (total <= 0) return@setOnTouchListener false
+            when (ev.action) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                    v.parent?.requestDisallowInterceptTouchEvent(true)
+                    val f = (ev.x / v.width).coerceIn(0f, 1f)
+                    bar.fraction = f                       // live preview while dragging
+                    player.seekTo((f * total).toInt())
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    v.parent?.requestDisallowInterceptTouchEvent(false)
             }
             true
         }
