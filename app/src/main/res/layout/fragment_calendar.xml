@@ -34,17 +34,6 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent">
 
-        <!-- The lane the hide-nav chevron occupies (it lives on the OUTER root, pinned top-right).
-             The navigator strip must END before this lane: it used to run edge-to-edge and the
-             chevron sat ON TOP of the strip's RIGHT CARET, so the caret read as an up-chevron and
-             couldn't be tapped. Same width as navHideButton (34dp) + its 2dp end margin. -->
-        <Space
-                android:id="@+id/navHideBarrier"
-                android:layout_width="36dp"
-                android:layout_height="1dp"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintEnd_toEndOf="parent"/>
-
         <ImageView
                 android:id="@+id/navigatorImageView"
                 android:layout_width="0dp"
@@ -54,7 +43,7 @@
 
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintStart_toEndOf="@id/toolbarDrawing"
-                app:layout_constraintEnd_toStartOf="@id/navHideBarrier"/>
+                app:layout_constraintEnd_toEndOf="parent"/>
 
         <!-- iPad-style jump buttons by the carets: left = apps/almanac, right = sections.
              Hidden by default; only the day page turns them on. -->
@@ -253,25 +242,5 @@
         </LinearLayout>
 
     </androidx.constraintlayout.widget.ConstraintLayout>
-
-    <!-- Hide-nav toggle: a small chevron pinned to the top-right corner that collapses the almanac
-         navigator strip (reclaiming its band for the page) and, once hidden, IS the thin affordance
-         that brings it back. Lives on the OUTER root — NOT inside drawing_layout — because that
-         inner layout's ConstraintSet gets re-cloned on toolbar-side switches and would come back 0×0
-         any child it doesn't describe (the spiral-line / notePager lesson). -->
-    <ImageButton
-            android:id="@+id/navHideButton"
-            android:layout_width="34dp"
-            android:layout_height="34dp"
-            android:padding="7dp"
-            android:scaleType="fitCenter"
-            android:src="@drawable/ic_nav_up"
-            android:background="#FFFFFF"
-            android:contentDescription="@string/calendar_navigator_image"
-
-            app:layout_constraintTop_toBottomOf="@id/mainProgress"
-            app:layout_constraintEnd_toEndOf="parent"
-            android:layout_marginTop="2dp"
-            android:layout_marginEnd="2dp"/>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -126,30 +126,10 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         )
         renderNav()
 
-        // Hide-nav toggle: collapse the almanac strip out of the header row to reclaim its band.
-        // Shares the app-wide "ledger_ui" prefs with the day page's toggle so the choice holds
-        // wherever the strip appears.
-        binding.mailNavHide.setOnClickListener {
-            val nowHidden = !com.toolsboox.plugin.calendar.ot.AlmanacNav.isHidden(requireContext())
-            com.toolsboox.plugin.calendar.ot.AlmanacNav.setHidden(requireContext(), nowHidden)
-            applyAlmanacNavHidden(nowHidden)
-        }
-        applyAlmanacNavHidden(com.toolsboox.plugin.calendar.ot.AlmanacNav.isHidden(requireContext()))
-
         val ctx = requireContext()
         messages = InboxStore.messages(ctx)
         render()
         if (InboxStore.hasAccounts(ctx)) refresh()
-    }
-
-    /**
-     * Show or hide the almanac navigator strip (persisted via [com.toolsboox.plugin.calendar.ot.AlmanacNav]).
-     * Hidden, the strip drops out of the header row so the list gains that band; the chevron flips
-     * to ⌄ and is the affordance that brings it back.
-     */
-    private fun applyAlmanacNavHidden(hidden: Boolean) {
-        binding.mailNavigator.visibility = if (hidden) View.GONE else View.VISIBLE
-        binding.mailNavHide.text = if (hidden) "⌄" else "⌃"
     }
 
     /**
