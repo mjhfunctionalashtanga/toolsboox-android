@@ -913,7 +913,11 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         )
         com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
             calendarDayService, root, face, today, pageKey = "intake",
-            sourceLink = mailUri, sourceLabel = sender, cardText = m.subject
+            sourceLink = mailUri, sourceLabel = sender, cardText = m.subject,
+            // A starred email belongs to the EMAIL quarter of Star Sort — whose storage key is the
+            // legacy "educate". Without this the gram carried NO intakeKind, matched no quarter, and
+            // landed at the default spot, i.e. on top of THE READ.
+            intakeKind = "educate"
         )
         return true
     }
