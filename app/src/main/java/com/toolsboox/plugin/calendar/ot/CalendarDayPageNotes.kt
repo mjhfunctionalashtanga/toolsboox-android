@@ -140,8 +140,13 @@ class CalendarDayPageNotes : Creator {
                 CalendarDayPageIntake.drawPage(canvas, com.toolsboox.plugin.michaelfilter.da.IntakePageData())
                 return
             }
-            if (notePage == "synthesize" || notePage == "brainstorm") {
+            if (base == "synthesize" || base == "brainstorm") {
                 drawBrainstormPage(canvas)
+                // The shared shell that WRITE/NOTES draws below — this branch returned before it, so
+                // Synthesize was missing its header + the big page number the inline ‹ N › pager counts.
+                val synthPage = base.toIntOrNull() ?: subIndex
+                canvas.drawText("SYNTHESIZE", lo, to - 16.0f, Creator.textDefaultBlack)
+                canvas.drawText("${synthPage + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)
                 return
             }
             if (base == "grid") {

@@ -235,7 +235,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     /** The named note bases that own an inline ‹ N › sub-page pager (like the numeric notes do). */
     private fun isSubPageableBase(base: String?): Boolean =
-        base == "write" || base == "grid" || base == "sketch"
+        base == "write" || base == "grid" || base == "sketch" || base == "synthesize"
 
     /**
      * Whether the current surface is a NOTES page for the almanac-as-filter interception: the
