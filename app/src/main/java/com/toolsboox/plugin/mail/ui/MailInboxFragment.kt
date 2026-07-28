@@ -568,6 +568,22 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         card.addView(star)
 
         card.setOnClickListener { InboxStore.markRead(ctx, m.id); openMessage(m) }
+        // Long-press a row → Delete: sweeps this one message out of the inbox for good (unlike the
+        // header 🧹 which only sweeps the unstarred pile, delete works on ANY row, starred included).
+        card.setOnLongClickListener {
+            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                .setTitle("Delete this email?")
+                .setMessage(m.subject.ifBlank { m.fromName.ifBlank { m.fromEmail } })
+                .setPositiveButton("Delete") { _, _ ->
+                    InboxStore.clear(ctx, listOf(m.id))
+                    messages = InboxStore.messages(ctx)
+                    render()
+                    toast("Deleted")
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+            true
+        }
         return card
     }
 
