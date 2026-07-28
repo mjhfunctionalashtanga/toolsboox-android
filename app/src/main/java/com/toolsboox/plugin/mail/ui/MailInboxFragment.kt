@@ -826,7 +826,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
                 runCatching { placeMailStarGram(root, m, today) }.getOrDefault(false)
             }
             if (!isAdded) return@launch
-            toast(if (placedGram) "★ → to-do + Intake" else "Starred — added to your to-dos")
+            toast(if (placedGram) "★ → to-do + Star Sort" else "Starred — added to your to-dos")
             messages = InboxStore.messages(ctx)
             render()
         }

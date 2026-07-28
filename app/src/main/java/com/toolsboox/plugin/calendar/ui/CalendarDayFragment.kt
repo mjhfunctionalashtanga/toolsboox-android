@@ -2048,7 +2048,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     add(GoItem("⚡", "Next · $label") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), page) })
                 }
                 add(GoItem("☀︎", "Day") { CalendarNavigator.toDayPage(this@CalendarDayFragment, LocalDate.now(), CalendarDay.DEFAULT_STYLE) })
-                add(GoItem("🔖", "Intake") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
+                add(GoItem("🔖", "Star Sort") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
                 add(GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "pickings") })
                 add(GoItem("🔬", "Synthesize") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "synthesize") })
                 add(GoItem("✍", "Write") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "write") })

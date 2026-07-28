@@ -171,7 +171,7 @@ fun ledgerDirectoryFolders(
         // out. (Was "Daily"; Daily Pile is retired — Intake takes its place. Gratitude and Self
         // Executive moved to the Garden.)
         ScreenFragment.Folder("⤳", "Flow", listOf(
-            "📥  Intake" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
+            "📥  Star Sort" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
             "❝  Pickings" to { showPickingsPicker(fragment) },
             "🔬  Synthesize" to { showSynthPicker(fragment) },
             "✍  Write" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "write") }
