@@ -95,6 +95,9 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentMailInboxBinding.bind(view)
         binding.mailClose.setOnClickListener { NavHostFragment.findNavController(this).popBackStack() }
+        // The ☰ by the almanac's left carat opens the main Ledger menu (the accordion hub every
+        // surface carries), so Mail isn't a dead-end — the title bar it replaces is gone.
+        binding.mailMenu.setOnClickListener { showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this)) }
         binding.mailRefresh.setOnClickListener { refresh() }
         binding.mailSettings.setOnClickListener { showAccountsList() }
         binding.mailClear.setOnClickListener { clearUnstarred() }
