@@ -560,7 +560,7 @@ object FeedNoteGram {
             fragment.requireActivity().runOnUiThread {
                 runCatching {
                     android.widget.Toast.makeText(
-                        fragment.requireContext(), "★ → Filtered", android.widget.Toast.LENGTH_SHORT
+                        fragment.requireContext(), "★ → Intake", android.widget.Toast.LENGTH_SHORT
                     ).show()
                 }
             }
