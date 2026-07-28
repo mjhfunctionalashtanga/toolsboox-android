@@ -3224,6 +3224,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                     // to be two image entries here and recording hidden behind a lasso.
                     LedgerContextMenu.Item("Add media…") { showAddMediaMenu(cx, cy) },
                     LedgerContextMenu.Item("🔖 Intake a link…") { onIntakeLink(cx, cy) },
+                    // Clip art before the clippings shelf: the shelf only ever holds what you cut
+                    // out yourself, so on a fresh ledger it's empty and the drawer above it isn't.
+                    LedgerContextMenu.Item("Clip art…") { showClipArtPicker(cx, cy) },
                     LedgerContextMenu.Item("Insert clipping…") { showClippingsPicker(cx, cy) },
                     LedgerContextMenu.Item("Simple shapes…") { showShapesPicker(cx, cy) }
                 ),
@@ -3386,6 +3389,88 @@ abstract class SurfaceFragment : ScreenFragment() {
             grid.addView(cell)
         }
         showModal(dialog)
+    }
+
+    /**
+     * The clip-art drawer: grouped line art you can stamp on the page.
+     *
+     * Grouped rather than one long grid — two dozen pictures in an undifferentiated wall is
+     * something you scan rather than choose from, and the groups are how you find "a leaf" without
+     * reading every label.
+     */
+    private fun showClipArtPicker(cx: Float, cy: Float) {
+        val ctx = context ?: return
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val cols = (resources.configuration.screenWidthDp / 110).coerceIn(3, 6)
+        val col = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(12), px(8), px(12), px(8))
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Clip art")
+            .setView(android.widget.ScrollView(ctx).apply { addView(col) })
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        for (group in com.toolsboox.ot.ClipArtLibrary.GROUPS) {
+            val items = com.toolsboox.ot.ClipArtLibrary.ALL.filter { it.group == group }
+            if (items.isEmpty()) continue
+            col.addView(android.widget.TextView(ctx).apply {
+                text = group.uppercase()
+                textSize = 12f; setTextColor(0xFF888888.toInt())
+                setPadding(px(4), px(10), px(4), px(4))
+            })
+            val grid = android.widget.GridLayout(ctx).apply { columnCount = cols }
+            for (art in items) {
+                grid.addView(LinearLayout(ctx).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = android.view.Gravity.CENTER
+                    setPadding(px(6), px(6), px(6), px(6))
+                    addView(android.widget.ImageView(ctx).apply {
+                        setImageBitmap(com.toolsboox.ot.ClipArtLibrary.bitmap(art.key, 160))
+                        adjustViewBounds = true
+                        layoutParams = LinearLayout.LayoutParams(px(56), px(56))
+                    })
+                    addView(android.widget.TextView(ctx).apply {
+                        text = art.label
+                        textSize = 10f; setTextColor(0xFF666666.toInt())
+                        gravity = android.view.Gravity.CENTER
+                    })
+                    setOnClickListener { dialog.dismiss(); placeClipArtAt(art.key, cx, cy) }
+                })
+            }
+            col.addView(grid)
+        }
+        showModal(dialog)
+    }
+
+    /**
+     * Stamp a piece of clip art where the finger pressed.
+     *
+     * Decorative, like a shape and unlike a picking: a sticker has no provenance, so it stays out
+     * of the rhizome and off the Map — an edge to a drawn leaf is noise. `edgeBaked` too, because
+     * its outline IS the picture and a tape frame round a drawing is a frame round a frame.
+     */
+    private fun placeClipArtAt(key: String, cx: Float, cy: Float) {
+        val bmp = com.toolsboox.ot.ClipArtLibrary.bitmap(key) ?: return
+        val baos = java.io.ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
+        val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        val w = CANVAS_WIDTH * 0.24f
+        val h = w * bmp.height / bmp.width
+        val element = ImageElement(
+            x = (cx - w / 2f).coerceIn(0f, (CANVAS_WIDTH - w).coerceAtLeast(0f)),
+            y = (cy - h / 2f).coerceIn(0f, (CANVAS_HEIGHT - h).coerceAtLeast(0f)),
+            width = w, height = h, data = base64,
+            sourceLabel = key, decorative = true, edgeBaked = true
+        )
+        pushUndo()
+        imageElements.add(element)
+        onImageElementsChanged(imageElements)
+        imageMode = true
+        penState = false
+        selectedImage = element
+        applyStrokes(strokes, true)
     }
 
     /** Drop a shape on the surface, selected so the very next thing you do is size it. */
