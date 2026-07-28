@@ -197,6 +197,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 return
             }
         }
+        // The intake page is a PICTURE of its grams — they're painted into the template's grid,
+        // not laid out at their own element coordinates — so the generic canvas menu, which
+        // hit-tests element.x/y, could never find one and a hold there did nothing. Resolve the
+        // hold against the same recorded cell geometry the tap handler uses.
+        if (notePage == CalendarDayPageIntake.INTAKE_PAGE) {
+            showIntakeHoldMenu(canvasPts[0], canvasPts[1], longPressDownX, longPressDownY)
+            return
+        }
         handleCanvasLongPress(canvasPts[0], canvasPts[1], longPressDownX, longPressDownY)
     }
 
@@ -4455,6 +4463,250 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             )
             binding.templateImageView.invalidate()
             showMessage("Picked into its own board — tap ✓ to open it", binding.root)
+        }
+    }
+
+    // ─── Intake page: the hold menu ────────────────────────────────────────────────────────────
+    // Star Sort fills itself — stars and filed mail arrive on their own — which left no way to put
+    // something there ON PURPOSE. A hold is that way in: "Bring in a picking" reaches back into the
+    // boards for a card you already made and files it under the quarter you held. When the hold
+    // lands on a gram, the rest of the menu is that gram's own business, using the same actions the
+    // page already offers it by tap (graduate / open its board / open the source) plus the gram
+    // verbs the canvas menu gives every other card.
+
+    /** One card already on a Pickings board, offered back to the intake page. */
+    private data class PickingGram(
+        val date: LocalDate, val boardName: String, val data: String,
+        val label: String, val link: String, val cardText: String, val feed: String
+    )
+
+    /**
+     * The intake page's hold menu, resolved against [CalendarDayPageIntake]'s recorded cells.
+     *
+     * @param cx canvas x of the hold
+     * @param cy canvas y of the hold
+     * @param pressX press x in the surface view (menu anchor)
+     * @param pressY press y in the surface view (menu anchor)
+     */
+    private fun showIntakeHoldMenu(cx: Float, cy: Float, pressX: Float, pressY: Float) {
+        if (!::calendarDay.isInitialized) return
+        val gram = CalendarDayPageIntake.gramAt(cx, cy)
+        // A gram held → its own quarter; empty paper → the quarter under the finger; neither →
+        // The Read, so the menu still works when the hold lands in a gutter.
+        val panel = CalendarDayPageIntake.panelAt(cx, cy)
+        val kindKey = gram?.kindKey ?: panel?.kindKey ?: CalendarDayPageIntake.panels.first().kindKey
+        val kindTitle = CalendarDayPageIntake.panels.firstOrNull { it.kindKey == kindKey }?.title ?: "STAR SORT"
+        val element = gram?.let { g ->
+            calendarDay.imageElements.firstOrNull { it.elementId.toString().lowercase() == g.elementId }
+        }
+
+        fun item(label: String, action: () -> Unit) = com.toolsboox.ot.LedgerContextMenu.Item(label, action)
+        val groups = mutableListOf<List<com.toolsboox.ot.LedgerContextMenu.Item>>()
+
+        groups.add(listOf(item("❝  Bring in a picking") { bringPickingIntoIntake(kindKey, kindTitle) }))
+
+        if (element != null) {
+            groups.add(listOfNotNull(
+                if (element.graduatedTo.isBlank())
+                    item("✓  Give it its own board") { graduateIntakeGram(element) }
+                else
+                    item("❝  Open its board") { CalendarNavigator.toDayNote(this, currentDate, element.graduatedTo) },
+                if (element.sourceLink.isNotBlank()) item("🔗  Open the source") { onImageSource(element) } else null,
+                if (element.sourceFeed.isNotBlank()) item("📰  Go to its feed") { onImageGoToFeed(element) } else null,
+                item("❝  Add to Pickings…") { intakeGramToPickings(element) },
+                item("🕸  Rhizome") { onImageRhizome(element) },
+                item("🔎  Where used") { onImageWhereUsed(element) }
+            ))
+            groups.add(listOf(item("🗑  Remove from Star Sort") { confirmRemoveIntakeGram(element) }))
+        }
+
+        com.toolsboox.ot.LedgerContextMenu.show(
+            provideSurfaceView(), pressX, pressY,
+            if (element != null) "GRAM" else kindTitle, groups
+        )
+    }
+
+    /** This intake gram onto a Pickings board — the same chooser every other card gets. */
+    private fun intakeGramToPickings(element: ImageElement) {
+        val bmp = runCatching {
+            val bytes = android.util.Base64.decode(element.data, android.util.Base64.DEFAULT)
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        }.getOrNull() ?: return
+        placeGramToPickings(bmp)
+    }
+
+    /** Taking a card off Star Sort is a deletion, so it asks — and says which one it means. */
+    private fun confirmRemoveIntakeGram(element: ImageElement) {
+        val what = element.cardText.ifBlank { element.sourceLabel }.ifBlank { "this gram" }
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+            .setTitle("Remove from Star Sort?")
+            .setMessage(what.take(160))
+            .setPositiveButton("Remove") { _, _ -> removeIntakeGram(element) }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** Drop the gram from the page and tombstone it, so a sync union can't hand it back. */
+    private fun removeIntakeGram(element: ImageElement) {
+        calendarDay.imageElements.removeAll { it.elementId == element.elementId }
+        val eid = element.elementId.toString()
+        if (eid !in calendarDay.deletedElementIds) calendarDay.deletedElementIds.add(eid)
+        setImageElements(
+            calendarDay.imageElements.filter { it.page == CalendarDayPageIntake.INTAKE_PAGE }.toMutableList()
+        )
+        calendarPattern.updateDay(calendarDay)
+        presenter.save(this, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+        redrawIntakePage()
+    }
+
+    /** Repaint the intake template in place (after a gram arrives or leaves). */
+    private fun redrawIntakePage() {
+        if (notePage != CalendarDayPageIntake.INTAKE_PAGE) return
+        CalendarDayPageIntake.drawPage(
+            templateCanvas, intakePageData ?: com.toolsboox.plugin.michaelfilter.da.IntakePageData(), calendarDay
+        )
+        binding.templateImageView.invalidate()
+    }
+
+    /**
+     * Bring a card from a Pickings board onto the intake page, into the quarter that was held.
+     *
+     * Star Sort's grams normally arrive by themselves — a star, a filed email — and there was no
+     * door for "put THAT one here". This is that door: the boards you already made, as faces you
+     * can recognise, and the chosen one is filed under [kindKey] exactly as a starred gram would
+     * be (same [PickingsPlacement] path, provenance carried, its card face already treated so it
+     * isn't taped down twice).
+     */
+    private fun bringPickingIntoIntake(kindKey: String, kindTitle: String) {
+        val ctx = context ?: return
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        val listCol = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = android.widget.ScrollView(ctx).apply {
+            addView(listCol)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (420 * dp).toInt())
+        }
+        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Bring in a picking → $kindTitle")
+            .setView(scroll)
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+
+        listCol.addView(android.widget.TextView(ctx).apply {
+            text = "Reading your boards…"; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0)
+        })
+
+        lifecycleScope.launch {
+            val picks = withContext(Dispatchers.IO) { gatherPickingGrams() }
+            if (!isAdded) return@launch
+            listCol.removeAllViews()
+            if (picks.isEmpty()) {
+                listCol.addView(android.widget.TextView(ctx).apply {
+                    text = "No pickings with cards yet."; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0)
+                })
+                return@launch
+            }
+            for (p in picks) {
+                // Downsampled decode — a couple of hundred full-res faces in one list is an OOM
+                // on e-ink RAM (the pickGramForReply rule).
+                val thumb = runCatching {
+                    val bytes = android.util.Base64.decode(p.data, android.util.Base64.DEFAULT)
+                    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                    val target = px(76)
+                    var sample = 1
+                    while (bounds.outWidth / (sample * 2) >= target && bounds.outHeight / (sample * 2) >= target) sample *= 2
+                    android.graphics.BitmapFactory.decodeByteArray(
+                        bytes, 0, bytes.size,
+                        android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+                }.getOrNull() ?: continue
+                val row = LinearLayout(ctx).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    setPadding(px(6), px(8), px(6), px(8))
+                    setBackgroundResource(android.R.drawable.list_selector_background)
+                }
+                row.addView(com.toolsboox.ot.InkMount.wrap(ctx,
+                    android.widget.ImageView(ctx).apply {
+                        setImageBitmap(thumb); adjustViewBounds = true
+                        layoutParams = FrameLayout.LayoutParams(px(76), px(76))
+                        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                    }, taped = false).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { marginEnd = px(10) }
+                })
+                row.addView(android.widget.TextView(ctx).apply {
+                    text = "${p.label}\n❝ ${p.boardName} · ${p.date}"
+                    textSize = 14f; setTextColor(0xFF000000.toInt())
+                })
+                row.setOnClickListener { dialog.dismiss(); fileIntoIntake(p, kindKey, kindTitle) }
+                listCol.addView(row)
+            }
+        }
+        showModal(dialog)
+    }
+
+    /** Every card sitting on a Pickings board across the recent window, newest day first. */
+    private fun gatherPickingGrams(): List<PickingGram> {
+        val out = mutableListOf<PickingGram>()
+        val calendarRoot = java.io.File(documentsRoot(), "calendar")
+        if (!calendarRoot.exists()) return out
+        val ctx = context ?: return out
+        calendarRoot.walkTopDown()
+            .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
+            .sortedByDescending { it.name }.take(120)
+            .forEach { file ->
+                val m = Regex("day-(\\d{4})-(\\d{2})-(\\d{2})").find(file.name) ?: return@forEach
+                val ld = runCatching {
+                    LocalDate.of(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt())
+                }.getOrNull() ?: return@forEach
+                val day = runCatching { calendarDayService.load(file) }.getOrNull() ?: return@forEach
+                val names = runCatching {
+                    com.toolsboox.plugin.calendar.ot.PickingsStore.list(ctx, ld).associate { it.key to it.name }
+                }.getOrNull().orEmpty()
+                for (img in day.imageElements) {
+                    if (img.data.isBlank() || img.decorative) continue
+                    if (!com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(img.page)) continue
+                    out.add(PickingGram(
+                        ld, names[img.page] ?: "Pickings", img.data,
+                        img.cardText.ifBlank { img.sourceLabel }.ifBlank { "Picking" }.take(80),
+                        img.sourceLink, img.cardText, img.sourceFeed
+                    ))
+                    if (out.size >= 200) return out
+                }
+            }
+        return out
+    }
+
+    /** File a chosen picking into the intake quarter — the starred-gram path, verbatim. */
+    private fun fileIntoIntake(pick: PickingGram, kindKey: String, kindTitle: String) {
+        val appCtx = requireContext().applicationContext
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bytes = android.util.Base64.decode(pick.data, android.util.Base64.DEFAULT)
+                    val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        ?: return@runCatching false
+                    com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                        calendarDayService, com.toolsboox.ot.LedgerPaths.documentsRoot(appCtx), bmp,
+                        currentDate, CalendarDayPageIntake.INTAKE_PAGE,
+                        sourceLink = pick.link, sourceLabel = pick.label,
+                        // The card already wears its treatment in its own pixels — taping it
+                        // twice is the one-decoration contract's whole point.
+                        treatment = false, cardText = pick.cardText, sourceFeed = pick.feed,
+                        intakeKind = kindKey
+                    )
+                    true
+                }.getOrDefault(false)
+            }
+            if (!isAdded) return@launch
+            if (!ok) { showMessage("Couldn't bring that picking in", binding.root); return@launch }
+            showMessage("Brought into $kindTitle", binding.root)
+            // Reload so the page draws from the day file the placement just wrote.
+            presenter.load(this@CalendarDayFragment, binding, currentDate,
+                sharedPreferences.getInt("calendarStartHour", 5), locale)
         }
     }
 
