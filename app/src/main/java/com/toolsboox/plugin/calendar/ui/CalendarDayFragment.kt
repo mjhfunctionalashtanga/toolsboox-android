@@ -896,7 +896,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             findNavController().navigate(R.id.action_to_quick_wins)
             return true
         }
-        val win = com.toolsboox.plugin.calendar.ot.CalendarDayPage.winAt(cx, cy) ?: return false
+        val win = com.toolsboox.plugin.calendar.ot.CalendarDayPage.winAt(cx, cy)
+        Timber.i("quick-win tap: cx=%.0f cy=%.0f hit=%s", cx, cy, win?.text ?: "∅")
+        if (win == null) return false
         goToWin(win)
         return true
     }
@@ -907,33 +909,47 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      *  a win with no addressable person still lands in the inbox, where the mail it's probably
      *  about is waiting with its Reply.
      *  CALL → the rolodex, opened straight onto the win's contact when it carries one, so the
-     *  number is on screen. HOME → the day the task lives on. */
+     *  number is on screen. HOME → the day the task lives on — UNLESS that day is the one we're
+     *  already on (a today-sourced win), in which case a tap would be a silent no-op ("nothing
+     *  happens, it flashes"); those open the ⚡ Quick Wins surface instead, where the win carries
+     *  its ✧ Path to victory. Every navigate is guarded so a stale/absent action can't dead-end. */
     private fun goToWin(win: com.toolsboox.plugin.calendar.ot.QuickWinsEngine.Win) {
-        when (com.toolsboox.plugin.calendar.ot.QuickWinsEngine.goKind(win)) {
-            com.toolsboox.plugin.calendar.ot.QuickWinsEngine.Go.EMAIL -> {
-                // contacts.json is one small local file — a synchronous read on a tap is the
-                // same bargain the rolodex list itself makes.
-                val contact = win.contactId?.let {
-                    com.toolsboox.plugin.calendar.ot.ContactStore.get(requireContext(), it)
-                }
-                if (contact != null && contact.email.isNotBlank())
-                    findNavController().navigate(
-                        R.id.action_to_mail_compose,
-                        androidx.core.os.bundleOf(
-                            com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_TO_EMAIL to contact.email,
-                            com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_TO_NAME to contact.name,
-                            com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_SUBJECT to win.text.take(120)
+        val go = com.toolsboox.plugin.calendar.ot.QuickWinsEngine.goKind(win)
+        Timber.i("goToWin: kind=%s sourceDay=%s current=%s", go, win.sourceDay, currentDate)
+        runCatching {
+            when (go) {
+                com.toolsboox.plugin.calendar.ot.QuickWinsEngine.Go.EMAIL -> {
+                    // contacts.json is one small local file — a synchronous read on a tap is the
+                    // same bargain the rolodex list itself makes.
+                    val contact = win.contactId?.let {
+                        com.toolsboox.plugin.calendar.ot.ContactStore.get(requireContext(), it)
+                    }
+                    if (contact != null && contact.email.isNotBlank())
+                        findNavController().navigate(
+                            R.id.action_to_mail_compose,
+                            androidx.core.os.bundleOf(
+                                com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_TO_EMAIL to contact.email,
+                                com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_TO_NAME to contact.name,
+                                com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_SUBJECT to win.text.take(120)
+                            )
                         )
+                    else findNavController().navigate(R.id.action_to_mail_inbox)
+                }
+                com.toolsboox.plugin.calendar.ot.QuickWinsEngine.Go.CALL ->
+                    findNavController().navigate(
+                        R.id.action_to_rolodex,
+                        androidx.core.os.bundleOf(RolodexFragment.ARG_CONTACT_ID to win.contactId)
                     )
-                else findNavController().navigate(R.id.action_to_mail_inbox)
+                com.toolsboox.plugin.calendar.ot.QuickWinsEngine.Go.HOME ->
+                    if (win.sourceDay == currentDate)
+                        findNavController().navigate(R.id.action_to_quick_wins)
+                    else
+                        CalendarNavigator.toDayPage(this, win.sourceDay)
             }
-            com.toolsboox.plugin.calendar.ot.QuickWinsEngine.Go.CALL ->
-                findNavController().navigate(
-                    R.id.action_to_rolodex,
-                    androidx.core.os.bundleOf(RolodexFragment.ARG_CONTACT_ID to win.contactId)
-                )
-            com.toolsboox.plugin.calendar.ot.QuickWinsEngine.Go.HOME ->
-                CalendarNavigator.toDayPage(this, win.sourceDay)
+        }.onFailure {
+            // A dead nav action must never be a silent flash — fall back to the ⚡ surface.
+            Timber.w(it, "goToWin: navigation failed; opening Quick Wins surface")
+            runCatching { findNavController().navigate(R.id.action_to_quick_wins) }
         }
     }
 
@@ -1976,7 +1992,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     add(GoItem("⚡", "Next · $label") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), page) })
                 }
                 add(GoItem("☀︎", "Day") { CalendarNavigator.toDayPage(this@CalendarDayFragment, LocalDate.now(), CalendarDay.DEFAULT_STYLE) })
-                add(GoItem("🔖", "Intake") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
+                add(GoItem("🔖", "Filtered") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
                 add(GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "pickings") })
                 add(GoItem("🔬", "Synthesize") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "synthesize") })
                 add(GoItem("✍", "Write") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "write") })

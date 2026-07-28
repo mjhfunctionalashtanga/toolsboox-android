@@ -62,9 +62,9 @@ object PickingsPlacement {
         DayLocks.withDay(date) {
             val day = service.load(root, date, null, Locale.getDefault())
             val count = day.imageElements.count { it.page == pageKey }        // grid-stagger new cards
-            // The daily board wears its cover band up top; a card staggered behind the band would sit
-            // under the recent-board tiles and steal their taps. Start the grid below the band there.
-            val yBase = if (pageKey == PickingsStore.DEFAULT_KEY) PickingsCover.CONTENT_TOP + 20f else 120f
+            // Every board is the standard full-height page now (the daily cover band is gone), so
+            // picked cards start at the normal top for all of them.
+            val yBase = 120f
             val x = (60f + (count % 3) * (w + 30f)).coerceIn(0f, (CANVAS_W - w).coerceAtLeast(0f))
             val y = (yBase + (count / 3) * (h + 30f)).coerceIn(0f, (CANVAS_H - h).coerceAtLeast(0f))
             day.imageElements.add(ImageElement(

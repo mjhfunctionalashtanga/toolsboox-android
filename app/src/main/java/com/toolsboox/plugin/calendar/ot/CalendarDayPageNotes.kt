@@ -119,19 +119,13 @@ class CalendarDayPageNotes : Creator {
                 return
             }
             if (PickingsStore.isPickings(notePage)) {
-                if (notePage == PickingsStore.DEFAULT_KEY) {
-                    // The DAILY board opens on its cover: the classic template first (its
-                    // full-page white fill would wipe anything under it), compressed to start
-                    // below the band, then the cover band drawn over the cleared top.
-                    drawPickingsPage(canvas, panelTop = PickingsCover.CONTENT_TOP)
-                    PickingsCover.draw(context, canvas, calendarDay)
-                } else {
-                    // A named board keeps the full-height classic page — and must drop the
-                    // cover's recorded tap zones, so a stale rectangle can't open a board
-                    // from a page that doesn't show any.
-                    PickingsCover.clear()
-                    drawPickingsPage(canvas)
-                }
+                // Every Pickings board — the daily one included — is just the standard full-height
+                // page now. The daily board no longer opens on a cover band of recent-board tiles;
+                // a gram lands on the page naturally by being picked and goes where it belongs, so
+                // the extra label + tiles only got in the way. Clearing the cover also drops any
+                // stale recorded tap zones so a rectangle can't open a board from a page with none.
+                PickingsCover.clear()
+                drawPickingsPage(canvas)
                 return
             }
             if (notePage == "intake") {
