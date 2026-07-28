@@ -54,7 +54,13 @@ data class FeedEntry(
                 c.startsWith("🎧") -> "listen"
                 c.startsWith("📖") -> "read"
                 "watch" in cl || "video" in cl || "youtube" in u || "youtu.be" in u || "vimeo" in u -> "watch"
-                "listen" in cl || "podcast" in cl || "audio" in cl || u.endsWith(".mp3") -> "listen"
+                // Any entry carrying a playable audio enclosure IS a listen item, whatever its
+                // category is named: a podcast episode's `url` is the show-notes webpage (not a
+                // `.mp3`), and its Miniflux folder is often a plain name ("The Daily") with no 🎧
+                // and no "podcast"/"audio" in it — so keying off category text alone dropped real
+                // audio out of The Listen. `audioUrl` covers both the audio enclosure and a direct
+                // audio-file URL.
+                "listen" in cl || "podcast" in cl || "audio" in cl || audioUrl != null -> "listen"
                 else -> "read"
             }
         }
