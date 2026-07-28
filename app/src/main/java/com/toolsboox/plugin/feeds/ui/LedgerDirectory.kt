@@ -85,6 +85,9 @@ fun ledgerDirectoryFolders(
     fun openFeed(mode: String, kind: String?) {
         FeedSelection.filterFeedTitle = null
         FeedSelection.mode = mode; FeedSelection.kind = kind
+        // Open the feed panel (directory) on arrival too — reaching a feed view from the hub should
+        // show the same left panel you'd have coming from within the feed list (Later especially).
+        FeedSelection.openDirectory = true
         nav.navigate(R.id.action_to_feeds)
     }
     fun openHistory(origin: LogOrigin?) {
