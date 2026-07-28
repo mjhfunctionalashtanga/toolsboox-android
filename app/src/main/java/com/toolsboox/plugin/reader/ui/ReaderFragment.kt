@@ -50,6 +50,12 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
     @Inject
     lateinit var calendarDayService: CalendarDayService
 
+    /** The same corpus the Log searches — day pages, OCR'd handwriting sections, text notes,
+     *  annotations, cached feed articles — so "all of Ledger" from inside a book means the same
+     *  thing it means anywhere else. */
+    @Inject
+    lateinit var corpusService: com.toolsboox.plugin.chat.fi.LedgerCorpusService
+
     /** If a book is open, stash a return anchor so the Day page can jump straight back to it. The
      *  reader restores the last book on its own (KEY_BOOK), so only the nav action + label are needed. */
     override fun prepareReturnAnchor() {
@@ -168,6 +174,11 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
 
     // --- In-book table of contents (posted by the reader JS on load) ---
     private data class TocEntry(val label: String, val href: String, val depth: Int)
+    /** One in-book search hit: where it is, and enough words to recognise it. */
+    private data class SearchHit(val cfi: String, val excerpt: String)
+    private var searchHits: List<SearchHit> = emptyList()
+    /** Set while a search dialog is open, so results can land in it when the engine answers. */
+    private var onSearchHits: ((List<SearchHit>) -> Unit)? = null
     private var tocItems: List<TocEntry> = emptyList()
 
     /**
@@ -189,6 +200,9 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         val bookmarked = book.isNotBlank() && currentCfi.isNotBlank() &&
             BookNoteStore.bookmarkAt(requireContext(), book, currentCfi) != null
         val groups = mutableListOf(
+            "Find" to listOf(
+                "🔎  Search this book / all Ledger…" to { showBookSearch() }
+            ),
             "Marks" to listOf(
                 (if (bookmarked) "🔖  Bookmarked — remove it" else "🔖  Bookmark this page") to { toggleBookmark() },
                 "🖍  Annotations…" to { showBookNotes(BookNote.ANNOTATION) },
@@ -266,6 +280,20 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         (activity as? com.toolsboox.ui.main.MainActivity)?.setQuickNoteVisible(visible)
     }
 
+    /** Run the book's own full-text search. The JS has had `searchBook` all along — the iPad has
+     *  called it since the reader shipped; Android simply never did. Results come back through the
+     *  "searchResults" message. */
+    private fun searchBook(query: String) {
+        val esc = query.replace("\\", "\\\\").replace("'", "\\'")
+        binding.readerWeb.evaluateJavascript("window.searchBook && window.searchBook('$esc')", null)
+    }
+
+    private fun goToCfi(cfi: String) {
+        if (cfi.isBlank()) return
+        val esc = cfi.replace("\\", "\\\\").replace("'", "\\'")
+        binding.readerWeb.evaluateJavascript("window.goToHref && window.goToHref('$esc')", null)
+    }
+
     private fun goToHref(href: String) {
         if (href.isBlank()) return
         val esc = href.replace("\\", "\\\\").replace("'", "\\'")
@@ -316,6 +344,121 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
      * incremental scheme, and there's no diffing to get wrong. Same shape as the tag index.
      */
     /** Filter a long table of contents rather than scrolling it. Same shape as the shelf. */
+    /**
+     * Search from inside a book — THIS book, or the whole ledger.
+     *
+     * The scope switch is the point. Reading, you want both questions and you don't want to decide
+     * which surface to be on first: "where does she say that" is this book, and "what else have I
+     * got on this" is everything. One field, one toggle, no trip out to another screen to change
+     * your mind. Michael: "make sure you can search all of Ledger or just the current book from
+     * inside a book."
+     *
+     * In-book hits come from the reader's own engine (foliate's `search`, via `window.searchBook`)
+     * and land asynchronously; ledger hits are the same corpus the Log searches, which already
+     * includes OCR'd handwriting, so a passage you wrote by hand is findable from here too.
+     */
+    private fun showBookSearch() {
+        val ctx = context ?: return
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        var wholeLedger = false
+        val rows = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+        }
+        val field = android.widget.EditText(ctx).apply {
+            hint = "Search"; isSingleLine = true; textSize = 15f
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+        }
+        val scope = android.widget.TextView(ctx).apply {
+            textSize = 14f; setTextColor(0xFF2F6F96.toInt())
+            setPadding(px(4), px(8), px(4), px(8))
+        }
+        val col = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(px(16), px(8), px(16), px(8))
+            addView(field); addView(scope); addView(rows)
+        }
+        lateinit var dialog: AlertDialog
+
+        fun note(text: String) {
+            rows.removeAllViews()
+            rows.addView(android.widget.TextView(ctx).apply {
+                this.text = text
+                textSize = 14f; setTextColor(0xFF888888.toInt())
+                setPadding(px(4), px(12), px(4), px(4))
+            })
+        }
+
+        fun showBookHits(hits: List<SearchHit>) {
+            rows.removeAllViews()
+            if (hits.isEmpty()) { note("Nothing in this book."); return }
+            for (h in hits.take(200)) {
+                rows.addView(android.widget.TextView(ctx).apply {
+                    text = h.excerpt.ifBlank { "…" }
+                    textSize = 15f; setTextColor(0xFF000000.toInt())
+                    setPadding(px(4), px(10), px(4), px(10))
+                    setBackgroundResource(android.R.drawable.list_selector_background)
+                    setOnClickListener { dialog.dismiss(); goToCfi(h.cfi) }
+                })
+            }
+            com.toolsboox.ot.LedgerFonts.applyTree(rows)
+        }
+
+        fun runLedger(q: String) {
+            note("Searching the ledger…")
+            lifecycleScope.launch {
+                val toks = com.toolsboox.plugin.calendar.ot.LedgerSearch.tokens(q)
+                val hits = withContext(Dispatchers.IO) {
+                    runCatching {
+                        corpusService.gather(com.toolsboox.ot.LedgerPaths.documentsRoot(ctx))
+                            .filter {
+                                com.toolsboox.plugin.calendar.ot.LedgerSearch.matches(
+                                    toks, it.title + " " + it.source + " " + it.text)
+                            }.take(60)
+                    }.getOrDefault(emptyList())
+                }
+                if (!isAdded) return@launch
+                rows.removeAllViews()
+                if (hits.isEmpty()) { note("Nothing in the ledger."); return@launch }
+                for (h in hits) {
+                    rows.addView(android.widget.TextView(ctx).apply {
+                        text = (h.title.ifBlank { h.source }) + "\n" +
+                            com.toolsboox.plugin.calendar.ot.LedgerSearch.window(h.text, toks)
+                        textSize = 14f; setTextColor(0xFF000000.toInt())
+                        setPadding(px(4), px(10), px(4), px(10))
+                    })
+                }
+                com.toolsboox.ot.LedgerFonts.applyTree(rows)
+            }
+        }
+
+        fun run() {
+            val q = field.text.toString().trim()
+            if (q.isBlank()) { note("Type something to look for."); return }
+            if (wholeLedger) runLedger(q) else { note("Searching this book…"); searchBook(q) }
+        }
+
+        fun paintScope() {
+            scope.text = if (wholeLedger) "Searching ALL of Ledger — tap for this book only"
+                         else "Searching THIS BOOK — tap to search all of Ledger"
+        }
+        scope.setOnClickListener { wholeLedger = !wholeLedger; paintScope(); run() }
+        paintScope()
+
+        onSearchHits = { hits -> if (!wholeLedger) showBookHits(hits) }
+        field.setOnEditorActionListener { _, _, _ -> run(); true }
+        note("Type something to look for.")
+
+        dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Search")
+            .setView(android.widget.ScrollView(ctx).apply { addView(col) })
+            .setNegativeButton(android.R.string.cancel) { _, _ -> onSearchHits = null }
+            .create()
+        dialog.setOnDismissListener { onSearchHits = null }
+        showModal(dialog)
+    }
+
     private fun showChapterFinder() {
         val ctx = context ?: return
         val dp = resources.displayMetrics.density
@@ -645,6 +788,15 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
                 if (cfi.isNotBlank()) currentBookFile?.let {
                     ReaderPositionStore.set(requireContext(), it.nameWithoutExtension, cfi)
                 }
+            }
+            "searchResults" -> {
+                val arr = msg.optJSONArray("items") ?: org.json.JSONArray()
+                searchHits = (0 until arr.length()).mapNotNull { i ->
+                    val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val cfi = o.optString("cfi"); if (cfi.isBlank()) null
+                    else SearchHit(cfi, o.optString("excerpt"))
+                }
+                onSearchHits?.invoke(searchHits)
             }
             "toc" -> {
                 val arr = msg.optJSONArray("items") ?: return
