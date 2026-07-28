@@ -201,7 +201,15 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
                 "🗒  Essay outline → Write" to { readerOutline() }
             )
         )
-        if (chapterRows.isNotEmpty()) groups += "Chapters" to chapterRows
+        // A book with eighty chapters turns this accordion into a scroll, which on e-ink is the
+        // slowest thing there is. Past a couple of screens' worth, offer a filter instead of the
+        // whole list — the list is still there under it.
+        if (chapterRows.isNotEmpty()) {
+            groups += "Chapters" to
+                (if (chapterRows.size > 18)
+                    listOf("🔎  Find a chapter…" to { showChapterFinder() }) + chapterRows
+                 else chapterRows)
+        }
         showDirectory(groups)
     }
 
@@ -299,19 +307,137 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
     }
 
     /** Pick from the imported books, or import a new one. */
-    private fun openShelf() {
-        val books = booksDir().listFiles()?.filter { it.isFile }?.sortedBy { it.name.lowercase() } ?: emptyList()
-        val labels = books.map { it.nameWithoutExtension } + listOf(getString(R.string.reader_import_new))
-        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
-            .setTitle(R.string.reader_shelf_title)
-            .setItems(labels.toTypedArray()) { _, which ->
-                if (which == books.size) {
-                    openBook.launch(arrayOf("application/epub+zip", "application/pdf", "application/x-mobipocket-ebook", "*/*"))
-                } else {
-                    loadBookFile(books[which])
-                }
+    /**
+     * The shelf, searchable.
+     *
+     * A shelf you can only scroll is a shelf you can only browse, and this is the surface you most
+     * often arrive at already knowing which book you want. A filter field over the same list,
+     * rebuilt in place as you type — on e-ink a full redraw per keystroke is still cheaper than any
+     * incremental scheme, and there's no diffing to get wrong. Same shape as the tag index.
+     */
+    /** Filter a long table of contents rather than scrolling it. Same shape as the shelf. */
+    private fun showChapterFinder() {
+        val ctx = context ?: return
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val rows = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+        }
+        val field = android.widget.EditText(ctx).apply {
+            hint = "Find a chapter"; isSingleLine = true; textSize = 15f
+        }
+        val col = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(px(16), px(8), px(16), px(8))
+            addView(field); addView(rows)
+        }
+        lateinit var dialog: AlertDialog
+
+        fun render(query: String) {
+            rows.removeAllViews()
+            val q = query.trim().lowercase()
+            val shown = if (q.isEmpty()) tocItems else tocItems.filter { it.label.lowercase().contains(q) }
+            if (shown.isEmpty()) {
+                rows.addView(android.widget.TextView(ctx).apply {
+                    text = "No chapter matches “$query”."
+                    textSize = 14f; setTextColor(0xFF888888.toInt())
+                    setPadding(px(4), px(12), px(4), px(4))
+                })
             }
-            .show()
+            for (e in shown) {
+                rows.addView(android.widget.TextView(ctx).apply {
+                    text = "${"  ".repeat(e.depth)}${if (e.depth == 0) "◦ " else "· "}${e.label}"
+                    textSize = 16f; setTextColor(0xFF000000.toInt())
+                    setPadding(px(4), px(10), px(4), px(10))
+                    setBackgroundResource(android.R.drawable.list_selector_background)
+                    setOnClickListener { dialog.dismiss(); goToHref(e.href) }
+                })
+            }
+            com.toolsboox.ot.LedgerFonts.applyTree(rows)
+        }
+
+        field.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) { render(s?.toString().orEmpty()) }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        render("")
+
+        dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Chapters")
+            .setView(android.widget.ScrollView(ctx).apply { addView(col) })
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        showModal(dialog)
+    }
+
+    private fun openShelf() {
+        val ctx = requireContext()
+        val all = booksDir().listFiles()?.filter { it.isFile }?.sortedBy { it.name.lowercase() } ?: emptyList()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        val rows = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+        }
+        val field = android.widget.EditText(ctx).apply {
+            hint = "Find a book"; isSingleLine = true; textSize = 15f
+        }
+        val col = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(px(16), px(8), px(16), px(8))
+            addView(field); addView(rows)
+        }
+        lateinit var dialog: AlertDialog
+
+        fun render(query: String) {
+            rows.removeAllViews()
+            val q = query.trim().lowercase()
+            val shown = if (q.isEmpty()) all
+                        else all.filter { it.nameWithoutExtension.lowercase().contains(q) }
+            for (f in shown) {
+                rows.addView(android.widget.TextView(ctx).apply {
+                    text = f.nameWithoutExtension
+                    textSize = 16f; setTextColor(0xFF000000.toInt())
+                    setPadding(px(4), px(10), px(4), px(10))
+                    setBackgroundResource(android.R.drawable.list_selector_background)
+                    setOnClickListener { dialog.dismiss(); loadBookFile(f) }
+                })
+            }
+            if (shown.isEmpty()) {
+                rows.addView(android.widget.TextView(ctx).apply {
+                    text = if (all.isEmpty()) "No books yet." else "Nothing matches “$query”."
+                    textSize = 14f; setTextColor(0xFF888888.toInt())
+                    setPadding(px(4), px(12), px(4), px(4))
+                })
+            }
+            // Import stays at the bottom of the list, where it doesn't compete with the books.
+            rows.addView(android.widget.TextView(ctx).apply {
+                text = "＋  " + getString(R.string.reader_import_new)
+                textSize = 15f; setTextColor(0xFF2F6F96.toInt())
+                setPadding(px(4), px(14), px(4), px(6))
+                setOnClickListener {
+                    dialog.dismiss()
+                    openBook.launch(arrayOf("application/epub+zip", "application/pdf",
+                                            "application/x-mobipocket-ebook", "*/*"))
+                }
+            })
+            com.toolsboox.ot.LedgerFonts.applyTree(rows)
+        }
+
+        field.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) { render(s?.toString().orEmpty()) }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        render("")
+
+        dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle(R.string.reader_shelf_title)
+            .setView(android.widget.ScrollView(ctx).apply { addView(col) })
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        showModal(dialog)
     }
 
     private fun loadBookFile(file: File) {
