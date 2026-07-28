@@ -20,6 +20,7 @@ import com.toolsboox.plugin.calendar.fi.CalendarDayService
 import com.toolsboox.plugin.mail.InboxMessage
 import com.toolsboox.plugin.mail.InboxStore
 import com.toolsboox.plugin.mail.MailAccount
+import com.toolsboox.plugin.mail.MailReaderHtml
 import com.toolsboox.plugin.mail.MailAccountStore
 import com.toolsboox.plugin.mail.MailMessageTooLarge
 import com.toolsboox.plugin.mail.MailSync
@@ -616,6 +617,77 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             text = bodyText(m)
             textSize = 15f; setTextColor(0xFF000000.toInt()); setTextIsSelectable(true)
         }
+
+        // HOW TO READ IT — only a question when the sender actually sent markup.
+        //
+        // A designed letter used to arrive as a wall of run-together words, because the MIME walk
+        // stripped the html and threw it away. It's kept now, so there are three readings: Text
+        // (the stripped body, which is what every other surface uses), Reader (the markup reflowed
+        // to a plain, high-contrast e-ink column) and As sent (the sender's own layout). Text stays
+        // the default — on e-ink the reflowed or original layouts are a choice, not an upgrade.
+        val web = if (cur.html.isNotBlank()) android.webkit.WebView(ctx).apply {
+            settings.javaScriptEnabled = false          // mail has no business running any
+            settings.loadsImagesAutomatically = false   // see the images row below
+            settings.blockNetworkImage = true
+            setBackgroundColor(0xFFFFFFFF.toInt())
+            isVerticalScrollBarEnabled = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, (420 * resources.displayMetrics.density).toInt())
+            visibility = View.GONE
+        } else null
+
+        if (web != null) {
+            var mode = 0            // 0 = text, 1 = reader, 2 = as sent
+            var imagesOn = false
+            lateinit var modeRow: LinearLayout
+            lateinit var imagesNote: TextView
+
+            fun renderWeb() {
+                val html = if (mode == 1) MailReaderHtml.reader(cur.html) else MailReaderHtml.asSent(cur.html)
+                // Remote fetches are defused in the MARKUP, not just by the WebView setting: a
+                // tracking pixel's whole payload is the REQUEST, and by the time a setting could be
+                // undone the request is already gone. `data:` images are left alone — they came
+                // with the letter and cost nothing.
+                val safe = if (imagesOn) html else MailReaderHtml.blockRemote(html)
+                web.settings.blockNetworkImage = !imagesOn
+                web.settings.loadsImagesAutomatically = imagesOn
+                web.loadDataWithBaseURL(null, safe, "text/html", "UTF-8", null)
+            }
+            fun applyMode() {
+                bodyView.visibility = if (mode == 0) View.VISIBLE else View.GONE
+                web.visibility = if (mode == 0) View.GONE else View.VISIBLE
+                imagesNote.visibility =
+                    if (mode != 0 && !imagesOn && MailReaderHtml.hasRemoteRefs(cur.html)) View.VISIBLE else View.GONE
+                for (i in 0 until modeRow.childCount) {
+                    (modeRow.getChildAt(i) as TextView).setTypeface(
+                        null, if (i == mode) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+                }
+                if (mode != 0) renderWeb()
+            }
+
+            modeRow = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, 0, 0, dp(6))
+                listOf("Text", "Reader", "As sent").forEachIndexed { i, label ->
+                    addView(TextView(ctx).apply {
+                        text = label; textSize = 13f; setTextColor(0xFF2F6F96.toInt())
+                        setPadding(0, 0, dp(18), 0)
+                        setOnClickListener { mode = i; applyMode() }
+                    })
+                }
+            }
+            imagesNote = TextView(ctx).apply {
+                text = "🖼  Images not loaded — tap to load"
+                textSize = 12f; setTextColor(0xFF666666.toInt()); setPadding(0, 0, 0, dp(6))
+                visibility = View.GONE
+                setOnClickListener { imagesOn = true; applyMode() }
+            }
+            col.addView(modeRow)
+            col.addView(imagesNote)
+            col.addView(web)
+            applyMode()
+        }
+
         col.addView(bodyView)
         if (m.truncated) col.addView(TextView(ctx).apply {
             // The fetch was bounded on purpose (the message is large — usually attachments);

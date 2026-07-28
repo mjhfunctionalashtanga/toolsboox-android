@@ -56,7 +56,7 @@ object MailSync {
         id = "acct:${a.id}:uid:${f.uid}", account = a.displayName.ifBlank { a.email },
         fromName = f.fromName, fromEmail = f.fromEmail, subject = f.subject,
         snippet = f.body.replace("\n", " ").take(140),
-        body = f.body, date = f.date, truncated = f.truncated,
+        body = f.body, date = f.date, truncated = f.truncated, html = f.html,
         // The typed UID (null when the probe fell back to a random one) -- the id embeds it too,
         // but only this field is safe to fetch by.
         uid = f.uid.toLongOrNull()
@@ -114,7 +114,9 @@ object MailSync {
         val f = client.fetchFull(a.loginName, pass, uid)     // suspends; IO within
         val full = m.copy(
             snippet = f.body.replace("\n", " ").take(140),
-            body = f.body, truncated = false
+            // The full fetch carries the markup too — loading the rest of a designed letter and
+            // getting only its stripped text back would be a downgrade halfway through reading.
+            body = f.body, truncated = false, html = f.html
         )
         InboxStore.replace(context, full)
         return full

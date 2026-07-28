@@ -14,6 +14,8 @@ data class FetchedMessage(
     val date: Long,          // epoch millis
     val body: String,
     val truncated: Boolean = false,   // oversized on the server; only a bounded slice was fetched
+    /** The sender's original markup, "" when they sent none — see [Mime.Parsed.html]. */
+    val html: String = "",
 )
 
 /**
@@ -24,7 +26,15 @@ data class FetchedMessage(
  * App/Mail/MIMEParser.swift -- a pragmatic reader for a cozy inbox, not a full RFC 2045 engine.
  */
 object Mime {
-    data class Parsed(val headers: Map<String, String>, val text: String)
+    /**
+     * [html] is the message's ORIGINAL markup, unstripped — "" when the sender only sent text.
+     *
+     * The walk used to strip html to text and throw the markup away, so a designed letter arrived
+     * as a wall of run-together words and there was nothing left to render properly even if you
+     * wanted to. [text] is still the stripped reading (search, snippets, the corpus, and the plain
+     * mode all want it); [html] is kept alongside so the reader can show the letter as sent.
+     */
+    data class Parsed(val headers: Map<String, String>, val text: String, val html: String = "")
 
     fun parse(data: ByteArray): Parsed {
         // The raw message rides through as ISO-8859-1 — a byte-TRANSPARENT carrier (latin-1 maps
@@ -38,7 +48,46 @@ object Mime {
         // out of the carrier so From/Subject read right without touching the body bytes.
         val headers = parseHeaders(headBlock).mapValues { (_, v) -> fromCarrier(v) }
         val text = extractText(headers, body).trim()
-        return Parsed(headers, text)
+        return Parsed(headers, text, extractHtml(headers, body).trim())
+    }
+
+    /**
+     * The message's original html, or "" when it sent none.
+     *
+     * A separate walk from [extractText] rather than a second return value threaded through it:
+     * that function's job is "give me the best READABLE text", and it returns early the moment it
+     * finds a text/plain part — which is exactly when the html part still exists and is the thing
+     * this wants. Teaching it to carry both would mean it could no longer return early, and the
+     * early return is the behaviour that keeps a plain-text part winning over a marketing shell.
+     *
+     * Picks the first html part with real markup in it, depth-first, for the same reason the text
+     * walk skips empty html parts: an empty lead-in part (a tracking shell, a bare wrapper div) is
+     * common and would otherwise win over the part holding the actual letter.
+     */
+    private fun extractHtml(headers: Map<String, String>, body: String): String {
+        val ctype = (headers["content-type"] ?: "text/plain").lowercase()
+        if (ctype.contains("multipart/")) {
+            val boundary = param(headers["content-type"] ?: "", "boundary") ?: return ""
+            for (part in splitMultipart(body, boundary)) {
+                val (ph, pb) = splitHeadersBody(part)
+                val phs = parseHeaders(ph)
+                val pct = (phs["content-type"] ?: "text/plain").lowercase()
+                when {
+                    pct.contains("multipart/") -> {
+                        val nested = extractHtml(phs, pb)
+                        if (nested.isNotBlank()) return nested
+                    }
+                    pct.contains("text/html") -> {
+                        val h = decodeBody(phs, pb)
+                        // "Real markup" = it strips to something. A part that's all tracking
+                        // pixel and no words is not the letter.
+                        if (stripHtml(h).isNotBlank()) return h
+                    }
+                }
+            }
+            return ""
+        }
+        return if (ctype.contains("text/html")) decodeBody(headers, body) else ""
     }
 
     // Headers

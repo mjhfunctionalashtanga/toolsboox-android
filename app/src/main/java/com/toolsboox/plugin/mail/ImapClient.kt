@@ -242,7 +242,7 @@ class ImapClient(host: String, port: Int, useTLS: Boolean) {
                 uid = uid,
                 subject = if (subject.isEmpty()) "(no subject)" else subject,
                 fromName = name, fromEmail = email, date = date, body = parsed.text,
-                truncated = truncated
+                truncated = truncated, html = parsed.html
             )
         }
 

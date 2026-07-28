@@ -18,6 +18,15 @@ data class InboxMessage(
     val date: Long,
     val truncated: Boolean = false,   // oversized on the server; only a bounded slice was fetched
     val uid: Long? = null,            // IMAP UID on the origin server; the handle the on-demand full fetch needs (null = unknown)
+    /**
+     * The sender's ORIGINAL markup, "" when they sent plain text only.
+     *
+     * Defaulted, and written to JSON only when present, so a starred-mail file written by an older
+     * build still reads and an older build still reads one written by this. [body] stays the
+     * stripped text — search, snippets and the corpus all want that — and this is what the reader
+     * shows when you ask for the letter as it was sent.
+     */
+    val html: String = "",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("account", account)
@@ -25,6 +34,7 @@ data class InboxMessage(
         .put("subject", subject).put("snippet", snippet).put("body", body)
         .put("date", date).put("truncated", truncated)
         .apply { uid?.let { put("uid", it) } }
+        .apply { if (html.isNotBlank()) put("html", html) }
 
     companion object {
         fun fromJson(o: JSONObject) = InboxMessage(
@@ -38,6 +48,7 @@ data class InboxMessage(
             o.optLong("date", 0L),
             o.optBoolean("truncated", false),
             if (o.has("uid")) o.optLong("uid") else null,   // pre-uid starred files stay readable
+            o.optString("html", ""),                        // pre-html files simply have none
         )
     }
 }
