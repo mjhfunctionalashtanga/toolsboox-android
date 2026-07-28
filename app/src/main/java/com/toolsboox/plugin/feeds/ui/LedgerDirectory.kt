@@ -312,12 +312,60 @@ fun showTagIndex(fragment: ScreenFragment) {
             .show()
         return
     }
-    val labels = tags.map { "#${it.tag}  ·  ${it.occurrences.size}" }.toTypedArray()
-    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+    // SEARCHABLE, not a flat list. Past a few dozen tags a scroll stops being an index and becomes
+    // a haystack — and this is built for hundreds. A filter field over the same data, rebuilt in
+    // place as you type: on e-ink a full redraw per keystroke is still cheaper than any incremental
+    // scheme, and there is no diffing to get wrong. Matches the iPad's `.searchable` index.
+    val dp = ctx.resources.displayMetrics.density
+    fun px(v: Int) = (v * dp).toInt()
+    val rows = android.widget.LinearLayout(ctx).apply { orientation = android.widget.LinearLayout.VERTICAL }
+    val field = android.widget.EditText(ctx).apply {
+        hint = "Find a tag"; isSingleLine = true; textSize = 15f
+    }
+    val col = android.widget.LinearLayout(ctx).apply {
+        orientation = android.widget.LinearLayout.VERTICAL
+        setPadding(px(16), px(8), px(16), px(8))
+        addView(field)
+        addView(rows)
+    }
+    lateinit var dialog: androidx.appcompat.app.AlertDialog
+
+    fun render(query: String) {
+        rows.removeAllViews()
+        val q = query.trim().lowercase()
+        val shown = if (q.isEmpty()) tags else tags.filter { it.tag.contains(q) }
+        if (shown.isEmpty()) {
+            rows.addView(android.widget.TextView(ctx).apply {
+                text = "Nothing matches “$query”."
+                textSize = 14f; setTextColor(0xFF888888.toInt()); setPadding(px(4), px(12), px(4), px(4))
+            })
+            return
+        }
+        for (t in shown) {
+            rows.addView(android.widget.TextView(ctx).apply {
+                text = "#${t.tag}  ·  ${t.occurrences.size}"
+                textSize = 16f; setTextColor(0xFF000000.toInt())
+                setPadding(px(4), px(10), px(4), px(10))
+                setBackgroundResource(android.R.drawable.list_selector_background)
+                setOnClickListener { dialog.dismiss(); showTagPages(fragment, t) }
+            })
+        }
+        com.toolsboox.ot.LedgerFonts.applyTree(rows)
+    }
+
+    field.addTextChangedListener(object : android.text.TextWatcher {
+        override fun afterTextChanged(s: android.text.Editable?) { render(s?.toString().orEmpty()) }
+        override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+    })
+    render("")
+
+    dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
         .setTitle("Tags")
-        .setItems(labels) { _, which -> showTagPages(fragment, tags[which]) }
+        .setView(android.widget.ScrollView(ctx).apply { addView(col) })
         .setNegativeButton("Close", null)
-        .show()
+        .create()
+    fragment.showModal(dialog)
 }
 
 /** One tag's pages, newest first — tap to jump straight to that day's page, landing on the tag's

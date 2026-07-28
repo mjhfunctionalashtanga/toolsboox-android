@@ -84,6 +84,7 @@ object LedgerTags {
         val editor = prefs.edit()
         for (tag in tags) putOccurrence(context, prefs, editor, date, pageKey, tag, zoneRect)
         editor.apply()
+        bumpGeneration()   // the memo is only correct if every writer says so
     }
 
     /**
@@ -99,6 +100,7 @@ object LedgerTags {
         val editor = prefs.edit()
         putOccurrence(context, prefs, editor, date, pageKey, t, wordRect)
         editor.apply()
+        bumpGeneration()
     }
 
     /** Write one tag occurrence (with optional [rect]) into [editor] and join tag↔page in the graph. */
@@ -149,7 +151,32 @@ object LedgerTags {
     }
 
     /** Every tag seen, most-used first. */
+    /**
+     * The whole tag store, memoized.
+     *
+     * Every read funnels through here, and the uncached version walked EVERY key in the prefs file
+     * and re-parsed EVERY occurrence of EVERY tag on each call — `prefs.all` materialises the lot.
+     * Survivable at a handful of tags; tags are the naming system now, aimed at hundreds, and this
+     * is read while drawing a page. The cost was set to arrive exactly as the vocabulary became
+     * useful. Invalidated by writes, not by time, so a stale read needs a missed write.
+     */
+    @Volatile private var cached: List<TagInfo>? = null
+    private val cacheLock = Any()
+
+    /** Drop the memo. Called from every path that writes the store. */
+    fun bumpGeneration() { synchronized(cacheLock) { cached = null } }
+
     fun list(context: Context): List<TagInfo> {
+        cached?.let { return it }
+        synchronized(cacheLock) {
+            cached?.let { return it }
+            val out = buildList(context)
+            cached = out
+            return out
+        }
+    }
+
+    private fun buildList(context: Context): List<TagInfo> {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         return prefs.all.keys
             .filter { it.startsWith("tag:") && it.endsWith(":occ") }
@@ -189,6 +216,7 @@ object LedgerTags {
             )
         }
         editor.apply()
+        bumpGeneration()
         return tags
     }
 
@@ -214,6 +242,7 @@ object LedgerTags {
         for (edge in ConnectionStore.touching(context, uri)) {
             if (edge.otherEnd(uri) == t) ConnectionStore.disconnect(context, edge.id)
         }
+        bumpGeneration()
     }
 
     /** The (date, page, zoneRect?) occurrences of one tag, newest first. */

@@ -101,12 +101,16 @@ class CalendarDayPageIntake : Creator {
         /** The panel a canvas-space point falls in, or null (used to file a fresh gram by quarter). */
         fun panelAt(x: Float, y: Float): IntakePanel? = panels.firstOrNull { it.rect.contains(x, y) }
 
-        /** The grams of one kind on the intake page, newest first, capped at [GRAMS_PER_PANEL]. */
+        /** How far each overflow card peeks out from under the one on top of it. */
+        private const val STACK_PEEK = 26f
+
+        /** The grams of one kind on the intake page, newest first. NOT capped — past
+         *  [GRAMS_PER_PANEL] the quarter stacks them (see the draw loop), because dropping a
+         *  quarter's ninth gram silently loses something you starred. */
         private fun gramsFor(kindKey: String, calendarDay: CalendarDay?): List<ImageElement> =
             calendarDay?.imageElements
                 ?.filter { it.page == INTAKE_PAGE && it.intakeKind == kindKey && !it.decorative && it.data.isNotBlank() }
                 ?.sortedByDescending { it.timestamp }
-                ?.take(GRAMS_PER_PANEL)
                 ?: emptyList()
 
         /**
@@ -164,11 +168,25 @@ class CalendarDayPageIntake : Creator {
                 val cellW = (gridW - (gramCols - 1) * cellGap) / gramCols
                 val cellH = (gridH - (gramRows - 1) * cellGap) / gramRows
 
-                kind.forEachIndexed { i, img ->
-                    val col = i % gramCols
-                    val rowi = i / gramCols
+                // Past the last cell the extras FAN on it like a hand of cards. They are drawn
+                // oldest-first so the newest ends up on top, and the newest takes the deepest
+                // offset — so what shows of each card underneath is its TOP edge, the way a fanned
+                // hand reads. Clamped inside the panel, so a deep pile leans tighter rather than
+                // spilling into the quarter below. Mirrors the iPad's IntakeLayout.gramFrame.
+                val overflow = (kind.size - GRAMS_PER_PANEL).coerceAtLeast(0)
+                kind.asReversed().forEachIndexed { rev, img ->
+                    val i = kind.size - 1 - rev            // back to newest-first index
+                    val slot = i.coerceAtMost(GRAMS_PER_PANEL - 1)
+                    val col = slot % gramCols
+                    val rowi = slot / gramCols
                     val cl = gridLeft + col * (cellW + cellGap)
-                    val ct = gridTop + rowi * (cellH + cellGap)
+                    var ct = gridTop + rowi * (cellH + cellGap)
+                    if (overflow > 0 && i >= GRAMS_PER_PANEL - 1) {
+                        val depth = (kind.size - 1) - i     // 0 for the oldest of the pile
+                        val room = (r.bottom - cellPad - (ct + cellH)).coerceAtLeast(0f)
+                        val step = if (overflow > 0) minOf(STACK_PEEK, room / overflow) else 0f
+                        ct += step * (overflow - depth)
+                    }
                     val cell = RectF(cl, ct, cl + cellW, ct + cellH)
                     drawGramInCell(canvas, img, cell)
                     canvas.drawRect(cell, cellBorder)
