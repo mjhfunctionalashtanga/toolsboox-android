@@ -1309,6 +1309,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val pagerBase = baseNotePage(notePage)
         if (notePage?.toIntOrNull() != null) {
             binding.notePager.visibility = View.VISIBLE
+            binding.notePagerPrev.visibility = View.VISIBLE
+            binding.notePagerNext.visibility = View.VISIBLE
             binding.notePagerLabel.text = ((notePage?.toIntOrNull() ?: 0) + 1).toString()   // 1-indexed, matches the header
             binding.notePagerPrev.setOnClickListener { binding.toolbarDrawing.toolbarSwipeUp.performClick() }
             binding.notePagerNext.setOnClickListener { binding.toolbarDrawing.toolbarSwipeDown.performClick() }
@@ -1317,6 +1319,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             val base = pagerBase!!
             val sub = notePageSubIndex(notePage)
             binding.notePager.visibility = View.VISIBLE
+            binding.notePagerPrev.visibility = View.VISIBLE
+            binding.notePagerNext.visibility = View.VISIBLE
             binding.notePagerLabel.text = (sub + 1).toString()
             binding.notePagerPrev.setOnClickListener {
                 if (sub > 0) {
@@ -1327,9 +1331,25 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             binding.notePagerNext.setOnClickListener {
                 CalendarNavigator.toDayNote(this, currentDate, "$base#${sub + 1}")
             }
-            // No numeric jump picker for these — the series is a simple linear extend/back.
-            binding.notePagerLabel.setOnClickListener(null)
-            binding.notePagerLabel.isClickable = false
+            // Tap the number → this kind's DIRECTORY, right beneath the almanac nav — the Text-Notes
+            // "≡ Notes" idea, for cohesion across the note surfaces. Synthesize opens its synthesis
+            // directory (today's + the named topics + New/Rename); write/grid/sketch open a jump
+            // across THIS base's sub-pages (+ New page + Go to a date).
+            binding.notePagerLabel.isClickable = true
+            binding.notePagerLabel.setOnClickListener {
+                if (base == "synthesize") com.toolsboox.plugin.feeds.ui.showSynthPicker(this)
+                else showNoteSubPageJump(base)
+            }
+        } else if (com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(notePage)) {
+            // Pickings carries the same directory affordance beneath the almanac nav: a single ❝
+            // chip (no linear ‹ › series — boards aren't an ordered run) that opens the boards
+            // directory (every board + New/Rename), the Text-Notes "≡ Notes" cohesion.
+            binding.notePager.visibility = View.VISIBLE
+            binding.notePagerPrev.visibility = View.GONE
+            binding.notePagerNext.visibility = View.GONE
+            binding.notePagerLabel.text = "❝"
+            binding.notePagerLabel.isClickable = true
+            binding.notePagerLabel.setOnClickListener { com.toolsboox.plugin.feeds.ui.showPickingsPicker(this) }
         }
 
         // Floating tool selector: each button drives the real (hidden) toolbar action,
@@ -1430,6 +1450,42 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .create()
         dialog.show()
         // The rows only exist once the list has laid out; apply the reading font then.
+        dialog.window?.decorView?.let { root -> root.post { com.toolsboox.ot.LedgerFonts.applyTree(root) } }
+    }
+
+    /** The named-base sibling of [showNotePageJump]: a directory across one base's own sub-pages
+     *  (write / grid / sketch — keyed "<base>", "<base>#1", …) on this day, plus New page and
+     *  Go-to-a-date. Same Text-Notes directory design, reached from the ‹ N › label beneath the
+     *  almanac nav so every note surface is findable the same way. */
+    private fun showNoteSubPageJump(base: String) {
+        val ctx = context ?: return
+        val here = notePageSubIndex(notePage)
+        val subs = sortedSetOf(here)   // the page you're on always lists
+        if (::calendarDay.isInitialized) {
+            fun consider(key: String) { if (baseNotePage(key) == base) subs.add(notePageSubIndex(key)) }
+            calendarDay.noteStrokes.filterValues { it.isNotEmpty() }.keys.forEach { consider(it) }
+            calendarDay.imageElements.forEach { consider(it.page) }
+        }
+        val ordered = subs.toList()
+        val newSub = (ordered.maxOrNull() ?: -1) + 1
+        fun keyFor(sub: Int) = if (sub == 0) base else "$base#$sub"
+        val labels = (ordered.map { "Page ${it + 1}" + if (it == here) "  ·  here" else "" }
+            + "＋  New page" + "📅  Go to a date…").toTypedArray()
+        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle(base.replaceFirstChar { it.uppercase() })
+            .setItems(labels) { _, which ->
+                when {
+                    which < ordered.size -> {
+                        val s = ordered[which]
+                        if (s != here) CalendarNavigator.toDayNote(this, currentDate, keyFor(s))
+                    }
+                    which == ordered.size -> CalendarNavigator.toDayNote(this, currentDate, keyFor(newSub))
+                    else -> showNoteDatePicker()   // navigate this surface BY DATE
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        dialog.show()
         dialog.window?.decorView?.let { root -> root.post { com.toolsboox.ot.LedgerFonts.applyTree(root) } }
     }
 
