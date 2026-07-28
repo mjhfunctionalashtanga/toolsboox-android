@@ -243,4 +243,24 @@
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 
+    <!-- Hide-nav toggle: a small chevron pinned to the top-right corner that collapses the almanac
+         navigator strip (reclaiming its band for the page) and, once hidden, IS the thin affordance
+         that brings it back. Lives on the OUTER root — NOT inside drawing_layout — because that
+         inner layout's ConstraintSet gets re-cloned on toolbar-side switches and would come back 0×0
+         any child it doesn't describe (the spiral-line / notePager lesson). -->
+    <ImageButton
+            android:id="@+id/navHideButton"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:padding="7dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_nav_up"
+            android:background="#FFFFFF"
+            android:contentDescription="@string/calendar_navigator_image"
+
+            app:layout_constraintTop_toBottomOf="@id/mainProgress"
+            app:layout_constraintEnd_toEndOf="parent"
+            android:layout_marginTop="2dp"
+            android:layout_marginEnd="2dp"/>
+
 </androidx.constraintlayout.widget.ConstraintLayout>

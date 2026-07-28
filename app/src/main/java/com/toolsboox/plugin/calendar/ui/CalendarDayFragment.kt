@@ -1300,6 +1300,19 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.navUp.setOnClickListener { binding.toolbarDrawing.toolbarSwipeUp.performClick() }
         binding.navDown.setOnClickListener { binding.toolbarDrawing.toolbarSwipeDown.performClick() }
 
+        // Hide-nav toggle: collapse the almanac strip to give the page its full height back. The
+        // drawing canvas is a fixed 1404×1872 logical space mapped onto the surface by a
+        // fit-to-screen matrix (SurfaceFragment), and the template rides that SAME matrix
+        // (onTransformChanged) — so a taller surface just scales the whole page up uniformly with
+        // template and ink still in register. The choice persists in the shared "ledger_ui" prefs.
+        binding.navHideButton.bringToFront()
+        binding.navHideButton.setOnClickListener {
+            val nowHidden = !com.toolsboox.plugin.calendar.ot.AlmanacNav.isHidden(requireContext())
+            com.toolsboox.plugin.calendar.ot.AlmanacNav.setHidden(requireContext(), nowHidden)
+            applyAlmanacNavHidden(nowHidden)
+        }
+        applyAlmanacNavHidden(com.toolsboox.plugin.calendar.ot.AlmanacNav.isHidden(requireContext()))
+
         // Inline ‹ N › pager. Two families carry it, never the ritual stations:
         //  • Numeric notes ("0","1",…): ‹ › reuse the stepper's ↑/↓ (which walk the numeric tail),
         //    and tapping the number opens the jump picker.
@@ -3940,6 +3953,22 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // fresh without a manual capture (skips when the ink is unchanged).
         runCatching { autoCaptureSections() }
         syncPresenter.backgroundSync(this@CalendarDayFragment, UUID.randomUUID())
+    }
+
+    /**
+     * Show or hide the almanac navigator strip (persisted via [com.toolsboox.plugin.calendar.ot.AlmanacNav]).
+     * Hiding it drops the strip out of the layout so the page surface reflows up into the reclaimed
+     * band; the corner chevron flips to an "expand" glyph and becomes the thin affordance that
+     * brings the strip back. A full EPD refresh clears any ghost of the removed strip.
+     */
+    private fun applyAlmanacNavHidden(hidden: Boolean) {
+        if (!::binding.isInitialized) return
+        binding.navigatorImageView.visibility = if (hidden) View.GONE else View.VISIBLE
+        // The ▦ apps/almanac jump by the carets rides with the strip — it's a navigator affordance.
+        binding.goAppsButton.visibility = if (hidden) View.GONE else View.VISIBLE
+        binding.navHideButton.setImageResource(if (hidden) R.drawable.ic_nav_down else R.drawable.ic_nav_up)
+        binding.navHideButton.bringToFront()
+        binding.root.post { if (isAdded) forceFullEpdRefresh() }
     }
 
     override fun onTransformChanged(matrix: Matrix) {
