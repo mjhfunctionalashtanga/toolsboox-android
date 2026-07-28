@@ -1283,6 +1283,10 @@ abstract class ScreenFragment : Fragment() {
         dialog.setOnShowListener { onModalShown() }
         dialog.setOnDismissListener { onModalDismissed() }
         dialog.show()
+        // Wear the reader's chosen face. The rows are built programmatically, so nothing picks the
+        // app font up from a layout — without this the ☰ menu that opens off the almanac nav was
+        // the one surface still speaking in the system font.
+        com.toolsboox.ot.LedgerFonts.applyTree(root)
         dialog.window?.let { w ->
             // Left drawer: flush-left, full-height, scrolls internally. No animation (e-ink).
             val lp = w.attributes
