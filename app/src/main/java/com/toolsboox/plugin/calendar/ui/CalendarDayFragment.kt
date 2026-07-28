@@ -317,8 +317,38 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .forEach { if (it.elementId.toString() !in calendarDay.deletedElementIds) calendarDay.deletedElementIds.add(it.elementId.toString()) }
         val others = calendarDay.textElements.filter { it.pageKey != pageKey }
         calendarDay.textElements = (others + textElements).toMutableList()
+        harvestTypedTags(pageKey, textElements)
         calendarPattern.updateDay(calendarDay)
         presenter.save(this, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+    }
+
+    /**
+     * Harvest `#tags` from the page's TYPED text boxes.
+     *
+     * Tags were only ever harvested from OCR'd handwriting ([harvestTags], behind the Vision pass),
+     * so a tag you TYPED was never recorded and pulling that tag up didn't list the note. Tags are
+     * the naming system now — "if I search tag, and then select it to search in Notes it'll surface
+     * all notes tagged that way" — so marking has to be enough on its own. Waiting on a recognition
+     * pass that may never run isn't marking.
+     *
+     * Typed text needs no recognition, so this runs on every save. The box's own frame is the mark,
+     * which is a truer landing spot than an estimated OCR word box: it's exactly the box you typed
+     * in. [LedgerTags.recordTag] keeps one occurrence per (tag, date, page), so re-saving — or
+     * dragging the box somewhere else — updates the mark instead of piling up rows.
+     *
+     * Deliberately NOT grams' `cardText`: that's the source author's words, not yours, so harvesting
+     * it would let anything you file plant tags in your own vocabulary. Mirrors iOS
+     * `PlannerShell.harvestTypedTags`.
+     */
+    private fun harvestTypedTags(pageKey: String, textElements: List<TextElement>) {
+        val ctx = context ?: return
+        for (el in textElements) {
+            if (el.text.isBlank()) continue
+            val rect = android.graphics.RectF(el.x, el.y, el.x + el.width, el.y + 60f)
+            for (tag in com.toolsboox.plugin.calendar.ot.LedgerTags.extract(el.text)) {
+                com.toolsboox.plugin.calendar.ot.LedgerTags.recordTag(ctx, currentDate, pageKey, tag, rect)
+            }
+        }
     }
 
     /**
@@ -1446,17 +1476,35 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         notePage?.toIntOrNull()?.let { pages.add(it) }   // the page you're on always lists
         val newPage = (pages.maxOrNull() ?: -1) + 1
         val ordered = pages.toList()
-        val labels = (ordered.map { if (it.toString() == notePage) "Page ${it + 1}  ·  here" else "Page ${it + 1}" }
+
+        // THIS PAGE'S TAGS, first and tappable.
+        //
+        // The tags were already drawn in the top margin, but painted into the page canvas with
+        // nothing to touch — and drawn as one ellipsized line, so past a few they aren't even
+        // visible. They lead the directory instead: tapping one zooms to the mark it was written
+        // at (the same focusOnRect the tag index lands with), and the list shows every tag whether
+        // or not the drawn strip had room for it. iOS carries these as chips under the almanac bar;
+        // on e-ink the directory is where a page's sub-navigation already lives.
+        val marks = com.toolsboox.plugin.calendar.ot.LedgerTags
+            .marksOn(ctx, currentDate, notePage ?: "default")
+
+        val labels = (marks.map { "#${it.first}" }
+            + ordered.map { if (it.toString() == notePage) "Page ${it + 1}  ·  here" else "Page ${it + 1}" }
             + "＋  New page" + "📅  Go to a date…").toTypedArray()
         val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Jump to")
             .setItems(labels) { _, which ->
+                val p = which - marks.size
                 when {
-                    which < ordered.size -> {
-                        val target = ordered[which]
+                    which < marks.size -> {
+                        // No rect (a legacy occurrence) → nothing to zoom to; the page is already open.
+                        marks[which].second?.let { focusOnRect(it) }
+                    }
+                    p < ordered.size -> {
+                        val target = ordered[p]
                         if (target.toString() != notePage) CalendarNavigator.toDayNote(this, currentDate, target.toString())
                     }
-                    which == ordered.size -> CalendarNavigator.toDayNote(this, currentDate, newPage.toString())
+                    p == ordered.size -> CalendarNavigator.toDayNote(this, currentDate, newPage.toString())
                     else -> showNoteDatePicker()   // navigate notes BY DATE
                 }
             }
@@ -1483,17 +1531,24 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val ordered = subs.toList()
         val newSub = (ordered.maxOrNull() ?: -1) + 1
         fun keyFor(sub: Int) = if (sub == 0) base else "$base#$sub"
-        val labels = (ordered.map { "Page ${it + 1}" + if (it == here) "  ·  here" else "" }
+        // This page's tags lead the directory here too — see showNotePageJump. Every making
+        // surface answers "what's on this page" the same way.
+        val marks = com.toolsboox.plugin.calendar.ot.LedgerTags
+            .marksOn(ctx, currentDate, notePage ?: base)
+        val labels = (marks.map { "#${it.first}" }
+            + ordered.map { "Page ${it + 1}" + if (it == here) "  ·  here" else "" }
             + "＋  New page" + "📅  Go to a date…").toTypedArray()
         val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(base.replaceFirstChar { it.uppercase() })
             .setItems(labels) { _, which ->
+                val p = which - marks.size
                 when {
-                    which < ordered.size -> {
-                        val s = ordered[which]
+                    which < marks.size -> marks[which].second?.let { focusOnRect(it) }
+                    p < ordered.size -> {
+                        val s = ordered[p]
                         if (s != here) CalendarNavigator.toDayNote(this, currentDate, keyFor(s))
                     }
-                    which == ordered.size -> CalendarNavigator.toDayNote(this, currentDate, keyFor(newSub))
+                    p == ordered.size -> CalendarNavigator.toDayNote(this, currentDate, keyFor(newSub))
                     else -> showNoteDatePicker()   // navigate this surface BY DATE
                 }
             }

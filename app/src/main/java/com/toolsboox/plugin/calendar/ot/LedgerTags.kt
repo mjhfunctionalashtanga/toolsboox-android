@@ -37,16 +37,37 @@ object LedgerTags {
 
     private const val PREFS = "ledger_tags"
 
-    /** A hash (not preceded by a word char or another hash) then a word: a letter, then letters /
-     *  digits / _ / - (2–41 chars total). Case-folded on store so `#Ashtanga` and `#ashtanga` merge. */
-    private val HASHTAG = Regex("""(?<![\w#])#([\p{L}][\p{L}\p{N}_-]{1,40})""")
+    /** A hash (not preceded by a word char, another hash, or an opening paren) then a word: a
+     *  letter, then letters / digits / _ / - (2–41 chars total). Case-folded on store so
+     *  `#Ashtanga` and `#ashtanga` merge.
+     *
+     *  `(` is in the lookbehind for MARKDOWN: `[label](#anchor-name)` is a link to a section, and
+     *  reading it as a tag plants one every time you write an internal link. Headings never
+     *  collided — the pattern needs a letter straight after the hash, so `# Heading`, `## Section`
+     *  and `### Deep` are ignored, as are `#42` and a URL's `page#fragment`. Byte-for-byte the iOS
+     *  pattern, so the two harvests agree. */
+    private val HASHTAG = Regex("""(?<![\w#(])#([\p{L}][\p{L}\p{N}_-]{1,40})""")
+
+    /** Code spans and code blocks, removed before the tag sweep.
+     *
+     *  `#include`, `#define` and `#fff` are all tags by the letter of the pattern, and filtering by
+     *  word shape is the wrong answer — `#decade` and `#facade` are valid hex AND plausible tags, so
+     *  it would trade real tags for junk ones. What separates them isn't the word, it's that nothing
+     *  inside code was written to be a tag. Fences first (so a hash inside one isn't rescued by a
+     *  stray backtick), then inline spans, then 4-space indented blocks. */
+    private val CODE_FENCE = Regex("""```.*?```|~~~.*?~~~""", RegexOption.DOT_MATCHES_ALL)
+    private val CODE_SPAN = Regex("""`[^`\n]*`""")
+    private val INDENTED_CODE = Regex("""(?m)^(?: {4}|\t).*$""")
+
+    private fun withoutCode(text: String): String =
+        INDENTED_CODE.replace(CODE_SPAN.replace(CODE_FENCE.replace(text, " "), " "), " ")
 
     /** The canonical URI for a tag node in the rhizome. */
     fun tagUri(tag: String): String = "tag://${tag.lowercase()}"
 
     /** The extracted, case-folded tags in [text] (deduped), or empty. */
     fun extract(text: String): Set<String> =
-        HASHTAG.findAll(text).map { it.groupValues[1].lowercase() }.toSet()
+        HASHTAG.findAll(withoutCode(text)).map { it.groupValues[1].lowercase() }.toSet()
 
     /**
      * Harvest `#tags` from a page's recognized [text] and record each as appearing on (date, page),
@@ -90,7 +111,14 @@ object LedgerTags {
         if (prefs.getString("tag:$tag:created", null) == null) {
             editor.putString("tag:$tag:created", System.currentTimeMillis().toString())
         }
-        val occs = prefs.getStringSet("tag:$tag:occ", emptySet())!!.toMutableSet()
+        // ONE OCCURRENCE PER (tag, date, page). A tag either marks a page or it doesn't; writing it
+        // twice on one page doesn't make the page appear twice in the tag's list. It also matters
+        // because the mark can MOVE — a rect recorded from an element's own frame would otherwise
+        // append a fresh occurrence at every new position until the list was all repeats of one
+        // page. Replacing by (date, page) keeps the newest mark, which is where the tag now is.
+        val occs = prefs.getStringSet("tag:$tag:occ", emptySet())!!
+            .filterNot { it == "$date|$pageKey" || it.startsWith("$date|$pageKey|") }
+            .toMutableSet()
         occs.add(occ)
         editor.putStringSet("tag:$tag:occ", occs)
         // The tag joins the page in the rhizome — one graph for tags AND connections.
@@ -138,6 +166,22 @@ object LedgerTags {
     fun pagesFor(context: Context, tag: String): List<Triple<LocalDate, String, RectF?>> =
         list(context).firstOrNull { it.tag == tag.lowercase() }?.occurrences?.sortedByDescending { it.first }
             ?: emptyList()
+
+    /**
+     * The tags written on ONE page, each with the mark it was written at — what the page's own tag
+     * strip shows, and what makes tapping one land on the word instead of merely opening the page
+     * you are already looking at.
+     *
+     * [tagsFor] answers a different question (everything tagged anywhere that day) and is what the
+     * drawn top-margin header uses. A tag appears at most once per page (see `putOccurrence`), so
+     * this lists each tag once and the tap goes somewhere definite. Mirrors iOS
+     * `LedgerTags.marksOn(date:page:)`.
+     */
+    fun marksOn(context: Context, date: LocalDate, pageKey: String): List<Pair<String, RectF?>> =
+        list(context).mapNotNull { info ->
+            val occ = info.occurrences.firstOrNull { it.first == date && it.second == pageKey }
+            if (occ == null) null else info.tag to occ.third
+        }.sortedBy { it.first }
 
     /** Every tag seen on [date] (any page), most-used first — for the day's tag header on page one. */
     fun tagsFor(context: Context, date: LocalDate): List<String> =
