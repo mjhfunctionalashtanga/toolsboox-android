@@ -245,18 +245,13 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
         val ctx = context ?: return
         val today = LocalDate.now()
         lifecycleScope.launch(Dispatchers.IO) {
+            // Grabbed wins land in today's TEXT NOTES now (not a Pickings basket) — the findable,
+            // notes-style surface is where captured things live (Michael).
             runCatching {
-                val card = QuoteCardRenderer.render(w.text.take(600), "⚡ quick win", null, 1080, 0)
-                PickingsPlacement.place(
-                    calendarDayService, documentsRoot(), card, today, PickingsStore.DEFAULT_KEY,
-                    sourceLink = w.uri, sourceLabel = w.text.take(60), cardText = w.text.take(600))
-                // Provenance: the task now belongs to today's pickings basket.
-                ConnectionStore.connect(
-                    ctx, w.uri, LedgerUri.page(today.toString(), PickingsStore.DEFAULT_KEY),
-                    kind = Connection.PLACED, fromLabel = w.text.take(60), toLabel = "Pickings · $today")
+                com.toolsboox.plugin.textnotes.TextNotesStore.addNote(ctx, today, "⚡ Quick Win", w.text.take(600))
             }
         }
-        showMessage("Grabbed into today's pickings", requireView())
+        showMessage("Grabbed into today's notes", requireView())
     }
 
     // MARK: - ✧ Path to victory (generate → preview → execute), per single win.
