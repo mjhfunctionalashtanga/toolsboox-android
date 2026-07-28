@@ -3523,6 +3523,42 @@ abstract class SurfaceFragment : ScreenFragment() {
         applyStrokes(strokes, true)
     }
 
+    /**
+     * Drop an existing gram onto this page where the finger pressed, provenance intact.
+     *
+     * The sibling of [placeClippingAt], and deliberately its opposite on the one point that
+     * matters: a clipping lands `decorative = true` — it's a sticker, it forgets where it came
+     * from. A picking is your own material being carried from one page to another, so it keeps
+     * its source link, its card text and its feed, and it still turns up in a rhizome and on the
+     * Map. The face arrives already treated (it wore its paper on the board it came from), so
+     * `edgeBaked` stands the render-time edge down rather than taping the same card twice.
+     */
+    protected fun placeGramAt(
+        base64: String, cx: Float, cy: Float,
+        sourceLink: String = "", sourceLabel: String = "", cardText: String = "", sourceFeed: String = ""
+    ): Boolean {
+        val bytes = runCatching { Base64.decode(base64, Base64.DEFAULT) }.getOrNull() ?: return false
+        val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return false
+        val w = (CANVAS_WIDTH * IMAGE_PLACE_FRACTION).coerceAtMost(bmp.width.toFloat())
+        val h = w * bmp.height / bmp.width
+        val element = ImageElement(
+            x = (cx - w / 2f).coerceIn(0f, (CANVAS_WIDTH - w).coerceAtLeast(0f)),
+            y = (cy - h / 2f).coerceIn(0f, (CANVAS_HEIGHT - h).coerceAtLeast(0f)),
+            width = w, height = h, data = base64,
+            sourceLink = sourceLink, sourceLabel = sourceLabel,
+            cardText = cardText, sourceFeed = sourceFeed,
+            edgeBaked = true
+        )
+        pushUndo()
+        imageElements.add(element)
+        onImageElementsChanged(imageElements)
+        imageMode = true
+        penState = false
+        selectedImage = element
+        applyStrokes(strokes, true)
+        return true
+    }
+
     /** Long-press on a text box: management menu (edit / move / clipboard ops / delete). */
     private fun showTextBoxMenu(element: TextElement, pressX: Float, pressY: Float) {
         val ctx = context ?: return

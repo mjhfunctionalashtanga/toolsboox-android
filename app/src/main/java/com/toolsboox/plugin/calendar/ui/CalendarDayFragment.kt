@@ -685,14 +685,20 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     override fun extraCreationGroups(cx: Float, cy: Float): List<List<com.toolsboox.ot.LedgerContextMenu.Item>> {
         val ctx = context ?: return emptyList()
-        if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage)) return listOf(listOf(
+        // Every making surface gets the way to reach BACKWARD for material you already gathered.
+        // Intake got this door first (hold a quarter); it belongs on the pages where you actually
+        // make something out of the day, which is all of them but the day page itself.
+        val bring = if (notePage != null) listOf(listOf(
+            com.toolsboox.ot.LedgerContextMenu.Item("❝  Bring in a picking…") { bringPickingOntoPage(cx, cy) }
+        )) else emptyList()
+        if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage)) return bring + listOf(listOf(
             com.toolsboox.ot.LedgerContextMenu.Item("⚗  Synthesize the day…") {
                 com.toolsboox.plugin.calendar.ot.SynthEngines.pick(ctx, "Synthesize the day") { e ->
                     runEngine(e, pageMaterial())
                 }
             }
         ))
-        return when (baseNotePage(notePage)) {
+        return bring + when (baseNotePage(notePage)) {
             "write" -> listOf(listOf(
                 com.toolsboox.ot.LedgerContextMenu.Item("→  Share essay…") { shareEssay() }
             ))
@@ -4548,7 +4554,29 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * be (same [PickingsPlacement] path, provenance carried, its card face already treated so it
      * isn't taped down twice).
      */
-    private fun bringPickingIntoIntake(kindKey: String, kindTitle: String) {
+    private fun bringPickingIntoIntake(kindKey: String, kindTitle: String) =
+        pickPickingGram("Bring in a picking → $kindTitle") { fileIntoIntake(it, kindKey, kindTitle) }
+
+    /**
+     * Bring a card from a Pickings board onto THIS page, where the finger pressed.
+     *
+     * The same door as the intake one, opening the other way: Star Sort files a picking into a
+     * quarter, a making page just wants it here, next to what you're writing. Provenance rides
+     * along ([placeGramAt] keeps the source link and card text), so a picking carried onto a
+     * synthesis page still knows where it came from — that's the whole reason to move it rather
+     * than paste a copy.
+     */
+    private fun bringPickingOntoPage(cx: Float, cy: Float) = pickPickingGram("Bring in a picking") { p ->
+        val ok = placeGramAt(p.data, cx, cy,
+            sourceLink = p.link, sourceLabel = p.label, cardText = p.cardText, sourceFeed = p.feed)
+        showMessage(if (ok) "Brought in ${p.label}" else "Couldn't bring that picking in", binding.root)
+    }
+
+    /**
+     * The picker itself: every card on your Pickings boards as a face you can recognise, and
+     * whatever the caller wants done with the one you choose.
+     */
+    private fun pickPickingGram(title: String, onPick: (PickingGram) -> Unit) {
         val ctx = context ?: return
         val dp = resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
@@ -4559,7 +4587,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (420 * dp).toInt())
         }
         val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle("Bring in a picking → $kindTitle")
+            .setTitle(title)
             .setView(scroll)
             .setNegativeButton(android.R.string.cancel, null)
             .create()
@@ -4612,7 +4640,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     text = "${p.label}\n❝ ${p.boardName} · ${p.date}"
                     textSize = 14f; setTextColor(0xFF000000.toInt())
                 })
-                row.setOnClickListener { dialog.dismiss(); fileIntoIntake(p, kindKey, kindTitle) }
+                row.setOnClickListener { dialog.dismiss(); onPick(p) }
                 listCol.addView(row)
             }
         }
