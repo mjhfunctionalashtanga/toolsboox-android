@@ -181,7 +181,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             })
         }
 
-        chip("★ To-dos", onlyStarred) {
+        chip("★ Starred", onlyStarred) {
             if (!onlyStarred) { onlyStarred = true; renderChips(); render() }
         }
 
@@ -509,7 +509,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
                     navFiltered() -> "No mail in ${windowLabel()}. Tap ✕ on the date chip for the live inbox."
                     accountFilter != null -> "No mail from this account yet. Tap the ▾ chip for all accounts."
                     onlyStarred ->
-                        "No starred mail yet. Open a message and star it to make a to-do, or switch to All."
+                        "No starred mail yet. Open a message and star it to keep it, or switch to All."
                     InboxStore.hasAccounts(ctx) -> "Inbox empty."
                     else -> "No accounts yet. Tap the gear to add one — until then a few samples show here."
                 }
@@ -709,7 +709,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         val builder = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setView(ScrollView(ctx).apply { addView(col) })
             .setPositiveButton("Close", null)
-            .setNeutralButton(if (InboxStore.isStarred(ctx, m.id)) "Un-star" else "★ To-do") { _, _ ->
+            .setNeutralButton(if (InboxStore.isStarred(ctx, m.id)) "Un-star" else "★ Star") { _, _ ->
                 if (InboxStore.isStarred(ctx, m.id)) unstar(cur) else starToTodo(cur)
             }
         if (canReply) builder.setNegativeButton("Reply…") { _, _ -> showReply(cur) }
@@ -862,7 +862,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
                 runCatching { placeMailStarGram(root, m, today) }.getOrDefault(false)
             }
             if (!isAdded) return@launch
-            toast(if (placedGram) "★ → to-do + Star Sort" else "Starred — added to your to-dos")
+            toast(if (placedGram) "★ → Star Sort" else "Starred")
             messages = InboxStore.messages(ctx)
             render()
         }
