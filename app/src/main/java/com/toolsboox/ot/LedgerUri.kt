@@ -33,6 +33,22 @@ object LedgerUri {
 
     /** A handwritten `#hashtag`, first-class in the rhizome — `tag://<tag>` (see LedgerTags). */
     const val SCHEME_TAG = "tag"
+    /** An email — parity with iOS, which has had this scheme since mail became an object. */
+    const val SCHEME_EMAIL = "email"
+    /** A support ticket. */
+    const val SCHEME_TICKET = "ticket"
+    /** A post in the Field Ledger archive, keyed on the WordPress POST ID — slugs get rewritten,
+     *  ids don't, and an edge keyed on a slug would quietly detach from its own post. */
+    const val SCHEME_JOURNAL = "journal"
+    /** A voice or video recording: the one object in the ledger carrying no text at all. */
+    const val SCHEME_AVGRAM = "avgram"
+    /** A written note, whose Markdown body may already carry #tags. */
+    const val SCHEME_NOTE = "note"
+    /** Site objects, host-qualified because the same id exists on every site. */
+    const val SCHEME_WPPOST = "wppost"
+    const val SCHEME_SITEBOARD = "siteboard"
+    const val SCHEME_SITETASK = "sitetask"
+    const val SCHEME_COMMUNITY = "community"
 
     /**
      * A parsed address. [body] is everything between the scheme and the fragment; [fragment] is
@@ -66,6 +82,9 @@ object LedgerUri {
 
     fun task(id: String): String = "$SCHEME_TASK://$id"
     fun contact(id: String): String = "$SCHEME_CONTACT://$id"
+    fun journal(id: Int): String = "$SCHEME_JOURNAL://$id"
+    fun avGram(id: String): String = "$SCHEME_AVGRAM://$id"
+    fun note(id: String): String = "$SCHEME_NOTE://$id"
     fun clipping(id: String): String = "$SCHEME_CLIPPING://$id"
     fun book(path: String): String = "$SCHEME_BOOK://$path"
 

@@ -2810,7 +2810,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         groups.add(listOf(
             LedgerContextMenu.Item("🎨 Adjust…") { showImageAdjustMenu(element, pressX, pressY) },
             LedgerContextMenu.Item("↥ Send / save…") { showImageSendMenu(element, pressX, pressY) },
-            LedgerContextMenu.Item("＋ Add here…") { showImageAddMenu(cx, cy, pressX, pressY) }
+            LedgerContextMenu.Item("＋ Add here…") { showImageAddMenu(cx, cy, pressX, pressY) },
+            // A gram is the object on a page with the least text of anything — often none — so
+            // the picker is the only way it was ever going to be nameable.
+            LedgerContextMenu.Item("🏷 Tag…") { onTagElement(element) }
         ))
         groups.add(listOf(
             LedgerContextMenu.Item("🗑 Delete") { deleteImageElement(element) }
@@ -3071,6 +3074,9 @@ abstract class SurfaceFragment : ScreenFragment() {
             LedgerContextMenu.Item("🔷 Simple shapes…") { showShapesPicker(cx, cy) }
         )))
     }
+
+    /** Tag a gram. The subclass knows the page address an element sits at; the base does not. */
+    protected open fun onTagElement(element: ImageElement) {}
 
     /** "Intake a link" — the subclass renders the link card and places it. Center when no press. */
     protected open fun onIntakeLink(cx: Float = CANVAS_WIDTH / 2f, cy: Float = CANVAS_HEIGHT / 2f) {}

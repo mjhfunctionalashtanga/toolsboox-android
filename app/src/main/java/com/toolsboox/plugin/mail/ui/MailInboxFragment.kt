@@ -739,6 +739,12 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         // ⁂ is THE connect glyph on Android (Missed Rhizomes / Quick Wins / Daily Pile agree).
         // Every move takes `cur`, not `m` — after a load-the-rest, what stars / files / connects
         // must be the whole message, not the stale slice.
+        // Until now an email could only be tagged by typing a # inside an annotation — writing a
+        // note you didn't want in order to file mail you did.
+        col.addView(action("🏷  Tag…") {
+            com.toolsboox.ot.TagPicker.show(
+                ctx, "email://${cur.id}", cur.subject, showModal = { showModal(it) })
+        })
         col.addView(action("⁂  Rhizome — connect & open graph") { dialog.dismiss(); openRhizome(cur) })
         col.addView(action("🧩  Assign to synthesis") { dialog.dismiss(); assignToSynthesis(cur) })
         // 🖍 The universal annotation menu, on mail like on everything: text selected in the body

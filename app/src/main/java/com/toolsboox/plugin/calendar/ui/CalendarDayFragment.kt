@@ -713,6 +713,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     // on any text box, any page): the same engines on just that one picking.
     // ------------------------------------------------------------------
 
+    /** Tag one gram, at its page address — the same `ledger://<date>/<page>#<element>` shape iOS
+     *  uses, so an edge made on either device lands on the same node. */
+    override fun onTagElement(element: com.toolsboox.da.ImageElement) {
+        val ctx = context ?: return
+        val uri = "ledger://$currentDate/${notePage ?: "default"}#${element.elementId}"
+        com.toolsboox.ot.TagPicker.show(
+            ctx, uri,
+            element.cardText.ifBlank { element.sourceLabel }.ifBlank { "gram" },
+            showModal = { showModal(it) }
+        )
+    }
+
     override fun extraCreationGroups(cx: Float, cy: Float): List<List<com.toolsboox.ot.LedgerContextMenu.Item>> {
         val ctx = context ?: return emptyList()
         // Every making surface gets the way to reach BACKWARD for material you already gathered.
@@ -721,14 +733,24 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val bring = if (notePage != null) listOf(listOf(
             com.toolsboox.ot.LedgerContextMenu.Item("❝  Bring in a picking…") { bringPickingOntoPage(cx, cy) }
         )) else emptyList()
-        if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage)) return bring + listOf(listOf(
+        // Tag the PAGE itself — a Pickings board, a synthesis, or the day. Distinct from tagging
+        // the grams on it: a board's tag names what the COLLECTION is about.
+        val tagPage = listOf(listOf(
+            com.toolsboox.ot.LedgerContextMenu.Item("🏷  Tag this page…") {
+                com.toolsboox.ot.TagPicker.show(
+                    ctx, "ledger://$currentDate/${notePage ?: "default"}",
+                    notePage ?: currentDate.toString(),
+                    showModal = { showModal(it) })
+            }
+        ))
+        if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage)) return bring + tagPage + listOf(listOf(
             com.toolsboox.ot.LedgerContextMenu.Item("⚗  Synthesize the day…") {
                 com.toolsboox.plugin.calendar.ot.SynthEngines.pick(ctx, "Synthesize the day") { e ->
                     runEngine(e, pageMaterial())
                 }
             }
         ))
-        return bring + when (baseNotePage(notePage)) {
+        return bring + tagPage + when (baseNotePage(notePage)) {
             "write" -> listOf(listOf(
                 com.toolsboox.ot.LedgerContextMenu.Item("→  Share essay…") { shareEssay() }
             ))

@@ -162,6 +162,60 @@ object LedgerTags {
             .sortedByDescending { it.occurrences.size }
     }
 
+    /**
+     * Tag ANY object, not just a note page: an email, an article, a book, a recording.
+     *
+     * [record] is page-shaped — it stores a "date|page" occurrence and builds a
+     * `ledger://<date>/<page>` URI — so it can only mark things that live on a planner page, and
+     * most of what you would want to tag doesn't. This writes the half that generalises: the
+     * tag↔object edge in the connection graph, which is what the rhizome and the Map read.
+     *
+     * It deliberately records NO page occurrence — the tag index lists pages, and an email is not
+     * one; inventing a fake page for it would put a row in that list that can't be opened.
+     * Byte-for-byte the iOS contract, so edges converge across devices.
+     */
+    fun recordObject(context: Context, uri: String, label: String, text: String): Set<String> {
+        val tags = extract(text)
+        if (tags.isEmpty() || uri.isBlank()) return emptySet()
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        for (tag in tags) {
+            if (prefs.getString("tag:$tag:created", null) == null) {
+                editor.putString("tag:$tag:created", System.currentTimeMillis().toString())
+            }
+            ConnectionStore.connect(
+                context, tagUri(tag), uri,
+                fromLabel = "#$tag", toLabel = label.ifBlank { uri }
+            )
+        }
+        editor.apply()
+        return tags
+    }
+
+    /** The tags currently on an object — read off the graph, which is where a non-page object's
+     *  tags live (the occurrence store only knows about pages). */
+    fun tagsOn(context: Context, uri: String): List<String> {
+        if (uri.isBlank()) return emptyList()
+        return ConnectionStore.neighbours(context, uri)
+            .filter { it.startsWith("tag://") }
+            .map { it.removePrefix("tag://") }
+            .sorted()
+    }
+
+    /**
+     * Take a tag OFF an object by severing the edge that put it there.
+     *
+     * [ConnectionStore.disconnect] tombstones rather than deleting, and the tombstone is what
+     * syncs — so removing a tag on one device removes it on the others, instead of the other
+     * device's copy quietly putting it back on the next merge.
+     */
+    fun untag(context: Context, uri: String, tag: String) {
+        val t = tagUri(tag)
+        for (edge in ConnectionStore.touching(context, uri)) {
+            if (edge.otherEnd(uri) == t) ConnectionStore.disconnect(context, edge.id)
+        }
+    }
+
     /** The (date, page, zoneRect?) occurrences of one tag, newest first. */
     fun pagesFor(context: Context, tag: String): List<Triple<LocalDate, String, RectF?>> =
         list(context).firstOrNull { it.tag == tag.lowercase() }?.occurrences?.sortedByDescending { it.first }
