@@ -56,11 +56,18 @@ object InboxStore {
     private const val STAR = "inbox_starred"
     private const val READ = "inbox_read"
     private const val CLEARED = "inbox_cleared"
+    private const val REPLIED = "inbox_replied"
 
     // Backstop cap per id set. The per-refresh prune keeps them near the fetch window's size;
     // string sets carry no order, so eviction past the cap is arbitrary — acceptable for ids
     // whose only cost of loss is a re-surfaced (cleared) or re-bolded (read) row.
     private const val MAX_IDS = 4000
+
+    // Retention for NON-keep-forever mail (everything that isn't starred or replied-to): keep the
+    // last 30 days and at most ~500 rows on device, newest-first, dropping the oldest first. The
+    // keep-forever pile (starred ∪ replied, bodies persisted) is NEVER subject to either bound.
+    private const val RETENTION_DAYS = 30L
+    private const val MAX_MESSAGES = 500
 
     private fun prefs(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private fun ids(c: Context, key: String): MutableSet<String> =
@@ -72,6 +79,7 @@ object InboxStore {
 
     fun isStarred(c: Context, id: String) = ids(c, STAR).contains(id)
     fun isRead(c: Context, id: String) = ids(c, READ).contains(id)
+    fun isReplied(c: Context, id: String) = ids(c, REPLIED).contains(id)
 
     fun setStarred(c: Context, m: InboxMessage, v: Boolean) {
         val s = ids(c, STAR); if (v) s.add(m.id) else s.remove(m.id); setIds(c, STAR, s)
@@ -85,6 +93,22 @@ object InboxStore {
 
     fun markRead(c: Context, id: String) { val s = ids(c, READ); s.add(id); setIds(c, READ, s) }
 
+    /** Mark a message replied-to — a keep-forever event that MIRRORS starring: the id joins the
+     *  REPLIED set, is rescued from any prior clear, and the whole body is persisted to its own kept
+     *  pile (`files/mail/replied.json`) so the mail you answered outlives the fetch window and a
+     *  restart, and stays searchable forever. The full message is resolved from the live window (you
+     *  reply to something you can see) or the starred pile; if neither has it the id is still recorded
+     *  (keep-more), and the next refresh that carries it in the window can back-fill the body. */
+    fun markReplied(c: Context, id: String) {
+        val s = ids(c, REPLIED); s.add(id); setIds(c, REPLIED, s)
+        val cl = ids(c, CLEARED); if (cl.remove(id)) setIds(c, CLEARED, cl)   // replying rescues from a prior clear
+        val msg = fetched.firstOrNull { it.id == id } ?: loadStarred(c).firstOrNull { it.id == id }
+        if (msg != null) {
+            val kept = loadReplied(c)
+            if (kept.none { it.id == id }) { kept.add(msg); saveReplied(c, kept) }
+        }
+    }
+
     /** Swap one message's content in place (the on-demand full fetch landing): the in-memory
      *  fetch window, and — if the message is starred — the kept pile on disk, so the whole body
      *  survives the window and a restart exactly as the truncated one did. */
@@ -93,6 +117,9 @@ object InboxStore {
         val kept = loadStarred(c)
         val i = kept.indexOfFirst { it.id == m.id }
         if (i >= 0) { kept[i] = m; saveStarred(c, kept) }
+        val rep = loadReplied(c)
+        val j = rep.indexOfFirst { it.id == m.id }
+        if (j >= 0) { rep[j] = m; saveReplied(c, rep) }
     }
 
     @Volatile private var fetched: List<InboxMessage> = emptyList()
@@ -109,12 +136,33 @@ object InboxStore {
      *  only while there are none. */
     fun messages(c: Context): List<InboxMessage> {
         val cleared = ids(c, CLEARED)
-        val base = if (hasAccounts(c)) {
-            val live = fetched
-            val liveIds = live.map { it.id }.toSet()
-            live + loadStarred(c).filter { it.id !in liveIds }
-        } else seeds()
-        return base.filter { !cleared.contains(it.id) }.sortedByDescending { it.date }
+        if (!hasAccounts(c)) return seeds().filter { !cleared.contains(it.id) }.sortedByDescending { it.date }
+        val live = fetched
+        val liveIds = live.map { it.id }.toSet()
+        // Keep-forever pile = starred ∪ replied, deduped by id, full bodies. These survive the window,
+        // a restart, and BOTH retention bounds below.
+        val keptForever = keepForeverPile(c)
+        val keptIds = keptForever.map { it.id }.toSet()
+        val base = live + keptForever.filter { it.id !in liveIds }
+        val visible = base.filter { !cleared.contains(it.id) }.sortedByDescending { it.date }
+
+        // Retention, applied ONLY to the non-keep-forever remainder: last 30 days, then a ~500 cap
+        // (keep-forever rows already shown always count first, so the cap only trims the rest). The
+        // kept-forever rows themselves are never dropped, even if they alone exceed the cap.
+        val kf = visible.filter { it.id in keptIds }
+        val cutoff = System.currentTimeMillis() - RETENTION_DAYS * 86_400_000L
+        var rest = visible.filter { it.id !in keptIds && it.date >= cutoff }   // drop non-kept older than 30d
+        val room = (MAX_MESSAGES - kf.size).coerceAtLeast(0)
+        if (rest.size > room) rest = rest.take(room)                          // newest-first: drops the oldest non-kept
+        return (kf + rest).sortedByDescending { it.date }
+    }
+
+    /** The keep-forever pile: persisted starred and replied bodies, unioned and deduped by id. */
+    private fun keepForeverPile(c: Context): List<InboxMessage> {
+        val out = loadStarred(c)
+        val seen = out.map { it.id }.toMutableSet()
+        for (m in loadReplied(c)) if (seen.add(m.id)) out.add(m)
+        return out
     }
 
     /** Sweep the given (already-triaged) messages out of the inbox -- the "clear" pass. The caller
@@ -138,7 +186,9 @@ object InboxStore {
      */
     fun prune(c: Context, okAccounts: Set<String>, liveIds: Set<String>) {
         if (okAccounts.isEmpty()) return
-        val kept = loadStarred(c).map { it.id }.toSet()
+        // Keep-forever = every id whose body is persisted (starred OR replied). Neither the id sets
+        // below nor the piles ever drop one of these while its content is on disk.
+        val kept = keepForeverPile(c).map { it.id }.toSet()
         fun keep(id: String): Boolean {
             if (id in liveIds || id in kept) return true
             val acct = MailSync.accountId(id)
@@ -148,8 +198,13 @@ object InboxStore {
             val s = ids(c, key)
             if (s.retainAll { keep(it) }) setIds(c, key, s)
         }
+        // STAR and REPLIED id sets follow the same rule as before: an id stays while backed by
+        // persisted content or still in the window; an unbacked one that left a cleanly-fetched
+        // account's window has nothing left to show and goes. Content in the piles is untouched.
         val stars = ids(c, STAR)
         if (stars.retainAll { keep(it) }) setIds(c, STAR, stars)
+        val replied = ids(c, REPLIED)
+        if (replied.retainAll { keep(it) }) setIds(c, REPLIED, replied)
     }
 
     // The starred-content store: a plain JSON array in the app's files dir. Local by design —
@@ -184,6 +239,40 @@ object InboxStore {
             starFile(c).writeText(arr.toString())
         } catch (e: Exception) {
             Timber.w(e, "starred mail save failed")
+        }
+    }
+
+    // The replied-content store: exact mirror of the starred pile above, a separate JSON array so a
+    // message can be starred, replied-to, or both, and its body is kept forever either way.
+
+    private fun repliedFile(c: Context): File =
+        File(c.filesDir, "mail").apply { mkdirs() }.let { File(it, "replied.json") }
+
+    @Volatile private var repliedCache: List<InboxMessage>? = null
+
+    private fun loadReplied(c: Context): MutableList<InboxMessage> {
+        repliedCache?.let { return it.toMutableList() }
+        val f = repliedFile(c)
+        val list = if (!f.exists()) mutableListOf() else try {
+            val arr = JSONArray(f.readText())
+            (0 until arr.length()).map { InboxMessage.fromJson(arr.getJSONObject(it)) }
+                .filter { it.id.isNotBlank() }.toMutableList()
+        } catch (e: Exception) {
+            Timber.w(e, "replied mail read failed")
+            mutableListOf<InboxMessage>()
+        }
+        repliedCache = list.toList()
+        return list
+    }
+
+    private fun saveReplied(c: Context, list: List<InboxMessage>) {
+        repliedCache = list.toList()
+        try {
+            val arr = JSONArray()
+            list.forEach { arr.put(it.toJson()) }
+            repliedFile(c).writeText(arr.toString())
+        } catch (e: Exception) {
+            Timber.w(e, "replied mail save failed")
         }
     }
 
