@@ -1696,6 +1696,30 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(dpPx(4), 0, dpPx(4), 0) })
         }
+        // Search field at the very TOP — search was buried and hard to reach; surface it like the
+        // VIEWS chips, a labelled "SEARCH" section with a form field right under it.
+        section("SEARCH")
+        container.addView(android.widget.EditText(ctx).apply {
+            hint = "Search all feeds"; textSize = 13f; setSingleLine()
+            setPadding(dpPx(10), dpPx(7), dpPx(10), dpPx(7))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dpPx(18).toFloat(); setColor(0xFFFFFFFF.toInt()); setStroke(dpPx(1), 0xFF000000.toInt())
+            }
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+            setOnEditorActionListener { v, _, _ ->
+                val q = v.text.toString().trim().lowercase()
+                if (binding.articlePane.visibility == View.VISIBLE) closeArticlePane()
+                adapter.submit(if (q.isEmpty()) applyKind(allEntries) else allEntries.filter {
+                    it.title.lowercase().contains(q) || it.blurb.lowercase().contains(q) ||
+                        it.feedTitle.lowercase().contains(q)
+                })
+                true
+            }
+        }, android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(dpPx(4), dpPx(2), dpPx(4), dpPx(4)) })
         section("VIEWS")
         chipPair(
             stateChip("📰 All", mode == "both" || mode == "edition") { switchTo("both", kindFilter) },
