@@ -274,6 +274,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     private var slimFeedFilter: String? = null
     /** Optional read/watch/listen lens. */
     private var kindFilter: String? = null
+    /** Sidebar search scope: "all" · "feed" (the selected feed) · "category" (the current lens). */
+    private var searchScope = "all"
     /** Selected local subscription (null = all local) when mode == "local". */
     private var localSub: com.toolsboox.plugin.feeds.nw.LocalSub? = null
     /** The active smart feed (saved search) when mode == "smart". */
@@ -662,7 +664,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             val date = java.time.LocalDate.now().minusDays(d)
             val data = com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.load(ctx, date)
             for (kind in kinds) {
-                data.typedFor(kind).lines().map { it.trim() }.filter { it.isNotBlank() }.forEach { line ->
+                // Reversed: lines are appended oldest-first within a day, so walk them backwards to
+                // surface the NEWEST-added link first instead of burying it under earlier saves.
+                data.typedFor(kind).lines().reversed().map { it.trim() }.filter { it.isNotBlank() }.forEach { line ->
                     val url = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.extractUrls(line).firstOrNull() ?: line
                     // Presentation metadata saved with the link (entry blurb + image, or the og:
                     // fetch) — what makes the row informative instead of a bare URL.
@@ -1696,30 +1700,50 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(dpPx(4), 0, dpPx(4), 0) })
         }
-        // Search field at the very TOP — search was buried and hard to reach; surface it like the
-        // VIEWS chips, a labelled "SEARCH" section with a form field right under it.
+        // Search at the very TOP — it was buried. A "SEARCH" section: a LIVE-filtering field (types
+        // filter as you go; the keyboard Search action alone didn't fire reliably on e-ink) + three
+        // tiny scope radios — All · This feed · This category — starting on All.
         section("SEARCH")
-        container.addView(android.widget.EditText(ctx).apply {
-            hint = "Search all feeds"; textSize = 13f; setSingleLine()
+        val searchField = android.widget.EditText(ctx).apply {
+            hint = "Search"; textSize = 13f; setSingleLine()
             setPadding(dpPx(10), dpPx(7), dpPx(10), dpPx(7))
             background = android.graphics.drawable.GradientDrawable().apply {
                 cornerRadius = dpPx(18).toFloat(); setColor(0xFFFFFFFF.toInt()); setStroke(dpPx(1), 0xFF000000.toInt())
             }
-            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
             inputType = android.text.InputType.TYPE_CLASS_TEXT
-            setOnEditorActionListener { v, _, _ ->
-                val q = v.text.toString().trim().lowercase()
-                if (binding.articlePane.visibility == View.VISIBLE) closeArticlePane()
-                adapter.submit(if (q.isEmpty()) applyKind(allEntries) else allEntries.filter {
-                    it.title.lowercase().contains(q) || it.blurb.lowercase().contains(q) ||
-                        it.feedTitle.lowercase().contains(q)
-                })
-                true
+        }
+        fun searchBase(): List<FeedEntry> = when (searchScope) {
+            "feed" -> slimFeedFilter?.let { f -> allEntries.filter { it.feedTitle == f } } ?: applyKind(allEntries)
+            "category" -> kindFilter?.let { k -> allEntries.filter { it.kind == k } } ?: applyKind(allEntries)
+            else -> applyKind(allEntries)
+        }
+        fun runSearch() {
+            val q = searchField.text.toString().trim().lowercase()
+            if (binding.articlePane.visibility == View.VISIBLE) closeArticlePane()
+            adapter.submit(if (q.isEmpty()) searchBase() else searchBase().filter {
+                it.title.lowercase().contains(q) || it.blurb.lowercase().contains(q) || it.feedTitle.lowercase().contains(q)
+            })
+        }
+        searchField.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) { runSearch() }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        container.addView(searchField, android.widget.LinearLayout.LayoutParams(
+            android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+            android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { setMargins(dpPx(4), dpPx(2), dpPx(4), dpPx(2)) })
+        container.addView(android.widget.RadioGroup(ctx).apply {
+            orientation = android.widget.RadioGroup.HORIZONTAL
+            fun radio(lbl: String, sc: String) = android.widget.RadioButton(ctx).apply {
+                text = lbl; textSize = 10f; setPadding(dpPx(1), 0, dpPx(6), 0); isChecked = searchScope == sc
+                setOnClickListener { searchScope = sc; runSearch() }
             }
+            addView(radio("All", "all")); addView(radio("This feed", "feed")); addView(radio("This category", "category"))
         }, android.widget.LinearLayout.LayoutParams(
             android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
             android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
-        ).apply { setMargins(dpPx(4), dpPx(2), dpPx(4), dpPx(4)) })
+        ).apply { setMargins(dpPx(4), 0, dpPx(4), dpPx(4)) })
         section("VIEWS")
         chipPair(
             stateChip("📰 All", mode == "both" || mode == "edition") { switchTo("both", kindFilter) },

@@ -33,11 +33,11 @@ fun ledgerDirectoryFolders(
     // page). One folder at most; surfaces that aren't inside any folder (the day page is "Today",
     // the week/month almanacs) expand nothing. The accordion renders expanded folders in its single
     // build pass, so there is no post-open toggle to flash the e-ink.
-    val home: String? = if (expandFeedLedger) "Feed" else when (fragment) {
-        is FeedsFragment, is FeedArticleFragment -> "Feed"
-        is com.toolsboox.plugin.calendar.ui.QuickWinsFragment,
+    val home: String? = if (expandFeedLedger) "Incoming" else when (fragment) {
+        is FeedsFragment, is FeedArticleFragment,
         is com.toolsboox.plugin.mail.ui.MailInboxFragment,
-        is com.toolsboox.plugin.mail.ui.MailComposeFragment,
+        is com.toolsboox.plugin.mail.ui.MailComposeFragment -> "Incoming"
+        is com.toolsboox.plugin.calendar.ui.QuickWinsFragment,
         is com.toolsboox.plugin.calendar.ui.RolodexFragment,
         is com.toolsboox.plugin.calendar.ui.LedgerItemsFragment,
         is com.toolsboox.plugin.calendar.ui.KanbanFragment,
@@ -141,7 +141,8 @@ fun ledgerDirectoryFolders(
         }),
         // Feed Ledger — the RSS reader lenses. Starred (your RSS stars) and Later (the read-later
         // intake) are DIFFERENT stores — both here, as on iPad, not one standing in for the other.
-        ScreenFragment.Folder("📰", "Feed", listOf(
+        ScreenFragment.Folder("📰", "Incoming", listOf(
+            "📧  Mail" to { nav.navigate(R.id.action_to_mail_inbox) },
             "📰  All" to { openFeed("feed", null) },
             "📖  The Read" to { openFeed("feed", "read") },
             "📺  The Watch" to { openFeed("feed", "watch") },
@@ -160,7 +161,7 @@ fun ledgerDirectoryFolders(
                 nav.navigate(R.id.action_to_feeds)
             },
             "📡  Local Feeds" to { openFeed("local", null) }
-        ), expanded = home == "Feed"),
+        ), expanded = home == "Incoming"),
         // Flow — the daily catch→make spine, right under Feed. Intake is the day's catch
         // (Email/Read/Watch/Listen grams, one per starred item); moving a gram into its Pickings
         // is where it becomes something; Synthesize works the gathered pieces and Write closes it
@@ -178,8 +179,6 @@ fun ledgerDirectoryFolders(
             // top — then the internet-backed working surfaces. The note surfaces moved to their
             // own Notes folder below.
             "⚡  Quick Wins" to { nav.navigate(R.id.action_to_quick_wins) },
-            // Native unified mail (IMAP/SMTP) — email is a working surface, so it lives on the Desk.
-            "✉  Mail" to { nav.navigate(R.id.action_to_mail_inbox) },
             "👤  Contacts" to { nav.navigate(R.id.action_to_rolodex) },
             // Boards = one system, two sources (Local on-device tasks · Site FluentBoards),
             // framed like the RSS Local/Site split. Tasks & Events is the list view of Local.
