@@ -1307,6 +1307,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.navWidget.visibility = View.VISIBLE
         binding.navUp.setOnClickListener { binding.toolbarDrawing.toolbarSwipeUp.performClick() }
         binding.navDown.setOnClickListener { binding.toolbarDrawing.toolbarSwipeDown.performClick() }
+        // Star Sort (intake) is a single board, not a page series — the ↑ ↓ section steppers have
+        // nothing to step there, so they stand down and the widget keeps only what applies.
+        val onIntake = notePage == com.toolsboox.plugin.calendar.ot.CalendarDayPageIntake.INTAKE_PAGE
+        binding.navUp.visibility = if (onIntake) View.GONE else View.VISIBLE
+        binding.navDown.visibility = if (onIntake) View.GONE else View.VISIBLE
 
         // Hide-nav toggle: collapse the almanac strip to give the page its full height back. The
         // drawing canvas is a fixed 1404×1872 logical space mapped onto the surface by a
@@ -2156,8 +2161,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val toolCollapsed = prefs.getBoolean("tool_collapsed", false)
 
         // Collapse the nav pill to grip + center emoji (↑ ↓ hide); expand by tapping the grip.
+        // On Star Sort (intake) the ↑ ↓ steppers stay GONE either way — it's one board, not a page
+        // series, so there is nothing for them to step (expanding the pill must not resurrect them).
+        val onIntakePill = notePage == com.toolsboox.plugin.calendar.ot.CalendarDayPageIntake.INTAKE_PAGE
         val navHidden = listOf(binding.navUp, binding.navDown)
-        for (v in navHidden) v.visibility = if (navCollapsed) View.GONE else View.VISIBLE
+        for (v in navHidden) v.visibility = if (navCollapsed || onIntakePill) View.GONE else View.VISIBLE
 
         val toolHidden = listOf(
             binding.toolEraser, binding.toolLasso, binding.toolUndo, binding.toolRedo, binding.toolGear
