@@ -566,12 +566,12 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
             withContext(Dispatchers.IO) {
                 val root = documentsRoot()
                 val day = calendarDayService.load(root, ld, null, Locale.getDefault())
-                // The ink it was made from stays on the page. Deleting a card is saying you are
-                // done tracking the thing, not that the handwriting never happened.
-                day.ledgerItems.removeAll { it.id == item.id }
-                // Tombstone the id or the sync union (and carry-over) resurrects the card from
-                // the other device's copy — removal alone is what "keeps coming back" was.
-                day.tombstoneLedgerItem(item.id)
+                // Item + tombstone + the face it wears on the day page (see
+                // CalendarDay.deleteLedgerItems). A board delete used to leave the task's text box
+                // sitting in the Tasks section, so a card you deleted here was still on the page.
+                // Tombstoning matters just as much: the sync union (and carry-over) resurrects an
+                // untombstoned card from the other device's copy — that was "keeps coming back".
+                day.deleteLedgerItems(listOf(item))
                 calendarDayService.save(root, ld, day)
             }
             load()

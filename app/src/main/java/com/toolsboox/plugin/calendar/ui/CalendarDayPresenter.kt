@@ -87,21 +87,37 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                     calendarDay.startHour =
                         if (defaultStartHour >= 0) defaultStartHour else calendarDay.startHour ?: defaultStartHour
 
+                    // The measuring context for the Tasks rows: the page face has to be the one the
+                    // surface actually draws with, or a row's height is measured against the wrong
+                    // metrics and the packing is off by a line.
+                    val measureCtx = fragment.context?.applicationContext
+
+                    var dayDirty = false
                     if (currentDate.isEqual(LocalDate.now())) {
                         val yesterday = currentDate.minusDays(1)
                         val yesterdayCalendarDay = calendarDayService.load(rootPath, yesterday, defaultStartHour, locale)
 
-                        if (LedgerTaskCarryOver.carryOver(yesterdayCalendarDay, calendarDay)) {
+                        if (LedgerTaskCarryOver.carryOver(yesterdayCalendarDay, calendarDay, measureCtx)) {
                             CalendarPatternService.mutex.withLock {
                                 val yesterdayPattern = calendarPatternService.load(rootPath, yesterday, locale)
                                 yesterdayPattern.updateDay(yesterdayCalendarDay)
                                 calendarDayService.save(rootPath, yesterday, yesterdayCalendarDay)
                                 calendarPatternService.save(rootPath, yesterday, yesterdayPattern)
-
-                                calendarPattern.updateDay(calendarDay)
-                                calendarDayService.save(rootPath, currentDate, calendarDay)
-                                calendarPatternService.save(rootPath, currentDate, calendarPattern)
                             }
+                            dayDirty = true
+                        }
+                    }
+
+                    // Repair pass: days written by the old fixed-pitch placement hold task boxes
+                    // that draw straight through the row below them. Re-laying them on measured
+                    // heights is idempotent, so a day is rewritten once and then goes quiet.
+                    if (LedgerTaskCarryOver.reflow(measureCtx, calendarDay)) dayDirty = true
+
+                    if (dayDirty) {
+                        CalendarPatternService.mutex.withLock {
+                            calendarPattern.updateDay(calendarDay)
+                            calendarDayService.save(rootPath, currentDate, calendarDay)
+                            calendarPatternService.save(rootPath, currentDate, calendarPattern)
                         }
                     }
 

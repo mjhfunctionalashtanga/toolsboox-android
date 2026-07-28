@@ -3998,10 +3998,35 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         this.calendarPattern = calendarPattern
         updateNavigator()
 
-        // Load this page's text elements and images from the calendar data
+        // Load this page's text elements and images from the calendar data.
+        //
+        // TOMBSTONES ARE HONOURED HERE, not only in the merger: deleting a task removes the item
+        // and its face from the file, but a union with a device that hadn't seen the delete yet
+        // (or a pre-tombstone copy already sitting in the file) hands the face straight back — and
+        // a deleted task drawn in the Tasks section is exactly what "tasks … that should have been
+        // deleted" is. The tombstone lists are the authority on what may be drawn; anything they
+        // name never reaches the surface, and the next save prunes it for good.
         val imgPageKey = notePage ?: "default"
-        setTextElements(calendarDay.textElements.filter { it.pageKey == imgPageKey }.toMutableList())
-        setImageElements(calendarDay.imageElements.filter { it.page == imgPageKey }.toMutableList())
+        val deadElements = HashSet<String>(calendarDay.deletedElementIds.size + calendarDay.deletedItemIds.size)
+        calendarDay.deletedElementIds.forEach { deadElements.add(it.lowercase()) }
+        calendarDay.deletedItemIds.forEach { deadElements.add(it.lowercase()) }
+        setTextElements(
+            calendarDay.textElements
+                .filter { it.pageKey == imgPageKey && it.elementId.toString().lowercase() !in deadElements }
+                .toMutableList()
+        )
+        setImageElements(
+            calendarDay.imageElements
+                .filter { it.page == imgPageKey && it.elementId.toString().lowercase() !in deadElements }
+                .toMutableList()
+        )
+        // Same rule for ink: an erased task's strokes are tombstoned, and a resurrected copy must
+        // not paint the handwriting back over the row.
+        val deadStrokes = HashSet<String>(calendarDay.deletedStrokeIds.size)
+        calendarDay.deletedStrokeIds.forEach { deadStrokes.add(it.lowercase()) }
+        fun live(strokes: List<Stroke>): List<Stroke> =
+            if (deadStrokes.isEmpty()) strokes
+            else strokes.filterNot { it.strokeId.toString().lowercase() in deadStrokes }
 
         if (notePage != null) {
             binding.toolbarDrawing.toolbarProcrastinator.visibility = View.GONE
@@ -4021,7 +4046,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             }
             // Zones still capture per-section (captureSections), but we no longer paint
             // boxes/labels over the page — the original template provides the sectioning.
-            applyStrokes(Stroke.listDeepCopy(noteStrokes), true)
+            applyStrokes(Stroke.listDeepCopy(live(noteStrokes)), true)
         } else {
             binding.toolbarDrawing.toolbarProcrastinator.visibility = View.VISIBLE
             val calendarStrokes = calendarDay.calendarStrokes[calendarStyle] ?: listOf()
@@ -4033,7 +4058,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             )
             warmQuickWins(calendarEvents)
             warmQuickWinsGlimpse(calendarEvents)
-            applyStrokes(Stroke.listDeepCopy(calendarStrokes), true)
+            applyStrokes(Stroke.listDeepCopy(live(calendarStrokes)), true)
         }
         // The template was just drawn into templateBitmap; force the ImageView to repaint so
         // named pages (pickings/gratitude) reliably show on first navigation, not only after a re-swipe.

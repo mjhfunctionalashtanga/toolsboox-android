@@ -96,6 +96,48 @@ data class CalendarDay(
         if (id !in deletedElementIds) deletedElementIds.add(id)
     }
 
+    /**
+     * Delete tasks/events **and the faces they wear on the day page**.
+     *
+     * Removing the [LedgerItem] alone is only half a deletion: the thing you actually see in the
+     * Tasks section is either the ink it was made from ([LedgerItem.strokeIds]) or a typed text box
+     * carrying its words — so a list/board delete used to leave the task sitting on the page as if
+     * nothing had happened ("tasks … that should have been deleted"). Every face goes here, and
+     * every id is tombstoned, so neither the item nor its face can come back through a sync union.
+     *
+     * Text boxes are matched on their WORDS through [com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe.key]
+     * — the same normalisation the rest of the ledger uses for "is this the same task" — because a
+     * box has no back-pointer to the item, and exact-string matching missed anything that had since
+     * picked up a status suffix or a punctuation difference.
+     */
+    fun deleteLedgerItems(items: List<LedgerItem>) {
+        if (items.isEmpty()) return
+        val ids = items.map { it.id }.toSet()
+        ledgerItems.removeAll { it.id in ids }
+        ids.forEach { tombstoneLedgerItem(it) }
+
+        val strokeIds = items.flatMap { it.strokeIds }.toSet()
+        if (strokeIds.isNotEmpty()) {
+            calendarStrokes[DEFAULT_STYLE] =
+                (calendarStrokes[DEFAULT_STYLE] ?: emptyList()).filterNot { it.strokeId.toString() in strokeIds }
+            strokeIds.forEach { if (it !in deletedStrokeIds) deletedStrokeIds.add(it) }
+        }
+
+        val keys = items.map { com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe.key(it.text) }
+            .filter { it.isNotEmpty() }.toSet()
+        if (keys.isNotEmpty()) {
+            val boxes = textElements.filter {
+                it.pageKey == "default" &&
+                    com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe.key(it.text) in keys
+            }
+            textElements.removeAll(boxes)
+            boxes.forEach {
+                val eid = it.elementId.toString()
+                if (eid !in deletedElementIds) deletedElementIds.add(eid)
+            }
+        }
+    }
+
     companion object {
         /**
          * Name of the default calendar page style.
