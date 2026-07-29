@@ -92,6 +92,20 @@ fun ledgerDirectoryFolders(
         FeedSelection.openDirectory = true
         nav.navigate(R.id.action_to_feeds)
     }
+    /**
+     * Open the inbox, unified or narrowed to one account.
+     *
+     * The narrowing travels through the same `account_filter` preference the inbox already reads on
+     * arrival, rather than a nav argument: the inbox persists that choice so it reopens the way it
+     * was left, and a second channel saying the same thing would be one more way for the two to
+     * disagree about which mailbox you asked for.
+     */
+    fun openMail(accountId: String?) {
+        fragment.requireContext().getSharedPreferences("ledger_mail_inbox", 0).edit()
+            .putString("account_filter", accountId ?: "").apply()
+        nav.navigate(R.id.action_to_mail_inbox)
+    }
+
     fun openHistory(origin: LogOrigin?) {
         ReadingLogSelection.origin = origin
         nav.navigate(R.id.action_to_reading_log)
@@ -147,7 +161,8 @@ fun ledgerDirectoryFolders(
         // Feed Ledger — the RSS reader lenses. Starred (your RSS stars) and Later (the read-later
         // intake) are DIFFERENT stores — both here, as on iPad, not one standing in for the other.
         ScreenFragment.Folder("📰", "Incoming", listOf(
-            "📧  Mail" to { nav.navigate(R.id.action_to_mail_inbox) },
+            "📧  Mail" to { openMail(null) },
+        ) + mailAccountRows(fragment, ::openMail) + listOf(
             "📰  All" to { openFeed("feed", null) },
             "📖  The Read" to { openFeed("feed", "read") },
             "📺  The Watch" to { openFeed("feed", "watch") },
@@ -597,3 +612,21 @@ fun showWritePicker(
     currentKey: String? = null,
 ) = showDocumentDirectory(
     fragment, com.toolsboox.plugin.calendar.ot.LedgerDocuments.WRITE, date, currentKey)
+
+/**
+ * The configured mailboxes, as directory rows under Mail — the Boox half of the iPad's accounts
+ * rail, where each account is listed beside the feeds rather than hidden behind a chip inside the
+ * inbox. Reaching one mailbox should cost the same as reaching one feed; it was costing a
+ * navigation plus a chip plus an accordion.
+ *
+ * Nothing is listed when there is only one account: a lone row under "Mail" says nothing "Mail"
+ * didn't already say, and a directory earns its length by every row being a real choice.
+ */
+private fun mailAccountRows(
+    fragment: ScreenFragment,
+    open: (String?) -> Unit,
+): List<Pair<String, () -> Unit>> {
+    val accounts = com.toolsboox.plugin.mail.MailAccountStore.all(fragment.requireContext())
+    if (accounts.size < 2) return emptyList()
+    return accounts.map { a -> "    @  ${a.display}" to { open(a.id) } }
+}
