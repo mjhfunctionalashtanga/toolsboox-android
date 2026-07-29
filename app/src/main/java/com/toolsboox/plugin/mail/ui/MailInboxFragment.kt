@@ -46,6 +46,16 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class MailInboxFragment @Inject constructor() : ScreenFragment() {
 
+    companion object {
+        // The four positions of the mail view axis, named to match the iPad's sidebar chips so the
+        // same four words mean the same four things on both devices.
+        private const val VIEW_STARRED = "starred"
+        private const val VIEW_UNREAD = "unread"
+        private const val VIEW_READ = "read"
+        private const val VIEW_ALL = "all"
+    }
+
+
     override val view = R.layout.fragment_mail_inbox
     private lateinit var binding: FragmentMailInboxBinding
 
@@ -55,9 +65,28 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
     @Inject
     lateinit var calendarPatternService: com.toolsboox.plugin.calendar.fi.CalendarPatternService
 
-    // Starred (your to-dos) is the default view -- the kept pile. Toggle to see everything that has
-    // come in, star what matters, then Clear sweeps the rest.
-    private var onlyStarred = true
+    // The list's VIEW AXIS — unread · read · all · starred — matching the four the iPad's sidebar
+    // chips offer, so the same four words mean the same four things on both devices.
+    //
+    // This was a single `onlyStarred` Boolean, which could say "the kept pile" or "everything" and
+    // nothing in between: there was no way to ask the inbox what you hadn't read yet, which is the
+    // question you most often have OF an inbox. Starred stays one of the four positions rather than
+    // a separate switch, because it is the same kind of question as the other three — which subset
+    // am I looking at — and two independent controls answering that would contradict each other.
+    private var mailView: String = VIEW_STARRED
+    /** The kept pile, as a Boolean — the shape the Clear guard and the empty state still read. */
+    private val onlyStarred: Boolean get() = mailView == VIEW_STARRED
+
+    /** Move the lens, remember it, redraw. Persisted so the inbox reopens on the question you left
+     *  it asking — the account narrowing already survived the trip away, and the view axis is the
+     *  same kind of choice. */
+    private fun setMailView(view: String) {
+        if (mailView == view) return
+        mailView = view
+        requireContext().getSharedPreferences("ledger_mail_inbox", 0).edit()
+            .putString("mail_view", view).apply()
+        renderChips(); render()
+    }
     private var messages: List<InboxMessage> = emptyList()
     private var refreshing = false
 
@@ -105,6 +134,9 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         val uiPrefs = requireContext().getSharedPreferences("ledger_mail_inbox", 0)
         accountFilter = uiPrefs.getString("account_filter", "")!!.ifBlank { null }
         accountsOpen = uiPrefs.getBoolean("accounts_open", false)
+        // Starred stays the default — the kept pile is what an inbox is FOR here — but the lens is
+        // remembered once moved, so an inbox left on Unread reopens on Unread.
+        mailView = uiPrefs.getString("mail_view", VIEW_STARRED) ?: VIEW_STARRED
 
         // The search row (Reading Log's field idiom): ⏎ submits, ✕ clears back to the inbox.
         binding.mailSearchField.setOnEditorActionListener { v, actionId, _ ->
@@ -162,20 +194,24 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             })
         }
 
-        chip("★ Starred", onlyStarred) {
-            if (!onlyStarred) { onlyStarred = true; renderChips(); render() }
-        }
+        chip("★ Starred", mailView == VIEW_STARRED) { setMailView(VIEW_STARRED) }
+        // The two the inbox was missing. "What haven't I read" is the question you most often have
+        // of a mailbox, and until now the only answers on offer were the kept pile or everything.
+        chip("◦ Unread", mailView == VIEW_UNREAD) { setMailView(VIEW_UNREAD) }
+        chip("● Read", mailView == VIEW_READ) { setMailView(VIEW_READ) }
 
         // ✉ All is the accordion header for the accounts (feed-drawer idiom: ▸/▾ caret; one tap
         // does BOTH — show the unified inbox and unfold the account rows; a second folds them).
         val accounts = MailAccountStore.all(ctx)
         val allLabel = if (accounts.isEmpty()) "✉ All" else "✉ All  " + (if (accountsOpen) "▾" else "▸")
-        chip(allLabel, !onlyStarred) {
-            if (accounts.isNotEmpty()) accountsOpen = !accountsOpen || onlyStarred
-            onlyStarred = false
+        chip(allLabel, mailView == VIEW_ALL) {
+            // The accordion still hangs off THIS chip, so its fold has to be decided before the
+            // view flips — `onlyStarred` is derived now, and reading it after the flip would ask
+            // about the state we just left.
+            if (accounts.isNotEmpty()) accountsOpen = !accountsOpen || mailView != VIEW_ALL
             ctx.getSharedPreferences("ledger_mail_inbox", 0).edit()
                 .putBoolean("accounts_open", accountsOpen).apply()
-            renderChips(); render()
+            setMailView(VIEW_ALL)
         }
 
         // The filter's face while the dropdown is folded: one selected chip naming the account,
@@ -254,7 +290,16 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         // would read as the search failing.
         if (searchActive()) return serverResults ?: localMatches()
         val ctx = requireContext()
-        var base = if (onlyStarred) messages.filter { InboxStore.isStarred(ctx, it.id) } else messages
+        // The four positions of the view axis, on mail's own material. Unread/Read run off the same
+        // read set that opening a message writes to, so the lens agrees with what the rows already
+        // show — a list that says "unread" while displaying mail you've read reads as a bug even
+        // when the filter is technically doing something defensible.
+        var base = when (mailView) {
+            VIEW_STARRED -> messages.filter { InboxStore.isStarred(ctx, it.id) }
+            VIEW_UNREAD -> messages.filter { !InboxStore.isRead(ctx, it.id) }
+            VIEW_READ -> messages.filter { InboxStore.isRead(ctx, it.id) }
+            else -> messages
+        }
         // Narrow to one account by ORIGIN (the acct:<id> prefix), not by display label — labels
         // get renamed; the id a message arrived through doesn't.
         accountFilter?.let { id -> base = base.filter { MailSync.accountId(it.id) == id } }
@@ -494,8 +539,16 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
                     searching -> "No matches in loaded mail for \"$searchQuery\"."
                     navFiltered() -> "No mail in ${windowLabel()}. Tap ✕ on the date chip for the live inbox."
                     accountFilter != null -> "No mail from this account yet. Tap the ▾ chip for all accounts."
-                    onlyStarred ->
+                    // Each lens names ITSELF when it comes up empty. The pane already argued that a
+                    // filtered-empty list saying only "empty" reads as broken — and two new lenses
+                    // that fell through to the bare "Inbox empty." would have re-created exactly
+                    // that, with the added cruelty that an empty Unread is usually GOOD news.
+                    mailView == VIEW_STARRED ->
                         "No starred mail yet. Open a message and star it to keep it, or switch to All."
+                    mailView == VIEW_UNREAD ->
+                        "Nothing unread — you're caught up. Tap ✉ All to see everything that's come in."
+                    mailView == VIEW_READ ->
+                        "Nothing read yet in this window. Tap ✉ All to see everything that's come in."
                     InboxStore.hasAccounts(ctx) -> "Inbox empty."
                     else -> "No accounts yet. Tap the gear to add one — until then a few samples show here."
                 }

@@ -383,15 +383,23 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         // discoverable nor reliable on the Palma, so it lives here as a plain switch. Applied
         // immediately AND remembered, so it survives leaving the screen.
         binding.autoRotateSwitch.isChecked = sharedPreferences.getBoolean("autoRotate", false)
+        updateRotationCycleVisibility(binding.autoRotateSwitch.isChecked)
         binding.autoRotateSwitch.setOnCheckedChangeListener { _, checked ->
             sharedPreferences.edit().putBoolean("autoRotate", checked).apply()
-            requireActivity().requestedOrientation = if (checked)
-                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
-            else com.toolsboox.ot.ScreenRotation.displayedBy(
-                @Suppress("DEPRECATION")
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
-                    requireContext().display?.rotation ?: 0
-                else requireActivity().windowManager.defaultDisplay.rotation
+            updateRotationCycleVisibility(checked)
+            // Through `apply`, which records the orientation as well as setting it. The switch used
+            // to write only the boolean, and the boolean alone cannot restore a LOCKED screen: it
+            // says "not the gyro" without saying which way up. Turning the gyro off therefore held
+            // until the app closed and then came back on by itself.
+            com.toolsboox.ot.ScreenRotation.apply(
+                requireActivity(),
+                if (checked) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
+                else com.toolsboox.ot.ScreenRotation.displayedBy(
+                    @Suppress("DEPRECATION")
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+                        requireContext().display?.rotation ?: 0
+                    else requireActivity().windowManager.defaultDisplay.rotation
+                )
             )
         }
 
@@ -568,8 +576,11 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             backupRestoreLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
         }
 
+        // No runtime relabel here any more. The button carried TWO names — the resource said
+        // "Text size…" and this line overwrote it with "Legibility (font & size)" — which meant
+        // the honest name existed only at runtime and the string anyone would grep for was the
+        // stale one. calendar_settings_button_text_size now says it in the resource.
         binding.buttonTextSize.setOnClickListener { showLegibilityDialog() }
-        binding.buttonTextSize.text = "Legibility (font & size)"
 
         // FULL ledger backup/restore (data, not just settings): long-press Export = zip the whole
         // Documents tree (every day page, contact, board, clipping) to a file you pick; long-press
@@ -747,6 +758,24 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
     }
 
     /**
+     * Show or hide the manual rotation cycle (the hint plus four orientation tick-boxes) according
+     * to whether the gyro has the screen.
+     *
+     * Those boxes write `rotationOrientationMask`, and the mask has exactly one reader:
+     * [com.toolsboox.ui.plugin.ScreenFragment.stepScreenOrientation], the toolbar rotate BUTTON's
+     * step. Hand the screen to the sensor and the button's cycle is not consulted at all — so the
+     * four boxes sat there looking live and answering nothing, which is the same "I changed it and
+     * nothing moved" trap the old MODAL SIZE label set. Hiding is deliberately visibility-only:
+     * the mask is left exactly as it was, so switching the gyro back off restores the cycle that
+     * was already configured rather than resetting it to all four.
+     *
+     * @param autoRotate true when the gyro is deciding
+     */
+    private fun updateRotationCycleVisibility(autoRotate: Boolean) {
+        binding.rotationManualGroup.visibility = if (autoRotate) View.GONE else View.VISIBLE
+    }
+
+    /**
      * Show or hide the Ultrabridge WebDAV fields based on the enable switch state.
      */
     private fun updateUltrabridgeFieldsVisibility(enabled: Boolean) {
@@ -863,6 +892,10 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         val dp = resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
         val prefs = ctx.getSharedPreferences("ledger_a11y", 0)
+        // A handle on THIS dialog, so a control that changes which rows exist (the link switch,
+        // which adds or removes the nav and pill dials) can close it before drawing the new one.
+        // Without the dismiss it would simply stack a second Legibility panel over the first.
+        var thisDialog: androidx.appcompat.app.AlertDialog? = null
 
         val col = android.widget.LinearLayout(ctx).apply {
             orientation = android.widget.LinearLayout.VERTICAL
@@ -963,6 +996,12 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             return outer
         }
 
+        // The panel runs STYLE first, then SIZE — and it used to interleave them: font, two size
+        // dials, theme, mode, three more size dials. Nine rows in no order is nine decisions to
+        // re-read every time; grouped, it is "what does it look like" followed by "how big is it",
+        // and the size block ends with the Linked switch that collapses the last three rows into
+        // one. Nothing here changed what it does, only where it sits and what it is called.
+
         // FONT — each chip labelled in its own face so the choice previews itself.
         col.addView(sectionLabel("FONT"))
         val fonts = com.toolsboox.ot.LedgerFonts.Choice.values().toList()
@@ -971,27 +1010,9 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             perRow = 2
         ) { i -> com.toolsboox.ot.LedgerFonts.set(ctx, fonts[i].id) })
 
-        // READING SIZE — the reading surfaces (books, feed articles, threads, semantic pages).
-        col.addView(sectionLabel("READING SIZE"))
-        val steps = com.toolsboox.ot.ReadingSize.STEPS.toList()
-        val stepLabels = listOf("Default", "Large", "Larger", "X-Large", "Max")
-        col.addView(chipRow(
-            steps.mapIndexed { i, s -> Triple(stepLabels.getOrElse(i) { "${(s * 100).toInt()}%" }, null as android.graphics.Typeface?) { kotlin.math.abs(com.toolsboox.ot.ReadingSize.scale(ctx) - s) < 0.001f } }
-        ) { i -> com.toolsboox.ot.ReadingSize.setScale(ctx, steps[i]) })
-
-        // INTERFACE SIZE — menus AND dialogs together (one Chrome dial, drives both a11y keys).
-        col.addView(sectionLabel("INTERFACE SIZE  ·  menus & dialogs"))
-        val tiers = listOf("small" to "Small", "medium" to "Medium", "large" to "Large")
-        col.addView(chipRow(
-            tiers.map { (value, label) -> Triple(label, null as android.graphics.Typeface?) { (prefs.getString("menu_text_size", "medium")) == value } }
-        ) { i ->
-            val v = tiers[i].first
-            prefs.edit().putString("menu_text_size", v).putString("modal_text_size", v).apply()
-        })
-
         // THEME — the vibe: an accent colour plus a default reading face (used only while the font is
         // still "System"). Selecting re-tints the preview immediately; the chrome catches up on reopen.
-        col.addView(sectionLabel("THEME"))
+        col.addView(sectionLabel("THEME  ·  accent colour"))
         val vibes = com.toolsboox.ot.LedgerTheme.ALL
         col.addView(chipRow(
             vibes.map { v -> Triple(v.name, null as android.graphics.Typeface?) { com.toolsboox.ot.LedgerTheme.current(ctx).id == v.id } },
@@ -1012,17 +1033,102 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             requireActivity().recreate()
         })
 
+        // READING SIZE — the reading surfaces (books, feed articles, threads, semantic pages).
+        // First of the size dials because it is the one that matters most and the one that has
+        // nothing to do with chrome: making an article readable should never be a decision about
+        // menus, which is exactly what a single shared dial used to make it.
+        col.addView(sectionLabel("READING SIZE  ·  books, articles & threads"))
+        val steps = com.toolsboox.ot.ReadingSize.STEPS.toList()
+        val stepLabels = listOf("Default", "Large", "Larger", "X-Large", "Max")
+        col.addView(chipRow(
+            steps.mapIndexed { i, s -> Triple(stepLabels.getOrElse(i) { "${(s * 100).toInt()}%" }, null as android.graphics.Typeface?) { kotlin.math.abs(com.toolsboox.ot.ReadingSize.scale(ctx) - s) < 0.001f } }
+        ) { i -> com.toolsboox.ot.ReadingSize.setScale(ctx, steps[i]) })
+
+        // INTERFACE SIZE — menus AND dialogs together (one Chrome dial, drives both a11y keys).
+        col.addView(sectionLabel("INTERFACE SIZE  ·  menus & dialogs"))
+        val tiers = listOf("small" to "Small", "medium" to "Medium", "large" to "Large")
+        col.addView(chipRow(
+            tiers.map { (value, label) -> Triple(label, null as android.graphics.Typeface?) { (prefs.getString("menu_text_size", "medium")) == value } }
+        ) { i ->
+            val v = tiers[i].first
+            prefs.edit().putString("menu_text_size", v).putString("modal_text_size", v).apply()
+        })
+
         // MODAL SIZE — how large dialogs sit. The scale logic itself lives elsewhere (ModalScale side);
         // here we only persist the choice under "modal_size" (compact / standard / expanded).
-        col.addView(sectionLabel("MODAL SIZE  ·  dialogs"))
+        // Named for what it actually moves. "Dialogs" was wrong twice over: this dial never
+        // touched an AlertDialog's type (that's `modal_text_size`, the row above), and what it
+        // DOES move is the pop-up navigation panels — the page-switcher, the ▦ directory drawer,
+        // and the slide-out trays. A label that misnames its own effect makes the setting feel
+        // broken, because you change it and the thing you were looking at doesn't move.
+        col.addView(sectionLabel("NAV MODALS  ·  page-switcher, directory, trays"))
         val modalSizes = listOf("compact" to "Compact", "standard" to "Standard", "expanded" to "Expanded")
         col.addView(chipRow(
             modalSizes.map { (value, label) -> Triple(label, null as android.graphics.Typeface?) { (prefs.getString("modal_size", "standard")) == value } }
         ) { i -> prefs.edit().putString("modal_size", modalSizes[i].first).apply() })
 
+        // SIZE EVERYTHING TOGETHER — the switch that keeps this section a single choice.
+        //
+        // Three surfaces genuinely want three dials: dialogs grow into free screen, the nav strip
+        // is boxed at 1404 and cannot reflow, and the pills are calibrated against the reading
+        // gutter. But three rows is three decisions for everyone, including the many people who
+        // just want things bigger. So the default is linked — one dial moves all three — and the
+        // other two rows appear only when this is turned off. Off pins each to what it shows right
+        // now, so flipping the switch never resizes anything; it only makes the rows editable.
+        col.addView(sectionLabel("SIZE EVERYTHING TOGETHER"))
+        val linkOptions = listOf(true to "Linked", false to "Separate")
+        col.addView(chipRow(
+            linkOptions.map { (linked, label) ->
+                Triple(label, null as android.graphics.Typeface?) {
+                    com.toolsboox.ot.ModalScale.sizesLinked(ctx) == linked
+                }
+            }
+        ) { i ->
+            if (linkOptions[i].first) com.toolsboox.ot.ModalScale.linkSizes(ctx)
+            else com.toolsboox.ot.ModalScale.unlinkSizes(ctx)
+            // The two rows below appear/disappear with this, so the section has to be redrawn —
+            // close this panel first, or the new one lands on top of it.
+            thisDialog?.dismiss()
+            showLegibilityDialog()
+        })
+
+        if (!com.toolsboox.ot.ModalScale.sizesLinked(ctx)) {
+            // TOP NAV SIZE — the date strip across the top, on its OWN dial.
+            //
+            // It used to ride the modal dial, which coupled two things with opposite constraints:
+            // a floating dialog can grow into free screen, the strip cannot. So sizing dialogs up
+            // pushed the nav past its own box and its labels went to "…". Note the strip ALSO
+            // fits itself now (NavigatorRenderer measures before it draws), so the worst this row
+            // can do is ask for more than fits and silently get the largest size that does.
+            col.addView(sectionLabel("TOP NAV SIZE  ·  the date strip"))
+            val navKey = com.toolsboox.ot.ModalScale.NAV_SIZE_KEY
+            col.addView(chipRow(
+                modalSizes.map { (value, label) ->
+                    Triple(label, null as android.graphics.Typeface?) {
+                        prefs.getString(navKey, prefs.getString("modal_size", "standard")) == value
+                    }
+                }
+            ) { i -> prefs.edit().putString(navKey, modalSizes[i].first).apply() })
+
+            // PILL SIZE — the floating pills and the pen button. Calibrated against the reading
+            // gutter rather than the screen: at Compact a vertical pill lands ~39-42dp and the pen
+            // button ~43dp, inside the narrowest margin the reading surfaces leave (44dp article,
+            // ~46dp book reader on a Tab8). That's why it deserves its own dial — the arithmetic
+            // is about the margin, and shouldn't move because a dialog wanted to be easier to read.
+            col.addView(sectionLabel("PILL SIZE  ·  floating pills & pen"))
+            val pillKey = com.toolsboox.ot.ModalScale.PILL_SIZE_KEY
+            col.addView(chipRow(
+                modalSizes.map { (value, label) ->
+                    Triple(label, null as android.graphics.Typeface?) {
+                        prefs.getString(pillKey, prefs.getString("modal_size", "standard")) == value
+                    }
+                }
+            ) { i -> prefs.edit().putString(pillKey, modalSizes[i].first).apply() })
+        }
+
         refreshPreview()
 
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        thisDialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Legibility")
             .setView(android.widget.ScrollView(ctx).apply { addView(col) })
             .setPositiveButton("Done", null)

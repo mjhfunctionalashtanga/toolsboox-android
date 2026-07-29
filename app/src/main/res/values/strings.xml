@@ -10,9 +10,12 @@
     <string name="widget_mail_description">Starred and recent inbox mail — sender and subject</string>
     <string name="widget_feed_description">Latest RSS headlines with unread count</string>
     <string name="widget_daily_pile_description">Everything today gathered — tasks, events, birthdays, grams</string>
-    <string name="calendar_settings_rotation_label">Rotation</string>
+    <string name="calendar_settings_rotation_label">WHICH WAY UP  ·  the rotate button &amp; the gyro</string>
     <string name="calendar_settings_auto_rotate">Auto-rotate (let the gyro decide)</string>
-    <string name="calendar_settings_rotation_hint">Pick which orientations the toolbar rotate button cycles through:</string>
+    <!-- The tick-list feeds ScreenFragment.stepScreenOrientation — the cycle of the toolbar's
+         rotate BUTTON, and nothing else. With the gyro on there is no cycle to configure, which
+         is why the list is hidden in that state rather than sitting there doing nothing. -->
+    <string name="calendar_settings_rotation_hint">The toolbar\'s rotate button steps through the orientations you tick:</string>
     <string name="calendar_settings_rotation_portrait">Portrait (upright)</string>
     <string name="calendar_settings_rotation_landscape_cw">Landscape — clockwise (top tilts right)</string>
     <string name="calendar_settings_rotation_reverse_portrait">Reverse portrait (upside down)</string>
@@ -142,37 +145,60 @@
     <string name="calendar_settings_shortcut_failed">Calendar shortcut creation failed</string>
     <string name="calendar_settings_shortcut_short_label">Calendar</string>
     <string name="calendar_settings_shortcut_long_label">Calendar for Boox</string>
-    <string name="calendar_settings_button_pattern_sync">Update marks</string>
+    <!-- "Update marks" read like a sync of something remote, sitting as it did in a row of sync
+         buttons. It touches no network: CalendarSettingsPresenter.patternSync walks last year,
+         this year and next year's day/week/month JSON and rewrites the pattern- files that decide
+         which squares on a planner page are drawn as already-written-on. -->
+    <string name="calendar_settings_button_pattern_sync">Rebuild the day marks (3 years)</string>
     <string name="calendar_settings_pattern_sync_done">Calendar marks updated</string>
-    <string name="calendar_settings_button_backup">Export backup</string>
+    <!-- "Export backup" / "Import backup" read as a pair and are not one. This button zips ONLY
+         Documents/calendar into the Downloads folder; the restore button below unpacks a FULL
+         ledger zip (every day page, contact, board, clipping, plus the settings JSON) made by the
+         long-press on Export settings. Two different archives, so two labels that say which. -->
+    <string name="calendar_settings_button_backup">Export the calendar only → Downloads</string>
     <string name="calendar_settings_backup_done">Calendar backup exported to the Downloads</string>
-    <string name="calendar_settings_button_restore">Import backup</string>
+    <string name="calendar_settings_button_restore">Restore a full ledger backup (.zip)…</string>
     <string name="calendar_settings_button_export_settings">Export settings</string>
     <string name="calendar_settings_button_import_settings">Import settings</string>
     <string name="calendar_settings_restore_done">Calendar backup imported from the Downloads</string>
-    <string name="calendar_settings_auto_sync_label">Automatic cloud sync</string>
-    <string name="calendar_settings_auto_sync_enabled">Enable auto-sync</string>
+    <!-- The full-ledger zip is on a LONG-PRESS of the two settings buttons, which is unfindable
+         without being told. Said out loud rather than left as folklore. -->
+    <string name="calendar_settings_backup_gesture_hint">Hold either button above for the whole ledger instead of just the settings: hold Export to write a dated .zip of every page, hold Import to read one back.</string>
+    <!-- "Automatic cloud sync" named no cloud, in an app that talks to five: the toolsBoox account
+         service, a WebDAV host, Google Calendar, Google Drive and one or more WordPress sites.
+         CalendarSyncWorker posts to api.toolsboox.com using the accessToken from the Cloud login,
+         and does nothing at all without it. -->
+    <string name="calendar_settings_auto_sync_label">TOOLSBOOX CLOUD  ·  this calendar, device to device</string>
+    <string name="calendar_settings_auto_sync_enabled">Sync calendar pages to my toolsBoox account</string>
     <string name="calendar_settings_auto_sync_interval_text">Sync interval:</string>
     <string name="calendar_settings_auto_sync_interval_15_min">Every 15 minutes</string>
     <string name="calendar_settings_auto_sync_interval_1_hr">Every hour</string>
     <string name="calendar_settings_auto_sync_interval_6_hr">Every 6 hours</string>
     <string name="calendar_settings_auto_sync_interval_daily">Daily</string>
-    <string name="calendar_settings_ultrabridge_title">WebCal Backup</string>
-    <string name="calendar_settings_ultrabridge_enable">Enable PDF backup to WebDAV</string>
+    <!-- "WebCal" is a calendar SUBSCRIPTION protocol and this has never been one. UltrabridgeSync-
+         Worker renders each calendar group to a PDF and PUTs it to a WebDAV host — nothing is
+         subscribed to, nothing is read back. Named for the two things you can actually see: PDFs,
+         on a WebDAV server. -->
+    <string name="calendar_settings_ultrabridge_title">WEBDAV  ·  a PDF of every planner page</string>
+    <string name="calendar_settings_ultrabridge_enable">Upload planner PDFs to my WebDAV server</string>
     <string name="calendar_settings_ultrabridge_url_hint">WebDAV URL</string>
     <string name="calendar_settings_ultrabridge_user_hint">Username</string>
     <string name="calendar_settings_ultrabridge_pass_hint">Password</string>
-    <string name="calendar_settings_ultrabridge_enabled_toast">WebCal backup enabled</string>
-    <string name="calendar_settings_ultrabridge_disabled_toast">WebCal backup disabled</string>
+    <string name="calendar_settings_ultrabridge_enabled_toast">WebDAV PDF upload enabled</string>
+    <string name="calendar_settings_ultrabridge_disabled_toast">WebDAV PDF upload disabled</string>
     <string name="calendar_settings_ultrabridge_missing_fields">Please fill in all WebDAV fields</string>
 
-    <string name="calendar_settings_gcal_title">Google Calendar</string>
+    <string name="calendar_settings_gcal_title">GOOGLE CALENDAR  ·  events you make in Ledger</string>
     <string name="calendar_settings_gcal_enable">Add events to Google Calendar</string>
-    <string name="calendar_settings_capture_label">Capture &amp; OCR</string>
-    <string name="calendar_settings_capture_enable">Auto-capture sections on leave (uses OCR credits)</string>
-    <string name="calendar_settings_extract_title">On-device extract</string>
-    <string name="calendar_settings_extract_enable">Extract tasks &amp; events on this device</string>
-    <string name="calendar_settings_community_label">Sites &amp; bridge</string>
+    <string name="calendar_settings_capture_label">HANDWRITING  ·  turning ink into text</string>
+    <string name="calendar_settings_capture_enable">Read this page when I leave it (vision OCR, uses credits)</string>
+    <!-- Repurposed as the HINT under the extract switch. Its old value, "On-device extract", was a
+         title for a setting that does not extract anything by itself: ledgerAutoExtractEnabled has
+         exactly one reader in the whole app — CalendarDayFragment's wrench menu, where it decides
+         whether the manual "Extract tasks & events" tool is listed. Nothing runs automatically. -->
+    <string name="calendar_settings_extract_title">On-device ink OCR, rougher than the vision pass above and doing the same job — this only puts the manual tool back in the wrench. Nothing runs on its own.</string>
+    <string name="calendar_settings_extract_enable">Also list “Extract tasks &amp; events” in the page wrench</string>
+    <string name="calendar_settings_community_label">YOUR SITES  ·  WordPress, community &amp; boards</string>
     <string name="calendar_settings_button_manage_sites">Manage sites…</string>
     <string name="calendar_settings_community_enable">Edit the active-site bridge here (advanced)</string>
     <string name="calendar_settings_gcal_id_hint">Calendar (primary, or an ID)</string>
@@ -463,14 +489,27 @@
     <string name="rhizome_title">🕸  Its rhizome</string>
     <string name="map_title">🗺  Map</string>
     <string name="map_menu">Draw…</string>
-    <string name="calendar_settings_calendar_label">CALENDAR</string>
-    <string name="calendar_settings_data_label">BACKUP &amp; DATA</string>
+    <string name="calendar_settings_calendar_label">PLANNER PAGES  ·  what opens, and how it\'s ruled</string>
+    <!-- Was "BACKUP &amp; DATA" and held the Legibility button, the shortcut maker and the mark
+         rebuilder alongside the archives — four unrelated errands under one word. Now it means the
+         archives only; the rest moved to sections named for what they do. -->
+    <string name="calendar_settings_data_label">BACKUP &amp; TRANSFER  ·  moving this ledger about</string>
+    <!-- The first section, because it is the one you open Settings to reach. -->
+    <string name="calendar_settings_look_label">LEGIBILITY  ·  size, font, theme, light &amp; dark</string>
+    <string name="calendar_settings_device_label">THIS DEVICE  ·  shortcut &amp; upkeep</string>
+    <!-- Prefix for the one-line read-out of what the chosen locale implies (start day, first and
+         last week number). Six stacked TextViews made a read-out look like four more settings. -->
+    <string name="calendar_settings_locale_summary">Weeks:</string>
     <string name="map_drawing">drawing…</string>
     <string name="map_needs_key">Add your AI key in Settings to ask for a map.</string>
     <string name="map_nothing_to_map">Nothing to map yet.</string>
     <string name="map_empty">Nothing is connected yet. Connect a few things and the map draws itself.</string>
     <string name="map_hint">Your ledger as connections — tap a node to walk, hold to pick or open it.</string>
-    <string name="calendar_settings_button_text_size">Text size…</string>
+    <!-- Was "Text size…", which undersold it and then got patched at runtime in Kotlin to say
+         something else — two labels for one button, and the resource was the wrong one. The dialog
+         behind it holds the font, the reading size, the interface size, the theme, light/dark and
+         the three nav-modal size dials. -->
+    <string name="calendar_settings_button_text_size">Legibility — size, font, theme…</string>
     <string name="rhizome_cannot_open">Nothing here can open %1$s</string>
     <string name="rhizome_empty">Nothing joins this yet. Assign it to someone, put it on a board, or connect it to something — the connections you make show up here, from either end.</string>
     <string name="roots_loading">Reading the roots…</string>

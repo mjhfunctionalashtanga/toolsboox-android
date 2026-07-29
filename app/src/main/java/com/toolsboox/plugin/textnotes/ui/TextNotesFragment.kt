@@ -226,9 +226,70 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
         androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle("Notes · $date")
             .setItems(labels) { _, which -> showNote(which) }
+            // Text Notes is one of the five surfaces the shared Send / Export sheet covers, and
+            // this list is the note's own menu — the only place on this screen that is about the
+            // note rather than about the text cursor.
+            .setPositiveButton("→  Send / Export…") { _, _ -> showSendExport() }
             .setNeutralButton("Delete current") { _, _ -> deleteCurrent() }
             .setNegativeButton("Close", null)
             .show()
+    }
+
+    /**
+     * The shared Send / Export sheet for the note on screen.
+     *
+     * Unlike the day surfaces this one has no canvas to photograph, so the picture it hands over is
+     * the note SET as a page — title and body laid out on white at the app's usual 1404×1872. That
+     * is what makes the picture-shaped destinations (PNG, the community space, the PDF's first
+     * page, the email's inline image) mean something here rather than being greyed out: a typed
+     * note still has a face, it just has to be typeset instead of photographed.
+     */
+    private fun showSendExport() {
+        persist()
+        val note = notes.getOrNull(current) ?: return
+        com.toolsboox.plugin.calendar.ot.LedgerSendExport.show(
+            this,
+            com.toolsboox.plugin.calendar.ot.LedgerSendExport.Payload(
+                title = note.title.ifBlank { "$date · text note" },
+                text = { note.body },
+                bitmap = { runCatching { typesetPage(note.title, note.body) }.getOrNull() }
+            )
+        )
+    }
+
+    /** Lay [title] and [body] out on a page-sized white bitmap. Plain sans and generous leading —
+     *  this is read on e-ink and printed to PDF, not shown behind glass. */
+    private fun typesetPage(title: String, body: String): android.graphics.Bitmap {
+        val w = 1404
+        val h = 1872
+        val margin = 96f
+        val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bmp)
+        canvas.drawColor(android.graphics.Color.WHITE)
+        var y = margin + 40f
+        if (title.isNotBlank()) {
+            val tp = android.text.TextPaint().apply {
+                isAntiAlias = true; color = android.graphics.Color.BLACK
+                textSize = 52f; typeface = android.graphics.Typeface.DEFAULT_BOLD
+            }
+            canvas.drawText(title.take(60), margin, y, tp)
+            y += 70f
+        }
+        val bp = android.text.TextPaint().apply {
+            isAntiAlias = true; color = android.graphics.Color.BLACK
+            textSize = 36f; typeface = android.graphics.Typeface.SANS_SERIF
+        }
+        val layout = android.text.StaticLayout.Builder
+            .obtain(body, 0, body.length, bp, (w - margin * 2).toInt())
+            .setAlignment(android.text.Layout.Alignment.ALIGN_NORMAL)
+            .setLineSpacing(10f, 1.1f)
+            .setIncludePad(false)
+            .build()
+        canvas.save()
+        canvas.translate(margin, y)
+        layout.draw(canvas)
+        canvas.restore()
+        return bmp
     }
 
     private fun deleteCurrent() {

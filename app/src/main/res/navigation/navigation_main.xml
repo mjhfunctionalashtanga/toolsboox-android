@@ -115,6 +115,10 @@
             app:destination="@id/MessagesFragment"/>
 
     <action
+            android:id="@+id/action_to_bluesky"
+            app:destination="@id/BlueskyFragment"/>
+
+    <action
             android:id="@+id/action_to_site_web"
             app:destination="@id/SiteWebFragment"/>
 
@@ -297,6 +301,12 @@
             android:name="com.toolsboox.plugin.calendar.ui.MessagesFragment"
             android:label="MessagesFragment"
             tools:layout="@layout/fragment_messages"/>
+
+    <fragment
+            android:id="@+id/BlueskyFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.BlueskyFragment"
+            android:label="BlueskyFragment"
+            tools:layout="@layout/fragment_bluesky"/>
 
     <fragment
             android:id="@+id/SiteWebFragment"

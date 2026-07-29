@@ -241,9 +241,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private fun notePageSubIndex(page: String?): Int =
         page?.substringAfter('#', "")?.toIntOrNull() ?: 0
 
-    /** The named note bases that own an inline ‹ N › sub-page pager (like the numeric notes do). */
+    /** The named note bases that own an inline ‹ N › sub-page pager (like the numeric notes do).
+     *  A named Write DOCUMENT ("write-1753…") pages exactly like the daily one — the document is
+     *  what's named; the pages inside it are still a run. (Named SYNTHESIZE topics deliberately
+     *  stay off this list: they have never had a sub-page series, and adding one would also change
+     *  what the almanac-as-filter interception below counts as a notes surface on pages Michael has
+     *  real content in. Their directory therefore lists them as single-page, which is what they are.) */
     private fun isSubPageableBase(base: String?): Boolean =
-        base == "write" || base == "grid" || base == "sketch" || base == "synthesize"
+        base == "write" || base == "grid" || base == "sketch" || base == "synthesize" ||
+            com.toolsboox.plugin.calendar.ot.WritePageStore.isWrite(base)
 
     /**
      * Whether the current surface is a NOTES page for the almanac-as-filter interception: the
@@ -1008,17 +1014,30 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     showModal = { showModal(it) })
             }
         ))
-        if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage)) return bring + tagPage + listOf(listOf(
+        // Send / Export is the SAME sheet on every making surface. It used to be Write's alone
+        // ("Share essay…", three destinations); Synthesize, Pickings and Notes had no way off the
+        // device but a gram share, which is why a synthesis could not become a draft without being
+        // retyped somewhere else. One row, one sheet, seven destinations — see [LedgerSendExport].
+        val sendExport = if (notePage != null) listOf(listOf(
+            com.toolsboox.ot.LedgerContextMenu.Item("→  Send / Export…") { showSendExport() }
+        )) else emptyList()
+        if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage)) return bring + tagPage + sendExport + listOf(listOf(
             com.toolsboox.ot.LedgerContextMenu.Item("⚗  Synthesize the day…") {
                 com.toolsboox.plugin.calendar.ot.SynthEngines.pick(ctx, "Synthesize the day") { e ->
                     runEngine(e, pageMaterial())
                 }
             }
         ))
-        return bring + tagPage + when (baseNotePage(notePage)) {
+        // A named Write document gets Write's own menu (text editor, share essay) — those are the
+        // tools of the surface, not of one particular key on it.
+        return bring + tagPage + sendExport + when (if (com.toolsboox.plugin.calendar.ot.WritePageStore.isWrite(notePage))
+            "write" else baseNotePage(notePage)) {
             "write" -> listOf(listOf(
                 // Hand or text, per Write sub-page. Neither converts the other.
                 com.toolsboox.ot.LedgerContextMenu.Item("⌨  Write in text…") { showWriteTextEditor() },
+                // Kept alongside Send / Export rather than replaced by it: "Share essay" asks for a
+                // title and tags first, which is what a piece of WRITING wants and what a Pickings
+                // board does not. The general sheet is the floor; this stays the specialised door.
                 com.toolsboox.ot.LedgerContextMenu.Item("→  Share essay…") { shareEssay() }
             ))
             // The day page: what you POSTED on this day, out of the archive. It belongs here and
@@ -1051,6 +1070,41 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private fun thisPageMaterial(): String =
         currentTextElements().filter { it.text.isNotBlank() }
             .joinToString("\n") { "• ${it.text.trim()}" }.take(6000)
+
+    /**
+     * The shared Send / Export sheet, for whichever making surface is open — Write, Synthesize,
+     * Pickings or a note page. See [com.toolsboox.plugin.calendar.ot.LedgerSendExport].
+     *
+     * Both halves of the payload are handed over as lambdas rather than values, and that is not
+     * fastidiousness: [renderPageBitmap] composites the whole 1404×1872 canvas and the text half
+     * may run the page through the vision model, so building either one eagerly would make the
+     * menu itself take seconds to open on e-ink — for a sheet where four of the seven rows need
+     * neither. The text is the page's typed boxes plus, when there is a key and there is ink, its
+     * recognition; a Write page that was typed rather than written hands over its markdown draft,
+     * because that IS the page and OCR of it would only be a worse copy.
+     */
+    private fun showSendExport() {
+        val ctx = requireContext()
+        val pageKey = notePage ?: "default"
+        val document = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+            .documentFor(ctx, notePage, currentDate)
+        val title = document?.title?.takeIf { it.isNotBlank() }
+            ?: "$currentDate · ${notePage ?: "day"}"
+        com.toolsboox.plugin.calendar.ot.LedgerSendExport.show(
+            this,
+            com.toolsboox.plugin.calendar.ot.LedgerSendExport.Payload(
+                title = title,
+                text = {
+                    val draft = com.toolsboox.plugin.calendar.ot.WriteDraftStore.draft(ctx, currentDate, pageKey)
+                    if (draft != null && draft.markdown.isNotBlank()) draft.markdown
+                    else aiCreds()?.let { pageOcrText(it) }
+                        ?: currentTextElements().filter { it.text.isNotBlank() }
+                            .joinToString("\n\n") { it.text.trim() }
+                },
+                bitmap = { runCatching { renderPageBitmap() }.getOrNull() }
+            )
+        )
+    }
 
     /** Write → Share: the handwritten page leaves as a WP draft, an email, or a community post. */
     private fun shareEssay() {
@@ -1581,6 +1635,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         fun stepStation(): String? = when {
             com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(notePage) -> "pickings"
             com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage) -> "synthesize"
+            // A named Write document folds onto the Write station the same way a named board folds
+            // onto Pickings — otherwise ↑/↓ from an essay would strand you on an unlisted key.
+            com.toolsboox.plugin.calendar.ot.WritePageStore.isWrite(notePage) -> "write"
             // A named sub-page (write#2) folds onto its base for the ritual step — write#2's ↑/↓
             // walk write's neighbours (synthesize ↔ write ↔ "0"), same as the base page.
             else -> baseNotePage(notePage)
@@ -1629,6 +1686,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.toolbarDrawing.toolbarCalendarView.setOnClickListener { showLedgerHub() }
         binding.goAppsButton.visibility = View.VISIBLE
         binding.goAppsButton.setOnClickListener { showLedgerHub() }
+        bindDirectoryChip()
 
         // Retire the fixed pen strip on the day page — the floating pills + gear now cover
         // everything. The real buttons stay in the (hidden) layout so performClick still
@@ -1678,7 +1736,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             // across THIS base's sub-pages (+ New page + Go to a date).
             binding.notePagerLabel.isClickable = true
             binding.notePagerLabel.setOnClickListener {
-                if (base == "synthesize") com.toolsboox.plugin.feeds.ui.showSynthPicker(this)
+                if (base == "synthesize") com.toolsboox.plugin.feeds.ui.showSynthPicker(this, currentDate, notePage)
                 else showNoteSubPageJump(base)
             }
         } else if (com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(notePage)) {
@@ -1690,7 +1748,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             binding.notePagerNext.visibility = View.GONE
             binding.notePagerLabel.text = "❝"
             binding.notePagerLabel.isClickable = true
-            binding.notePagerLabel.setOnClickListener { com.toolsboox.plugin.feeds.ui.showPickingsPicker(this) }
+            // The day you're on and the board you're in — the pager's chip used to pass neither, so
+            // it reopened the same "today's boards" list the day chip above was fixed to stop giving.
+            binding.notePagerLabel.setOnClickListener {
+                com.toolsboox.plugin.feeds.ui.showPickingsPicker(this, currentDate, notePage)
+            }
         }
 
         // Floating tool selector: each button drives the real (hidden) toolbar action,
@@ -1835,8 +1897,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val labels = (marks.map { "#${it.first}" }
             + ordered.map { "Page ${it + 1}" + if (it == here) "  ·  here" else "" }
             + "＋  New page" + "📅  Go to a date…").toTypedArray()
+        // A named Write document is titled by its NAME here, not by its raw key — "write-1753…" as
+        // a dialog title tells you nothing, and the document's title is the whole point of naming
+        // it. An UNnamed document keeps the surface's own name ("Write"), because the date default
+        // is already the day the whole screen is showing and repeating it says nothing.
+        val doc = com.toolsboox.plugin.calendar.ot.LedgerDocuments.documentFor(ctx, base, currentDate)
+        val heading = if (doc != null && doc.named) doc.title else base.replaceFirstChar { it.uppercase() }
         val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle(base.replaceFirstChar { it.uppercase() })
+            .setTitle(heading)
             .setItems(labels) { _, which ->
                 val p = which - marks.size
                 when {
@@ -2395,6 +2463,58 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * page (Gratitude / Self Executive) it's the Garden's own surfaces. Landing on a section adopts
      * its glyph on the pill; the sibling links open their folder's head.
      */
+    /**
+     * The directory bar under the date strip: what board you're standing in, and the door to the
+     * rest of them.
+     *
+     * Pickings' only way in was the ▦ hub's "Pickings" row, which opened a picker that could not
+     * describe the day you were on — so from a page you were actually working in there was nothing
+     * that named the board or offered its siblings. A surface that accumulates pages needs to say
+     * which one you're on; without it the boards exist but are unreachable from where you use them.
+     *
+     * Deliberately a LABEL that happens to be tappable rather than a button: it earns its space by
+     * telling you where you are even when you never touch it. Same bargain the iPad's chip makes.
+     */
+    private fun bindDirectoryChip() {
+        val chip = binding.directoryChip
+        val page = notePage
+        val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+        // Only the surfaces that accumulate DOCUMENTS get a chip; a page you only ever have one of
+        // has nothing to list, and a chip over it would be chrome for its own sake. Pickings was
+        // the one wired here at first — Write and Synthesize now qualify too, on the same query,
+        // because they are the same kind of thing (a titled document with pages). Grid and Sketch
+        // stay out: they are sub-pageable but hold exactly one implicit document per day, so their
+        // ‹ N › pager already says everything a chip could.
+        val surface = docs.surfaceOf(page)
+        if (surface == null) {
+            chip.visibility = View.GONE
+            return
+        }
+        // Hand the query the keys of the day we ALREADY have loaded rather than making it re-read
+        // the day file off disk — the chip rebinds on every page turn, and a multi-megabyte day
+        // re-read per turn is exactly the kind of cost that shows up as a sluggish e-ink refresh.
+        val keys: Set<String> = if (::calendarDay.isInitialized)
+            (calendarDay.noteStrokes.filterValues { it.isNotEmpty() }.keys +
+                calendarDay.imageElements.map { it.page } +
+                calendarDay.textElements.map { it.pageKey }).toSet()
+        else emptySet()
+        val siblings = docs.forSurface(requireContext(), surface, currentDate, keys)
+        val here = siblings.firstOrNull { it.key == page?.substringBefore('#') }
+        val title = here?.title ?: docs.dateTitle(currentDate)
+        // The count only appears when there IS more than one — otherwise it reads as a promise of
+        // siblings that aren't there.
+        chip.text = if (siblings.size > 1) "${docs.glyph(surface)}  $title  ·  ${siblings.size}  ▾"
+        else "${docs.glyph(surface)}  $title  ▾"
+        chip.visibility = View.VISIBLE
+        chip.setOnClickListener {
+            // The day you're ON and the document you're IN — the two things the old hub route could
+            // not pass, which is what made its picker describe someone else's day.
+            com.toolsboox.plugin.feeds.ui.showDocumentDirectory(this, surface, currentDate, page, keys)
+        }
+        com.toolsboox.ot.LedgerFonts.applyTree(chip)
+        chip.bringToFront()
+    }
+
     private fun showSectionSwitcher() {
         val onGarden = currentNotePage() in listOf("gratitude", "selfexec")
         val currentFolder = if (onGarden) "Garden" else "Flow"
@@ -2525,7 +2645,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // outline) with the writing prompt also reachable from Write — so it doesn't clutter every
         // other page. "View tasks & events" left the wrench (it's in the ▦ hub).
         val onSynth = com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage)
-        val onWrite = baseNotePage(notePage) == "write"
+        val onWrite = com.toolsboox.plugin.calendar.ot.WritePageStore.isWrite(notePage)
         val tools = buildList {
             // "Add text" / "Add image" left the wrench: hold-to-add (long-press on the page, bare
             // canvas or over an image) already offers "Text box" and "Add media…" everywhere, so
@@ -4190,7 +4310,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         "grid" -> R.drawable.ic_reader_view
         "sketch" -> R.drawable.ic_edit
         "selfexec" -> R.drawable.ic_refresh
-        else -> if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(currentNotePage())) R.drawable.ic_swap else R.drawable.ic_pencil
+        // Named documents wear their surface's glyph, not the generic note pencil — a piece of
+        // writing you named is still Write.
+        else -> when {
+            com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(currentNotePage()) -> R.drawable.ic_swap
+            com.toolsboox.plugin.calendar.ot.WritePageStore.isWrite(currentNotePage()) -> R.drawable.ic_edit
+            else -> R.drawable.ic_pencil
+        }
     }
 
     private fun sectionEmoji(): String = when (baseNotePage(currentNotePage())) {
@@ -4206,7 +4332,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         "grid" -> "📈"
         "sketch" -> "⌱"
         "selfexec" -> "🐘"
-        else -> if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(currentNotePage())) "🔬" else "✒"
+        else -> when {
+            com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(currentNotePage()) -> "🔬"
+            com.toolsboox.plugin.calendar.ot.WritePageStore.isWrite(currentNotePage()) -> "✍"
+            else -> "✒"
+        }
     }
 
     /**

@@ -141,6 +141,52 @@ object VisionOcr {
         return out
     }
 
+    // ---------------------------------------------------------------------------------
+    // URL word-boxes — where each link SITS on the page, for the linked-PDF export.
+    // Same bargain as the tag boxes above: the vision model is already reading the page, and
+    // it can also point at where it read something. A PDF link annotation needs a rectangle,
+    // and there is no other source of one for handwriting — the on-device OCR gives text and
+    // not geometry. Approximate on purpose: every link is ALSO listed on the exported PDF's
+    // index page as exact, selectable text, so a rectangle that sits a little off costs a
+    // slightly-misplaced tap target and never costs the link itself.
+    // ---------------------------------------------------------------------------------
+
+    private const val URLBOX_PROMPT =
+        "This image is a page that may contain web addresses (URLs), handwritten or typed. " +
+            "For EACH URL you can read, give the address and its APPROXIMATE bounding box, " +
+            "normalized to THIS image with the TOP-LEFT corner as origin and every value between " +
+            "0.0 and 1.0. Reply with ONLY this JSON array, nothing else:\n" +
+            "[{\"url\": \"https://example.com/page\", \"x\": 0.0, \"y\": 0.0, \"w\": 0.0, \"h\": 0.0}]\n" +
+            "x,y = the address's top-left corner; w,h = its width and height (all 0.0-1.0). " +
+            "Transcribe the address exactly; do not invent or complete one you cannot read. " +
+            "If there are none, reply with []."
+
+    /**
+     * Ask the vision model for each URL on [bitmap] and its NORMALIZED box (0..1, top-left origin).
+     * Returns url → RectF(l,t,r,b) in 0..1, empty on no key / request failure / unparseable reply —
+     * the export then falls back to the index page alone, which is the honest outcome rather than a
+     * guessed rectangle.
+     *
+     * Only http/https survive: a `mailto:` or a bare `example.com` in the middle of a sentence is
+     * more likely to be a misread than a link the reader wants to follow.
+     */
+    fun recognizeUrlBoxes(bitmap: Bitmap, provider: String, apiKey: String, model: String): Map<String, RectF> {
+        val raw = recognizeWithPrompt(bitmap, provider, apiKey, model, URLBOX_PROMPT) ?: return emptyMap()
+        val cleaned = raw.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+        val arr = runCatching { JSONArray(cleaned) }.getOrNull() ?: return emptyMap()
+        val out = LinkedHashMap<String, RectF>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val url = o.optString("url", "").trim().trimEnd('.', ',', ')', ']', '>', ';')
+            if (!url.startsWith("http://") && !url.startsWith("https://")) continue
+            if (url.length < 12 || url.contains(' ')) continue
+            val rect = boxFrom(o) ?: continue
+            val prev = out[url]
+            if (prev == null || rect.width() * rect.height() > prev.width() * prev.height()) out[url] = rect
+        }
+        return out
+    }
+
     /** Normalized RectF from either {x,y,w,h} or {l,t,r,b}; clamped to 0..1, null if not positive-area. */
     private fun boxFrom(o: JSONObject): RectF? {
         val l: Float; val t: Float; val r: Float; val b: Float

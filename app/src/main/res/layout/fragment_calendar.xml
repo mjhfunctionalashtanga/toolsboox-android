@@ -62,6 +62,35 @@
                 app:layout_constraintStart_toStartOf="parent"
                 android:layout_marginStart="4dp"/>
 
+    <!-- The making surface's DIRECTORY, as a small bar under the date strip: it names the board
+         or page you're standing in, and opening it lists this surface's others on this day, a way
+         to start another, and the way to the same surface on a different day. The iPad grew this
+         first (a chip in the strip under its almanac bar); this is its Boox half, so learning it
+         once is learning it everywhere.
+
+         Overlaid via constraints to the strip — NOT inserted into the layout flow — for the same
+         reason goAppsButton is: the canvas below draws in a fixed 1404-wide design space, and a
+         view that pushed it down would put every template's geometry out by the height of this
+         bar. Hidden by default; only the surfaces that accumulate pages turn it on. -->
+    <TextView
+            android:id="@+id/directoryChip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:layout_marginStart="8dp"
+            android:layout_marginTop="2dp"
+            android:textSize="13sp"
+            android:textColor="#FF000000"
+            android:background="@drawable/dialog_rounded_bg"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:visibility="gone"
+            app:layout_constraintTop_toBottomOf="@id/navigatorImageView"
+            app:layout_constraintStart_toStartOf="@id/navigatorImageView"/>
+
         <!-- Floating nav widget (day page only): ‹ prev-date · ↑↓ sections · next-date ›.
              Overlays the page (does not shift it). Hidden by default. -->
         <LinearLayout

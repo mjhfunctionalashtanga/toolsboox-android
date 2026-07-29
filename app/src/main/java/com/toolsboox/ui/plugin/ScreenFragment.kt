@@ -396,7 +396,7 @@ abstract class ScreenFragment : Fragment() {
      * itself and would otherwise fight this over who sized the grip last.
      */
     protected fun applyPillSizing(pill: View, skip: View? = null) {
-        val scale = com.toolsboox.ot.ModalScale.sizeScale(requireContext())
+        val scale = com.toolsboox.ot.ModalScale.pillScale(requireContext())
         scaleChrome(pill, scale)
         if (pill is ViewGroup) {
             for (i in 0 until pill.childCount) {
@@ -511,10 +511,15 @@ abstract class ScreenFragment : Fragment() {
         val activity = requireActivity()
         val mask = requireContext().getSharedPreferences("MAIN", 0)
             .getInt("rotationOrientationMask", 0b1111)
-        activity.requestedOrientation = com.toolsboox.ot.ScreenRotation.next(
-            com.toolsboox.ot.ScreenRotation.cycleFor(mask),
-            activity.requestedOrientation,
-            com.toolsboox.ot.ScreenRotation.displayedBy(currentSurfaceRotation())
+        // Through `apply`, so the step is remembered: rotating with the button and then restarting
+        // used to snap back to whatever the manifest said.
+        com.toolsboox.ot.ScreenRotation.apply(
+            activity,
+            com.toolsboox.ot.ScreenRotation.next(
+                com.toolsboox.ot.ScreenRotation.cycleFor(mask),
+                activity.requestedOrientation,
+                com.toolsboox.ot.ScreenRotation.displayedBy(currentSurfaceRotation())
+            )
         )
     }
 
@@ -529,14 +534,19 @@ abstract class ScreenFragment : Fragment() {
         val activity = requireActivity()
         val auto = activity.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
         if (auto) {
-            // Leaving the sensor: hold whatever it had landed on, so the screen doesn't jump.
-            activity.requestedOrientation =
-                com.toolsboox.ot.ScreenRotation.displayedBy(currentSurfaceRotation())
+            // Leaving the sensor: hold whatever it had landed on, so the screen doesn't jump — and
+            // remember THAT, not merely "not-sensor", or a restart would have nothing to lock to.
+            com.toolsboox.ot.ScreenRotation.apply(
+                activity, com.toolsboox.ot.ScreenRotation.displayedBy(currentSurfaceRotation()))
             showMessage(getString(R.string.rotate_locked), requireView())
         } else {
-            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
+            com.toolsboox.ot.ScreenRotation.apply(
+                activity, android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR)
             showMessage(getString(R.string.rotate_auto), requireView())
         }
+        // The settings switch reads this key, so the two controls agree next time it's opened.
+        requireContext().getSharedPreferences("MAIN", 0).edit()
+            .putBoolean("autoRotate", !auto).apply()
     }
 
     @Suppress("DEPRECATION")
@@ -926,9 +936,13 @@ abstract class ScreenFragment : Fragment() {
         // large-screen sizing every time a pill is flipped, and the grip alone shrinks back to
         // phone size on a Tab X while the buttons beside it stay large.
         //
-        // Times the modal-size dial, matching applyPillSizing on the buttons beside it — at
-        // Compact the whole pill (grip included) slims to reading-margin width.
-        val scale = com.toolsboox.ot.ModalScale.sizeScale(requireContext())
+        // Times the PILL dial, matching applyPillSizing on the buttons beside it — at Compact the
+        // whole pill (grip included) slims to reading-margin width. It must be the same dial as
+        // those buttons, whichever that is: when the pills were split onto their own setting this
+        // line kept reading the modal one for a moment, which would have re-created the exact
+        // failure the note above describes — a grip sized off one number and its neighbours off
+        // another, disagreeing the moment the two dials differ.
+        val scale = com.toolsboox.ot.ModalScale.pillScale(requireContext())
         val short = Math.round(resources.getDimensionPixelSize(R.dimen.ledger_grip_short) * scale)
         val long = Math.round(resources.getDimensionPixelSize(R.dimen.ledger_grip_long) * scale)
         grip.layoutParams = grip.layoutParams.apply {

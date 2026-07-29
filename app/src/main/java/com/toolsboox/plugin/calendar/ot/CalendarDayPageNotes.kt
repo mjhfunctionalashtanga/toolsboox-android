@@ -162,6 +162,11 @@ class CalendarDayPageNotes : Creator {
             // in the "#n" sub-index. Either way `page` is the 0-based number the header shows +1.
             val page = base.toIntOrNull() ?: subIndex
 
+            // A named Write DOCUMENT ("write-1753…") is a Write page — same ruled template, same
+            // WRITE header. Without this it fell through to the generic NOTES look, so naming a
+            // piece of writing would have silently changed what it looked like to write on.
+            val isWrite = base == "write" || WritePageStore.isWrite(base)
+
             canvas.drawRect(0.0f, 0.0f, 1404.0f, 1872.0f, Creator.fillWhite)
 
             // Title in the top margin so this freeform surface reads as "NOTES" — distinct from the
@@ -169,7 +174,7 @@ class CalendarDayPageNotes : Creator {
             // Just "NOTES" / "WRITE" — the page number rides the inline ‹ N › pager next to it, so
             // "· Page N" here would double up.
             canvas.drawText(
-                if (base == "write") "WRITE" else "NOTES",
+                if (isWrite) "WRITE" else "NOTES",
                 lo, to - 16.0f, Creator.textDefaultBlack)
 
             canvas.drawText("${page + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)

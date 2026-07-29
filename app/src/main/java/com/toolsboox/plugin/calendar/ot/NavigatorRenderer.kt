@@ -50,19 +50,61 @@ object NavigatorRenderer {
         val boldFace = if (chosen != null) Typeface.create(chosen, Typeface.BOLD) else atkinsonBold
         val regFace = chosen ?: atkinsonReg
 
-        // The modal-size dial scales the type WITHIN the fixed 1404-wide strip.
-        val sizeScale = com.toolsboox.ot.ModalScale.stripScale(context)
+        // Slot geometry FIRST, because the type is sized to fit it rather than the other way
+        // round. The strip's footprint is fixed by design (1404 wide, no reflow), so the width a
+        // label gets is a constant we solve against — not something the dial can negotiate with.
+        val slotsLeft = 175f
+        val slotsRight = 1264f
+        val slotWidth = (slotsRight - slotsLeft) / slots.size
+        val slotGap = 12f
+        val maxLabelWidth = slotWidth - slotGap * 2f
+
+        // The nav's own size dial — what you ASKED for.
+        val requested = com.toolsboox.ot.ModalScale.stripScale(context)
+
+        val focalBase = 92f
+        val normalBase = 68f
+        val mutedBase = 56f
+        fun baseFor(e: Emphasis) = when (e) {
+            Emphasis.FOCAL -> focalBase
+            Emphasis.NORMAL -> normalBase
+            Emphasis.MUTED -> mutedBase
+        }
+
+        // …and what actually FITS. The largest step is capped by measurement, not by a constant:
+        // shrink the whole strip together until every label clears its slot.
+        //
+        // The dial used to hand its number straight to the paints, so Expanded sized the type past
+        // a box that cannot grow and the labels went to "(…)" — the almanac header must never do
+        // that, at any setting. Solving for the fit makes overflow unreachable instead of merely
+        // unlikely, and it keeps holding when the numbers underneath change: a different reading
+        // font (LedgerFonts lets you pick one), a locale whose short month is four letters, or a
+        // strip built with a different number of slots would each invalidate a hardcoded ceiling.
+        //
+        // UNIFORM, deliberately — one scale for all six slots. Shrinking only the offenders makes
+        // a strip of mismatched type where the sizes no longer mean emphasis, which is a worse
+        // read than a strip that is honestly one step smaller than you asked for.
+        val probe = TextPaint().apply { isAntiAlias = true }
+        fun everythingFits(scale: Float): Boolean = slots.all { s ->
+            probe.typeface = if (s.emphasis == Emphasis.FOCAL) boldFace else regFace
+            probe.textSize = baseFor(s.emphasis) * scale
+            probe.measureText(s.text) <= maxLabelWidth
+        }
+        var sizeScale = requested
+        // 0.6 is the floor: below that the strip stops being readable at arm's length, and a label
+        // that still doesn't fit there is pathological enough to earn the ellipsis backstop below.
+        while (sizeScale > 0.6f && !everythingFits(sizeScale)) sizeScale -= 0.02f
 
         val focalPaint = TextPaint().apply {
-            color = Color.BLACK; textAlign = Paint.Align.CENTER; textSize = 92f * sizeScale
+            color = Color.BLACK; textAlign = Paint.Align.CENTER; textSize = focalBase * sizeScale
             typeface = boldFace; isAntiAlias = true
         }
         val normalPaint = TextPaint().apply {
-            color = Color.BLACK; textAlign = Paint.Align.CENTER; textSize = 68f * sizeScale
+            color = Color.BLACK; textAlign = Paint.Align.CENTER; textSize = normalBase * sizeScale
             typeface = regFace; isAntiAlias = true
         }
         val mutedPaint = TextPaint().apply {
-            color = Color.argb(180, 0, 0, 0); textAlign = Paint.Align.CENTER; textSize = 56f * sizeScale
+            color = Color.argb(180, 0, 0, 0); textAlign = Paint.Align.CENTER; textSize = mutedBase * sizeScale
             typeface = regFace; isAntiAlias = true
         }
         val arrowPaint = TextPaint().apply {
@@ -91,16 +133,8 @@ object NavigatorRenderer {
         canvas.drawText("<", 120f, rowCenterY, arrowPaint)
         canvas.drawText(">", 1344f, rowCenterY, arrowPaint)
 
-        val slotsLeft = 175f
-        val slotsRight = 1264f
-        val slotWidth = (slotsRight - slotsLeft) / slots.size
-
-        // A slot's label must never draw past its slot. The strip's footprint is fixed by design
-        // (no reflow), so at Expanded a wide label ("September 2026") used to march straight over
-        // the separators into its neighbours. Measure first; a label that doesn't fit inside the
-        // slot minus a little clear air is ellipsized rather than allowed to collide.
-        val slotGap = 12f
-        val maxLabelWidth = slotWidth - slotGap * 2f
+        // (Slot geometry and the fitted scale are computed above, before the paints — the type is
+        // sized to the slots, not the slots to the type.)
 
         for ((idx, slot) in slots.withIndex()) {
             val cx = slotsLeft + slotWidth * (idx + 0.5f)
@@ -109,16 +143,28 @@ object NavigatorRenderer {
                 Emphasis.NORMAL -> normalPaint
                 Emphasis.MUTED -> mutedPaint
             }
-            // Focal labels SHRINK to fit rather than ellipsize — "2026" promoted to focal came
-            // out as "…", which filters a year down to three dots. Ellipsis only ever made sense
-            // for long prose labels ("September 2026" muted); a focal slot always shows its text.
+            // EVERY label shrinks to fit rather than ellipsize. This started as a focal-only rule
+            // ("2026" promoted to focal came out as "…", which filters a year down to three dots),
+            // but the same thing happens to the other two the moment the modal-size dial goes to
+            // Expanded: `sizeScale` grows the type 25% inside a strip whose 1404 footprint and even
+            // slot division never reflow, so "September 2026" turned into "(…)" and the whole top
+            // nav read as unreadable. That is the failure ScreenFragment already names — text that
+            // grows inside a fixed box only ellipsizes, which reads as the setting doing nothing.
+            //
+            // Shrinking keeps the words. A long label at Expanded may land back near its Standard
+            // size, so the dial looks like it did little THERE — but a slot that still says
+            // "September 2026" beats one that says "…", and the short labels around it do grow.
+            // Floors stay ordered focal > normal > muted so the hierarchy survives the squeeze.
+            val minSize = when (slot.emphasis) {
+                Emphasis.FOCAL -> 40f
+                Emphasis.NORMAL -> 38f
+                Emphasis.MUTED -> 34f
+            }
             var drawPaint = paint
             if (paint.measureText(slot.text) > maxLabelWidth) {
-                if (slot.emphasis == Emphasis.FOCAL) {
-                    drawPaint = TextPaint(paint)
-                    while (drawPaint.textSize > 40f && drawPaint.measureText(slot.text) > maxLabelWidth) {
-                        drawPaint.textSize -= 4f
-                    }
+                drawPaint = TextPaint(paint)
+                while (drawPaint.textSize > minSize && drawPaint.measureText(slot.text) > maxLabelWidth) {
+                    drawPaint.textSize -= 4f
                 }
             }
             val label =

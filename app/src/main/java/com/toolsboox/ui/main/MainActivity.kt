@@ -124,7 +124,11 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
      * collected and the dial would silently stop reaching the button.
      */
     private val a11yListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == com.toolsboox.ot.ModalScale.SIZE_KEY) applyPenButtonScale()
+        // Both keys: the pen button rides the PILL dial now, but that dial INHERITS the modal one
+        // while it has no value of its own — so a change to either can be the one that moves it.
+        // Watching only the modal key left the button stale the moment the pill dial was touched.
+        if (key == com.toolsboox.ot.ModalScale.SIZE_KEY ||
+            key == com.toolsboox.ot.ModalScale.PILL_SIZE_KEY) applyPenButtonScale()
     }
 
     /**
@@ -138,7 +142,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         val v = binding.floatNoteButton
         val base = penButtonBase ?: intArrayOf(v.layoutParams.width, v.layoutParams.height, v.paddingLeft)
             .also { penButtonBase = it }
-        val mul = com.toolsboox.ot.ModalScale.sizeScale(this)
+        val mul = com.toolsboox.ot.ModalScale.pillScale(this)
         v.layoutParams = v.layoutParams.apply {
             width = Math.round(base[0] * mul)
             height = Math.round(base[1] * mul)
@@ -625,6 +629,13 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         // Bound the re-creatable caches (article copies, later media, temp shots) —
         // daily, off-main, never touching user media or day JSONs.
         com.toolsboox.ot.CacheJanitor.runDaily(this)
+        // Which way up, before the first frame. The three controls that turn the screen all set
+        // `requestedOrientation`, which is activity state and dies with the process — so a cold
+        // start fell back to the manifest's `sensorPortrait` no matter what had been chosen, and
+        // the gyro switch appeared to turn itself back on overnight. Re-asserted here rather than
+        // after `setContentView` so the window is laid out once, in the right orientation: doing it
+        // later costs a visible re-layout, which on e-ink is a full flashing redraw.
+        com.toolsboox.ot.ScreenRotation.restore(this)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -1066,7 +1077,17 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
      * @param fragment the fragment
      */
     private fun orientateFragment(fragment: Fragment?) {
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-        Timber.i("Sensor portrait: ${fragment?.javaClass?.name}")
+        // Re-assert the user's CHOICE, not sensor-portrait.
+        //
+        // This hardcoded SENSOR_PORTRAIT and runs on every back-press that pops the stack, so
+        // going back silently undid a locked or gyro-driven screen MID-SESSION — rotate, press
+        // Back, and you were portrait again with nothing on screen to say why. Together with the
+        // orientation never surviving a restart, that made the rotate controls look broken from
+        // two directions at once.
+        //
+        // The remembered orientation is the honest thing to return to; with nothing remembered it
+        // falls back to sensor-portrait, which is what this line was reaching for all along.
+        com.toolsboox.ot.ScreenRotation.restore(this, ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT)
+        Timber.i("Orientation re-asserted after back: ${fragment?.javaClass?.name}")
     }
 }

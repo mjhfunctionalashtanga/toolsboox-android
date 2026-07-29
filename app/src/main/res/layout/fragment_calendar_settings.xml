@@ -70,8 +70,114 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content">
 
-            <!-- The auto-capture switch used to float here, above the first section heading, with
-                 no group. It now lives under the "Capture & OCR" section further down. -->
+            <!-- ORDER OF THIS PAGE, and why.
+                 It used to be a flat run of nine sections in the order they were written, so the
+                 setting people come here for most — Legibility — sat at the very bottom under a
+                 heading that said BACKUP & DATA, three screens past anything to do with looking at
+                 things. The order now runs by what you came to change: first how it LOOKS right
+                 now (legibility, which way up), then how the planner BEHAVES, then what happens to
+                 your INK, then the four places pages GO, and last the archive and upkeep errands
+                 you touch once a year. Every heading names a visible effect, not the subsystem
+                 underneath it. -->
+
+            <TextView
+                    style="@style/Settings.SectionHeading"
+                    android:id="@+id/look_section_label"
+                    android:text="@string/calendar_settings_look_label"/>
+
+            <!-- One button to a dialog that holds seven dials. It was the last widget on the page;
+                 it is now the first, because "make this readable" is the errand that brings someone
+                 to Settings on an e-ink screen in bad light. -->
+            <Button
+                    android:id="@+id/button_text_size"
+                    android:text="@string/calendar_settings_button_text_size"
+
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"/>
+
+            <View
+                    android:id="@+id/divider_look"
+                    android:layout_width="match_parent"
+                    android:layout_height="2dp"
+                    android:layout_marginTop="16dp"
+                    android:background="#e0e0e0"/>
+
+            <!-- Rotation. Hold-to-gyro on the rotate button proved undiscoverable and unreliable on
+                 the Palma, so the same thing is a plain switch here. -->
+            <TextView
+                    style="@style/Settings.SectionHeading"
+                    android:id="@+id/rotation_section_label"
+                    android:text="@string/calendar_settings_rotation_label"/>
+
+            <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/auto_rotate_switch"
+                    android:text="@string/calendar_settings_auto_rotate"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginEnd="16dp"/>
+
+            <!-- The four tick-boxes configure ONE thing: the cycle the toolbar's rotate button
+                 steps through (ScreenFragment.stepScreenOrientation reads rotationOrientationMask,
+                 and it is the only reader). Hand the screen to the gyro and there is no cycle left
+                 to configure — the boxes stayed on screen anyway, four live-looking controls that
+                 changed nothing you could see. Grouped so the whole cluster hides behind the one
+                 decision above it; the mask itself is untouched while hidden, so turning the gyro
+                 back off restores exactly the cycle that was there. -->
+            <LinearLayout
+                    android:id="@+id/rotation_manual_group"
+                    android:orientation="vertical"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                <TextView
+                        android:id="@+id/rotation_section_hint"
+                        android:text="@string/calendar_settings_rotation_hint"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:layout_marginEnd="16dp"/>
+
+                <androidx.appcompat.widget.AppCompatCheckBox
+                        android:id="@+id/rotation_portrait_check"
+                        android:text="@string/calendar_settings_rotation_portrait"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:layout_marginEnd="16dp"/>
+
+                <androidx.appcompat.widget.AppCompatCheckBox
+                        android:id="@+id/rotation_landscape_cw_check"
+                        android:text="@string/calendar_settings_rotation_landscape_cw"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="16dp"/>
+
+                <androidx.appcompat.widget.AppCompatCheckBox
+                        android:id="@+id/rotation_reverse_portrait_check"
+                        android:text="@string/calendar_settings_rotation_reverse_portrait"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="16dp"/>
+
+                <androidx.appcompat.widget.AppCompatCheckBox
+                        android:id="@+id/rotation_landscape_ccw_check"
+                        android:text="@string/calendar_settings_rotation_landscape_ccw"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="16dp"/>
+            </LinearLayout>
+
+            <View
+                    android:id="@+id/divider_rotation"
+                    android:layout_width="match_parent"
+                    android:layout_height="2dp"
+                    android:layout_marginTop="16dp"
+                    android:background="#e0e0e0"/>
+
+            <!-- The auto-capture switch used to float above the first section heading, with no
+                 group at all. It now lives under "HANDWRITING" further down. -->
             <TextView
                     style="@style/Settings.SectionHeading"
                     android:id="@+id/calendar_section_label"
@@ -104,94 +210,6 @@
                         android:layout_height="match_parent"
                         android:inputType="text"/>
             </com.google.android.material.textfield.TextInputLayout>
-
-            <View
-                    android:layout_width="match_parent"
-                    android:layout_height="2dp"
-                    android:layout_marginTop="8dp"
-                    android:background="#e0e0e0"/>
-
-            <TextView
-                    android:id="@+id/locales_spinner_text"
-                    android:text="@string/calendar_settings_select_locale_text"
-
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"
-                    android:layout_marginEnd="16dp"/>
-
-            <com.google.android.material.textfield.TextInputLayout
-                    android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
-                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
-
-                    android:id="@+id/locales_spinner_layout"
-                    android:spinnerMode="dropdown"
-
-                    android:layout_width="match_parent"
-                    android:layout_height="60dp"
-                    android:layout_marginEnd="16dp">
-
-                <com.toolsboox.ot.AutoCompleteTextView
-                        android:id="@+id/locales_spinner"
-                        android:labelFor="@id/locales_spinner_text"
-                        android:layout_width="match_parent"
-                        android:layout_height="match_parent"
-                        android:completionThreshold="1"
-                        android:inputType="text"/>
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <TextView
-                    android:id="@+id/calendar_first_day_of_the_week_text"
-                    android:text="@string/calendar_settings_first_day_of_the_week_text"
-
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"/>
-
-            <TextView
-                    android:id="@+id/calendar_first_day_of_the_week_value"
-                    android:text="@string/calendar_settings_first_day_of_the_week_value"
-
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:layout_marginEnd="16dp"/>
-
-            <TextView
-                    android:id="@+id/calendar_week_number_of_first_day_text"
-                    android:text="@string/calendar_settings_week_number_of_first_day_text"
-
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:layout_marginEnd="16dp"/>
-
-            <TextView
-                    android:id="@+id/calendar_week_number_of_first_day_value"
-                    android:text="@string/calendar_settings_week_number_of_first_day_value"
-
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:layout_marginEnd="16dp"/>
-
-            <TextView
-                    android:id="@+id/calendar_week_number_of_last_day_text"
-                    android:text="@string/calendar_settings_week_number_of_last_day_text"
-
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:layout_marginEnd="16dp"/>
-
-            <TextView
-                    android:id="@+id/calendar_week_number_of_last_day_value"
-                    android:text="@string/calendar_settings_week_number_of_last_day_value"
-
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:layout_marginEnd="16dp"/>
 
             <View
                     android:layout_width="match_parent"
@@ -268,65 +286,148 @@
                     android:layout_marginTop="8dp"
                     android:background="#e0e0e0"/>
 
-            <!-- Rotation section -->
+            <!-- Locale, moved to the END of this section from the middle of it. The three spinners
+                 above are things you change to taste; this one you set once, on the day the device
+                 comes out of the box, and it is only here to answer "why does my week start on a
+                 Sunday". Putting a set-once control between two taste controls made the section
+                 read as four unrelated dropdowns. -->
+            <TextView
+                    android:id="@+id/locales_spinner_text"
+                    android:text="@string/calendar_settings_select_locale_text"
+
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:layout_marginEnd="16dp"/>
+
+            <com.google.android.material.textfield.TextInputLayout
+                    android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+
+                    android:id="@+id/locales_spinner_layout"
+                    android:spinnerMode="dropdown"
+
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp"
+                    android:layout_marginEnd="16dp">
+
+                <com.toolsboox.ot.AutoCompleteTextView
+                        android:id="@+id/locales_spinner"
+                        android:labelFor="@id/locales_spinner_text"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:completionThreshold="1"
+                        android:inputType="text"/>
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- What the locale above IMPLIES, on one line. This was six stacked full-width
+                 TextViews — three captions and three values — for something nobody can edit: it is
+                 a read-out of the dropdown, not a setting, and stacked like that it looked like
+                 three more settings that refused to respond to being tapped. Same three value
+                 views, same ids (updateLocaleSettings still writes them by name), one row. -->
+            <LinearLayout
+                    android:orientation="horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginEnd="16dp">
+
+                <TextView
+                        android:text="@string/calendar_settings_locale_summary"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="8dp"/>
+
+                <TextView
+                        android:id="@+id/calendar_first_day_of_the_week_value"
+                        android:text="@string/calendar_settings_first_day_of_the_week_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"/>
+
+                <TextView
+                        android:text="·"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_marginEnd="8dp"/>
+
+                <TextView
+                        android:id="@+id/calendar_week_number_of_first_day_value"
+                        android:text="@string/calendar_settings_week_number_of_first_day_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"/>
+
+                <TextView
+                        android:text="–"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:layout_marginEnd="4dp"/>
+
+                <TextView
+                        android:id="@+id/calendar_week_number_of_last_day_value"
+                        android:text="@string/calendar_settings_week_number_of_last_day_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"/>
+            </LinearLayout>
+
+            <View
+                    android:id="@+id/divider_locale"
+                    android:layout_width="match_parent"
+                    android:layout_height="2dp"
+                    android:layout_marginTop="16dp"
+                    android:background="#e0e0e0"/>
+
+            <!-- HANDWRITING. Moved up from below the four connection blocks: what happens to your
+                 ink is a property of the page you write on, not of a server, and it was stranded
+                 among credential boxes. -->
             <TextView
                     style="@style/Settings.SectionHeading"
-                    android:id="@+id/rotation_section_label"
-                    android:text="@string/calendar_settings_rotation_label"/>
+                    android:id="@+id/capture_section_label"
+                    android:text="@string/calendar_settings_capture_label"/>
 
-            <!-- Hold-to-gyro on the rotate button proved undiscoverable and unreliable on the
-                 Palma, so the same thing is a plain switch here. -->
             <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/auto_rotate_switch"
-                    android:text="@string/calendar_settings_auto_rotate"
+                    android:id="@+id/auto_capture_switch"
+                    android:text="@string/calendar_settings_capture_enable"
+
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:layout_marginEnd="16dp"/>
 
+            <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/auto_extract_switch"
+                    android:text="@string/calendar_settings_extract_enable"
+
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginEnd="16dp"/>
+
+            <!-- Was a bare title TextView reading "On-device extract" above the switch — two lines
+                 saying the same word twice. It carries the caveat instead, because the switch's
+                 real effect (a menu item appears) is not what "extract" leads anyone to expect. -->
             <TextView
-                    android:id="@+id/rotation_section_hint"
-                    android:text="@string/calendar_settings_rotation_hint"
+                    android:id="@+id/auto_extract_hint"
+                    android:text="@string/calendar_settings_extract_title"
+
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:layout_marginEnd="16dp"/>
-
-            <androidx.appcompat.widget.AppCompatCheckBox
-                    android:id="@+id/rotation_portrait_check"
-                    android:text="@string/calendar_settings_rotation_portrait"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:layout_marginEnd="16dp"/>
-
-            <androidx.appcompat.widget.AppCompatCheckBox
-                    android:id="@+id/rotation_landscape_cw_check"
-                    android:text="@string/calendar_settings_rotation_landscape_cw"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="16dp"/>
-
-            <androidx.appcompat.widget.AppCompatCheckBox
-                    android:id="@+id/rotation_reverse_portrait_check"
-                    android:text="@string/calendar_settings_rotation_reverse_portrait"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="16dp"/>
-
-            <androidx.appcompat.widget.AppCompatCheckBox
-                    android:id="@+id/rotation_landscape_ccw_check"
-                    android:text="@string/calendar_settings_rotation_landscape_ccw"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
                     android:layout_marginEnd="16dp"/>
 
             <View
-                    android:id="@+id/divider_rotation"
+                    android:id="@+id/divider_capture"
                     android:layout_width="match_parent"
                     android:layout_height="2dp"
                     android:layout_marginTop="16dp"
                     android:background="#e0e0e0"/>
+
+            <!-- THE FOUR DESTINATIONS, back to back: toolsBoox cloud, WebDAV, Google Calendar,
+                 WordPress. They answer one question — where does this end up — and each already
+                 hides its own fields behind an enable switch, so the run reads as four one-line
+                 choices until you turn one on. Google Calendar and the sites block used to be
+                 split apart by the capture settings sitting in the middle of them. -->
 
             <!-- Auto-sync section -->
             <TextView
@@ -454,6 +555,13 @@
                         android:singleLine="true"/>
             </com.google.android.material.textfield.TextInputLayout>
 
+            <View
+                    android:id="@+id/divider_ultrabridge"
+                    android:layout_width="match_parent"
+                    android:layout_height="2dp"
+                    android:layout_marginTop="16dp"
+                    android:background="#e0e0e0"/>
+
             <!-- Google Calendar (events) section -->
             <TextView
                     style="@style/Settings.SectionHeading"
@@ -498,38 +606,12 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginStart="16dp"/>
 
-            <!-- Capture & OCR: server auto-capture (default on) + on-device extract (default off) -->
-            <TextView
-                    style="@style/Settings.SectionHeading"
-                    android:id="@+id/capture_section_label"
-                    android:text="@string/calendar_settings_capture_label"/>
-
-            <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/auto_capture_switch"
-                    android:text="@string/calendar_settings_capture_enable"
-
+            <View
+                    android:id="@+id/divider_gcal"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:layout_marginEnd="16dp"/>
-
-            <TextView
-                    android:id="@+id/auto_extract_label"
-                    android:text="@string/calendar_settings_extract_title"
-
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginEnd="16dp"/>
-
-            <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/auto_extract_switch"
-                    android:text="@string/calendar_settings_extract_enable"
-
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:layout_marginEnd="16dp"/>
+                    android:layout_height="2dp"
+                    android:layout_marginTop="16dp"
+                    android:background="#e0e0e0"/>
 
             <!-- Sites & bridge. "Manage sites" is the SOURCE OF TRUTH (every WordPress site + the
                  active one). The single-cred fields below are the same active-site bridge as an
@@ -623,46 +705,23 @@
             </com.google.android.material.textfield.TextInputLayout>
 
             <View
-                    android:id="@+id/divider_ultrabridge"
+                    android:id="@+id/divider_sites"
                     android:layout_width="match_parent"
                     android:layout_height="2dp"
-                    android:layout_marginTop="8dp"
+                    android:layout_marginTop="16dp"
                     android:background="#e0e0e0"/>
 
+            <!-- BACKUP & TRANSFER. Six buttons used to sit here in the order somebody added them,
+                 so the pair you actually want together ("Export settings", "Import settings") was
+                 split by a calendar-only zip and a full-ledger restore, and the whole run was
+                 shuffled in with a shortcut maker and a mark rebuilder. Now: settings out, settings
+                 in, the gesture that turns those two into a whole-ledger backup, then the restore
+                 that reads such a backup, then the odd one out (calendar-only) last and labelled
+                 as the different thing it is. -->
             <TextView
                     style="@style/Settings.SectionHeading"
                     android:id="@+id/data_section_label"
                     android:text="@string/calendar_settings_data_label"/>
-
-            <Button
-                    android:id="@+id/button_shortcut"
-                    android:text="@string/calendar_settings_button_shortcut"
-
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="24dp"/>
-
-            <Button
-                    android:id="@+id/button_backup"
-                    android:text="@string/calendar_settings_button_backup"
-
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="24dp"/>
-
-            <Button
-                    android:id="@+id/button_pattern_sync"
-                    android:text="@string/calendar_settings_button_pattern_sync"
-
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"/>
-
-            <Button
-                    android:id="@+id/button_restore"
-                    android:text="@string/calendar_settings_button_restore"
-
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"/>
 
             <Button
                     android:id="@+id/button_export_settings"
@@ -678,16 +737,64 @@
 
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="16dp"/>
+                    android:layout_marginTop="8dp"/>
 
+            <TextView
+                    android:id="@+id/backup_gesture_hint"
+                    android:text="@string/calendar_settings_backup_gesture_hint"
+
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginEnd="16dp"/>
 
             <Button
-                    android:id="@+id/button_text_size"
-                    android:text="@string/calendar_settings_button_text_size"
+                    android:id="@+id/button_restore"
+                    android:text="@string/calendar_settings_button_restore"
 
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"/>
+
+            <Button
+                    android:id="@+id/button_backup"
+                    android:text="@string/calendar_settings_button_backup"
+
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"/>
+
+            <View
+                    android:id="@+id/divider_data"
+                    android:layout_width="match_parent"
+                    android:layout_height="2dp"
+                    android:layout_marginTop="16dp"
+                    android:background="#e0e0e0"/>
+
+            <!-- The two errands that are neither a preference nor an archive: one puts an icon on
+                 the launcher, the other reindexes local files. They were filed under "BACKUP &
+                 DATA" because there was nowhere else, which is how "Update marks" came to sit
+                 between two backup buttons and read as a sync. -->
+            <TextView
+                    style="@style/Settings.SectionHeading"
+                    android:id="@+id/device_section_label"
+                    android:text="@string/calendar_settings_device_label"/>
+
+            <Button
+                    android:id="@+id/button_shortcut"
+                    android:text="@string/calendar_settings_button_shortcut"
+
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"/>
+
+            <Button
+                    android:id="@+id/button_pattern_sync"
+                    android:text="@string/calendar_settings_button_pattern_sync"
+
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"/>
 
         </LinearLayout>
     </ScrollView>

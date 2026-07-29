@@ -73,8 +73,10 @@ fun ledgerDirectoryFolders(
                 "intake", "write" -> "Flow"
                 "gratitude", "selfexec" -> "Garden"
                 "grid", "sketch" -> "Notes"
-                else -> if (com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(page) ||
-                    com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(page)) "Flow"
+                // A NAMED document ("pickings-…", "synthesize-…", "write-…") calls the same folder
+                // home as the surface it belongs to — the "-<millis>" tail is storage, never a
+                // different kind of page.
+                else -> if (com.toolsboox.plugin.calendar.ot.LedgerDocuments.surfaceOf(page) != null) "Flow"
                 else "Notes"   // lined pages ("0", "1", …) and named notebooks
             }
         else -> null   // almanac pages (week/month/…), dashboard — no folder to call home
@@ -174,7 +176,10 @@ fun ledgerDirectoryFolders(
             "📥  Star Sort" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
             "❝  Pickings" to { showPickingsPicker(fragment) },
             "🔬  Synthesize" to { showSynthPicker(fragment) },
-            "✍  Write" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "write") }
+            // Write opens its directory rather than jumping straight at today's page, now that it
+            // HAS documents to choose between. Its two neighbours in Flow already worked this way;
+            // the odd one out was Write, the surface with the most reason to ask which piece.
+            "✍  Write" to { showWritePicker(fragment) }
         ), expanded = home == "Flow"),
         // Desk Ledger — the working surfaces: mail, people, tasks, boards, publishing, notes.
         ScreenFragment.Folder("🗒", "Desk", listOf(
@@ -241,6 +246,11 @@ fun ledgerDirectoryFolders(
             "🗃  Boards · Site" to { nav.navigate(R.id.action_to_site_boards) },
             "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
             "💬  Messages" to { nav.navigate(R.id.action_to_messages) },
+            // Bluesky sits beside Correspondence rather than inside it: Correspondence is the
+            // community/boards exchange on his OWN sites, where the bridge creds get him in;
+            // this is the POSSE loop back out to a public timeline, on the syndication secret and
+            // a queue on the VPS. Same act, different ground and different auth — one door each.
+            "🦋  Bluesky" to { nav.navigate(R.id.action_to_bluesky) },
             // The day's booking roster (tap a person → their CRM, scribble a note that OCRs onto their
             // CRM timeline). Mail moved to the Desk — email is a working surface, not a person-surface.
             "🎟  Roster" to { nav.navigate(R.id.action_to_roster) }
@@ -280,25 +290,206 @@ private fun openSiteWeb(nav: androidx.navigation.NavController, target: String) 
     )
 }
 
-/** Pickings can be multiple, named boards per day — choose one, add a new one, or rename one. */
-fun showPickingsPicker(fragment: ScreenFragment) {
+/**
+ * The document directory — ONE listing for every making surface that accumulates pages.
+ *
+ * This grew out of the Pickings picker, which had two problems. The small one: it read
+ * `LocalDate.now()` and nothing else, so opening it from a page dated the 21st listed the 21st's
+ * boards nowhere and today's boards always, and every pick navigated you off the day you were
+ * working on. A directory that can only ever describe one day isn't a directory; it's a shortcut
+ * wearing one's clothes. The larger one: it was the ONLY surface with a directory at all, so Write
+ * and Synthesize — the two that most need to say which piece you're in — had none, and each would
+ * have grown its own had this stayed Pickings-shaped.
+ *
+ * So the listing is driven by [com.toolsboox.plugin.calendar.ot.LedgerDocuments], which knows all
+ * four surfaces as one kind of thing: a titled document with a page count. Multi-page documents
+ * (Write, Synthesize) expand into their sub-pages rather than jumping you at the base; single-page
+ * ones (Pickings) are flat rows, because there is no drill-down to build.
+ *
+ * [knownPageKeys] lets a caller that already holds the day (the day fragment does) hand over its
+ * page keys so the counts don't cost a second read of the day file.
+ */
+fun showDocumentDirectory(
+    fragment: ScreenFragment,
+    surface: String,
+    date: LocalDate = LocalDate.now(),
+    currentKey: String? = null,
+    knownPageKeys: Set<String> = emptySet(),
+) {
     val ctx = fragment.requireContext()
-    val today = LocalDate.now()
-    com.toolsboox.plugin.calendar.ot.PickingsStore.sync(ctx, today)   // pull other devices' board names
-    val pages = com.toolsboox.plugin.calendar.ot.PickingsStore.list(ctx, today)
-    val labels = (pages.map { "❝  ${it.name}" } + listOf("＋  New pickings…", "✎  Rename a pickings…")).toTypedArray()
+    val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    docs0.sync(ctx, surface, date)   // pull the names given on other devices
+    val docs = docs0.forSurface(ctx, surface, date, knownPageKeys)
+    val glyph = docs0.glyph(surface)
+    val label = docs0.label(surface)
+    // The document you're standing in is marked, so the list answers "where am I" as well as "what
+    // else is there" — the same "· here" the iPad's directory uses. One shape on both platforms.
+    val hereBase = currentKey?.substringBefore('#')
+    val rows = docs.map {
+        val pages = if (it.subPageCount > 1) "  ·  ${it.subPageCount} pages" else ""
+        // A named document off today shows the day it was started; without it a list of essay
+        // titles says nothing about when any of them happened.
+        val when_ = if (it.date != date) "  ·  ${it.date}" else ""
+        "$glyph  ${it.title}$pages$when_" + if (it.key == hereBase) "   ·  here" else ""
+    }
+    val renameable = docs.any { docs0.canRename(surface, it.key) }
+    val extras = listOfNotNull(
+        "＋  New ${docs0.noun(surface)}…",
+        if (renameable) "✎  Rename…" else null,
+        "📅  Go to a date…"
+    )
     androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-        .setTitle("Pickings · $today")
-        .setItems(labels) { _, which ->
+        .setTitle("$label · $date")
+        .setItems((rows + extras).toTypedArray()) { _, which ->
+            val extra = which - rows.size
             when {
-                which < pages.size -> CalendarNavigator.toDayNote(fragment, today, pages[which].key)
-                which == pages.size -> promptNewPicking(fragment)
-                else -> promptRenamePicking(fragment)
+                which < rows.size -> {
+                    val doc = docs[which]
+                    // Expand rather than jump: a document with pages should show you its pages, so
+                    // "which page of the essay" is answerable from the same place as "which essay".
+                    if (doc.subPageCount > 1) showDocumentPages(fragment, surface, doc, currentKey)
+                    else CalendarNavigator.toDayNote(fragment, doc.date, doc.key)
+                }
+                extra == 0 -> promptNewDocument(fragment, surface, date)
+                extras.size == 3 && extra == 1 -> promptRenameDocument(fragment, surface, date, docs)
+                // The same surface on another day — a directory should walk time as well as pages,
+                // which is the move the iPad's directory ends on too.
+                else -> showDocumentDatePicker(fragment, surface, date, currentKey)
             }
         }
         .setNegativeButton("Close", null)
         .show()
 }
+
+/**
+ * One multi-page document's pages. The same "Page N · here / ＋ New page" shape the day fragment's
+ * own sub-page jump uses, so drilling in from the directory and tapping the ‹ N › pager land you in
+ * the same list — a surface should not have two different answers to "what pages are in this".
+ */
+private fun showDocumentPages(
+    fragment: ScreenFragment,
+    surface: String,
+    doc: com.toolsboox.plugin.calendar.ot.LedgerDocument,
+    currentKey: String?,
+) {
+    val ctx = fragment.requireContext()
+    val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    val here = if (currentKey?.substringBefore('#') == doc.key)
+        currentKey.substringAfter('#', "").toIntOrNull() ?: 0 else -1
+    val rows = (0 until doc.subPageCount).map { "Page ${it + 1}" + if (it == here) "   ·  here" else "" }
+    // An unnamed document's title IS its date, so titling this dialog "<title> · <date>" would
+    // print the date twice; it takes the surface's name instead.
+    val heading = if (doc.named) "${doc.title} · ${doc.date}"
+    else "${docs0.label(surface)} · ${doc.date}"
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle(heading)
+        .setItems((rows + listOf("＋  New page", "‹  All ${docs0.label(surface)}")).toTypedArray()) { _, which ->
+            when (which) {
+                in rows.indices -> CalendarNavigator.toDayNote(fragment, doc.date, docs0.subPageKey(doc.key, which))
+                rows.size -> CalendarNavigator.toDayNote(
+                    fragment, doc.date, docs0.subPageKey(doc.key, doc.subPageCount))
+                // Back up a level rather than closing: the drill-down was one tap, and having to
+                // reopen the whole directory to look at a different document is what makes a nested
+                // menu feel like a trap.
+                else -> showDocumentDirectory(fragment, surface, doc.date, currentKey)
+            }
+        }
+        .setNegativeButton("Close", null)
+        .show()
+}
+
+/**
+ * "Go to a date…": pick a day, then land back in the directory FOR that day rather than jumping
+ * blind. Re-entering the list is what makes it a walk rather than a leap — you see what's over
+ * there before committing to a page.
+ */
+private fun showDocumentDatePicker(
+    fragment: ScreenFragment,
+    surface: String,
+    from: LocalDate,
+    currentKey: String?,
+) {
+    val ctx = fragment.requireContext()
+    android.app.DatePickerDialog(
+        com.toolsboox.ot.ModalScale.wrap(ctx),
+        { _, y, m, d -> showDocumentDirectory(fragment, surface, LocalDate.of(y, m + 1, d), currentKey) },
+        from.year, from.monthValue - 1, from.dayOfMonth
+    ).show()
+}
+
+/** Name a new document and open it. Blank is allowed — the store falls back to the date. */
+private fun promptNewDocument(fragment: ScreenFragment, surface: String, date: LocalDate) {
+    val ctx = fragment.requireContext()
+    val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    val input = android.widget.EditText(ctx).apply {
+        hint = "What's this ${docs0.noun(surface)} about?"; setSingleLine()
+    }
+    val pad = (16 * ctx.resources.displayMetrics.density).toInt()
+    val box = android.widget.LinearLayout(ctx).apply {
+        orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
+    }
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle("New ${docs0.noun(surface)}")
+        .setView(box)
+        .setPositiveButton("Create") { _, _ ->
+            val doc = docs0.create(ctx, surface, input.text.toString().trim(), date) ?: return@setPositiveButton
+            CalendarNavigator.toDayNote(fragment, doc.date, doc.key)
+        }
+        .setNegativeButton(android.R.string.cancel, null)
+        .show()
+}
+
+/**
+ * Rename one of the listed documents. The list is the directory's own, so what you can rename is
+ * exactly what you were just looking at — including, on Write, the daily page itself (its index
+ * scopes the shared "write" key by date, so naming the 21st's leaves the 22nd's alone).
+ */
+private fun promptRenameDocument(
+    fragment: ScreenFragment,
+    surface: String,
+    date: LocalDate,
+    docs: List<com.toolsboox.plugin.calendar.ot.LedgerDocument>,
+) {
+    val ctx = fragment.requireContext()
+    val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    val target = docs.filter { docs0.canRename(surface, it.key) }
+    if (target.isEmpty()) return
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle("Rename which ${docs0.noun(surface)}?")
+        .setItems(target.map { it.title }.toTypedArray()) { _, which ->
+            val doc = target[which]
+            // Seed the field with the EXPLICIT name only. Pre-filling an unnamed document with its
+            // date would make "rename" mean "confirm the date as the name", which is the one answer
+            // the date default already gives for free.
+            val input = android.widget.EditText(ctx).apply {
+                if (doc.named) setText(doc.title) else hint = doc.date.toString()
+                setSingleLine()
+            }
+            val pad = (16 * ctx.resources.displayMetrics.density).toInt()
+            val box = android.widget.LinearLayout(ctx).apply {
+                orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
+            }
+            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                .setTitle("Rename ${docs0.noun(surface)}")
+                .setView(box)
+                .setPositiveButton("Save") { _, _ ->
+                    docs0.rename(ctx, surface, doc.key, input.text.toString().trim(), doc.date)
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
+        .setNegativeButton(android.R.string.cancel, null)
+        .show()
+}
+
+/** Pickings' door into the shared directory. Kept as its own name because the surface is called
+ *  Pickings everywhere it's reached from — the hub row, the pager chip, the day chip. */
+fun showPickingsPicker(
+    fragment: ScreenFragment,
+    date: LocalDate = LocalDate.now(),
+    currentKey: String? = null,
+) = showDocumentDirectory(
+    fragment, com.toolsboox.plugin.calendar.ot.LedgerDocuments.PICKINGS, date, currentKey)
 
 /** The tag index: every #tag harvested off note pages → the pages it appears on, for jump-nav. */
 fun showTagIndex(fragment: ScreenFragment) {
@@ -386,121 +577,23 @@ private fun showTagPages(fragment: ScreenFragment, tag: com.toolsboox.plugin.cal
 }
 
 /**
- * Synthesize pages: today's daily page, plus the named TOPIC pages that persist over time.
+ * Synthesize's door into the shared directory: the day's own synthesis, plus the named TOPIC pages
+ * that persist over time, each expandable into its sub-pages.
  *
  * The topic pages are the coarse boundary — one per subject, each holding only what you carried
  * onto it — so a surrogacy synthesis and an Android one never bleed into each other's outlines.
  */
-fun showSynthPicker(fragment: ScreenFragment) {
-    val ctx = fragment.requireContext()
-    val today = LocalDate.now()
-    val store = com.toolsboox.plugin.calendar.ot.SynthPageStore
-    store.sync(ctx)   // pull topic pages made on other devices
-    val topics = store.list(ctx)
-    val labels = (listOf("🔬  Today's synthesis") +
-        topics.map { "🔬  ${it.name}  ·  ${it.date}" } +
-        listOf("＋  New synthesis…", "✎  Rename a synthesis…")).toTypedArray()
-    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-        .setTitle("Synthesize")
-        .setItems(labels) { _, which ->
-            when {
-                which == 0 -> CalendarNavigator.toDayNote(fragment, today, store.DEFAULT_KEY)
-                which <= topics.size -> {
-                    val p = topics[which - 1]
-                    CalendarNavigator.toDayNote(fragment, p.date, p.key)
-                }
-                which == topics.size + 1 -> promptNewSynth(fragment)
-                else -> promptRenameSynth(fragment)
-            }
-        }
-        .setNegativeButton("Close", null)
-        .show()
-}
+fun showSynthPicker(
+    fragment: ScreenFragment,
+    date: LocalDate = LocalDate.now(),
+    currentKey: String? = null,
+) = showDocumentDirectory(
+    fragment, com.toolsboox.plugin.calendar.ot.LedgerDocuments.SYNTHESIZE, date, currentKey)
 
-private fun promptNewSynth(fragment: ScreenFragment) {
-    val ctx = fragment.requireContext()
-    val input = android.widget.EditText(ctx).apply { hint = "What's this synthesis about?"; setSingleLine() }
-    val pad = (16 * ctx.resources.displayMetrics.density).toInt()
-    val box = android.widget.LinearLayout(ctx).apply {
-        orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
-    }
-    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-        .setTitle("New synthesis")
-        .setView(box)
-        .setPositiveButton("Create") { _, _ ->
-            val page = com.toolsboox.plugin.calendar.ot.SynthPageStore.add(ctx, input.text.toString().trim())
-            CalendarNavigator.toDayNote(fragment, page.date, page.key)
-        }
-        .setNegativeButton(android.R.string.cancel, null)
-        .show()
-}
-
-private fun promptRenameSynth(fragment: ScreenFragment) {
-    val ctx = fragment.requireContext()
-    val pages = com.toolsboox.plugin.calendar.ot.SynthPageStore.list(ctx)
-    if (pages.isEmpty()) return
-    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-        .setTitle("Rename which synthesis?")
-        .setItems(pages.map { it.name }.toTypedArray()) { _, which ->
-            val page = pages[which]
-            val input = android.widget.EditText(ctx).apply { setText(page.name); setSingleLine() }
-            val pad = (16 * ctx.resources.displayMetrics.density).toInt()
-            val box = android.widget.LinearLayout(ctx).apply {
-                orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
-            }
-            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-                .setTitle("Rename synthesis")
-                .setView(box)
-                .setPositiveButton("Save") { _, _ ->
-                    com.toolsboox.plugin.calendar.ot.SynthPageStore.rename(ctx, page.key, input.text.toString().trim())
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-        }
-        .setNegativeButton(android.R.string.cancel, null)
-        .show()
-}
-
-private fun promptNewPicking(fragment: ScreenFragment) {
-    val ctx = fragment.requireContext()
-    val today = LocalDate.now()
-    val input = android.widget.EditText(ctx).apply { hint = "Pickings name"; setSingleLine() }
-    val pad = (16 * ctx.resources.displayMetrics.density).toInt()
-    val box = android.widget.LinearLayout(ctx).apply {
-        orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
-    }
-    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-        .setTitle("New pickings")
-        .setView(box)
-        .setPositiveButton("Create") { _, _ ->
-            val page = com.toolsboox.plugin.calendar.ot.PickingsStore.add(ctx, today, input.text.toString().trim())
-            CalendarNavigator.toDayNote(fragment, today, page.key)
-        }
-        .setNegativeButton(android.R.string.cancel, null)
-        .show()
-}
-
-private fun promptRenamePicking(fragment: ScreenFragment) {
-    val ctx = fragment.requireContext()
-    val today = LocalDate.now()
-    val pages = com.toolsboox.plugin.calendar.ot.PickingsStore.list(ctx, today)
-    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-        .setTitle("Rename which pickings?")
-        .setItems(pages.map { it.name }.toTypedArray()) { _, which ->
-            val page = pages[which]
-            val input = android.widget.EditText(ctx).apply { setText(page.name); setSingleLine() }
-            val pad = (16 * ctx.resources.displayMetrics.density).toInt()
-            val box = android.widget.LinearLayout(ctx).apply {
-                orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
-            }
-            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-                .setTitle("Rename pickings")
-                .setView(box)
-                .setPositiveButton("Save") { _, _ ->
-                    com.toolsboox.plugin.calendar.ot.PickingsStore.rename(ctx, today, page.key, input.text.toString().trim())
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-        }
-        .show()
-}
+/** Write's door into the shared directory: the day's writing plus the named pieces you return to. */
+fun showWritePicker(
+    fragment: ScreenFragment,
+    date: LocalDate = LocalDate.now(),
+    currentKey: String? = null,
+) = showDocumentDirectory(
+    fragment, com.toolsboox.plugin.calendar.ot.LedgerDocuments.WRITE, date, currentKey)
