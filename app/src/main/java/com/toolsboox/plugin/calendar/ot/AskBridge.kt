@@ -124,6 +124,13 @@ object AskBridge {
             }.isSuccess
             runCatching {
                 activity.runOnUiThread {
+                    // Tell the surface, THEN say it landed. [DayLocks] in placeOnEducatePanel keeps
+                    // this write from interleaving with the open day page's pen-up save, but a lock
+                    // only orders the two writes — it cannot tell the page that the day it has been
+                    // holding since it loaded is now short a gram. 🎓 is offered from ScreenFragment
+                    // itself, so this fires from every surface in the app, the day page included:
+                    // without the re-read the question-gram is written and then written over.
+                    if (ok && fragment.isAdded) runCatching { fragment.onExternalGramPlaced("intake") }
                     if (fragment.isAdded) fragment.showMessage(
                         if (ok) "🎓 → Educate Me" else "Couldn't place that — try again.",
                         fragment.view

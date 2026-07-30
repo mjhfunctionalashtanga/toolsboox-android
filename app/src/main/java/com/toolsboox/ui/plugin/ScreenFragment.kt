@@ -269,6 +269,19 @@ abstract class ScreenFragment : Fragment() {
      */
     open fun onExternalGramPlaced(pageKey: String) {}
 
+    /**
+     * Something OTHER than this fragment just wrote a text note for [date].
+     *
+     * The same failure as [onExternalGramPlaced], one store over. Text Notes keeps the whole day's
+     * note LIST in the fragment and writes all of it back on every autosave — so a note appended to
+     * disk by the activity (the 📷 Capture → OCR path, which is reachable from every screen) is a
+     * note the fragment has never heard of, and the next keystroke's 400ms autosave serialises the
+     * list without it. The note is written, then un-written, and nothing says so.
+     *
+     * Same rule as its sibling: RE-READ, never blind-save.
+     */
+    open fun onExternalNoteAdded(date: java.time.LocalDate) {}
+
     internal fun dispatchVolumeKey(up: Boolean): Boolean = isResumed && onVolumeKey(up)
 
     /**

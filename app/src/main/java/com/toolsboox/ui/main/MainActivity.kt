@@ -533,6 +533,10 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                             calendarDayService, documentsRoot(), file, att
                         )
                     }
+                    // AvGrams.file writes BOTH the attachment and the poster gram into today's day
+                    // file. The mic is on the floating pen button, so this fires from every screen
+                    // in the app — including the day page you were writing on when you hit record.
+                    if (placed) tellSurfaceGramPlaced(com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY)
                     toast(if (placed) "🎤 Voice gram → today's Pickings" else "Voice gram saved")
                 }
             }
@@ -543,6 +547,43 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         super.onStop()
         // Never leave the microphone open behind a backgrounded app; keep the memo.
         com.toolsboox.ot.VoiceRecorder.stop(save = true)
+    }
+
+    /**
+     * The screen the user is actually looking at, or null.
+     *
+     * Same resolution [handleVolumeKey] uses, and for the same reason: the activity has no direct
+     * handle on the current screen, and anything it caches goes stale across a navigation. Ask the
+     * nav host at the moment it matters.
+     */
+    private fun resumedScreen(): com.toolsboox.ui.plugin.ScreenFragment? {
+        val navHost = supportFragmentManager.primaryNavigationFragment ?: return null
+        val current = navHost.childFragmentManager.fragments.lastOrNull { it.isResumed }
+        return current as? com.toolsboox.ui.plugin.ScreenFragment
+    }
+
+    /**
+     * We just wrote something into today's day file from up here. Tell the screen below.
+     *
+     * THE WHOLE ACTIVITY IS A BACKGROUND WRITER. Capture, voice grams, shared links and OCR filing
+     * all run in [lifecycleScope] against today's day JSON while some fragment — very often today's
+     * own day page — sits RESUMED holding its own copy of that day. The write lands, the toast says
+     * it landed, and then the fragment's next pen-up save serialises the copy it has been holding
+     * since it loaded, which does not contain what we just wrote. Michael's rule for this whole
+     * class: a write that succeeds while the surface never learns about it is a write that is going
+     * to be lost. [ScreenFragment.onExternalGramPlaced] is the telling; the surface re-reads and
+     * never saves, because saving is the thing that destroys the record.
+     *
+     * Only ever called after the write actually SUCCEEDED — an unnecessary re-read is a full e-ink
+     * redraw, and on a failed write there is nothing new on disk to go and get.
+     */
+    private fun tellSurfaceGramPlaced(pageKey: String) {
+        runCatching { resumedScreen()?.onExternalGramPlaced(pageKey) }
+    }
+
+    /** The same telling for the text-note store — see [ScreenFragment.onExternalNoteAdded]. */
+    private fun tellSurfaceNoteAdded(date: java.time.LocalDate) {
+        runCatching { resumedScreen()?.onExternalNoteAdded(date) }
     }
 
     private fun ingestPhotoFile(f: java.io.File) {
@@ -567,15 +608,19 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     private fun ingestBitmap(bmp: android.graphics.Bitmap?) {
         if (bmp == null) { toast("Couldn't read that image"); return }
         lifecycleScope.launch {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val key = com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY
+            val placed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching {
                     com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
                         calendarDayService, documentsRoot(), bmp, java.time.LocalDate.now(),
-                        com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY,
-                        sourceLabel = "📷 Photo · ${java.time.LocalDate.now()}"
+                        key, sourceLabel = "📷 Photo · ${java.time.LocalDate.now()}"
                     )
-                }
+                }.isSuccess
             }
+            // Same telling as the OCR path below, and needed a step earlier: the photo gram itself
+            // goes into today's day file from up here, so a day page on screen is stale from the
+            // moment the shutter closes — before the OCR dialog has even been offered.
+            if (placed) tellSurfaceGramPlaced(key)
             toast("Added to today's Pickings")
             offerOcr(bmp)   // recycles bmp when done
         }
@@ -631,9 +676,10 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
     private fun fileOcrText(text: String, asTask: Boolean, asEvent: Boolean) {
         lifecycleScope.launch {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val today = java.time.LocalDate.now()
+            val filed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching {
-                    val root = documentsRoot(); val today = java.time.LocalDate.now()
+                    val root = documentsRoot()
                     if (asTask) {
                         val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
                         day.ledgerItems.add(com.toolsboox.plugin.calendar.da.v2.LedgerItem(
@@ -646,7 +692,16 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                         com.toolsboox.plugin.textnotes.TextNotesStore.addNote(
                             this@MainActivity, today, "📷 Photo · $today", text)
                     }
-                }
+                }.isSuccess
+            }
+            // Tell the surface BEFORE the toast, so the words "filed as a task on today" are true of
+            // the page as well as of the file. A photographed to-do went into today's day JSON from
+            // this IO block while today's day page was very plausibly the screen it was photographed
+            // from — and that page's next pen-up wrote its pre-OCR copy of the day straight back
+            // over the task. Confirmed silent loss; the task was saved and then quietly unsaved.
+            if (filed) {
+                if (asTask) tellSurfaceGramPlaced(com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY)
+                else tellSurfaceNoteAdded(today)
             }
             toast(if (asEvent) "Filed as an event on today" else if (asTask) "Filed as a task on today" else "Saved as a note")
         }
@@ -899,14 +954,18 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     /** Place [bitmap] as a gram (with provenance) on [pageKey]; reload the day when it landed there. */
     private fun placeGram(bitmap: android.graphics.Bitmap, pageKey: String, sourceLink: String, sourceLabel: String, openDay: Boolean) {
         lifecycleScope.launch {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val placed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching {
                     com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
                         calendarDayService, documentsRoot(), bitmap, java.time.LocalDate.now(), pageKey,
                         sourceLink = sourceLink, sourceLabel = sourceLabel
                     )
-                }
+                }.isSuccess
             }
+            // Only the STAY branch needs telling — `openDay` navigates, and arriving at the day page
+            // loads the day fresh. A share that stays put drops the caller back onto whatever screen
+            // it interrupted, holding a day that predates the card by a second.
+            if (placed && !openDay) tellSurfaceGramPlaced(pageKey)
             if (openDay) {
                 val navOptions = androidx.navigation.navOptions { popUpTo(R.id.CalendarDayFragment) { inclusive = true } }
                 runCatching { binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, null, navOptions) }

@@ -307,6 +307,40 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
         showNote(current.coerceAtMost(notes.lastIndex))
     }
 
+    /**
+     * A note for [date] was written to the store by something other than this screen — today, the
+     * 📷 Capture → OCR path in [com.toolsboox.ui.main.MainActivity], which can fire from any screen
+     * including this one.
+     *
+     * RE-READ, never blind-save — the day page's rule, adapted to a store that has no per-item
+     * write. [persist] serialises the WHOLE list, so simply saving here would drop the note that
+     * was just added, and simply reloading would drop whatever is half-typed in the editor. So do
+     * both, in the only order that keeps both: fold the editor's live text back into the note object
+     * in memory (no disk), re-read the list from disk to pick up the newcomer, and union the two by
+     * id with the live note winning its own slot.
+     *
+     * Deliberately NOT [showNote] — the current note's text has not changed, and re-setting it would
+     * yank the cursor to the end of the body mid-sentence. Only the list and its count move.
+     */
+    override fun onExternalNoteAdded(date: LocalDate) {
+        if (!isAdded || !isResumed || date != this.date) return
+        val live = notes.getOrNull(current)
+        if (live != null) {
+            val t = binding.textNotesTitle.text.toString()
+            val b = binding.textNotesEdit.text.toString()
+            if (live.title != t || live.body != b) {
+                live.title = t; live.body = b; live.updatedAt = System.currentTimeMillis()
+            }
+        }
+        val byId = LinkedHashMap<String, TextNote>()
+        for (n in TextNotesStore.load(requireContext(), date)) byId[n.id] = n
+        for (n in notes) byId.putIfAbsent(n.id, n)
+        live?.let { byId[it.id] = it }
+        notes = byId.values.toMutableList()
+        current = notes.indexOfFirst { it.id == live?.id }.coerceAtLeast(0)
+        binding.textNotesList.text = "≡ Notes (${notes.size})"
+    }
+
     override fun onPause() {
         super.onPause()
         main.removeCallbacks(saveRunnable)
