@@ -476,23 +476,35 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     private fun createManual(kind: LedgerItem.Kind, text: String, due: LocalDate, time: String? = null) {
         val t = text.trim()
         if (t.isEmpty()) return
-        val d = day ?: return
+        if (day == null) return   // nothing has been read yet; there is no page to add to
         val dueDate = Date(due.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli())
         val item = LedgerItem(
             id = "li-${java.util.UUID.randomUUID()}", kind = kind, text = t, date = dueDate,
             time = if (kind == LedgerItem.Kind.EVENT) time else null, source = "manual"
         )
-        d.ledgerItems.add(item)
-        // Tasks also land on the day page (a text box in a free Tasks row); the scrollable list
-        // holds every task regardless, so overflow past the 16 rows still shows there.
-        if (kind == LedgerItem.Kind.TASK)
-            com.toolsboox.plugin.calendar.ot.LedgerTaskCarryOver.placeTypedTask(d, t, requireContext().applicationContext)
+        val appCtx = requireContext().applicationContext
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
-                runCatching { calendarDayService.save(documentsRoot(), anchor, d) }
-                    .onFailure { Timber.w(it, "ledger items: manual save failed") }
-                com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), item)
-                com.toolsboox.plugin.calendar.nw.LedgerEventSync.pushEvent(requireContext(), item)
+                runCatching {
+                    // Read the ANCHOR's own file and write the item into that, rather than saving
+                    // back whatever `day` is holding. With a period on the strip `day` is a
+                    // SYNTHETIC CalendarDay carrying every item the window gathered, so saving it
+                    // to the anchor would copy a whole month of other days' tasks into one file —
+                    // the same family of defect as looking a row's file up from the anchor
+                    // (see `persist` / `deleteItems`): once a window is on screen, "the day" the
+                    // surface is showing and "the day file" a write belongs in are two things.
+                    val root = documentsRoot()
+                    val cd = calendarDayService.load(root, anchor, null, Locale.getDefault())
+                    cd.ledgerItems.add(item)
+                    // Tasks also land on the day page (a text box in a free Tasks row); the
+                    // scrollable list holds every task regardless, so overflow past the 16 rows
+                    // still shows there.
+                    if (kind == LedgerItem.Kind.TASK)
+                        com.toolsboox.plugin.calendar.ot.LedgerTaskCarryOver.placeTypedTask(cd, t, appCtx)
+                    calendarDayService.save(root, anchor, cd)
+                }.onFailure { Timber.w(it, "ledger items: manual save failed") }
+                com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(appCtx, item)
+                com.toolsboox.plugin.calendar.nw.LedgerEventSync.pushEvent(appCtx, item)
             }
             load()
         }

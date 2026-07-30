@@ -80,6 +80,20 @@ object LedgerSendExport {
         val community = LedgerCommunityBridge.config(ctx)
 
         val rows = mutableListOf<Pair<String, () -> Unit>>()
+        // Ask sits FIRST, above every row that puts the page somewhere, because it is the only
+        // destination here that sends the page nowhere: nothing leaves the device, nothing is
+        // posted, and you can come back. Michael, on how far the send-to-Ask bridge should reach:
+        // "We can do that from any surface pretty much. Maybe export would work for that." He was
+        // right — this one sheet is already the way out of Write, Synthesize, Pickings, Notes and
+        // Text Notes, so a single row here is five surfaces at once and none of them had to learn
+        // anything about Ask.
+        //
+        // What travels is [Payload.text], the composed plain text: the page's typed boxes, or its
+        // Write markdown, or — on a handwritten page — whatever the vision model reads off the ink.
+        // That last one is the point. A handwritten page becomes askable, which is a thing no other
+        // route into Ask can do: every other caller of the bridge starts from a text selection that
+        // was already text.
+        rows.add("🔎  Ask my Ledger about this" to { askAboutThis(fragment, payload) })
         rows.add("📝  Plain text" to { sharePlainText(fragment, payload) })
         // The text sibling of PNG and Linked PDF: a real `.md` on disk rather than EXTRA_TEXT.
         // "Plain text" hands the words to the chooser as an extra, which most destinations paste
@@ -111,6 +125,42 @@ object LedgerSendExport {
                 .setNegativeButton(android.R.string.cancel, null)
                 .create()
         )
+    }
+
+    /* -----------------------------------------------------------------------------------
+     * Nowhere at all — the page into Ask
+     * --------------------------------------------------------------------------------- */
+
+    /**
+     * The page into the Ask surface as a passage, waiting for a prompt.
+     *
+     * The words are produced on IO for the same reason every other row here does it: on a
+     * handwritten page "give me the text" is a vision-model round trip, and doing it on the main
+     * thread would freeze the panel for seconds. It says so first, because on e-ink a screen that
+     * does nothing for four seconds reads as a tap that missed.
+     *
+     * An empty page still goes: [AskBridge.askFrom] falls back to the title, which is the honest
+     * "you sent the whole thing" case rather than a refusal — the sheet knows the page has a name
+     * even when it has no readable words yet.
+     */
+    private fun askAboutThis(fragment: ScreenFragment, payload: Payload) {
+        val ctx = fragment.requireContext()
+        fragment.lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) { runCatching { payload.text() }.getOrDefault("") }
+            if (!fragment.isAdded) return@launch
+            if (text.isBlank()) toast(ctx, "Nothing readable on this page — sending its title")
+            AskBridge.askFrom(
+                fragment,
+                selection = text.takeIf { it.isNotBlank() },
+                title = payload.title,
+                // The page's address in the Ledger, so the connection graph has something to match
+                // on. [LedgerProvenance] already remembers a published page's permalink under
+                // exactly this key, which is the closest thing a made page has to a URL.
+                link = LedgerProvenance.publishedUrl(ctx, payload.date, payload.pageKey).orEmpty(),
+                sourceLabel = listOf(payload.surface, payload.date?.toString().orEmpty())
+                    .filter { it.isNotBlank() }.joinToString(" · ")
+            )
+        }
     }
 
     /* -----------------------------------------------------------------------------------

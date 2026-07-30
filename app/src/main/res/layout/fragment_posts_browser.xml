@@ -42,6 +42,16 @@
             android:layout_height="wrap_content"/>
     </LinearLayout>
 
+    <!-- The real Almanac strip (the 1404×140 day navigator), hosted by CalendarNavBarHost as the
+         browser's date filter — the same bar Mail and the feeds filter with, not a look-alike. -->
+    <ImageView
+        android:id="@+id/posts_navigator"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginHorizontal="4dp"
+        android:scaleType="fitXY"
+        android:contentDescription="@null"/>
+
     <View
         android:background="#000000"
         android:layout_width="match_parent"

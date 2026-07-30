@@ -39,6 +39,46 @@
         android:layout_height="wrap_content"
         android:layout_marginBottom="14dp"/>
 
+    <!--
+      What was sent, sitting above the answer for the whole visit.
+
+      The passage has always ridden the grounding (`ask_context`); what it never did was show its
+      face, so the one thing you could not check while choosing a prompt was WHICH highlight you
+      were about to ask about. Four lines and a cross: enough to recognise it, not so much that it
+      becomes the page. The cross drops the grounding with it — one gesture, one meaning, no state
+      where the model is still reading a passage you thought you had put down.
+    -->
+    <LinearLayout
+        android:id="@+id/passage_banner"
+        android:orientation="horizontal"
+        android:visibility="gone"
+        android:background="@drawable/eink_edit_bg"
+        android:padding="10dp"
+        android:layout_marginBottom="10dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+        <TextView
+            android:id="@+id/passage_text"
+            android:textColor="#000000"
+            android:textSize="14sp"
+            android:maxLines="4"
+            android:ellipsize="end"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+        <TextView
+            android:id="@+id/passage_clear"
+            android:text="✕"
+            android:textColor="#000000"
+            android:textSize="18sp"
+            android:paddingStart="12dp"
+            android:paddingEnd="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/ledger_chat_passage_clear"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+
     <!-- Scope: everything, or pick sections -->
     <LinearLayout
         android:orientation="horizontal"
@@ -68,6 +108,31 @@
             android:checked="true" android:textColor="#000000"
             android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
     </LinearLayout>
+
+    <!--
+      The prompt presets, as a row of chips directly over the question field.
+
+      They live HERE and not in the collapsed key/model panel where the persona button sits,
+      because a preset is spent at the moment of asking: it has to be one tap from the question,
+      or typing the question out again is cheaper than finding the saved one. (The persona button
+      being buried is a separate sin, and not this pass's to fix — a persona is chosen once and
+      then forgotten about, which is the one thing that makes its hiding place survivable.)
+
+      Filled programmatically by [LedgerChatFragment.rebuildPresetRow]: tapping a chip asks it,
+      holding one edits or deletes it — hold-to-act, no modes — and the trailing ＋ makes a new one.
+    -->
+    <HorizontalScrollView
+        android:id="@+id/preset_scroll"
+        android:scrollbars="none"
+        android:layout_marginBottom="8dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+        <LinearLayout
+            android:id="@+id/preset_row"
+            android:orientation="horizontal"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </HorizontalScrollView>
 
     <EditText
         android:id="@+id/question_edit"
@@ -131,6 +196,17 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal">
+        <!--
+          Two keeps, not one. The feed is for something to come back past you again; a text note is
+          a thing you have KEPT, titled by the question, with the provenance attached.
+        -->
+        <Button
+            android:id="@+id/save_note_button"
+            android:text="@string/ledger_chat_save_note"
+            android:textSize="14sp"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"/>
         <Button
             android:id="@+id/save_feed_button"
             android:text="@string/ledger_chat_save_feed"

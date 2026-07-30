@@ -31,6 +31,9 @@ import com.toolsboox.plugin.calendar.ot.PanelOcr
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
@@ -53,12 +56,28 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class RosterFragment @Inject constructor() : ScreenFragment() {
 
+    companion object {
+        /** How many days one window may fetch. A year of a busy studio is 365 round trips and
+         *  nobody asked a pane for that; six weeks is the widest picture the surface can draw
+         *  without becoming a scrape. Beyond it the window is truncated, not refused — a quarter
+         *  still opens, on its first six weeks. */
+        private const val MAX_WINDOW_DAYS = 42
+    }
+
     @Inject
     lateinit var calendarDayService: CalendarDayService
 
+    @Inject
+    lateinit var calendarPatternService: com.toolsboox.plugin.calendar.fi.CalendarPatternService
+
     private lateinit var content: FrameLayout
     private lateinit var titleView: TextView
+    private lateinit var navigatorImageView: ImageView
+    private var navBar: CalendarNavBarHost? = null
 
+    /** The pair the almanac strip owns: how wide the window is, and where it sits. "day" is the
+     *  live view this pane has always had; the rest are what the strip added. */
+    private var navPeriod: String = "day"
     private var date: LocalDate = LocalDate.now()
     private var attendees: List<RosterBridge.Attendee> = emptyList()
     private var loading = true
@@ -100,9 +119,11 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
             setOnClickListener { onTap() }
         }
         bar.addView(titleView)
-        bar.addView(barBtn("‹") { step(-1) })
-        bar.addView(barBtn("Today") { date = LocalDate.now(); load() })
-        bar.addView(barBtn("›") { step(1) })
+        // Today is the almanac chip's ✕ in a button: it resets BOTH halves of the pair, because a
+        // pane left on "this month, three months ago" is not returned to today by moving one of
+        // them. The ‹ › that used to sit here are gone — the strip carries its own, and they step
+        // by the window, which is the thing a bespoke pair always gets wrong.
+        bar.addView(barBtn("Today") { navPeriod = "day"; date = LocalDate.now(); navBar?.setGranularity("day"); load() })
         bar.addView(barBtn("↻") { load() })
         // Booking is a facet of the roster (a roster is just the attendees of an event), so the public
         // booking page lives here rather than as its own menu row — the member-facing web version of
@@ -110,6 +131,17 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
         bar.addView(barBtn("Booking") { openBookingPage() })
         bar.addView(barBtn("Close") { NavHostFragment.findNavController(this).popBackStack() })
         col.addView(bar)
+
+        // The real Almanac strip, the one Mail and the feeds already filter with — not a look-alike.
+        // It goes under the title bar rather than at the foot, where the old ‹ Today › lived, so it
+        // reads as the pane's date chrome instead of as a pagination footer.
+        navigatorImageView = ImageView(ctx).apply {
+            scaleType = ImageView.ScaleType.FIT_XY
+            contentDescription = null
+        }
+        col.addView(navigatorImageView, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, px(52)
+        ).apply { setMargins(px(4), 0, px(4), px(2)) })
 
         content = FrameLayout(ctx)
         col.addView(content, LinearLayout.LayoutParams(
@@ -120,16 +152,81 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        load()
+        // Passing onSelectPeriod is what turns the strip from a way OUT of the pane into its date
+        // filter: a slot tap scopes the roster in place instead of jumping to the calendar page for
+        // that period (see CalendarNavBarHost.select). The arrows move this pane's own anchor, by
+        // the active window — a month steps a month.
+        navBar = CalendarNavBarHost(requireContext(), navigatorImageView, this,
+            onStepDay = { d -> date = d; load() },
+            onSelectPeriod = { period, d -> navPeriod = period; date = d; load() })
+        load()   // draws the strip on its way past — see renderNav()
     }
+
+    /** Redraw the Almanac strip for the anchor (dots for filled days), as every hosting surface does. */
+    private fun renderNav() {
+        val bar = navBar ?: return
+        viewLifecycleOwner.lifecycleScope.launch {
+            val root = documentsRoot()
+            val loc = Locale.getDefault()
+            val anchor = date
+            val (day, pat) = withContext(Dispatchers.IO) {
+                val cd = runCatching { calendarDayService.load(root, anchor, null, loc) }.getOrNull()
+                    ?: com.toolsboox.plugin.calendar.da.v2.CalendarDay(
+                        anchor.year, anchor.monthValue, anchor.dayOfMonth, startHour = null)
+                cd to runCatching { calendarPatternService.load(root, anchor, loc) }.getOrNull()
+            }
+            // A missing pattern must not kill the strip: an unrendered CalendarNavBarHost never
+            // sets its currentDay, and a bar with no currentDay swallows every touch — the silent
+            // way a date filter can "render once, then no-op" on a fresh year.
+            val safePat = pat ?: com.toolsboox.plugin.calendar.da.v1.CalendarPattern(anchor.year, loc).fill()
+            if (isAdded) bar.render(day, safePat)
+        }
+    }
+
+    /** Inclusive day range for the active window — the same shape [LedgerItemsFragment] uses. */
+    private fun periodRange(): Pair<LocalDate, LocalDate> = when (navPeriod) {
+        "week" -> {
+            val s = date.with(java.time.temporal.WeekFields.of(Locale.getDefault()).dayOfWeek(), 1)
+            s to s.plusDays(6)
+        }
+        "month" -> date.withDayOfMonth(1) to date.withDayOfMonth(date.lengthOfMonth())
+        "quarter" -> {
+            val s = date.withMonth((date.monthValue - 1) / 3 * 3 + 1).withDayOfMonth(1)
+            val e = s.plusMonths(2)
+            s to e.withDayOfMonth(e.lengthOfMonth())
+        }
+        "year" -> LocalDate.of(date.year, 1, 1) to LocalDate.of(date.year, 12, 31)
+        else -> date to date
+    }
+
+    /**
+     * What a period MEANS here: the bridge answers one day at a time, so a window is that many
+     * days — fetched together, capped at [MAX_WINDOW_DAYS]. "day" is the one-element case, so
+     * there is no separate path for it.
+     */
+    private fun windowDays(): List<String> {
+        val (start, end) = periodRange()
+        val out = mutableListOf<String>()
+        var cur = start
+        while (!cur.isAfter(end) && out.size < MAX_WINDOW_DAYS) {
+            out.add(cur.toString()); cur = cur.plusDays(1)
+        }
+        return out.ifEmpty { listOf(dateStr) }
+    }
+
+    /** True while the strip is scoped wider than one day — what decides whether a slot header has
+     *  to name its date, and how an empty pane words itself. */
+    private fun wideWindow(): Boolean = navPeriod != "day"
+
+    /** The pair, as one string — the stale-response guard, so a slow month landing after you have
+     *  stepped on doesn't stamp itself over the day you are now looking at. */
+    private fun windowKey(): String = "$navPeriod|$date"
 
     override fun onResume() {
         super.onResume()
         // The pre-session nudge can also surface here (it primarily fires from the day page).
         AppointmentNudge.maybeShow(this) { recordForToday() }
     }
-
-    private fun step(days: Int) { date = date.plusDays(days.toLong()); load() }
 
     /** The member-facing booking page (FluentBooking) in the in-app WebView — the web face of the
      *  same bookings this roster manages. */
@@ -142,16 +239,30 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
 
     private fun load() {
         if (!isAdded) return
-        titleView.text = "Roster · $dateStr"
+        // The date left the title when the strip arrived. It was in there because nothing else on
+        // the screen said which day you were looking at; the almanac says it now, with dots.
+        titleView.text = "Roster"
         loading = true
+        renderNav()
         renderLoading()
         val ctx = requireContext()
-        val target = dateStr
+        val days = windowDays()
+        val target = windowKey()
         // The view's scope: the fetch exists only to draw this roster, so back-navigation
         // cancels it instead of ghost-rendering into a dead view.
         viewLifecycleOwner.lifecycleScope.launch {
-            val list = withContext(Dispatchers.IO) { RosterBridge.roster(ctx, target) }
-            if (!isAdded || target != dateStr) return@launch
+            val list = withContext(Dispatchers.IO) {
+                // Concurrently, because a month is thirty round trips and doing them in a row is
+                // the difference between a pane that opens and a pane you wait for. One day's
+                // failure is caught to an empty list, exactly as the posts fan-out does — an
+                // unreachable Tuesday must not empty the rest of the week.
+                coroutineScope {
+                    days.map { d ->
+                        async { runCatching { RosterBridge.roster(ctx, d) }.getOrDefault(emptyList()) }
+                    }.awaitAll().flatten()
+                }
+            }
+            if (!isAdded || target != windowKey()) return@launch
             attendees = list
             loading = false
             render()
@@ -171,7 +282,9 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
         content.removeAllViews()
         if (attendees.isEmpty()) {
             content.addView(TextView(ctx).apply {
-                text = "Nobody's booked on $dateStr, or the site bridge isn't reachable."
+                text = if (wideWindow())
+                    "Nobody's booked in this $navPeriod, or the site bridge isn't reachable."
+                else "Nobody's booked on $dateStr, or the site bridge isn't reachable."
                 setTextColor(Color.parseColor("#666666")); textSize = 15f
                 setPadding(px(20), px(24), px(20), px(20))
             })
@@ -182,10 +295,16 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
             orientation = LinearLayout.VERTICAL
             setPadding(0, 0, 0, px(24))
         }
-        val slots = attendees.map { it.clock }.distinct().sorted()
-        for (slot in slots) {
-            val inSlot = attendees.filter { it.clock == slot }
-            list.addView(slotHeader(slot, inSlot.first()))
+        // A slot is a (day, time), not a time. Grouping on the clock alone was right while the pane
+        // could only ever show one day; with a month on screen it would fold the 3rd's nine o'clock
+        // into the 12th's — one header, one class title borrowed from whichever booking sorted
+        // first, and no way to tell the two mornings apart. The header only SAYS the date when the
+        // window is wider than a day, because on a day view the strip has already said it.
+        val slots = attendees.map { it.day to it.clock }.distinct()
+            .sortedWith(compareBy({ it.first }, { it.second }))
+        for ((day, clock) in slots) {
+            val inSlot = attendees.filter { it.day == day && it.clock == clock }
+            list.addView(slotHeader(if (wideWindow()) "$day · $clock" else clock, inSlot.first()))
             list.addView(cardGrid(inSlot))
         }
         scroll.addView(list)

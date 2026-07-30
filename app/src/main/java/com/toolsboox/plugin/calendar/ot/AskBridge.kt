@@ -48,8 +48,22 @@ object AskBridge {
     }
 
     /**
-     * Open Ask my Ledger about [selection] (or the whole item when null/blank), grounded with
-     * provenance + connections.
+     * Open Ask my Ledger HOLDING [selection] (or the whole item when null/blank), grounded with
+     * provenance + connections, and wait there for a prompt.
+     *
+     * This used to make the passage BE the question and auto-ask it, which produced the one
+     * exchange nobody wants: a highlighted sentence pasted into the box, and an answer to the
+     * question "what do you make of this?" that nobody had actually asked. Michael, deciding what
+     * the bridge is for: "We can send a highlight or a selected set of items to the ask ai and give
+     * it a prompt or use a preset." So the passage now arrives AS a passage — visible in the chat's
+     * banner, riding `ask_context` — and the question is the next thing chosen. One tap on a preset
+     * chip and it is asked; the old behaviour is roughly the first chip ("What is this?").
+     *
+     * `initial_query` is deliberately no longer set. It still exists and still auto-asks, because
+     * some callers genuinely know the question (ReadingLog's search box, a lasso'd term) — but a
+     * highlight is a SUBJECT, not a question, and the bridge's callers are all sending subjects.
+     * Every surface that already carried an "Ask about this" row got the new behaviour for free
+     * without learning anything about presets.
      *
      * @param fragment the surface asking — used for navigation and context only
      * @param selection the highlight; null/blank = "push the whole thing"
@@ -66,13 +80,17 @@ object AskBridge {
     ) {
         val ctx = fragment.context ?: return
         val appCtx = ctx.applicationContext
+        // What was sent, for the human: the highlight, or the item's title when the whole thing
+        // went. The model reads the same text through the grounding; this copy is what the banner
+        // shows, so you can see WHICH passage you are about to ask about while you pick the prompt.
+        val passage = selection?.trim().takeUnless { it.isNullOrEmpty() } ?: title.trim()
+        if (passage.isEmpty()) return
         // The connection graph is one small cached JSON, but its first read is still disk — build
         // the grounding off the main thread, then navigate in one hop. Single redraw either way.
         Thread {
             val grounding = runCatching {
                 buildGrounding(appCtx, selection, title, link, sourceLabel)
             }.getOrDefault("")
-            val question = selection?.trim().takeUnless { it.isNullOrEmpty() } ?: title.trim()
             runCatching {
                 fragment.requireActivity().runOnUiThread {
                     if (!fragment.isAdded) return@runOnUiThread
@@ -80,7 +98,7 @@ object AskBridge {
                         NavHostFragment.findNavController(fragment).navigate(
                             R.id.action_to_ledger_chat,
                             bundleOf(
-                                "initial_query" to question,
+                                "ask_passage" to passage,
                                 "ask_context" to grounding
                             )
                         )
@@ -167,8 +185,14 @@ object AskBridge {
         if (sel.isEmpty()) {
             sb.append("· The reader sent the whole item to Ask.\n")
         } else {
-            sb.append("· The reader highlighted: “").append(sel.take(300))
-            if (sel.length > 300) sb.append('…')
+            // "Sent", not "highlighted", and 2000 characters rather than 300. Both were right when
+            // the only caller was a reader selection — a sentence or two off a page. The Send /
+            // Export sheet now pushes a whole made page through this same door (a Write page, a
+            // Synthesize, a text note, a handwritten sheet via OCR), and for that the old line said
+            // something untrue about a page nobody highlighted, and 300 characters of an 800-word
+            // note is a teaser rather than provenance.
+            sb.append("· The reader sent: “").append(sel.take(2000))
+            if (sel.length > 2000) sb.append('…')
             sb.append("”\n")
         }
 

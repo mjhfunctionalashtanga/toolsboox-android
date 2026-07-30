@@ -403,7 +403,9 @@
     <string name="ledger_persona">🎭 Persona</string>
     <string name="ledger_chat_dictate">🎤 Dictate</string>
     <string name="ledger_chat_save_feed">💾 Save to feed</string>
+    <string name="ledger_chat_save_note">📝 Save as note</string>
     <string name="ledger_chat_history">🕘 History</string>
+    <string name="ledger_chat_passage_clear">Stop asking about this passage</string>
     <string name="text_notes_saving">Saving…</string>
     <string name="text_notes_saved">Saved</string>
     <string name="feeds_add_later">Add to Later</string>

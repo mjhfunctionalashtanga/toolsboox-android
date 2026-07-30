@@ -36,14 +36,31 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
 
+    @Inject
+    lateinit var calendarDayService: com.toolsboox.plugin.calendar.fi.CalendarDayService
+
+    @Inject
+    lateinit var calendarPatternService: com.toolsboox.plugin.calendar.fi.CalendarPatternService
+
     override val view = R.layout.fragment_posts_browser
     private lateinit var binding: FragmentPostsBrowserBinding
 
     private var types: List<WPPublish.PostType> = emptyList()
     private var type = "posts"
     private var filterKey = "all"
+
+    // The almanac anchor and how wide its window is. MONTH rather than day, because this pane opens
+    // on "what have I got" and not "what is today": a day-wide window would meet you with an empty
+    // list on every day you didn't publish, which is most of them. The Type and Show pickers stay —
+    // neither is a date filter, and "drafts" is a different question from "July" — but WHEN is the
+    // strip's now, where before this pane had no answer to it at all.
+    private var navBar: CalendarNavBarHost? = null
+    private var navPeriod: String = "month"
+    private var anchor: java.time.LocalDate = java.time.LocalDate.now()
     private var items: List<com.toolsboox.plugin.calendar.ui.SiteFetch.SitePost> = emptyList()
     private var loading = false
+    /** Bumped by every fetch; only the newest one is allowed to paint. See [reload]. */
+    private var loadSeq = 0
 
     // Which site the list is narrowed to (null = every configured site). Persisted, so the browser
     // reopens the way it was left — the aggregate stays the default, the narrowing a kept choice.
@@ -72,7 +89,78 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
         }
         siteFilter = uiPrefs().getString("site_filter", "")!!.ifBlank { null }
         sitesOpen = uiPrefs().getBoolean("sites_open", false)
-        reload()
+
+        // Passing onSelectPeriod is what makes the strip a FILTER rather than a way out of the
+        // pane: a slot tap scopes the list in place instead of jumping to that period's calendar
+        // page (see CalendarNavBarHost.select). The arrows step by the active window, so a month
+        // steps a month — the thing a bespoke ‹ › pair always gets wrong.
+        navBar = CalendarNavBarHost(requireContext(), binding.postsNavigator, this,
+            onStepDay = { d -> anchor = d; reload(force = true) },
+            onSelectPeriod = { period, d -> navPeriod = period; anchor = d; reload(force = true) })
+        navBar?.setGranularity(navPeriod)
+        reload()   // draws the strip on its way past — see renderNav()
+    }
+
+    /** Redraw the Almanac strip for the anchor (dots for filled days), as every hosting surface does. */
+    private fun renderNav() {
+        val bar = navBar ?: return
+        viewLifecycleOwner.lifecycleScope.launch {
+            val root = documentsRoot()
+            val loc = java.util.Locale.getDefault()
+            val at = anchor
+            val (day, pat) = withContext(Dispatchers.IO) {
+                val cd = runCatching { calendarDayService.load(root, at, null, loc) }.getOrNull()
+                    ?: com.toolsboox.plugin.calendar.da.v2.CalendarDay(
+                        at.year, at.monthValue, at.dayOfMonth, startHour = null)
+                cd to runCatching { calendarPatternService.load(root, at, loc) }.getOrNull()
+            }
+            // A missing pattern must not kill the strip: an unrendered CalendarNavBarHost never
+            // sets its currentDay, and a bar with no currentDay swallows every touch.
+            val safePat = pat ?: com.toolsboox.plugin.calendar.da.v1.CalendarPattern(at.year, loc).fill()
+            if (isAdded) bar.render(day, safePat)
+        }
+    }
+
+    /** Inclusive day range for the active window — the same shape [LedgerItemsFragment] uses. */
+    private fun periodRange(): Pair<java.time.LocalDate, java.time.LocalDate> = when (navPeriod) {
+        "week" -> {
+            val s = anchor.with(java.time.temporal.WeekFields.of(java.util.Locale.getDefault()).dayOfWeek(), 1)
+            s to s.plusDays(6)
+        }
+        "month" -> anchor.withDayOfMonth(1) to anchor.withDayOfMonth(anchor.lengthOfMonth())
+        "quarter" -> {
+            val s = anchor.withMonth((anchor.monthValue - 1) / 3 * 3 + 1).withDayOfMonth(1)
+            val e = s.plusMonths(2)
+            s to e.withDayOfMonth(e.lengthOfMonth())
+        }
+        "year" -> java.time.LocalDate.of(anchor.year, 1, 1) to java.time.LocalDate.of(anchor.year, 12, 31)
+        else -> anchor to anchor
+    }
+
+    /**
+     * The window as WP's `after`/`before` pair, in the site's wall-clock shape.
+     *
+     * `after` is exclusive on WP's side, so the lower bound goes out by a second — a post published
+     * at the stroke of midnight belongs to the window it starts, not the one before it.
+     */
+    private fun windowBounds(): Pair<String, String> {
+        val fmt = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+        val (start, end) = periodRange()
+        return start.atStartOfDay().minusSeconds(1).format(fmt) to end.plusDays(1).atStartOfDay().format(fmt)
+    }
+
+    /**
+     * Is this post inside the window? The fetch already asked for the range, but WP compares
+     * `after`/`before` against the SITE's wall clock, so on a site in another zone the edge sits a
+     * few hours out — the range is how the right posts get fetched, this is what decides the window.
+     *
+     * A post whose date won't parse is KEPT rather than hidden: a floating draft with no date isn't
+     * in some other month, it's nowhere, and this browser is the only way back to it.
+     */
+    private fun inWindow(p: WPPublish.WpPost): Boolean {
+        val d = runCatching { java.time.LocalDate.parse(p.date.take(10)) }.getOrNull() ?: return true
+        val (start, end) = periodRange()
+        return !d.isBefore(start) && !d.isAfter(end)
     }
 
     override fun onResume() {
@@ -98,10 +186,19 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
 
     private fun typeName(rest: String) = types.firstOrNull { it.restBase == rest }?.name ?: rest
 
-    private fun reload() {
+    /**
+     * @param force fetch even while one is in flight. The `loading` guard exists to collapse the
+     *   harmless double-fire of onViewCreated + onResume; a move of the almanac is not that, and
+     *   swallowing one would leave the strip pointing at a month the list has never been asked for.
+     *   Two fetches in flight are settled by [loadSeq] — the last one asked for is the one that
+     *   lands, so a slow month arriving after you stepped on cannot stamp itself over the pane.
+     */
+    private fun reload(force: Boolean = false) {
         val ctx = context ?: return
-        if (loading) return
+        renderNav()
+        if (loading && !force) return
         loading = true
+        val seq = ++loadSeq
         render()
         // The view's scope: this exists only to draw the list; a back-navigation mid-fetch cancels
         // the render rather than ghost-writing into a dead view.
@@ -116,6 +213,10 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
                     types = withContext(Dispatchers.IO) { SiteFetch.postTypes(ref, SiteStore.password(ctx, ref.id)) }
                     if (types.isNotEmpty() && types.none { it.restBase == type }) type = types.first().restBase
                 }
+                // The window scopes the FETCH as well as the list: every site sends only its thirty
+                // most recent posts of a type, so a step back to last month would otherwise land on
+                // an empty pane with the posts sitting right there, never asked for.
+                val (after, before) = windowBounds()
                 // Fan out across the sites in scope, each with its own creds, in parallel — one bad
                 // site's failure is caught to an empty list, never emptying the others.
                 val merged = withContext(Dispatchers.IO) {
@@ -123,14 +224,18 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
                         scope.map { s ->
                             async {
                                 try {
-                                    SiteFetch.listPosts(s, SiteStore.password(ctx, s.id), type, statuses)
+                                    SiteFetch.listPosts(s, SiteStore.password(ctx, s.id), type, statuses,
+                                        after = after, before = before)
                                         .map { SiteFetch.SitePost(s, it) }
                                 } catch (e: Exception) { emptyList() }
                             }
                         }.awaitAll().flatten()
                     }
                 }
-                items = merged.sortedByDescending { it.post.date }
+                // An overtaken fetch drops its answer rather than painting it: it was asked about a
+                // window nobody is looking at any more.
+                if (seq != loadSeq) return@launch
+                items = merged.filter { inWindow(it.post) }.sortedByDescending { it.post.date }
                 if (isAdded) { loading = false; render() }
             } finally {
                 // Also on cancellation — a wedged flag here would refuse every future reload.
@@ -194,8 +299,11 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
             return
         }
         if (items.isEmpty()) {
+            // Name the window, not just the emptiness: "Nothing here" over a list that is scoped to
+            // a month you happened to step onto reads as a broken pane rather than a quiet one.
             c.addView(TextView(ctx).apply {
-                text = if (siteFilter != null) "Nothing here for this site." else "Nothing here on any site."
+                text = if (siteFilter != null) "Nothing in this $navPeriod for this site."
+                else "Nothing in this $navPeriod on any site."
                 setTextColor(0xFF888888.toInt()); setPadding(px(4), px(16), px(4), 0)
             })
             return

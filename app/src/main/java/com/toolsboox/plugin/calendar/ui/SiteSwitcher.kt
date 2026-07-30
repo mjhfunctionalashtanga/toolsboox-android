@@ -199,11 +199,28 @@ object SiteFetch {
         }
     }
 
-    /** Recent posts of [type] (rest_base) on [site], filtered by [statuses]. Empty on any failure. */
-    fun listPosts(site: LedgerSite, pass: String, type: String, statuses: List<String>): List<WPPublish.WpPost> {
+    /**
+     * Recent posts of [type] (rest_base) on [site], filtered by [statuses]. Empty on any failure.
+     *
+     * [after] / [before] scope the fetch to a date range — the browser's almanac window, as
+     * "yyyy-MM-ddTHH:mm:ss". Without them the site only ever sends its thirty most recent posts of
+     * a type, so stepping the strip back a month landed on an empty list: the posts were there,
+     * they were simply never asked for, and the filter would have been cosmetic.
+     *
+     * WP compares both against `post_date` — the SITE's wall clock, there is no `after_gmt` — so on
+     * a site in another zone the edge can sit a few hours out. That is why the browser still
+     * filters what comes back: the range is how the right posts get FETCHED, not what decides the
+     * window.
+     */
+    fun listPosts(
+        site: LedgerSite, pass: String, type: String, statuses: List<String>,
+        after: String? = null, before: String? = null
+    ): List<WPPublish.WpPost> {
         if (!ready(site, pass)) return emptyList()
         var path = "wp-json/wp/v2/$type?context=edit&per_page=30&orderby=date&order=desc&_fields=id,title,status,date,link"
         if (statuses.isNotEmpty()) path += "&status=${statuses.joinToString(",")}"
+        if (!after.isNullOrBlank()) path += "&after=$after"
+        if (!before.isNullOrBlank()) path += "&before=$before"
         val resp = get(site, pass, path) ?: return emptyList()
         return resp.use { r ->
             if (!r.isSuccessful) return emptyList()

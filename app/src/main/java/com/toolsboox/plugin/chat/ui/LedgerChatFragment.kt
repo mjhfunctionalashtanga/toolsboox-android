@@ -47,6 +47,21 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
     private var lastQuestion: String = ""
     private var lastAnswer: String = ""
 
+    /**
+     * The send-to-Ask bridge's provenance preamble — rides the system context (never the visible
+     * question) for every ask in this visit, so follow-up questions stay grounded in where the
+     * passage came from. Held in a field rather than read straight off [getArguments] at ask time
+     * because it can now be PUT DOWN: the banner's ✕ drops the passage and the grounding together,
+     * and an argument the fragment kept re-reading would resurrect it on the next question.
+     */
+    private var askContext: String? = null
+
+    /** What the ask was grounded in, as the answer footer reports it — kept so a saved note can
+     *  say the same thing the screen said rather than a second, differently-counted version. */
+    private var lastHits = 0
+    private var lastCorpus = 0
+    private var lastCreated = 0
+
     /** System speech-to-text → appended into the question box, for quick dictation. */
     private val speechLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
@@ -99,11 +114,33 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
         binding.askButton.setOnClickListener { ask() }
         binding.personaButton.setOnClickListener { showPersonaDialog() }
         binding.micButton.setOnClickListener { startDictation() }
+        binding.saveNoteButton.setOnClickListener { saveAnswerAsNote() }
         binding.saveFeedButton.setOnClickListener { saveAnswerToFeed() }
         binding.historyButton.setOnClickListener { showHistoryDialog() }
         updatePersonaLabel()
 
-        // Seeded query (e.g. from a lasso "Find in Ledger") → prefill and auto-ask once.
+        // The presets that ship arrive on first look rather than at install, the same way the
+        // personas do, so a fresh Ask has something on the chip row to tap.
+        com.toolsboox.plugin.chat.nw.AskPresetStore.seedDefaults(requireContext())
+        rebuildPresetRow()
+
+        // A sent passage: shown in the banner, riding the grounding, waiting for a prompt. Read
+        // from the arguments on every view creation (not just a fresh one) so a rotation or a
+        // process death doesn't quietly detach the passage from the visit it belongs to.
+        askContext = arguments?.getString("ask_context")?.trim()?.takeIf { it.isNotEmpty() }
+        showPassage(arguments?.getString("ask_passage")?.trim())
+        binding.passageClear.setOnClickListener {
+            // One gesture, both halves. Dropping only the banner would leave the model still
+            // reading a passage the screen no longer admits to holding.
+            askContext = null
+            arguments?.remove("ask_context")
+            arguments?.remove("ask_passage")
+            showPassage(null)
+        }
+
+        // Seeded query (e.g. from a lasso "Find in Ledger") → prefill and auto-ask once. This is
+        // the door left open for callers that genuinely know what they want to ask; the send-to-Ask
+        // bridge deliberately no longer uses it (see [AskBridge.askFrom]).
         if (savedInstanceState == null) {
             arguments?.getString("initial_query")?.trim()?.takeIf { it.isNotEmpty() }?.let { seed ->
                 binding.questionEdit.setText(seed)
@@ -222,6 +259,11 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
             .setItems(labels) { _, which ->
                 val t = turns[which]
                 lastQuestion = t.question; lastAnswer = t.answer
+                // The history keeps the question and the answer, not how they were retrieved. Zero
+                // the receipt rather than let the last live ask's counts follow a reopened answer
+                // into a saved note — a note that claimed a grounding this exchange never had would
+                // be worse than one that claims nothing.
+                lastHits = 0; lastCorpus = 0; lastCreated = 0
                 binding.questionEdit.setText(t.question)
                 setAnswerWithLinks(t.answer)
             }
@@ -257,35 +299,190 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
             .show()
     }
 
+    /**
+     * The persona editor, now the shared [NamedPromptEditor] rather than a hand-rolled dialog.
+     *
+     * It lost nothing in the move and gained the multi-line discipline the presets needed: the old
+     * copy already had a four-line prompt box, and this one has six plus a footnote saying what the
+     * field is for. What it really gained is that there is now ONE form to fix when either list
+     * grows a habit — the second copy is where they drift.
+     */
     private fun showPersonaEditor(existing: com.toolsboox.plugin.chat.nw.Persona?) {
         val ctx = requireContext()
-        val nameEdit = android.widget.EditText(ctx).apply { hint = "Persona name"; setText(existing?.name ?: "") }
-        val promptEdit = android.widget.EditText(ctx).apply {
-            hint = "System prompt — the voice / role the AI should take on"
-            setText(existing?.prompt ?: ""); minLines = 4
-            gravity = android.view.Gravity.TOP or android.view.Gravity.START
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
-        }
-        val pad = (16 * resources.displayMetrics.density).toInt()
-        val box = android.widget.LinearLayout(ctx).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(pad, pad / 2, pad, 0); addView(nameEdit); addView(promptEdit)
-        }
-        val b = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle(if (existing == null) "New persona" else "Edit persona")
-            .setView(android.widget.ScrollView(ctx).apply { addView(box) })
-            .setPositiveButton("Save") { _, _ ->
-                val n = nameEdit.text.toString().trim(); val p = promptEdit.text.toString().trim()
-                if (n.isNotEmpty() && p.isNotEmpty()) {
-                    com.toolsboox.plugin.chat.nw.PersonaStore.upsert(ctx, com.toolsboox.plugin.chat.nw.Persona(n, p))
-                    com.toolsboox.plugin.chat.nw.PersonaStore.setActive(ctx, n); updatePersonaLabel()
-                } else showMessage("Give the persona a name and a prompt.")
+        NamedPromptEditor.show(
+            fragment = this,
+            title = if (existing == null) "New persona" else "Edit persona",
+            nameHint = "Persona name",
+            promptHint = "System prompt — the voice / role the AI should take on",
+            footnote = "The voice and stance the answers come back in. It stays put until you " +
+                "change it, and it is not affected by which preset you tap.",
+            original = existing?.name.orEmpty(),
+            prompt = existing?.prompt.orEmpty(),
+            onSave = { name, prompt ->
+                // Personas key on name, so a rename has to retire the old key or you get two.
+                if (existing != null && existing.name != name) {
+                    com.toolsboox.plugin.chat.nw.PersonaStore.delete(ctx, existing.name)
+                }
+                com.toolsboox.plugin.chat.nw.PersonaStore.upsert(
+                    ctx, com.toolsboox.plugin.chat.nw.Persona(name, prompt))
+                com.toolsboox.plugin.chat.nw.PersonaStore.setActive(ctx, name)
+                updatePersonaLabel()
+            },
+            onDelete = if (existing == null) null else { name ->
+                com.toolsboox.plugin.chat.nw.PersonaStore.delete(ctx, name); updatePersonaLabel()
+            },
+        )
+    }
+
+    // ---- prompt presets ------------------------------------------------------------------------
+
+    /**
+     * The chip row over the question field, rebuilt from the store.
+     *
+     * Tapping a chip ASKS it — that is the whole point of a preset, and a chip that opened a
+     * confirmation first would cost more taps than typing the question out. Holding one edits or
+     * deletes it, which is this app's standing answer to "where do the management verbs live"
+     * (hold to act, no modes), and the trailing ＋ makes a new one.
+     *
+     * Tapping a preset does NOT touch the active persona, and that is the whole separation working:
+     * the stance stays whatever it was while the question changes underneath it. Both the chip and
+     * the persona button are read from their own stores at their own moments; neither writes to the
+     * other's key.
+     */
+    private fun rebuildPresetRow() {
+        val ctx = requireContext()
+        val row = binding.presetRow
+        row.removeAllViews()
+        val density = resources.displayMetrics.density
+        val gap = (6 * density).toInt()
+
+        fun chip(label: String, onTap: () -> Unit, onHold: (() -> Unit)?): android.widget.TextView =
+            android.widget.TextView(ctx).apply {
+                text = label
+                textSize = 14f
+                setTextColor(0xFF000000.toInt())
+                // The e-ink edit background is the app's existing "this is a soft-edged control"
+                // treatment; borrowing it keeps the row from needing a drawable of its own.
+                setBackgroundResource(com.toolsboox.R.drawable.eink_edit_bg)
+                setPadding((12 * density).toInt(), (7 * density).toInt(),
+                    (12 * density).toInt(), (7 * density).toInt())
+                isSingleLine = true
+                setOnClickListener { onTap() }
+                if (onHold != null) setOnLongClickListener { onHold(); true }
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginEnd = gap }
             }
-            .setNegativeButton(android.R.string.cancel, null)
-        if (existing != null) b.setNeutralButton("Delete") { _, _ ->
-            com.toolsboox.plugin.chat.nw.PersonaStore.delete(ctx, existing.name); updatePersonaLabel()
+
+        for (preset in com.toolsboox.plugin.chat.nw.AskPresetStore.all(ctx)) {
+            row.addView(chip(preset.name, onTap = {
+                // The prompt goes into the visible question box rather than straight to the wire,
+                // so what was asked is what you can read afterwards — and so a preset can be
+                // amended in place before sending, which is the cheapest way to turn a recurring
+                // question into a slightly different one.
+                binding.questionEdit.setText(preset.prompt)
+                binding.questionEdit.setSelection(binding.questionEdit.text?.length ?: 0)
+                ask()
+            }, onHold = { showPresetEditor(preset) }))
         }
-        b.show()
+        row.addView(chip("＋ Preset", onTap = { showPresetEditor(null) }, onHold = null))
+    }
+
+    /** New / edit / delete a preset, through the same form the personas use. */
+    private fun showPresetEditor(existing: com.toolsboox.plugin.chat.nw.AskPreset?) {
+        val ctx = requireContext()
+        NamedPromptEditor.show(
+            fragment = this,
+            title = if (existing == null) "New prompt preset" else "Edit prompt preset",
+            nameHint = "Short label — what the chip says",
+            promptHint = "The question it asks",
+            footnote = "A question or a whole workflow you run often. Write as many lines as it " +
+                "takes — it is sent exactly as typed, and the passage you sent to Ask rides along " +
+                "behind it.",
+            original = existing?.name.orEmpty(),
+            prompt = existing?.prompt.orEmpty(),
+            onSave = { name, prompt ->
+                if (existing != null && existing.name != name) {
+                    com.toolsboox.plugin.chat.nw.AskPresetStore.delete(ctx, existing.name)
+                }
+                com.toolsboox.plugin.chat.nw.AskPresetStore.upsert(
+                    ctx, com.toolsboox.plugin.chat.nw.AskPreset(name, prompt))
+                rebuildPresetRow()
+            },
+            onDelete = if (existing == null) null else { name ->
+                com.toolsboox.plugin.chat.nw.AskPresetStore.delete(ctx, name); rebuildPresetRow()
+            },
+        )
+    }
+
+    // ---- the sent passage ----------------------------------------------------------------------
+
+    /** Show (or hide) the banner holding what was sent to Ask. Null/blank puts it away. */
+    private fun showPassage(text: String?) {
+        val sent = text?.trim().orEmpty()
+        binding.passageText.text = sent
+        binding.passageBanner.visibility = if (sent.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    /**
+     * Save the exchange as a Text Note — Michael, choosing where answers live: "Answers can be
+     * saved as text notes."
+     *
+     * ONE note per answer, filed on today, not one growing document per conversation. A single
+     * accumulating note was the other candidate and it loses the thing that makes a note findable:
+     * its title. A note titled by the question you asked comes back out of search, out of the
+     * rhizome, out of the corpus Ask itself reads; a note called "Ask · Thursday" with nine answers
+     * in it comes back as a wall. If a threaded read is ever wanted it can be assembled from these
+     * — the reverse is not true.
+     *
+     * The body is markdown because Text Notes ARE markdown ([com.toolsboox.ot.MarkdownHighlight]
+     * styles it in the editor, [com.toolsboox.ot.MarkdownRender] renders it for reading), so the
+     * note styles itself with no extra work and the `.md` export off that surface is a real
+     * markdown file. The provenance goes in as a blockquote at the FOOT rather than a preamble: the
+     * answer is what you came back for, and where it came from is what you check afterwards.
+     */
+    private fun saveAnswerAsNote() {
+        val ctx = requireContext()
+        val q = lastQuestion.trim().ifEmpty { binding.questionEdit.text.toString().trim() }
+        val a = lastAnswer.trim()
+        if (a.isEmpty()) { showMessage("Ask something first, then save its answer."); return }
+
+        val stamp = java.time.LocalDateTime.now()
+            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+        val sb = StringBuilder("*Asked ").append(stamp)
+        com.toolsboox.plugin.chat.nw.PersonaStore.activeName(ctx)
+            ?.let { sb.append(" · ").append(it) }
+        sb.append("*\n\n")
+        if (q.isNotEmpty()) sb.append("**").append(q).append("**\n\n")
+        sb.append(a)
+        // What was sent, verbatim from the same preamble the model read — so the note and the ask
+        // cannot disagree about the provenance.
+        askContext?.takeIf { it.isNotBlank() }?.let { g ->
+            sb.append("\n\n---\n\n")
+            sb.append(g.split("\n").joinToString("\n") { "> $it" })
+            sb.append('\n')
+        }
+        // The iPad writes a "used <tools>" receipt here, because over there the answer comes out of
+        // a tool loop that can name what it called. Android has no tool loop: retrieval happens up
+        // front and creation is the ```ledger-create block. So the honest Android receipt is what
+        // this fragment actually knows — how much of the corpus grounded the answer, and what the
+        // answer went on to create. Naming iOS's tools here would be a nicer-looking lie.
+        val receipt = buildList {
+            if (lastCorpus > 0) add("grounded in $lastHits of $lastCorpus entries in scope")
+            if (lastCreated > 0) add("created $lastCreated item(s) in the Ledger")
+        }
+        if (receipt.isNotEmpty()) sb.append("\n*Used: ").append(receipt.joinToString("; ")).append(".*\n")
+
+        // Titled by the question, trimmed to a line — a title that ran to a paragraph would make
+        // the Text Notes picker unreadable, and the full question is in the body regardless.
+        val head = q.lineSequence().firstOrNull()?.trim().orEmpty().ifEmpty { "Ask my Ledger" }
+        val title = "Ask · " + (if (head.length > 60) head.take(60) + "…" else head)
+        runCatching {
+            com.toolsboox.plugin.textnotes.TextNotesStore.addNote(
+                ctx, java.time.LocalDate.now(), title, sb.toString())
+        }.onSuccess { showMessage("Saved to today's Text Notes.") }
+            .onFailure { showMessage("Couldn't save that note — try again.") }
     }
 
     private fun ask() {
@@ -309,12 +506,13 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
         binding.askButton.isEnabled = false
         binding.answerText.text = getString(R.string.ledger_chat_thinking)
 
-        // Grounding from "Ask about this" (AskBridge): where the item came from and what already
-        // connects to it, riding ahead of the corpus excerpts in the system prompt — the model
-        // sees it, the visible question stays exactly what the reader sent. Deliberately NOT
-        // one-shot like initial_query: it stays in the arguments so follow-up questions in the
-        // same visit keep knowing what "this" is.
-        val askContext = arguments?.getString("ask_context")?.trim()?.takeIf { it.isNotEmpty() }
+        // Grounding from "Ask about this" (AskBridge): where the item came from, what was sent, and
+        // what already connects to it, riding ahead of the corpus excerpts in the system prompt —
+        // the model sees it, the visible question stays exactly what the reader typed or tapped.
+        // Deliberately NOT one-shot like initial_query: it lives in [askContext] for the whole
+        // visit, so follow-up questions and preset chips alike keep knowing what "this" is, until
+        // the banner's ✕ puts it down.
+        val askContext = this.askContext
 
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
@@ -333,10 +531,14 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
                     // If the model asked to create task/event/note, run it and confirm.
                     val (clean, creates) = extractCreates(answer.answer)
                     var shown = clean
+                    var created = 0
                     if (creates.isNotEmpty()) {
-                        val n = withContext(Dispatchers.IO) { executeCreates(creates) }
-                        if (n > 0) shown += "\n\n✓ Created $n item(s) in your Ledger."
+                        created = withContext(Dispatchers.IO) { executeCreates(creates) }
+                        if (created > 0) shown += "\n\n✓ Created $created item(s) in your Ledger."
                     }
+                    // Kept for the saved note's receipt, so the note reports the same retrieval the
+                    // footer under the answer does rather than a second count of its own.
+                    lastHits = hitCount; lastCorpus = corpusCount; lastCreated = created
                     lastQuestion = question; lastAnswer = shown
                     com.toolsboox.plugin.chat.nw.ChatHistoryStore.add(requireContext(), question, shown)
                     setAnswerWithLinks(shown + "\n\n" + getString(R.string.ledger_chat_footer, hitCount, corpusCount))

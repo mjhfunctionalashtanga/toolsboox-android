@@ -58,6 +58,15 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
          *  capped, so a ledger with a dense tag vocabulary stays a picture rather than a hairball. */
         const val MAX_TAG_COOCCURRENCE_EDGES = 48
 
+        /** The seed bed's own middle. Deliberately NOT a ledger address: the bed is a place to
+         *  stand, not an object, so [nodeHoldMenu] stands down on it rather than offering a
+         *  rhizome that could never resolve — the same guard the weave's centre gets. */
+        const val SEED_BED = "seeds:root"
+
+        /** How many seeds the bed hands the layout: twice what a ring can seat, so the rest are a
+         *  walk away rather than thrown away. */
+        private const val MAX_SEEDS = MindMap.MAX_INNER * 2
+
         /** The immediate state while the ledger is read — the surface must never look dead. */
         private const val WEAVING = "Weaving the map…"
     }
@@ -356,6 +365,86 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
+    /**
+     * 🌰 The "Seeds" road: the seed bed in the middle, each incubating `#tag` ringing it, and the
+     * pages that tag was planted on hanging off it.
+     *
+     * The Map's other two pictures both need the ledger to have done something first — the
+     * connection graph needs edges you drew, the weave needs words that have come back often
+     * enough to be threads — which is the honest reason the surface can open on nothing. A seed
+     * needs neither: the moment you write a `#hashtag` it is planted ([LedgerTags.record]), so
+     * this is the map most ledgers can draw on the day they are opened, and it answers a question
+     * you actually have — what am I currently incubating, and where does it live?
+     *
+     * Newest-planted first, because that is what "still finding its roots" means and it is the bed
+     * [SeedsFragment] leads with. Every node here is a REAL address: a tag is `tag://…`, the same
+     * node the connection graph draws, so holding a seed opens its own rhizome; an occurrence is
+     * `ledger://<date>/<page>`, so holding one opens the day it was planted on. Nothing synthetic
+     * but the bed itself, which is why it is the only thing [nodeHoldMenu] has to guard.
+     */
+    private fun showSeeds() {
+        binding.mapSubject.text = WEAVING
+        val appCtx = requireContext().applicationContext
+        lifecycleScope.launch {
+            val bed = withContext(Dispatchers.IO) { buildSeedBed(appCtx) }
+            if (!isAdded) return@launch
+            if (bed.adjacency.isEmpty()) {
+                // The picture you had stays on screen; only the refusal is new information. A road
+                // asked for BY NAME is the only one that can come back empty and mean something —
+                // the ordinary empty-ledger case is already worded properly by render(), but asking
+                // for Seeds on a ledger with no hashtags deserves to be told why.
+                render()
+                showMessage("No seeds yet — write a #hashtag on a page and it plants here.", binding.root)
+                return@launch
+            }
+            applyConnections(bed)
+            trail.clear()
+            focus = SEED_BED
+            render()
+        }
+    }
+
+    /**
+     * Build the bed off-main, as a plain [ConnGraph] — the same shape [buildConnectionGraph]
+     * returns, so this is one more producer of the picture rather than a second kind of picture.
+     *
+     * Node weight rides the degree fallback in [render] rather than a weights map of its own, and
+     * that lands where it should by construction: a seed's neighbours ARE its occurrences (plus
+     * the bed), so a tag written on nine pages draws heavier than one written on two — sized by
+     * occurrence count, which is what the ring is supposed to say.
+     */
+    private fun buildSeedBed(ctx: android.content.Context): ConnGraph {
+        val infos = runCatching { LedgerTags.list(ctx) }.getOrNull().orEmpty()
+            .filter { it.occurrences.isNotEmpty() }
+        if (infos.isEmpty()) return ConnGraph(emptyList(), emptyMap(), emptyMap())
+
+        val adj = HashMap<String, MutableList<String>>()
+        val names = HashMap<String, String>()
+        names[SEED_BED] = "🌰 Seeds"
+        val bed = adj.getOrPut(SEED_BED) { mutableListOf() }
+
+        for (info in infos.sortedByDescending { it.created }.take(MAX_SEEDS)) {
+            val tid = LedgerTags.tagUri(info.tag)
+            bed.add(tid)
+            names[tid] = "#${info.tag}"
+            // The bed first, then this seed's pages — so standing in a seed you see where it has
+            // landed with the way back one step away rather than buried at the end of the ring.
+            val pages = mutableListOf(SEED_BED)
+            // Newest sighting first: where a seed has been landing lately is the useful end of its
+            // history, and the ring only has room for the head of the list.
+            for (occ in info.occurrences.sortedByDescending { it.first }) {
+                val pid = LedgerUri.page(occ.first.toString(), occ.second)
+                names.putIfAbsent(pid, LedgerUri.describe(pid))
+                pages.add(pid)
+                // Undirected, like every other picture here: focus a page and every seed planted
+                // on it rings IT, which is the crossing made visible.
+                adj.getOrPut(pid) { mutableListOf() }.add(tid)
+            }
+            adj[tid] = pages
+        }
+        return ConnGraph(emptyList(), adj, names)
+    }
+
     private fun applyWeave(w: com.toolsboox.plugin.calendar.ot.LedgerMapWeave.Weave, initialFocus: String?) {
         weave = w
         adjacency = w.adjacency
@@ -425,6 +514,12 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             // The weave stays reachable even when drawn edges exist — the words are a different
             // map of the same ledger, not just the fallback for an unwoven one.
             "🌿  Word rhizomes" to { showWeave() },
+            // The third road, and the one that answers Michael's standing complaint that the Map
+            // is "not obviously useful on load" with material rather than with copy: the two above
+            // both need the ledger to have DONE something first, and a seed needs nothing but a
+            // hashtag. It sits here rather than under Ask because it is not a map you have to ask
+            // anyone for — the bed is already in the ledger.
+            "🌰  Seeds — what's incubating" to { showSeeds() },
             "✎  Type an outline…" to { showOutlineDialog("") },
             "🧠  Ask for a map…" to { showPersonaMenu() }
         ))
@@ -539,6 +634,9 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             weaveHoldMenu(w, uri)
             return
         }
+        // The seed bed is the one node on that map with nothing behind it — the same reason the
+        // weave's centre has no menu. Everything else the bed places is a real address.
+        if (uri == SEED_BED) return
         val label = labels[uri] ?: LedgerUri.describe(uri)
         showIconMenu(label.take(80), listOf(
             "⁂  Pick — make it a gram" to {
