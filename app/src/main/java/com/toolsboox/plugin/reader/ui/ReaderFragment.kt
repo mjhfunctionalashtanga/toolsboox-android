@@ -1005,11 +1005,26 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         )
     }
 
-    /** A note about the book rather than a passage in it — typed, or written by hand. */
+    /**
+     * A note about the book rather than a passage in it — typed, or written by hand.
+     *
+     * It used to answer a saved note with "Noted", which says that something happened and nothing
+     * about what. Michael: "the pen on the pill lets me write on the book which I love, but what
+     * exactly does it do after that." It goes to this book's marks, alongside its highlights and
+     * bookmarks — so the confirmation names that, and offers the trip rather than making you go
+     * looking for a thing you cannot be sure exists.
+     */
     private fun composeBookNote() {
         val book = bookNoteKey().ifBlank { showMessage("Open a book first."); return }
         BookNotesPanel.bind(book)
-        BookNotesPanel.editNote(requireContext(), null) { showMessage("Noted") }
+        BookNotesPanel.editNote(requireContext(), null) {
+            // getView(), not `view` — on ScreenFragment that name is the layout RESOURCE ID.
+            val root = getView() ?: return@editNote
+            com.google.android.material.snackbar.Snackbar
+                .make(root, "Saved to this book's notes", com.google.android.material.snackbar.Snackbar.LENGTH_LONG)
+                .setAction("Show") { showBookNotes(BookNote.NOTE) }
+                .show()
+        }
     }
 
     /** Tapping an existing highlight opens its menu: copy the passage, add a note, or remove it —

@@ -104,6 +104,42 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     }
 
     /** Locally-tracked "you replied to this thread" set — a ✓ marker without a server round-trip. */
+    /**
+     * Clearing an item out of the inbox.
+     *
+     * Michael: "need to be able to delete correspondence", and from the handwritten list, "Need the
+     * ability to delete low quality or uninteresting correspondence." These are other people's posts
+     * on a community site, so DELETE is not ours to do — what is ours is to stop showing it. This is
+     * a local dismiss, kept per (source, id) in the same prefs that remember what you've replied to,
+     * and the menu says "Hide" rather than "Delete" so it never implies something happened on the
+     * server that didn't. Own replies keep their real Delete, which does reach the server.
+     */
+    private fun hiddenKey(source: String, id: String) = "hidden_${source}_$id"
+
+    private fun isHidden(source: String, id: String) = prefs().getBoolean(hiddenKey(source, id), false)
+
+    private fun hide(source: String, id: String) =
+        prefs().edit().putBoolean(hiddenKey(source, id), true).apply()
+
+    private fun unhideAll() =
+        prefs().all.keys.filter { it.startsWith("hidden_") }
+            .let { keys -> prefs().edit().apply { keys.forEach { remove(it) } }.apply() }
+
+    /** Long-press anywhere on a card offers to clear it (and to bring everything back). */
+    private fun wireHide(card: View, source: String, id: String, what: String) {
+        card.setOnLongClickListener {
+            val ctx = context ?: return@setOnLongClickListener false
+            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                .setTitle("Hide this?")
+                .setMessage(what.take(160).ifBlank { "This item stops showing in your correspondence." })
+                .setPositiveButton("Hide") { _, _ -> hide(source, id); load() }
+                .setNeutralButton("Show hidden again") { _, _ -> unhideAll(); load() }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+            true
+        }
+    }
+
     private fun markReplied(source: String, id: Long) {
         val set = prefs().getStringSet("repliedThreads", emptySet())!!.toMutableSet()
         set.add("$source-$id"); prefs().edit().putStringSet("repliedThreads", set).apply()
@@ -233,7 +269,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             })
             return
         }
-        for (post in posts) {
+        for (post in posts.filterNot { isHidden("community", it.id.toString()) }) {
             val card = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(px(10), px(8), px(10), px(8))
@@ -312,6 +348,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 setOnClickListener { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(post.url))) }
             })
             card.addView(actionsScroll)
+            wireHide(card, "community", post.id.toString(), post.title.ifBlank { deHtml(post.excerpt) })
             container.addView(card)
         }
         // Size the freshly-built page to the reader's choice, and let its pictures open.
@@ -357,7 +394,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 // Tap the thread title → open the original post (and its replies) in-app.
                 setOnClickListener { showThread(head.source, head.threadId, head.thread) }
             })
-            for (r in thread) {
+            for (r in thread.filterNot { isHidden("replies", it.id) }) {
                 val card = LinearLayout(ctx).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(px(10), px(8), px(10), px(8))
@@ -375,6 +412,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     text = deHtml(r.content.ifBlank { r.excerpt }); textSize = 14f; setTextColor(0xFF000000.toInt())
                 })
                 r.imageUrl?.let { addImage(card, it, heightDp = 180) }
+                wireHide(card, "replies", r.id, deHtml(r.content.ifBlank { r.excerpt }))
                 container.addView(card)
             }
             container.addView(TextView(ctx).apply {
