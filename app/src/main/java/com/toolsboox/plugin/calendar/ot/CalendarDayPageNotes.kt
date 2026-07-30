@@ -110,6 +110,59 @@ class CalendarDayPageNotes : Creator {
             return true
         }
 
+        /** How wide the header may run before it is cut. The top margin also carries the day's
+         *  #tags, right-aligned to clear the header and the floating ‹ N › pager; a title allowed to
+         *  run the full width would collide with them, and a page that shows half a tag strip is
+         *  worse than one that shows a shortened title. */
+        private const val HEADER_MAX_WIDTH = 420.0f
+
+        /**
+         * THE DOCUMENT'S NAME, ON THE DOCUMENT.
+         *
+         * Write and Synthesize gained a store of titles and a menu that sets them, and then had
+         * nowhere to show one: the header said "WRITE" whichever piece you were in, the ‹ N › label
+         * said which page, and nothing on the page said which writing. Naming a thing you then
+         * cannot see the name of is a filing system, not a title — and the whole point of the shared
+         * shell is that a named piece of writing behaves like a titled text note, whose title is the
+         * first thing on it.
+         *
+         * The name is HIS CASING, not upper-cased into the header's register. "WRITE" is a label for
+         * a kind of page and shouting it is fine; "The Oxford essay" is his sentence, and shouting
+         * that changes it.
+         *
+         * Falls back to [fallback] whenever the document has never been named, which is the same
+         * null-means-unnamed signal [WritePageStore.nameOf] exists to give — so an untitled page is
+         * unchanged from what it has always looked like, rather than gaining a date it never asked
+         * for.
+         *
+         * Cost: one small index file per page draw. That is a few hundred bytes of JSON against a
+         * template render, and unlike a page COUNT it never touches a day file — see
+         * [LedgerDocument]'s note on why counts are lazy and this is not.
+         */
+        private fun headerFor(
+            context: Context,
+            base: String,
+            calendarDay: CalendarDay,
+            fallback: String,
+        ): String {
+            val date = runCatching {
+                LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day)
+            }.getOrNull() ?: return fallback
+            val name = when {
+                WritePageStore.isWrite(base) -> WritePageStore.nameOf(context, base, date)
+                // The daily synthesis cannot hold a name — SynthPageStore keys by key alone and
+                // every day's daily page shares "synthesize", so one day's title would stand in for
+                // all of them. LedgerDocuments.canRename declines it for the same reason, and the
+                // menu never offers it, so there is nothing here to look up.
+                base == SynthPageStore.DEFAULT_KEY -> null
+                SynthPageStore.isSynth(base) ->
+                    SynthPageStore.list(context).firstOrNull { it.key == base }?.name
+                else -> null
+            }?.trim()?.takeIf { it.isNotEmpty() } ?: return fallback
+            val fitted = Creator.textDefaultBlack.breakText(name, true, HEADER_MAX_WIDTH, null)
+            return if (fitted >= name.length) name else name.take(fitted).trimEnd() + "…"
+        }
+
         /**
          * Draw the daily template of calendar plugin notes.
          *
@@ -145,12 +198,19 @@ class CalendarDayPageNotes : Creator {
                 CalendarDayPageIntake.drawPage(canvas, com.toolsboox.plugin.michaelfilter.da.IntakePageData())
                 return
             }
-            if (base == "synthesize" || base == "brainstorm") {
+            // A NAMED synthesis topic ("synthesize-1753…") is a Synthesize page — same dot-grid
+            // whiteboard, same header. Without [SynthPageStore.isSynth] it fell past this branch to
+            // the generic ruled NOTES look at the foot of this method, so naming a synthesis
+            // silently changed the surface underneath it. Exactly the bug the Write branch below
+            // already carries a note about, on the other half of the same pair.
+            if (base == "synthesize" || base == "brainstorm" || SynthPageStore.isSynth(base)) {
                 drawBrainstormPage(canvas)
                 // The shared shell that WRITE/NOTES draws below — this branch returned before it, so
                 // Synthesize was missing its header + the big page number the inline ‹ N › pager counts.
                 val synthPage = base.toIntOrNull() ?: subIndex
-                canvas.drawText("SYNTHESIZE", lo, to - 16.0f, Creator.textDefaultBlack)
+                canvas.drawText(
+                    headerFor(context, base, calendarDay, "SYNTHESIZE"),
+                    lo, to - 16.0f, Creator.textDefaultBlack)
                 canvas.drawText("${synthPage + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)
                 return
             }
@@ -200,7 +260,7 @@ class CalendarDayPageNotes : Creator {
             // Just "NOTES" / "WRITE" — the page number rides the inline ‹ N › pager next to it, so
             // "· Page N" here would double up.
             canvas.drawText(
-                if (isWrite) "WRITE" else "NOTES",
+                if (isWrite) headerFor(context, base, calendarDay, "WRITE") else "NOTES",
                 lo, to - 16.0f, Creator.textDefaultBlack)
 
             canvas.drawText("${page + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)

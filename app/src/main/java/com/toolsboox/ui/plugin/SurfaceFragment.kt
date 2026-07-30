@@ -3532,7 +3532,16 @@ abstract class SurfaceFragment : ScreenFragment() {
         val ctx = requireContext()
         val clippings = com.toolsboox.plugin.calendar.ot.ClippingsStore.list(ctx)
         if (clippings.isEmpty()) {
-            Toast.makeText(ctx, "No clippings yet. Save a gram to your library first.", Toast.LENGTH_LONG).show()
+            // The clippings library is a cross-device sidecar like the rest, so an unconfigured
+            // device shows an empty shelf and blames you for not having saved anything — when what
+            // it actually means is that it can't see the shelf. Same sentence the Later List and
+            // the Rolodex carry; silent when the sync is fine.
+            Toast.makeText(
+                ctx,
+                com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.explainEmpty(
+                    ctx, "No clippings yet. Save a gram to your library first."),
+                Toast.LENGTH_LONG
+            ).show()
             return
         }
         val dp = resources.displayMetrics.density

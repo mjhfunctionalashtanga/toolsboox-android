@@ -1310,8 +1310,15 @@ private fun showDocumentDatePicker(
     ).show()
 }
 
-/** Name a new document and open it. Blank is allowed — the store falls back to the date. */
-private fun promptNewDocument(fragment: ScreenFragment, surface: String, date: LocalDate) {
+/**
+ * Name a new document and open it. Blank is allowed — the store falls back to the date.
+ *
+ * `internal` rather than private because the day page's ‹ N › menu offers the same "＋ New
+ * writing…" row the directory does, and a second copy of a naming dialog is a second thing to keep
+ * in step — the wording, the hint, and the "blank is allowed" rule all have to agree, or naming a
+ * piece from the surface would mean something subtly different from naming it from the directory.
+ */
+internal fun promptNewDocument(fragment: ScreenFragment, surface: String, date: LocalDate) {
     val ctx = fragment.requireContext()
     val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
     val input = android.widget.EditText(ctx).apply {
@@ -1370,6 +1377,53 @@ private fun promptRenameDocument(
                 }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
+        }
+        .setNegativeButton(android.R.string.cancel, null)
+        .show()
+}
+
+/**
+ * Title THE DOCUMENT YOU ARE STANDING IN — the surface's own naming, as against the directory's.
+ *
+ * [promptRenameDocument] asks "rename which one?" first, and that is right where it lives: the
+ * directory lists documents from many days and may have been opened from the hub with no current
+ * page at all, so it has to be told which. From the page itself the question is already answered —
+ * you are IN the thing — and asking again is the difference between titling your work and
+ * administering a list of titles. Text Notes never asks: the title field belongs to the note on
+ * screen. This is that, for a surface whose title has nowhere to live but a menu.
+ *
+ * Seeded with the EXPLICIT name only, [promptRenameDocument]'s rule and iOS's
+ * (`PlannerShell.documentNamingButtons`): pre-filling an unnamed document with its date would make
+ * "rename" mean "confirm the date as the name", which is the one answer the date default already
+ * gives for free.
+ *
+ * [onRenamed] lets the caller redraw — the page header carries the name, so a rename that didn't
+ * repaint would leave the old title on screen until the next navigation.
+ */
+internal fun promptRenameCurrentDocument(
+    fragment: ScreenFragment,
+    surface: String,
+    key: String,
+    date: LocalDate,
+    onRenamed: () -> Unit = {},
+) {
+    val ctx = fragment.requireContext()
+    val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    val doc = docs0.forSurface(ctx, surface, date).firstOrNull { it.key == key }
+    val input = android.widget.EditText(ctx).apply {
+        if (doc != null && doc.named) setText(doc.title) else hint = date.toString()
+        setSingleLine()
+    }
+    val pad = (16 * ctx.resources.displayMetrics.density).toInt()
+    val box = android.widget.LinearLayout(ctx).apply {
+        orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
+    }
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle("Name this ${docs0.noun(surface)}")
+        .setView(box)
+        .setPositiveButton("Save") { _, _ ->
+            docs0.rename(ctx, surface, key, input.text.toString().trim(), date)
+            onRenamed()
         }
         .setNegativeButton(android.R.string.cancel, null)
         .show()

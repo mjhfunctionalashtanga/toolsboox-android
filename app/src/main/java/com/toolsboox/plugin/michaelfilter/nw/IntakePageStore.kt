@@ -196,7 +196,13 @@ object IntakePageStore {
         // null means the LISTING failed, which is not the same as "the server has nothing" — the
         // caller keeps whatever it has rather than concluding the backlog is empty. (Same
         // distinction CalendarWebDavSyncService draws, and for the same reason.)
-        val listing = runCatching { svc.propfind("intake/") }.getOrNull() ?: return false
+        val listing = runCatching { svc.propfind("intake/") }.getOrNull()
+        // Tell the empty state what this listing just learned. It is the one call on the Later
+        // List's path that can distinguish a dead server from an empty one, so letting the answer
+        // fall on the floor here would leave the list explaining itself with a second round trip
+        // it could have avoided. See LedgerSidecarSync's "why an empty list is empty".
+        com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.noteListing(listing != null)
+        if (listing == null) return false
         val oldest = LocalDate.now().minusDays(window)
         var landed = false
         for (entry in listing) {

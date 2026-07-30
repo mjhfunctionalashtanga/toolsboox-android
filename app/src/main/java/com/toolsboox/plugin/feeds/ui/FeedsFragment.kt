@@ -743,8 +743,21 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 if (changed) {
                     allEntries = merged
                     adapter.submit(merged)
-                    if (merged.isEmpty()) showEmpty(laterEmptyText())
-                    else binding.emptyText.visibility = View.GONE
+                }
+                if (merged.isEmpty()) {
+                    // STILL EMPTY AFTER BOTH SWEEPS — the one moment "can this device even reach
+                    // the others" is worth a round trip, and the only moment it is. A probe on
+                    // every load would put a request in front of a list that already had its
+                    // answer. Re-shown unconditionally rather than only when `changed`, because
+                    // an empty list that stays empty is the case where nothing changed and the
+                    // explanation is the only thing that did.
+                    withContext(Dispatchers.IO) {
+                        com.toolsboox.plugin.calendar.nw.LedgerSidecarSync
+                            .probe(requireContext().applicationContext)
+                    }
+                    if (isAdded) showEmpty(laterEmptyText())
+                } else if (changed) {
+                    binding.emptyText.visibility = View.GONE
                 }
             }
         }
@@ -761,12 +774,23 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
      * who has filed four hundred links and drilled into 📧 Email would be told he has never filed
      * anything. So a lane names itself and points back at the list it belongs to, which is one tap
      * up in the same drawer.
+     *
+     * And there is a second emptiness underneath both of those, which was the whole reason the Go 6
+     * showed nothing: this list's contents come from the intake sidecars, which are pulled across
+     * WebDAV, and a device with no WebDAV configured can never see a link filed anywhere else. That
+     * is not "you have not saved anything yet" — it is "this device is not part of the ledger yet",
+     * and only one of those two sentences tells you what to do. [LedgerSidecarSync.explainEmpty]
+     * appends it when it applies and stays silent when it doesn't, so a configured device with an
+     * empty list still reads as an empty list rather than as a fault.
      */
     private fun laterEmptyText(): String {
-        val lane = laterLane ?: return getString(R.string.feeds_later_empty)
-        val label = com.toolsboox.plugin.feeds.nw.LaterFeed.LANES
-            .firstOrNull { it.first == lane }?.third ?: lane
-        return "Nothing filed under $label yet — the rest of your Later List is one row up in 🔖."
+        val own = laterLane?.let { lane ->
+            val label = com.toolsboox.plugin.feeds.nw.LaterFeed.LANES
+                .firstOrNull { it.first == lane }?.third ?: lane
+            "Nothing filed under $label yet — the rest of your Later List is one row up in 🔖."
+        } ?: getString(R.string.feeds_later_empty)
+        return com.toolsboox.plugin.calendar.nw.LedgerSidecarSync
+            .explainEmpty(requireContext(), own)
     }
 
     /** Feed Pickings: your pickings boards (that hold grams or ink) surfaced as feed rows. Tapping
@@ -779,7 +803,13 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             binding.progress.visibility = View.INVISIBLE
             allEntries = entries
             adapter.submit(entries)
-            if (entries.isEmpty()) showEmpty("No pickings boards with content yet.")
+            // Board NAMES ride the same cross-device sidecar the Later List does (PickingsStore's
+            // per-day index), so this list inherits the same silence: an unconfigured device shows
+            // no boards made anywhere else and blames it on you. Same sentence, same conditions.
+            if (entries.isEmpty()) showEmpty(
+                com.toolsboox.plugin.calendar.nw.LedgerSidecarSync
+                    .explainEmpty(requireContext(), "No pickings boards with content yet.")
+            )
             else binding.emptyText.visibility = View.GONE
         }
     }

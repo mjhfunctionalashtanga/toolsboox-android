@@ -276,11 +276,33 @@ class UltrabridgeWebDavService(
         data object Failed : PropfindResult
     }
 
+    /**
+     * ONE cheap round trip that answers only "can this device reach and authenticate against this
+     * server", with no listing and no recursion — `Depth: 0` on the base collection itself.
+     *
+     * It exists because a surface with an empty list has a question the sidecar stores cannot
+     * answer for it. [download] returns null for a missing file and for a dead network alike, and
+     * [upload]/[uploadBytes] return false for a 403 on one path as readily as for an unplugged
+     * router — so "I got nothing back" is not evidence of anything, and a surface that treated it
+     * as evidence would tell a man with a working sync that his sync was broken. A PROPFIND
+     * distinguishes: [PropfindResult.Failed] is a genuine failure to reach or authenticate, while
+     * [PropfindResult.Missing] (404) means the server answered and the collection simply isn't
+     * there, which is a reachable server.
+     *
+     * `Depth: 0` because nothing here wants the contents. [propfind]'s Depth-1 walk costs one
+     * request per collection — forty for a three-year day tree — and asking "are you there" must
+     * not cost what asking "what have you got" costs, or empty states will stop asking.
+     */
+    fun reachable(): Boolean = propfindOnce("", "0") !is PropfindResult.Failed
+
     /** One PROPFIND at an explicit depth. */
     private fun propfindOnce(remoteDirPath: String, depth: String): PropfindResult {
         val normalizedBase = baseUrl.trimEnd('/')
         val anchor = remoteDirPath.trim('/')
-        val url = "$normalizedBase/$anchor/"
+        // An empty anchor means the base collection itself ([reachable]). Left to the general form
+        // it would build "…/dav//" — a double slash some servers 404 and others 301, which would
+        // read as unreachable on exactly the devices this check exists to reassure.
+        val url = if (anchor.isEmpty()) "$normalizedBase/" else "$normalizedBase/$anchor/"
 
         val credential = Credentials.basic(username, password)
         val body = (

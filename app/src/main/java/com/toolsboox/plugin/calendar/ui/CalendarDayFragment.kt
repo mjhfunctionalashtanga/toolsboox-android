@@ -1771,13 +1771,32 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 CalendarNavigator.toDayNote(this, currentDate, "$base#${sub + 1}")
             }
             // Tap the number → this kind's DIRECTORY, right beneath the almanac nav — the Text-Notes
-            // "≡ Notes" idea, for cohesion across the note surfaces. Synthesize opens its synthesis
-            // directory (today's + the named topics + New/Rename); write/grid/sketch open a jump
-            // across THIS base's sub-pages (+ New page + Go to a date).
+            // "≡ Notes" idea, for cohesion across the note surfaces.
+            //
+            // ONE destination for all of them now. Synthesize used to peel off here into
+            // showSynthPicker while write/grid/sketch got the sub-page jump, so the same control on
+            // two surfaces Michael calls the same shape opened two different menus: one that could
+            // name a document but not list its pages, one that could list pages but not name
+            // anything. [showNoteSubPageJump] is both, and the full sortable directory is still one
+            // row inside it ("🗂 All …") for when the menu isn't enough.
+            binding.notePagerLabel.isClickable = true
+            binding.notePagerLabel.setOnClickListener { showNoteSubPageJump(base) }
+        } else if (com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(baseNotePage(notePage))) {
+            // A NAMED synthesis topic ("synthesize-1753…") is deliberately not sub-pageable — see
+            // [isSubPageableBase], which must stay in step with what the almanac-as-filter counts as
+            // a notes surface. That left it the one document surface with no ‹ N › control at all,
+            // so the topic pages Michael actually keeps his synthesis work on were the only pages
+            // in the app you could not name from. It gets Pickings' answer instead: a single chip,
+            // no linear ‹ ›, opening the same menu — which knows not to offer pages to a base that
+            // has none.
+            binding.notePager.visibility = View.VISIBLE
+            binding.notePagerPrev.visibility = View.GONE
+            binding.notePagerNext.visibility = View.GONE
+            binding.notePagerLabel.text = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+                .glyph(com.toolsboox.plugin.calendar.ot.LedgerDocuments.SYNTHESIZE)
             binding.notePagerLabel.isClickable = true
             binding.notePagerLabel.setOnClickListener {
-                if (base == "synthesize") com.toolsboox.plugin.feeds.ui.showSynthPicker(this, currentDate, notePage)
-                else showNoteSubPageJump(base)
+                showNoteSubPageJump(baseNotePage(notePage) ?: return@setOnClickListener)
             }
         } else if (com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(notePage)) {
             // Pickings carries the same directory affordance beneath the almanac nav: a single ❝
@@ -1914,12 +1933,50 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         dialog.window?.decorView?.let { root -> root.post { com.toolsboox.ot.LedgerFonts.applyTree(root) } }
     }
 
-    /** The named-base sibling of [showNotePageJump]: a directory across one base's own sub-pages
-     *  (write / grid / sketch — keyed "<base>", "<base>#1", …) on this day, plus New page and
-     *  Go-to-a-date. Same Text-Notes directory design, reached from the ‹ N › label beneath the
-     *  almanac nav so every note surface is findable the same way. */
+    /** How many of a surface's documents the ‹ N › menu shows before deferring to the directory.
+     *  Twelve is about a screenful on this hardware, which is the honest limit of a menu you read at
+     *  a glance; past it you want a sort and a filter field, and those live one row down in
+     *  "🗂 All …". */
+    private val DOCUMENTS_IN_PAGER_MENU = 12
+
+    /**
+     * The named-base sibling of [showNotePageJump] — and, on the surfaces that have documents, the
+     * Text-Notes save-and-title menu.
+     *
+     * It began as a jump across one base's own sub-pages ("<base>", "<base>#1", …) plus New page
+     * and Go-to-a-date: the ≡ Notes idea, reached from the ‹ N › label beneath the almanac nav so
+     * every note surface is findable the same way. What it did NOT carry was the other half of what
+     * ≡ Notes is. In Text Notes the note on screen has a title field and its list has ＋ and Delete;
+     * on Write the ‹ N › label listed pages and nothing else, so from the one surface actually meant
+     * for long-form there was no way to start a named piece or to title the one you were in.
+     * Synthesize meanwhile opened the whole document directory from the same control. Two surfaces
+     * Michael calls "the same shape — nameable, multi-page documents, where the name defaults to the
+     * start date if the user never renames it" answered the same tap two different ways, which is
+     * exactly what "build the pattern ONCE and apply it to all four surfaces" was meant to stop.
+     *
+     * So: one menu, in the order the iPad settled on (`PlannerShell.pageDirectoryActions`) — the
+     * page's #tags, this surface's DOCUMENTS with the one you're in marked, this document's PAGES,
+     * ＋ New page, ＋ New <noun>…, ✎ Name this <noun>…, 📅 Go to a date…, 🗂 All <label>….
+     *
+     * Grid and Sketch fall through it unchanged. They are one implicit pad per day with nothing to
+     * name ([com.toolsboox.plugin.calendar.ot.LedgerDocuments.surfaceOf] returns null for them), and
+     * a control that would write nowhere isn't offered.
+     *
+     * DELIBERATELY NO DELETE, though Text Notes' list has one. A text note IS its record, so
+     * deleting the entry deletes the writing. A Write document's ink lives in the day JSON under its
+     * key and the index holds only its title — so "delete" would either drop the title and strand
+     * the pages under a key nothing can reach again, or reach into the day file and destroy work.
+     * That is a decision about what deletion MEANS here, not a missing button, and it is Michael's.
+     */
     private fun showNoteSubPageJump(base: String) {
         val ctx = context ?: return
+        val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+        val surface = docs0.surfaceOf(base)
+        // Whether this base carries a "<base>#n" run at all. A named Synthesize topic does not (see
+        // [isSubPageableBase]), so listing "Page 1 / ＋ New page" on one would offer a page the
+        // pager can't reach and the directory correctly says doesn't exist.
+        val paged = isSubPageableBase(base)
+
         val here = notePageSubIndex(notePage)
         val subs = sortedSetOf(here)   // the page you're on always lists
         if (::calendarDay.isInitialized) {
@@ -1927,40 +1984,105 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             calendarDay.noteStrokes.filterValues { it.isNotEmpty() }.keys.forEach { consider(it) }
             calendarDay.imageElements.forEach { consider(it.page) }
         }
-        val ordered = subs.toList()
+        val ordered = if (paged) subs.toList() else emptyList()
         val newSub = (ordered.maxOrNull() ?: -1) + 1
         fun keyFor(sub: Int) = if (sub == 0) base else "$base#$sub"
+
+        // Rows as (label, action) pairs rather than parallel arrays indexed by arithmetic. The old
+        // `which - marks.size` chain was already three cases deep; folding documents and three
+        // naming rows into it would have made the index maths the most fragile thing on the screen.
+        val rows = mutableListOf<Pair<String, () -> Unit>>()
+
         // This page's tags lead the directory here too — see showNotePageJump. Every making
         // surface answers "what's on this page" the same way.
-        val marks = com.toolsboox.plugin.calendar.ot.LedgerTags
-            .marksOn(ctx, currentDate, notePage ?: base)
-        val labels = (marks.map { "#${it.first}" }
-            + ordered.map { "Page ${it + 1}" + if (it == here) "  ·  here" else "" }
-            + "＋  New page" + "📅  Go to a date…").toTypedArray()
+        for ((tag, rect) in
+            com.toolsboox.plugin.calendar.ot.LedgerTags.marksOn(ctx, currentDate, notePage ?: base)) {
+            rows += "#$tag" to { rect?.let { focusOnRect(it) }; Unit }
+        }
+
+        if (surface != null) {
+            // The shelf, capped. A man with sixty essays should not meet all sixty in a menu he
+            // opened to turn a page — and needn't, because "🗂 All …" at the foot is the same shelf
+            // with a sort and a filter field on it. The document you're standing in leads the list
+            // whatever the cap, so the menu can always answer "which one am I in".
+            val all = docs0.forSurface(ctx, surface, currentDate, knownNotePageKeys())
+            val shown = (all.filter { it.key == base } + all.filterNot { it.key == base })
+                .take(DOCUMENTS_IN_PAGER_MENU)
+            for (d in shown) {
+                val label = docs0.glyph(surface) + "  " + d.title + if (d.key == base) "  ·  here" else ""
+                rows += label to { if (d.key != base) CalendarNavigator.toDayNote(this, d.date, d.key) }
+            }
+        }
+
+        for (s in ordered) {
+            rows += ("Page ${s + 1}" + if (s == here) "  ·  here" else "") to {
+                if (s != here) CalendarNavigator.toDayNote(this, currentDate, keyFor(s))
+            }
+        }
+        if (paged) {
+            rows += "＋  New page" to { CalendarNavigator.toDayNote(this, currentDate, keyFor(newSub)) }
+        }
+
+        if (surface != null) {
+            rows += "＋  New ${docs0.noun(surface)}…" to {
+                com.toolsboox.plugin.feeds.ui.promptNewDocument(this, surface, currentDate)
+            }
+            if (docs0.canRename(surface, base)) {
+                // "Name this", not "Rename". Most of the time the document has never had a name and
+                // is wearing its date, so "rename" would describe undoing something you never did.
+                rows += "✎  Name this ${docs0.noun(surface)}…" to {
+                    com.toolsboox.plugin.feeds.ui.promptRenameCurrentDocument(
+                        this, surface, base, currentDate
+                    ) { redrawNoteTemplate() }
+                }
+            }
+        }
+
+        rows += "📅  Go to a date…" to { showNoteDatePicker() }   // navigate this surface BY DATE
+        if (surface != null) {
+            rows += "🗂  All ${docs0.label(surface)}…" to {
+                com.toolsboox.plugin.feeds.ui.showDocumentDirectory(this, surface, currentDate, notePage)
+            }
+        }
+
         // A named Write document is titled by its NAME here, not by its raw key — "write-1753…" as
         // a dialog title tells you nothing, and the document's title is the whole point of naming
         // it. An UNnamed document keeps the surface's own name ("Write"), because the date default
         // is already the day the whole screen is showing and repeating it says nothing.
-        val doc = com.toolsboox.plugin.calendar.ot.LedgerDocuments.documentFor(ctx, base, currentDate)
+        val doc = docs0.documentFor(ctx, base, currentDate)
         val heading = if (doc != null && doc.named) doc.title else base.replaceFirstChar { it.uppercase() }
         val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(heading)
-            .setItems(labels) { _, which ->
-                val p = which - marks.size
-                when {
-                    which < marks.size -> marks[which].second?.let { focusOnRect(it) }
-                    p < ordered.size -> {
-                        val s = ordered[p]
-                        if (s != here) CalendarNavigator.toDayNote(this, currentDate, keyFor(s))
-                    }
-                    p == ordered.size -> CalendarNavigator.toDayNote(this, currentDate, keyFor(newSub))
-                    else -> showNoteDatePicker()   // navigate this surface BY DATE
-                }
-            }
+            .setItems(rows.map { it.first }.toTypedArray()) { _, which -> rows[which].second() }
             .setNegativeButton(android.R.string.cancel, null)
             .create()
         dialog.show()
         dialog.window?.decorView?.let { root -> root.post { com.toolsboox.ot.LedgerFonts.applyTree(root) } }
+    }
+
+    /** The page keys this day already holds, so a document's page count comes off the day in hand
+     *  rather than a second streamed read of the file. Empty before the day has loaded, which
+     *  [com.toolsboox.plugin.calendar.ot.LedgerDocuments.subPageCount] correctly reads as "go and
+     *  ask the file". */
+    private fun knownNotePageKeys(): Set<String> =
+        if (!::calendarDay.isInitialized) emptySet()
+        else calendarDay.noteStrokes.keys + calendarDay.imageElements.map { it.page }
+
+    /**
+     * Repaint the note page's TEMPLATE in place.
+     *
+     * The header carries the document's name now, so naming a piece has to show on the page you
+     * named it from rather than on the next one you happen to open. The same move
+     * [redrawIntakePage] makes, and safe for the same reason: the template is its own bitmap and
+     * the ink rides a separate layer, so redrawing one never disturbs the other.
+     */
+    private fun redrawNoteTemplate() {
+        val page = notePage ?: return
+        if (page == CalendarDayPageIntake.INTAKE_PAGE) { redrawIntakePage(); return }
+        if (!::calendarDay.isInitialized) return
+        val noteTemplate = sharedPreferences.getInt("calendarNoteTemplate", 0)
+        CalendarDayPageNotes.drawPage(requireContext(), templateCanvas, calendarDay, noteTemplate, page)
+        binding.templateImageView.invalidate()
     }
 
     /**

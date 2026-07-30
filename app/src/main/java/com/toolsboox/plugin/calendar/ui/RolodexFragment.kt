@@ -241,6 +241,17 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
                 it.email.lowercase().contains(q) || it.org.lowercase().contains(q)
         }
         adapter.submit(filtered)
+        // The CRM tab has always said "…or the site bridge isn't reachable" when it comes back with
+        // nothing, and the local tab never learned the same manners — though the local rolodex is
+        // ALSO a cross-device sidecar (ContactStore rides LedgerSidecarSync), so a device with no
+        // WebDAV set up shows an empty address book and calls it yours. Only when the store itself
+        // is empty: "no contacts, and by the way sync is off" over a search that simply matched
+        // nothing would be the same lie pointed at a different fact.
+        binding.emptyText.text =
+            if (q.isEmpty() && allContacts.isEmpty())
+                com.toolsboox.plugin.calendar.nw.LedgerSidecarSync
+                    .explainEmpty(requireContext(), LOCAL_EMPTY_HINT)
+            else LOCAL_EMPTY_HINT
         binding.emptyText.visibility = if (filtered.isEmpty()) View.VISIBLE else View.GONE
     }
 
