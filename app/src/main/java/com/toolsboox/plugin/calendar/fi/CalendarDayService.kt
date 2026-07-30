@@ -153,7 +153,7 @@ class CalendarDayService @Inject constructor() {
             return null
         }
 
-        return try {
+        val day = try {
             Timber.i("Try to load from ${item.name}")
             if (item.absolutePath.endsWith("-v2.json")) {
                 moshi.adapter(CalendarDay::class.java).fromJson(json)
@@ -165,6 +165,30 @@ class CalendarDayService @Inject constructor() {
             Timber.w(e, "Corrupt day file ${item.name}; treating as unwritten")
             null
         }
+
+        // ── The backfill that costs nothing ───────────────────────────────────────────────────
+        //
+        // A card index has to cope with two things a save hook cannot see: the boards that already
+        // existed before there was an index, and the day files `CalendarWebDavSyncService.writeLocal`
+        // installs straight from downloaded bytes (deliberately — parsing tens of megabytes on a
+        // Boox to decide whether to keep a download "would cost more than the sync"). Both leave a
+        // day on disk that the index has never met.
+        //
+        // Rather than a start-up sweep, the repair rides the decodes that were happening anyway.
+        // This method is the app's only full day decode, and it is called by everything that walks
+        // history: opening a day page, the Drive sync's inventory pass, the "Bring in a picking"
+        // gather over 120 days. The expensive part — reading and parsing the file — has already
+        // been paid for by the caller; the index takes the result on its way past, and only when
+        // its sidecar is older than the file. So the ledger backfills itself a day at a time,
+        // always off the main thread (every one of those callers is), and never because a menu
+        // opened. The explicit, bounded repair for a day you are asking about right now lives in
+        // PickingsCards.backfill.
+        if (day != null) runCatching {
+            com.toolsboox.plugin.calendar.ot.PickingsCards.dateOf(item.name)?.let {
+                com.toolsboox.plugin.calendar.ot.PickingsCards.refreshIfStale(it, day, item)
+            }
+        }
+        return day
     }
 
     /**
@@ -328,6 +352,29 @@ class CalendarDayService @Inject constructor() {
             Timber.w(e, "Atomic move unavailable for $baseName-v2.json; falling back to replace")
             Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
         }
+
+        // ── The placed-card index rides the save ──────────────────────────────────────────────
+        //
+        // THIS IS THE ONE THROAT. Every way a card can appear on, move around, or leave a board
+        // ends here: the cross-surface "Send this gram to" chooser (PickingsPlacement.place), the
+        // day page's own drag / resize / rotate / duplicate / delete / z-order / auto-arrange (all
+        // of which funnel through SurfaceFragment.onImageElementsChanged → the day fragment →
+        // CalendarDayPresenter.save), graduating an intake gram into its own board, "Add to
+        // pickings", the synthesized-question groups placed from the reader and from mail, Ask's
+        // answer cards, the intake removal, and the sync merge's write-back of a remote device's
+        // placements. Instrumenting each of them separately would have been ten edits and one
+        // eventual miss — and a card index that silently misses a path is worse than no index,
+        // because the directory then shows a stale list with total confidence.
+        //
+        // It costs nothing that isn't already paid: the day object is in memory, having just been
+        // serialised, and the index reads a dozen scalar fields off each element and touches not
+        // one byte of the inline base64. The write itself is skipped when only strokes changed.
+        // Guarded, because a save that succeeded must not be reported as failed over a sidecar.
+        runCatching {
+            com.toolsboox.plugin.calendar.ot.PickingsCards.dateOf(baseName)?.let {
+                com.toolsboox.plugin.calendar.ot.PickingsCards.record(it, calendarDay)
+            }
+        }.onFailure { Timber.w(it, "card index update failed for $baseName") }
 
         // Try to rename the old v1 file to .backup. REPLACE_EXISTING: if a .backup already
         // exists this used to throw FileAlreadyExistsException AFTER the save succeeded,

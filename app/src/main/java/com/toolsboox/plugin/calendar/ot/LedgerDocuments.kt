@@ -3,7 +3,6 @@ package com.toolsboox.plugin.calendar.ot
 import android.content.Context
 import java.io.File
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 
 /**
  * One document on a making surface, as the directory and the chip see it.
@@ -295,16 +294,13 @@ object LedgerDocuments {
         return max + 1
     }
 
-    /** The day file for [date], newest format first — the same Documents root every reader uses. */
-    private fun dayFile(context: Context, date: LocalDate): File? {
-        val root = ledgerRoot(context) ?: return null
-        val y = date.format(DateTimeFormatter.ofPattern("yyyy"))
-        val m = date.format(DateTimeFormatter.ofPattern("MM"))
-        val d = date.format(DateTimeFormatter.ofPattern("dd"))
-        val dir = File(root, "calendar/$y/$m")
-        return listOf(File(dir, "day-$y-$m-$d-v2.json"), File(dir, "day-$y-$m-$d.json"))
-            .firstOrNull { it.exists() }
-    }
+    /** The day file for [date], newest format first — the same Documents root every reader uses.
+     *  The convention now lives in [com.toolsboox.ot.LedgerPaths] beside the root it hangs off,
+     *  since the card index needs the identical answer and a second copy of a path layout is a
+     *  second thing to keep in step. Wrapped, because that version asserts the root exists and this
+     *  caller has always answered "no day file" rather than throwing on a device without one. */
+    private fun dayFile(context: Context, date: LocalDate): File? =
+        runCatching { com.toolsboox.ot.LedgerPaths.dayFile(context, date) }.getOrNull()
 
     private fun ledgerRoot(context: Context): File? =
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)

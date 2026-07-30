@@ -568,22 +568,45 @@ private fun documentMarks(
         if (occ == null) null else Triple(info.tag, occ.second, occ.third)
     }.sortedBy { it.first }
 
+/** "  ·  page 3" for a sub-page key, nothing for a base page. Shared by the tag rows and the card
+ *  rows so a #tag and a card on the same sheet say where they are the same way. */
+private fun subPageSuffix(page: String): String {
+    val sub = page.substringAfter('#', "").toIntOrNull() ?: return ""
+    return "  ·  page ${sub + 1}"
+}
+
+/**
+ * A CalendarDayService for the directory's one bounded repair.
+ *
+ * The directory is a file of top-level functions with no injection point of its own, and the repair
+ * needs the SAME day reader everything else uses — not a private one. Moshi is provided in the
+ * activity component, so the entry point is an activity one; every screen that opens a directory
+ * lives in MainActivity, which is an `@AndroidEntryPoint`.
+ */
+@dagger.hilt.EntryPoint
+@dagger.hilt.InstallIn(dagger.hilt.android.components.ActivityComponent::class)
+internal interface DirectoryDayServiceEntryPoint {
+    fun calendarDayService(): com.toolsboox.plugin.calendar.fi.CalendarDayService
+}
+
 /**
  * Michael's first refinement: "Items must be findable INDIVIDUALLY on the page too — a jump-to-a-
  * specific-item affordance, not only a flat list." So a document is not only a page you open; it is
  * a page you can open AT something.
  *
- * The items are the document's #tags and the marks they were written at, which is exactly the data
- * [showTagIndex]/[showTagPages] already navigate by — same occurrence store, same design-space
- * rect, same `toDayNote(date, page, rect)` landing. Reused rather than reimplemented, per the brief
- * and because a second definition of "where is this tag" is a second thing to keep agreeing with
- * the first. The day page's own ‹ N › jump already leads with these marks; this puts the same move
- * in the directory, so you can land on a mark from a page you are not standing on.
+ * The items are the document's #tags and its CARDS: the two things on a page that have a name and a
+ * place. Both are read from an occurrence store — [com.toolsboox.plugin.calendar.ot.LedgerTags] and
+ * [com.toolsboox.plugin.calendar.ot.PickingsCards] — and both land through the same
+ * `toDayNote(date, page, rect)` with a rect in the same design space, so the two kinds of row are
+ * genuinely one kind of row with two sources. That was the condition this list was left waiting on:
+ * "When cards get an index of their own they can join this list unchanged." They have, and they did.
  *
- * A Pickings board's CARDS are the other addressable item and are deliberately not here. They live
- * as image elements inside the day JSON, so listing them means decoding that file — the one thing
- * every other query in this file streams, samples or indexes its way around, and never on the path
- * of opening a menu. When cards get an index of their own they can join this list unchanged.
+ * The card index is still never DECODED from here. Cards arrive from a small per-day sidecar; the
+ * only thing that opens a day file is the ⟳ row, which appears only when that day's index is behind
+ * its day file (a board made before the index existed, or a day pulled down by WebDAV behind the
+ * app's back), does exactly one day, and does it on a background thread. So the menu still opens at
+ * the cost of a directory listing, and the repair is a thing you choose rather than a thing that
+ * happens to you while you are trying to get somewhere.
  */
 private fun showDocumentItems(
     fragment: ScreenFragment,
@@ -592,31 +615,95 @@ private fun showDocumentItems(
     base: String,
 ) {
     val ctx = fragment.requireContext()
+    val store = com.toolsboox.plugin.calendar.ot.PickingsCards
     val marks = documentMarks(ctx, date, base)
-    // Nothing to aim at: behave exactly as a tap would rather than showing an empty chooser.
-    if (marks.isEmpty()) {
+    val cards = store.cards(ctx, date, base)
+    // Two stats, no decode — safe on the path of opening a menu, which is the whole point.
+    val stale = !store.isFresh(ctx, date)
+    // Nothing to aim at and nothing to repair: behave exactly as a tap would rather than showing an
+    // empty chooser.
+    if (marks.isEmpty() && cards.isEmpty() && !stale) {
         CalendarNavigator.toDayNote(fragment, date, base)
         return
     }
     // "Top of the page" leads, so the item list is never a detour on the way to the ordinary thing.
-    val labels = (listOf("⌂  Top of the page") + marks.map { (tag, page, rect) ->
-        val sub = page.substringAfter('#', "").toIntOrNull()
-        val where = if (sub == null) "" else "  ·  page ${sub + 1}"
-        // The ✎ is showTagPages' own mark for "this one zooms to the word"; a legacy occurrence
-        // with no rect just opens the page, and saying so beats a jump that silently doesn't.
-        "${if (rect != null) "✎  " else ""}#$tag$where"
-    }).toTypedArray()
+    // Tags then cards, each in its own order: tags alphabetically (they are a vocabulary), cards in
+    // reading order down the board (they are a composition). Interleaving them by position was the
+    // alternative and reads as a jumble — you come here knowing WHICH KIND of thing you are after.
+    val labels = (
+        listOf("⌂  Top of the page") +
+            marks.map { (tag, page, rect) ->
+                // The ✎ is showTagPages' own mark for "this one zooms to the word"; a legacy
+                // occurrence with no rect just opens the page, and saying so beats a jump that
+                // silently doesn't.
+                "${if (rect != null) "✎  " else ""}#$tag${subPageSuffix(page)}"
+            } +
+            cards.map { c -> "${store.glyphFor(c)}  ${store.labelFor(c)}${subPageSuffix(c.page)}" } +
+            (if (stale) listOf("⟳  Read this page's cards…") else emptyList())
+        ).toTypedArray()
     androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
         .setTitle(title)
         .setItems(labels) { _, which ->
-            if (which == 0) CalendarNavigator.toDayNote(fragment, date, base)
-            else {
-                val (_, page, rect) = marks[which - 1]
-                CalendarNavigator.toDayNote(fragment, date, page, rect)
+            when {
+                which == 0 -> CalendarNavigator.toDayNote(fragment, date, base)
+                which <= marks.size -> {
+                    val (_, page, rect) = marks[which - 1]
+                    CalendarNavigator.toDayNote(fragment, date, page, rect)
+                }
+
+                which <= marks.size + cards.size -> {
+                    val card = cards[which - 1 - marks.size]
+                    CalendarNavigator.toDayNote(fragment, date, card.page, card.rect)
+                }
+
+                else -> repairDocumentCards(fragment, title, date, base)
             }
         }
         .setNegativeButton("Close", null)
         .show()
+}
+
+/**
+ * Read ONE day file and rebuild its card index, then re-open the item list with the cards in it.
+ *
+ * Everything about this is deliberately narrow. One day, chosen by you, off the main thread, through
+ * the same [com.toolsboox.plugin.calendar.fi.CalendarDayService] load that carries this fork's
+ * defences against a day file too large to read — the 86 MB day that killed the process on launch is
+ * the reason a private decoder was not written for this. Idempotent: run it twice and the second run
+ * writes the same bytes.
+ *
+ * It re-opens the list rather than reporting success, because "it worked" is not what you were after
+ * — the card you were looking for is.
+ */
+private fun repairDocumentCards(
+    fragment: ScreenFragment,
+    title: String,
+    date: LocalDate,
+    base: String,
+) {
+    val app = fragment.requireContext().applicationContext
+    val service = runCatching {
+        dagger.hilt.android.EntryPointAccessors
+            .fromActivity(fragment.requireActivity(), DirectoryDayServiceEntryPoint::class.java)
+            .calendarDayService()
+    }.getOrNull()
+    if (service == null) {
+        fragment.showMessage("Couldn't open the day reader")
+        return
+    }
+    fragment.showMessage("Reading $date…")
+    Thread {
+        val n = runCatching {
+            com.toolsboox.plugin.calendar.ot.PickingsCards.backfill(app, service, date)
+        }.getOrDefault(-1)
+        runCatching {
+            fragment.requireActivity().runOnUiThread {
+                if (!fragment.isAdded) return@runOnUiThread
+                if (n < 0) fragment.showMessage("That day couldn't be read")
+                else showDocumentItems(fragment, title, date, base)
+            }
+        }
+    }.apply { isDaemon = true }.start()
 }
 
 /** Open a document the way the directory always has: expand it if it has pages, else go to it.
@@ -686,27 +773,50 @@ private fun sortItems(items: List<DirItem>, sort: DirectorySort): List<DirItem> 
         )
 }
 
-/** One item as a row: its own glyph, its title, and — the part that makes it findable — the date
- *  it belongs to and how many #tags are written inside it. Holding the row lands on one of them. */
+/**
+ * One item as a row: its own glyph, its title, and — the part that makes it findable — the date it
+ * belongs to and what is addressable inside it. Holding the row lands on one of those things.
+ *
+ * TWO badges, not one widened badge. 🏷 counts #tags and ❝ counts cards, because they answer
+ * different questions about a page — "what is this filed under" and "what is on it" — and a page can
+ * easily be heavy in one and empty in the other. A single number summing them would be the one
+ * figure that tells you neither.
+ *
+ * The hold is now offered on every row that has a page behind it, badge or no badge. It used to be
+ * withheld when the tag count was zero, which was honest while tags were the only item; with a card
+ * index that can be BEHIND its day file, a zero is sometimes "nothing there" and sometimes "not
+ * looked yet", and a gesture that silently does nothing is the worst way to tell those apart.
+ * [showDocumentItems] still falls straight through to opening the page when there really is nothing
+ * to aim at, so a hold on an empty document costs exactly what a tap does.
+ */
 private fun directoryRowFor(
     fragment: ScreenFragment,
     item: DirItem,
     depth: Int,
     markCounts: Map<String, Int>,
+    cardCounts: Map<String, Int>,
     showKind: Boolean,
 ): DirRow {
-    val n = if (item.kind == KIND_TAGS) 0 else markCounts["${item.date}|${item.key}"] ?: 0
+    // Two kinds have no page behind them and so nothing to land ON: a tag row IS the index of
+    // places, and a Text Note's "key" is a note id its own fragment owns — holding either used to
+    // be impossible only because their tag count was always zero, which stopped being a guard the
+    // moment the hold became unconditional.
+    val isTag = item.kind == KIND_TAGS ||
+        item.kind == com.toolsboox.plugin.calendar.ot.LedgerDocuments.TEXT_NOTES
+    val n = if (isTag) 0 else markCounts["${item.date}|${item.key}"] ?: 0
+    val cards = if (isTag) 0 else cardCounts["${item.date}|${item.key}"] ?: 0
     val detail = buildString {
         if (showKind) append(kindLabel(item.kind)).append("  ·  ")
         append(item.date.toString())
         if (n > 0) append("  ·  🏷 ").append(n)
+        if (cards > 0) append("  ·  ❝ ").append(cards)
     }
     return DirRow(
         glyph = kindGlyph(item.kind),
         label = item.title,
         detail = detail,
         depth = depth,
-        onHold = if (n == 0) null else ({ showDocumentItems(fragment, item.title, item.date, item.key) }),
+        onHold = if (isTag) null else ({ showDocumentItems(fragment, item.title, item.date, item.key) }),
     ) { openDirectoryItem(fragment, item) }
 }
 
@@ -834,6 +944,10 @@ fun showLedgerRootDirectory(fragment: ScreenFragment, date: LocalDate = LocalDat
     val cache = HashMap<String, List<DirItem>>()
     fun items(kind: String): List<DirItem> = cache.getOrPut(kind) { directoryItems(ctx, kind) }
     val marks = directoryMarkCounts(ctx)
+    // The card tally is ONE small file for the whole ledger, read here for the same reason the tag
+    // marks are: a badge is wanted on every row, and asking per row — or opening a per-day sidecar
+    // per row — is the cost that shows up as a sluggish redraw and gets blamed on e-ink.
+    val cardCounts = com.toolsboox.plugin.calendar.ot.PickingsCards.counts(ctx)
     // How far each folder has been unrolled — the "…and N more" row raises its own cap and redraws,
     // which is the same in-place move as opening a folder rather than a second kind of paging.
     val unrolled = HashMap<String, Int>()
@@ -876,7 +990,7 @@ fun showLedgerRootDirectory(fragment: ScreenFragment, date: LocalDate = LocalDat
             if (hits.isEmpty()) {
                 rows += DirRow("", "Nothing matches “$query”.", null, 1, closes = false) {}
             }
-            for (item in hits.take(cap)) rows += directoryRowFor(fragment, item, 1, marks, true)
+            for (item in hits.take(cap)) rows += directoryRowFor(fragment, item, 1, marks, cardCounts, true)
             if (hits.size > cap) {
                 rows += DirRow("", "…and ${hits.size - cap} more", "tap to show more", 1, closes = false) {
                     unrolled["find"] = cap + DIRECTORY_PAGE; redraw()
@@ -897,7 +1011,7 @@ fun showLedgerRootDirectory(fragment: ScreenFragment, date: LocalDate = LocalDat
                 rows += kindDoorRow(fragment, kind, date)
                 val ordered = sortItems(list, sort)
                 val cap = unrolled[id] ?: DIRECTORY_PAGE
-                for (item in ordered.take(cap)) rows += directoryRowFor(fragment, item, 1, marks, false)
+                for (item in ordered.take(cap)) rows += directoryRowFor(fragment, item, 1, marks, cardCounts, false)
                 if (ordered.size > cap) {
                     rows += DirRow("", "…and ${ordered.size - cap} more", "tap to show more", 1, closes = false) {
                         unrolled[id] = cap + DIRECTORY_PAGE; redraw()
@@ -941,7 +1055,7 @@ fun showLedgerRootDirectory(fragment: ScreenFragment, date: LocalDate = LocalDat
                             ) { toggle(did); redraw() }
                             if (did !in open) continue
                             for (item in sortItems(dayDocuments(ctx, day), sort)) {
-                                rows += directoryRowFor(fragment, item, 3, marks, true)
+                                rows += directoryRowFor(fragment, item, 3, marks, cardCounts, true)
                             }
                         }
                     }
@@ -998,6 +1112,7 @@ fun showDocumentDirectory(
     // document behind the keyboard. Held across redraws, each count is paid for at most once.
     val docs = docs0.forSurface(ctx, surface, date, knownPageKeys)
     val marks = directoryMarkCounts(ctx)
+    val cardCounts = com.toolsboox.plugin.calendar.ot.PickingsCards.counts(ctx)
     val glyph = docs0.glyph(surface)
     val label = docs0.label(surface)
     // The document you're standing in is marked, so the list answers "where am I" as well as "what
@@ -1023,17 +1138,24 @@ fun showDocumentDirectory(
         if (shown.isEmpty()) rows += DirRow("", "Nothing matches “$query”.", null, 1, closes = false) {}
         for (doc in shown) {
             val n = marks["${doc.date}|${doc.key}"] ?: 0
+            val cards = cardCounts["${doc.date}|${doc.key}"] ?: 0
             val detail = buildString {
                 if (doc.subPageCount > 1) append("${doc.subPageCount} pages")
                 // A named document off today shows the day it was started; without it a list of
                 // essay titles says nothing about when any of them happened.
                 if (doc.date != date) { if (isNotEmpty()) append("  ·  "); append(doc.date.toString()) }
                 if (n > 0) { if (isNotEmpty()) append("  ·  "); append("🏷 $n") }
+                // On a Pickings board this is the badge that matters — a board's whole content is
+                // its cards, and until now the row could only say how many WORDS were on it.
+                if (cards > 0) { if (isNotEmpty()) append("  ·  "); append("❝ $cards") }
                 if (doc.key == hereBase) { if (isNotEmpty()) append("  ·  "); append("here") }
             }
             rows += DirRow(
                 glyph, doc.title, detail,
-                onHold = if (n == 0) null else ({ showDocumentItems(fragment, doc.title, doc.date, doc.key) }),
+                // Text Notes are listable here but not landable: their key is a note id, not a page
+                // key, so there is no page for a hold to open at anything.
+                onHold = if (surface == docs0.TEXT_NOTES) null
+                else ({ showDocumentItems(fragment, doc.title, doc.date, doc.key) }),
             ) {
                 // Expand rather than jump: a document with pages should show you its pages, so
                 // "which page of the essay" is answerable from the same place as "which essay".
@@ -1042,6 +1164,23 @@ fun showDocumentDirectory(
         }
         rows += DirRow("＋", "New ${docs0.noun(surface)}…") { promptNewDocument(fragment, surface, date) }
         if (renameable) rows += DirRow("✎", "Rename…") { promptRenameDocument(fragment, surface, date, docs) }
+        // The one place a SWEEP is offered, and it is offered rather than run.
+        //
+        // Every board made before the card index existed has a day file the index has never read,
+        // and repairing them one hold at a time is a poor answer for a year of boards. So the row
+        // appears only when this listing actually contains days the index is behind on, says how
+        // many, and reads them in the background — bounded by COUNT rather than by time, because
+        // one 40 MB day is worth thirty ordinary ones and a deadline would stop in the middle of
+        // whichever one it was on. Everything about it is idempotent: run it again and the days it
+        // already read are fresh and skipped.
+        val staleDates = docs.map { it.date }.distinct()
+            .filter { !com.toolsboox.plugin.calendar.ot.PickingsCards.isFresh(ctx, it) }
+        if (staleDates.isNotEmpty()) {
+            val what = if (staleDates.size == 1) "1 day" else "${staleDates.size} days"
+            rows += DirRow("⟳", "Read the cards on $what…", "not indexed yet", closes = false) {
+                sweepDocumentCards(fragment, staleDates, redraw)
+            }
+        }
         // The same surface on another day — a directory should walk time as well as pages,
         // which is the move the iPad's directory ends on too.
         rows += DirRow("📅", "Go to a date…") { showDocumentDatePicker(fragment, surface, date, currentKey) }
@@ -1050,6 +1189,45 @@ fun showDocumentDirectory(
         rows += DirRow("‹", "All of the Ledger…") { showLedgerRootDirectory(fragment, date) }
         rows
     }
+}
+
+/** How many days one tap of the sweep will read. Thirty ordinary days is a second or two of IO and
+ *  a handful of small writes; it is also more days than any one directory listing usually shows, so
+ *  in practice one tap finishes the job and the row stops appearing. A bigger number would only buy
+ *  a longer wait for the same outcome. */
+private const val CARD_SWEEP_LIMIT = 30
+
+/** Read up to [CARD_SWEEP_LIMIT] of [dates] into the card index, newest first, off the main thread,
+ *  then rebuild the list in place so the badges appear where they were missing. */
+private fun sweepDocumentCards(
+    fragment: ScreenFragment,
+    dates: List<LocalDate>,
+    redraw: () -> Unit,
+) {
+    val app = fragment.requireContext().applicationContext
+    val service = runCatching {
+        dagger.hilt.android.EntryPointAccessors
+            .fromActivity(fragment.requireActivity(), DirectoryDayServiceEntryPoint::class.java)
+            .calendarDayService()
+    }.getOrNull()
+    if (service == null) {
+        fragment.showMessage("Couldn't open the day reader")
+        return
+    }
+    fragment.showMessage("Reading…")
+    Thread {
+        val done = runCatching {
+            com.toolsboox.plugin.calendar.ot.PickingsCards
+                .backfillMissing(app, service, dates, CARD_SWEEP_LIMIT)
+        }.getOrDefault(0)
+        runCatching {
+            fragment.requireActivity().runOnUiThread {
+                if (!fragment.isAdded) return@runOnUiThread
+                fragment.showMessage(if (done == 1) "Read 1 day." else "Read $done days.")
+                redraw()
+            }
+        }
+    }.apply { isDaemon = true }.start()
 }
 
 /**
