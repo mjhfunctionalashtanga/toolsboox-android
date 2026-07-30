@@ -53,6 +53,23 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         private const val VIEW_UNREAD = "unread"
         private const val VIEW_READ = "read"
         private const val VIEW_ALL = "all"
+
+        /**
+         * Sent is a MAILBOX, not a fifth chip on the view axis.
+         *
+         * The axis — Starred · Unread · Read · All — is a LENS: four ways of looking at ONE pile,
+         * and the same four words name the same four things on the iPad. "Sent" is not a way of
+         * looking at the inbox; it is a different pile, with a recipient where a sender should be
+         * and no unread state to speak of, so a fifth chip beside the four would have been a
+         * category error you could tap.
+         *
+         * What the screen already has for "switch pile" is the ✉ All accordion — "All accounts"
+         * and one row per inbox. Sent joins that list, because it is the same KIND of thing: a
+         * mailbox you switch to, not a lens you apply. It therefore needs a name inside the
+         * account-filter vocabulary; this token is a reserved string no account id can be (ids are
+         * UUIDs), and it is the same one the iPad reserves in `mail_account_filter`.
+         */
+        private const val SENT_MAILBOX = "__sent"
     }
 
 
@@ -81,7 +98,13 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
      *  it asking — the account narrowing already survived the trip away, and the view axis is the
      *  same kind of choice. */
     private fun setMailView(view: String) {
-        if (mailView == view) return
+        // Picking a lens while Sent is up is a request for the INCOMING pile — the four words only
+        // ever meant something about mail that arrived. So the lens takes you back out of Sent
+        // rather than sitting there selected and doing nothing visible, which is how a chip teaches
+        // a reader that the screen is broken.
+        val leavingSent = showingSent
+        if (leavingSent) setMailbox(null, redraw = false)
+        if (mailView == view && !leavingSent) return
         mailView = view
         requireContext().getSharedPreferences("ledger_mail_inbox", 0).edit()
             .putString("mail_view", view).apply()
@@ -90,10 +113,26 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
     private var messages: List<InboxMessage> = emptyList()
     private var refreshing = false
 
-    // Which account the unified list is narrowed to (null = every account). Persisted, so the
-    // inbox reopens the way it was left — the unified view stays the default, the narrowing a
-    // choice that survives the trip away.
-    private var accountFilter: String? = null
+    // WHICH MAILBOX IS ON SCREEN, as the one token the chip face and the account rows both speak:
+    // null = every account (the unified inbox), an account id = that inbox, [SENT_MAILBOX] = Sent.
+    // Persisted, so the screen reopens the way it was left — the unified view stays the default,
+    // and any narrowing is a choice that survives the trip away.
+    private var mailbox: String? = null
+
+    /** The account narrowing, which Sent is NOT: it's a pile of its own, not one account's mail.
+     *  Every filter below reads this, so nothing has to remember to special-case the token. */
+    private val accountFilter: String? get() = mailbox?.takeIf { it != SENT_MAILBOX }
+
+    /** True while the Sent pile is the list — the outgoing mailbox, not a lens over the inbox. */
+    private val showingSent: Boolean get() = mailbox == SENT_MAILBOX
+
+    /** Move the mailbox, remember it, redraw. */
+    private fun setMailbox(id: String?, redraw: Boolean = true) {
+        mailbox = id
+        requireContext().getSharedPreferences("ledger_mail_inbox", 0).edit()
+            .putString("account_filter", id ?: "").apply()
+        if (redraw) { renderChips(); render() }
+    }
 
     // Whether the ✉ All chip's account dropdown is unfolded (persisted, like the feed drawer's).
     private var accountsOpen = false
@@ -132,7 +171,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         binding.mailSettings.setOnClickListener { showAccountsList() }
         binding.mailClear.setOnClickListener { clearUnstarred() }
         val uiPrefs = requireContext().getSharedPreferences("ledger_mail_inbox", 0)
-        accountFilter = uiPrefs.getString("account_filter", "")!!.ifBlank { null }
+        mailbox = uiPrefs.getString("account_filter", "")!!.ifBlank { null }
         accountsOpen = uiPrefs.getBoolean("accounts_open", false)
         // Starred stays the default — the kept pile is what an inbox is FOR here — but the lens is
         // remembered once moved, so an inbox left on Unread reopens on Unread.
@@ -194,17 +233,21 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             })
         }
 
-        chip("★ Starred", mailView == VIEW_STARRED) { setMailView(VIEW_STARRED) }
+        // In Sent NONE of the four reads as selected: the lens isn't what's deciding the list, and a
+        // solid black ★ Starred chip over a list of letters you wrote would be a plain lie.
+        fun lens(view: String) = !showingSent && mailView == view
+
+        chip("★ Starred", lens(VIEW_STARRED)) { setMailView(VIEW_STARRED) }
         // The two the inbox was missing. "What haven't I read" is the question you most often have
         // of a mailbox, and until now the only answers on offer were the kept pile or everything.
-        chip("◦ Unread", mailView == VIEW_UNREAD) { setMailView(VIEW_UNREAD) }
-        chip("● Read", mailView == VIEW_READ) { setMailView(VIEW_READ) }
+        chip("◦ Unread", lens(VIEW_UNREAD)) { setMailView(VIEW_UNREAD) }
+        chip("● Read", lens(VIEW_READ)) { setMailView(VIEW_READ) }
 
         // ✉ All is the accordion header for the accounts (feed-drawer idiom: ▸/▾ caret; one tap
         // does BOTH — show the unified inbox and unfold the account rows; a second folds them).
         val accounts = MailAccountStore.all(ctx)
         val allLabel = if (accounts.isEmpty()) "✉ All" else "✉ All  " + (if (accountsOpen) "▾" else "▸")
-        chip(allLabel, mailView == VIEW_ALL) {
+        chip(allLabel, lens(VIEW_ALL)) {
             // The accordion still hangs off THIS chip, so its fold has to be decided before the
             // view flips — `onlyStarred` is derived now, and reading it after the flip would ask
             // about the state we just left.
@@ -214,14 +257,17 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             setMailView(VIEW_ALL)
         }
 
-        // The filter's face while the dropdown is folded: one selected chip naming the account,
-        // so a narrowed inbox is never a surprise. Tapping it unfolds the rows to change it.
-        val current = accounts.firstOrNull { it.id == accountFilter }
-        if (current != null && !accountsOpen) chip("@ ${current.display}", true) {
+        // The mailbox's face while the dropdown is folded: one selected chip naming it, so a
+        // narrowed inbox — or a screenful of your own outgoing mail — is never a surprise. Tapping
+        // it unfolds the rows to change it.
+        fun unfold() {
             accountsOpen = true
             ctx.getSharedPreferences("ledger_mail_inbox", 0).edit().putBoolean("accounts_open", true).apply()
             renderChips()
         }
+        val current = accounts.firstOrNull { it.id == accountFilter }
+        if (showingSent && !accountsOpen) chip("➤ Sent", true) { unfold() }
+        else if (current != null && !accountsOpen) chip("@ ${current.display}", true) { unfold() }
 
         // The window filter, named so there's no guessing what the strip has scoped to.
         if (navFiltered()) chip("🗓 ${windowLabel()}  ✕", true) {
@@ -235,15 +281,21 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             NavHostFragment.findNavController(this).navigate(R.id.action_to_mail_compose)
         }
 
-        // Clear only makes sense while triaging All — it sweeps everything you didn't star.
-        binding.mailClear.visibility = if (onlyStarred) View.GONE else View.VISIBLE
+        // Clear only makes sense while triaging All — it sweeps everything you didn't star. Not in
+        // Sent either: every row there is keep-forever, so the sweep would be guarded down to
+        // nothing and the 🧹 would be a promise the store refuses to keep.
+        binding.mailClear.visibility = if (onlyStarred || showingSent) View.GONE else View.VISIBLE
 
         renderAccountRows(accounts)
     }
 
-    /** The unfolded account rows under the chip strip: "All accounts" + one row per inbox,
+    /** The unfolded mailbox rows under the chip strip: "All accounts", one row per inbox, and Sent —
      *  indented inside the accent outline like every accordion dropdown in the app. Tapping a
-     *  row narrows (or widens) the unified list; the choice is kept for next time. */
+     *  row narrows (or widens) the unified list; the choice is kept for next time.
+     *
+     *  Sent sits with the accounts because it is the same KIND of thing (see [SENT_MAILBOX]): a
+     *  mailbox you switch to, not a lens you apply. It is listed last and set apart by a rule,
+     *  because it is the only one of them that holds mail going the other way. */
     private fun renderAccountRows(accounts: List<MailAccount>) {
         val ctx = context ?: return
         val panel = binding.mailAccounts
@@ -273,14 +325,15 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             })
         }
 
-        fun pick(id: String?) {
-            accountFilter = id
-            ctx.getSharedPreferences("ledger_mail_inbox", 0).edit()
-                .putString("account_filter", id ?: "").apply()
-            renderChips(); render()
-        }
-        accountRow("✉  All accounts", accountFilter == null) { pick(null) }
-        for (a in accounts) accountRow("@  ${a.display}", accountFilter == a.id) { pick(a.id) }
+        accountRow("✉  All accounts", accountFilter == null && !showingSent) { setMailbox(null) }
+        for (a in accounts) accountRow("@  ${a.display}", accountFilter == a.id) { setMailbox(a.id) }
+        // The rule that says the pile below goes the other way.
+        panel.addView(View(ctx).apply {
+            setBackgroundColor(0xFF000000.toInt())
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1))
+                .apply { setMargins(dp(12), dp(4), dp(4), dp(4)) }
+        })
+        accountRow("➤  Sent", showingSent) { setMailbox(SENT_MAILBOX) }
     }
 
     private fun shown(): List<InboxMessage> {
@@ -290,15 +343,33 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         // would read as the search failing.
         if (searchActive()) return serverResults ?: localMatches()
         val ctx = requireContext()
+        if (showingSent) {
+            // A DIFFERENT PILE, not a lens over this one — so the view axis stands aside here the
+            // way it does for a search. Unread and Read mean nothing about a letter you wrote, and
+            // Starred would empty the mailbox for no reason a reader could work out.
+            //
+            // The date strip still applies: "what did I send in July" is a real question, and a
+            // mailbox you can't scope by time is the one thing the almanac exists to fix.
+            return filterByWindow(messages.filter { InboxStore.isSent(it.id) })
+        }
         // The four positions of the view axis, on mail's own material. Unread/Read run off the same
         // read set that opening a message writes to, so the lens agrees with what the rows already
         // show — a list that says "unread" while displaying mail you've read reads as a bug even
         // when the filter is technically doing something defensible.
-        var base = when (mailView) {
-            VIEW_STARRED -> messages.filter { InboxStore.isStarred(ctx, it.id) }
-            VIEW_UNREAD -> messages.filter { !InboxStore.isRead(ctx, it.id) }
-            VIEW_READ -> messages.filter { InboxStore.isRead(ctx, it.id) }
-            else -> messages
+        //
+        // SENT ROWS ARE EXCLUDED FROM ALL FOUR. They live in the same store — they're keep-forever,
+        // so InboxStore.messages folds them in from the sent pile — but they are not incoming mail,
+        // and the lenses had no idea. A sent row carries no read id, so ◦ Unread listed every reply
+        // you had ever written, with the bold and the ● dot saying it wanted your attention; under
+        // ✉ All your own letters interleaved with the inbox with nothing on the row to tell them
+        // apart; and under ★ Starred they vanished, because you don't star your own outgoing mail.
+        // Sent is where they belong, and this is the line that puts them there.
+        var base = messages.filter { !InboxStore.isSent(it.id) }
+        base = when (mailView) {
+            VIEW_STARRED -> base.filter { InboxStore.isStarred(ctx, it.id) }
+            VIEW_UNREAD -> base.filter { !InboxStore.isRead(ctx, it.id) }
+            VIEW_READ -> base.filter { InboxStore.isRead(ctx, it.id) }
+            else -> base
         }
         // Narrow to one account by ORIGIN (the acct:<id> prefix), not by display label — labels
         // get renamed; the id a message arrived through doesn't.
@@ -315,6 +386,11 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         m.subject.contains(q, ignoreCase = true) ||
             m.fromName.contains(q, ignoreCase = true) ||
             m.fromEmail.contains(q, ignoreCase = true) ||
+            // Sent rows are in this pool too (keep-forever, so messages() folds them in), and the
+            // way you look for one is by who you wrote it TO — searching your own name finds
+            // nothing useful. Blank on everything that arrived, so this costs incoming mail nothing.
+            m.toName.contains(q, ignoreCase = true) ||
+            m.toEmail.contains(q, ignoreCase = true) ||
             m.snippet.contains(q, ignoreCase = true) ||
             m.body.contains(q, ignoreCase = true)
 
@@ -537,6 +613,12 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
                     searching && serverResults != null ->
                         "The server found nothing for \"$searchQuery\". Tap ✕ to go back to the inbox."
                     searching -> "No matches in loaded mail for \"$searchQuery\"."
+                    // Sent answers for itself before the window does: an empty Sent is almost
+                    // always "you haven't written one from here yet", not a date problem.
+                    showingSent && navFiltered() ->
+                        "Nothing sent in ${windowLabel()}. Tap ✕ on the date chip for everything you've sent."
+                    showingSent ->
+                        "Nothing sent from this device yet. Replies and letters you compose are kept here."
                     navFiltered() -> "No mail in ${windowLabel()}. Tap ✕ on the date chip for the live inbox."
                     accountFilter != null -> "No mail from this account yet. Tap the ▾ chip for all accounts."
                     // Each lens names ITSELF when it comes up empty. The pane already argued that a
@@ -573,7 +655,10 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
 
     private fun row(m: InboxMessage): View {
         val ctx = requireContext()
-        val unread = !InboxStore.isRead(ctx, m.id)
+        val sent = InboxStore.isSent(m.id)
+        // A letter you wrote is never "unread": the dot and the bold say a thing needs your
+        // attention, and it is the one row in the mailbox that has already had all of it.
+        val unread = !sent && !InboxStore.isRead(ctx, m.id)
         val starred = InboxStore.isStarred(ctx, m.id)
 
         // Unread must survive monochrome: the old 5%-gray row tint was invisible on a Boox
@@ -605,7 +690,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         }
         val head = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
         head.addView(TextView(ctx).apply {
-            text = (if (unread) "●  " else "") + m.fromName.ifBlank { m.fromEmail }
+            text = (if (unread) "●  " else "") + if (sent) "To ${correspondent(m)}" else m.fromName.ifBlank { m.fromEmail }
             textSize = 14f; setTextColor(0xFF000000.toInt())
             if (unread) setTypeface(typeface, android.graphics.Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -657,7 +742,10 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             setTypeface(typeface, android.graphics.Typeface.BOLD); setPadding(0, dp(2), 0, dp(4))
         })
         col.addView(TextView(ctx).apply {
-            text = listOf(m.fromName, m.fromEmail).filter { it.isNotBlank() }.joinToString("  ·  ")
+            // Open a letter you SENT and the useful half of its header is the recipient — you
+            // already know perfectly well who wrote it.
+            text = if (InboxStore.isSent(m.id)) "To ${correspondent(m)}"
+            else listOf(m.fromName, m.fromEmail).filter { it.isNotBlank() }.joinToString("  ·  ")
             textSize = 12f; setTextColor(0xFF666666.toInt()); setPadding(0, 0, 0, dp(8))
         })
         // Never a blank pane: a message whose MIME walk produced nothing readable still says
@@ -1191,11 +1279,9 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             .setNegativeButton("Cancel", null)
         if (exists) builder.setNeutralButton("Delete") { _, _ ->
             MailAccountStore.delete(ctx, a.id); toast("Account deleted")
-            if (accountFilter == a.id) {
-                // Never leave the list narrowed to an account that no longer exists.
-                accountFilter = null
-                ctx.getSharedPreferences("ledger_mail_inbox", 0).edit().putString("account_filter", "").apply()
-            }
+            // Never leave the list narrowed to an account that no longer exists. (Sent survives an
+            // account deletion: the letters were still sent, and their pile is file-backed.)
+            if (accountFilter == a.id) setMailbox(null, redraw = false)
             messages = InboxStore.messages(ctx); renderChips(); render()
         }
         val dialog = builder.create()
@@ -1205,6 +1291,13 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT
         )
     }
+
+    /** A sent row's correspondent is its RECIPIENT — the sender is always you, and a Sent list of
+     *  your own name over and over tells you nothing. Sent rows written before the recipient was
+     *  recorded have no "to" at all, so they fall back to the account the letter went out on rather
+     *  than showing a blank where a person should be. */
+    private fun correspondent(m: InboxMessage): String =
+        m.toName.ifBlank { m.toEmail }.ifBlank { m.account }.ifBlank { "—" }
 
     private fun rel(millis: Long): String =
         android.text.format.DateUtils.getRelativeTimeSpanString(

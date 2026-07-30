@@ -128,11 +128,27 @@ object MailSync {
             ?: throw MailException("This message isn't tied to a configured account, so there's nowhere to send from.")
         if (m.fromEmail.isBlank()) throw MailException("This message has no reply address.")
         val subject = if (m.subject.lowercase().startsWith("re:")) m.subject else "Re: ${m.subject}"
-        sendNew(context, aid, m.fromEmail, subject, body)
+        // `record = false`: the reply flow writes its own, richer sent row (with the original in
+        // hand, so it can carry who it went to and the Re: thread it belongs to) once this returns
+        // — see MailInboxFragment.showReply. Letting sendNew record as well would file the same
+        // reply twice, once with a recipient and once without.
+        sendNew(context, aid, m.fromEmail, subject, body, record = false)
     }
 
-    /** Send a fresh message from a chosen account (used by the reply above; ready for a composer). */
-    suspend fun sendNew(context: Context, accountId: String, to: String, subject: String, body: String) {
+    /**
+     * Send a fresh message from a chosen account (used by the standalone composer and the reply above).
+     *
+     * [record] files the sent message in the keep-forever pile once SMTP has accepted it — on by
+     * default, because everything that reaches here IS a message you sent, and that pile is the only
+     * copy of it this device will ever have (nothing is APPENDed to the server's Sent folder; this
+     * client speaks only INBOX). The composer used to send and then only toast "Sent", so a letter
+     * written here vanished the instant the server took it. The reply path passes false and records
+     * its own row.
+     */
+    suspend fun sendNew(
+        context: Context, accountId: String, to: String, subject: String, body: String,
+        record: Boolean = true
+    ) {
         val a = MailAccountStore.all(context).firstOrNull { it.id == accountId }
             ?: throw MailException("No such account.")
         val pass = MailAccountStore.password(context, a.id)
@@ -145,6 +161,13 @@ object MailSync {
                 fromEmail = a.email, fromName = a.displayName, toEmail = to,
                 subject = subject.ifBlank { "(no subject)" }, body = body
             )
+        )
+        // Past the throwing send: it went. Only NOW is there anything to keep — a failed send must
+        // leave no sent row behind, or the pile starts lying about what actually left the device.
+        if (record) InboxStore.recordComposed(
+            context, accountId = a.id, accountLabel = a.display,
+            fromName = a.displayName, fromEmail = a.email,
+            to = to, subject = subject, body = body
         )
     }
 }

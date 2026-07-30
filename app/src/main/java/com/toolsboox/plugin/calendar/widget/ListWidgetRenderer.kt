@@ -60,7 +60,12 @@ object ListWidgetRenderer {
      *  is empty, so this resolves to the persisted starred pile (files/mail/starred.json) union the
      *  seeded samples on a fresh install. No IMAP, no fetch. */
     fun renderMail(context: Context, widthDp: Int, heightDp: Int): Bitmap {
-        val messages = runCatching { InboxStore.messages(context) }.getOrDefault(emptyList())
+        val messages = runCatching { InboxStore.messages(context) }
+            .getOrDefault(emptyList())
+            // Mail you SENT is keep-forever, so it comes back from messages() alongside the rest —
+            // and on a widget headed "Mail" it read as arriving mail from yourself. A glance widget
+            // answers "what wants me", and a letter you already wrote does not.
+            .filter { !InboxStore.isSent(it.id) }
         val (starred, rest) = messages.partition { runCatching { InboxStore.isStarred(context, it.id) }.getOrDefault(false) }
         val ordered = starred + rest
         val rows = ordered.take(MAX_ROWS).map { m ->

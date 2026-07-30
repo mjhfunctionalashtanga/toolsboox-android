@@ -27,6 +27,19 @@ data class InboxMessage(
      * shows when you ask for the letter as it was sent.
      */
     val html: String = "",
+    /**
+     * Who it went TO. Blank on everything that ARRIVED — an inbox row's recipient is you, and
+     * printing that on every line would be noise. It is filled in on the synthetic rows written for
+     * mail we SENT ([recordSent], [recordComposed]), because a Sent list that can tell you what you
+     * wrote but not who you wrote it to is half a list.
+     *
+     * Defaulted and written only when present, exactly as [html] is: a sent.json written by an
+     * older build still reads here, and an older build still reads one written by this. The key
+     * names match iOS `InboxMessage.toName` / `.toEmail` so the two forks describe a sent row the
+     * same way.
+     */
+    val toName: String = "",
+    val toEmail: String = "",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("account", account)
@@ -35,6 +48,8 @@ data class InboxMessage(
         .put("date", date).put("truncated", truncated)
         .apply { uid?.let { put("uid", it) } }
         .apply { if (html.isNotBlank()) put("html", html) }
+        .apply { if (toName.isNotBlank()) put("toName", toName) }
+        .apply { if (toEmail.isNotBlank()) put("toEmail", toEmail) }
 
     companion object {
         fun fromJson(o: JSONObject) = InboxMessage(
@@ -49,6 +64,8 @@ data class InboxMessage(
             o.optBoolean("truncated", false),
             if (o.has("uid")) o.optLong("uid") else null,   // pre-uid starred files stay readable
             o.optString("html", ""),                        // pre-html files simply have none
+            o.optString("toName", ""),                      // pre-recipient sent rows have no "to"
+            o.optString("toEmail", ""),
         )
     }
 }
@@ -72,13 +89,23 @@ object InboxStore {
     // Backstop cap per id set. The per-refresh prune keeps them near the fetch window's size;
     // string sets carry no order, so eviction past the cap is arbitrary — acceptable for ids
     // whose only cost of loss is a re-surfaced (cleared) or re-bolded (read) row.
-    private const val MAX_IDS = 4000
+    //
+    // Raised with MAX_MESSAGES below, and it HAD to be: a cap under the retention count meant the
+    // device could hold more mail than it could hold state about, and the eviction is arbitrary —
+    // so the id it dropped could have been a STAR, which is keep-forever and the one thing here
+    // that is never allowed to be lost. Ids are cheap; keep far more of them than mail.
+    private const val MAX_IDS = 20_000
 
-    // Retention for NON-keep-forever mail (everything that isn't starred or replied-to): keep the
-    // last 30 days and at most ~500 rows on device, newest-first, dropping the oldest first. The
-    // keep-forever pile (starred ∪ replied, bodies persisted) is NEVER subject to either bound.
-    private const val RETENTION_DAYS = 30L
-    private const val MAX_MESSAGES = 500
+    // Retention for NON-keep-forever mail (everything that isn't starred, replied-to or sent): keep
+    // the last year and at most ~5,000 rows on device, newest-first, dropping the oldest first. The
+    // keep-forever pile (starred ∪ replied ∪ sent, bodies persisted) is NEVER subject to either.
+    //
+    // A year and 5,000 rather than the 30 days and 500 this shipped with — Michael, 07-30: "mail
+    // should be stored on the device". A month is a triage window, not an archive, and mail you
+    // neither starred nor answered is still mail you may need to go back for. The iPad moved first
+    // (its commit: "keep a year of it on the device, not a month"); these are the same two numbers.
+    private const val RETENTION_DAYS = 365L
+    private const val MAX_MESSAGES = 5000
 
     private fun prefs(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private fun ids(c: Context, key: String): MutableSet<String> =
@@ -138,15 +165,55 @@ object InboxStore {
         val aid = MailSync.accountId(original.id)
         val a = if (aid != null) MailAccountStore.all(c).firstOrNull { it.id == aid } else null
         val subject = if (original.subject.lowercase().startsWith("re:")) original.subject else "Re: ${original.subject}"
+        record(
+            c, accountId = aid ?: "unknown", accountLabel = a?.display ?: original.account,
+            fromName = a?.displayName ?: "Me", fromEmail = a?.email ?: "",
+            // A reply's recipient is whoever wrote the thing you're answering.
+            toName = original.fromName, toEmail = original.fromEmail,
+            subject = subject, text = replyText
+        )
+    }
+
+    /**
+     * The same, for a message you COMPOSED rather than replied to.
+     *
+     * Only replies were recorded before, which meant a letter written from the standalone composer
+     * (`MailComposeFragment`) left no trace anywhere on the device the moment SMTP accepted it:
+     * nothing in the sent pile, nothing in search, nothing in the corpus —
+     * the screen said "Sent" and that was the entire record. That is the same loss the retention
+     * work was done to stop, and worse: a sent message is the most deliberate thing in a mailbox
+     * and the least reconstructable, and this client never APPENDs to the server's Sent folder, so
+     * this pile is the only copy that will ever exist. Called on the SUCCESS path only — see
+     * [MailSync.sendNew]. Call OFF the main thread (it writes a file).
+     */
+    fun recordComposed(
+        c: Context, accountId: String, accountLabel: String,
+        fromName: String, fromEmail: String, to: String, subject: String, body: String
+    ) = record(
+        c, accountId = accountId, accountLabel = accountLabel,
+        fromName = fromName, fromEmail = fromEmail,
+        // A composed letter knows the address it went to and nothing else about the person — the
+        // "Name <addr>" the composer offered is already reduced to an address by the time it sends.
+        toName = "", toEmail = to,
+        subject = subject, text = body
+    )
+
+    /** The shared write behind both: mint the synthetic row and append it to the sent pile. */
+    private fun record(
+        c: Context, accountId: String, accountLabel: String,
+        fromName: String, fromEmail: String, toName: String, toEmail: String,
+        subject: String, text: String
+    ) {
         val msg = InboxMessage(
-            id = "sent:${aid ?: "unknown"}:${java.util.UUID.randomUUID()}",
-            account = a?.display ?: original.account,
-            fromName = a?.displayName ?: "Me",
-            fromEmail = a?.email ?: "",
-            subject = subject,
-            snippet = replyText.replace("\n", " ").take(140),
-            body = replyText,
-            date = System.currentTimeMillis()
+            id = "sent:$accountId:${java.util.UUID.randomUUID()}",
+            account = accountLabel,
+            fromName = fromName.ifBlank { fromEmail.ifBlank { "Me" } },
+            fromEmail = fromEmail,
+            subject = subject.ifBlank { "(no subject)" },
+            snippet = text.replace("\n", " ").take(140),
+            body = text,
+            date = System.currentTimeMillis(),
+            toName = toName, toEmail = toEmail
         )
         val kept = loadSent(c)
         kept.add(msg)
@@ -183,19 +250,24 @@ object InboxStore {
         if (!hasAccounts(c)) return seeds().filter { !cleared.contains(it.id) }.sortedByDescending { it.date }
         val live = fetched
         val liveIds = live.map { it.id }.toSet()
-        // Keep-forever pile = starred ∪ replied, deduped by id, full bodies. These survive the window,
-        // a restart, and BOTH retention bounds below.
+        // Keep-forever pile = starred ∪ replied ∪ sent, deduped by id, full bodies. These survive the
+        // window, a restart, and BOTH retention bounds below.
         val keptForever = keepForeverPile(c)
-        val keptIds = keptForever.map { it.id }.toSet()
+        // The EXEMPTION is by id, not by pile membership. [markReplied] deliberately records the id
+        // even when it can't resolve a body to persist (keep-more, back-fill on a later refresh), so
+        // a pile-only reading of "kept forever" would have let retention age out the one message the
+        // reader had already answered — the exact case the keep-forever rule exists for. The union
+        // here mirrors iOS `InboxStore.keepForeverIds()`, which is purely the three id sets.
+        val keptIds = keptForever.map { it.id }.toSet() + ids(c, STAR) + ids(c, REPLIED)
         val base = live + keptForever.filter { it.id !in liveIds }
         val visible = base.filter { !cleared.contains(it.id) }.sortedByDescending { it.date }
 
-        // Retention, applied ONLY to the non-keep-forever remainder: last 30 days, then a ~500 cap
-        // (keep-forever rows already shown always count first, so the cap only trims the rest). The
-        // kept-forever rows themselves are never dropped, even if they alone exceed the cap.
+        // Retention, applied ONLY to the non-keep-forever remainder: the last RETENTION_DAYS, then
+        // the MAX_MESSAGES cap (keep-forever rows already shown always count first, so the cap only
+        // trims the rest). The kept-forever rows themselves are never dropped, even alone past it.
         val kf = visible.filter { it.id in keptIds }
         val cutoff = System.currentTimeMillis() - RETENTION_DAYS * 86_400_000L
-        var rest = visible.filter { it.id !in keptIds && it.date >= cutoff }   // drop non-kept older than 30d
+        var rest = visible.filter { it.id !in keptIds && it.date >= cutoff }   // drop non-kept past the window
         val room = (MAX_MESSAGES - kf.size).coerceAtLeast(0)
         if (rest.size > room) rest = rest.take(room)                          // newest-first: drops the oldest non-kept
         return (kf + rest).sortedByDescending { it.date }

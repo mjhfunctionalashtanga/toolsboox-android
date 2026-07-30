@@ -64,7 +64,10 @@ class MailComposeFragment @Inject constructor() : ScreenFragment() {
         binding.mailComposeDiscard.setOnClickListener { discard() }
 
         // From: the inbox's account filter if one is set (a narrowed inbox and its compose should
-        // agree on which door mail goes out), else the first configured account.
+        // agree on which door mail goes out), else the first configured account. That key also
+        // carries MailInboxFragment's reserved Sent token, which is a MAILBOX and not an account —
+        // it matches nothing here and falls through to the first account, which is the right answer
+        // for "compose, from the Sent view".
         accounts = MailAccountStore.all(ctx)
         val filtered = ctx.getSharedPreferences("ledger_mail_inbox", 0)
             .getString("account_filter", "")!!.ifBlank { null }
