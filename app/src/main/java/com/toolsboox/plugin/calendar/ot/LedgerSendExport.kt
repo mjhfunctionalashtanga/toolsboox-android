@@ -81,6 +81,12 @@ object LedgerSendExport {
 
         val rows = mutableListOf<Pair<String, () -> Unit>>()
         rows.add("📝  Plain text" to { sharePlainText(fragment, payload) })
+        // The text sibling of PNG and Linked PDF: a real `.md` on disk rather than EXTRA_TEXT.
+        // "Plain text" hands the words to the chooser as an extra, which most destinations paste
+        // into a body with no name attached — fine for a message, useless for filing. A file
+        // arrives as the page, named after it, which is the whole point of exporting one. (The
+        // iPad's Text Notes has had this and its making surfaces had not; now both have both.)
+        rows.add("📄  Markdown file" to { shareMarkdownFile(fragment, payload) })
         rows.add("🖼  PNG" to { sharePng(fragment, payload) })
         rows.add("🔗  Linked PDF" to { shareLinkedPdf(fragment, payload) })
 
@@ -126,6 +132,32 @@ object LedgerSendExport {
                     "Send text"
                 ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
             }.onFailure { toast(ctx, "Nothing on this device can take text") }
+        }
+    }
+
+    /**
+     * The page written out as a markdown document and handed to the chooser as a file.
+     *
+     * The title becomes an H1 so the document still says what it is once it is sitting in a folder
+     * next to other files — the same shape the iPad writes ([App/LaterListView.swift]'s
+     * `currentMarkdown`), so a note exported from either device opens the same way.
+     */
+    private fun shareMarkdownFile(fragment: ScreenFragment, payload: Payload) {
+        val ctx = fragment.requireContext()
+        fragment.lifecycleScope.launch {
+            // Same reason as sharePlainText: on a handwritten page these words come from the
+            // vision model, so producing them is a network call.
+            val text = withContext(Dispatchers.IO) { payload.text() }
+            if (text.isBlank()) { toast(ctx, "Nothing typed or recognised on this page"); return@launch }
+            val doc = if (payload.title.isBlank()) text else "# ${payload.title}\n\n$text"
+            val file = withContext(Dispatchers.IO) {
+                runCatching {
+                    File(exportsDir(ctx), "${safeName(payload.title)}.md")
+                        .apply { writeText(doc) }
+                }.getOrNull()
+            }
+            if (file == null) { toast(ctx, "Couldn't write the markdown file"); return@launch }
+            shareFile(ctx, file, "text/markdown", "Send markdown")
         }
     }
 
