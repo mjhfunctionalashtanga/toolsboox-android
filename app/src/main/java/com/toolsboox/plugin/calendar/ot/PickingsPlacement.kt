@@ -17,7 +17,10 @@ import java.util.Locale
  * chosen board's page key in the day JSON, so the card is there when the board is opened.
  */
 object PickingsPlacement {
-    private const val MAX_DIM = 1200
+    /** The long edge a placed card is kept at. Public because callers that DECODE a face before
+     *  handing it over should decode no bigger than this — a full-resolution decode that this
+     *  method then scales down is a peak allocation nobody ever wanted (see the 86 MB day file). */
+    const val MAX_DIM = 1200
     private const val CANVAS_W = 1404f
     private const val CANVAS_H = 1872f
 

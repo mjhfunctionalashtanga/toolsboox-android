@@ -5224,8 +5224,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             text = "Reading your boards…"; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0)
         })
 
+        val thumbPx = px(76)
         lifecycleScope.launch {
-            val picks = withContext(Dispatchers.IO) { gatherPickingGrams() }
+            // The thumbnails are decoded ON THE IO THREAD, beside the walk that found the grams.
+            // They used to be built in the row loop below — which runs after `withContext`
+            // returns, i.e. on MAIN — so opening this picker did up to two hundred base64
+            // decodes and four hundred BitmapFactory passes on the UI thread, each one
+            // allocating a multi-megabyte byte[] from a gram's payload. That is the freeze in
+            // "bring in a picking freezes then crashes": the dialog sits there saying nothing
+            // while the main thread chews through every card on every board.
+            val picks = withContext(Dispatchers.IO) {
+                gatherPickingGrams().map { it to decodeGramThumb(it.data, thumbPx) }
+            }
             if (!isAdded) return@launch
             listCol.removeAllViews()
             if (picks.isEmpty()) {
@@ -5234,20 +5244,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 })
                 return@launch
             }
-            for (p in picks) {
-                // Downsampled decode — a couple of hundred full-res faces in one list is an OOM
-                // on e-ink RAM (the pickGramForReply rule).
-                val thumb = runCatching {
-                    val bytes = android.util.Base64.decode(p.data, android.util.Base64.DEFAULT)
-                    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                    val target = px(76)
-                    var sample = 1
-                    while (bounds.outWidth / (sample * 2) >= target && bounds.outHeight / (sample * 2) >= target) sample *= 2
-                    android.graphics.BitmapFactory.decodeByteArray(
-                        bytes, 0, bytes.size,
-                        android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
-                }.getOrNull() ?: continue
+            for ((p, thumb) in picks) {
+                if (thumb == null) continue
                 val row = LinearLayout(ctx).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = android.view.Gravity.CENTER_VERTICAL
@@ -5274,6 +5272,29 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
         showModal(dialog)
     }
+
+    /**
+     * Decode a gram's base64 face at no more than [maxPx] on its long edge.
+     *
+     * NOTHING here may decode a gram at full resolution. A day file was found at 86 MB because a
+     * single 3150×4200 16-bit PNG had been inlined into it, and that one card decodes to ~53 MB of
+     * ARGB_8888 — one allocation big enough to take the app out on a Boox, and slow enough to look
+     * like a hang on the way. Bounds first, then a power-of-two `inSampleSize`, so the cost of a
+     * face is set by the size we're going to SHOW it at, not by whatever the source happened to be.
+     *
+     * Returns null on any failure (including OOM, which `runCatching` catches as a Throwable) —
+     * a card that won't decode is skipped, never fatal.
+     */
+    private fun decodeGramThumb(data: String, maxPx: Int): android.graphics.Bitmap? = runCatching {
+        val bytes = android.util.Base64.decode(data, android.util.Base64.DEFAULT)
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= maxPx && bounds.outHeight / (sample * 2) >= maxPx) sample *= 2
+        android.graphics.BitmapFactory.decodeByteArray(
+            bytes, 0, bytes.size,
+            android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+    }.getOrNull()
 
     /** Every card sitting on a Pickings board across the recent window, newest day first. */
     private fun gatherPickingGrams(): List<PickingGram> {
@@ -5313,9 +5334,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         lifecycleScope.launch {
             val ok = withContext(Dispatchers.IO) {
                 runCatching {
-                    val bytes = android.util.Base64.decode(pick.data, android.util.Base64.DEFAULT)
-                    val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        ?: return@runCatching false
+                    // Bounded decode, capped at what the placement is going to keep anyway
+                    // (PickingsPlacement.MAX_DIM): the full-resolution decode that used to stand
+                    // here allocated the whole source bitmap — ~53 MB for the 3150×4200 face that
+                    // put a day file at 86 MB — only for `place` to immediately scale it down to
+                    // 1200. The peak was the crash; the pixels were never wanted.
+                    val bmp = decodeGramThumb(
+                        pick.data, com.toolsboox.plugin.calendar.ot.PickingsPlacement.MAX_DIM
+                    ) ?: return@runCatching false
                     com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
                         calendarDayService, com.toolsboox.ot.LedgerPaths.documentsRoot(appCtx), bmp,
                         currentDate, CalendarDayPageIntake.INTAKE_PAGE,

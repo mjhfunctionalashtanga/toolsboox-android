@@ -535,7 +535,7 @@ object FeedNoteGram {
     fun placeStarGram(
         fragment: ScreenFragment, service: CalendarDayService, root: File,
         title: String, feedTitle: String, url: String, kind: String,
-        imageUrl: String?, thumb: Bitmap? = null
+        imageUrl: String?, thumb: Bitmap? = null, excerpt: String = ""
     ): Boolean {
         val today = LocalDate.now()
         // Dedupe by sourceLink. Read-before-place is unlocked, but stars arrive at human speed
@@ -546,8 +546,16 @@ object FeedNoteGram {
         }
         val photo = thumb ?: imageUrl?.let { fetchImage(it) }
         val host = runCatching { java.net.URI(url).host?.removePrefix("www.") }.getOrNull().orEmpty()
+        // The excerpt comes from the entry the star was struck on — already parsed, already in
+        // hand — so the card carries a taste of the piece without a second trip to the network.
+        // Filed alongside the rest of the link's face too, so the SAME link picked up later
+        // (shared to a page, re-rendered off the Later list) arrives already dressed.
+        if (url.isNotBlank() && (excerpt.isNotBlank() || !imageUrl.isNullOrBlank())) runCatching {
+            com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.rememberLinkMeta(
+                fragment.requireContext().applicationContext, today, url, title, excerpt, imageUrl)
+        }
         val face = com.toolsboox.plugin.calendar.ot.LinkCardRenderer.render(
-            url, title, kind, thumb = photo, sourceName = feedTitle)
+            url, title, kind, thumb = photo, sourceName = feedTitle, excerpt = excerpt)
         PickingsPlacement.place(
             service, root, face, today, INTAKE_PAGE,
             sourceLink = url, sourceLabel = feedTitle.ifBlank { host },

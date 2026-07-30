@@ -47,20 +47,20 @@ data class FeedEntry(
     val kind: String
         get() {
             val c = category?.trim().orEmpty()
-            val cl = c.lowercase()
+            val byName = categoryKind(c)
             val u = url.lowercase()
             return when {
                 c.startsWith("📺") -> "watch"
                 c.startsWith("🎧") -> "listen"
                 c.startsWith("📖") -> "read"
-                "watch" in cl || "video" in cl || "youtube" in u || "youtu.be" in u || "vimeo" in u -> "watch"
+                byName == "watch" || "youtube" in u || "youtu.be" in u || "vimeo" in u -> "watch"
                 // Any entry carrying a playable audio enclosure IS a listen item, whatever its
                 // category is named: a podcast episode's `url` is the show-notes webpage (not a
                 // `.mp3`), and its Miniflux folder is often a plain name ("The Daily") with no 🎧
                 // and no "podcast"/"audio" in it — so keying off category text alone dropped real
                 // audio out of The Listen. `audioUrl` covers both the audio enclosure and a direct
                 // audio-file URL.
-                "listen" in cl || "podcast" in cl || "audio" in cl || audioUrl != null -> "listen"
+                byName == "listen" || audioUrl != null -> "listen"
                 else -> "read"
             }
         }
@@ -94,4 +94,31 @@ data class FeedEntry(
             return Regex("""youtube(?:-nocookie)?\.com/embed/([A-Za-z0-9_\-]{6,})""")
                 .find(content)?.groupValues?.get(1)?.take(16)
         }
+
+    companion object {
+        /**
+         * The lens a Miniflux CATEGORY TITLE declares on its own — the leading media emoji of the
+         * grammar shared with the iPad (📖 / 📺 / 🎧) first, then the folder's plain name. Null
+         * when the name says nothing either way; entries in such a folder are still sorted by
+         * [kind]'s media heuristics (an audio enclosure makes a listen item whatever the folder
+         * is called).
+         *
+         * It lives here, beside [kind], because the drawer now asks the SERVER for a lens's
+         * folders rather than sifting the loaded page — and two places deciding what counts as
+         * "The Listen" is exactly how they drift apart and the lens goes quietly empty again.
+         */
+        fun categoryKind(title: String?): String? {
+            val c = title?.trim().orEmpty()
+            if (c.isBlank()) return null
+            val cl = c.lowercase()
+            return when {
+                c.startsWith("📺") -> "watch"
+                c.startsWith("🎧") -> "listen"
+                c.startsWith("📖") -> "read"
+                "watch" in cl || "video" in cl -> "watch"
+                "listen" in cl || "podcast" in cl || "audio" in cl -> "listen"
+                else -> null
+            }
+        }
+    }
 }

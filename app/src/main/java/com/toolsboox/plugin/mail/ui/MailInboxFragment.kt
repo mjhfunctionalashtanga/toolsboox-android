@@ -1071,7 +1071,11 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             .format(java.time.format.DateTimeFormatter.ofPattern("MMM d", Locale.getDefault()))
         val face = com.toolsboox.plugin.calendar.ot.LinkCardRenderer.render(
             url = "", title = m.subject.ifBlank { "(no subject)" }, kind = "mail",
-            sourceName = "$sender · $dateLabel"
+            sourceName = "$sender · $dateLabel",
+            // The letter's own opening lines are its excerpt — the iPad's mail gram passes the
+            // same snippet. A subject alone tells you a message arrived; the first sentence tells
+            // you what it wants, which is what makes the gram worth arranging on the board.
+            excerpt = m.snippet.ifBlank { m.body }.trim().take(400)
         )
         com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
             calendarDayService, root, face, today, pageKey = "intake",

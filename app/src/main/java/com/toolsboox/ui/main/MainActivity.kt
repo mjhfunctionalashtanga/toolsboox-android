@@ -893,8 +893,12 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             }
         } else if (url != null) {
             val t = title ?: url
-            items += Triple(R.drawable.ic_reader_view, "On this page") { renderAndPlaceLink(url, t, "default", openDay = true) }
-            items += Triple(R.drawable.ic_quote, "To Pickings") { renderAndPlaceLink(url, t, pickings, openDay = false) }
+            // What the sharing app sent BESIDES the link and its title is the link's own blurb —
+            // that's the excerpt band on the card. (ShareTextParser already pulled the url and
+            // title out of the shared text; what's left is the description the app offered.)
+            val blurb = leftoverText?.trim().orEmpty()
+            items += Triple(R.drawable.ic_reader_view, "On this page") { renderAndPlaceLink(url, t, blurb, "default", openDay = true) }
+            items += Triple(R.drawable.ic_quote, "To Pickings") { renderAndPlaceLink(url, t, blurb, pickings, openDay = false) }
             items += Triple(R.drawable.ic_bookmark, "Later — read / watch / listen") { offerToFileLink(url, title, sharedText) }
             items += Triple(R.drawable.ic_edit, "As text") {
                 val boxText = wrapForTextBox(listOfNotNull(title, url).joinToString("\n").ifBlank { sharedText?.trim().orEmpty() })
@@ -941,10 +945,18 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     }
 
     /** Render a shared link into a card and place it as a gram (with provenance) on [pageKey]. */
-    private fun renderAndPlaceLink(url: String, title: String, pageKey: String, openDay: Boolean) {
+    private fun renderAndPlaceLink(url: String, title: String, excerpt: String, pageKey: String, openDay: Boolean) {
         lifecycleScope.launch {
             val card = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching { com.toolsboox.plugin.calendar.ot.LinkCardRenderer.render(url, title, "read") }.getOrNull()
+                // The kind was hard-coded "read", so a shared YouTube link wore 🔖 READ and landed
+                // in the wrong Intake quarter — the iPad has always inferred it from the host
+                // (FeedNoteGram.kind(for:)). ShareTextParser.inferKind is the Boox's copy of that
+                // same table, already used by the day page's "Intake a link".
+                val kind = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.inferKind(url)
+                runCatching {
+                    com.toolsboox.plugin.calendar.ot.LinkCardRenderer.render(
+                        url, title, kind, excerpt = excerpt)
+                }.getOrNull()
             }
             if (card != null) placeGram(card, pageKey, url, title, openDay)
             else android.widget.Toast.makeText(this@MainActivity, "Couldn't make a card", android.widget.Toast.LENGTH_SHORT).show()

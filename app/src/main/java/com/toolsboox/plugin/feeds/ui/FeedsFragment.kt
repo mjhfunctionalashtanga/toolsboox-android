@@ -488,9 +488,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         loading = true
         binding.progress.visibility = View.VISIBLE
         binding.emptyText.visibility = View.GONE
+        val lens = kindFilter
+        val viewMode = mode
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                when (mode) {
+                val base = when (viewMode) {
                     "stars" -> miniflux.fetchStarred(url, token)
                     "read" -> miniflux.fetchRead(url, token)
                     "both" -> miniflux.fetchEverything(url, token)
@@ -505,27 +507,40 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     }
                     else -> miniflux.fetchUnread(url, token)
                 }
+                // A lens is a QUESTION PUT TO THE SERVER, not a sieve held over the front page.
+                // Unread/Read/All each fetch one flat page (50/100/150 rows) ordered by publish
+                // date across every feed at once — so a medium that publishes rarely never makes
+                // that page. Michael's podcasts publish an episode a day against text feeds that
+                // publish dozens, and The Listen showed "(nothing in this lens yet)" while whole
+                // 🎧 folders sat on the server unread. Ask the folders themselves, exactly as the
+                // iPad does (FeedStore `.media(categoryIDs:)` merges `entries(categoryID:)` per
+                // category), and union the result with the flat page — the page still contributes
+                // audio that lives in a plainly-named folder, which is what `kind` catches by
+                // enclosure and category ids never would.
+                if (lens != null) unionLensCategories(url, token, viewMode, lens, base) else base
             }
             loading = false
             binding.progress.visibility = View.INVISIBLE
             when (result) {
                 is MinifluxClient.Result.Ok -> {
-                    allEntries = result.value
+                    allEntries = withOfflineListen(result.value)
                     com.toolsboox.plugin.feeds.nw.FeedCache.saveEntries(requireContext(), cacheKey(), result.value)
                     prefetchParsed(url, token, result.value)   // download readable (parsed) versions offline
-                    // Auto-keep the latest audio episodes offline (parity with the iPad's keep-latest;
-                    // podcast-app behaviour, no star). Newest-first; the count cap trims the rest.
-                    com.toolsboox.plugin.feeds.nw.LaterMedia.keepRecent(
-                        requireContext(), result.value.mapNotNull { it.audioUrl })
-                    // Opportunistic janitor — parsed HTML accrued forever (the .versions lesson).
+                    // Opportunistic janitor — parsed HTML accrued forever (the .versions lesson) —
+                    // and the auto-keep sweep rides with it. Auto-keep used to run right here, on
+                    // Main: it stats every candidate file, and now that each kept episode also
+                    // files a row in the offline index it writes that JSON too. Small work, but
+                    // file work, and file work on the UI thread of an e-ink device is a stutter
+                    // on every single feed load. Newest-first; the count cap trims the rest.
                     val appCtx = requireContext().applicationContext
+                    val loaded = result.value
                     lifecycleScope.launch(Dispatchers.IO) {
                         com.toolsboox.plugin.feeds.nw.FeedCache.prune(appCtx)
-                        com.toolsboox.plugin.feeds.nw.LaterMedia.prune(appCtx)
+                        com.toolsboox.plugin.feeds.nw.LaterMedia.keepRecent(appCtx, loaded)
                     }
                     val filter = FeedSelection.filterFeedTitle
                     FeedSelection.filterFeedTitle = null
-                    var shown = applyKind(result.value)
+                    var shown = applyKind(allEntries)
                     if (filter != null) shown = shown.filter { it.feedTitle == filter }
                     shown = filterByNavDay(shown)
                     adapter.submit(shown)
@@ -539,7 +554,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 }
                 is MinifluxClient.Result.Err -> {
                     // Offline: fall back to the cached (offline-readable) copy.
-                    val cached = com.toolsboox.plugin.feeds.nw.FeedCache.loadEntries(requireContext(), cacheKey())
+                    val cached = withOfflineListen(
+                        com.toolsboox.plugin.feeds.nw.FeedCache.loadEntries(requireContext(), cacheKey()))
                     if (cached.isNotEmpty()) {
                         allEntries = cached
                         adapter.submit(filterByNavDay(applyKind(cached)))
@@ -553,6 +569,86 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     private fun cacheKey(): String =
         if (mode == "edition") "edition_${navGranularity}_${navAnchor}_${kindFilter ?: "all"}"
         else "${mode}_${kindFilter ?: "all"}"
+
+    /**
+     * Union DOWNLOADED audio into The Listen — episodes that live on this device but have aged out
+     * of whatever the server just handed back.
+     *
+     * The server's recent window and Michael's downloads are two different sets. He keeps the last
+     * eight episodes offline for the subway; the unread page moves on within a day or two. Without
+     * this the file is on the Boox, the ⬇ says it's downloaded, and The Listen never shows it —
+     * the episode simply stops existing as far as the lens is concerned. The iPad has always
+     * unioned these in (`FeedLedgerView.load`: `episodes = live + downloadedOnly`); this is the
+     * Android half, now that [LaterMedia] keeps a metadata index to rebuild the rows from.
+     *
+     * Rebuilt rows carry the episode's REAL entry id, so one that later returns to the live list
+     * dedupes against itself and its star / mark-read still reach the server. They're marked read
+     * (that's why they aged out) and filed under a 🎧 Downloaded folder so the drawer says plainly
+     * where they came from.
+     */
+    private fun withOfflineListen(entries: List<FeedEntry>): List<FeedEntry> {
+        if (kindFilter != "listen") return entries
+        val present = entries.mapTo(HashSet()) { it.id }
+        val extra = com.toolsboox.plugin.feeds.nw.LaterMedia.downloaded(requireContext())
+            .filter { it.entryId !in present }
+            .map { i ->
+                FeedEntry(
+                    id = i.entryId, title = i.title, feedTitle = i.feedTitle, url = i.sourceUrl,
+                    author = null, content = "", publishedAt = i.publishedAt,
+                    starred = false, read = true, category = "🎧 Downloaded",
+                    enclosureImage = i.imageUrl, enclosureAudio = i.audioUrl
+                )
+            }
+        // Aged-out downloads TRAIL the live list — they are older by definition, and pushing them
+        // to the top would bury today's episodes under last month's.
+        return if (extra.isEmpty()) entries else entries + extra
+    }
+
+    /** Miniflux category list, held for the life of the screen. The lens fetch below needs the
+     *  (id, title) map on every reload and the folder set changes about as often as Michael adds
+     *  a subscription — re-asking for it on each lens tap is a round trip for an answer we
+     *  already have. Blank on failure so the union simply degrades to the flat page. */
+    private var categoriesCache: List<Pair<Long, String>>? = null
+
+    /**
+     * Merge the lens's own folders into [base] — the per-medium server fetch, mirroring the iPad's
+     * `.media(categoryIDs:)` source.
+     *
+     * Only the corpus views compose this way. Starred and the Edition window are DEFINED by
+     * something other than the medium (a bookmark; a publish window), so pouring whole 🎧 folders
+     * into them would put unstarred episodes under the ⭐ chip and items from outside the window
+     * into the Edition — the chip would stay lit over a list that no longer obeyed it.
+     *
+     * Blocking; call from [Dispatchers.IO].
+     */
+    private fun unionLensCategories(
+        url: String, token: String, viewMode: String, lens: String,
+        base: MinifluxClient.Result<List<FeedEntry>>
+    ): MinifluxClient.Result<List<FeedEntry>> {
+        if (viewMode !in setOf("feed", "read", "both")) return base
+        val cats = categoriesCache
+            ?: (miniflux.categories(url, token) as? MinifluxClient.Result.Ok)?.value?.also { categoriesCache = it }
+            ?: return base
+        val ids = cats.filter { (_, title) -> FeedEntry.categoryKind(title) == lens }.map { it.first }
+        if (ids.isEmpty()) return base
+        val status = when (viewMode) { "feed" -> "unread"; "read" -> "read"; else -> null }
+        val extra = ids.flatMap { id ->
+            (miniflux.fetchCategory(url, token, id, status) as? MinifluxClient.Result.Ok)?.value.orEmpty()
+        }
+        if (extra.isEmpty()) return base
+        // The flat page still leads: it is what every other view shows, and an entry that appears
+        // in both must keep the copy the rest of the screen is holding (same id, same read/star
+        // state). distinctBy keeps the first, so `base + extra` is the right order.
+        val merged = (((base as? MinifluxClient.Result.Ok)?.value).orEmpty() + extra)
+            .distinctBy { it.id }
+            // Sorted on the parsed instant, not on the timestamp STRING: feeds hand back offsets
+            // as well as Z, and "…T09:00:00-04:00" sorts before "…T08:00:00Z" as text while being
+            // the later moment — which is how a merged list ends up shuffled by timezone.
+            .sortedByDescending {
+                runCatching { java.time.OffsetDateTime.parse(it.publishedAt).toEpochSecond() }.getOrDefault(0L)
+            }
+        return MinifluxClient.Result.Ok(merged)
+    }
 
     /** Best-effort: fetch + cache the parsed (readability) HTML for each entry so the
      *  in-pane reader has an offline-readable version. Runs in the background. The 400 window
@@ -1124,7 +1220,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         }
         val media = e.audioUrl
         if (media != null) {
-            com.toolsboox.plugin.feeds.nw.LaterMedia.download(requireContext(), media)
+            com.toolsboox.plugin.feeds.nw.LaterMedia.download(requireContext(), media, e)
             showMessage(R.string.feeds_added_later_dl, binding.root)
         } else {
             showMessage(R.string.feeds_added_later, binding.root)
@@ -2375,7 +2471,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 this, calendarDayService, documentsRoot(),
                 title = entry.title, feedTitle = entry.feedTitle, url = entry.url,
                 kind = entry.kind, imageUrl = entry.imageUrl,
-                thumb = entry.imageUrl?.let { FeedThumbCache.get(it) }
+                thumb = entry.imageUrl?.let { FeedThumbCache.get(it) },
+                excerpt = entry.blurb
             )
         }.onFailure { Timber.w(it, "intake gram failed") }
         // Generic, opt-in on-star reactions (webhook-out / in-app synthesis). No-ops unless

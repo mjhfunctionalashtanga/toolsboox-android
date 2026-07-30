@@ -60,9 +60,31 @@ class MinifluxClient @Inject constructor() {
             "$statusFilter&published_after=$afterEpochSec&published_before=$beforeEpochSec", limit)
     }
 
-    private fun fetch(baseUrl: String, token: String, filter: String, limit: Int): Result<List<FeedEntry>> {
+    /**
+     * GET /v1/categories/{id}/entries — ONE FOLDER'S OWN LIST, asked of the server directly.
+     *
+     * The media lenses (📖 The Read / 📺 The Watch / 🎧 The Listen) used to be a client-side sift
+     * of whatever [fetchUnread] had already handed back — and that page is 50 rows deep across
+     * every feed on the server. Michael's text feeds publish dozens of items a day and his podcasts
+     * publish one an episode, so the newest 50 unread rows routinely held no audio at all and The
+     * Listen said "(nothing in this lens yet)" while a full folder of episodes sat on the server.
+     * A lens has to ASK for its folders, the way the iPad does (`FeedStore.entries(for: .media)`
+     * merges `client.entries(categoryID:)` per category) — not hope they float to the top of All.
+     *
+     * [status] is "unread"/"read", or null for the folder's whole list.
+     */
+    fun fetchCategory(
+        baseUrl: String, token: String, categoryId: Long, status: String?, limit: Int = 100
+    ): Result<List<FeedEntry>> =
+        fetch(baseUrl, token, if (status != null) "status=$status" else "", limit,
+            path = "/v1/categories/$categoryId/entries")
+
+    private fun fetch(
+        baseUrl: String, token: String, filter: String, limit: Int, path: String = "/v1/entries"
+    ): Result<List<FeedEntry>> {
         if (baseUrl.isBlank() || token.isBlank()) return Result.Err("Add your Miniflux URL and token in Settings.")
-        val url = "${normalize(baseUrl)}/v1/entries?$filter&order=published_at&direction=desc&limit=$limit"
+        val q = if (filter.isBlank()) "" else "$filter&"
+        val url = "${normalize(baseUrl)}$path?${q}order=published_at&direction=desc&limit=$limit"
         return try {
             val req = Request.Builder().url(url).addHeader("X-Auth-Token", token).get().build()
             client.newCall(req).execute().use { resp ->

@@ -3606,7 +3606,18 @@ abstract class SurfaceFragment : ScreenFragment() {
      *  "Where used" groups it with every other placement and "Go to source" still jumps home. */
     private fun placeClippingAt(clip: com.toolsboox.plugin.calendar.da.v2.Clipping, cx: Float, cy: Float) {
         val bytes = runCatching { Base64.decode(clip.data, Base64.DEFAULT) }.getOrNull() ?: return
-        val raw = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
+        // Unlike [placeGramAt] this one really does want the pixels (it re-treats and re-encodes
+        // them), but it still must not want ALL of them: capped at the same long edge a placed
+        // card is kept at, so an oversized clipping costs a bounded decode instead of a
+        // main-thread allocation the size of the source. Same lesson, same ceiling.
+        val cap = com.toolsboox.plugin.calendar.ot.PickingsPlacement.MAX_DIM
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= cap && bounds.outHeight / (sample * 2) >= cap) sample *= 2
+        val raw = android.graphics.BitmapFactory.decodeByteArray(
+            bytes, 0, bytes.size,
+            android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }) ?: return
         // A scrap gets its paper and its tape, the same as a card placed on a board. This door
         // was missed when placement got its treatment: Add-to-Pickings ran it, Insert clipping
         // dropped the pixels verbatim, and the two look like different apps on the same page.
@@ -3653,9 +3664,17 @@ abstract class SurfaceFragment : ScreenFragment() {
         sourceLink: String = "", sourceLabel: String = "", cardText: String = "", sourceFeed: String = ""
     ): Boolean {
         val bytes = runCatching { Base64.decode(base64, Base64.DEFAULT) }.getOrNull() ?: return false
-        val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return false
-        val w = (CANVAS_WIDTH * IMAGE_PLACE_FRACTION).coerceAtMost(bmp.width.toFloat())
-        val h = w * bmp.height / bmp.width
+        // BOUNDS ONLY. This runs on the MAIN thread (a tap in the "Bring in a picking" list), and
+        // all it has ever needed from the face is its aspect ratio — the element stores the
+        // ORIGINAL base64 unchanged, so the decoded pixels were thrown away untouched. Decoding
+        // them in full meant a ~53 MB ARGB_8888 allocation on the UI thread for the 3150×4200 card
+        // that put a day file at 86 MB: a visible freeze, then an OOM. `inJustDecodeBounds` reads
+        // the header and allocates nothing.
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return false
+        val w = (CANVAS_WIDTH * IMAGE_PLACE_FRACTION).coerceAtMost(bounds.outWidth.toFloat())
+        val h = w * bounds.outHeight / bounds.outWidth
         val element = ImageElement(
             x = (cx - w / 2f).coerceIn(0f, (CANVAS_WIDTH - w).coerceAtLeast(0f)),
             y = (cy - h / 2f).coerceIn(0f, (CANVAS_HEIGHT - h).coerceAtLeast(0f)),
