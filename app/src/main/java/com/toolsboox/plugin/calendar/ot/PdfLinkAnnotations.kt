@@ -53,18 +53,32 @@ object PdfLinkAnnotations {
     )
 
     /**
-     * Return [pdf] with [links] added as annotations, or null when this file cannot be annotated
-     * safely. An empty [links] list is also null — there is nothing to add and no reason to rewrite.
+     * Return [pdf] with [links] added as annotations and [info] written as the document's `/Info`
+     * dictionary, or null when this file cannot be rewritten safely. Both empty is also null —
+     * there is nothing to add and no reason to rewrite.
+     *
+     * [info] rides the same incremental update as the annotations, and for the same reason the
+     * annotations need one: `android.graphics.pdf.PdfDocument` hands you a Canvas and no way to say
+     * who made the file, what it is, or when. Provenance a reader can SHOW you (rather than one
+     * drawn into the pixels) has to be appended afterwards, as an Info object plus a trailer that
+     * points at it. Values are written as UTF-16 hex strings when they contain anything outside
+     * printable ASCII — a title with a curly quote in it is the normal case, not the exotic one.
+     *
+     * A file may carry annotations, metadata, or both; the caller decides. Metadata alone is the
+     * common case for a page with no links on it, which is why an empty [links] list no longer
+     * short-circuits the whole pass.
      */
-    fun inject(pdf: ByteArray, links: List<Link>): ByteArray? {
-        if (links.isEmpty()) return null
+    fun inject(pdf: ByteArray, links: List<Link>, info: Map<String, String> = emptyMap()): ByteArray? {
+        if (links.isEmpty() && info.isEmpty()) return null
         val s = String(pdf, Charsets.ISO_8859_1)
         val xref = readXref(s) ?: return null
         val pages = pageObjects(s, xref) ?: return null
         if (pages.isEmpty()) return null
 
         val byPage = links.groupBy { it.pageIndex }.filterKeys { it in pages.indices }
-        if (byPage.isEmpty()) return null
+        // Links that all landed on pages this file does not have leave nothing to annotate. That is
+        // only a reason to abandon the whole pass when there is no metadata to write either.
+        if (byPage.isEmpty() && info.isEmpty()) return null
 
         val out = StringBuilder(s)
         // The appended section must start on its own line; a writer that ended without a newline
@@ -95,14 +109,56 @@ object PdfLinkAnnotations {
                 .append(" /Annots [ ").append(refs.toString().trim()).append(" ] >>\nendobj\n")
         }
 
+        // The Info dictionary is one more appended object; the trailer below points at it. It is
+        // written last so its object number is the highest, which keeps the appended cross-reference
+        // subsections contiguous with the annotation objects that precede it.
+        var infoRef: String? = null
+        if (info.isNotEmpty()) {
+            val infoNum = nextObj++
+            updated[infoNum] = out.length
+            out.append(infoNum).append(" 0 obj\n").append(infoDict(info)).append("\nendobj\n")
+            infoRef = "$infoNum 0 R"
+        }
+
         val xrefOffset = out.length
         out.append(xrefSection(updated))
         out.append("trailer\n<< /Size ").append(nextObj)
             .append(" /Root ").append(xref.rootRef)
-            .append(" /Prev ").append(xref.startXref)
+        if (infoRef != null) out.append(" /Info ").append(infoRef)
+        out.append(" /Prev ").append(xref.startXref)
             .append(" >>\nstartxref\n").append(xrefOffset).append("\n%%EOF\n")
 
         return out.toString().toByteArray(Charsets.ISO_8859_1)
+    }
+
+    /** `<< /Title (…) /Subject (…) … >>` — the document's Info dictionary. Keys are written as
+     *  given (they are ours and are plain ASCII names); values go through [pdfText], which decides
+     *  between a literal string and a UTF-16 hex string. A `/CreationDate` value is already in the
+     *  format's own `D:…` form and survives as a literal unchanged. */
+    private fun infoDict(info: Map<String, String>): String = buildString {
+        append("<< ")
+        for ((key, value) in info) {
+            if (value.isBlank()) continue
+            append('/').append(key.filter { it.isLetterOrDigit() }).append(' ')
+            append(pdfText(value)).append(' ')
+        }
+        append(">>")
+    }
+
+    /**
+     * A PDF text string. Printable ASCII goes out as a literal `(…)` with the three structural
+     * characters escaped; anything else becomes a UTF-16BE hex string with the byte-order mark,
+     * which is the format's own answer for text outside PDFDocEncoding.
+     *
+     * Dropping the non-ASCII characters (as [escape] does for URLs, where percent-encoding means
+     * they should never have been there) is not acceptable here: these values are titles, and a
+     * title that silently loses its apostrophes and dashes is a title nobody searches successfully.
+     */
+    private fun pdfText(value: String): String {
+        if (value.all { it.code in 32..126 }) return "(" + escape(value) + ")"
+        val sb = StringBuilder("<FEFF")
+        for (c in value) sb.append(String.format(java.util.Locale.US, "%04X", c.code))
+        return sb.append('>').toString()
     }
 
     /** `<< /Type /Annot /Subtype /Link … >>` for one link. `/Border [0 0 0]` keeps readers from

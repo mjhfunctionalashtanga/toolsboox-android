@@ -252,7 +252,15 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
             com.toolsboox.plugin.calendar.ot.LedgerSendExport.Payload(
                 title = note.title.ifBlank { "$date · text note" },
                 text = { note.body },
-                bitmap = { runCatching { typesetPage(note.title, note.body) }.getOrNull() }
+                bitmap = { runCatching { typesetPage(note.title, note.body) }.getOrNull() },
+                // A text note's identity is its note id, not a note-page key — TextNotesStore keys
+                // by id and nothing on a day surface can address one. That id is what the stamp's
+                // published-URL memory is filed under, which is right: renaming the note must not
+                // orphan the address the published version already lives at.
+                surface = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+                    .label(com.toolsboox.plugin.calendar.ot.LedgerDocuments.TEXT_NOTES),
+                date = date,
+                pageKey = note.id
             )
         )
     }

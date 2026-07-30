@@ -33,19 +33,32 @@ class CalendarDayPageIntake : Creator {
 
         private const val left = 40f
         private const val right = 1364f
-        private const val gap = 36f
-        private const val colMidR = (left + right) / 2f - gap / 2f  // 666
-        private const val colMidL = (left + right) / 2f + gap / 2f  // 702
 
-        private const val row1Top = 60f
-        private const val row1Bottom = 910f
-        private const val row2Top = 1000f
-        // No bottom picks strip any more — the four quarters own the whole page.
-        private const val row2Bottom = 1830f
+        // STARS IS A REGISTER, NOT A SORTING BOARD.
+        //
+        // This was a 2x2 of quarters you filed things into — "Star Sort". Michael: "Instead of being
+        // an inbox, it's a list of everything that has gotten a star that day, not an inbox, a
+        // reference." A list is what it now looks like: five full-width bands stacked down the page,
+        // one per kind, each a single row of cards. Quarters read as four boxes to sort between;
+        // bands read as a register you scan. The working surface where grams are actually written on
+        // and rearranged is Gram Picks — see [CalendarDayPageNotes.GRAM_PICKS].
+        private const val bandHeight = 300f
+        private const val bandTitleSpace = 30f
+        private const val bandGap = 12f
+        // Room above the first band for the page title ("ALL STARS \u00B7 <window>"). Both are 40px
+        // mono bold, so they need a clear gap or they read as one mashed line — at 130 the title sat
+        // 30px off the first band's own title and the two ran together.
+        private const val bandFirstTop = 156f
+        private const val pageTitleBaseline = 72f
+        private fun bandTop(i: Int) = bandFirstTop + i * (bandHeight + bandTitleSpace + bandGap)
+        private fun band(i: Int) = RectF(left, bandTop(i), right, bandTop(i) + bandHeight)
 
-        private const val GRAMS_PER_PANEL = 8
+        // Per-band grid: one row of six across the full width. The default stays 2x4 so any panel
+        // declared without a shape keeps the old quarter behaviour.
         private const val gramCols = 2
         private const val gramRows = 4
+        private const val bandCols = 6
+        private const val bandRows = 1
         private const val cellGap = 12f
         private const val cellPad = 16f   // inner padding of a panel before its grid
 
@@ -65,19 +78,51 @@ class CalendarDayPageIntake : Creator {
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD); isAntiAlias = true
         }
 
-        /** A quarter of the intake page — one media kind, one grid of grams. */
-        data class IntakePanel(val kindKey: String, val title: String, val rect: RectF)
+        /** A band of the Stars page — one kind, one grid of grams. [cols]/[rows] let a wide band be
+         *  a single row while the legacy quarter shape stays 2x4. */
+        data class IntakePanel(
+            val kindKey: String, val title: String, val rect: RectF,
+            val cols: Int = gramCols, val rows: Int = gramRows
+        )
 
         /**
-         * The four quarters: READ (top-left), WATCH (top-right), LISTEN (bottom-left),
-         * EMAIL (bottom-right — legacy "educate" storage key).
+         * The five kinds of star, in reading order down the page. BOOKS is the one Michael named as
+         * missing ("the only Star type missing is books on the page"); EMAIL keeps its legacy
+         * "educate" storage key so every gram already filed there still lands in its band.
          */
         val panels = listOf(
-            IntakePanel("read", "THE READ", RectF(left, row1Top, colMidR, row1Bottom)),
-            IntakePanel("watch", "THE WATCH", RectF(colMidL, row1Top, right, row1Bottom)),
-            IntakePanel("listen", "THE LISTEN", RectF(left, row2Top, colMidR, row2Bottom)),
-            IntakePanel("educate", "EMAIL", RectF(colMidL, row2Top, right, row2Bottom))
+            IntakePanel("read", "THE READ", band(0), bandCols, bandRows),
+            IntakePanel("watch", "THE WATCH", band(1), bandCols, bandRows),
+            IntakePanel("listen", "THE LISTEN", band(2), bandCols, bandRows),
+            IntakePanel("books", "THE BOOKS", band(3), bandCols, bandRows),
+            IntakePanel("educate", "EMAIL", band(4), bandCols, bandRows)
         )
+
+        /**
+         * Where a NEW star of [kindKey] should land: the next free slot inside that kind's band.
+         *
+         * Stars arrive organised — you never file one — but they are ordinary elements from the
+         * moment they land, so this only chooses a starting point. Drag one into another band and it
+         * stays there; nothing re-flows it, because a register that rearranges what you moved is not
+         * yours. [taken] is how many the band already holds, so arrivals stack across, then down,
+         * then simply overlap once the band is full (visible and draggable, never dropped).
+         *
+         * Returns null for an unknown kind, so a caller with no band falls back to plain placement.
+         */
+        fun bandSlotFor(kindKey: String, taken: Int, cardW: Float, cardH: Float): Pair<Float, Float>? {
+            val panel = panels.firstOrNull { it.kindKey == kindKey } ?: return null
+            val r = panel.rect
+            val cols = panel.cols
+            val cellW = (r.width() - 2 * cellPad - (cols - 1) * cellGap) / cols
+            val col = taken % cols
+            val row = taken / cols
+            val x = r.left + cellPad + col * (cellW + cellGap)
+            // Rows step by the card's own height once past the first, and everything is clamped
+            // inside the band so an arrival can't be dropped off the page.
+            val y = r.top + cellPad + row * (cardH * 0.18f)
+            return x.coerceIn(0f, (1404f - cardW).coerceAtLeast(0f)) to
+                y.coerceIn(0f, (1872f - cardH).coerceAtLeast(0f))
+        }
 
         // ---- gram hit-testing ---------------------------------------------------------------
 
@@ -104,11 +149,13 @@ class CalendarDayPageIntake : Creator {
         /** How far each overflow card peeks out from under the one on top of it. */
         private const val STACK_PEEK = 26f
 
-        /** The grams of one kind on the intake page, newest first. NOT capped — past
-         *  [GRAMS_PER_PANEL] the quarter stacks them (see the draw loop), because dropping a
-         *  quarter's ninth gram silently loses something you starred. */
-        private fun gramsFor(kindKey: String, calendarDay: CalendarDay?): List<ImageElement> =
-            calendarDay?.imageElements
+        /** The grams of one kind on the Stars page, newest first. NOT capped — past a band's own
+         *  cols x rows the band stacks them (see the draw loop), because dropping the overflow would
+         *  silently lose something you starred, and a register that omits entries is not a register. */
+        private fun gramsFor(
+            kindKey: String, calendarDay: CalendarDay?, scoped: List<ImageElement>? = null
+        ): List<ImageElement> =
+            (scoped ?: calendarDay?.imageElements)
                 ?.filter { it.page == INTAKE_PAGE && it.intakeKind == kindKey && !it.decorative && it.data.isNotBlank() }
                 ?.sortedByDescending { it.timestamp }
                 ?: emptyList()
@@ -123,7 +170,23 @@ class CalendarDayPageIntake : Creator {
          *        fallback — draws empty quarters and clears the hit-test list).
          */
         @Suppress("UNUSED_PARAMETER")
-        fun drawPage(canvas: Canvas, intakeData: IntakePageData, calendarDay: CalendarDay? = null) {
+        /**
+         * Draw the All Stars register.
+         *
+         * @param scopedGrams when non-null, the grams to show INSTEAD of [calendarDay]'s own — the
+         *   almanac header's period filter collects these across a week / month / quarter / year, so
+         *   the page can answer "everything I starred this month" and not only today. Null keeps the
+         *   single-day reading, which costs one already-loaded file.
+         * @param scopeLabel what the header says after "ALL STARS ·", e.g. "TODAY" or "WEEK 30".
+         */
+        fun drawPage(
+            canvas: Canvas, intakeData: IntakePageData, calendarDay: CalendarDay? = null,
+            scopedGrams: List<ImageElement>? = null, scopeLabel: String = "TODAY"
+        ) {
+            // Today's own stars are live elements, so they must not ALSO be printed as part of the
+            // wider-window record — identity by timestamp, which is what the day JSON carries.
+            val todayStamps = calendarDay?.imageElements
+                ?.filter { it.page == INTAKE_PAGE }?.map { it.timestamp }?.toHashSet() ?: HashSet()
             canvas.drawRect(0f, 0f, 1404f, 1872f, Creator.fillWhite)
 
             val monoBold = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
@@ -145,65 +208,62 @@ class CalendarDayPageIntake : Creator {
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.ITALIC); isAntiAlias = true
             }
 
+            // The register names its own window. Without this the page looks identical whether it
+            // holds today's stars or the whole month's, which is the one thing a filter must never
+            // leave ambiguous.
+            canvas.drawText("ALL STARS \u00B7 $scopeLabel", left, pageTitleBaseline, headerPaint)
+
+            // TODAY'S STARS ARE NOT PAINTED HERE — they are real ImageElements and the element
+            // layer draws them, exactly as it does on a Pickings board.
+            //
+            // They used to be BOTH. CalendarDayFragment hands every element on this page to
+            // setImageElements (imgPageKey = "intake"), so each gram was already live and movable at
+            // its own x/y — and this loop painted a second copy of it into a band cell. Two copies,
+            // in different places. The painted one is the one the eye goes to and it cannot move,
+            // because it is part of the template picture: that, and not a missing feature, is what
+            // "Star Sort's grams are not selectable/movable" was. Michael: "all stars should be
+            // manipulatable just like pickings." They now are, because the photograph of them is
+            // gone and only the thing itself remains.
+            //
+            // The bands stay as printed guides, and [bandFor] places each new arrival inside the one
+            // for its kind — so stars still land organised, then behave like any other object.
+            //
+            // The ONE thing still painted is a WIDER WINDOW: when the almanac filter reaches past
+            // today, other days' stars are drawn here as a printed record. They cannot be live
+            // elements of this page — they belong to their own days — so a printed record behind
+            // today's live objects is the honest rendering, and it needs no mode: your own stars are
+            // always the real ones.
             val recorded = mutableListOf<IntakeGram>()
-            for (panel in panels) {
-                val r = panel.rect
-
-                // Panel title above the box, pickings-style; then the border.
-                canvas.drawText(panel.title, r.left, r.top - 14f, headerPaint)
-                canvas.drawRect(r, panelBorder)
-
-                val kind = gramsFor(panel.kindKey, calendarDay)
-                if (kind.isEmpty()) {
-                    val slot = RectF(r.left + cellPad, r.top + cellPad, r.right - cellPad, r.top + cellPad + 150f)
-                    canvas.drawRect(slot, dashed)
-                    canvas.drawText(emptyHint(panel.kindKey), slot.centerX(), slot.centerY() + 8f, hintPaint)
-                    continue
-                }
-
-                val gridLeft = r.left + cellPad
-                val gridTop = r.top + cellPad
-                val gridW = r.width() - 2 * cellPad
-                val gridH = r.height() - 2 * cellPad
-                val cellW = (gridW - (gramCols - 1) * cellGap) / gramCols
-                val cellH = (gridH - (gramRows - 1) * cellGap) / gramRows
-
-                // Past the last cell the extras FAN on it like a hand of cards. They are drawn
-                // oldest-first so the newest ends up on top, and the newest takes the deepest
-                // offset — so what shows of each card underneath is its TOP edge, the way a fanned
-                // hand reads. Clamped inside the panel, so a deep pile leans tighter rather than
-                // spilling into the quarter below. Mirrors the iPad's IntakeLayout.gramFrame.
-                val overflow = (kind.size - GRAMS_PER_PANEL).coerceAtLeast(0)
-                kind.asReversed().forEachIndexed { rev, img ->
-                    val i = kind.size - 1 - rev            // back to newest-first index
-                    val slot = i.coerceAtMost(GRAMS_PER_PANEL - 1)
-                    val col = slot % gramCols
-                    val rowi = slot / gramCols
-                    val cl = gridLeft + col * (cellW + cellGap)
-                    var ct = gridTop + rowi * (cellH + cellGap)
-                    if (overflow > 0 && i >= GRAMS_PER_PANEL - 1) {
-                        val depth = (kind.size - 1) - i     // 0 for the oldest of the pile
-                        val room = (r.bottom - cellPad - (ct + cellH)).coerceAtLeast(0f)
-                        val step = if (overflow > 0) minOf(STACK_PEEK, room / overflow) else 0f
-                        ct += step * (overflow - depth)
+            if (scopedGrams != null) {
+                for (panel in panels) {
+                    val r = panel.rect
+                    val past = gramsFor(panel.kindKey, null, scopedGrams)
+                        .filter { it.timestamp !in todayStamps }
+                    if (past.isEmpty()) continue
+                    val gridLeft = r.left + cellPad
+                    val gridTop = r.top + cellPad
+                    val gridW = r.width() - 2 * cellPad
+                    val gridH = r.height() - 2 * cellPad
+                    val cols = panel.cols
+                    val perPanel = panel.cols * panel.rows
+                    val cellW = (gridW - (cols - 1) * cellGap) / cols
+                    val cellH = (gridH - (panel.rows - 1) * cellGap) / panel.rows
+                    val overflow = (past.size - perPanel).coerceAtLeast(0)
+                    past.asReversed().forEachIndexed { rev, img ->
+                        val i = past.size - 1 - rev
+                        val slotIdx = i.coerceAtMost(perPanel - 1)
+                        val cl = gridLeft + (slotIdx % cols) * (cellW + cellGap)
+                        var ct = gridTop + (slotIdx / cols) * (cellH + cellGap)
+                        if (overflow > 0 && i >= perPanel - 1) {
+                            val depth = (past.size - 1) - i
+                            val room = (r.bottom - cellPad - (ct + cellH)).coerceAtLeast(0f)
+                            val step = minOf(STACK_PEEK, room / overflow)
+                            ct += step * (overflow - depth)
+                        }
+                        val cell = RectF(cl, ct, cl + cellW, ct + cellH)
+                        drawGramInCell(canvas, img, cell)
+                        canvas.drawRect(cell, cellBorder)
                     }
-                    val cell = RectF(cl, ct, cl + cellW, ct + cellH)
-                    drawGramInCell(canvas, img, cell)
-                    canvas.drawRect(cell, cellBorder)
-
-                    // ✓-corner target (top-right): empty box until graduated, checked after.
-                    val corner = RectF(
-                        cell.right - cornerSize - 8f, cell.top + 8f,
-                        cell.right - 8f, cell.top + 8f + cornerSize
-                    )
-                    drawCorner(canvas, corner, img.graduatedTo.isNotBlank())
-
-                    recorded.add(
-                        IntakeGram(
-                            img.elementId.toString().lowercase(), img.page, panel.kindKey,
-                            img.sourceLink, cell, corner, img.graduatedTo
-                        )
-                    )
                 }
             }
             grams = recorded
@@ -220,6 +280,7 @@ class CalendarDayPageIntake : Creator {
             "read" -> "star Reads to fill this"
             "watch" -> "star Watches to fill this"
             "listen" -> "star Listens to fill this"
+            "books" -> "star Books to fill this"
             else -> "filed emails land here"
         }
 

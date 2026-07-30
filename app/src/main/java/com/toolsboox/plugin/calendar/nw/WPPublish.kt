@@ -134,6 +134,31 @@ object WPPublish {
         }
     }
 
+    /**
+     * The one term with this exact SLUG, or null.
+     *
+     * Distinct from filtering [terms] by name, and the difference is not pedantry: server-side
+     * taxonomy queries (`mjh_synd_sources()` on michaeljoelhall.com is the live example) match a
+     * post_tag by slug, and a term's slug is not its name — "Essay" can perfectly well carry the
+     * slug `essay-2` if `essay` was taken and later deleted. Matching what the server matches is
+     * the only way a client can be sure the tag it attached is the tag that will be looked for.
+     *
+     * It is also one request rather than a page of a hundred: [terms] is capped at `per_page=100`
+     * and ordered by name, so on a site whose tag list outgrows that cap a name scan starts
+     * silently missing terms that exist — and a miss here reads as "the tag didn't stick".
+     */
+    fun termBySlug(context: Context, taxonomy: String, slug: String): Term? {
+        val q = java.net.URLEncoder.encode(slug, "UTF-8")
+        val resp = getResp(context, "$taxonomy?slug=$q&_fields=id,name&per_page=1") ?: return null
+        return resp.use { r ->
+            if (!r.isSuccessful) return null
+            val arr = try { JSONArray(r.body?.string() ?: return null) } catch (e: Exception) { return null }
+            val o = arr.optJSONObject(0) ?: return null
+            val id = o.optInt("id", 0)
+            if (id > 0) Term(id, o.optString("name", slug)) else null
+        }
+    }
+
     /** Create a term inline; returns it (with its new id) or null. */
     fun createTerm(context: Context, taxonomy: String, name: String): Term? {
         val b = base(context) ?: return null
@@ -146,7 +171,13 @@ object WPPublish {
             ).execute().use { r ->
                 val o = try { JSONObject(r.body?.string() ?: return null) } catch (e: Exception) { return null }
                 val id = o.optInt("id", 0)
-                if (id > 0) Term(id, o.optString("name", name)) else null
+                if (id > 0) return Term(id, o.optString("name", name))
+                // `term_exists` is a REFUSAL that carries the answer: WP puts the existing term's
+                // id in the error's data. Discarding it made "create the tag if it isn't there"
+                // fail in exactly the case where the tag was there — a lookup that missed it, or
+                // two devices creating it at once — which is the case it most needed to survive.
+                o.optJSONObject("data")?.optInt("term_id", 0)?.takeIf { it > 0 }
+                    ?.let { Term(it, name) }
             }
         } catch (e: Exception) {
             Timber.w(e, "wp createTerm failed"); null

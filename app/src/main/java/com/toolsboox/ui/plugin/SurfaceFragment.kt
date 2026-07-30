@@ -2635,7 +2635,9 @@ abstract class SurfaceFragment : ScreenFragment() {
     fun isImageModeActive(): Boolean = imageMode
 
     /** Topmost image element under a canvas point, or null. */
-    private fun imageElementAt(cx: Float, cy: Float): ImageElement? =
+    /** The topmost image element under a canvas point, or null. Protected so a page can ask
+     *  "did this hold land on a card or on empty paper?" before offering its own menu. */
+    protected fun imageElementAt(cx: Float, cy: Float): ImageElement? =
         imageElements.lastOrNull { cx >= it.x && cx <= it.x + it.width && cy >= it.y && cy <= it.y + it.height }
 
     /** Canvas-space bounds of a text box (measured from its rendered lines). */
@@ -2912,6 +2914,18 @@ abstract class SurfaceFragment : ScreenFragment() {
         if (element.sourceFeed.isNotBlank())
             send.add(LedgerContextMenu.Item("📰 Go to feed · ${element.sourceFeed}") { onImageGoToFeed(element) })
         send.add(LedgerContextMenu.Item("Where used…") { onImageWhereUsed(element) })
+        // The onward move — what makes Gram Picks an inbox you can empty rather than a fifth place
+        // a gram accumulates. Available from every surface, not just Gram Picks: "this belongs
+        // somewhere else" is true wherever you notice it, and the previous answer was to delete the
+        // gram and re-grab it at the right destination.
+        send.add(LedgerContextMenu.Item("↔ Move to…") { onImageMoveTo(element) })
+        // Folded up from the old All-Stars-only hold menu, which existed because that page's grams
+        // were painted rather than real. They're real now, so these belong to the gram wherever it
+        // is: a starred card is worth a board of its own on any surface, not just on All Stars.
+        if (element.graduatedTo.isBlank())
+            send.add(LedgerContextMenu.Item("✓ Give it its own board") { onImageGraduate(element) })
+        else
+            send.add(LedgerContextMenu.Item("❝ Open its board") { onImageOpenBoard(element) })
         send.add(LedgerContextMenu.Item("Post to community…") { postGramToCommunity(element) })
         send.add(LedgerContextMenu.Item("Pin to Board…") { onImagePinToBoard(element) })
         send.add(LedgerContextMenu.Item("Save to Clippings") {
@@ -3164,6 +3178,16 @@ abstract class SurfaceFragment : ScreenFragment() {
 
     /** "Pin to Board…" — the day page subclass files the gram as a kanban card. Base is a no-op. */
     protected open fun onImagePinToBoard(element: ImageElement) {}
+
+    /** Move this gram to another making surface — Gram Picks, a Pickings board, a Star Sort quarter,
+     *  Synthesize. Only the day fragment knows the day's boards, so it implements the picker. */
+    protected open fun onImageMoveTo(element: ImageElement) {}
+
+    /** Promote this gram to a Pickings board of its own (the old All Stars ✓-corner, now a verb). */
+    protected open fun onImageGraduate(element: ImageElement) {}
+
+    /** Open the board this gram was already graduated into. */
+    protected open fun onImageOpenBoard(element: ImageElement) {}
 
     /** Finger single-tap in canvas (design) space. Return true when handled (e.g. a star row). */
     protected open fun onCanvasSingleTap(cx: Float, cy: Float): Boolean = false

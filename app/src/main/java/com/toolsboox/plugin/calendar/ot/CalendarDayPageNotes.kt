@@ -25,6 +25,17 @@ class CalendarDayPageNotes : Creator {
 
     companion object {
 
+        /**
+         * The Gram Picks page key — one landing place for every gram, whatever grabbed it.
+         *
+         * Grams used to be routed at the moment of capture: a Pickings board, Star Sort, Synthesize,
+         * or a board of their own. That asks you to know what a thing is for before you have looked
+         * at it, and then to remember which of four places you chose. Gram Picks is the inbox: send
+         * here, sort later. The onward moves all live on this page's hold menu, so the decision
+         * happens once, in one place, with the gram in front of you.
+         */
+        const val GRAM_PICKS = "grampicks"
+
         // Cell width
         private const val cew = 1300.0f
 
@@ -151,6 +162,21 @@ class CalendarDayPageNotes : Creator {
                 // Sketch Notes: the same light dot grid as the synthesize whiteboard — dots stay
                 // out of the way of a drawing far better than rules or a full grid do.
                 drawBrainstormPage(canvas)
+                return
+            }
+            if (base == GRAM_PICKS) {
+                // Gram Picks: the one place a gram lands, so you sort it later instead of deciding
+                // at the moment you grab it. Michael's proposal, and it answers a real complaint —
+                // a gram could previously go to a Pickings board, Star Sort, Synthesize, or a
+                // graduated board of its own, chosen at send time, so you had to pick a destination
+                // before you knew what the thing was for and then remember where it went.
+                //
+                // Dot grid, like the other surfaces that hold arranged images rather than lines:
+                // grams are pictures, and rules would fight them. The dots give the eye somewhere
+                // to align to when you shuffle cards around by hand.
+                drawBrainstormPage(canvas)
+                canvas.drawText("GRAM PICKS", lo, to - 16.0f, Creator.textDefaultBlack)
+                canvas.drawText("${subIndex + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)
                 return
             }
             if (notePage == "selfexec") {

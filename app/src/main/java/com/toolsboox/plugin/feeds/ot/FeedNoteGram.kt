@@ -560,7 +560,7 @@ object FeedNoteGram {
             fragment.requireActivity().runOnUiThread {
                 runCatching {
                     android.widget.Toast.makeText(
-                        fragment.requireContext(), "★ → Star Sort", android.widget.Toast.LENGTH_SHORT
+                        fragment.requireContext(), "★ → All Stars", android.widget.Toast.LENGTH_SHORT
                     ).show()
                 }
             }
@@ -587,7 +587,17 @@ object FeedNoteGram {
                     cardText = cardText, sourceFeed = feedTitle
                 )
             }.isSuccess
-            if (ok) { rememberDestination(appCtx, pageKey); offerTrip(fragment, pageKey) }
+            if (ok) {
+                rememberDestination(appCtx, pageKey)
+                // Tell the surface underneath, BEFORE offering the trip: if the reader is a pane on
+                // the day page, that page is holding a day without this card in it.
+                runCatching {
+                    fragment.requireActivity().runOnUiThread {
+                        runCatching { fragment.onExternalGramPlaced(pageKey) }
+                    }
+                }
+                offerTrip(fragment, pageKey)
+            }
         }.apply { isDaemon = true }.start()
     }
 

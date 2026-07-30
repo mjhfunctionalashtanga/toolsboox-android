@@ -607,16 +607,60 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         val items = arrayOf(
             getString(R.string.reader_font_smaller),
             getString(R.string.reader_font_larger),
-            getString(R.string.reader_theme, current)
+            getString(R.string.reader_theme, current),
+            "★  Star this book"
         )
         builder.setItems(items) { _, which ->
             when (which) {
                 0 -> changeFont(-10)
                 1 -> changeFont(10)
                 2 -> cycleTheme()
+                3 -> starThisBook()
             }
         }
         builder.show()
+    }
+
+    /**
+     * Star the whole book onto today's Stars register, into THE BOOKS band.
+     *
+     * Michael, on Stars: "the only Star type missing is books on the page". Feeds could star a read,
+     * a watch or a listen, and mail could file itself, but a book had no way to appear at all — you
+     * could star a *passage* (which goes to the Ledger Log, a different thing entirely) and that was
+     * the closest available. So the register was silent about the one kind of intake that takes the
+     * longest.
+     *
+     * Deduped on `book://<path>` the same way [com.toolsboox.plugin.feeds.ot.FeedNoteGram.placeStarGram]
+     * dedupes a feed star, so re-starring a book you are part-way through doesn't stack twins.
+     */
+    private fun starThisBook() {
+        val file = currentBookFile
+        if (file == null) { showMessage("No book open"); return }
+        val title = bookTitle.ifBlank { file.nameWithoutExtension }
+        val author = bookAuthor.ifBlank { null }
+        val src = "book://${file.absolutePath}"
+        lifecycleScope.launch {
+            val placed = withContext(Dispatchers.IO) {
+                val root = documentsRoot()
+                val today = LocalDate.now()
+                val day = calendarDayService.load(root, today, null, Locale.getDefault())
+                if (day.imageElements.any {
+                        it.page == com.toolsboox.plugin.calendar.ot.CalendarDayPageIntake.INTAKE_PAGE &&
+                            it.sourceLink == src
+                    }) return@withContext false
+                val face = com.toolsboox.plugin.calendar.ot.LinkCardRenderer.render(
+                    src, title, "books", thumb = bookCover, sourceName = author.orEmpty()
+                )
+                com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                    calendarDayService, root, face, today,
+                    com.toolsboox.plugin.calendar.ot.CalendarDayPageIntake.INTAKE_PAGE,
+                    sourceLink = src, sourceLabel = listOfNotNull(title, author).joinToString(" · "),
+                    cardText = title, intakeKind = "books"
+                )
+                true
+            }
+            showMessage(if (placed) "★ → All Stars · THE BOOKS" else "Already starred today")
+        }
     }
 
     private fun changeFont(delta: Int) {

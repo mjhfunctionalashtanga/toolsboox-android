@@ -128,10 +128,24 @@ class CalendarDayService @Inject constructor() {
         // as the "check your network status" error and leave the page blank. Treat any
         // unreadable/blank/corrupt day file as "unwritten" so the caller falls back to a
         // fresh empty day and the page still renders.
+        // Throwable, not Exception. OutOfMemoryError is an Error, so it walked straight past a
+        // `catch (e: Exception)` and killed the process — which is exactly what happened: one day
+        // page held a 3150×4200 16-bit PNG photograph inline, 84 MB of base64 in an 86 MB file, and
+        // readText's StringBuffer doubling asked for a 256 MB allocation. The Drive background sync
+        // loads EVERY day file to build its inventory and runs on every page open, so the app died
+        // seconds after launch, over and over — taking the WebDAV sync pass down with it each time
+        // and making a data problem look like a flaky network.
+        //
+        // A day too large to read is treated as unwritten, the same as a corrupt one. That is the
+        // least-bad answer available here (see the caller: it renders a fresh empty day), and it is
+        // strictly better than dying — but it is NOT harmless, because a save over that empty day
+        // would discard the file's real content. The durable fix is to stop putting megabytes of
+        // base64 inside the day JSON at all; LedgerImageCodec now writes photographs as JPEG, and
+        // externalising blobs entirely is the follow-on.
         val json = try {
             item.readText(Charsets.UTF_8)
-        } catch (e: Exception) {
-            Timber.w(e, "Could not read ${item.name}; treating as unwritten")
+        } catch (e: Throwable) {
+            Timber.w(e, "Could not read ${item.name} (${item.length()} bytes); treating as unwritten")
             return null
         }
         if (json.isBlank()) {

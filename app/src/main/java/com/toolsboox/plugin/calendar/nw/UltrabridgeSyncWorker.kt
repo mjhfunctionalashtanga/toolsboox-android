@@ -52,6 +52,10 @@ class UltrabridgeSyncWorker(
         private const val MAIN_PREFS_NAME = "MAIN"
         private const val PREF_LAST_SYNC_MS = "ultrabridgeLastSyncMs"
 
+        /** Human-readable outcome of the last day-JSON mirror pass, and when it ran. */
+        const val PREF_LAST_MIRROR_RESULT = "ultrabridgeLastMirrorResult"
+        const val PREF_LAST_MIRROR_AT = "ultrabridgeLastMirrorAt"
+
         /**
          * True while an ink surface is in the foreground. The sync renders every calendar group to
          * PDF (17+ documents) and uploads them — CPU-heavy work that, run alongside active drawing,
@@ -78,8 +82,15 @@ class UltrabridgeSyncWorker(
                     15, java.util.concurrent.TimeUnit.SECONDS
                 )
                 .build()
+            // KEEP, not REPLACE. A pass takes minutes (17+ PDF renders, then the day mirror), and
+            // both on-open and on-pause call this — so REPLACE meant every trigger CANCELLED the
+            // running pass, and whatever sat at its tail never completed. Observed live as
+            // "Day-JSON WebDAV mirror failed (non-fatal): JobCancellationException" on a loop: the
+            // one pass that actually converges devices was the one reliably killed. The worker is
+            // idempotent and re-reads everything each run, so letting a running pass finish is
+            // strictly better than restarting it from the top.
             androidx.work.WorkManager.getInstance(context)
-                .enqueueUniqueWork(ONE_SHOT_WORK_NAME, androidx.work.ExistingWorkPolicy.REPLACE, request)
+                .enqueueUniqueWork(ONE_SHOT_WORK_NAME, androidx.work.ExistingWorkPolicy.KEEP, request)
         }
 
         /**
@@ -92,6 +103,22 @@ class UltrabridgeSyncWorker(
                 .add(UUIDJsonAdapter())
                 .build()
         }
+    }
+
+    /**
+     * Record how the last day-mirror pass went, so Settings can say so.
+     *
+     * The outage this exists for was invisible for three days: the mirror aborted on every pass,
+     * logged one warn line, and the worker returned success. Nothing a person could see said
+     * anything was wrong — the surfaces that DON'T use PROPFIND kept syncing, so the app looked
+     * healthy. A timestamped one-liner in Settings is the cheapest thing that would have caught it
+     * on day one.
+     */
+    private fun recordSyncOutcome(prefs: SharedPreferences, outcome: String) {
+        prefs.edit()
+            .putString(PREF_LAST_MIRROR_RESULT, outcome)
+            .putLong(PREF_LAST_MIRROR_AT, System.currentTimeMillis())
+            .apply()
     }
 
     /**
@@ -113,9 +140,17 @@ class UltrabridgeSyncWorker(
 
     override suspend fun doWork(): Result {
         // Never run the heavy PDF pass while the pen is live — defer until the surface is idle.
+        //
+        // Bow out with SUCCESS, not retry. Retry increments runAttemptCount, and the backoff grows
+        // with it (15s, 30s, 45s…) — so on a device where the ink surface is the home screen, the
+        // deferral fires on nearly every trigger and inflates the backoff for the runs that DO have
+        // work to do. There is nothing to retry here anyway: SurfaceFragment.onPause clears this
+        // flag and calls syncNow() immediately after, and the periodic worker backs that up. Saying
+        // "nothing to do right now" is the honest answer and keeps the backoff meaningful for real
+        // failures.
         if (inkSurfaceActive) {
             Timber.i("$TAG: Ink surface active — deferring sync so drawing stays smooth")
-            return Result.retry()
+            return Result.success()
         }
         Timber.i("$TAG: Starting Ultrabridge PDF sync")
 
@@ -213,6 +248,32 @@ class UltrabridgeSyncWorker(
             tempDir.mkdirs()
 
             try {
+                // FIRST, before anything expensive: the two-way mirror of the versioned day JSON
+                // against the SAME WebDAV tree the iPad uses (calendar/YYYY/MM/day-...-vN.json), so
+                // the clients converge. This used to run last, after every PDF had been rendered and
+                // pushed — several minutes in — which made it the part of the pass that got dropped
+                // whenever anything cut the run short. It is also by far the cheapest and the only
+                // part that carries the user's pages between devices, so it goes first: if only one
+                // thing survives a truncated pass, this is the thing that should.
+                //
+                // Failures here don't fail the whole worker — the pass is self-healing and re-runs.
+                var mirrorFailed = false
+                try {
+                    val daySync = CalendarWebDavSyncService(
+                        UltrabridgeWebDavService(webdavUrl, webdavUser, webdavPass),
+                        rootDir,
+                        moshi
+                    )
+                    val stats = daySync.sync()
+                    mirrorFailed = stats.failed > 0
+                    Timber.i("$TAG: Day-JSON WebDAV mirror: $stats")
+                    recordSyncOutcome(mainPrefs, if (mirrorFailed) "partial: $stats" else "ok: $stats")
+                } catch (e: Exception) {
+                    mirrorFailed = true
+                    Timber.w(e, "$TAG: Day-JSON WebDAV mirror failed (non-fatal)")
+                    recordSyncOutcome(mainPrefs, "failed: ${e.javaClass.simpleName}")
+                }
+
                 for ((groupKey, files) in groupedFiles) {
                     // If the pen goes live mid-run, abandon and reschedule — a half-done sync is
                     // fine (it's idempotent), a frozen page is not.
@@ -262,29 +323,15 @@ class UltrabridgeSyncWorker(
                 }
                 Timber.i("$TAG: Uploaded $jsonUploadCount of ${dayJsonFiles.size} day JSON files")
 
-                // Two-way mirror of the versioned day JSON files against the SAME WebDAV tree the
-                // iPad app uses (calendar/YYYY/MM/day-...-vN.json), so the two clients converge.
-                // This is additive to the flat json/ push above (which feeds the OCR pipeline):
-                // here we both push local edits AND pull remote/iPad edits down, last-write-wins by
-                // the day's `updated` field. Failures here don't fail the whole worker — the pass
-                // is self-healing and re-runs next window.
-                try {
-                    val daySync = CalendarWebDavSyncService(
-                        UltrabridgeWebDavService(webdavUrl, webdavUser, webdavPass),
-                        rootDir,
-                        moshi
-                    )
-                    val stats = daySync.sync()
-                    Timber.i("$TAG: Day-JSON WebDAV mirror: $stats")
-                } catch (e: Exception) {
-                    Timber.w(e, "$TAG: Day-JSON WebDAV mirror failed (non-fatal)")
-                }
-
                 // If anything failed, ask WorkManager to retry with backoff rather than
                 // reporting a clean success. The worker re-uploads everything each run
                 // (self-healing), so a retry simply re-attempts the failed files.
-                if (failureCount > 0) {
-                    Timber.w("$TAG: $failureCount upload(s) failed; requesting retry")
+                //
+                // A failed MIRROR counts too. It used to be swallowed at warn level and the worker
+                // still returned success, so the day tree could stop converging entirely — as it did
+                // for three days — while every pass reported itself clean.
+                if (failureCount > 0 || mirrorFailed) {
+                    Timber.w("$TAG: $failureCount upload(s) failed, mirrorFailed=$mirrorFailed; requesting retry")
                     return Result.retry()
                 }
 

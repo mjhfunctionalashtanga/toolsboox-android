@@ -100,6 +100,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     override fun onPause() {
         super.onPause()
         (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = null
+        // Leaving the screen is the other natural flush point for the Bluesky "seen" batch — the
+        // size threshold alone would strand a half-batch on the device every time he read six posts
+        // and went back to the day page, and those six would be unread again tomorrow.
+        flushBlueskySeen()
     }
 
     /** Shared with the full-screen article and the book reader, so one setting covers reading. */
@@ -287,6 +291,28 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     /** Reader-view (parsed) vs original (unparsed) for the in-pane article. */
     private var showParsed: Boolean = true
 
+    /**
+     * Synthetic row id → the post's AT URI, for the Bluesky source.
+     *
+     * The URI does not go on [FeedEntry] and should not: that model is shared by every source in
+     * this screen, and widening it for one source's key is how a lean data class becomes a union of
+     * everything anyone ever needed. It also could not ride in `url`, which has to stay the
+     * bsky.app permalink so "open externally" and the long-press both work. So the mapping is held
+     * beside the list, rebuilt whenever the timeline is loaded.
+     */
+    private val bskyUriById = HashMap<Long, String>()
+
+    /**
+     * Posts read but not yet reported to the site.
+     *
+     * Batched because the server's contract says to batch: one request per row as the list scrolls
+     * would be a cellular round trip per post, which on a Boox costs both time and battery. Flushed
+     * when the batch is big enough to be worth a request, and again on the way out of the screen —
+     * whichever comes first. Kept (not cleared) when a flush fails, because a silently-dropped
+     * batch means those posts come back unread on the next refresh and he reads them twice.
+     */
+    private val pendingBskySeen = LinkedHashSet<String>()
+
     /** OPML file picker (parity with the iPad's fileImporter). */
     private val opmlPicker = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.GetContent()) { uri ->
         uri ?: return@registerForActivityResult
@@ -449,6 +475,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         if (mode == "smart") { loadSmart(); return }
         if (mode == "asklog") { loadAskLog(); return }
         if (mode == "pickings") { loadPickingsFeed(); return }
+        if (mode == "bsky") { loadBlueskyFeed(); return }
 
         val p = prefs()
         val url = p.getString(KEY_URL, "").orEmpty()
@@ -645,6 +672,162 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         return out
     }
 
+    /* ---------------------------------------------------------------
+     * Bluesky — the following-timeline, as one more source in this list
+     * ------------------------------------------------------------- */
+
+    /**
+     * WHY THE TIMELINE LIVES HERE AND NOT ON A SCREEN OF ITS OWN.
+     *
+     * [com.toolsboox.plugin.calendar.ui.BlueskyFragment] is the CORRESPONDENCE surface: the replies
+     * awaiting an answer and the ink pad he answers them on. It is a work queue — a short list you
+     * empty. A timeline is the opposite: a long list you skim, page through with the volume keys,
+     * star out of, search, and stop reading in the middle of. Everything that makes that bearable
+     * on e-ink already exists in this fragment and in nothing else the app has — list → in-pane
+     * reader, volume paging, tap zones, mark-read-on-scroll, the search field with its scopes, the
+     * star that writes a ReadingEvent into the day JSON. Building a second list surface for Bluesky
+     * would have been re-implementing all of it, worse, and then having two places where "mark as
+     * read" means something slightly different.
+     *
+     * So Bluesky is a SOURCE, exactly as Pickings, Later and the Ask log are sources: its posts
+     * become [FeedEntry] rows in the band of synthetic ids, and every behaviour of this screen
+     * applies to them for free. Replying is the one thing this screen cannot do, and that is
+     * precisely the thing BlueskyFragment already does — so the reader hands off to it rather than
+     * growing a second composer.
+     *
+     * AVATARS ARE NOT SHOWN, and that is a decision rather than an omission. Every item carries an
+     * avatar URL and it would be trivial to put it in the row's thumbnail slot. On a monochrome
+     * panel a 76dp avatar is a dithered grey smudge that tells you nothing — faces are exactly the
+     * kind of image e-ink renders worst — and it would evict the one image on the row that IS worth
+     * its width: the post's own attached picture, which about a sixth of real posts have. Identity
+     * is carried as text instead (display name and @handle on the meta line), which is legible at
+     * every text tier and costs no network round trip per row.
+     */
+    private fun loadBlueskyFeed() {
+        val ctx = requireContext()
+        if (!com.toolsboox.plugin.calendar.nw.BlueskyReply.config(ctx).ready) {
+            allEntries = emptyList()
+            adapter.submit(emptyList())
+            showEmpty(
+                "The Bluesky bridge isn't configured yet.\n\n" +
+                    "Open 🦋 Bluesky from the Ledger directory and paste the shared POSSE secret " +
+                    "there — this list reads the same bridge, so setting it once covers both."
+            )
+            return
+        }
+        loading = true
+        binding.progress.visibility = View.VISIBLE
+        binding.emptyText.visibility = View.GONE
+        lifecycleScope.launch {
+            val posts = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.nw.BlueskyFeed.recent(ctx, 200)
+            }
+            loading = false
+            binding.progress.visibility = View.INVISIBLE
+            if (!isAdded) return@launch
+            // Rebuilt from scratch: ids are positional, so a shorter timeline would otherwise leave
+            // the tail of the previous load's mapping pointing at posts no longer on screen.
+            bskyUriById.clear()
+            val entries = posts.mapIndexed { i, p -> blueskyEntry(p, BSKY_ID_BASE - i) }
+            allEntries = entries
+            adapter.submit(entries)
+            if (entries.isEmpty()) showEmpty("Nothing in the timeline mirror yet. ↻ to check again.")
+            else binding.emptyText.visibility = View.GONE
+            renderDirectory()
+        }
+    }
+
+    /**
+     * One mirrored post as a feed row.
+     *
+     * The mapping is doing real work in three places. A skeet has NO TITLE — it is a paragraph —
+     * so the first line stands in as one and the whole text is the body; without that the row would
+     * show a blank headline over a blurb, which is how every "posts as articles" list looks wrong.
+     * Its `category` is deliberately left null so the meta line falls back to the feed title and
+     * shows the handle rather than the word "bluesky". And the attached images go into the content
+     * as real `<img>` tags, which is what makes [FeedEntry.imageUrl] — and therefore the row
+     * thumbnail — the post's own picture.
+     */
+    private fun blueskyEntry(
+        post: com.toolsboox.plugin.calendar.nw.BlueskyFeed.Item, id: Long
+    ): FeedEntry {
+        bskyUriById[id] = post.uri
+        val text = post.text.trim()
+        val firstLine = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+        // A post with no words at all is a picture post; saying so beats an empty row.
+        val head = firstLine.ifBlank { if (post.images.isNotEmpty()) "(image)" else "(no text)" }
+        // Most of a real timeline is replies (about three in five of his), and a reply read out of
+        // its thread is confusing unless it says it is one. The glyph is the same ↳ the app uses
+        // for nested things elsewhere; the parent itself is one tap away on bsky.app.
+        val title = (if (post.isReply) "↳  " else "") + head.take(110)
+        return FeedEntry(
+            id = id,
+            title = title,
+            feedTitle = "Bluesky · @" + post.handle.ifBlank { "unknown" },
+            url = post.url,
+            author = post.author.takeIf { it.isNotBlank() },
+            content = blueskyHtml(post),
+            publishedAt = blueskyIso(post.createdAt),
+            starred = false,
+            read = post.seen,
+            category = null,
+        )
+    }
+
+    /**
+     * The post as the in-pane reader's body: an answer door, the text, then any pictures.
+     *
+     * Everything from the post is ESCAPED. The site already runs the text through `wp_kses_post`,
+     * so nothing dangerous survives the mirror — but this is a stranger's words being written into
+     * a WebView, kses allows a generous tag set, and the text is meant to be read as the plain
+     * prose it is. Escaping means a post containing "<3" or "a > b" shows what was typed instead of
+     * losing it to a parser, which is the failure the server's own comment worries about from the
+     * other side.
+     *
+     * The answer door is a `ledger://` link rather than a button because the reader IS a WebView:
+     * there is no view here to hang a button on, and [openEntry] already intercepts main-frame
+     * navigations, so one extra branch there turns a link into an in-app action.
+     */
+    private fun blueskyHtml(post: com.toolsboox.plugin.calendar.nw.BlueskyFeed.Item): String {
+        fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace("\"", "&quot;")
+        val sb = StringBuilder()
+        // Argument-less on purpose. The obvious shape — the AT URI in the link's path — means
+        // percent-encoding `at://did:plc:…/app.bsky.feed.post/…` into a URL and trusting the
+        // WebView not to normalise the escaped slashes on the way back out, which is exactly the
+        // sort of thing that works on one WebView build and not the next. The reader already knows
+        // which post is open, so the link only has to say "this one".
+        sb.append("<p><a href=\"").append(BSKY_REPLY_SCHEME)
+            .append("\"><b>✍&nbsp;&nbsp;Answer this on Bluesky</b></a></p>")
+        if (post.isReply) {
+            sb.append("<p style=\"color:#666;font-size:14px\">↳ a reply in a thread — hold the ")
+                .append("row, or use ⧉, to open the whole thread on bsky.app</p>")
+        }
+        for (para in post.text.split(Regex("\n{2,}"))) {
+            if (para.isBlank()) continue
+            sb.append("<p>").append(esc(para.trim()).replace("\n", "<br />")).append("</p>")
+        }
+        for (image in post.images) sb.append("<p><img src=\"").append(esc(image)).append("\"/></p>")
+        return sb.toString()
+    }
+
+    /**
+     * The site hands out `created_at` site-local with no offset ("2026-07-29 11:47:03") — it did
+     * the timezone maths so no client has to. The row's date formatter wants an offset date-time,
+     * so this attaches the DEVICE's zone, which is the same choice
+     * [com.toolsboox.plugin.calendar.nw.WPPublish.parseWpDate] makes for WordPress's identically
+     * shaped dates: when the zones agree (the normal case, this being his own site) the wall clock
+     * is preserved exactly, and when they do not, a timeline is still ordered correctly because the
+     * server sorted it before we ever saw it.
+     */
+    private fun blueskyIso(local: String): String = runCatching {
+        java.time.LocalDateTime
+            .parse(local.trim(), java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+            .atZone(java.time.ZoneId.systemDefault())
+            .toOffsetDateTime()
+            .toString()
+    }.getOrElse { local }
+
     /** Saved Ask-my-Ledger answers, surfaced as a local feed. */
     private fun loadAskLog() {
         val entries = com.toolsboox.plugin.feeds.nw.AskFeedStore.list(requireContext())
@@ -750,6 +933,12 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 // cancel the very embed the tap asked for. The menu is for main-frame link taps.
                 if (request?.isForMainFrame == false) return false
                 val url = request?.url?.toString().orEmpty()
+                // The Bluesky reader's "Answer this" door. Handing off to the surface that already
+                // owns replying rather than growing a second composer here — see [loadBlueskyFeed].
+                if (url.startsWith(BSKY_REPLY_SCHEME)) {
+                    openBlueskyComposer(bskyUriById[currentArticle?.id] ?: "")
+                    return true
+                }
                 if (url.startsWith("http")) { showPaneLinkMenu(url); return true }
                 return false
             }
@@ -799,6 +988,28 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         articleBackCallback?.isEnabled = true
         // Keep the shrunk/expanded drawer state across next/last-article jumps (don't reset it here).
         applyArticlePill()
+    }
+
+    /**
+     * Hand a Bluesky post to the surface that can actually answer it.
+     *
+     * The composer is not reimplemented here and must not be: [BlueskyFragment] enforces the one
+     * rule the whole reply path exists for — handwriting is recognised into an editable field he
+     * reads and corrects before anything is sent — and a second composer would be a second place
+     * for that rule to be forgotten. The AT URI travels through [BlueskyTarget] the same way a
+     * tapped entry travels through [FeedSelection]: a one-shot handoff rather than nav args, which
+     * is this app's existing idiom for exactly this.
+     *
+     * Read-only posts are the honest limit here. The site's reply queue answers COMMENTS on his own
+     * syndicated posts — a reply threaded under something of his — and there is no route that posts
+     * to an arbitrary skeet. So BlueskyFragment opens the pad when the queue holds this post and
+     * says plainly that it cannot when it does not, rather than offering a Send that would 404.
+     */
+    private fun openBlueskyComposer(uri: String) {
+        if (uri.isBlank()) { showMessage("No Bluesky reference on that post", binding.root); return }
+        com.toolsboox.plugin.calendar.ui.BlueskyTarget.pendingUri = uri
+        runCatching { findNavController().navigate(R.id.action_to_bluesky) }
+            .onFailure { showMessage("Couldn't open Bluesky", binding.root) }
     }
 
     /** Render the open article as parsed (reader view) or unparsed (original). */
@@ -1564,6 +1775,40 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // small synthetic id would address someone ELSE's entry.
         if (u.isNotBlank() && tk.isNotBlank() && entry.id > 0)
             lifecycleScope.launch(Dispatchers.IO) { runCatching { miniflux.markRead(u, tk, entry.id) } }
+        // A Bluesky row has its own "read" on the far side — the site's `seen` flag, which is what
+        // stops the same morning's posts coming back on every refresh and is shared with the iPad.
+        // Collected rather than sent: see [pendingBskySeen].
+        // `!entry.read` because the site already knows about a post it handed us as seen — the
+        // session read-tracker above is per-launch, so without this every re-opened post would put
+        // its URI back in the batch and buy a request that could only be a no-op.
+        bskyUriById[entry.id]?.takeIf { !entry.read }?.let { uri ->
+            val ready = synchronized(pendingBskySeen) {
+                pendingBskySeen.add(uri); pendingBskySeen.size >= BSKY_SEEN_BATCH
+            }
+            if (ready) flushBlueskySeen()
+        }
+    }
+
+    /**
+     * Send the accumulated "seen" batch.
+     *
+     * On [lifecycleScope] and the APPLICATION context: the scope survives onPause (it is cancelled
+     * at DESTROY, not at PAUSE), which is what lets the leaving-the-screen flush actually complete,
+     * and the app context is what keeps the request from holding the fragment's own.
+     *
+     * The URIs leave the pending set only after the site has accepted them. A flush that fails
+     * therefore leaves the work to be redone on the next one rather than dropping it — dropping a
+     * batch means those posts come back unread, and he reads the same morning twice.
+     */
+    private fun flushBlueskySeen() {
+        val batch = synchronized(pendingBskySeen) { pendingBskySeen.toList() }
+        if (batch.isEmpty()) return
+        val appCtx = requireContext().applicationContext
+        lifecycleScope.launch(Dispatchers.IO) {
+            if (com.toolsboox.plugin.calendar.nw.BlueskyFeed.markSeen(appCtx, batch)) {
+                synchronized(pendingBskySeen) { pendingBskySeen.removeAll(batch.toSet()) }
+            }
+        }
     }
 
     /** Apply the persisted pill orientation to the feeds pill (vertical on narrow screens by choice). */
@@ -1976,6 +2221,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
 
         // ── MORE ── the rest of the iPad's set: Pickings, local (no-server) feeds, OPML.
         section("MORE")
+        // The timeline sits with the other non-Miniflux sources rather than among the media lenses:
+        // it is a source, not a medium, and it composes with none of the view chips (there is no
+        // "starred Bluesky" on the server side). Same 🦋 the Ledger directory's Bluesky row wears,
+        // so the two doors to the same bridge are recognisably one thing.
+        row("🦋  Bluesky", true, mode == "bsky") { switchTo("bsky", null) }
         row("❝  Pickings", true, mode == "pickings") { switchTo("pickings", null) }
         row("📡  Local feeds", true, mode == "local" && localSub == null) { switchToLocal(null) }
         com.toolsboox.plugin.feeds.nw.LocalFeedStore.subscriptions(ctx).forEach { sub ->
@@ -2184,6 +2434,17 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // from their base (id--), so each band stays disjoint.
         private const val PICKINGS_ID_BASE = -1_100_000_000L
         private const val LATER_ID_BASE = -1_200_000_000L
+        private const val BSKY_ID_BASE = -1_300_000_000L
+
+        /** How many read posts are worth a request. Small enough that a normal reading session
+         *  flushes at least once before he leaves; large enough that skimming a screenful is one
+         *  round trip and not twenty. */
+        private const val BSKY_SEEN_BATCH = 20
+
+        /** The in-reader "answer this" link. Not a real scheme anyone registers — it exists only to
+         *  be recognised by [openEntry]'s navigation interceptor and turned into a fragment jump.
+         *  Which post it means is the one the reader has open, so it carries no argument. */
+        const val BSKY_REPLY_SCHEME = "ledger://bsky-reply"
     }
 }
 

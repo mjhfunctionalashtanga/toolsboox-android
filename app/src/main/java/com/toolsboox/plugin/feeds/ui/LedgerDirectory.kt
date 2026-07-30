@@ -72,7 +72,8 @@ fun ledgerDirectoryFolders(
                 null, "default", com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE -> null
                 "intake", "write" -> "Flow"
                 "gratitude", "selfexec" -> "Garden"
-                "grid", "sketch" -> "Notes"
+                "grid", "sketch",
+                com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> "Notes"
                 // A NAMED document ("pickings-…", "synthesize-…", "write-…") calls the same folder
                 // home as the surface it belongs to — the "-<millis>" tail is storage, never a
                 // different kind of page.
@@ -188,7 +189,7 @@ fun ledgerDirectoryFolders(
         // out. (Was "Daily"; Daily Pile is retired — Intake takes its place. Gratitude and Self
         // Executive moved to the Garden.)
         ScreenFragment.Folder("⤳", "Flow", listOf(
-            "📥  Star Sort" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
+            "★  All Stars" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
             "❝  Pickings" to { showPickingsPicker(fragment) },
             "🔬  Synthesize" to { showSynthPicker(fragment) },
             // Write opens its directory rather than jumping straight at today's page, now that it
@@ -234,6 +235,15 @@ fun ledgerDirectoryFolders(
             "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
             "📈  Grid Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "grid") },
             "⌱  Jot Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "sketch") },
+            // Gram Picks: where every grabbed gram lands, so sorting happens once, later, in one
+            // place — instead of choosing between a Pickings board, Star Sort, Synthesize and a
+            // board of its own at the moment you grab the thing.
+            "◈  Gram Picks" to {
+                CalendarNavigator.toDayNote(
+                    fragment, LocalDate.now(),
+                    com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
+                )
+            },
             "⌗  Text Notes" to { nav.navigate(R.id.action_to_text_notes) },
             // #hashtags harvested off note pages → jump to any page a tag appears on. No naming.
             "#  Tags" to { showTagIndex(fragment) },

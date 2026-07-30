@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The frame around a settings group that only exists while its switch is on: the WebDAV
+    credentials, the Google Calendar target, the site bridge, the rotation cycle.
+
+    Square corners and a 2dp solid stroke, because that is what a PANEL looks like everywhere
+    else in this app — LedgerContextMenu's card, and the four quarters CalendarDayPageIntake
+    draws (`panelBorder`, 2f, no radius). Rounding it would have made it a Material card, which
+    is a different object with a different meaning.
+
+    Colours come from the DayNight pair rather than literal black/white: this is one of the few
+    surfaces that is a real fragment rather than a dialog, so it DOES invert with the scheme, and
+    a hardcoded #000 frame would disappear into the night background.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/bgColor"/>
+    <stroke android:width="2dp" android:color="@color/fgColor"/>
+</shape>

@@ -61,12 +61,31 @@ object CalendarNavigator {
             .apply()
     }
 
-    /** Open Notes where you last left it; today's first page when there's no memory yet. */
+    /**
+     * Open TODAY's notes, resuming the page you were on if you were on it today.
+     *
+     * This used to resume the remembered DATE as well, with no bound on how old it was — so once a
+     * note had been written on the 21st, every later tap on "Notes" opened the 21st, forever. That
+     * is not a navigation annoyance, it is a data-loss bug: the page looks like a notes page, gives
+     * no indication which day it belongs to, and so the next thing written lands on top of what is
+     * already there. Michael reported it three ways without realising they were one thing — "I keep
+     * getting sent back to the 21st when I click the quick jump button for Notes", "it keeps
+     * returning me to Friday's Notes", and, from the iPad, "the handwritten notes are layering on
+     * one another, ignoring the date/days". They were, because the surface WAS ignoring the date.
+     * The proof is in the ink: day-2026-07-26's grid page has its lines written over each other.
+     *
+     * Resuming a page number within the same day is genuinely useful, so that half stays. Resuming
+     * a date across days is the half that overwrites your work, so it goes: these are numeric
+     * per-day lined pages ([rememberNoteLocation] stores nothing else), and a per-day page's day is
+     * today. A named Write/Synthesize document is the thing that legitimately spans days, and it has
+     * its own key and its own directory.
+     */
     fun toLastDayNote(fragment: ScreenFragment) {
         val p = fragment.requireContext().getSharedPreferences("ledger_notes", 0)
-        val date = runCatching { LocalDate.parse(p.getString("last_note_date", "") ?: "") }
-            .getOrNull() ?: LocalDate.now()
-        toDayNote(fragment, date, p.getString("last_note_page", "0") ?: "0")
+        val today = LocalDate.now()
+        val remembered = runCatching { LocalDate.parse(p.getString("last_note_date", "") ?: "") }.getOrNull()
+        val page = if (remembered == today) (p.getString("last_note_page", "0") ?: "0") else "0"
+        toDayNote(fragment, today, page)
     }
 
     /**

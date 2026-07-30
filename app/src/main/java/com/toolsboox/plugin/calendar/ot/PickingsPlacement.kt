@@ -62,11 +62,24 @@ object PickingsPlacement {
         DayLocks.withDay(date) {
             val day = service.load(root, date, null, Locale.getDefault())
             val count = day.imageElements.count { it.page == pageKey }        // grid-stagger new cards
+            // ALL STARS lands each arrival inside the band for its kind, so the register organises
+            // itself without anyone filing anything — and the card is an ordinary element from that
+            // moment on, free to be dragged into another band and left there. Every other page keeps
+            // the plain three-across stagger.
+            //
+            // Counted per KIND, not per page: staggering All Stars by the page's total would march
+            // arrivals diagonally away from their own band as the day filled up.
+            val bandSlot = if (pageKey == CalendarDayPageIntake.INTAKE_PAGE && intakeKind.isNotBlank()) {
+                val taken = day.imageElements.count { it.page == pageKey && it.intakeKind == intakeKind }
+                CalendarDayPageIntake.bandSlotFor(intakeKind, taken, w, h)
+            } else null
             // Every board is the standard full-height page now (the daily cover band is gone), so
             // picked cards start at the normal top for all of them.
             val yBase = 120f
-            val x = (60f + (count % 3) * (w + 30f)).coerceIn(0f, (CANVAS_W - w).coerceAtLeast(0f))
-            val y = (yBase + (count / 3) * (h + 30f)).coerceIn(0f, (CANVAS_H - h).coerceAtLeast(0f))
+            val x = bandSlot?.first
+                ?: (60f + (count % 3) * (w + 30f)).coerceIn(0f, (CANVAS_W - w).coerceAtLeast(0f))
+            val y = bandSlot?.second
+                ?: (yBase + (count / 3) * (h + 30f)).coerceIn(0f, (CANVAS_H - h).coerceAtLeast(0f))
             day.imageElements.add(ImageElement(
                 x = x, y = y, width = w, height = h, data = base64, page = pageKey,
                 sourceLink = sourceLink, sourceLabel = sourceLabel,
@@ -100,13 +113,25 @@ object PickingsPlacement {
         val bitmap = bitmaps.firstOrNull() ?: return
         val ctx = fragment.requireContext()
         val saved = PickingsStore.list(ctx, date).filter { it.key != PickingsStore.DEFAULT_KEY }
-        val labels = (listOf("❝  Today's Pickings", "＋  New pickings…") + saved.map { "❝  ${it.name}" }).toTypedArray()
+        // GRAM PICKS FIRST — the inbox, and the answer to "a gram gets sent to too many places".
+        //
+        // Every capture route funnels through this chooser, so putting the inbox at the top of it is
+        // the whole change: you no longer have to decide what a gram is FOR at the moment you grab
+        // it, which is the moment you know least. Send it here, sort it later from one page with the
+        // gram in front of you. The boards stay right below for when you already know.
+        val labels = (listOf("◈  Gram Picks", "❝  Today's Pickings", "＋  New pickings…") +
+            saved.map { "❝  ${it.name}" }).toTypedArray()
         androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle("Add to Pickings")
+            .setTitle("Send this gram to")
             .setItems(labels) { _, which ->
                 when (which) {
-                    0 -> placeAsync(fragment, service, root, bitmaps, date, PickingsStore.DEFAULT_KEY, "today's Pickings", sourceLink, sourceLabel, media, cardText, sourceFeed)
-                    1 -> {
+                    0 -> placeAsync(
+                        fragment, service, root, bitmaps, date,
+                        CalendarDayPageNotes.GRAM_PICKS, "Gram Picks",
+                        sourceLink, sourceLabel, media, cardText, sourceFeed
+                    )
+                    1 -> placeAsync(fragment, service, root, bitmaps, date, PickingsStore.DEFAULT_KEY, "today's Pickings", sourceLink, sourceLabel, media, cardText, sourceFeed)
+                    2 -> {
                         val input = android.widget.EditText(ctx).apply { hint = "Pickings name"; setSingleLine() }
                         val pad = (16 * ctx.resources.displayMetrics.density).toInt()
                         val box = android.widget.LinearLayout(ctx).apply {
@@ -119,7 +144,8 @@ object PickingsPlacement {
                             }.setNegativeButton(android.R.string.cancel, null).show()
                     }
                     else -> {
-                        val board = saved[which - 2]
+                        // Offset 3, not 2: Gram Picks now leads the list.
+                        val board = saved[which - 3]
                         placeAsync(fragment, service, root, bitmaps, date, board.key, board.name, sourceLink, sourceLabel, media, cardText, sourceFeed)
                     }
                 }

@@ -116,6 +116,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private var notePage: String? = null
 
     /**
+     * Which window All Stars is showing: "day" (default), "week", "month", "quarter", "year".
+     *
+     * Set by tapping a period slot in the almanac header, which on this page FILTERS rather than
+     * navigates — Michael: "a place where items that got stars from the different places within
+     * Ledger and the day almanac top header menu can filter". The register is the same page
+     * throughout; only how far back it reaches changes. Deliberately not persisted: a filter you
+     * left on last week would silently answer a different question than the one the page appears to
+     * be asking, and the page's whole job is to be unambiguous about its window.
+     */
+    private var starsScope: String = "day"
+
+    /**
      * The current locale.
      */
     private var locale: Locale = Locale.getDefault()
@@ -197,11 +209,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 return
             }
         }
-        // The intake page is a PICTURE of its grams — they're painted into the template's grid,
-        // not laid out at their own element coordinates — so the generic canvas menu, which
-        // hit-tests element.x/y, could never find one and a hold there did nothing. Resolve the
-        // hold against the same recorded cell geometry the tap handler uses.
-        if (notePage == CalendarDayPageIntake.INTAKE_PAGE) {
+        // All Stars used to need its own hold menu, because its grams were painted into the template
+        // and the generic canvas menu — which hit-tests element.x/y — could never find one. They are
+        // real elements now, so the ordinary menu finds them, and the page keeps its own menu only
+        // for a hold on EMPTY paper (bringing a picking into a band).
+        if (notePage == CalendarDayPageIntake.INTAKE_PAGE &&
+            imageElementAt(canvasPts[0], canvasPts[1]) == null
+        ) {
             showIntakeHoldMenu(canvasPts[0], canvasPts[1], longPressDownX, longPressDownY)
             return
         }
@@ -249,6 +263,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      *  real content in. Their directory therefore lists them as single-page, which is what they are.) */
     private fun isSubPageableBase(base: String?): Boolean =
         base == "write" || base == "grid" || base == "sketch" || base == "synthesize" ||
+            base == com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS ||
             com.toolsboox.plugin.calendar.ot.WritePageStore.isWrite(base)
 
     /**
@@ -268,7 +283,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * tap-to-type strips; the Onyx raw session would swallow it system-wide,
      * so that page runs on the MotionEvent capture + software render path.
      */
-    override fun provideDisableRawInkCapture(): Boolean = notePage == "intake"
+    // Ink is ALLOWED on All Stars. It was blocked because the page was a picture of its grams and
+    // writing on a picture goes nowhere useful; now the grams are ordinary elements on an ordinary
+    // page, so the pen behaves as it does on a Pickings board — you can write around and between
+    // your stars. Michael: "all stars should be manipulatable just like pickings."
+    override fun provideDisableRawInkCapture(): Boolean = false
 
     // Exclude the floating nav + tool pills (and the notes pager) from the raw stylus reader
     // so the stylus can drag/tap them (and never inks a stray dot over them).
@@ -827,7 +846,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     private fun archiveItemActions(item: com.toolsboox.plugin.calendar.ot.JournalItem) {
         val ctx = context ?: return
-        val rows = arrayOf("🌐  Open the post", "❝  Make it a picking", "★  Send to Star Sort", "🏷  Tag…")
+        val rows = arrayOf("🌐  Open the post", "❝  Make it a picking", "★  Send to All Stars", "🏷  Tag…")
         showModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(item.title.ifBlank { item.dateString })
             .setItems(rows) { _, which ->
@@ -1101,7 +1120,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                         ?: currentTextElements().filter { it.text.isNotBlank() }
                             .joinToString("\n\n") { it.text.trim() }
                 },
-                bitmap = { runCatching { renderPageBitmap() }.getOrNull() }
+                bitmap = { runCatching { renderPageBitmap() }.getOrNull() },
+                // Where this page lives, so the export can say so — see [LedgerProvenance]. The
+                // surface name comes from LedgerDocuments so the stamp says "Synthesize" exactly
+                // as the hub row, the day chip and the directory do; a page with no document
+                // surface (the day page itself) says "Day" rather than inventing a fifth name.
+                surface = com.toolsboox.plugin.calendar.ot.LedgerDocuments.surfaceOf(notePage)
+                    ?.let { com.toolsboox.plugin.calendar.ot.LedgerDocuments.label(it) } ?: "Day",
+                date = currentDate,
+                pageKey = notePage
             )
         )
     }
@@ -1577,7 +1604,19 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             // slot opens the period-scoped "Notes & Tags" list for that level instead of jumping to
             // the Week/Month/… almanac. The plain day page and the ritual pages keep the almanac
             // behaviour unchanged (onSelectPeriod stays null for them). Bounded to this handler.
-            if (isNotesTagSurface(notePage)) {
+            // ALL STARS: the almanac strip filters the register instead of navigating. A period slot
+            // widens the window in place; the day slot returns it to today's stars. Nothing leaves
+            // the page, because the page IS the answer — it just reaches further back.
+            if (notePage == CalendarDayPageIntake.INTAKE_PAGE) {
+                CalendarDayNavigator.onTouchEvent(
+                    view, motionEvent, this@CalendarDayFragment, calendarDay,
+                    onSelectPeriod = { level, _ ->
+                        starsScope = if (level == "day") "day" else level
+                        redrawIntakePage()
+                        showMessage("All Stars · ${starsScopeLabel()}", binding.root)
+                    }
+                )
+            } else if (isNotesTagSurface(notePage)) {
                 CalendarDayNavigator.onTouchEvent(
                     view, motionEvent, this@CalendarDayFragment, calendarDay,
                     onSelectPeriod = { level, date ->
@@ -1602,8 +1641,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             val rawGesture = gestureListener.onTouchEvent(gestureDetector, view, motionEvent)
             val gestureResult = if (twoFingerGesture) rawGesture else OnGestureListener.NONE
 
-            if (notePage == "intake" && handleIntakeTap(motionEvent, gestureResult))
-                return@setOnTouchListener true
+            // No intake tap interception any more. It existed to hit-test grams against the
+            // template's painted cells; the grams are real elements, so the element layer resolves a
+            // tap by itself — the same code path every other making surface uses.
 
             // The daily Pickings cover: its recent-board tiles are pixels in the template, so a
             // tap resolves against the rectangles PickingsCover recorded when it drew the band.
@@ -2536,7 +2576,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     add(GoItem("⚡", "Next · $label") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), page) })
                 }
                 add(GoItem("☀︎", "Day") { CalendarNavigator.toDayPage(this@CalendarDayFragment, LocalDate.now(), CalendarDay.DEFAULT_STYLE) })
-                add(GoItem("🔖", "Star Sort") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
+                add(GoItem("★", "All Stars") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
                 add(GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "pickings") })
                 add(GoItem("🔬", "Synthesize") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "synthesize") })
                 add(GoItem("✍", "Write") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "write") })
@@ -4309,6 +4349,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         "synthesize" -> R.drawable.ic_swap
         "grid" -> R.drawable.ic_reader_view
         "sketch" -> R.drawable.ic_edit
+        com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> R.drawable.ic_bookmark
         "selfexec" -> R.drawable.ic_refresh
         // Named documents wear their surface's glyph, not the generic note pencil — a piece of
         // writing you named is still Write.
@@ -4331,6 +4372,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         "synthesize" -> "🔬"
         "grid" -> "📈"
         "sketch" -> "⌱"
+        com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> "◈"
         "selfexec" -> "🐘"
         else -> when {
             com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(currentNotePage()) -> "🔬"
@@ -4824,60 +4866,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .show()
     }
 
-    private fun handleIntakeTap(motionEvent: MotionEvent, gestureResult: Int): Boolean {
-        // Finger taps only. TOOL_TYPE_UNKNOWN is accepted because injected events
-        // (adb input tap, accessibility) carry it; real pen taps are STYLUS and stay ink.
-        val toolType = motionEvent.getToolType(0)
-        if (toolType != MotionEvent.TOOL_TYPE_FINGER && toolType != MotionEvent.TOOL_TYPE_UNKNOWN) return false
-
-        when (motionEvent.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                intakeTapDownX = motionEvent.x
-                intakeTapDownY = motionEvent.y
-                intakeTapDownAt = System.currentTimeMillis()
-            }
-
-            MotionEvent.ACTION_UP -> {
-                val dx = abs(motionEvent.x - intakeTapDownX)
-                val dy = abs(motionEvent.y - intakeTapDownY)
-                val dt = System.currentTimeMillis() - intakeTapDownAt
-                // NOTE: deliberately no twoFingerGesture check — with the one-finger
-                // gestures toolbar toggle enabled, SurfaceFragment sets
-                // twoFingerGesture=true for EVERY single-finger touch (the flag really
-                // means "gesture recognition armed"), which would veto all taps.
-                // gestureResult==NONE + movement slop + tap duration are sufficient.
-                if (gestureResult == OnGestureListener.NONE &&
-                    dx < 30f && dy < 30f && dt in 1..600
-                ) {
-                    val canvasPts = screenToCanvas(motionEvent.x, motionEvent.y)
-                    val cx = canvasPts[0]; val cy = canvasPts[1]
-                    fun intakeElement(id: String) = calendarDay.imageElements.firstOrNull {
-                        it.elementId.toString().lowercase() == id
-                    }
-                    // The ✓-corner graduates the gram into its own Pickings page (or opens that page
-                    // once graduated). Checked before the body so the corner wins the tap.
-                    CalendarDayPageIntake.cornerAt(cx, cy)?.let { gram ->
-                        intakeElement(gram.elementId)?.let { el ->
-                            if (el.graduatedTo.isBlank()) graduateIntakeGram(el)
-                            else CalendarNavigator.toDayNote(this, currentDate, el.graduatedTo)
-                        }
-                        return true
-                    }
-                    // A tap on the gram body: open its Pickings page if graduated, else its source.
-                    CalendarDayPageIntake.gramAt(cx, cy)?.let { gram ->
-                        intakeElement(gram.elementId)?.let { el ->
-                            if (el.graduatedTo.isNotBlank())
-                                CalendarNavigator.toDayNote(this, currentDate, el.graduatedTo)
-                            else onImageSource(el)
-                        }
-                        return true
-                    }
-                }
-            }
-        }
-
-        return false
-    }
+    // handleIntakeTap is gone. It resolved finger taps against the cells the template had painted
+    // its grams into — a hit-test table for a picture. All Stars' grams are real elements now, so
+    // the element layer resolves taps (and the ✓-corner became the "Give it its own board" verb on
+    // the ordinary gram menu). Keeping a second, parallel tap path over stale rects would only ever
+    // disagree with the live one.
 
     /**
      * Graduate an intake gram into its own Pickings page: make a board named for the gram, place a
@@ -4956,7 +4949,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // The Read, so the menu still works when the hold lands in a gutter.
         val panel = CalendarDayPageIntake.panelAt(cx, cy)
         val kindKey = gram?.kindKey ?: panel?.kindKey ?: CalendarDayPageIntake.panels.first().kindKey
-        val kindTitle = CalendarDayPageIntake.panels.firstOrNull { it.kindKey == kindKey }?.title ?: "STAR SORT"
+        val kindTitle = CalendarDayPageIntake.panels.firstOrNull { it.kindKey == kindKey }?.title ?: "ALL STARS"
         val element = gram?.let { g ->
             calendarDay.imageElements.firstOrNull { it.elementId.toString().lowercase() == g.elementId }
         }
@@ -4978,7 +4971,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 item("🕸  Rhizome") { onImageRhizome(element) },
                 item("🔎  Where used") { onImageWhereUsed(element) }
             ))
-            groups.add(listOf(item("🗑  Remove from Star Sort") { confirmRemoveIntakeGram(element) }))
+            groups.add(listOf(item("🗑  Remove from All Stars") { confirmRemoveIntakeGram(element) }))
         }
 
         com.toolsboox.ot.LedgerContextMenu.show(
@@ -4996,11 +4989,88 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         placeGramToPickings(bmp)
     }
 
+    /**
+     * Move a gram to another making surface: Gram Picks, a Pickings board, a Star Sort quarter, or
+     * Synthesize.
+     *
+     * This is the other half of Gram Picks (Michael's proposal): an inbox is only useful if you can
+     * empty it. Capture sends everything to one page; this sorts it onward, once, with the gram in
+     * front of you. Before, the only way to change a gram's home was to delete it and re-grab it
+     * from the original source — assuming the source was still to hand.
+     *
+     * A move is just a change of [ImageElement.page]. The one surface that needs more is Star Sort,
+     * whose grams are painted into a grid keyed by [ImageElement.intakeKind] rather than laid out at
+     * their own coordinates — so going there sets the quarter, and leaving clears it, or the gram
+     * would carry a stale quarter that nothing reads.
+     */
+    /**
+     * A gram was placed on the day by the in-pane feed reader while this page stayed on screen.
+     *
+     * RE-READ, never save. The card is already on disk (the placement wrote it under the day lock);
+     * this fragment's in-memory copy is the stale one, so saving would be the very thing that loses
+     * it. Ink is safe to discard here because it is already persisted — strokes commit on pen-up.
+     */
+    override fun onExternalGramPlaced(pageKey: String) {
+        if (!isAdded || !isResumed) return
+        presenter.load(
+            this, binding, currentDate,
+            sharedPreferences.getInt("calendarStartHour", 5), locale
+        )
+    }
+
+    override fun onImageGraduate(element: ImageElement) = graduateIntakeGram(element)
+
+    override fun onImageOpenBoard(element: ImageElement) {
+        if (element.graduatedTo.isNotBlank())
+            CalendarNavigator.toDayNote(this, currentDate, element.graduatedTo)
+    }
+
+    override fun onImageMoveTo(element: ImageElement) {
+        if (!::calendarDay.isInitialized) return
+        val ctx = requireContext()
+        val boards = com.toolsboox.plugin.calendar.ot.PickingsStore.list(ctx, currentDate)
+        val gramPicks = com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
+
+        // (label, pageKey, intakeKind) — intakeKind only means anything on the intake page.
+        val targets = mutableListOf<Triple<String, String, String>>()
+        targets.add(Triple("◈  Gram Picks", gramPicks, ""))
+        for (b in boards) targets.add(Triple("❝  ${b.name}", b.key, ""))
+        for (p in CalendarDayPageIntake.panels)
+            targets.add(Triple("★  All Stars · ${p.title}", CalendarDayPageIntake.INTAKE_PAGE, p.kindKey))
+        targets.add(Triple("🔬  Synthesize", "synthesize", ""))
+
+        // Don't offer where it already is.
+        val here = targets.filterNot { it.second == element.page && it.third == element.intakeKind }
+        if (here.isEmpty()) return
+
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Move to…")
+            .setItems(here.map { it.first }.toTypedArray()) { _, which ->
+                val (label, pageKey, kind) = here[which]
+                element.page = pageKey
+                element.intakeKind = kind
+                setImageElements(
+                    calendarDay.imageElements.filter { it.page == (notePage ?: "default") }.toMutableList()
+                )
+                calendarPattern.updateDay(calendarDay)
+                presenter.save(this, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+                if (notePage == CalendarDayPageIntake.INTAKE_PAGE) redrawIntakePage()
+                showMessage("Moved to ${label.substringAfter("  ")}.", binding.root)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    // The quarter-to-quarter picker that used to live here is gone. It existed because a painted
+    // gram could not be dragged, so changing its band needed a dialog; a real element just gets
+    // dragged into the band you want, which is what "manipulatable just like pickings" means.
+    // Correcting a mis-detected kind still works — drag it across and it stays.
+
     /** Taking a card off Star Sort is a deletion, so it asks — and says which one it means. */
     private fun confirmRemoveIntakeGram(element: ImageElement) {
         val what = element.cardText.ifBlank { element.sourceLabel }.ifBlank { "this gram" }
         AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
-            .setTitle("Remove from Star Sort?")
+            .setTitle("Remove from All Stars?")
             .setMessage(what.take(160))
             .setPositiveButton("Remove") { _, _ -> removeIntakeGram(element) }
             .setNegativeButton(android.R.string.cancel, null)
@@ -5020,13 +5090,87 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         redrawIntakePage()
     }
 
-    /** Repaint the intake template in place (after a gram arrives or leaves). */
+    /** Repaint the All Stars template in place (after a gram arrives or leaves, or the filter moves). */
     private fun redrawIntakePage() {
         if (notePage != CalendarDayPageIntake.INTAKE_PAGE) return
+        if (starsScope == "day") {
+            CalendarDayPageIntake.drawPage(
+                templateCanvas, intakePageData ?: com.toolsboox.plugin.michaelfilter.da.IntakePageData(),
+                calendarDay, null, "TODAY"
+            )
+            binding.templateImageView.invalidate()
+            return
+        }
+        // A wider window means reading other days off disk, so paint the day's own stars now and
+        // swap in the fuller set when it lands. The page is never blank and never blocks the pen.
         CalendarDayPageIntake.drawPage(
-            templateCanvas, intakePageData ?: com.toolsboox.plugin.michaelfilter.da.IntakePageData(), calendarDay
+            templateCanvas, intakePageData ?: com.toolsboox.plugin.michaelfilter.da.IntakePageData(),
+            calendarDay, null, starsScopeLabel() + " …"
         )
         binding.templateImageView.invalidate()
+        val scope = starsScope
+        lifecycleScope.launch {
+            val grams = withContext(Dispatchers.IO) { collectScopedStars(scope) }
+            if (!isAdded || notePage != CalendarDayPageIntake.INTAKE_PAGE || starsScope != scope) return@launch
+            CalendarDayPageIntake.drawPage(
+                templateCanvas, intakePageData ?: com.toolsboox.plugin.michaelfilter.da.IntakePageData(),
+                calendarDay, grams, starsScopeLabel()
+            )
+            binding.templateImageView.invalidate()
+        }
+    }
+
+    /**
+     * Every starred gram inside the current window, gathered off the main thread.
+     *
+     * One directory walk finds the day files that exist in range, and only those are read — the same
+     * discipline [NotesTagsFragment.gather] uses, and for the same reason: day files run to
+     * megabytes, so "load the year" must mean "load the days that exist", not 365 attempts. A day
+     * that won't parse is skipped rather than failing the window; a register that shows most of the
+     * month beats one that shows an error.
+     */
+    private fun collectScopedStars(scope: String): List<ImageElement> {
+        val (start, end) = starsWindow(scope)
+        val root = java.io.File(documentsRoot(), "calendar")
+        if (!root.exists()) return emptyList()
+        val out = mutableListOf<ImageElement>()
+        val re = Regex("""day-(\d{4})-(\d{2})-(\d{2})""")
+        root.walkTopDown()
+            .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
+            .forEach { f ->
+                val m = re.find(f.name) ?: return@forEach
+                val d = runCatching {
+                    LocalDate.of(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt())
+                }.getOrNull() ?: return@forEach
+                if (d.isBefore(start) || !d.isBefore(end)) return@forEach
+                val day = runCatching { calendarDayService.load(f) }
+                    .onFailure { Timber.w(it, "All Stars: skipping ${f.name}") }.getOrNull() ?: return@forEach
+                out += day.imageElements.filter { it.page == CalendarDayPageIntake.INTAKE_PAGE }
+            }
+        return out
+    }
+
+    /** Half-open [start, end) for the current filter level, anchored on the page's date. */
+    private fun starsWindow(scope: String): Pair<LocalDate, LocalDate> = when (scope) {
+        "week" -> {
+            val monday = currentDate.with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+            monday to monday.plusWeeks(1)
+        }
+        "month" -> currentDate.withDayOfMonth(1) to currentDate.withDayOfMonth(1).plusMonths(1)
+        "quarter" -> {
+            val q = currentDate.withDayOfMonth(1).withMonth(((currentDate.monthValue - 1) / 3) * 3 + 1)
+            q to q.plusMonths(3)
+        }
+        "year" -> currentDate.withDayOfYear(1) to currentDate.withDayOfYear(1).plusYears(1)
+        else -> currentDate to currentDate.plusDays(1)
+    }
+
+    private fun starsScopeLabel(): String = when (starsScope) {
+        "week" -> "WEEK ${currentDate.get(java.time.temporal.WeekFields.of(locale).weekOfWeekBasedYear())}"
+        "month" -> currentDate.month.name
+        "quarter" -> "Q${(currentDate.monthValue - 1) / 3 + 1}"
+        "year" -> "${currentDate.year}"
+        else -> "TODAY"
     }
 
     /**

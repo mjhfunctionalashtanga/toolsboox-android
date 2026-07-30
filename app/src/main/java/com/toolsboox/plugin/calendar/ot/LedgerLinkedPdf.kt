@@ -63,6 +63,7 @@ object LedgerLinkedPdf {
         urls: List<String>,
         boxes: Map<String, RectF>,
         out: File,
+        provenance: LedgerProvenance.Stamp? = null,
     ): Result {
         val links = ArrayList<PdfLinkAnnotations.Link>()
         val pdf = PdfDocument()
@@ -96,12 +97,22 @@ object LedgerLinkedPdf {
                 }
             }
 
-            // ---- Page 2: the index. Always written when there is anything to index.
-            if (urls.isNotEmpty()) {
+            // ---- Page 2: the colophon — where this came from, and what it points at.
+            //
+            // Written whenever there is EITHER, which is why the condition is no longer "are there
+            // links": a page with no URLs on it still has a surface, a day and a title, and that
+            // was the whole complaint about the bare export. Provenance and the link index share
+            // this page rather than getting one each ([LedgerProvenance.drawBlock] draws the top
+            // of it) — a reader should not have to turn past a two-line page to reach the links.
+            if (urls.isNotEmpty() || provenance != null) {
                 val info2 = PdfDocument.PageInfo.Builder(PAGE_W, PAGE_H, 2).create()
                 val p2 = pdf.startPage(info2)
                 p2.canvas.drawColor(Color.WHITE)
-                links.addAll(drawIndex(p2.canvas, title, urls))
+                var y = MARGIN + 50f
+                if (provenance != null) {
+                    y = LedgerProvenance.drawBlock(p2.canvas, provenance, MARGIN, y, PAGE_W - MARGIN)
+                }
+                if (urls.isNotEmpty()) links.addAll(drawIndex(p2.canvas, title, urls, y))
                 pdf.finishPage(p2)
             }
 
@@ -114,19 +125,28 @@ object LedgerLinkedPdf {
             pdf.close()
         }
 
-        if (links.isEmpty()) return Result(out, false, urls.size)
+        // The incremental-update pass now carries TWO payloads — the link annotations and the
+        // document's /Info dictionary — so it runs whenever either exists. A page with no links but
+        // real provenance still gets rewritten, which is how a PDF of a plain handwritten page ends
+        // up knowing its own surface and date.
+        val info = provenance?.let { LedgerProvenance.pdfInfo(it) } ?: emptyMap()
+        if (links.isEmpty() && info.isEmpty()) return Result(out, false, urls.size)
 
         // ---- The annotation pass, and its own verification.
         val annotated = try {
             val original = out.readBytes()
-            val patched = PdfLinkAnnotations.inject(original, links)
+            val patched = PdfLinkAnnotations.inject(original, links, info)
             if (patched == null) false
             else {
                 out.writeBytes(patched)
                 // Prove the file still opens BEFORE anyone is handed it. PdfRenderer is the same
                 // parser the device's own viewer uses, so a file it will not open is a file we
                 // must not ship — put the untouched bytes back and export as a plain PDF.
-                if (opens(out)) true else { out.writeBytes(original); false }
+                //
+                // "Annotated" stays the answer to "are the LINKS real", not "did the rewrite
+                // succeed": a metadata-only rewrite on a page with no links must not make the
+                // toast claim tappable links that were never there.
+                if (opens(out)) links.isNotEmpty() else { out.writeBytes(original); false }
             }
         } catch (e: Exception) {
             Timber.w(e, "link annotation pass failed")
@@ -136,15 +156,18 @@ object LedgerLinkedPdf {
     }
 
     /** Draw "Links on this page" and each URL, returning an exact annotation rect for each line —
-     *  exact because this is the one place where we put the text down ourselves. */
-    private fun drawIndex(canvas: Canvas, title: String, urls: List<String>): List<PdfLinkAnnotations.Link> {
+     *  exact because this is the one place where we put the text down ourselves. [startY] is where
+     *  the caller has got to, so the index sits under the provenance block instead of over it. */
+    private fun drawIndex(
+        canvas: Canvas, title: String, urls: List<String>, startY: Float
+    ): List<PdfLinkAnnotations.Link> {
         val out = ArrayList<PdfLinkAnnotations.Link>()
         val head = Paint().apply { color = Color.BLACK; textSize = 44f; isAntiAlias = true; isFakeBoldText = true }
         val sub = Paint().apply { color = Color.BLACK; textSize = 30f; isAntiAlias = true }
         val body = Paint().apply { color = Color.BLACK; textSize = 32f; isAntiAlias = true }
         val rule = Paint().apply { color = Color.BLACK; strokeWidth = 2f }
 
-        var y = MARGIN + 50f
+        var y = startY
         canvas.drawText(title.take(48).ifBlank { "Ledger page" }, MARGIN, y, head)
         y += 46f
         canvas.drawText("Links on this page", MARGIN, y, sub)

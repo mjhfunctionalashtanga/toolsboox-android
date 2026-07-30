@@ -264,6 +264,12 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
 
         binding = FragmentCalendarSettingsBinding.bind(view)
 
+        // Set the ten section headings ONCE, here rather than in onResume: [styleSectionHeadings]
+        // rewrites each label into a two-line spanned form, and re-running it over its own output
+        // would find no "·" left to split on and swallow the whole heading into the name line.
+        // onViewCreated fires exactly once per inflated view, which is the guarantee this needs.
+        styleSectionHeadings()
+
         toolbar.toolbarPager.visibility = View.GONE
 
         // Multi-site foundation. Fold any existing single-site bridge creds into one site (so nothing
@@ -749,12 +755,97 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
     }
 
     /**
+     * Give the ten section headings the app's own hand: a glyph, the section's NAME in bold mono
+     * caps, and its gloss on a second line at four-fifths the size.
+     *
+     * The glyphs are not decoration and none of them are new — every one is lifted from the row it
+     * already labels in the ▦ directory and the day page's Go menu (LedgerDirectory / CalendarDay-
+     * Fragment): ☁ is Cloud sync, 🖥 is Site accounts, ⚙ is All settings, 🔄 is Rotate screen, ✒ is
+     * Notes, 🔤 is the OCR model picker. So the section that governs your sites wears the same mark
+     * as the row that opens them, and Settings stops being the one surface with a private
+     * vocabulary. They are carried in the label text rather than as drawableStart because these
+     * are emoji, not vector assets, and ScreenFragment.showAccordion already does exactly this
+     * (its `glyphLabel`, down to the 1.3-ish RelativeSizeSpan that keeps a glyph from shrinking
+     * into the line beside it).
+     *
+     * The two-line break is the point of the whole method. Each heading string is "NAME  ·  gloss"
+     * — a short stamped label plus a human sentence — and set as one run of mono caps it wrapped
+     * wherever the column happened to end, which put the break mid-gloss on a Tab and mid-NAME on
+     * a Palma. Splitting on the separator the strings already carry makes the break deliberate and
+     * identical on every panel, and it lets the two halves be typeset as what they are: the name
+     * bold, the gloss plain and smaller. No colour is spent doing it, because there is none to
+     * spend — this screen is read on a monochrome panel where a grey subtitle is either invisible
+     * or indistinguishable from the heading above it.
+     *
+     * Strings are read from the views, never rewritten, so the nine renamings from the earlier pass
+     * (and the translations that trail them) stay the single source of these words.
+     */
+    private fun styleSectionHeadings() {
+        listOf(
+            binding.lookSectionLabel to "🔤",
+            binding.rotationSectionLabel to "🔄",
+            binding.calendarSectionLabel to "🗓",
+            binding.captureSectionLabel to "✒",
+            binding.autoSyncSectionLabel to "☁",
+            binding.ultrabridgeSectionLabel to "📄",
+            binding.gcalSectionLabel to "☑",
+            binding.communitySectionLabel to "🖥",
+            binding.dataSectionLabel to "🗃",
+            binding.deviceSectionLabel to "⚙"
+        ).forEach { (label, glyph) -> label.text = sectionHeading(glyph, label.text.toString()) }
+    }
+
+    /**
+     * Build one heading: "glyph  NAME" bold on line one, the gloss plain and smaller on line two.
+     *
+     * A heading with no "·" (a translation that dropped it, or a future section that never had one)
+     * keeps its whole text as the name and simply gets no second line — the split is opportunistic,
+     * never required, because half the locale files still carry English-derived strings for the
+     * renamed keys and none of them should be able to make a heading vanish.
+     *
+     * The name is bolded by a span rather than by the style, and Settings.SectionHeading is
+     * deliberately NOT bold: StyleSpan ORs styles onto the base, so there is no span that can take
+     * bold back OFF a bold TextView, and TypefaceSpan's Typeface constructor is API 28 against a
+     * minSdk of 26. Starting light and adding weight is the only direction that works everywhere.
+     */
+    private fun sectionHeading(glyph: String, raw: String): CharSequence {
+        val separator = raw.indexOf('·')
+        val name = (if (separator < 0) raw else raw.substring(0, separator)).trim()
+        val gloss = if (separator < 0) "" else raw.substring(separator + 1).trim()
+
+        // Two spaces after the glyph, as everywhere else in the app ("🌿  Roots", "🗺  Map") — one
+        // leaves the mark touching the word at these letter-spacings.
+        val head = if (glyph.isBlank()) name else "$glyph  $name"
+        val full = if (gloss.isEmpty()) head else "$head\n$gloss"
+        val styled = android.text.SpannableString(full)
+
+        if (glyph.isNotBlank()) {
+            styled.setSpan(android.text.style.RelativeSizeSpan(1.25f), 0, glyph.length, 0)
+        }
+        styled.setSpan(
+            android.text.style.StyleSpan(android.graphics.Typeface.BOLD), 0, head.length, 0
+        )
+        if (gloss.isNotEmpty()) {
+            styled.setSpan(
+                android.text.style.RelativeSizeSpan(0.8f), head.length + 1, full.length, 0
+            )
+        }
+        return styled
+    }
+
+    /**
      * Show or hide the auto-sync interval spinner based on the switch state.
+     *
+     * Both halves are set on every call, because the section has two drawn states and not one
+     * drawn state plus a hole: the framed group when the switch is on, the dashed fold standing in
+     * its place when it is off. See the layout's comment above the four destination blocks for why
+     * an empty gap was the wrong answer — and note the two are near enough the same height that
+     * flipping the switch does not shove the rest of the page down a screen, which on e-ink is the
+     * difference between a local update and a full-panel flash.
      */
     private fun updateAutoSyncIntervalVisibility() {
-        val visibility = if (autoSyncEnabled) View.VISIBLE else View.GONE
-        binding.autoSyncIntervalText.visibility = visibility
-        binding.autoSyncIntervalSpinnerLayout.visibility = visibility
+        binding.autoSyncFieldsGroup.visibility = if (autoSyncEnabled) View.VISIBLE else View.GONE
+        binding.autoSyncFold.visibility = if (autoSyncEnabled) View.GONE else View.VISIBLE
     }
 
     /**
@@ -777,33 +868,65 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
 
     /**
      * Show or hide the Ultrabridge WebDAV fields based on the enable switch state.
+     *
+     * One view each way now, not three: the three credential boxes live inside the framed group,
+     * so the frame IS the thing that appears and disappears. Toggling them individually left the
+     * frame to be drawn around nothing whenever a later field was hidden by other means, and it
+     * meant the block's two states had to be kept in step in three places.
      */
     private fun updateUltrabridgeFieldsVisibility(enabled: Boolean) {
-        val visibility = if (enabled) View.VISIBLE else View.GONE
-        binding.ultrabridgeUrlLayout.visibility = visibility
-        binding.ultrabridgeUserLayout.visibility = visibility
-        binding.ultrabridgePassLayout.visibility = visibility
+        binding.ultrabridgeFieldsGroup.visibility = if (enabled) View.VISIBLE else View.GONE
+        binding.ultrabridgeFold.visibility = if (enabled) View.GONE else View.VISIBLE
+        showLastMirrorResult(enabled)
+    }
+
+    /**
+     * Report how the last automatic day-mirror pass went, right under the WebDAV switch.
+     *
+     * The outage this answers ran for three days in total silence: every pass aborted, the worker
+     * logged one warn line and returned success, and the sidecar surfaces (text notes, pickings,
+     * attachments) kept syncing — so nothing a person could see suggested the day pages had stopped
+     * moving between devices at all. The age is shown alongside the outcome deliberately: "ok" from
+     * four days ago is as much of a warning as an outright failure, and only one of those two states
+     * is visible if you print the outcome on its own.
+     */
+    private fun showLastMirrorResult(enabled: Boolean) {
+        val view = binding.ultrabridgeLastResult
+        val prefs = requireContext().getSharedPreferences("MAIN", android.content.Context.MODE_PRIVATE)
+        val result = prefs.getString(UltrabridgeSyncWorker.PREF_LAST_MIRROR_RESULT, null)
+        val at = prefs.getLong(UltrabridgeSyncWorker.PREF_LAST_MIRROR_AT, 0L)
+        if (!enabled || result == null || at <= 0L) {
+            view.visibility = View.GONE
+            return
+        }
+        val ago = android.text.format.DateUtils.getRelativeTimeSpanString(
+            at, System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS
+        )
+        val failed = result.startsWith("failed") || result.startsWith("partial")
+        view.text = "Last sync $ago — $result"
+        view.setTextColor(if (failed) 0xFF000000.toInt() else 0xFF555555.toInt())
+        // E-ink: a failure reads as weight, not colour — an orange warning is a mid-grey smear on
+        // this screen, and mid-greys are exactly the tone that vanishes here.
+        view.typeface = if (failed) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
+        view.visibility = View.VISIBLE
     }
 
     /**
      * Show or hide the Google Calendar fields (target calendar + connect) based on the enable switch.
      */
     private fun updateGcalFieldsVisibility(enabled: Boolean) {
-        val visibility = if (enabled) View.VISIBLE else View.GONE
-        binding.gcalIdLayout.visibility = visibility
-        binding.gcalConnectButton.visibility = visibility
+        binding.gcalFieldsGroup.visibility = if (enabled) View.VISIBLE else View.GONE
+        binding.gcalFold.visibility = if (enabled) View.GONE else View.VISIBLE
     }
 
     /**
      * Show or hide the Community / Boards bridge fields (site, user, pass, board) based on the
-     * enable switch. Hiding via GONE keeps the text intact, so Save still persists what was typed.
+     * enable switch. Hiding the GROUP via GONE keeps every field's text intact exactly as hiding
+     * them one by one did, so Save still persists what was typed before the block was folded.
      */
     private fun updateCommunityFieldsVisibility(enabled: Boolean) {
-        val visibility = if (enabled) View.VISIBLE else View.GONE
-        binding.communitySiteLayout.visibility = visibility
-        binding.communityUserLayout.visibility = visibility
-        binding.communityPassLayout.visibility = visibility
-        binding.communityBoardLayout.visibility = visibility
+        binding.communityFieldsGroup.visibility = if (enabled) View.VISIBLE else View.GONE
+        binding.communityFold.visibility = if (enabled) View.GONE else View.VISIBLE
     }
 
 
@@ -902,19 +1025,90 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             setPadding(px(20), px(8), px(20), 0)
         }
 
-        // Live preview: a sample menu row + a line of body text, redrawn as font/size change.
+        // A dashed hairline, the app's mark for a division WITHIN a group (LedgerContextMenu:
+        // "solid = structure, dashed = strips"). Software layer or the dashes are silently dropped
+        // when the view is composited into a hardware layer — the same flag, for the same reason,
+        // that LedgerContextMenu.DashRule sets.
+        fun dashRule() = android.view.View(ctx).apply {
+            setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.LINE
+                setStroke(px(2), 0xFF000000.toInt(), px(6).toFloat(), px(6).toFloat())
+            }
+        }
+
+        // The tag over each preview band. Mono caps at 10sp, worded to MATCH the section label of
+        // the dial that moves it further down the panel — "TOP NAV" over the strip, "READING" over
+        // the paragraph — because that pairing is the whole reason the preview exists. Five dials
+        // is five things to try one at a time when you cannot tell which one owns the thing that
+        // is annoying you; naming each sample after its dial turns that into one glance.
+        fun bandTag(text: String) = android.widget.TextView(ctx).apply {
+            this.text = text
+            textSize = 10f; letterSpacing = 0.16f
+            typeface = android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD)
+            setTextColor(0xFF000000.toInt())
+            setPadding(0, px(9), 0, px(3))
+        }
+
+        // LIVE PREVIEW — four bands, one per dial, at the sizes those dials actually produce.
+        //
+        // It was two lines: a menu row and one sentence. That covered two of the five dials, and it
+        // drew the menu row in LedgerTheme.accent — which on the monochrome Boox this is read on
+        // resolves to a GREY, so the one sample whose entire job was to demonstrate legibility was
+        // demonstrated at deliberately reduced contrast. Everything here is now full black, which
+        // is what a menu row is actually drawn in; the accent survives on the card's frame, where
+        // it is a signature and degrades to a grey line harmlessly.
+        //
+        // Bands, not a list: each is tagged, and they are separated by dashed rules inside a single
+        // 2dp black frame — the LedgerContextMenu card, which is this app's word for "a panel". The
+        // reading band carries two lines because a face cannot be judged from one; the difference
+        // between Fast Serif and Atkinson is in how a second line sits under the first.
+        val previewNav = android.widget.TextView(ctx).apply {
+            text = "‹    2026  ·  JUL  ·  WED 29    ›"; setTextColor(0xFF000000.toInt())
+        }
         val previewMenu = android.widget.TextView(ctx).apply { text = "☀  Today      ❤  Daily"; setTextColor(0xFF000000.toInt()) }
         val previewBody = android.widget.TextView(ctx).apply {
-            text = "The quick brown fox reads clearly."
-            setTextColor(0xFF000000.toInt()); setPadding(0, px(6), 0, 0)
+            text = "The quick brown fox reads clearly.\nA second line, to judge a face by."
+            setTextColor(0xFF000000.toInt()); setLineSpacing(px(2).toFloat(), 1f)
         }
+        // The pill sample is a BOX, not a word: PILL SIZE moves the floating pen button and the
+        // page pills, whose size is a physical target for a fingertip and cannot be read off a
+        // font. Drawn at the real base (ledger_pill_button, 38dp) times the real scale, so what is
+        // in the card is the size the thing will be.
+        val previewPill = android.view.View(ctx).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFFFFFFFF.toInt()); setStroke(px(2), 0xFF000000.toInt())
+                cornerRadius = px(8).toFloat()
+            }
+        }
+        val previewPillRow = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            addView(previewPill, android.widget.LinearLayout.LayoutParams(px(38), px(38)))
+        }
+
         col.addView(android.widget.LinearLayout(ctx).apply {
             orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(px(14), px(12), px(14), px(12))
+            setPadding(px(14), px(4), px(14), px(14))
+            // Square corners and a 2dp stroke: a panel, the same object the drawn pages and the
+            // long-press menu are built from. The vibe's accent rings it — the one place in this
+            // dialog the accent is spent, matching how showAccordion frames an open folder, and
+            // nothing inside depends on it being visible.
             background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(0xFFF4F4F4.toInt()); cornerRadius = px(10).toFloat()
+                setColor(0xFFFFFFFF.toInt())
+                setStroke(px(2), com.toolsboox.ot.LedgerTheme.accent(ctx))
             }
-            addView(previewMenu); addView(previewBody)
+            // Fresh params per rule: a LayoutParams object belongs to exactly one view, and handing
+            // the same instance to three of them makes any later measure pass write through all
+            // three at once.
+            fun ruleParams() = android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT, px(12))
+            addView(bandTag("TOP NAV")); addView(previewNav)
+            addView(dashRule(), ruleParams())
+            addView(bandTag("MENUS & DIALOGS")); addView(previewMenu)
+            addView(dashRule(), ruleParams())
+            addView(bandTag("READING")); addView(previewBody)
+            addView(dashRule(), ruleParams())
+            addView(bandTag("PILLS & PEN")); addView(previewPillRow)
         })
 
         // The real tiers from ScreenFragment.tier — the preview must not flatter. It briefly used
@@ -925,16 +1119,37 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             // they're still on "system" — so picking a vibe previews its font as well as its accent.
             val effective = com.toolsboox.ot.LedgerFonts.choiceById(com.toolsboox.ot.LedgerTheme.effectiveFontId(ctx))
             val tf = com.toolsboox.ot.LedgerFonts.typefaceFor(ctx, effective)
-            previewMenu.typeface = tf; previewBody.typeface = tf
-            // The menu sample carries the vibe's accent, so a theme pick shows its colour at once.
-            previewMenu.setTextColor(com.toolsboox.ot.LedgerTheme.accent(ctx))
+            previewNav.typeface = tf; previewMenu.typeface = tf; previewBody.typeface = tf
+            // Every scale here is read from the SAME function the surface itself calls, never a
+            // number retyped to match — ModalScale.stripScale is what NavigatorRenderer asks, and
+            // ModalScale.pillScale is what the pills ask. A preview that keeps its own copy of the
+            // arithmetic is a preview that will quietly stop agreeing with the app.
+            previewNav.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP,
+                15f * com.toolsboox.ot.ModalScale.stripScale(ctx))
             previewMenu.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 17f * interfaceMul())
             previewBody.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f * com.toolsboox.ot.ReadingSize.scale(ctx))
+            val pill = (px(38) * com.toolsboox.ot.ModalScale.pillScale(ctx)).toInt()
+            previewPill.layoutParams = android.widget.LinearLayout.LayoutParams(pill, pill)
+            previewPill.requestLayout()
         }
 
-        fun sectionLabel(title: String) = android.widget.TextView(ctx).apply {
-            text = title; textSize = 12f; setTextColor(0xFF8A8A8A.toInt()); letterSpacing = 0.08f
-            setPadding(0, px(16), 0, px(6))
+        // A panel title inside the dialog: mono caps over a solid rule, which is the header
+        // LedgerContextMenu draws and the header the intake page draws over each of its quarters.
+        // It was 12sp of #8A8A8A — the grey that is simply not there on an e-ink panel, so the nine
+        // labels dividing this dialog into sections were the least visible thing in it. Black at
+        // the same size, with the rule doing the separating, costs no space and cannot fade.
+        fun sectionLabel(title: String) = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            addView(android.widget.TextView(ctx).apply {
+                text = title; textSize = 12f; letterSpacing = 0.14f
+                typeface = android.graphics.Typeface.create(
+                    android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD)
+                setTextColor(0xFF000000.toInt())
+                setPadding(0, px(18), 0, px(5))
+            })
+            addView(android.view.View(ctx).apply { setBackgroundColor(0xFF000000.toInt()) },
+                android.widget.LinearLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT, px(2)))
         }
 
         // Selectable chips, chunked into rows of [perRow] — a single weighted row sharded ten vibe
@@ -947,19 +1162,46 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             onPick: (Int) -> Unit
         ): android.view.View {
             val views = ArrayList<android.widget.TextView>()
+            // SELECTION IS AN INVERSION: the chosen chip is a solid black box with white text, the
+            // rest are white boxes with black text and a 2dp outline.
+            //
+            // It used to be a 0x11000000 fill (black at 6.7%) behind an accent ring, with the
+            // unselected labels at #555. All three of those are the same mistake in three costumes:
+            // an alpha fill dithers into mud on e-ink rather than reading as a tint, the accent is
+            // a grey on a monochrome Boox, and #555 sits in the dead band where a grey is neither
+            // legibly lighter than black nor distinguishable from it. So "which one is on?" was
+            // being carried entirely by the bold, in a row of ten short words. Inverting is the one
+            // answer this panel can draw at full strength, and it is what LedgerContextMenu already
+            // uses for a pressed row — the app's own way of saying "this one".
             fun paint() = views.forEachIndexed { i, v ->
                 val on = chips[i].third()
                 v.setTypeface(chips[i].second, if (on) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
-                v.setTextColor(if (on) 0xFF000000.toInt() else 0xFF555555.toInt())
+                v.setTextColor(if (on) 0xFFFFFFFF.toInt() else 0xFF000000.toInt())
                 v.background = android.graphics.drawable.GradientDrawable().apply {
-                    cornerRadius = px(8).toFloat(); setColor(if (on) 0x11000000 else 0x00000000)
-                    // The selected chip's ring wears the vibe's accent — read fresh on every
-                    // repaint, so tapping a new vibe re-rings its own row in the new colour.
-                    setStroke(px(1), if (on) com.toolsboox.ot.LedgerTheme.accent(ctx) else 0xFFCCCCCC.toInt())
+                    cornerRadius = px(8).toFloat()
+                    setColor(if (on) 0xFF000000.toInt() else 0xFFFFFFFF.toInt())
+                    setStroke(px(2), 0xFF000000.toInt())
+                }
+                // The vibe swatch is rebuilt on every repaint rather than once at construction,
+                // because the chip underneath it now changes colour: a dark accent dot is legible
+                // on a white chip and gone on the selected black one. The white ring solves both
+                // ends at once — invisible against the unselected chip, and the thing that cuts the
+                // dot out of the selected one. On a monochrome panel, where every accent is some
+                // grey, that ring is also what keeps the dot a token rather than a smudge.
+                swatches?.getOrNull(i)?.let { swatch ->
+                    val dot = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        setColor(swatch); setSize(px(14), px(14))
+                        setStroke(px(2), 0xFFFFFFFF.toInt())
+                    }
+                    v.setCompoundDrawablesWithIntrinsicBounds(dot, null, null, null)
+                    v.compoundDrawablePadding = px(6)
                 }
             }
             val outer = android.widget.LinearLayout(ctx).apply {
                 orientation = android.widget.LinearLayout.VERTICAL
+                // Clear of the solid rule that closes every sectionLabel above it.
+                setPadding(0, px(9), 0, 0)
             }
             chips.indices.chunked(perRow).forEach { rowIdx ->
                 val row = android.widget.LinearLayout(ctx).apply {
@@ -971,15 +1213,13 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                         text = label; textSize = 15f; maxLines = 1
                         ellipsize = android.text.TextUtils.TruncateAt.END
                         gravity = android.view.Gravity.CENTER
-                        setPadding(px(10), px(8), px(10), px(8))
-                        swatches?.getOrNull(i)?.let { c ->
-                            val dot = android.graphics.drawable.GradientDrawable().apply {
-                                shape = android.graphics.drawable.GradientDrawable.OVAL
-                                setColor(c); setSize(px(10), px(10))
-                            }
-                            setCompoundDrawablesWithIntrinsicBounds(dot, null, null, null)
-                            compoundDrawablePadding = px(6)
-                        }
+                        // Taller than it was: a chip is now a box with a real edge, and a box needs
+                        // room around its word or the outline reads as a hairline around the text
+                        // rather than as a target. It is also the smallest thing on this page that
+                        // gets tapped with a stylus.
+                        setPadding(px(10), px(11), px(10), px(11))
+                        // (The swatch dot is drawn in paint(), not here — it has to be rebuilt each
+                        // time selection moves, since the chip beneath it inverts.)
                         setOnClickListener { onPick(i); paint(); refreshPreview() }
                         views.add(this)
                     }, android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f)

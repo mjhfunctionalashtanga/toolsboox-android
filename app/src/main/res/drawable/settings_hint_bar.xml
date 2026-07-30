@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The margin bar beside a paragraph that explains rather than sets: the rotate-button hint,
+    the on-device-OCR caveat, the hold-to-back-up note.
+
+    Those three used to look exactly like the switch labels above them, so a caveat read as one
+    more thing you could turn on. The usual fixes are unavailable here — grey text dissolves on
+    e-ink and italic costs real legibility in a four-line paragraph — so the demotion is
+    positional instead: a rule down the left margin and an indent, the way a printed page marks
+    an aside. Full ink, no reading cost, unmistakably not a control.
+
+    A layer-list item with an explicit width pins the bar to the leading edge instead of letting
+    the shape stretch across the whole background (API 23+; minSdk here is 26).
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:width="2dp" android:gravity="start|fill_vertical">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/fgColor"/>
+        </shape>
+    </item>
+</layer-list>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The label on an outlined settings button. Must move in lockstep with
+    drawable/settings_button_bg.xml: that fills the box with fgColor while pressed, so the text
+    has to become bgColor on the same state or the press turns the button into a solid slab with
+    an invisible label on it.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true" android:color="@color/bgColor"/>
+    <item android:color="@color/fgColor"/>
+</selector>

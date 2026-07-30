@@ -204,11 +204,28 @@ class UltrabridgeWebDavService(
     }
 
     /**
-     * List every file under a remote collection via a WebDAV PROPFIND (Depth: infinity).
+     * List every file beneath a remote collection, recursively.
+     *
+     * Tries `Depth: infinity` first, because where it is allowed the whole tree costs one round
+     * trip. Where it is not, falls back to walking the tree a collection at a time with `Depth: 1`.
+     *
+     * The fallback is not a nicety — it is the normal path. Apache's mod_dav ships
+     * `DavDepthInfinity Off` and answers an infinite-depth PROPFIND with **403 Forbidden**, and
+     * bytemark/webdav (what dav.mjh.yoga runs) is stock Apache. So this method returned null on
+     * every call, [CalendarWebDavSyncService.sync] correctly refused to treat "listing failed" as
+     * "server is empty" and aborted the pass, and the day-JSON mirror silently did nothing at all
+     * for three days while the sidecar surfaces — which use plain GET/PUT and no PROPFIND — kept
+     * syncing perfectly. That mix is exactly what "they don't sync together *fully*" looks like
+     * from the outside.
+     *
+     * Walking costs one request per collection (~40 for a three-year day tree, ~0.4s each), which
+     * is cheap enough for a periodic pass and, unlike `DavDepthInfinity On`, needs nothing of the
+     * server. Fixing it here rather than in Apache also means the app works against any WebDAV
+     * endpoint out of the box.
      *
      * Hrefs are resolved back to paths relative to [baseUrl]. Entries whose href cannot be
-     * anchored under the requested collection are skipped. Collections (hrefs ending in "/")
-     * are omitted — only concrete files are returned.
+     * anchored under the requested collection are skipped. Collections are omitted from the
+     * result — only concrete files are returned.
      *
      * @param remoteDirPath the collection path relative to [baseUrl] (e.g. "calendar/")
      * @return the discovered file entries, or null on error — callers MUST distinguish
@@ -217,6 +234,50 @@ class UltrabridgeWebDavService(
      *   remote edits (then advance the watermark past them).
      */
     fun propfind(remoteDirPath: String): List<RemoteEntry>? {
+        (propfindOnce(remoteDirPath, "infinity") as? PropfindResult.Ok)?.let { return it.listing.files }
+        Timber.i("$TAG: Depth:infinity unavailable for $remoteDirPath; walking with Depth:1")
+        return walk(remoteDirPath)
+    }
+
+    /**
+     * Depth-1 recursive walk. A missing collection (404) contributes nothing rather than failing
+     * the walk — a year folder can exist locally and not yet remotely. Any OTHER failure fails the
+     * whole walk (null), because a partial listing read as complete is the blind-push hazard the
+     * caller's null-check exists to prevent.
+     *
+     * @param depthLeft belt-and-braces against a server that reports a collection as its own child
+     */
+    private fun walk(remoteDirPath: String, depthLeft: Int = 8): List<RemoteEntry>? {
+        if (depthLeft <= 0) {
+            Timber.w("$TAG: walk depth limit reached at $remoteDirPath")
+            return emptyList()
+        }
+        val listing = when (val r = propfindOnce(remoteDirPath, "1")) {
+            is PropfindResult.Ok -> r.listing
+            PropfindResult.Missing -> return emptyList()
+            PropfindResult.Failed -> return null
+        }
+        val files = listing.files.toMutableList()
+        for (child in listing.collections) {
+            files += walk(child, depthLeft - 1) ?: return null
+        }
+        return files
+    }
+
+    internal data class Listing(val files: List<RemoteEntry>, val collections: List<String>)
+
+    /**
+     * A PROPFIND outcome. "No such collection" is kept distinct from "failed" so the walk can treat
+     * an absent folder as empty while still refusing to mistake a real error for an empty server.
+     */
+    private sealed interface PropfindResult {
+        data class Ok(val listing: Listing) : PropfindResult
+        data object Missing : PropfindResult
+        data object Failed : PropfindResult
+    }
+
+    /** One PROPFIND at an explicit depth. */
+    private fun propfindOnce(remoteDirPath: String, depth: String): PropfindResult {
         val normalizedBase = baseUrl.trimEnd('/')
         val anchor = remoteDirPath.trim('/')
         val url = "$normalizedBase/$anchor/"
@@ -229,43 +290,60 @@ class UltrabridgeWebDavService(
         val request = Request.Builder()
             .url(url)
             .header("Authorization", credential)
-            .header("Depth", "infinity")
+            .header("Depth", depth)
             .method("PROPFIND", body)
             .build()
 
         return try {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    Timber.w("$TAG: PROPFIND failed for $remoteDirPath: ${response.code} ${response.message}")
-                    return null
+                    Timber.w("$TAG: PROPFIND(Depth:$depth) failed for $remoteDirPath: ${response.code} ${response.message}")
+                    return if (response.code == 404) PropfindResult.Missing else PropfindResult.Failed
                 }
-                parsePropfind(response.body?.string() ?: "", anchor)
+                PropfindResult.Ok(parseListing(response.body?.string() ?: "", anchor))
             }
         } catch (e: IOException) {
             Timber.e(e, "$TAG: Network error listing $remoteDirPath")
-            null
+            PropfindResult.Failed
         }
     }
 
     /**
-     * Parse a WebDAV multistatus XML body into [RemoteEntry] items, anchoring each href to a
+     * Parse a WebDAV multistatus XML body into files and sub-collections, anchoring each href to a
      * path relative to [baseUrl]. The href is matched from the first occurrence of "<anchor>/"
      * so it works whether the server returns absolute paths, full URLs, or (percent) encoded ones.
+     *
+     * Sub-collections are returned separately so the Depth-1 walk can recurse into them. The
+     * collection's own entry — every PROPFIND reports the requested collection as the first
+     * response — is dropped, since recursing into it would never terminate.
      */
-    private fun parsePropfind(xml: String, anchor: String): List<RemoteEntry> {
+    internal fun parseListing(xml: String, anchor: String): Listing {
         val dateFormat = SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", Locale.US)
-        val entries = mutableListOf<RemoteEntry>()
+        val files = mutableListOf<RemoteEntry>()
+        val collections = mutableListOf<String>()
         val marker = "$anchor/"
 
         for (block in RESPONSE_REGEX.findAll(xml)) {
             val chunk = block.value
             val rawHref = HREF_REGEX.find(chunk)?.groupValues?.get(1)?.trim() ?: continue
-            if (rawHref.endsWith("/")) continue // a collection, not a file
+            val isCollection = rawHref.endsWith("/")
 
             val href = try {
                 URLDecoder.decode(rawHref, "UTF-8")
             } catch (e: Exception) {
                 rawHref
+            }
+
+            if (isCollection) {
+                // Anchor a child collection by its parent marker, then keep only a direct child:
+                // "calendar/2026/" under anchor "calendar" yields "2026/", which has one segment.
+                val idx = href.indexOf(marker)
+                if (idx < 0) continue
+                val rest = href.substring(idx + marker.length).trim('/')
+                if (rest.isEmpty()) continue                    // the collection itself
+                if (rest.contains('/')) continue                // a grandchild (Depth>1 response)
+                collections.add("$anchor/$rest")
+                continue
             }
 
             val idx = href.indexOf(marker)
@@ -280,9 +358,9 @@ class UltrabridgeWebDavService(
                 }
             } ?: 0L
 
-            entries.add(RemoteEntry(remotePath, lastModified))
+            files.add(RemoteEntry(remotePath, lastModified))
         }
 
-        return entries
+        return Listing(files, collections)
     }
 }

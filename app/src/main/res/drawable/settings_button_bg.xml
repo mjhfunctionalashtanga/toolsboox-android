@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    A secondary settings button: white box, 2dp outline, 10dp radius — the same object as
+    eink_edit_bg, which is the entry box on the Ask screen, so a button and a field on this
+    device are visibly siblings.
+
+    Pressed is a PLAIN INVERSION, not a ripple and not a tint. A ripple is an animation (e-ink
+    cannot draw one — it arrives as a smear or as nothing), and a tint would have to be a grey,
+    which on a monochrome panel is either invisible above ~#777 or indistinguishable from black
+    below ~#333. Inverting is the only press feedback this screen can actually show, and it is
+    what LedgerContextMenu already does for its rows.
+
+    Paired with color/settings_button_text.xml, which flips the label the other way on the same
+    state so the two never both go dark.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/fgColor"/>
+            <stroke android:width="2dp" android:color="@color/fgColor"/>
+            <corners android:radius="10dp"/>
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/bgColor"/>
+            <stroke android:width="2dp" android:color="@color/fgColor"/>
+            <corners android:radius="10dp"/>
+        </shape>
+    </item>
+</selector>

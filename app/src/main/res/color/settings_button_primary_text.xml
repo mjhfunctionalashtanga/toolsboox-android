@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The label on a solid settings button — the mirror of color/settings_button_text.xml, since
+    drawable/settings_button_primary_bg.xml starts filled and empties on press.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true" android:color="@color/fgColor"/>
+    <item android:color="@color/bgColor"/>
+</selector>

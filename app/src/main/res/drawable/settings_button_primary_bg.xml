@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The one solid button per screen — Legibility at the top, Save at the bottom.
+
+    Emphasis on a monochrome panel cannot be a colour and cannot be a shadow, so it has to be
+    ink coverage: a filled black box among outlined ones is the only "this is the primary
+    action" that survives the medium. Same 10dp radius and 2dp geometry as its outlined
+    siblings, so it reads as the same object filled in rather than a different control.
+    Mirrors eink_button_solid, which is the Ask screen's send button.
+
+    Pressed inverts back to the outlined state — the press is legible in both directions.
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/bgColor"/>
+            <stroke android:width="2dp" android:color="@color/fgColor"/>
+            <corners android:radius="10dp"/>
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/fgColor"/>
+            <stroke android:width="2dp" android:color="@color/fgColor"/>
+            <corners android:radius="10dp"/>
+        </shape>
+    </item>
+</selector>

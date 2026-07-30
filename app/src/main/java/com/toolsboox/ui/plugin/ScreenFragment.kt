@@ -256,6 +256,19 @@ abstract class ScreenFragment : Fragment() {
      * fragment on screen to page itself. Guarded on [isResumed] so a mid-transaction key can
      * never page a screen that is leaving.
      */
+    /**
+     * Something OTHER than this fragment just wrote a gram into the day file.
+     *
+     * A placement from the in-pane feed reader goes straight to disk under the day lock, while this
+     * fragment is still RESUMED holding its own copy of the day — so the card is saved and invisible,
+     * and the next pen-up save writes the stale copy back over it. Michael: "I saved an item from the
+     * feed with a written note and it said it was added to today's note and it is not there." It was
+     * there; it just wasn't in the copy on screen, and then it wasn't anywhere.
+     *
+     * The standalone reader never showed this because leaving and returning reloads the day.
+     */
+    open fun onExternalGramPlaced(pageKey: String) {}
+
     internal fun dispatchVolumeKey(up: Boolean): Boolean = isResumed && onVolumeKey(up)
 
     /**

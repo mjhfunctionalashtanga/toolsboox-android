@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The closed fold: what stands in for a group's fields while its switch is off.
+
+    Four of the ten sections are destinations that hide credential boxes behind an enable
+    switch, so with everything off the page used to run heading / switch / rule / heading /
+    switch / rule with a hole where the fields would be — which reads as a section that failed
+    to load rather than one you haven't turned on. A dashed rule fills that space with the one
+    thing it can honestly say: there is more here, folded away.
+
+    Dashed rather than solid on purpose. The page grammar this app already writes in is
+    "solid = structure, dashed = strips" (LedgerContextMenu's header comment); the intake page
+    draws exactly this for an empty gram slot. So a dashed line is already the app's word for a
+    space something belongs in.
+
+    Shape "line" draws through the vertical centre of the view, so give it height to sit in.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="line">
+    <stroke
+            android:width="2dp"
+            android:color="@color/fgColor"
+            android:dashWidth="7dp"
+            android:dashGap="7dp"/>
+</shape>

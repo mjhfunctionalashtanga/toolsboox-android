@@ -47,15 +47,50 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
      */
     var volumeKeyHandler: ((up: Boolean) -> Boolean)? = null
 
+    /** Last page-key press: which key, and when — for the double-press-to-go-back gesture. */
+    private var lastPageKeyCode = 0
+    private var lastPageKeyAt = 0L
+
+    /** How close two presses must be to count as one gesture. */
+    private val doublePressWindowMs = 320L
+
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
         if (event.action == android.view.KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 // Boox page-turn buttons emit either volume OR page keycodes depending on device;
                 // accept both so the hardware buttons page everywhere a handler is registered.
                 android.view.KeyEvent.KEYCODE_VOLUME_UP,
-                android.view.KeyEvent.KEYCODE_PAGE_UP -> if (handleVolumeKey(true)) return true
+                android.view.KeyEvent.KEYCODE_PAGE_UP,
                 android.view.KeyEvent.KEYCODE_VOLUME_DOWN,
-                android.view.KeyEvent.KEYCODE_PAGE_DOWN -> if (handleVolumeKey(false)) return true
+                android.view.KeyEvent.KEYCODE_PAGE_DOWN -> {
+                    // DOUBLE-PRESS GOES BACK, and we have to implement it ourselves.
+                    //
+                    // The Boox does this at system level, but only for presses the foreground app
+                    // lets through — and since [ScreenFragment.onResume] began registering a page
+                    // handler on EVERY screen (it used to be four), this activity consumes every
+                    // volume DOWN, so the system never sees a second press and the gesture died
+                    // app-wide. Michael: "double clicking the volume on Android no longer takes you
+                    // back." Nothing in this app ever implemented it; it was the device's, and we
+                    // started swallowing it.
+                    //
+                    // The first press still pages IMMEDIATELY — paging must not wait out a
+                    // double-click window to find out whether it was one. So a double-press turns a
+                    // page and then goes back, which is the right trade: instant paging is felt on
+                    // every single press, a stray page turn on the screen you are leaving is not.
+                    val now = android.os.SystemClock.uptimeMillis()
+                    val isDouble = event.keyCode == lastPageKeyCode &&
+                        now - lastPageKeyAt <= doublePressWindowMs
+                    lastPageKeyCode = event.keyCode
+                    lastPageKeyAt = now
+                    if (isDouble) {
+                        lastPageKeyCode = 0          // a triple press is two gestures, not three
+                        onBackPressedDispatcher.onBackPressed()
+                        return true
+                    }
+                    val up = event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP ||
+                        event.keyCode == android.view.KeyEvent.KEYCODE_PAGE_UP
+                    if (handleVolumeKey(up)) return true
+                }
             }
         }
         return super.dispatchKeyEvent(event)
@@ -271,7 +306,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         R.drawable.ic_toolbar_text, R.drawable.ic_camera, R.drawable.ic_mic
     )
     /** The glyph for each style, shown in the hold-out picker. Same order as the labels/faces. */
-    private val quickNoteGlyphs = arrayOf("✒", "📈", "⌱", "⌗", "📷", "🎤")
+    private val quickNoteGlyphs = arrayOf("✒", "📈", "⌱", "⌗", "📷", "🎤", "◈")
 
     companion object {
         /** Hold-picker entries; the index is stored as the remembered tap action, so keep order stable. */
@@ -281,7 +316,12 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             "Jot Notes",
             "Text Notes",
             "Capture a photo",
-            "Record a voice gram"
+            "Record a voice gram",
+            // APPENDED, never inserted: the index IS the remembered tap action, so putting Gram Picks
+            // anywhere but the end would silently re-point everyone's remembered button at a
+            // different surface. Michael: "the note modal quick jump button does not have a gram
+            // picks on long hold" — it is a note surface, so it belongs in the notes picker.
+            "Gram Picks"
         )
     }
 
@@ -405,6 +445,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             3 -> binding.fragmentContent.findNavController().navigate(R.id.action_to_text_notes)
             4 -> startCapture()
             5 -> requestVoiceGram()
+            6 -> navigateToDayNote(com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS)
         }
     }
 
@@ -424,12 +465,18 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             nav.navigate(R.id.action_to_calendar_day, bundleOf(
                 "year" to "${d.year}", "month" to "${d.monthValue}", "day" to "${d.dayOfMonth}"))
         } else {
-            // First tap — back to the last note page you were on.
-            val date = runCatching { java.time.LocalDate.parse(p.getString("last_note_date", "") ?: "") }
-                .getOrNull() ?: java.time.LocalDate.now()
+            // First tap — TODAY's notes, resuming the page only if you were on it today.
+            //
+            // Same fix as CalendarNavigator.toLastDayNote, and for the same reason: resuming a
+            // remembered date with no staleness bound stranded this button on whatever day was last
+            // written on, so new ink piled onto an old day's page. See that function's comment.
+            val today = java.time.LocalDate.now()
+            val remembered = runCatching { java.time.LocalDate.parse(p.getString("last_note_date", "") ?: "") }
+                .getOrNull()
+            val page = if (remembered == today) (p.getString("last_note_page", "0") ?: "0") else "0"
             nav.navigate(R.id.action_to_scratch, bundleOf(
-                "year" to "${date.year}", "month" to "${date.monthValue}", "day" to "${date.dayOfMonth}",
-                "notePage" to (p.getString("last_note_page", "0") ?: "0")))
+                "year" to "${today.year}", "month" to "${today.monthValue}", "day" to "${today.dayOfMonth}",
+                "notePage" to page))
         }
     }
 

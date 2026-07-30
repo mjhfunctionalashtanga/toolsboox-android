@@ -683,9 +683,26 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             settings.loadsImagesAutomatically = false   // see the images row below
             settings.blockNetworkImage = true
             setBackgroundColor(0xFFFFFFFF.toInt())
-            isVerticalScrollBarEnabled = true
+            // A letter is as long as it is.
+            //
+            // This was pinned to 420dp inside the dialog's ScrollView, which cropped every message
+            // longer than about half a screen — the rest existed, was laid out, and could not be
+            // reached, because the WebView's own scrollbar was the only way down and a nested
+            // scroller inside a scroller is unusable with a stylus. WRAP_CONTENT lets the letter
+            // take its true height and hands the scrolling to the ONE scroller that should have
+            // had it all along, so a long email simply continues.
+            isVerticalScrollBarEnabled = false
+            isNestedScrollingEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            // A designed letter is usually built to a fixed pixel width (600-ish is the mail
+            // convention). Without a wide viewport the WebView lays it out at device width and the
+            // design overhangs the right edge; with one it fits the column and scales down to it,
+            // which is the "shrunk" half of the same complaint. The reader/as-sent CSS already caps
+            // img/table at 100%, so this is about the letter's own outer width, not its contents.
+            settings.useWideViewPort = true
+            settings.loadWithOverviewMode = true
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, (420 * resources.displayMetrics.density).toInt())
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             visibility = View.GONE
         } else null
 
@@ -868,15 +885,49 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
                 val today = LocalDate.now()
+                // The idea BANK — syncs across devices, and feeds the "Ideas → grid" picker.
                 com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.add(ctx, today, listOf(line), "note", label)
                 com.toolsboox.plugin.calendar.ot.ConnectionStore.connect(
                     ctx, uri, com.toolsboox.ot.LedgerUri.page(today.toString(), "synthesize"),
                     kind = com.toolsboox.plugin.calendar.da.v2.Connection.PLACED,
                     fromLabel = label, toLabel = "Synthesize · $today"
                 )
+                // AND the page itself. Filing used to write only the bank, which is a list behind a
+                // control you have to know to open — so "Assign to synthesis" reported success and
+                // the Synthesize page stayed blank. Michael: "Send to Synthesis from email is the
+                // correct move — but when used, nothing appears in Synthesis." It didn't, because
+                // nothing was ever put there. A card on the grid is what "in Synthesis" means; the
+                // bank is the reservoir, not the destination.
+                //
+                // Same card + same staggered placement as CalendarDayFragment.addIdeaCards, so a
+                // filed message is indistinguishable from one dropped via the Ideas picker.
+                runCatching {
+                    val root = documentsRoot()
+                    // Per-day lock: this is a background whole-file load→mutate→save that races the
+                    // open day page's per-pen-up save (see logMailAnnotation).
+                    com.toolsboox.plugin.calendar.ot.DayLocks.withDay(today) {
+                        val day = calendarDayService.load(root, today, null, Locale.getDefault())
+                        val pageKey = "synthesize"
+                        val bmp = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer
+                            .render(line, "— $label", null, 1080, 0)
+                        val baos = java.io.ByteArrayOutputStream()
+                        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
+                        val base64 = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+                        val w = 1404f * 0.42f
+                        val h = w * bmp.height / bmp.width
+                        val count = day.imageElements.count { it.page == pageKey }
+                        val x = (60f + (count % 3) * (w + 30f)).coerceIn(0f, (1404f - w).coerceAtLeast(0f))
+                        val y = (120f + (count / 3) * (h + 30f)).coerceIn(0f, (1872f - h).coerceAtLeast(0f))
+                        day.imageElements.add(com.toolsboox.da.ImageElement(
+                            x = x, y = y, width = w, height = h, data = base64, page = pageKey,
+                            sourceLabel = "— $label", cardText = line
+                        ))
+                        calendarDayService.save(root, today, day)
+                    }
+                }.onFailure { timber.log.Timber.w(it, "failed to place the synthesis card") }
             }
             if (!isAdded) return@launch
-            toast("Filed to today's synthesis")
+            toast("Filed to today's Synthesize page")
         }
     }
 
@@ -988,7 +1039,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
                 runCatching { placeMailStarGram(root, m, today) }.getOrDefault(false)
             }
             if (!isAdded) return@launch
-            toast(if (placedGram) "★ → Star Sort" else "Starred")
+            toast(if (placedGram) "★ → All Stars" else "Starred")
             messages = InboxStore.messages(ctx)
             render()
         }

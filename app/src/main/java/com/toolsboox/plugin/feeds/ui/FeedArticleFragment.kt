@@ -75,7 +75,12 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
             ): Boolean {
                 val url = request.url?.toString().orEmpty()
                 if (url.startsWith("http")) { showLinkMenu(url); return true }
-                return false
+                // Swallow everything else rather than letting the WebView try to load it. An
+                // in-app `ledger://` link (the Bluesky reader's "Answer this" door writes one) has
+                // no handler on THIS screen, and a scheme the WebView cannot resolve replaces the
+                // article the user was reading with an ERR_UNKNOWN_URL_SCHEME page. Doing nothing
+                // is the correct behaviour for a link this surface has no way to honour.
+                return true
             }
         }
         binding.articleWeb.setOnLongClickListener {

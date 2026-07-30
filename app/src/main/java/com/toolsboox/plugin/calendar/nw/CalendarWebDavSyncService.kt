@@ -154,7 +154,15 @@ class CalendarWebDavSyncService(
             .filter { DAY_FILE_REGEX.matches(File(it.remotePath).name) }
             .associateBy { it.remotePath }
 
-        val allPaths = localByPath.keys + remoteByPath.keys
+        // NEWEST DAY FIRST, deliberately. A first converge over a few years of days means downloading
+        // and merging a hundred multi-megabyte files, which takes long enough that the pass often
+        // does not survive to the end — the Boox kills a backgrounded process, and the on-exit
+        // trigger is exactly when this runs. Since the watermark only advances on a fully clean pass,
+        // a truncated run still commits every file it got through; so the order it gets through them
+        // in decides what converges. Descending path order puts today, then yesterday, at the front:
+        // the pages just written are the ones a person is waiting to see on their other device, and
+        // 2025 can wait for a pass that runs to completion.
+        val allPaths = (localByPath.keys + remoteByPath.keys).sortedDescending()
         Timber.i("$TAG: local=${localByPath.size} remote=${remoteByPath.size} union=${allPaths.size}")
 
         // Two watermarks from the last fully-converged pass, each compared only against its OWN clock:
@@ -242,7 +250,10 @@ class CalendarWebDavSyncService(
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Throwable so that one unreadable/oversized day costs that day, not the pass — and
+                // certainly not the process. An OutOfMemoryError here used to escape every handler
+                // up to the worker and take the app down mid-sync.
                 failed++
                 Timber.e(e, "$TAG: Error syncing $remotePath")
             }
@@ -362,14 +373,23 @@ class CalendarWebDavSyncService(
     private fun parseUpdated(json: String): Long? {
         return try {
             moshi.adapter(CalendarDay::class.java).fromJson(json)?.updated?.time
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             null
         }
     }
 
-    /** Parse a day JSON to a [CalendarDay], or null if it isn't parseable. */
+    /**
+     * Parse a day JSON to a [CalendarDay], or null if it isn't parseable.
+     *
+     * Throwable, not Exception: a day carrying tens of megabytes of inline base64 throws
+     * OutOfMemoryError, which is an Error and therefore sailed past every `catch (e: Exception)`
+     * between here and the top of the worker — one oversized file killed the whole process rather
+     * than being skipped as unparseable. Treating "too big to parse" the same as "not a v2 day" is
+     * exactly right for this caller: [sync] already leaves both copies untouched when either side
+     * won't parse, so the file is left alone instead of being clobbered or crashing the app.
+     */
     private fun parseDay(bytes: ByteArray): CalendarDay? =
-        try { moshi.adapter(CalendarDay::class.java).fromJson(String(bytes, Charsets.UTF_8)) } catch (e: Exception) { null }
+        try { moshi.adapter(CalendarDay::class.java).fromJson(String(bytes, Charsets.UTF_8)) } catch (e: Throwable) { null }
 
     /** Serialize a day the same way it's stored, so equal content produces equal strings. */
     private fun dayJson(day: CalendarDay): String = moshi.adapter(CalendarDay::class.java).toJson(day)

@@ -91,14 +91,54 @@ class BlueskyFragment @Inject constructor() : ScreenFragment() {
                     "queue uses). It is kept in the encrypted store on this device — it is never " +
                     "compiled into the app."
             )
+            // Dropped rather than held: a target that survived an unconfigured visit would pop a
+            // composer for a post he tapped days ago the next time this screen loaded properly.
+            BlueskyTarget.pendingUri = null
             return
         }
         renderMessage("Loading replies…")
         lifecycleScope.launch {
             val list = withContext(Dispatchers.IO) { BlueskyReply.inbox(ctx, 25) }
             items = list
-            if (isAdded) renderList()
+            if (isAdded) { renderList(); consumePendingTarget() }
         }
+    }
+
+    /**
+     * Open the composer for a post the Feed Ledger's timeline sent us, if it is one we can answer.
+     *
+     * ANSWERABLE IS NARROWER THAN VISIBLE, and pretending otherwise would be the dishonest option.
+     * The site's queue carries replies to HIS syndicated posts — a comment threaded under something
+     * of his, addressed by its on-site comment id — and there is no route that posts to an arbitrary
+     * skeet from a device that (by design) holds no app password. So a timeline post that is in the
+     * queue opens the pad; one that is not says so and offers the place it can be answered, which is
+     * Bluesky itself. The alternative — a composer whose Send could only ever 404 — is the failure
+     * this whole screen's "review before you send" discipline exists to avoid.
+     */
+    private fun consumePendingTarget() {
+        val uri = BlueskyTarget.pendingUri ?: return
+        BlueskyTarget.pendingUri = null
+        val match = items.firstOrNull { it.bskyUri.isNotBlank() && it.bskyUri == uri }
+        if (match != null) { showComposer(match); return }
+        showModal(
+            androidx.appcompat.app.AlertDialog.Builder(ModalScale.wrap(requireContext()))
+                .setTitle("Not in the reply queue")
+                .setMessage(
+                    "Ledger can answer replies to your own syndicated posts — those come home " +
+                        "through the site's queue, which is what carries an answer back out.\n\n" +
+                        "This post isn't one of those, so there is nothing here to reply through. " +
+                        "Open it on Bluesky to answer it there."
+                )
+                .setPositiveButton("Open on Bluesky") { _, _ ->
+                    // The AT URI is not a web address; bsky.app's own profile/post form is, and it
+                    // is built from the two path components at the end of the URI.
+                    val parts = uri.removePrefix("at://").split("/")
+                    if (parts.size >= 3) openUrl("https://bsky.app/profile/${parts[0]}/post/${parts.last()}")
+                    else toast("No web address for that post")
+                }
+                .setNegativeButton("Not now", null)
+                .create()
+        )
     }
 
     private fun renderMessage(text: String) {
@@ -461,4 +501,17 @@ class BlueskyFragment @Inject constructor() : ScreenFragment() {
                 .create()
         )
     }
+}
+
+/**
+ * A post the Feed Ledger's Bluesky timeline wants answered, handed over without nav args.
+ *
+ * The same one-shot idiom as [com.toolsboox.plugin.feeds.ui.FeedSelection], and for the same
+ * reason: the two screens live in different plugins and a typed argument between them would mean a
+ * nav-graph argument, a bundle key and a parcelable for one string. Consumed exactly once, by
+ * [BlueskyFragment] as soon as it knows what is in the reply queue.
+ */
+object BlueskyTarget {
+    /** The AT URI of the post to open the composer for, or null. */
+    var pendingUri: String? = null
 }

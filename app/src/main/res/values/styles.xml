@@ -8,18 +8,183 @@
         13" page and a four-line menu becomes a wall.
     -->
     <!--
-        Settings section heading. There were five of these, each with its own size and margins
-        typed out by hand, so the page read as a list of unrelated things rather than as sections.
+        THE SETTINGS PAGE'S TYPE SYSTEM.
+
+        Six styles, and between them they are the whole visual argument of that screen. The page
+        is 1404x1872 of e-ink, which removes almost every lever a settings screen normally pulls:
+        no animation, no elevation, no gradient, no translucency (alpha dithers into mud), and no
+        colour worth the name — the panel is monochrome, so LedgerTheme's accent resolves to a
+        grey there and can never carry meaning. Greys are worse than useless: above about #777
+        they vanish into the paper, below about #333 they read as plain black. There is black,
+        there is white, and there is the space between them.
+
+        So hierarchy is built out of the four things that DO survive: rule weight, letter case,
+        type size, and whitespace. That is also, not coincidentally, how the app's own drawn pages
+        already work — CalendarDayPageIntake sets its quarter titles in mono caps above a solid
+        2dp border, and LedgerContextMenu copies that for its popup header. These styles bring the
+        settings screen into that same hand instead of leaving it in stock Material.
+    -->
+
+    <!--
+        Section heading: mono, caps, full ink, sitting just under its rule.
+
+        It used to be 13sp bold at #7A7A7A — precisely the grey that disappears on this panel, so
+        the ten headings that organise the page were the faintest thing on it. Monospace is not
+        decoration: it is the face the app's own page templates title their panels in, and the
+        even advance of a mono cap is what makes a short heading read as a label rather than as a
+        sentence. Contrast against the body text now comes from case and face, both of which are
+        as legible at 3% battery in bad light as they are anywhere.
+
+        Line spacing is generous because CalendarSettingsFragment.styleSectionHeadings breaks each
+        of these onto two lines — NAME above, the "· gloss" below at 0.8 — and two mono lines set
+        solid would tangle.
     -->
     <style name="Settings.SectionHeading" parent="">
-        <item name="android:textSize">13sp</item>
-        <item name="android:textStyle">bold</item>
-        <item name="android:textColor">#7A7A7A</item>
-        <item name="android:letterSpacing">0.09</item>
-        <item name="android:layout_marginTop">26dp</item>
-        <item name="android:layout_marginBottom">2dp</item>
-        <item name="android:layout_width">wrap_content</item>
+        <item name="android:textSize">15sp</item>
+        <!--
+            NOT bold, and that is load-bearing: CalendarSettingsFragment.sectionHeading bolds the
+            NAME with a StyleSpan and leaves the gloss plain, and StyleSpan only ever ORs weight
+            onto the base. Set bold here and the span becomes a no-op, both lines come out heavy,
+            and the two-line split stops meaning anything.
+        -->
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:textColor">@color/fgColor</item>
+        <item name="android:letterSpacing">0.05</item>
+        <item name="android:lineSpacingExtra">3dp</item>
+        <item name="android:layout_marginTop">12dp</item>
+        <item name="android:layout_marginBottom">4dp</item>
+        <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
+    </style>
+
+    <!--
+        The section rule: 3dp of solid ink across the column, immediately above a heading.
+
+        One weight, one meaning — a rule is a section boundary and nothing else. The old page had
+        twelve rules at 2dp #e0e0e0, three of which merely separated one dropdown from the next
+        dropdown inside a single section, and #e0e0e0 on e-ink is white. So the page had twelve
+        invisible lines doing two different jobs. The three interior ones are gone (whitespace
+        separates a label/dropdown pair perfectly well) and the nine that mark real boundaries are
+        now heavy enough to see and count while scrolling.
+    -->
+    <style name="Settings.Rule" parent="">
+        <item name="android:background">@color/fgColor</item>
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">3dp</item>
+        <item name="android:layout_marginTop">22dp</item>
+    </style>
+
+    <!--
+        A caption above a dropdown ("Select the start view", "Sync interval:"). Deliberately
+        smaller than the switch labels it shares the page with: a caption names the control under
+        it, a switch label IS the control, and on a page with no colour the only way to say which
+        is which is size and proximity. Tight bottom margin so it belongs to the box below it
+        rather than floating between two.
+    -->
+    <style name="Settings.FieldLabel" parent="">
+        <item name="android:textSize">15sp</item>
+        <item name="android:textColor">@color/fgColor</item>
+        <item name="android:layout_marginTop">18dp</item>
+        <item name="android:layout_marginBottom">6dp</item>
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+    </style>
+
+    <!--
+        An explanatory paragraph — not a setting. Marked the way a printed page marks an aside:
+        indented, with a rule down the left margin (drawable/settings_hint_bar). Grey would have
+        been the reflex and is unavailable; italic would have been the second reflex and costs
+        real legibility across four lines on e-ink. Position and a bar cost nothing and cannot be
+        misread, and the text stays at full ink for the people who most need to read it.
+    -->
+    <style name="Settings.Hint" parent="">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/fgColor</item>
+        <item name="android:background">@drawable/settings_hint_bar</item>
+        <item name="android:paddingStart">14dp</item>
+        <item name="android:paddingTop">2dp</item>
+        <item name="android:paddingBottom">2dp</item>
+        <item name="android:lineSpacingExtra">3dp</item>
+        <item name="android:layout_marginTop">10dp</item>
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+    </style>
+
+    <!--
+        Switch and tick-box rows. Full width and 52dp tall because this is driven with a stylus or
+        a thumb on a device with no hover and a ~300ms redraw — a missed tap costs a full page
+        flash. 17sp matches the menu rows (ScreenFragment.ROW_SP), so a label here is the same
+        size as a label in the ▦ directory rather than mysteriously smaller.
+    -->
+    <style name="Settings.Toggle" parent="">
+        <item name="android:textSize">17sp</item>
+        <item name="android:textColor">@color/fgColor</item>
+        <item name="android:minHeight">52dp</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+    </style>
+
+    <!--
+        Every button on the page, at one width and one height.
+
+        They were wrap_content, so nine buttons made nine different-length boxes down the left
+        edge and the column had no edge at all. Full width gives the page a spine, gives the
+        stylus a target it cannot miss, and lets the label sit at a readable size without the
+        button growing to swallow the row. stateListAnimator is nulled because the platform's
+        default is an elevation animation, and this app draws nothing that lifts off the paper.
+    -->
+    <style name="Settings.Button" parent="">
+        <item name="android:background">@drawable/settings_button_bg</item>
+        <item name="android:textColor">@color/settings_button_text</item>
+        <item name="android:textSize">17sp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="android:elevation">0dp</item>
+        <item name="android:minHeight">54dp</item>
+        <item name="android:paddingHorizontal">18dp</item>
+        <item name="android:paddingVertical">12dp</item>
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">10dp</item>
+    </style>
+
+    <!--
+        The filled variant, used exactly twice: Legibility at the top of the page and Save at the
+        bottom of it. Ink coverage is the only emphasis this panel can render, so spending it
+        twice is the whole budget — a third solid button and none of them would mean anything.
+    -->
+    <style name="Settings.Button.Primary" parent="Settings.Button">
+        <item name="android:background">@drawable/settings_button_primary_bg</item>
+        <item name="android:textColor">@color/settings_button_primary_text</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <!--
+        The frame around a group that appears only when its switch is on. Padding is asymmetric on
+        purpose: the fields inside already carry their own top margin, so the box needs less at the
+        top than at the bottom to sit optically even.
+    -->
+    <style name="Settings.Group" parent="">
+        <item name="android:background">@drawable/settings_group_frame</item>
+        <item name="android:padding">14dp</item>
+        <item name="android:layout_marginTop">10dp</item>
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+    </style>
+
+    <!--
+        The closed fold that stands in for that box while the switch is off — see
+        drawable/settings_fold_dashed for why it is dashed. Software layer because a dashed stroke
+        is silently dropped when the view is drawn into a hardware layer; LedgerContextMenu's
+        DashRule sets the same flag for the same reason.
+    -->
+    <style name="Settings.Fold" parent="">
+        <item name="android:background">@drawable/settings_fold_dashed</item>
+        <item name="android:layerType">software</item>
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">14dp</item>
+        <item name="android:layout_marginTop">10dp</item>
     </style>
 
     <!-- Dialogs stay LIGHT cards even in Dark scheme (the full dark-dialog pass is deferred —
