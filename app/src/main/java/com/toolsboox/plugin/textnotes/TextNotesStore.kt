@@ -69,6 +69,23 @@ object TextNotesStore {
 
     fun newId(): String = "tn-${System.currentTimeMillis()}-${(0..9999).random()}"
 
+    /**
+     * Every day that has a notes file, newest first — from the FILENAMES, nothing parsed.
+     *
+     * The whole-ledger directory lists text notes across all time, and it has to build that list
+     * while a menu opens. Note files are small, but there is one per day forever, so the directory
+     * takes the days from this and reads only the days it is actually about to show.
+     */
+    fun dates(context: Context): List<LocalDate> =
+        dir(context).listFiles()
+            ?.mapNotNull { f ->
+                val stem = f.name.removePrefix("notes-")
+                if (!f.name.startsWith("notes-") || !f.name.endsWith(".json")) null
+                else runCatching { LocalDate.parse(stem.removeSuffix(".json")) }.getOrNull()
+            }
+            ?.sortedDescending()
+            ?: emptyList()
+
     /** Merge two note lists by id: keep every id, and for shared ids take the newer [updatedAt]. */
     private fun merge(a: List<TextNote>, b: List<TextNote>): MutableList<TextNote> {
         val byId = LinkedHashMap<String, TextNote>()

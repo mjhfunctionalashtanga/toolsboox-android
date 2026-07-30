@@ -59,6 +59,25 @@ object PickingsStore {
         }.getOrDefault(emptyList())
     }
 
+    /**
+     * Every day this store has an index file for, newest first — read off the FILENAMES only.
+     *
+     * The whole-ledger directory needs to answer "which days hold boards" before it knows which day
+     * you want, and it must answer it while a menu is opening. Listing a directory is one syscall;
+     * the alternative — walking the day files to find pages keyed "pickings*" — is a multi-megabyte
+     * read per day. The trade is [listSaved]'s trade: a day whose default board was drawn on but
+     * never named or added to has no index file and doesn't appear, which is the same "nothing was
+     * ever recorded here" the daily cover already relies on.
+     */
+    fun dates(context: Context): List<LocalDate> =
+        File(context.filesDir, DIR).listFiles()
+            ?.mapNotNull { f ->
+                if (!f.name.endsWith(".json")) null
+                else runCatching { LocalDate.parse(f.name.removeSuffix(".json")) }.getOrNull()
+            }
+            ?.sortedDescending()
+            ?: emptyList()
+
     fun save(context: Context, date: LocalDate, pages: List<PickingPage>) {
         runCatching {
             val arr = JSONArray()

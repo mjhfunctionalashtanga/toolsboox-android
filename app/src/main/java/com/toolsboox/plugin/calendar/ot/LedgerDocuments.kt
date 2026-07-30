@@ -169,6 +169,55 @@ object LedgerDocuments {
         else -> emptyList()
     }
 
+    /**
+     * Every date on which [surface] has documents the stores KNOW about, newest first.
+     *
+     * [forSurface] answers "what is on this day"; this answers "which days are there at all", which
+     * is what a directory needs before it can offer a year → month → day spine. The two scopes of
+     * the model show through here as they do everywhere else: the multi-page surfaces keep one
+     * global index, so their dates come straight off it; the per-day surfaces keep one small file
+     * per day, so their dates come off the FILENAMES — no file is opened to build this list.
+     *
+     * "Know about" is doing real work in that sentence. A day whose Write page was written on but
+     * never named appears in no index and is not here; the by-date spine finds it anyway, because
+     * its skeleton comes from [dayDates] and the day's implicit documents come from [forSurface]
+     * once you open that day. Splitting it that way is what keeps the directory's cost proportional
+     * to what you are looking at rather than to how long you have owned the device.
+     */
+    fun dates(context: Context, surface: String): List<LocalDate> = when (surface) {
+        WRITE -> WritePageStore.list(context).map { it.date }.distinct().sortedDescending()
+        SYNTHESIZE -> SynthPageStore.list(context).map { it.date }.distinct().sortedDescending()
+        PICKINGS -> PickingsStore.dates(context)
+        TEXT_NOTES -> com.toolsboox.plugin.textnotes.TextNotesStore.dates(context)
+        else -> emptyList()
+    }
+
+    /**
+     * Every day that has a day file on disk, newest first — filenames only, nothing decoded.
+     *
+     * This is the by-date spine's skeleton and the closest honest answer to "which days did I make
+     * anything on". Reading each day to ask what it holds is what [NotesTagsFragment] does for a
+     * WINDOW of days and is the right cost there; doing it for all of history while a directory
+     * opens is not, so the directory shows the day and reads it only when you choose it.
+     */
+    fun dayDates(context: Context): List<LocalDate> {
+        val root = ledgerRoot(context) ?: return emptyList()
+        val calendar = File(root, "calendar")
+        if (!calendar.exists()) return emptyList()
+        val pattern = Regex("""^day-(\d{4})-(\d{2})-(\d{2})""")
+        val out = sortedSetOf<LocalDate>(compareByDescending { it })
+        runCatching {
+            calendar.walkTopDown().maxDepth(3).forEach { f ->
+                if (!f.isFile || !f.name.endsWith(".json")) return@forEach
+                val m = pattern.find(f.name) ?: return@forEach
+                runCatching {
+                    LocalDate.of(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt())
+                }.getOrNull()?.let { out.add(it) }
+            }
+        }
+        return out.toList()
+    }
+
     /** The one document [key] names, as seen from [date] — the chip's "where am I". */
     fun documentFor(
         context: Context,

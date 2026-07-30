@@ -54,10 +54,50 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
     private var current: Int = 0
     private var suppressWatch = false
 
+    companion object {
+        const val ARG_DATE = "textNotesDate"
+        const val ARG_NOTE_ID = "textNotesNoteId"
+
+        /**
+         * Open Text Notes ON a particular note rather than at today's first one.
+         *
+         * The whole-ledger directory lists text notes across all time, and a list that can name a
+         * note but only ever lands you on today isn't a directory — it's a list of things you then
+         * have to go and find. Every other making surface is reachable by (date, page) through
+         * [com.toolsboox.plugin.calendar.CalendarNavigator]; Text Notes lives in its own fragment,
+         * so it needs its own door, and this is it. Both arguments are optional and each degrades
+         * on its own: an unparseable date lands on today, an id that no longer exists (deleted on
+         * another device) lands on that day's first note rather than on nothing.
+         */
+        fun open(fragment: ScreenFragment, date: LocalDate? = null, noteId: String? = null) {
+            androidx.navigation.fragment.NavHostFragment.findNavController(fragment).navigate(
+                R.id.action_to_text_notes,
+                androidx.core.os.bundleOf(
+                    ARG_DATE to date?.toString(),
+                    ARG_NOTE_ID to noteId
+                )
+            )
+        }
+    }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentTextNotesBinding.bind(view)
+        // Honour the day/note handed in by the directory before the first load, so the screen opens
+        // on the note that was chosen instead of opening on today and then jumping.
+        arguments?.getString(ARG_DATE)
+            ?.let { s -> runCatching { LocalDate.parse(s) }.getOrNull() }
+            ?.let { date = it }
         loadDay()
+        arguments?.getString(ARG_NOTE_ID)?.let { id ->
+            val i = notes.indexOfFirst { it.id == id }
+            if (i >= 0) showNote(i)
+        }
+        // Consume the arguments: they describe how this screen was OPENED, and leaving them in
+        // place would make a later recreate (rotation, process death) re-land you on that note
+        // after you had navigated away from it inside the screen.
+        arguments?.remove(ARG_DATE)
+        arguments?.remove(ARG_NOTE_ID)
 
         binding.textNotesPrev.setOnClickListener { goToDate(date.minusDays(1)) }
         binding.textNotesNext.setOnClickListener { goToDate(date.plusDays(1)) }

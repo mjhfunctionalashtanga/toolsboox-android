@@ -154,6 +154,13 @@ fun ledgerDirectoryFolders(
             ReadingLogSelection.focusSearch = true
             openHistory(null)
         }),
+        // The DIRECTORY, directly under Search, because they are the two halves of the same
+        // question: Search reads what you wrote, the Directory shows what you have. Michael asked
+        // for "the directory folder system for things like picking synthesize, write notes, etc." —
+        // one findable, sortable place across every kind. Until this row existed the per-kind
+        // directories could only be reached from INSIDE a kind, so "what do I have?" was a question
+        // you could only ask once you had already gone somewhere and stopped needing to ask it.
+        ScreenFragment.Folder("🗂", "Directory", action = { showLedgerRootDirectory(fragment) }),
         // One-tap jump to today's Day page — no submenu. If we're leaving an open article/book,
         // drop a return anchor so the Day page can jump straight back.
         ScreenFragment.Folder("☀️", "Today", action = {
@@ -326,6 +333,631 @@ private fun openSiteWeb(nav: androidx.navigation.NavController, target: String) 
     )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  The ROOT directory — one findable, sortable place across everything you have
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The two things the root lists that are NOT [com.toolsboox.plugin.calendar.ot.LedgerDocuments]
+ * surfaces, given ids in the same namespace so one list can hold all six kinds.
+ *
+ * Notes are the handwritten day pages: they have no store, no names and no registry — a day either
+ * has a page or it doesn't — so there is nothing for [LedgerDocuments] to index and the directory
+ * lists the DAYS instead. Tags are the opposite shape: hundreds of them, no dates of their own
+ * except the days they were written on. Neither is a document, and pretending either was one (a
+ * fake "document" per note page, a fake date per tag) would put rows in the by-date spine that
+ * nothing could open. So they are kinds here and only here.
+ */
+private const val KIND_NOTES = "notes"
+private const val KIND_TAGS = "tags"
+
+/** Michael's order, and the order every view here uses: what you catch, what you work it into,
+ *  what you write from it, then the two indexes over the whole thing. */
+private val DIRECTORY_KINDS = listOf(
+    com.toolsboox.plugin.calendar.ot.LedgerDocuments.PICKINGS,
+    com.toolsboox.plugin.calendar.ot.LedgerDocuments.SYNTHESIZE,
+    com.toolsboox.plugin.calendar.ot.LedgerDocuments.WRITE,
+    KIND_NOTES,
+    com.toolsboox.plugin.calendar.ot.LedgerDocuments.TEXT_NOTES,
+    KIND_TAGS,
+)
+
+/**
+ * A kind's glyph. The four document surfaces take theirs from [LedgerDocuments] rather than
+ * carrying a second copy here — that object's glyph/label/noun trio is the one vocabulary the hub,
+ * the day chip and the per-kind directories all speak, and a root directory that renamed Text Notes
+ * from ⌗ to 📝 would have you looking for a door you'd never seen. Notes and Tags borrow the hub's
+ * own row glyphs for the same reason.
+ */
+private fun kindGlyph(kind: String): String = when (kind) {
+    KIND_NOTES -> "✒"
+    KIND_TAGS -> "#"
+    else -> com.toolsboox.plugin.calendar.ot.LedgerDocuments.glyph(kind)
+}
+
+private fun kindLabel(kind: String): String = when (kind) {
+    KIND_NOTES -> "Notes"
+    KIND_TAGS -> "Tags"
+    else -> com.toolsboox.plugin.calendar.ot.LedgerDocuments.label(kind)
+}
+
+/** What a kind's count is counting. "412" alone is a number; "412 days" is an answer. */
+private fun kindCountLabel(kind: String, n: Int): String = when (kind) {
+    KIND_NOTES -> if (n == 1) "1 day" else "$n days"
+    KIND_TAGS -> if (n == 1) "1 tag" else "$n tags"
+    else -> if (n == 1) "1 document" else "$n documents"
+}
+
+private const val DIRECTORY_PREFS = "ledger_directory"
+
+/** How many rows a folder opens with before it offers to show more. A folder that renders four
+ *  hundred rows into a scroll view is a full-page e-ink repaint you then have to scroll past. */
+private const val DIRECTORY_PAGE = 40
+
+/**
+ * How the directory orders what it lists — at the root AND inside a kind, from one setting.
+ *
+ * Persisted, because "a directory that forgets how you like it sorted is a directory you re-sort
+ * every time". One setting rather than one per surface: the whole point of the root is that the six
+ * kinds are one thing seen six ways, and six independent sort settings would be six ways for them
+ * to disagree about what "newest" means.
+ */
+private enum class DirectorySort(val id: String, val label: String) {
+    DATE("date", "Date"), NAME("name", "Name"), KIND("kind", "Kind");
+
+    fun next(): DirectorySort = entries[(ordinal + 1) % entries.size]
+
+    companion object {
+        fun of(id: String?): DirectorySort = entries.firstOrNull { it.id == id } ?: DATE
+    }
+}
+
+/**
+ * Which SPINE the root is showing. Michael's second refinement, in his words: reimagine the date
+ * navigation "as a FOLDER — it should feel like opening a drawer or a folder tree (by date / name /
+ * kind), not a flat scroll". So the date axis is not a jump you take and a list you land in; it is
+ * the same directory hung on a different spine, and this is the switch between them.
+ */
+private enum class DirectorySpine(val id: String, val label: String, val glyph: String) {
+    KIND("kind", "By kind", "▦"), DATE("date", "By date", "📅");
+
+    fun next(): DirectorySpine = entries[(ordinal + 1) % entries.size]
+
+    companion object {
+        fun of(id: String?): DirectorySpine = entries.firstOrNull { it.id == id } ?: KIND
+    }
+}
+
+private fun directoryPrefs(context: android.content.Context) =
+    context.getSharedPreferences(DIRECTORY_PREFS, 0)
+
+private fun directorySort(context: android.content.Context): DirectorySort =
+    DirectorySort.of(directoryPrefs(context).getString("sort", null))
+
+private fun setDirectorySort(context: android.content.Context, sort: DirectorySort) {
+    directoryPrefs(context).edit().putString("sort", sort.id).apply()
+}
+
+private fun directorySpine(context: android.content.Context): DirectorySpine =
+    DirectorySpine.of(directoryPrefs(context).getString("spine", null))
+
+private fun setDirectorySpine(context: android.content.Context, spine: DirectorySpine) {
+    directoryPrefs(context).edit().putString("spine", spine.id).apply()
+}
+
+/**
+ * Which folders are open, persisted so the drawer reopens the way you left it — the same argument
+ * as persisting the sort. Copied out of the preference: [android.content.SharedPreferences] hands
+ * back the live set and mutating it is documented as undefined.
+ */
+private fun directoryOpenFolders(context: android.content.Context): MutableSet<String> =
+    HashSet(directoryPrefs(context).getStringSet("open", emptySet()).orEmpty())
+
+private fun setDirectoryOpenFolders(context: android.content.Context, open: Set<String>) {
+    directoryPrefs(context).edit().putStringSet("open", HashSet(open)).apply()
+}
+
+/** One listable thing, whatever kind it came from — the root's common currency. */
+private class DirItem(
+    val kind: String,
+    val key: String,
+    val title: String,
+    val date: LocalDate,
+)
+
+/**
+ * Everything of one kind, across all of time.
+ *
+ * The costs here are deliberately unequal, because the kinds are. Write and Synthesize keep ONE
+ * global index, so their whole history is one small file. Pickings and Text Notes keep one small
+ * file per day, so this asks the store which days exist ([LedgerDocuments.dates], filenames only)
+ * and reads just those. Notes have no index at all, so the list is the day files that exist
+ * ([LedgerDocuments.dayDates], filenames again). Tags come off the memoized occurrence store.
+ *
+ * Nothing here decodes a day file. That is the whole design constraint: a day file is megabytes of
+ * inline base64 and this list is built while a menu is opening, on e-ink. It is why the by-kind
+ * view lists what the STORES know — the documents you named and kept — and why the implicit daily
+ * pages (a day's bare "write", its default board) show up in the by-date spine instead, where
+ * exactly one day's worth is read at a time.
+ */
+private fun directoryItems(context: android.content.Context, kind: String): List<DirItem> {
+    val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    val today = LocalDate.now()
+    return when (kind) {
+        // Global index + today's implicit daily document, which is what forSurface already returns.
+        docs.WRITE, docs.SYNTHESIZE ->
+            docs.forSurface(context, kind, today).map { DirItem(kind, it.key, it.title, it.date) }
+
+        // Per-day stores: the days the store has files for, plus today (which always has a page in
+        // principle even before anything is written to it).
+        docs.PICKINGS, docs.TEXT_NOTES ->
+            (docs.dates(context, kind) + today).distinct().sortedDescending().flatMap { d ->
+                docs.forSurface(context, kind, d).map { DirItem(kind, it.key, it.title, d) }
+            }
+
+        // A day, titled by its date, opening on note page "0" — the page the Notes door lands on.
+        KIND_NOTES -> docs.dayDates(context).map { DirItem(KIND_NOTES, "0", it.toString(), it) }
+
+        // A tag's "date" is the last day it was written on, so sorting by date puts the vocabulary
+        // you are currently using at the top rather than the vocabulary you started with.
+        KIND_TAGS -> com.toolsboox.plugin.calendar.ot.LedgerTags.list(context).map { t ->
+            DirItem(KIND_TAGS, t.tag, "#${t.tag}", t.occurrences.maxOf { it.first })
+        }
+
+        else -> emptyList()
+    }
+}
+
+/**
+ * Everything ONE day holds, across every kind — the leaf of the by-date spine.
+ *
+ * This is where the implicit documents the by-kind view can't afford to hunt for appear: asking
+ * [LedgerDocuments.forSurface] for a single date supplies that day's own bare Write page, its
+ * default Pickings board and so on, whether or not any store ever recorded them. The filter on
+ * `it.date == date` drops the globally-indexed documents forSurface folds in, which belong to
+ * their own days elsewhere in this same tree.
+ *
+ * The Notes row is offered unconditionally rather than checked against the day file. Opening a
+ * never-written page shows a blank page, which is that surface's normal answer to a page never
+ * written; confirming it first would cost a multi-megabyte read per day row.
+ */
+private fun dayDocuments(context: android.content.Context, date: LocalDate): List<DirItem> {
+    val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    val out = mutableListOf<DirItem>()
+    for (surface in listOf(docs.PICKINGS, docs.SYNTHESIZE, docs.WRITE, docs.TEXT_NOTES)) {
+        docs.forSurface(context, surface, date)
+            .filter { it.date == date }
+            .forEach { out.add(DirItem(surface, it.key, it.title, date)) }
+    }
+    out.add(DirItem(KIND_NOTES, "0", "Notes", date))
+    return out
+}
+
+/**
+ * How many #tags each (day, document) carries, in one pass — the badge that tells you a row has
+ * items inside it worth landing on.
+ *
+ * Built once per opening of a directory and handed to every row. The obvious alternative, asking
+ * [com.toolsboox.plugin.calendar.ot.LedgerTags] per row, is a scan of every tag's occurrences per
+ * row per keystroke of the filter; at the hundreds of tags this vocabulary is aimed at that is the
+ * kind of cost that shows up as a sluggish redraw and gets blamed on e-ink.
+ *
+ * Keyed on the document's BASE key, so a tag written on page three of an essay still marks the
+ * essay.
+ */
+private fun directoryMarkCounts(context: android.content.Context): Map<String, Int> {
+    val out = HashMap<String, Int>()
+    for (info in com.toolsboox.plugin.calendar.ot.LedgerTags.list(context)) {
+        for ((day, page, _) in info.occurrences) {
+            val k = "$day|${page.substringBefore('#')}"
+            out[k] = (out[k] ?: 0) + 1
+        }
+    }
+    return out
+}
+
+/** The #tags written anywhere inside one document — base page and sub-pages — each with the page
+ *  it is on and the mark it was written at. */
+private fun documentMarks(
+    context: android.content.Context,
+    date: LocalDate,
+    base: String,
+): List<Triple<String, String, android.graphics.RectF?>> =
+    com.toolsboox.plugin.calendar.ot.LedgerTags.list(context).mapNotNull { info ->
+        val occ = info.occurrences.firstOrNull { it.first == date && it.second.substringBefore('#') == base }
+        if (occ == null) null else Triple(info.tag, occ.second, occ.third)
+    }.sortedBy { it.first }
+
+/**
+ * Michael's first refinement: "Items must be findable INDIVIDUALLY on the page too — a jump-to-a-
+ * specific-item affordance, not only a flat list." So a document is not only a page you open; it is
+ * a page you can open AT something.
+ *
+ * The items are the document's #tags and the marks they were written at, which is exactly the data
+ * [showTagIndex]/[showTagPages] already navigate by — same occurrence store, same design-space
+ * rect, same `toDayNote(date, page, rect)` landing. Reused rather than reimplemented, per the brief
+ * and because a second definition of "where is this tag" is a second thing to keep agreeing with
+ * the first. The day page's own ‹ N › jump already leads with these marks; this puts the same move
+ * in the directory, so you can land on a mark from a page you are not standing on.
+ *
+ * A Pickings board's CARDS are the other addressable item and are deliberately not here. They live
+ * as image elements inside the day JSON, so listing them means decoding that file — the one thing
+ * every other query in this file streams, samples or indexes its way around, and never on the path
+ * of opening a menu. When cards get an index of their own they can join this list unchanged.
+ */
+private fun showDocumentItems(
+    fragment: ScreenFragment,
+    title: String,
+    date: LocalDate,
+    base: String,
+) {
+    val ctx = fragment.requireContext()
+    val marks = documentMarks(ctx, date, base)
+    // Nothing to aim at: behave exactly as a tap would rather than showing an empty chooser.
+    if (marks.isEmpty()) {
+        CalendarNavigator.toDayNote(fragment, date, base)
+        return
+    }
+    // "Top of the page" leads, so the item list is never a detour on the way to the ordinary thing.
+    val labels = (listOf("⌂  Top of the page") + marks.map { (tag, page, rect) ->
+        val sub = page.substringAfter('#', "").toIntOrNull()
+        val where = if (sub == null) "" else "  ·  page ${sub + 1}"
+        // The ✎ is showTagPages' own mark for "this one zooms to the word"; a legacy occurrence
+        // with no rect just opens the page, and saying so beats a jump that silently doesn't.
+        "${if (rect != null) "✎  " else ""}#$tag$where"
+    }).toTypedArray()
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle(title)
+        .setItems(labels) { _, which ->
+            if (which == 0) CalendarNavigator.toDayNote(fragment, date, base)
+            else {
+                val (_, page, rect) = marks[which - 1]
+                CalendarNavigator.toDayNote(fragment, date, page, rect)
+            }
+        }
+        .setNegativeButton("Close", null)
+        .show()
+}
+
+/** Open a document the way the directory always has: expand it if it has pages, else go to it.
+ *  Factored out so the root and the per-kind directory can't drift on what a tap means. */
+private fun openDocument(
+    fragment: ScreenFragment,
+    surface: String,
+    doc: com.toolsboox.plugin.calendar.ot.LedgerDocument,
+    currentKey: String?,
+) {
+    if (doc.subPageCount > 1) showDocumentPages(fragment, surface, doc, currentKey)
+    else CalendarNavigator.toDayNote(fragment, doc.date, doc.key)
+}
+
+/** Open one listed item, whatever kind it is. Only the tapped document pays for its page count —
+ *  the count is lazy, and the rows deliberately never ask for it. */
+private fun openDirectoryItem(fragment: ScreenFragment, item: DirItem) {
+    val ctx = fragment.requireContext()
+    val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    when (item.kind) {
+        KIND_TAGS -> com.toolsboox.plugin.calendar.ot.LedgerTags.list(ctx)
+            .firstOrNull { it.tag == item.key }
+            ?.let { showTagPages(fragment, it) }
+
+        KIND_NOTES -> CalendarNavigator.toDayNote(fragment, item.date, item.key)
+
+        // Text Notes lives in its own fragment rather than on a day-page surface, so it is reached
+        // through its own door rather than through CalendarNavigator.
+        docs.TEXT_NOTES ->
+            com.toolsboox.plugin.textnotes.ui.TextNotesFragment.open(fragment, item.date, item.key)
+
+        else -> {
+            val doc = docs.forSurface(ctx, item.kind, item.date).firstOrNull { it.key == item.key }
+            if (doc == null) CalendarNavigator.toDayNote(fragment, item.date, item.key)
+            else openDocument(fragment, item.kind, doc, null)
+        }
+    }
+}
+
+/** The row that opens a kind's OWN directory — the per-kind doors this root sits above rather than
+ *  replaces, reachable from inside the folder that lists the same things. */
+private fun kindDoorRow(fragment: ScreenFragment, kind: String, date: LocalDate): DirRow {
+    val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    return when (kind) {
+        KIND_TAGS -> DirRow("↳", "Open the Tags index…", null, 1) { showTagIndex(fragment) }
+        KIND_NOTES -> DirRow("↳", "Open Notes & Tags…", null, 1) {
+            com.toolsboox.plugin.calendar.ui.NotesTagsFragment.open(fragment, date, "week")
+        }
+        docs.TEXT_NOTES -> DirRow("↳", "Open Text Notes…", null, 1) {
+            com.toolsboox.plugin.textnotes.ui.TextNotesFragment.open(fragment, date, null)
+        }
+        else -> DirRow("↳", "Open the ${docs.label(kind)} directory…", null, 1) {
+            showDocumentDirectory(fragment, kind, date)
+        }
+    }
+}
+
+private fun sortItems(items: List<DirItem>, sort: DirectorySort): List<DirItem> = when (sort) {
+    DirectorySort.DATE ->
+        items.sortedWith(compareByDescending<DirItem> { it.date }.thenBy { it.title.lowercase() })
+    DirectorySort.NAME ->
+        items.sortedWith(compareBy<DirItem> { it.title.lowercase() }.thenByDescending { it.date })
+    DirectorySort.KIND ->
+        items.sortedWith(
+            compareBy<DirItem> { DIRECTORY_KINDS.indexOf(it.kind) }
+                .thenByDescending { it.date }.thenBy { it.title.lowercase() }
+        )
+}
+
+/** One item as a row: its own glyph, its title, and — the part that makes it findable — the date
+ *  it belongs to and how many #tags are written inside it. Holding the row lands on one of them. */
+private fun directoryRowFor(
+    fragment: ScreenFragment,
+    item: DirItem,
+    depth: Int,
+    markCounts: Map<String, Int>,
+    showKind: Boolean,
+): DirRow {
+    val n = if (item.kind == KIND_TAGS) 0 else markCounts["${item.date}|${item.key}"] ?: 0
+    val detail = buildString {
+        if (showKind) append(kindLabel(item.kind)).append("  ·  ")
+        append(item.date.toString())
+        if (n > 0) append("  ·  🏷 ").append(n)
+    }
+    return DirRow(
+        glyph = kindGlyph(item.kind),
+        label = item.title,
+        detail = detail,
+        depth = depth,
+        onHold = if (n == 0) null else ({ showDocumentItems(fragment, item.title, item.date, item.key) }),
+    ) { openDirectoryItem(fragment, item) }
+}
+
+/** One row of a directory list. [closes] is false for the rows that are CONTROLS — a folder header,
+ *  a sort chip — because dismissing the dialog you are steering is not steering it. */
+private class DirRow(
+    val glyph: String,
+    val label: String,
+    val detail: String? = null,
+    val depth: Int = 0,
+    val closes: Boolean = true,
+    val onHold: (() -> Unit)? = null,
+    val onTap: () -> Unit,
+)
+
+/**
+ * The directory list, and the reason there is only one of it.
+ *
+ * This is [showTagIndex]'s pattern generalised: a filter field over a column that is REBUILT IN
+ * PLACE on every change. On e-ink a full redraw per keystroke is still cheaper than any incremental
+ * scheme, and there is no diffing to get wrong — which is also why the folder tree expands by
+ * rebuilding rather than by animating a reveal, per the fork's standing rule that a constantly
+ * repainting view ghosts on this hardware.
+ *
+ * [build] is handed the current query and a redraw hook, so a row can change the state the next
+ * build reads (a folder's open-ness, the sort) and ask for the list again — an accordion without a
+ * second mechanism for accordions.
+ */
+private fun showDirectoryList(
+    fragment: ScreenFragment,
+    title: String,
+    searchHint: String?,
+    empty: String,
+    build: (query: String, redraw: () -> Unit) -> List<DirRow>,
+) {
+    val ctx = fragment.requireContext()
+    val density = ctx.resources.displayMetrics.density
+    fun px(v: Int) = (v * density).toInt()
+
+    val body = android.widget.LinearLayout(ctx).apply {
+        orientation = android.widget.LinearLayout.VERTICAL
+    }
+    val field = searchHint?.let {
+        android.widget.EditText(ctx).apply { hint = it; isSingleLine = true; textSize = 15f }
+    }
+    val col = android.widget.LinearLayout(ctx).apply {
+        orientation = android.widget.LinearLayout.VERTICAL
+        setPadding(px(16), px(8), px(16), px(8))
+        field?.let { addView(it) }
+        addView(body)
+    }
+    lateinit var dialog: androidx.appcompat.app.AlertDialog
+    var draw: (() -> Unit)? = null
+    val redraw = { draw?.invoke(); Unit }
+
+    draw = {
+        body.removeAllViews()
+        val rows = build(field?.text?.toString()?.trim().orEmpty(), redraw)
+        if (rows.isEmpty()) {
+            body.addView(android.widget.TextView(ctx).apply {
+                text = empty
+                textSize = 14f; setTextColor(0xFF888888.toInt())
+                setPadding(px(4), px(12), px(4), px(4))
+            })
+        }
+        for (row in rows) {
+            val hold = row.onHold
+            body.addView(android.widget.TextView(ctx).apply {
+                text = buildString {
+                    if (row.glyph.isNotBlank()) { append(row.glyph); append("  ") }
+                    append(row.label)
+                    if (!row.detail.isNullOrBlank()) { append("  ·  "); append(row.detail) }
+                }
+                textSize = if (row.depth == 0) 16f else 15f
+                setTextColor(if (row.depth == 0) 0xFF000000.toInt() else 0xFF333333.toInt())
+                setPadding(px(4 + row.depth * 16), px(10), px(4), px(10))
+                setBackgroundResource(android.R.drawable.list_selector_background)
+                setOnClickListener { if (row.closes) dialog.dismiss(); row.onTap() }
+                if (hold != null) setOnLongClickListener { dialog.dismiss(); hold(); true }
+            })
+        }
+        com.toolsboox.ot.LedgerFonts.applyTree(body)
+    }
+
+    field?.addTextChangedListener(object : android.text.TextWatcher {
+        override fun afterTextChanged(s: android.text.Editable?) { redraw() }
+        override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+    })
+    redraw()
+
+    dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle(title)
+        .setView(android.widget.ScrollView(ctx).apply { addView(col) })
+        .setNegativeButton("Close", null)
+        .create()
+    fragment.showModal(dialog)
+}
+
+/**
+ * THE root directory: one place that answers "what do I have?" across every kind at once.
+ *
+ * Michael, on the punchlist: one findable, sortable place across ALL #tags AND all Pickings /
+ * Synthesis / Text Notes / Writes. Until this existed each kind had a good directory and no way in
+ * except from inside that kind — so the question could only be asked by someone who had already
+ * gone somewhere and, in going, answered it.
+ *
+ * Three things ride on the same rebuilt-in-place column:
+ *
+ *  • **By kind** — the six kinds as folders, each with its count, each opening to its documents and
+ *    carrying a row into its OWN directory (which keeps New / Rename / the date walk). The per-kind
+ *    doors are untouched; this is a root above them.
+ *  • **By date** — the same material hung on the other spine: year → month → day → what you made
+ *    that day. Michael's "opening a drawer", not a date picker that fires you somewhere.
+ *  • **Find** — type, and both spines collapse into one flat result list across every kind. A folder
+ *    tree stops being findable past a few hundred documents; the field is what carries it past that.
+ *
+ * The sort and the open folders persist, so the drawer reopens the way you left it.
+ */
+fun showLedgerRootDirectory(fragment: ScreenFragment, date: LocalDate = LocalDate.now()) {
+    val ctx = fragment.requireContext()
+    // Read each kind ONCE per opening, not once per keystroke: the by-kind counts walk index files,
+    // and re-walking them behind the keyboard is the difference between a filter that keeps up and
+    // one that stutters. The tag marks are gathered once for the same reason.
+    val cache = HashMap<String, List<DirItem>>()
+    fun items(kind: String): List<DirItem> = cache.getOrPut(kind) { directoryItems(ctx, kind) }
+    val marks = directoryMarkCounts(ctx)
+    // How far each folder has been unrolled — the "…and N more" row raises its own cap and redraws,
+    // which is the same in-place move as opening a folder rather than a second kind of paging.
+    val unrolled = HashMap<String, Int>()
+
+    showDirectoryList(
+        fragment,
+        title = "Directory",
+        searchHint = "Find anything",
+        empty = "Nothing in the ledger yet.",
+    ) { query, redraw ->
+        val sort = directorySort(ctx)
+        val spine = directorySpine(ctx)
+        val open = directoryOpenFolders(ctx)
+        val rows = mutableListOf<DirRow>()
+
+        fun toggle(id: String) {
+            if (id in open) open.remove(id) else open.add(id)
+            setDirectoryOpenFolders(ctx, open)
+        }
+
+        fun caret(id: String) = if (id in open) "▾  " else "▸  "
+
+        // The two dials, at the top where a dial belongs. Both cycle in place.
+        rows += DirRow(spine.glyph, spine.label, "tap for ${spine.next().label}", closes = false) {
+            setDirectorySpine(ctx, spine.next()); redraw()
+        }
+        rows += DirRow("⇅", "Sort · ${sort.label}", "date → name → kind", closes = false) {
+            setDirectorySort(ctx, sort.next()); redraw()
+        }
+
+        if (query.isNotEmpty()) {
+            // Searching flattens both spines: when you are looking for a named thing, which folder
+            // it happens to live in is the one fact you don't have.
+            val q = query.lowercase()
+            val hits = sortItems(
+                DIRECTORY_KINDS.flatMap { items(it) }.filter { it.title.lowercase().contains(q) },
+                sort
+            )
+            val cap = unrolled["find"] ?: DIRECTORY_PAGE
+            if (hits.isEmpty()) {
+                rows += DirRow("", "Nothing matches “$query”.", null, 1, closes = false) {}
+            }
+            for (item in hits.take(cap)) rows += directoryRowFor(fragment, item, 1, marks, true)
+            if (hits.size > cap) {
+                rows += DirRow("", "…and ${hits.size - cap} more", "tap to show more", 1, closes = false) {
+                    unrolled["find"] = cap + DIRECTORY_PAGE; redraw()
+                }
+            }
+            return@showDirectoryList rows
+        }
+
+        when (spine) {
+            DirectorySpine.KIND -> for (kind in DIRECTORY_KINDS) {
+                val list = items(kind)
+                val id = "kind:$kind"
+                rows += DirRow(
+                    kindGlyph(kind), caret(id) + kindLabel(kind), kindCountLabel(kind, list.size),
+                    closes = false
+                ) { toggle(id); redraw() }
+                if (id !in open) continue
+                rows += kindDoorRow(fragment, kind, date)
+                val ordered = sortItems(list, sort)
+                val cap = unrolled[id] ?: DIRECTORY_PAGE
+                for (item in ordered.take(cap)) rows += directoryRowFor(fragment, item, 1, marks, false)
+                if (ordered.size > cap) {
+                    rows += DirRow("", "…and ${ordered.size - cap} more", "tap to show more", 1, closes = false) {
+                        unrolled[id] = cap + DIRECTORY_PAGE; redraw()
+                    }
+                }
+            }
+
+            DirectorySpine.DATE -> {
+                // The spine's skeleton is every date ANY kind knows about — cheap, because each
+                // kind's dates came off filenames and indexes. A day's contents are read only when
+                // that day's folder is opened, so walking the tree costs what you look at.
+                val days = DIRECTORY_KINDS.flatMap { items(it) }.map { it.date }
+                    .distinct().sortedDescending()
+                val locale = Locale.getDefault()
+                val byYear = days.groupBy { it.year }
+                for (year in byYear.keys.sortedDescending()) {
+                    val yearDays = byYear.getValue(year)
+                    val yid = "y:$year"
+                    rows += DirRow(
+                        "🗂", caret(yid) + year, kindCountLabel(KIND_NOTES, yearDays.size), closes = false
+                    ) { toggle(yid); redraw() }
+                    if (yid !in open) continue
+                    val byMonth = yearDays.groupBy { it.monthValue }
+                    for (month in byMonth.keys.sortedDescending()) {
+                        val monthDays = byMonth.getValue(month)
+                        val mid = "$yid/m:$month"
+                        val name = java.time.Month.of(month)
+                            .getDisplayName(java.time.format.TextStyle.FULL, locale)
+                        rows += DirRow(
+                            "📁", caret(mid) + name, kindCountLabel(KIND_NOTES, monthDays.size), 1,
+                            closes = false
+                        ) { toggle(mid); redraw() }
+                        if (mid !in open) continue
+                        for (day in monthDays) {
+                            val did = "$mid/d:$day"
+                            val dow = day.dayOfWeek
+                                .getDisplayName(java.time.format.TextStyle.SHORT, locale)
+                            rows += DirRow(
+                                "🗓", caret(did) + "$dow ${day.dayOfMonth}", day.toString(), 2,
+                                closes = false
+                            ) { toggle(did); redraw() }
+                            if (did !in open) continue
+                            for (item in sortItems(dayDocuments(ctx, day), sort)) {
+                                rows += directoryRowFor(fragment, item, 3, marks, true)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Holding a row is not a thing anyone guesses, and an undiscoverable affordance is not one.
+        // This row says what hold does AND is a working door to the index it lands you in.
+        rows += DirRow("🏷", "Hold a document to land on a #tag inside it", "Tags index") {
+            showTagIndex(fragment)
+        }
+        rows
+    }
+}
+
 /**
  * The document directory — ONE listing for every making surface that accumulates pages.
  *
@@ -344,6 +976,12 @@ private fun openSiteWeb(nav: androidx.navigation.NavController, target: String) 
  *
  * [knownPageKeys] lets a caller that already holds the day (the day fragment does) hand over its
  * page keys so the counts don't cost a second read of the day file.
+ *
+ * It now rides the same rebuilt-in-place column as the root ([showDirectoryList]), which is what
+ * gives it the three things a list of documents wants and a fixed `setItems` array can't have: the
+ * persisted sort, a filter field once there are enough documents to need one, and a HOLD on a
+ * document that lands you on an item inside it rather than at the top of it. The rows, the extras
+ * and what each of them does are otherwise exactly what they were.
  */
 fun showDocumentDirectory(
     fragment: ScreenFragment,
@@ -355,46 +993,87 @@ fun showDocumentDirectory(
     val ctx = fragment.requireContext()
     val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
     docs0.sync(ctx, surface, date)   // pull the names given on other devices
+    // Built ONCE, outside the redraw: a document's page count is lazy and a miss costs a streamed
+    // read of the day file, so rebuilding this list per keystroke would put a disk scan per
+    // document behind the keyboard. Held across redraws, each count is paid for at most once.
     val docs = docs0.forSurface(ctx, surface, date, knownPageKeys)
+    val marks = directoryMarkCounts(ctx)
     val glyph = docs0.glyph(surface)
     val label = docs0.label(surface)
     // The document you're standing in is marked, so the list answers "where am I" as well as "what
     // else is there" — the same "· here" the iPad's directory uses. One shape on both platforms.
     val hereBase = currentKey?.substringBefore('#')
-    val rows = docs.map {
-        val pages = if (it.subPageCount > 1) "  ·  ${it.subPageCount} pages" else ""
-        // A named document off today shows the day it was started; without it a list of essay
-        // titles says nothing about when any of them happened.
-        val when_ = if (it.date != date) "  ·  ${it.date}" else ""
-        "$glyph  ${it.title}$pages$when_" + if (it.key == hereBase) "   ·  here" else ""
-    }
     val renameable = docs.any { docs0.canRename(surface, it.key) }
-    val extras = listOfNotNull(
-        "＋  New ${docs0.noun(surface)}…",
-        if (renameable) "✎  Rename…" else null,
-        "📅  Go to a date…"
-    )
-    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-        .setTitle("$label · $date")
-        .setItems((rows + extras).toTypedArray()) { _, which ->
-            val extra = which - rows.size
-            when {
-                which < rows.size -> {
-                    val doc = docs[which]
-                    // Expand rather than jump: a document with pages should show you its pages, so
-                    // "which page of the essay" is answerable from the same place as "which essay".
-                    if (doc.subPageCount > 1) showDocumentPages(fragment, surface, doc, currentKey)
-                    else CalendarNavigator.toDayNote(fragment, doc.date, doc.key)
-                }
-                extra == 0 -> promptNewDocument(fragment, surface, date)
-                extras.size == 3 && extra == 1 -> promptRenameDocument(fragment, surface, date, docs)
-                // The same surface on another day — a directory should walk time as well as pages,
-                // which is the move the iPad's directory ends on too.
-                else -> showDocumentDatePicker(fragment, surface, date, currentKey)
+
+    showDirectoryList(
+        fragment,
+        title = "$label · $date",
+        // The field appears only once the list is long enough to hide something. On a surface with
+        // three documents it would be a box asking you to type what you can already see.
+        searchHint = if (docs.size > 6) "Find a ${docs0.noun(surface)}" else null,
+        empty = "Nothing here yet.",
+    ) { query, redraw ->
+        val sort = directorySort(ctx)
+        val rows = mutableListOf<DirRow>()
+        rows += DirRow("⇅", "Sort · ${sort.label}", "date → name → kind", closes = false) {
+            setDirectorySort(ctx, sort.next()); redraw()
+        }
+        val q = query.lowercase()
+        val shown = sortDocuments(docs.filter { q.isEmpty() || it.title.lowercase().contains(q) }, sort)
+        if (shown.isEmpty()) rows += DirRow("", "Nothing matches “$query”.", null, 1, closes = false) {}
+        for (doc in shown) {
+            val n = marks["${doc.date}|${doc.key}"] ?: 0
+            val detail = buildString {
+                if (doc.subPageCount > 1) append("${doc.subPageCount} pages")
+                // A named document off today shows the day it was started; without it a list of
+                // essay titles says nothing about when any of them happened.
+                if (doc.date != date) { if (isNotEmpty()) append("  ·  "); append(doc.date.toString()) }
+                if (n > 0) { if (isNotEmpty()) append("  ·  "); append("🏷 $n") }
+                if (doc.key == hereBase) { if (isNotEmpty()) append("  ·  "); append("here") }
+            }
+            rows += DirRow(
+                glyph, doc.title, detail,
+                onHold = if (n == 0) null else ({ showDocumentItems(fragment, doc.title, doc.date, doc.key) }),
+            ) {
+                // Expand rather than jump: a document with pages should show you its pages, so
+                // "which page of the essay" is answerable from the same place as "which essay".
+                openDocument(fragment, surface, doc, currentKey)
             }
         }
-        .setNegativeButton("Close", null)
-        .show()
+        rows += DirRow("＋", "New ${docs0.noun(surface)}…") { promptNewDocument(fragment, surface, date) }
+        if (renameable) rows += DirRow("✎", "Rename…") { promptRenameDocument(fragment, surface, date, docs) }
+        // The same surface on another day — a directory should walk time as well as pages,
+        // which is the move the iPad's directory ends on too.
+        rows += DirRow("📅", "Go to a date…") { showDocumentDatePicker(fragment, surface, date, currentKey) }
+        // Up, not out: this kind is one folder of a larger drawer, and the way back to the rest of
+        // it should not be "close this and find the hub".
+        rows += DirRow("‹", "All of the Ledger…") { showLedgerRootDirectory(fragment, date) }
+        rows
+    }
+}
+
+/**
+ * The persisted sort, applied inside one kind.
+ *
+ * "By kind" has nothing left to group by once you are already inside a kind, so it falls back to
+ * the store's own order — the daily document first, then the named ones as the index holds them,
+ * which is exactly what this list looked like before it could be sorted at all. Reordering it to
+ * something arbitrary just so all three settings visibly "do something" would be worse than a
+ * setting that honestly does nothing here.
+ */
+private fun sortDocuments(
+    docs: List<com.toolsboox.plugin.calendar.ot.LedgerDocument>,
+    sort: DirectorySort,
+): List<com.toolsboox.plugin.calendar.ot.LedgerDocument> = when (sort) {
+    DirectorySort.DATE -> docs.sortedWith(
+        compareByDescending<com.toolsboox.plugin.calendar.ot.LedgerDocument> { it.date }
+            .thenBy { it.title.lowercase() }
+    )
+    DirectorySort.NAME -> docs.sortedWith(
+        compareBy<com.toolsboox.plugin.calendar.ot.LedgerDocument> { it.title.lowercase() }
+            .thenByDescending { it.date }
+    )
+    DirectorySort.KIND -> docs
 }
 
 /**
@@ -543,56 +1222,37 @@ fun showTagIndex(fragment: ScreenFragment) {
     // a haystack — and this is built for hundreds. A filter field over the same data, rebuilt in
     // place as you type: on e-ink a full redraw per keystroke is still cheaper than any incremental
     // scheme, and there is no diffing to get wrong. Matches the iPad's `.searchable` index.
-    val dp = ctx.resources.displayMetrics.density
-    fun px(v: Int) = (v * dp).toInt()
-    val rows = android.widget.LinearLayout(ctx).apply { orientation = android.widget.LinearLayout.VERTICAL }
-    val field = android.widget.EditText(ctx).apply {
-        hint = "Find a tag"; isSingleLine = true; textSize = 15f
-    }
-    val col = android.widget.LinearLayout(ctx).apply {
-        orientation = android.widget.LinearLayout.VERTICAL
-        setPadding(px(16), px(8), px(16), px(8))
-        addView(field)
-        addView(rows)
-    }
-    lateinit var dialog: androidx.appcompat.app.AlertDialog
-
-    fun render(query: String) {
-        rows.removeAllViews()
-        val q = query.trim().lowercase()
-        val shown = if (q.isEmpty()) tags else tags.filter { it.tag.contains(q) }
-        if (shown.isEmpty()) {
-            rows.addView(android.widget.TextView(ctx).apply {
-                text = "Nothing matches “$query”."
-                textSize = 14f; setTextColor(0xFF888888.toInt()); setPadding(px(4), px(12), px(4), px(4))
-            })
-            return
+    //
+    // That pattern is now [showDirectoryList] and every directory in this file shares it — this one
+    // is where it came from, so it uses it rather than keeping the original hand-rolled copy around
+    // to drift from its own children.
+    showDirectoryList(
+        fragment,
+        title = "Tags",
+        searchHint = "Find a tag",
+        empty = "No #tags yet.",
+    ) { query, redraw ->
+        val sort = directorySort(ctx)
+        val rows = mutableListOf<DirRow>()
+        rows += DirRow("⇅", "Sort · ${sort.label}", "date → name → kind", closes = false) {
+            setDirectorySort(ctx, sort.next()); redraw()
         }
-        for (t in shown) {
-            rows.addView(android.widget.TextView(ctx).apply {
-                text = "#${t.tag}  ·  ${t.occurrences.size}"
-                textSize = 16f; setTextColor(0xFF000000.toInt())
-                setPadding(px(4), px(10), px(4), px(10))
-                setBackgroundResource(android.R.drawable.list_selector_background)
-                setOnClickListener { dialog.dismiss(); showTagPages(fragment, t) }
-            })
+        val q = query.lowercase()
+        val shown = tags.filter { q.isEmpty() || it.tag.contains(q) }
+        // Tags are one kind, so "by kind" has nothing to group — it keeps the store's own order,
+        // which is most-used first, and that is the ordering this index has always opened with.
+        val ordered = when (sort) {
+            DirectorySort.NAME -> shown.sortedBy { it.tag }
+            DirectorySort.DATE -> shown.sortedByDescending { t -> t.occurrences.maxOf { it.first } }
+            DirectorySort.KIND -> shown
         }
-        com.toolsboox.ot.LedgerFonts.applyTree(rows)
+        if (ordered.isEmpty()) rows += DirRow("", "Nothing matches “$query”.", null, 1, closes = false) {}
+        for (t in ordered) {
+            rows += DirRow("#", t.tag, "${t.occurrences.size} pages") { showTagPages(fragment, t) }
+        }
+        rows += DirRow("‹", "All of the Ledger…") { showLedgerRootDirectory(fragment) }
+        rows
     }
-
-    field.addTextChangedListener(object : android.text.TextWatcher {
-        override fun afterTextChanged(s: android.text.Editable?) { render(s?.toString().orEmpty()) }
-        override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-        override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-    })
-    render("")
-
-    dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-        .setTitle("Tags")
-        .setView(android.widget.ScrollView(ctx).apply { addView(col) })
-        .setNegativeButton("Close", null)
-        .create()
-    fragment.showModal(dialog)
 }
 
 /** One tag's pages, newest first — tap to jump straight to that day's page, landing on the tag's
