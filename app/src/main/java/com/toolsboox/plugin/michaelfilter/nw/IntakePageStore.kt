@@ -31,12 +31,23 @@ object IntakePageStore {
 
     /**
      * The four panels in page order: kind key to panel title.
+     *
+     * `"educate"` is a LEGACY STORAGE KEY, not a description — and the fourth quarter is EMAIL.
+     * [com.toolsboox.plugin.calendar.ot.CalendarDayPageIntake] has drawn it as `IntakePanel(
+     * "educate", "EMAIL", …)` since starred mail started landing there, and the Later List's fourth
+     * lane says "📧 Email" for the same reason (see
+     * [com.toolsboox.plugin.feeds.nw.LaterFeed.LANES]). Ask's "Educate me" lookups land in the same
+     * lane, which is where the key's name came from, but mail is the bulk of it now. When the
+     * storage key and the DRAWN label disagree, the drawn label is the one that was learned — so
+     * the title here is corrected to match the page rather than left as the third different word
+     * for one quarter. (The key itself never moves: it is on disk in every intake day file, on both
+     * forks, and renaming it would orphan every link ever filed there.)
      */
     val PANELS = listOf(
         "read" to "THE READ",
         "watch" to "THE WATCH",
         "listen" to "THE LISTEN",
-        "educate" to "EDUCATE ME"
+        "educate" to "EMAIL"
     )
 
     private val moshi: Moshi = Moshi.Builder().build()
@@ -76,10 +87,25 @@ object IntakePageStore {
 
     private fun remotePath(date: LocalDate) = "intake/intake-$date.json"
 
-    /** Union the non-blank lines of [a] and [b], preserving order (a first) and de-duplicating. */
-    private fun unionLines(a: String, b: String): String {
+    /**
+     * Union the non-blank lines of [a] and [b], preserving order (a first) and de-duplicating —
+     * minus anything [unfileLink] has taken off the list.
+     *
+     * The union is what stops two devices clobbering each other's filings, and it is also what
+     * would resurrect a deleted link: the remote copy still holds the line the delete just removed,
+     * so a plain union hands it straight back. [removed] is the tombstone set, and a line naming a
+     * tombstoned URL is dropped from BOTH sides — which also means the merged page pushed back up
+     * no longer carries it, so the deletion propagates to the other devices instead of fighting
+     * them. Nothing else is filtered: a tombstone is only ever written by an explicit delete.
+     */
+    private fun unionLines(a: String, b: String, removed: Set<String>): String {
         val seen = LinkedHashSet<String>()
-        for (s in (a + "\n" + b).split("\n")) { val t = s.trim(); if (t.isNotEmpty()) seen.add(t) }
+        for (s in (a + "\n" + b).split("\n")) {
+            val t = s.trim()
+            if (t.isEmpty()) continue
+            if (removed.any { t.contains(it) }) continue
+            seen.add(t)
+        }
         return seen.joinToString("\n")
     }
 
@@ -89,12 +115,19 @@ object IntakePageStore {
      * is a free note, so the longer text wins; delivered markers union; structured sections keep the
      * non-blank side. Stops the old push-only clobber where the last device to save wiped the other.
      */
-    private fun merge(local: IntakePageData, remote: IntakePageData): IntakePageData {
+    private fun merge(context: Context, local: IntakePageData, remote: IntakePageData): IntakePageData {
         val m = IntakePageData()
-        m.readTyped = unionLines(local.readTyped, remote.readTyped)
-        m.watchTyped = unionLines(local.watchTyped, remote.watchTyped)
-        m.listenTyped = unionLines(local.listenTyped, remote.listenTyped)
-        m.educateTyped = if (remote.educateTyped.length > local.educateTyped.length) remote.educateTyped else local.educateTyped
+        val removed = LaterRemovals.all(context)
+        m.readTyped = unionLines(local.readTyped, remote.readTyped, removed)
+        m.watchTyped = unionLines(local.watchTyped, remote.watchTyped, removed)
+        m.listenTyped = unionLines(local.listenTyped, remote.listenTyped, removed)
+        // Educate is the odd lane: longer-wins, because it is a free note as well as a link lane.
+        // A delete inside it still has to stick, so the winning side is line-filtered afterwards
+        // rather than unioned — the note keeps its shape, the deleted link doesn't come back.
+        val educate = if (remote.educateTyped.length > local.educateTyped.length) remote.educateTyped else local.educateTyped
+        m.educateTyped =
+            if (removed.isEmpty()) educate
+            else educate.split("\n").filterNot { l -> removed.any { l.contains(it) } }.joinToString("\n")
         m.deliveredLinkUrls = (local.deliveredLinkUrls + remote.deliveredLinkUrls).distinct().toMutableList()
         m.deliveredEducateNote = local.deliveredEducateNote.ifBlank { remote.deliveredEducateNote }
         for (k in (local.sections.keys + remote.sections.keys)) {
@@ -127,16 +160,75 @@ object IntakePageStore {
      *  so links filed on another device show up here. */
     fun pullLatest(context: Context, date: LocalDate) = mergeFromRemote(context, date)
 
-    private fun mergeFromRemote(context: Context, date: LocalDate) {
+    /**
+     * ASK THE SERVER WHICH DAYS EXIST, then fetch the ones this device hasn't got.
+     *
+     * The Later List reads a 120-day window of LOCAL intake files while the refresh sweep pulled a
+     * 15-day window of remote ones, and that asymmetry is invisible until it isn't: a device that
+     * has never filed a link of its own — a fresh Boox beside an iPhone and an iPad that do the
+     * filing — has no local files at all, so it can only ever show the last fortnight, and shows an
+     * EMPTY LIST if he happened not to file anything in it. The list calls itself "the WHOLE
+     * backlog, a finite feed to clear" in its own comment; a fortnight cannot serve a four-month
+     * read, and no choice of two numbers ever makes a guess correct.
+     *
+     * So stop guessing. `intake/` is a flat collection of `intake-YYYY-MM-DD.json`, and the WebDAV
+     * service can list it in one round trip (`propfind` walks with Depth:1 where the server refuses
+     * Depth:infinity, which stock Apache does — see its own comment). The listing IS the answer to
+     * "which days are there", and it costs one request to get instead of a hundred and twenty
+     * speculative GETs for days that mostly do not exist.
+     *
+     * A day is fetched when this device has no copy, OR when the server's copy is NEWER than ours.
+     * "Missing" alone would not have been enough: the old short sweep wrote a file for every day it
+     * looked at, including the empty ones, so a device could hold a zero-link page for a day the
+     * others have since filled — present on disk, skipped forever, and invisible in the list. The
+     * modification time is already in the listing, so this costs nothing extra to ask. (It trusts
+     * two clocks to roughly agree. They are both his; a skew re-fetches a page or defers it until
+     * the next real change, neither of which loses anything.)
+     *
+     * Days that land here are pulled WITHOUT pushing back — this device is catching up on what the
+     * others wrote, and echoing an untouched page at the server is a PUT that says nothing.
+     *
+     * @return true when at least one day file arrived or changed — the caller redraws on that, and
+     *         on nothing else.
+     */
+    fun pullMissingDays(context: Context, window: Long = 120L): Boolean {
+        val svc = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.service(context) ?: return false
+        // null means the LISTING failed, which is not the same as "the server has nothing" — the
+        // caller keeps whatever it has rather than concluding the backlog is empty. (Same
+        // distinction CalendarWebDavSyncService draws, and for the same reason.)
+        val listing = runCatching { svc.propfind("intake/") }.getOrNull() ?: return false
+        val oldest = LocalDate.now().minusDays(window)
+        var landed = false
+        for (entry in listing) {
+            val name = entry.remotePath.substringAfterLast('/')
+            val date = runCatching {
+                LocalDate.parse(name.removePrefix("intake-").removeSuffix(".json"))
+            }.getOrNull() ?: continue
+            if (date.isBefore(oldest)) continue
+            val local = fileFor(context, date)
+            if (local.exists() && entry.lastModified in 1..local.lastModified()) continue
+            val before = runCatching { local.readText(Charsets.UTF_8) }.getOrNull().orEmpty()
+            mergeFromRemote(context, date, push = false)
+            val after = runCatching { local.readText(Charsets.UTF_8) }.getOrNull().orEmpty()
+            if (after != before) landed = true
+        }
+        return landed
+    }
+
+    private fun mergeFromRemote(context: Context, date: LocalDate, push: Boolean = true) {
         val adapter = moshi.adapter(IntakePageData::class.java)
         val localText = fileFor(context, date).let { if (it.exists()) it.readText(Charsets.UTF_8) else "" }
         val local = runCatching { adapter.fromJson(localText) }.getOrNull() ?: IntakePageData()
         val remoteText = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.pull(context, remotePath(date))
         val remote = remoteText?.let { runCatching { adapter.fromJson(it) }.getOrNull() }
-        val merged = if (remote == null) local else merge(local, remote)
+        val merged = if (remote == null) local else merge(context, local, remote)
         val mergedJson = adapter.toJson(merged)
+        // Nothing there and nothing here: don't mint an empty day file. It would satisfy the
+        // "already on disk" check in [pullMissingDays] forever after, so a day that later gained a
+        // link on another device would never be fetched again.
+        if (remote == null && localText.isEmpty()) return
         if (mergedJson != localText) runCatching { fileFor(context, date).writeText(mergedJson, Charsets.UTF_8) }
-        com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.push(context, remotePath(date), mergedJson)
+        if (push) com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.push(context, remotePath(date), mergedJson)
     }
 
     /**
@@ -153,6 +245,10 @@ object IntakePageStore {
     fun fileLink(context: Context, date: LocalDate, kind: String, url: String, title: String?,
                  excerpt: String? = null, image: String? = null) {
         val data = load(context, date)
+        // Filing a link is an explicit act, so it OUTRANKS an old deletion of the same URL: without
+        // this, a link he removed months ago could never be filed again — the merge would quietly
+        // drop it on the next sync and the row would just never appear.
+        LaterRemovals.forget(context, url)
         val entry = listOfNotNull(title?.trim()?.takeIf { it.isNotEmpty() }, url.trim()).joinToString(" — ")
         val existing = data.typedFor(kind).trim()
         data.setTypedFor(kind, if (existing.isEmpty()) entry else "$existing\n$entry")
@@ -162,6 +258,54 @@ object IntakePageStore {
         publish(context, kind, url, title ?: "")
         cacheArticle(context, url)
         if (excerpt.isNullOrBlank() && image.isNullOrBlank()) fetchLinkMeta(context, date, url)
+    }
+
+    /**
+     * Take a filed link back off the Later List.
+     *
+     * A later-list entry is a LINE inside an intake day page — that is the whole storage model — so
+     * removing one means rewriting that day's lane without it. Matched on the line's URL when it
+     * has one and on the whole line when it doesn't, because the title half is RECONSTRUCTED when
+     * the row is built ([com.toolsboox.plugin.feeds.nw.LaterFeed] strips the URL out of the line and
+     * falls back to the saved meta title or the host), so the title is not reliably what is on disk.
+     * The URL is.
+     *
+     * Michael, 07-30: "I would like to be able to star items from the later list tho and delete
+     * them." Deleting drops the link's meta and its star with it — a link you removed should not
+     * come back wearing its old face if you file it again a year later.
+     *
+     * AND IT LEAVES A TOMBSTONE, which the iPad twin does not need and this fork does. Over there a
+     * delete rewrites the file and the union-merge only re-adds the line on the next cross-device
+     * pull. Here [save] kicks [syncWebDav] on every write, so the pull-merge-push would run seconds
+     * later, union the deleted line back out of the remote copy and put the row on screen again
+     * before the list had finished redrawing — a delete that undoes itself is worse than no delete.
+     * [LaterRemovals] is that record, and [merge] consults it; re-filing the same URL clears it (see
+     * [fileLink]), so a deliberate second filing is never eaten by an old deletion.
+     *
+     * @return true when a line actually went; false when it had already gone (a stale tap on a list
+     *         that has since been reloaded), which should be silent rather than an error.
+     */
+    fun unfileLink(context: Context, date: LocalDate, kind: String, url: String?, title: String): Boolean {
+        val data = load(context, date)
+        val lines = data.typedFor(kind).split("\n")
+        val link = url?.trim()?.takeIf { it.isNotEmpty() }
+        val kept = lines.filter { raw ->
+            val line = raw.trim()
+            when {
+                line.isEmpty() -> true
+                link != null -> !line.contains(link)
+                else -> line != title
+            }
+        }
+        if (kept.size == lines.size) return false
+        data.setTypedFor(kind, kept.joinToString("\n").trim())
+        if (link != null) {
+            data.linkMeta.remove(link)
+            LaterRemovals.remember(context, link)
+            LaterStars.set(context, link, starred = false)
+        }
+        save(context, date, data)
+        return true
     }
 
     /** The saved presentation metadata for a filed [url] on [date]'s page (null when none). */
@@ -383,5 +527,90 @@ object IntakePageStore {
         }
 
         return enqueued
+    }
+}
+
+/**
+ * WHICH FILED LINKS ARE STARRED.
+ *
+ * The Later List shipped without a star on both forks, and the reason was honest: a later-list
+ * entry is a LINE inside an intake day page, so there was nowhere to put the flag, and the rule
+ * here is that a gesture which would write nowhere isn't offered at all. Michael's answer was to
+ * make the place exist — "I would like to be able to star items from the later list tho and delete
+ * them."
+ *
+ * A SIDECAR rather than a new field on the line, and that is the load-bearing decision: the line's
+ * format is shared with the iPad, which reads these same day files off WebDAV and would not know
+ * what to do with a decorated entry. Whatever either fork writes into that lane, the other has to
+ * be able to read as "title — url" and nothing else. So the flag lives beside the file, never in it.
+ *
+ * Keyed on the URL, so a link filed twice on different days is one thing with one star — which is
+ * what the row builder's dedup already assumes. Local-only, like the iPad's `later-stars.json`: a
+ * star here is triage inside a list you keep on the device you are keeping it on, and syncing it
+ * would mean a third sidecar on the wire for a flag no other surface reads.
+ */
+object LaterStars {
+
+    private fun prefs(context: Context) =
+        context.getSharedPreferences("ledger_later_prefs", Context.MODE_PRIVATE)
+
+    private const val KEY = "starred_links"
+
+    /** Defensive copy: [android.content.SharedPreferences.getStringSet] hands back the live set and
+     *  explicitly forbids mutating it. */
+    private fun all(context: Context): MutableSet<String> =
+        HashSet(prefs(context).getStringSet(KEY, emptySet()) ?: emptySet())
+
+    fun isStarred(context: Context, link: String): Boolean {
+        val key = link.trim()
+        return key.isNotEmpty() && all(context).contains(key)
+    }
+
+    fun set(context: Context, link: String, starred: Boolean) {
+        val key = link.trim()
+        if (key.isEmpty()) return
+        val s = all(context)
+        if (starred) s.add(key) else s.remove(key)
+        prefs(context).edit().putStringSet(KEY, s).apply()
+    }
+}
+
+/**
+ * WHICH FILED LINKS HAVE BEEN DELETED — the tombstones that make a delete stick.
+ *
+ * See [IntakePageStore.unfileLink] for why this exists at all: every save on this fork pushes the
+ * day's page through a pull-merge-push, and the merge unions lines, so a line removed locally comes
+ * straight back out of the remote copy. A tombstone is the only thing that can tell "this line is
+ * gone on purpose" apart from "this line hasn't reached this device yet", which is exactly what a
+ * union cannot distinguish on its own.
+ *
+ * Deliberately NOT capped or expired. The set holds one URL string per link he has ever deleted,
+ * which after years of use is kilobytes, and the failure mode of dropping an old tombstone is the
+ * worst one this whole feature has: a link he threw away reappearing at the top of the list with no
+ * explanation. Re-filing the URL is the intended way out (see [IntakePageStore.fileLink]) — a
+ * deliberate act, undoing a deliberate act.
+ */
+object LaterRemovals {
+
+    private fun prefs(context: Context) =
+        context.getSharedPreferences("ledger_later_prefs", Context.MODE_PRIVATE)
+
+    private const val KEY = "removed_links"
+
+    fun all(context: Context): Set<String> =
+        HashSet(prefs(context).getStringSet(KEY, emptySet()) ?: emptySet())
+
+    fun remember(context: Context, link: String) {
+        val key = link.trim()
+        if (key.isEmpty()) return
+        val s = HashSet(all(context)); s.add(key)
+        prefs(context).edit().putStringSet(KEY, s).apply()
+    }
+
+    fun forget(context: Context, link: String) {
+        val key = link.trim()
+        if (key.isEmpty()) return
+        val s = HashSet(all(context))
+        if (s.remove(key)) prefs(context).edit().putStringSet(KEY, s).apply()
     }
 }

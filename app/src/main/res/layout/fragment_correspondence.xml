@@ -5,6 +5,44 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
+    <!-- Nav line: the ▦ hub, then the real Almanac strip (the same 1404×140 navigator the day page
+         draws). Correspondence was the one list surface with neither — its only way out was the ✕,
+         which pops the back stack and therefore lands on the almanac day page nearly every time,
+         because that is where you opened the directory from. One list surface without the house key
+         every other one carries is a room you can only leave backwards.
+
+         The strip here FILTERS the page rather than jumping into the calendar (CalendarNavBarHost
+         does that whenever the host passes onSelectPeriod, exactly as Mail and the Feed do).
+         Michael: "the correspondence top nav goes to the almanac instead of a correspondence
+         filter"; asked which of two candidate screens he meant, he confirmed this one. -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp"
+        android:paddingTop="6dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <ImageButton
+            android:id="@+id/correspondence_hub_button"
+            android:src="@drawable/ic_bar_sections"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:scaleType="fitCenter"
+            android:padding="3dp"
+            android:layout_marginEnd="4dp"
+            android:contentDescription="@string/go_to_title"
+            android:layout_width="32dp"
+            android:layout_height="32dp"/>
+
+        <ImageView
+            android:id="@+id/correspondence_navigator"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="52dp"
+            android:scaleType="fitXY"
+            android:contentDescription="@null"/>
+    </LinearLayout>
+
     <LinearLayout
         android:orientation="horizontal"
         android:gravity="center_vertical"

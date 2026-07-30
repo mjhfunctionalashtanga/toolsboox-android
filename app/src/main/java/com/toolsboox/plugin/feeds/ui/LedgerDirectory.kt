@@ -85,9 +85,10 @@ fun ledgerDirectoryFolders(
 
     // Jump to a Feed Ledger view (feed / stars / read / later, optionally by kind) by setting the
     // selection and navigating — the same wiring across every surface.
-    fun openFeed(mode: String, kind: String?) {
+    fun openFeed(mode: String, kind: String?, laterLane: String? = null) {
         FeedSelection.filterFeedTitle = null
         FeedSelection.mode = mode; FeedSelection.kind = kind
+        FeedSelection.laterLane = laterLane
         // Open the feed panel (directory) on arrival too — reaching a feed view from the hub should
         // show the same left panel you'd have coming from within the feed list (Later especially).
         FeedSelection.openDirectory = true
@@ -168,8 +169,18 @@ fun ledgerDirectoryFolders(
             "📖  The Read" to { openFeed("feed", "read") },
             "📺  The Watch" to { openFeed("feed", "watch") },
             "🎧  The Listen" to { openFeed("feed", "listen") },
+            // 🔖 Later List sits directly under 🎧 The Listen — Michael: "I'd love later list to
+            // appear in feeds like a feed instead of this, instead under '🎧 The Listen' like
+            // '🔖 Later List'." It's the end of the media block, above Starred and the rest,
+            // because it's the one list here you KEEP rather than a lens over what arrived.
+            // Its four lanes ride under it, indented like the mail accounts under Mail: this hub is
+            // a flat list of doors, so an accordion isn't available, and a door per lane costs one
+            // row each and saves a navigation plus a fold on the other side.
+            "🔖  Later List" to { openFeed("later", null) },
+        ) + com.toolsboox.plugin.feeds.nw.LaterFeed.LANES.map { (lane, label, _) ->
+            "    $label" to { openFeed("later", null, lane) }
+        } + listOf(
             "⭐  Starred" to { openFeed("stars", null) },
-            "🔖  Later" to { openFeed("later", null) },
             // The rest of the feed drawer's views, here too so the hub and the drawer agree
             // (they're sidebar rows on iPad). "pickings" and "local" ride the same one-shot
             // FeedSelection mode the lens rows use; Smart Feeds are each their own saved

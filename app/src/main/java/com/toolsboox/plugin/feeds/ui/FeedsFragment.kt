@@ -256,7 +256,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
 
         // Honour the view/kind chosen from the hub (feed / stars / later, + read/watch/listen).
         val (m, k) = FeedSelection.consume()
-        mode = m; kindFilter = k
+        mode = m; kindFilter = k; laterLane = FeedSelection.consumeLaterLane()
+        // Arriving on a Later lane from the hub opens the folder it belongs to, so the drawer shows
+        // where you are instead of a folded row and a list you can't account for.
+        if (laterLane != null) a11y.edit().putBoolean("feeds_later_open", true).apply()
         refresh()
 
         // The article's ☰ asks the list to pop the RSS directory open on return.
@@ -278,6 +281,16 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     private var slimFeedFilter: String? = null
     /** Optional read/watch/listen lens. */
     private var kindFilter: String? = null
+    /**
+     * Which Later List LANE is showing (null = the whole list), when `mode == "later"`.
+     *
+     * Its own field rather than reusing [kindFilter], even though three of the four lanes share
+     * their names with the media lenses. A lane is where a link was FILED — a fact on disk, one
+     * field of one day file — while [kindFilter] is a guess the row makes about itself from its
+     * category and its URL. Folding them together would mean the 📧 Email lane (whose links are
+     * mostly articles) either vanished from its own lens or dragged half The Read in with it.
+     */
+    private var laterLane: String? = null
     /** Sidebar search scope: "all" · "feed" (the selected feed) · "category" (the current lens). */
     private var searchScope = "all"
     /** Selected local subscription (null = all local) when mode == "local". */
@@ -680,7 +693,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     }
 
     /** Later List: the read-later links intaked across recent days (MichaelFilter intake
-     *  sidecar), as feed rows — read/watch/listen by the intake kind. */
+     *  sidecar), as feed rows — narrowed to one lane when the drawer's 🔖 folder is drilled into. */
     private fun loadLaterList() {
         binding.progress.visibility = View.VISIBLE
         binding.emptyText.visibility = View.GONE
@@ -690,19 +703,35 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             val local = withContext(Dispatchers.IO) { gatherLaterList() }
             binding.progress.visibility = View.INVISIBLE
             allEntries = local
-            // The Later list is the WHOLE backlog ("a finite feed to clear"), NOT filtered by
-            // the timeline nav — nav-filtering it hid every item saved on a day other than the
-            // one the navigator happened to sit on.
-            val shown = applyKind(local)
-            adapter.submit(shown)
-            if (shown.isEmpty()) showEmpty(getString(R.string.feeds_later_empty))
+            // The Later list is the WHOLE backlog ("a finite feed to clear"), NOT filtered by the
+            // timeline nav — nav-filtering it hid every item saved on a day other than the one the
+            // navigator happened to sit on — and NOT filtered by the media lens either. The lens
+            // asks a row to guess its own medium from its category and URL; the Later List's axis
+            // is the LANE it was filed into, which is a fact, and which `gatherLaterList` has
+            // already applied. Running both meant arriving here with 🎧 The Listen open and being
+            // told the whole list was empty.
+            adapter.submit(local)
+            if (local.isEmpty()) showEmpty(laterEmptyText())
             else binding.emptyText.visibility = View.GONE
 
-            // Then pull other devices' intake in the background and refresh if new links arrived.
+            // Then catch up on the other devices' filings in the background, and put them on screen
+            // if any arrived. TWO SWEEPS, because they answer different questions: the recent one
+            // asks "what changed on days I already have" (a round trip each, so it stays short),
+            // and the listing one asks "which days exist at all that I have never seen" — which is
+            // the only question that can help a device where he does no filing. See
+            // IntakePageStore.pullMissingDays for why a second date window was not the answer.
             withContext(Dispatchers.IO) {
                 val ctx = requireContext().applicationContext
+                val store = com.toolsboox.plugin.michaelfilter.nw.IntakePageStore
                 for (d in 0L..14L) runCatching {
-                    com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.pullLatest(ctx, java.time.LocalDate.now().minusDays(d))
+                    store.pullLatest(ctx, java.time.LocalDate.now().minusDays(d))
+                }
+                // Single-flight with a floor: this method runs again on every reload and every
+                // lane tap, and the sweep is a PROPFIND plus a GET per unseen day. A completed
+                // sweep buys a few minutes of quiet rather than re-running because he tapped 📧.
+                if (System.currentTimeMillis() - lastLaterBackfillMs > 5 * 60_000L) {
+                    lastLaterBackfillMs = System.currentTimeMillis()
+                    runCatching { store.pullMissingDays(ctx) }
                 }
             }
             if (mode == "later" && isAdded) {
@@ -713,13 +742,31 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     local.map { it.url + "·" + it.title }.toSet()
                 if (changed) {
                     allEntries = merged
-                    val m = applyKind(merged)
-                    adapter.submit(m)
-                    if (m.isEmpty()) showEmpty(getString(R.string.feeds_later_empty))
+                    adapter.submit(merged)
+                    if (merged.isEmpty()) showEmpty(laterEmptyText())
                     else binding.emptyText.visibility = View.GONE
                 }
             }
         }
+    }
+
+    /** When the Later List's listing sweep last ran — see [loadLaterList]. On the fragment rather
+     *  than in the store because it is a UI-pacing decision, not a fact about the data. */
+    private var lastLaterBackfillMs = 0L
+
+    /**
+     * The Later List's empty state, which has to say WHICH emptiness it means.
+     *
+     * "Nothing on your Later List yet" is true of the whole list and a lie about one lane — a man
+     * who has filed four hundred links and drilled into 📧 Email would be told he has never filed
+     * anything. So a lane names itself and points back at the list it belongs to, which is one tap
+     * up in the same drawer.
+     */
+    private fun laterEmptyText(): String {
+        val lane = laterLane ?: return getString(R.string.feeds_later_empty)
+        val label = com.toolsboox.plugin.feeds.nw.LaterFeed.LANES
+            .firstOrNull { it.first == lane }?.third ?: lane
+        return "Nothing filed under $label yet — the rest of your Later List is one row up in 🔖."
     }
 
     /** Feed Pickings: your pickings boards (that hold grams or ink) surfaced as feed rows. Tapping
@@ -933,52 +980,16 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         else binding.emptyText.visibility = View.GONE
     }
 
-    private fun gatherLaterList(): List<FeedEntry> {
-        val ctx = requireContext().applicationContext
-        val out = mutableListOf<FeedEntry>()
-        val kinds = listOf("read", "watch", "listen", "educate")
-        // Own negative band — see PICKINGS_ID_BASE: a synthetic id must never reach Miniflux.
-        var idSeed = LATER_ID_BASE
-        for (d in 0L..120L) {
-            val date = java.time.LocalDate.now().minusDays(d)
-            val data = com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.load(ctx, date)
-            for (kind in kinds) {
-                // Reversed: lines are appended oldest-first within a day, so walk them backwards to
-                // surface the NEWEST-added link first instead of burying it under earlier saves.
-                data.typedFor(kind).lines().reversed().map { it.trim() }.filter { it.isNotBlank() }.forEach { line ->
-                    val url = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.extractUrls(line).firstOrNull() ?: line
-                    // Presentation metadata saved with the link (entry blurb + image, or the og:
-                    // fetch) — what makes the row informative instead of a bare URL.
-                    val meta = com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.linkMeta(data, url)
-                    // A link saved without a title reads as its host ("nytimes.com"), not the
-                    // raw URL; stripping the URL also drops the " — " separator leftovers.
-                    val title = meta?.get("title")?.takeIf { it.isNotBlank() }
-                        ?: line.replace(url, "").trim().trim('—', '-', ' ')
-                            .ifBlank { runCatching { android.net.Uri.parse(url).host?.removePrefix("www.") }.getOrNull() ?: url }
-                    // Same link re-filed on another day shows once (newest day wins — we walk newest-first).
-                    if (out.any { it.url == url && it.title == title }) return@forEach
-                    // The offline parsed copy saved at file time IS the entry content — the
-                    // article opens in the reader like any other feed entry, no connection
-                    // needed. Older items without a copy get one fetched now (background).
-                    val cached = com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.cachedArticle(ctx, url)
-                    if (cached == null) com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.cacheArticle(ctx, url)
-                    // No offline copy (yet)? The saved excerpt stands in, so the row still says
-                    // what the thing is. The image rides the enclosure slot: FeedEntry.imageUrl
-                    // prefers an inline <img> from the article, then falls back to it.
-                    val excerpt = meta?.get("excerpt")?.takeIf { it.isNotBlank() }
-                    val content = cached ?: excerpt?.let { "<p>$it</p>" }.orEmpty()
-                    // Reuse the RSS kind field via category so applyKind() sees read/watch/listen.
-                    out += FeedEntry(
-                        id = idSeed--, title = title, feedTitle = "Later · $kind",
-                        url = url, author = null, content = content, publishedAt = date.toString(),
-                        starred = false, category = if (kind == "educate") "read" else kind,
-                        enclosureImage = meta?.get("image")?.takeIf { it.startsWith("http") }
-                    )
-                }
-            }
-        }
-        return out
-    }
+    /**
+     * The Later List's rows. The synthesis itself moved to
+     * [com.toolsboox.plugin.feeds.nw.LaterFeed] when the list grew a star and a delete: those two
+     * verbs need a way back from a row to the LINE it was read out of, and a source that has to
+     * remember something is a thing with a name rather than a private helper on a screen. This
+     * stays as the fragment's one door onto it — the lane narrowing rides along, so every caller
+     * gets the same list the drawer is currently pointed at.
+     */
+    private fun gatherLaterList(): List<FeedEntry> =
+        com.toolsboox.plugin.feeds.nw.LaterFeed.rows(requireContext(), laterLane)
 
     private fun showEmpty(text: String) {
         binding.emptyText.text = text
@@ -1604,6 +1615,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val liveToday = navGranularity == "day" && navAnchor == java.time.LocalDate.now()
         mode = if (newMode == "feed" && !liveToday) "read" else newMode
         kindFilter = kind
+        // Leaving the Later List drops its lane with it: a lane is a narrowing of THAT corpus and
+        // means nothing over any other, and a stale one would silently narrow the list the next
+        // time he came back — the drawer saying "Later List" while showing only 📧 Email.
+        if (newMode != "later") laterLane = null
         refresh()
     }
 
@@ -1845,6 +1860,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
      *  can be accidental and this is a bulk change. Marks the same "above" set the scroll-mode
      *  handler does — everything before this row in the current list. */
     private fun markAboveAsRead(entry: FeedEntry) {
+        // A hold on a Later List row means something else entirely. "Mark above as read" is
+        // meaningless here — nothing on disk records whether a filed link has been read, so the
+        // gesture would grey a screenful of rows until the next load and no further. The list's own
+        // two verbs take the gesture instead.
+        if (com.toolsboox.plugin.feeds.nw.LaterFeed.isLater(entry.id)) { showLaterRowMenu(entry); return }
         val list = adapter.current()
         val idx = list.indexOfFirst { it.id == entry.id }
         if (idx <= 0) return
@@ -1857,6 +1877,56 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 adapter.notifyDataSetChanged()
             }
             .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /**
+     * A HOLD on a Later List row — the two verbs the list is FOR: keep this one, or be done with it.
+     *
+     * Michael: "I would like to be able to star items from the later list tho and delete them."
+     * Both shipped hidden, and the reasoning was sound as far as it went — a later-list entry is a
+     * "title — url" LINE inside an intake day file, there is no server entry behind it, and a
+     * gesture that writes nowhere is worse than a missing one. The answer was to build the places
+     * (LaterStars, IntakePageStore.unfileLink) rather than to accept the absence.
+     *
+     * DELETE SITS LAST, and that is the iPad's "destructive before the star so a full swipe can't
+     * reach it" translated into this fork's idiom. There are no swipes on a Boox row; the gestures
+     * are a tap (open), a hold (this), and the star glyph. So the accident this menu has to defend
+     * against is a different one: a hold on e-ink can be accidental — the panel is slow enough that
+     * a tap you thought didn't register becomes a long press — and a menu that opens under a finger
+     * already coming down gets its FIRST row chosen. So the first row is the harmless one, and
+     * "I flicked it and it vanished" stays a thing this list cannot do to something you saved on
+     * purpose. Same reason [showFolderHoldMenu] treats the menu itself as the deliberate second
+     * step and asks for no further confirmation: choosing a row does the thing.
+     */
+    private fun showLaterRowMenu(entry: FeedEntry) {
+        val items = arrayOf(
+            if (entry.starred) "☆  Unstar" else "★  Star",
+            "🗑  Remove from Later List"
+        )
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+            .setTitle(entry.title)
+            .setItems(items) { _, which ->
+                if (which == 0) { toggleStar(entry); return@setItems }
+                lifecycleScope.launch {
+                    val removed = withContext(Dispatchers.IO) {
+                        com.toolsboox.plugin.feeds.nw.LaterFeed.remove(requireContext(), entry.id)
+                    }
+                    if (!isAdded) return@launch
+                    // A stale row (the list has since reloaded, or another device removed it first)
+                    // is silent about it rather than raising an error for something already true.
+                    if (!removed) return@launch
+                    // Drop it from the list in place instead of reloading: loadLaterList re-walks
+                    // 120 day files and would flash the whole panel on e-ink to communicate the
+                    // disappearance of one row.
+                    allEntries = allEntries.filterNot { it.id == entry.id }
+                    val shown = adapter.current().filterNot { it.id == entry.id }
+                    adapter.submit(shown)
+                    if (shown.isEmpty()) showEmpty(laterEmptyText())
+                    showMessage("Removed from Later List", binding.root)
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
@@ -2165,7 +2235,24 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             stateChip("○ Read", mode == "read") { switchTo("read", kindFilter) },
             stateChip("⭐ Starred", mode == "stars") { switchTo("stars", kindFilter) }
         )
-        chipPair(stateChip("🔖 Later", mode == "later") { switchTo("later", kindFilter) })
+        // TWO CAPTIONS, because there were two kinds of chip under one heading. The four above
+        // really are view axes — states that COMPOSE with wherever you are browsing. Clear WRITES
+        // to the list, and Intake puts something INTO one. A control that acts, sitting under a
+        // heading that says VIEWS, is the same category confusion the tool pill's star was: a
+        // filter read as "star all of these". So the acting ones are named as what they are rather
+        // than trusted to look different.
+        //
+        // 🔖 Later left this block. It was never a view either — it swapped the corpus — and
+        // READING the Later List now happens at the 🔖 Later List folder down in FEEDS, with the
+        // rest of the feeds, which is what Michael asked for. What stays here is the other half of
+        // that list: the place you put something in. He kept the button where his thumb already
+        // goes ("the current later button can become a later list intake spot"); it just stopped
+        // pretending to be a lens.
+        section("ACTIONS")
+        // One chip to a row, as the Later and Clear chips already were: paired, "Intake a link…"
+        // ellipsizes to "Intake a l…" in a Palma-width drawer, and a control whose name is cut off
+        // is a control you have to press to find out about.
+        chipPair(stateChip("📋 Intake a link…", false) { intakeLinkFromClipboard() })
         // Clear rides with the view controls, not at the bottom of a scroll: it acts on the
         // LIST AS DISPLAYED, so it belongs beside the chips that decide what's displayed.
         // (Undo snackbar included — markAllRead holds the swept ids until it lapses.)
@@ -2179,7 +2266,12 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val a11y = requireContext().getSharedPreferences("ledger_a11y", 0)
         val lensOpen = a11y.getString("feeds_lens_open", "") ?: ""
         // Views the medium filter can ride on; anything else (smart/local/…) snaps back to All.
-        val composable = mode in setOf("feed", "read", "both", "edition", "stars", "later")
+        // "later" is NOT one of them any more. The Later List has its own axis — the four lanes
+        // under 🔖, which are where a link was FILED rather than what a row guesses it is — and
+        // letting the media lens compose on top meant tapping 📖 The Read while standing in the
+        // Later List silently intersected the two and could empty the list outright. Tapping a lens
+        // from here now means what it says: go and read that lens.
+        val composable = mode in setOf("feed", "read", "both", "edition", "stars")
         fun lensRow(emoji: String, title: String, lens: String) {
             val open = lensOpen == lens
             row(
@@ -2293,10 +2385,83 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { setMargins(dpPx(6), dpPx(1), dpPx(6), dpPx(4)) })
         }
+        /**
+         * "🔖 Later List" — the links you filed, as a feed among the feeds.
+         *
+         * Michael: "I'd love later list to appear in feeds like a feed instead of this, instead
+         * under '🎧 The Listen' like '🔖 Later List'." So it sits directly under The Listen, at the
+         * end of the media block and above everything that isn't a lens — not down in MORE with
+         * Pickings and Bluesky, which are sources you look AT; this is the one you keep.
+         *
+         * It borrows the media lenses' SHAPE — a folder that opens a list and drops its children
+         * out beneath — but its children are the intake LANES rather than Miniflux categories. That
+         * grouping is the one thing the list would have lost by being flat, and the drawer already
+         * speaks the axis, so it comes across as folders rather than as headers inside a list. It
+         * costs nothing to serve: a lane is a filter over rows synthesized from the same store, not
+         * four more sources.
+         *
+         * Same dual gesture as a lens: opening it shows the WHOLE Later List and drops its lanes
+         * out; folding it goes back to All, because unlike a lens the folder is not a filter over
+         * the current list — it IS the list, so there is nothing left to be standing in once it
+         * closes.
+         */
+        fun laterFolder() {
+            val open = a11y.getBoolean("feeds_later_open", false)
+            row("🔖  ${if (open) "▾" else "▸"}  Later List", true, mode == "later" && laterLane == null) {
+                if (open) {
+                    a11y.edit().putBoolean("feeds_later_open", false).apply()
+                    laterLane = null
+                    renderDirectory()
+                    if (mode == "later") switchTo("both", null)
+                } else {
+                    a11y.edit().putBoolean("feeds_later_open", true).apply()
+                    laterLane = null
+                    renderDirectory()
+                    switchTo("later", null)
+                }
+            }
+            if (!open) return
+            val box = android.widget.LinearLayout(ctx).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(android.graphics.Color.TRANSPARENT)
+                    setStroke(dpPx(1), com.toolsboox.ot.LedgerTheme.accent(ctx))
+                    cornerRadius = dpPx(8).toFloat()
+                }
+                setPadding(dpPx(2), dpPx(2), dpPx(2), dpPx(4))
+            }
+            for ((lane, label, _) in com.toolsboox.plugin.feeds.nw.LaterFeed.LANES) {
+                val selected = mode == "later" && laterLane == lane
+                box.addView(android.widget.TextView(ctx).apply {
+                    text = label
+                    textSize = 12.5f
+                    setTextColor(0xFF000000.toInt())
+                    if (selected) {
+                        setTypeface(typeface, android.graphics.Typeface.BOLD)
+                        paintFlags = paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
+                    }
+                    setPadding(dpPx(18), dpPx(7), dpPx(6), dpPx(7))
+                    maxLines = 1
+                    isClickable = true
+                    setOnClickListener {
+                        if (binding.articlePane.visibility == View.VISIBLE) closeArticlePane()
+                        laterLane = lane
+                        renderDirectory()
+                        switchTo("later", null)
+                    }
+                })
+            }
+            container.addView(box, android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(dpPx(6), dpPx(1), dpPx(6), dpPx(4)) })
+        }
+
         section("FEEDS")
         lensRow("📖", "The Read", "read")
         lensRow("📺", "The Watch", "watch")
         lensRow("🎧", "The Listen", "listen")
+        laterFolder()
         // Asks & Answers rides with the media folders per Michael's list, but it's a different
         // corpus (the local AskFeedStore Q&A log, mode "asklog") with no Miniflux categories —
         // so it's a plain folder row: no caret, no dropdown, and the view toggle doesn't compose.
@@ -2333,6 +2498,63 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     }
 
     /**
+     * FILE WHATEVER LINK IS ON THE CLIPBOARD, then show the Later List so the row you just made is
+     * the confirmation.
+     *
+     * This is what the 🔖 Later chip became. Michael: "the current later button can become a later
+     * list intake spot." Reading the list moved down to the 🔖 Later List folder with the rest of
+     * the feeds; the button stayed where his thumb already goes and changed jobs, from a door into
+     * the list to the place you put something IN it.
+     *
+     * It PASTES rather than asking, because a link you want to keep is nearly always the thing you
+     * just copied, and the alternative — a text field in the drawer — is a keyboard and two taps on
+     * an e-ink panel to do what the clipboard already knows. No modal confirmation either: the
+     * thing that proves it worked is the list it landed in, one row down in this same drawer, with
+     * the item at the top of it.
+     *
+     * The lane is inferred from the host by [ShareTextParser.inferKind] — the same function the
+     * share-to-file flow uses, so a YouTube link files under 📺 The Watch whether it arrives by
+     * share sheet or by hand, and filing goes through [IntakePageStore.fileLink], the same write
+     * path the share target and both readers take. So a link filed here is dressed with its og:
+     * face, cached for offline reading, published to the personal RSS feed and merged across
+     * devices exactly like every other one. Nothing about it is a second, lesser kind of filing.
+     */
+    private fun intakeLinkFromClipboard() {
+        val ctx = requireContext()
+        val clip = (ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as? android.content.ClipboardManager)?.primaryClip
+        val text = (0 until (clip?.itemCount ?: 0))
+            .mapNotNull { clip?.getItemAt(it)?.coerceToText(ctx)?.toString() }
+            .joinToString("\n")
+        val url = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.extractUrls(text).firstOrNull()
+        if (url == null) {
+            // The honest report, not a shrug: he pressed a button and it has to say what happened.
+            showMessage("Nothing on the clipboard to file — copy a link first.", binding.root)
+            return
+        }
+        val kind = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.inferKind(url)
+        val lane = com.toolsboox.plugin.feeds.nw.LaterFeed.LANES.firstOrNull { it.first == kind }?.third ?: "The Read"
+        // fileLink does network work (the og: fetch, the article cache, the publish) on its own
+        // daemon threads, but the day-file read/merge/write in front of them is disk — off main.
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.fileLink(
+                    ctx.applicationContext, java.time.LocalDate.now(), kind, url, null)
+            }
+            if (!isAdded) return@launch
+            val host = runCatching { android.net.Uri.parse(url).host?.removePrefix("www.") }.getOrNull() ?: "link"
+            showMessage("Filed to $lane · $host", binding.root)
+            // Open the list ON the lane it landed in, and drop the folder open so the lane it chose
+            // is visible rather than merely asserted by a toast that is already fading.
+            requireContext().getSharedPreferences("ledger_a11y", 0)
+                .edit().putBoolean("feeds_later_open", true).apply()
+            laterLane = kind
+            renderDirectory()
+            switchTo("later", null)
+        }
+    }
+
+    /**
      * Opening "the feed directory" now just opens the ONE unified drawer (VIEWS · FEEDS · SEARCH · MORE) —
      * there's no separate accordion to ladder into anymore. Kept as a named entry point because a
      * few arrival paths (onResume, smart-feed-added) call it to pop the drawer open.
@@ -2359,9 +2581,23 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             reflectStar(entry, !entry.starred)
             return
         }
+        if (com.toolsboox.plugin.feeds.nw.LaterFeed.isLater(entry.id)) {
+            // A Later List row stars into its OWN sidecar, and deliberately skips the ceremony
+            // every other star performs. There is no Miniflux entry to POST to and never will be —
+            // that much it shares with the Pickings rows below — but the important half is what it
+            // does NOT do: no logStar, so no Log line, no Star Sort gram, no webhook. A filed link
+            // is already IN the ledger, because filing it is what put it there and minted its gram.
+            // Starring it again is triage inside a list you already keep, not a new act of keeping,
+            // and running the ceremony would drop a DUPLICATE gram on Star Sort for something
+            // already sitting on Star Sort. (See LaterFeed.setStar, which is the only writer.)
+            com.toolsboox.plugin.feeds.nw.LaterFeed.setStar(requireContext(), entry.url, !entry.starred)
+            showMessage(if (entry.starred) R.string.feeds_unstarred else R.string.feeds_starred)
+            reflectStar(entry, !entry.starred)
+            return
+        }
         if (entry.id <= 0) {
-            // Later/Pickings rows have synthetic negative ids and no Miniflux entry: star into
-            // the Ledger corpus only — never send a synthetic id to the server.
+            // Pickings / Bluesky / Ask-log rows have synthetic negative ids and no Miniflux entry:
+            // star into the Ledger corpus only — never send a synthetic id to the server.
             if (!entry.starred) lifecycleScope.launch(Dispatchers.IO) { logStar(entry) }
             showMessage(if (entry.starred) R.string.feeds_unstarred else R.string.feeds_starred)
             reflectStar(entry, !entry.starred)
@@ -2530,7 +2766,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // can never collide with a real Miniflux or local-feed entry. Rows count DOWN
         // from their base (id--), so each band stays disjoint.
         private const val PICKINGS_ID_BASE = -1_100_000_000L
-        private const val LATER_ID_BASE = -1_200_000_000L
+        // (The Later List's band is -1.2e9 and the 99 million below it — it owns its ids now that
+        // it hashes them for stability rather than counting down. See LaterFeed.ID_BASE.)
         private const val BSKY_ID_BASE = -1_300_000_000L
 
         /** How many read posts are worth a request. Small enough that a normal reading session
@@ -2569,6 +2806,9 @@ object FeedSelection {
     var mode: String? = null
     /** Optional read/watch/listen lens to filter to. */
     var kind: String? = null
+    /** Optional Later List LANE ("read"/"watch"/"listen"/"educate") to open narrowed to. Its own
+     *  channel and not [kind]: a lane is where a link was filed, a kind is what a row looks like. */
+    var laterLane: String? = null
 
     /** Set by the article's ☰ so the feed list pops the RSS directory open on return. */
     var openDirectory: Boolean = false
@@ -2578,5 +2818,10 @@ object FeedSelection {
         val m = mode ?: "feed"; val k = kind
         mode = null; kind = null
         return m to k
+    }
+
+    /** Consume the pending Later List lane (one-shot), alongside [consume]. */
+    fun consumeLaterLane(): String? {
+        val l = laterLane; laterLane = null; return l
     }
 }

@@ -1366,6 +1366,31 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             ) { i -> prefs.edit().putString(pillKey, modalSizes[i].first).apply() })
         }
 
+        // FLOATING PILLS — whether they are there at all.
+        //
+        // The mirror of the switch on the wrenches, and on some surfaces the only way BACK: the
+        // feed's wrench lives on the pill it hides. Sitting under PILL SIZE because it answers the
+        // same question one step further — how big, and whether. Nothing else changes: each pill
+        // keeps its own folded/turned state and its parked position, so showing them again puts
+        // every one back exactly as you left it.
+        //
+        // Takes effect as each surface comes back to the front (ScreenFragment.onResume asks), so
+        // a page sitting behind this dialog updates on the way back to it rather than needing the
+        // app restarted.
+        col.addView(sectionLabel("FLOATING PILLS  ·  the tool and paging capsules"))
+        val pillVisibility = listOf(false to "Shown", true to "Hidden")
+        col.addView(chipRow(
+            pillVisibility.map { (hidden, label) ->
+                Triple(label, null as android.graphics.Typeface?) {
+                    com.toolsboox.ui.plugin.ScreenFragment.pillsHidden(ctx) == hidden
+                }
+            }
+        ) { i ->
+            ctx.getSharedPreferences("ledger_widgets", 0).edit()
+                .putBoolean(com.toolsboox.ui.plugin.ScreenFragment.PILLS_HIDDEN, pillVisibility[i].first)
+                .apply()
+        })
+
         refreshPreview()
 
         thisDialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))

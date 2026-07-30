@@ -46,6 +46,82 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     @Inject
     lateinit var calendarDayService: com.toolsboox.plugin.calendar.fi.CalendarDayService
 
+    @Inject
+    lateinit var calendarPatternService: com.toolsboox.plugin.calendar.fi.CalendarPatternService
+
+    // --- The almanac strip as THIS PAGE'S DATE FILTER -----------------------------------------
+    //
+    // Correspondence is a planner page, so the strip belongs above it — but it was not among the
+    // surfaces that filter, so its slots would have fallen through to "go to that almanac page".
+    // Tapping Jul over your replies taking you to the month planner is what Michael was reporting.
+    // Mail and the feed already made this move (over there the strip IS the date filter), so this
+    // is the third surface to join a rule, not a new idea.
+    //
+    // EVERY LEVEL FILTERS, INCLUDING DAY — unlike a notes surface, where the Day slot means "go to
+    // the day page". There is no day-page version of your replies to go to, so Day here can only
+    // mean "the ones that landed that day", which is also what it means on mail and feeds.
+    private var navBar: CalendarNavBarHost? = null
+    // Opening on YEAR, matching iOS's `correspondenceScope`. The pile is small and slow-moving —
+    // a conversation can go a fortnight between turns — so a page that opened on today would open
+    // empty for most of the week and read as broken before you had touched anything.
+    private var navGranularity = "year"
+    private var navAnchor: java.time.LocalDate = java.time.LocalDate.now()
+
+    /**
+     * `[start, end)` of the window the strip is pointing at — the twin of the mailbox's and the
+     * feed's `navWindow()`.
+     */
+    private fun navWindow(): Pair<java.time.LocalDate, java.time.LocalDate> {
+        val a = navAnchor
+        return when (navGranularity) {
+            "week" -> {
+                val s = a.with(java.time.temporal.WeekFields.of(java.util.Locale.getDefault()).dayOfWeek(), 1)
+                s to s.plusWeeks(1)
+            }
+            "month" -> { val s = a.withDayOfMonth(1); s to s.plusMonths(1) }
+            "quarter" -> { val s = a.withDayOfMonth(1).withMonth((a.monthValue - 1) / 3 * 3 + 1); s to s.plusMonths(3) }
+            "year" -> { val s = a.withDayOfYear(1); s to s.plusYears(1) }
+            else -> a to a.plusDays(1)
+        }
+    }
+
+    /** One step of the active granularity — the carets walk the WINDOW's unit, not always a day. */
+    private fun stepByGranularity(date: java.time.LocalDate, dir: Int): java.time.LocalDate =
+        when (navGranularity) {
+            "week" -> date.plusWeeks(dir.toLong())
+            "month" -> date.plusMonths(dir.toLong())
+            "quarter" -> date.plusMonths(3L * dir)
+            "year" -> date.plusYears(dir.toLong())
+            else -> date.plusDays(dir.toLong())
+        }
+
+    /**
+     * Is this item inside the window?
+     *
+     * The bridge hands `created_at` down as the site wrote it ("2026-07-30 14:33:22", or the same
+     * with a T), and every row on this page shows the first 16 characters of it verbatim. So the
+     * filter reads the same first ten: whatever window a row appears to belong to by its own
+     * printed date is the window it is filtered into, with no timezone shifted in between to make
+     * a row disagree with the label beside it.
+     *
+     * An unreadable date PASSES. A reply we can't place is still correspondence, and dropping it
+     * would make the filter quietly lossy in exactly the case nobody would think to check.
+     */
+    private fun inWindow(createdAt: String): Boolean {
+        val d = runCatching { java.time.LocalDate.parse(createdAt.take(10)) }.getOrNull() ?: return true
+        val (start, end) = navWindow()
+        return !d.isBefore(start) && d.isBefore(end)
+    }
+
+    /** The window named the way the strip names it — for the "nothing here" line. */
+    private fun windowLabel(): String = when (navGranularity) {
+        "week" -> "week"
+        "month" -> "month"
+        "quarter" -> "quarter"
+        "year" -> "year"
+        else -> "day"
+    }
+
 
     /** Stack two bitmaps vertically (either may be null) — the attached item above your ink. */
     private fun stackVertically(top: Bitmap?, bottom: Bitmap?): Bitmap? {
@@ -153,6 +229,13 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         spaceId = prefs().getLong("space_id", 25L)
         spaceTitle = prefs().getString("space_title", "MichaelFilter") ?: "MichaelFilter"
         binding.correspondenceClose.setOnClickListener { NavHostFragment.findNavController(this).popBackStack() }
+        // The ▦ hub, top-left as on every other list surface — the same directory accordion the
+        // feed, the mailbox and the garden pages carry. Until now the ✕ was the only way out of
+        // here, and popBackStack lands wherever you came from, which is nearly always the almanac
+        // day page; that is not a route to anywhere else, it is the absence of one.
+        binding.correspondenceHubButton.setOnClickListener {
+            showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
+        }
         binding.correspondenceRefresh.setOnClickListener { load() }
         // Step the reading size. The page re-lays out at the new size rather than being
         // magnified, so the text stays as sharp as the panel can draw it.
@@ -164,7 +247,45 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 android.widget.Toast.LENGTH_SHORT
             ).show()
         }
+
+        // The strip, wired to FILTER: passing onSelectPeriod is what tells CalendarNavBarHost that
+        // a period tap narrows this page instead of leaving for the calendar, and it also makes the
+        // strip tell the truth about the filter — the active level becomes the focal slot, and the
+        // carets step by that level rather than always by a day.
+        navBar = CalendarNavBarHost(
+            requireContext(), binding.correspondenceNavigator, this,
+            onStepDay = { d ->
+                val dir = if (d.isBefore(navAnchor)) -1 else 1
+                navAnchor = stepByGranularity(navAnchor, dir); renderNav(); load()
+            },
+            onSelectPeriod = { g, d -> navGranularity = g; navAnchor = d; renderNav(); load() }
+        )
+        // The host opens filtering surfaces on "day"; this one opens on the year (see navGranularity).
+        navBar?.setGranularity(navGranularity)
+        renderNav()
+
         load()
+    }
+
+    /** Redraw the Almanac strip for the current anchor (dots for filled days), as the feed does. */
+    private fun renderNav() {
+        val bar = navBar ?: return
+        viewLifecycleOwner.lifecycleScope.launch {
+            val root = documentsRoot()
+            val loc = java.util.Locale.getDefault()
+            val (day, pat) = withContext(Dispatchers.IO) {
+                val cd = runCatching { calendarDayService.load(root, navAnchor, null, loc) }.getOrNull()
+                    ?: com.toolsboox.plugin.calendar.da.v2.CalendarDay(
+                        navAnchor.year, navAnchor.monthValue, navAnchor.dayOfMonth, startHour = null)
+                cd to runCatching { calendarPatternService.load(root, navAnchor, loc) }.getOrNull()
+            }
+            // A missing/failed pattern must not kill the strip: render with an empty one rather
+            // than skip. An unrendered CalendarNavBarHost never sets its currentDay, and a nav bar
+            // with no currentDay swallows every touch — the silent way a date filter can render
+            // once and then no-op for good (the mailbox hit exactly this on a fresh year).
+            val safePat = pat ?: com.toolsboox.plugin.calendar.da.v1.CalendarPattern(navAnchor.year, loc).fill()
+            if (isAdded) bar.render(day, safePat)
+        }
     }
 
     /**
@@ -269,7 +390,20 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             })
             return
         }
-        for (post in posts.filterNot { isHidden("community", it.id.toString()) }) {
+        // The strip sits above BOTH tabs, so it filters both. A date control that visibly did
+        // nothing on one of the two piles under it would read as broken on that tab, and the
+        // question "what was said in July" is the same question whichever pile you ask it of.
+        val shown = posts.filterNot { isHidden("community", it.id.toString()) }
+            .filter { inWindow(it.createdAt) }
+        if (shown.isEmpty()) {
+            container.addView(TextView(ctx).apply {
+                text = "Nothing in this ${windowLabel()}.\n\nNo posts in $spaceTitle landed in the " +
+                    "period the strip above is pointing at. Step it, or widen it, to see more."
+                textSize = 15f; setTextColor(0xFF444444.toInt()); setPadding(px(8), px(16), px(8), 0)
+            })
+            return
+        }
+        for (post in shown) {
             val card = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(px(10), px(8), px(10), px(8))
@@ -379,8 +513,26 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         }
 
         // Group by exchange, newest activity first (items arrive newest-first from the bridge).
-        val threads = replies.groupBy { "${it.source}-${it.threadId}" }.values
+        //
+        // THE WINDOW FILTERS THE REPLIES, and then any thread left with none drops out — rather
+        // than testing a thread's own newest activity. A conversation that ran across a month
+        // boundary should show you the half that happened in the month you are looking at, not
+        // vanish because its last word came later.
+        val threads = replies.filter { inWindow(it.createdAt) }
+            .groupBy { "${it.source}-${it.threadId}" }.values
             .sortedByDescending { it.first().createdAt }
+
+        if (threads.isEmpty()) {
+            // There IS correspondence — the window just doesn't hold any of it. Saying so, and
+            // saying WHICH window, is the difference between a filter and a page that looks broken.
+            // The strip above is both the way out and the thing that put you here.
+            container.addView(TextView(ctx).apply {
+                text = "Nothing in this ${windowLabel()}.\n\nNo replies landed in the period the " +
+                    "strip above is pointing at. Step it, or widen it, to see more."
+                textSize = 15f; setTextColor(0xFF444444.toInt()); setPadding(px(8), px(24), px(8), 0)
+            })
+            return
+        }
 
         for (thread in threads) {
             val head = thread.first()

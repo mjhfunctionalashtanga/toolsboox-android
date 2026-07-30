@@ -80,6 +80,31 @@ abstract class ScreenFragment : Fragment() {
         /** The pill shape you last chose, used as the default for a surface that has none yet. */
         private const val PILL_LAST_VERTICAL = "pill_last_vertical"
 
+        /**
+         * PUT THEM ALL AWAY. The master switch over every floating pill on every surface.
+         *
+         * Each pill already folds on its own — tap the handle and it walks the four states — but
+         * folding leaves the handle behind, which is the point of folding and exactly wrong when
+         * the complaint is not about any single pill. Michael, 07-30: "hide pill leaves the
+         * pageskipper. It should hide." The tool capsule and the paging pill are one piece of
+         * furniture to him, and a switch that takes away one of the two is a switch that doesn't
+         * work.
+         *
+         * So this is over ALL of them, in the one seam every pill already passes through
+         * ([makeDraggable]) rather than remembered per-surface. It costs nothing to hide them:
+         * the wrench's rows, the ▦ hub and the almanac strip all still reach everything the pills
+         * do. Kept in `ledger_widgets` beside the per-pill `_collapsed`/`_vertical` keys, which
+         * stay untouched — turning the pills back on restores whatever shape each one was left in
+         * rather than flattening them all.
+         *
+         * The twin of iOS's `DaySkipperChrome.pillsHiddenKey`.
+         */
+        const val PILLS_HIDDEN = "pills_hidden"
+
+        /** The master switch's state, for callers that have a context but no fragment (Settings). */
+        fun pillsHidden(context: android.content.Context): Boolean =
+            context.getSharedPreferences("ledger_widgets", 0).getBoolean(PILLS_HIDDEN, false)
+
         private const val TITLE_SP = 20f        // dialog_go_to's go_to_title
         private const val ROW_SP = 16f          // item_go_to's go_label
         private const val ICON_DP = 22f         // item_go_to's go_icon, square
@@ -229,6 +254,51 @@ abstract class ScreenFragment : Fragment() {
         val handler: (Boolean) -> Boolean = { up -> onVolumeKey(up) }
         registeredVolumeKeyHandler = handler
         (activity as? MainActivity)?.volumeKeyHandler = handler
+        // The switch may have been thrown in Settings while this surface sat in the back stack —
+        // Settings can't reach into a fragment's views, so the fragment asks on the way back in.
+        applyPillsHidden()
+    }
+
+    /**
+     * Every floating pill this surface has wired, so the master switch has something to act on.
+     *
+     * Rebuilt with the view: a fragment that comes back off the back stack inflates fresh views,
+     * and holding the dead ones would mean toggling the pills wrote visibility into a tree nobody
+     * is looking at while the live pills stayed as they were.
+     */
+    private val floatingPills = mutableListOf<View>()
+
+    override fun onDestroyView() {
+        floatingPills.clear()
+        super.onDestroyView()
+    }
+
+    /** The master switch's state on this surface. */
+    protected fun pillsHidden(): Boolean = pillsHidden(requireContext())
+
+    /** Show or hide every floating pill on this surface, per the master switch. */
+    protected fun applyPillsHidden() {
+        val hidden = pillsHidden()
+        for (pill in floatingPills) pill.visibility = if (hidden) View.GONE else View.VISIBLE
+    }
+
+    /**
+     * Throw the master switch and act on it now.
+     *
+     * Offered from the wrench modals, which is where the Boox has always kept this kind of dial —
+     * and mirrored in Settings → Legibility, because the wrench on some surfaces lives ON a pill,
+     * and a control you can only reach through the thing you just hid is no way back at all.
+     */
+    protected fun togglePillsHidden() {
+        val next = !pillsHidden()
+        requireContext().getSharedPreferences("ledger_widgets", 0)
+            .edit().putBoolean(PILLS_HIDDEN, next).apply()
+        applyPillsHidden()
+        showMessage(
+            if (next) "Floating pills hidden — Settings → Legibility brings them back"
+            else "Floating pills shown",
+            null
+        )
     }
 
     override fun onPause() {
@@ -344,6 +414,12 @@ abstract class ScreenFragment : Fragment() {
         // park in a reading gutter without covering the text. (The grip is sized separately by
         // applyGripOrientation, which already scales.)
         applyPillSizing(pill, skip = handle)
+        // …and the same seam is where the master hide switch reaches all of them. Registering the
+        // pill here rather than at each call site is what makes [PILLS_HIDDEN] a promise about the
+        // WHOLE screen: a pill added to some surface next month is covered the day it is written,
+        // because being draggable and being hideable are the same membership.
+        if (floatingPills.none { it === pill }) floatingPills.add(pill)
+        pill.visibility = if (pillsHidden()) View.GONE else View.VISIBLE
         // NOTE: keys are versioned (`_px`/`_py`). The pill redesign changed each pill's
         // anchored home, so positions saved by earlier builds are meaningless and would
         // strand a pill off-screen — discard them by not reading the old `_tx`/`_ty` keys.

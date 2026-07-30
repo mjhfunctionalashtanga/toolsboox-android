@@ -2713,6 +2713,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     // Modal text size lived ONLY on the feed wrench, which is why it couldn't be
                     // found from the page you spend the day on. Same setting, reachable here.
                     GoItem("🎯", "Reset pill positions") { resetPillPositions() },
+                    // BOTH pills, one switch. Each handle already folds its own pill down to a
+                    // grip, which is the right control when you want the tools out of the way and
+                    // the pager still there — and the wrong one when the answer is "the page has
+                    // furniture on it". Michael: "hide pill leaves the pageskipper. It should
+                    // hide." Reachable back from Settings → Legibility, since this wrench is
+                    // itself on a pill.
+                    GoItem(
+                        if (pillsHidden()) "🫧" else "🫥",
+                        if (pillsHidden()) "Show the floating pills" else "Hide the floating pills"
+                    ) { togglePillsHidden() },
                     GoItem("⚙️", "Settings") { binding.toolbarDrawing.toolbarSettings.performClick() }
                 )
             ),

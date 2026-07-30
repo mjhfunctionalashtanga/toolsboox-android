@@ -36,6 +36,30 @@ import com.toolsboox.ui.plugin.LedgerPlayer
  */
 object NowPlayingCard {
 
+    /**
+     * FOLDED AWAY, STILL PLAYING.
+     *
+     * The card sits at the very top of the directory while anything is playing, which is the point
+     * of it — and also the problem: it is a permanent block above the views, the feeds and the
+     * sources, and the only control that got rid of it was ⏹, which stops the audio. So "I want my
+     * drawer back" and "I am done listening" were the same button, and the first one cost you the
+     * second. (Michael's punchlist #17: a hideable now-playing bar.)
+     *
+     * Folded, it is a single speaker button — playback untouched, the transport one tap away.
+     * Persisted, because a card you fold away every time the drawer opens is a card you meant to
+     * fold away; the drawer rebuilds this view on every render, so without persistence the fold
+     * would last until the next tap on anything.
+     *
+     * [KEY_TITLE] is what makes it a fold rather than a dismissal: a NEW thing starting un-folds
+     * the card. You chose to put away the transport for the episode you were listening to, not to
+     * never see a transport again. Kept as the title rather than a flag so it survives the rebuild
+     * — the comparison has to work when the card is being constructed from scratch, which is the
+     * only moment we can see that what is playing has changed.
+     */
+    private const val PREFS = "ledger_now_playing"
+    private const val KEY_FOLDED = "collapsed"
+    private const val KEY_TITLE = "collapsed_title"
+
     private fun dp(context: Context, v: Int) = (v * context.resources.displayMetrics.density).toInt()
 
     /** mm:ss, or h:mm:ss past the hour — podcast episodes routinely cross it. */
@@ -72,6 +96,17 @@ object NowPlayingCard {
     @SuppressLint("ClickableViewAccessibility")
     fun build(context: Context, onStopped: () -> Unit): View {
         val player = LedgerPlayer
+
+        val prefs = context.getSharedPreferences(PREFS, 0)
+        // A different thing is playing than the one that was folded away — show its transport.
+        // Done here, at construction, because that is where the change is visible: the card is
+        // rebuilt whenever the drawer renders, and a fresh build is exactly when we can compare
+        // what is playing now against what was playing when the fold was chosen.
+        val playingTitle = player.title ?: ""
+        if (prefs.getBoolean(KEY_FOLDED, false) && prefs.getString(KEY_TITLE, "") != playingTitle) {
+            prefs.edit().putBoolean(KEY_FOLDED, false).apply()
+        }
+        var folded = prefs.getBoolean(KEY_FOLDED, false)
 
         val titleView = TextView(context).apply {
             text = player.title ?: "Now Playing"
@@ -154,6 +189,12 @@ object NowPlayingCard {
         val chapPrev = chip("⏮") { player.chapterPrev() }.apply { visibility = View.GONE }
         val chapNext = chip("⏭") { player.chapterNext() }.apply { visibility = View.GONE }
         val speedBtn = chip("${player.speed}×") { player.cycleSpeed() }
+        // Assigned once the card and its folded face both exist — the chips below need to call it,
+        // and it needs to know about them.
+        var applyFold: (Boolean) -> Unit = {}
+        // FOLD, next to STOP, so the difference between them is visible at the moment you are
+        // choosing: the chevron takes the card away, the ⏹ takes the audio away.
+        val foldBtn = chip("⌄") { applyFold(true) }
         val stopBtn = chip("⏹") { player.stop() }
 
         val card = SemanticCards.card(context).apply {
@@ -167,7 +208,35 @@ object NowPlayingCard {
             addView(chipRow(chapPrev, back, playPause, fwd, chapNext), LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = dp(context, 4) })
-            addView(chipRow(speedBtn, stopBtn))
+            addView(chipRow(speedBtn, foldBtn, stopBtn))
+        }
+
+        // The folded face: one button, no information beyond "something is playing" and whether it
+        // is running. Right-aligned and WRAP_CONTENT rather than a full-width chip, so what the
+        // fold gives back is visibly the whole width of the pane, not a shorter block in the same
+        // place. Tapping it brings the transport back.
+        val speakerBtn = chip(if (player.isPlaying) "🔊" else "🔈") { applyFold(false) }
+        val foldedRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            addView(speakerBtn, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(dp(context, 3), dp(context, 4), dp(context, 3), dp(context, 5))
+                marginStart = dp(context, 14)
+                marginEnd = dp(context, 14)
+            })
+        }
+        speakerBtn.setPadding(dp(context, 14), dp(context, 6), dp(context, 14), dp(context, 6))
+
+        // ONE view is handed to the drawer, and the fold swaps what is inside it. Returning the
+        // card itself and hiding it would have left the drawer holding a view it could not get
+        // back — the host only rebuilds this on stop, so there would be nothing left to tap.
+        val holder = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            )
         }
 
         // ---- Live state ------------------------------------------------------------------
@@ -213,12 +282,51 @@ object NowPlayingCard {
         val sync = {
             playPause.text = if (player.isPlaying) "⏸" else "▶"
             speedBtn.text = "${player.speed}×"
+            // The folded button carries the one thing it can: running, or paused. Kept in sync
+            // even while the transport is showing, so unfolding never flashes a stale glyph.
+            speakerBtn.text = if (player.isPlaying) "🔊" else "🔈"
             titleView.text = player.title ?: "Now Playing"
             subView.text = player.subtitle ?: ""
             subView.visibility = if (player.subtitle.isNullOrBlank()) View.GONE else View.VISIBLE
-            tickPosition()
+            // The clock is the one thing the folded face doesn't show, so while folded there is
+            // nothing on screen for a tick to move — and on e-ink an update nobody can see is
+            // still a redraw somebody paid for.
+            if (!folded) tickPosition()
         }
-        sync()
+
+        applyFold = { f ->
+            folded = f
+            prefs.edit()
+                .putBoolean(KEY_FOLDED, f)
+                // What was playing when you folded it, so the NEXT thing can un-fold it. Written
+                // on unfold too, so the pairing can never go stale against a title we never saw.
+                .putString(KEY_TITLE, player.title ?: "")
+                .apply()
+            holder.removeAllViews()
+            holder.addView(if (f) foldedRow else card)
+            sync()
+        }
+        applyFold(folded)
+
+        // A downward drag on the TITLE folds it too — the gesture the shape suggests, and the one
+        // a hand reaches for before it finds a chevron. On the title rather than on the card as a
+        // whole because the card sits inside the drawer's scroller: claiming touches across the
+        // whole card to watch for a flick would fight every scroll that happened to start on it.
+        run {
+            var downY = 0f
+            val slop = dp(context, 24)
+            titleView.isClickable = true
+            titleView.setOnTouchListener { _, ev ->
+                when (ev.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> { downY = ev.y; true }
+                    MotionEvent.ACTION_UP -> {
+                        if (!folded && ev.y - downY > slop) applyFold(true)
+                        true
+                    }
+                    else -> false
+                }
+            }
+        }
 
         var stopped = false
         val listener = {
@@ -231,23 +339,26 @@ object NowPlayingCard {
 
         val ticker = object : Runnable {
             override fun run() {
-                if (!card.isAttachedToWindow) return
-                tickPosition()
-                card.postDelayed(this, 1000)
+                if (!holder.isAttachedToWindow) return
+                if (!folded) tickPosition()
+                holder.postDelayed(this, 1000)
             }
         }
-        card.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+        // The HOLDER is what the drawer keeps, so it is the honest attach/detach signal: the card
+        // itself comes and goes as the fold swaps it, and hanging the teardown off that would stop
+        // the clock the first time the transport was folded and never start it again.
+        holder.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) {
                 player.addListener(listener)
-                card.postDelayed(ticker, 1000)
+                holder.postDelayed(ticker, 1000)
             }
             override fun onViewDetachedFromWindow(v: View) {
                 player.removeListener(listener)
-                card.removeCallbacks(ticker)
+                holder.removeCallbacks(ticker)
             }
         })
 
-        return card
+        return holder
     }
 
     /** The compact chapter list: "12:34  Title" rows, tap to seek. Plain dialog items — solid
