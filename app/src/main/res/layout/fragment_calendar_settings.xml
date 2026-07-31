@@ -749,7 +749,10 @@
                  the hint about their long-press bracketed under both. The three that follow are
                  separate errands and sit at the normal spacing, so the grouping is legible from
                  the gaps alone — which is the only grouping device left when you cannot tint a
-                 background or draw a card that floats. -->
+                 background or draw a card that floats.
+                 A SECOND pair joined them: names & structure, built the same way (two buttons, one
+                 hint bracketing both) precisely so the shape says "these two go together" without
+                 anything having to explain it twice. -->
             <TextView
                     style="@style/Settings.SectionHeading"
                     android:id="@+id/data_section_label"
@@ -769,6 +772,28 @@
                     style="@style/Settings.Hint"
                     android:id="@+id/backup_gesture_hint"
                     android:text="@string/calendar_settings_backup_gesture_hint"/>
+
+            <!-- NAMES & STRUCTURE, a second pair built like the first and sitting next to it because
+                 it is the same kind of errand: a small JSON you carry to another device, not an
+                 archive. It goes between the settings pair and the whole-ledger buttons in size
+                 order — settings (a page), names (a file), the ledger (everything) — so the run
+                 reads as a scale rather than an assortment. Its hint is not optional decoration:
+                 it is the only place that says the file holds no page ink. -->
+            <Button
+                    style="@style/Settings.Button"
+                    android:id="@+id/button_export_names"
+                    android:layout_marginTop="20dp"
+                    android:text="@string/calendar_settings_button_export_names"/>
+
+            <Button
+                    style="@style/Settings.Button"
+                    android:id="@+id/button_import_names"
+                    android:text="@string/calendar_settings_button_import_names"/>
+
+            <TextView
+                    style="@style/Settings.Hint"
+                    android:id="@+id/names_hint"
+                    android:text="@string/calendar_settings_names_hint"/>
 
             <Button
                     style="@style/Settings.Button"

@@ -164,6 +164,12 @@
     <!-- The full-ledger zip is on a LONG-PRESS of the two settings buttons, which is unfindable
          without being told. Said out loud rather than left as folklore. -->
     <string name="calendar_settings_backup_gesture_hint">Hold either button above for the whole ledger instead of just the settings: hold Export to write a dated .zip of every page, hold Import to read one back.</string>
+    <!-- The names/structure pair. The hint has one job the labels can't do: say what the file does
+         NOT contain, so it is never mistaken for a full backup. Names and pages live in different
+         files (indexes vs. day JSON), which is invisible from the outside and matters entirely. -->
+    <string name="calendar_settings_button_export_names">Export names &amp; structure</string>
+    <string name="calendar_settings_button_import_names">Import names &amp; structure</string>
+    <string name="calendar_settings_names_hint">Document names, handwritten titles, board names, the record of what you deleted, and how the directory is arranged — one small file. It does NOT hold the ink on the pages: that lives in the day files and only the whole-ledger .zip carries it. Importing merges, so nothing you have made since the backup is overwritten.</string>
     <!-- "Automatic cloud sync" named no cloud, in an app that talks to five: the toolsBoox account
          service, a WebDAV host, Google Calendar, Google Drive and one or more WordPress sites.
          CalendarSyncWorker posts to api.toolsboox.com using the accessToken from the Cloud login,

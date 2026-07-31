@@ -462,6 +462,34 @@ private fun setDirectorySpine(context: android.content.Context, spine: Directory
 }
 
 /**
+ * The directory's own two settings, as the ids the backup file carries — `sort` and `spine`.
+ *
+ * These exist so [com.toolsboox.plugin.calendar.ot.NamesBackup] can carry "how this drawer is
+ * arranged" without a second copy of the preference name or the two enums' id strings living over
+ * in the calendar package. They are the whole of the directory's persistent state that is worth
+ * moving between devices: the open-folder set is where you happened to leave a drawer three minutes
+ * ago, not a shape of the ledger, and restoring one device's half-open drawers onto another would
+ * be noise dressed as a restore.
+ */
+fun ledgerDirectoryState(context: android.content.Context): Pair<String, String> =
+    directorySort(context).id to directorySpine(context).id
+
+/**
+ * Apply a backed-up arrangement. Blank or UNRECOGNISED ids are left alone rather than coerced:
+ * [DirectorySort.of] and [DirectorySpine.of] both fall back to a default for anything they don't
+ * know, so passing an iPad-only spine straight through would silently reset Michael's spine to
+ * "By kind" and call it a restore. Ignoring it leaves the local setting standing, which is the
+ * failure this can afford — a preference is the one thing in a names backup that costs nothing to
+ * set again by hand.
+ */
+fun applyLedgerDirectoryState(context: android.content.Context, sort: String?, spine: String?) {
+    if (!sort.isNullOrBlank() && DirectorySort.entries.any { it.id == sort })
+        setDirectorySort(context, DirectorySort.of(sort))
+    if (!spine.isNullOrBlank() && DirectorySpine.entries.any { it.id == spine })
+        setDirectorySpine(context, DirectorySpine.of(spine))
+}
+
+/**
  * Which folders are open, persisted so the drawer reopens the way you left it — the same argument
  * as persisting the sort. Copied out of the preference: [android.content.SharedPreferences] hands
  * back the live set and mutating it is documented as undefined.

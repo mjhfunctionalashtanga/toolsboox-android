@@ -304,6 +304,66 @@ object LedgerTitleInk {
         }.onFailure { Timber.w(it, "title ink pull failed for $id") }
     }
 
+    // ── Backup ────────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * The surfaces a written title can live on, enumerated.
+     *
+     * [supports] is the same fact as a predicate, and the two must not drift: a fifth surface taught
+     * to hold a face but not added here would be a face the backup silently never carries, which is
+     * the failure mode this whole file exists to prevent. Kept as a list rather than derived from
+     * [supports] because there is nothing to derive it from — `supports` tests a string against four
+     * constants, and a list of those four constants is the honest spelling of the same knowledge.
+     */
+    val SURFACES = listOf(
+        LedgerDocuments.WRITE, LedgerDocuments.SYNTHESIZE, LedgerDocuments.GRID, LedgerDocuments.JOT
+    )
+
+    /** Every manifest row for a surface — headstones included, because a backup that carried only the
+     *  living faces would restore a face the user deleted the moment it was imported anywhere. */
+    fun rows(context: Context, surface: String): List<Face> = manifest(context, surface).values.toList()
+
+    /** The PNG behind a row, or null when this device hasn't got the file (a headstone, or a face
+     *  another device wrote and this one has never pulled). Null is not an error and not a gap in the
+     *  backup: the manifest row still goes, so the id survives and the pixels arrive by sync later. */
+    fun bytes(context: Context, surface: String, id: String): ByteArray? =
+        fileFor(context, surface, id).takeIf { it.exists() }
+            ?.let { runCatching { it.readBytes() }.getOrNull() }
+
+    /**
+     * Fold ONE backed-up row in, newest-[at]-wins, and return whether it changed anything.
+     *
+     * Deliberately the same rule [sync] resolves a remote manifest with, because a restore IS a sync
+     * from a peer that stopped talking on the day the file was written. A row whose local copy is the
+     * same age or newer is dropped on the floor: the device has been used since the backup, and
+     * "restore" must never mean "undo the last three weeks of renaming". That is also what makes the
+     * headstone rule fall out for free rather than needing a case of its own — a `gone` row from the
+     * backup beats an older live row, and loses to a face written since.
+     *
+     * Does NOT call [sync]. A restore hands this hundreds of rows in a loop, and one background
+     * WebDAV round trip per row would be hundreds of round trips racing each other to push
+     * successive half-merged manifests; the importer syncs each touched surface once at the end.
+     */
+    fun restore(context: Context, surface: String, row: Face, png: ByteArray?): Boolean {
+        if (!supports(surface) || row.id.isBlank()) return false
+        synchronized(lock) {
+            val rows = LinkedHashMap(manifest(context, surface))
+            val local = rows[row.id]
+            if (local != null && local.at >= row.at) return false
+            rows[row.id] = row
+            val file = fileFor(context, surface, row.id)
+            runCatching {
+                if (row.gone) file.delete()
+                else if (png != null && png.isNotEmpty()) {
+                    file.parentFile?.mkdirs()
+                    file.writeBytes(png)
+                }
+            }.onFailure { Timber.w(it, "title ink restore failed for ${row.id}") }
+            saveManifest(context, surface, rows.values.toList())
+        }
+        return true
+    }
+
     // ── Internals ─────────────────────────────────────────────────────────────────────────────
 
     /** A face goes up as a PNG, not as JSON. [UltrabridgeWebDavService.uploadBytes] defaults to

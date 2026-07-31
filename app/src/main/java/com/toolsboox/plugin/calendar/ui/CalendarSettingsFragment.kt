@@ -78,6 +78,29 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
+    /**
+     * Picks a names/structure JSON to import. Same picker, same "any file type so JSON always
+     * shows" reasoning as the settings one above.
+     *
+     * The message is [NamesBackup.Restored.summary], not a flat "Imported": this import MERGES, so
+     * the only interesting number is what it actually added, and a device that was already up to
+     * date has to be able to say so. Anything it could not use is logged, never guessed at.
+     */
+    private val importNamesLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri ?: return@registerForActivityResult
+        try {
+            val json = requireContext().contentResolver.openInputStream(uri)!!
+                .bufferedReader().use { it.readText() }
+            val restored = com.toolsboox.plugin.calendar.ot.NamesBackup.importJson(requireContext(), json)
+            showMessage(restored.summary(), binding.root)
+        } catch (e: Exception) {
+            Timber.w(e, "names import failed")
+            showMessage("Import failed", binding.root)
+        }
+    }
+
     /** FULL ledger backup: zip the entire external Documents tree into the file the user picked.
      *  APFS-style cheap it is not, but a personal ledger zips in seconds on device. */
     private val backupCreateLauncher = registerForActivityResult(
@@ -574,6 +597,46 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             }
         }
         binding.buttonImportSettings.setOnClickListener { importSettingsLauncher.launch("*/*") }
+
+        // Names & structure: the same share-a-JSON idiom as the settings pair directly above,
+        // deliberately — see [NamesBackup] for what it carries and, more importantly, what it does
+        // not.
+        //
+        // The inventory rides the share SUBJECT rather than a snackbar, which is the only place it
+        // can actually be read: the chooser goes up in the same breath and covers a
+        // Snackbar.LENGTH_LONG, whereas the subject is the title of the share sheet's own preview.
+        // Worth saying at all because the written-title count is the one figure that can surprise
+        // anyone about the size of the file they are about to mail themselves — names are bytes,
+        // faces are kilobytes each.
+        binding.buttonExportNames.setOnClickListener {
+            try {
+                val ctx = requireContext()
+                val json = com.toolsboox.plugin.calendar.ot.NamesBackup.exportJson(ctx)
+                // Same FileProvider-declared "exports/" root the settings export uses; a directory
+                // that isn't declared in res/xml/file_paths.xml throws "Failed to find configured
+                // root" and the share silently never happens.
+                val dir = java.io.File(ctx.cacheDir, "exports").apply { mkdirs() }
+                val file = java.io.File(dir, "ledger-names.json").apply { writeText(json) }
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    ctx, "${ctx.packageName}.fileprovider", file
+                )
+                val inventory = com.toolsboox.plugin.calendar.ot.NamesBackup.inventory(ctx)
+                val share = android.content.Intent(android.content.Intent.ACTION_SEND)
+                    .setType("application/json")
+                    .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    .putExtra(
+                        android.content.Intent.EXTRA_SUBJECT,
+                        "Ledger names & structure — $inventory · ${file.length() / 1024} KB"
+                    )
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                startActivity(android.content.Intent.createChooser(
+                    share, getString(R.string.calendar_settings_button_export_names)))
+            } catch (e: Exception) {
+                Timber.w(e, "names export failed")
+                showMessage("Export failed", binding.root)
+            }
+        }
+        binding.buttonImportNames.setOnClickListener { importNamesLauncher.launch("*/*") }
 
         // "Import backup" was a dead button (no handler); it now restores a full-ledger backup zip —
         // exactly what its label says, and the same action that was otherwise hidden on the long-press
