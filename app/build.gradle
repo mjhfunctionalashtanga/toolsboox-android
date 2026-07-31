@@ -128,6 +128,15 @@ android {
         }
     }
 
+    sourceSets {
+        // Cross-fork convergence golden files — canonical copies at the repo root, committed
+        // byte-identically to the iOS repo (ledger-ipad-correspondence/convergence-fixtures/).
+        // Exposed as unit-test resources so ConvergenceGoldenTests loads the one committed copy.
+        test {
+            resources.srcDirs += ['../convergence-fixtures']
+        }
+    }
+
     namespace 'com.toolsboox'
     lint {
         disable 'MissingTranslation', 'MissingQuantity', 'GestureBackNavigation'

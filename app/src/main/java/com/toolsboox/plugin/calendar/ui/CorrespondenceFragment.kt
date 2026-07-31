@@ -159,9 +159,9 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     // "Fluent accounts" here = the configured sites in [SiteStore] — one WordPress login per site
     // powers its whole Fluent suite, so the account IS the site. null filter = All sites (both
     // tabs aggregate, rows tagged with their site); an id narrows to one. Persisted in this
-    // page's own prefs, exactly like the posts browser and site-boards keep theirs.
-    private var siteFilter: String? = null
-    private var sitesOpen = false
+    // page's own prefs through the shared [SiteFilterState], exactly like the posts browser and
+    // site-boards keep theirs — one holder, three surfaces, so the pattern can't drift.
+    private val siteState = SiteFilterState("ledger_correspondence")
 
     // The last-fetched rows, kept so fold/unfold of the switcher redraws without a refetch.
     // A null site on a row = the single-site path (no tag to draw).
@@ -171,7 +171,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     private fun allSites() = SiteStore.all(requireContext())
 
     /** All-sites aggregation only exists once there is more than one site to aggregate. */
-    private fun aggregate(): Boolean = context != null && siteFilter == null && allSites().size > 1
+    private fun aggregate(): Boolean = context != null && siteState.filter == null && allSites().size > 1
 
     /**
      * Point every ACTIVE-site consumer (thread reader, replies, likes, grams) at [site] — the
@@ -213,14 +213,11 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     private fun switcherBar(): View = SiteSwitcherBar.build(
         context = requireContext(),
         sites = allSites(),
-        filter = siteFilter,
-        open = sitesOpen,
-        onToggleOpen = { open ->
-            sitesOpen = open; prefs().edit().putBoolean("sites_open", open).apply(); renderCurrent()
-        },
+        filter = siteState.filter,
+        open = siteState.open,
+        onToggleOpen = { open -> siteState.setOpen(requireContext(), open); renderCurrent() },
         onPick = { id ->
-            siteFilter = id
-            prefs().edit().putString("site_filter", id ?: "").apply()
+            siteState.setFilter(requireContext(), id)
             load()
         },
         onManage = { SitesSettingsDialog.show(requireContext()) { load() } },
@@ -338,10 +335,9 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         SiteStore.seedIfNeeded(requireContext())
         SiteStore.seedKnownSites(requireContext())
         migrateSpacePrefs()
-        siteFilter = prefs().getString("site_filter", "")!!.ifBlank { null }
-        sitesOpen = prefs().getBoolean("sites_open", false)
+        siteState.load(requireContext())
         // A filter naming a site that has since been deleted = All.
-        if (siteFilter != null && allSites().none { it.id == siteFilter }) siteFilter = null
+        siteState.dropMissing(allSites().map { it.id })
         // The space choice belongs to the active site; the unqualified prefs are the pre-multi-site
         // fallback so nothing moves for a single-site install.
         val act = SiteStore.active(requireContext())
@@ -432,7 +428,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         val seq = ++loadSeq
         // Narrowed → that site becomes the live one, so the whole proven single-site path (thread
         // reader, replies, likes, grams) targets it unchanged — the SiteBoards seam.
-        siteFilter?.let { id -> focusSite(allSites().firstOrNull { it.id == id }) }
+        siteState.filter?.let { id -> focusSite(allSites().firstOrNull { it.id == id }) }
         lifecycleScope.launch {
             if (mode == "community") {
                 if (aggregate()) {

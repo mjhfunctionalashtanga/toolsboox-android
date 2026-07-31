@@ -88,6 +88,39 @@ object LedgerDocumentTombstones {
     /** Last-deleted / last-revived, millis. Dead iff d > r. */
     data class Epoch(val d: Long, val r: Long)
 
+    // ── The pure per-id rules ─────────────────────────────────────────────────────────────────
+    // Context-free and network-free so the cross-fork convergence golden tests (JVM, and the iOS
+    // twin `LedgerCore.TombstoneEpochs`) can pin them against `convergence-fixtures/` at the repo
+    // root. [epochs]/[ids]/[save]/[roundTrip] apply exactly these — change them only in lockstep
+    // with the iOS twin and the fixtures.
+
+    /** Per-id MAX of each clock — a deletion and a revival each win exactly the arguments they
+     *  are newer for. Blank ids are skipped, matching both forks' readers. */
+    fun mergeEpochs(ours: Map<String, Epoch>, theirs: Map<String, Epoch>): Map<String, Epoch> {
+        val out = LinkedHashMap(ours)
+        for ((id, t) in theirs) {
+            if (id.isBlank()) continue
+            val o = out[id]
+            out[id] = if (o == null) t else Epoch(maxOf(o.d, t.d), maxOf(o.r, t.r))
+        }
+        return out
+    }
+
+    /** Fold a legacy `deleted.json` id array in: an id lands as {d: 1, r: 0} ONLY when the store
+     *  has never heard of it — a known id already has real clocks, and legacy knowledge must
+     *  never outrank them. */
+    fun foldLegacy(epochs: Map<String, Epoch>, legacyIds: Iterable<String>): Map<String, Epoch> {
+        val out = LinkedHashMap(epochs)
+        for (id in legacyIds) {
+            if (id.isNotBlank() && id !in out) out[id] = Epoch(LEGACY_DELETED_AT, 0L)
+        }
+        return out
+    }
+
+    /** The dead subset — every id whose deletion clock outranks its revival clock. */
+    fun deadIds(epochs: Map<String, Epoch>): Set<String> =
+        epochs.filterValues { it.d > it.r }.keys
+
     /** Every id's clocks — legacy `deleted.json` entries folded in as {d:1, r:0}. Empty on any
      *  problem: a tombstone store that cannot be read must fail towards KEEPING data. */
     fun epochs(context: Context, dir: String): Map<String, Epoch> {
@@ -100,20 +133,18 @@ object LedgerDocumentTombstones {
                 if (id.isNotBlank()) out[id] = Epoch(e.optLong("d"), e.optLong("r"))
             }
         }
+        var result: Map<String, Epoch> = out
         val f = file(context, dir)
         if (f.exists()) runCatching {
             val arr = JSONArray(f.readText())
-            for (i in 0 until arr.length()) {
-                val id = arr.optString(i)
-                if (id.isNotBlank() && id !in out) out[id] = Epoch(LEGACY_DELETED_AT, 0L)
-            }
+            result = foldLegacy(result, (0 until arr.length()).map { arr.optString(it) })
         }
-        return out
+        return result
     }
 
     /** Every id this device knows to be deleted — the d > r subset of [epochs]. */
     fun ids(context: Context, dir: String): Set<String> =
-        epochs(context, dir).filterValues { it.d > it.r }.keys
+        deadIds(epochs(context, dir))
 
     /** Both files, atomically derived from one truth: epochs first, then `deleted.json` as the
      *  dead subset old builds still read. Sorted on write so an unchanged set isn't a change. */
@@ -126,7 +157,7 @@ object LedgerDocumentTombstones {
             }
             epochsFile(context, dir).writeText(obj.toString())
             val arr = JSONArray()
-            for (id in epochs.filterValues { it.d > it.r }.keys.sorted()) arr.put(id)
+            for (id in deadIds(epochs).sorted()) arr.put(id)
             file(context, dir).writeText(arr.toString())
         }.onFailure { Timber.w(it, "document tombstones save failed for $dir") }
     }
@@ -174,33 +205,28 @@ object LedgerDocumentTombstones {
      */
     fun roundTrip(context: Context, dir: String): Set<String> {
         val local = epochs(context, dir)
-        val merged = local.toMutableMap()
+        var merged: Map<String, Epoch> = local
 
         val remoteEpochsText = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync
             .pull(context, epochsRemotePath(dir))
         if (!remoteEpochsText.isNullOrBlank()) runCatching {
             val obj = org.json.JSONObject(remoteEpochsText)
+            val theirs = LinkedHashMap<String, Epoch>()
             for (id in obj.keys()) {
                 val e = obj.optJSONObject(id) ?: continue
-                if (id.isBlank()) continue
-                val theirs = Epoch(e.optLong("d"), e.optLong("r"))
-                val ours = merged[id]
-                merged[id] = if (ours == null) theirs
-                else Epoch(maxOf(ours.d, theirs.d), maxOf(ours.r, theirs.r))
+                if (id.isNotBlank()) theirs[id] = Epoch(e.optLong("d"), e.optLong("r"))
             }
+            merged = mergeEpochs(merged, theirs)
         }
         val remoteDeletedText = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync
             .pull(context, remotePath(dir))
         if (!remoteDeletedText.isNullOrBlank()) runCatching {
             val arr = JSONArray(remoteDeletedText)
-            for (i in 0 until arr.length()) {
-                val id = arr.optString(i)
-                if (id.isNotBlank() && id !in merged) merged[id] = Epoch(LEGACY_DELETED_AT, 0L)
-            }
+            merged = foldLegacy(merged, (0 until arr.length()).map { arr.optString(it) })
         }
 
         if (merged != local) save(context, dir, merged)
-        val dead = merged.filterValues { it.d > it.r }.keys
+        val dead = deadIds(merged)
         // An empty store is not pushed — absence reads as empty on every build, and this runs on
         // every Directory open; see the iOS twin's note on the same guard.
         if (merged.isNotEmpty()) {

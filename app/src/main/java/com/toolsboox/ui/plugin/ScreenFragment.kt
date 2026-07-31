@@ -1433,101 +1433,176 @@ abstract class ScreenFragment : Fragment() {
             }
         }
 
-        for (folder in folders) {
-            val header = layoutInflater.inflate(R.layout.item_go_to, list, false)
-            val hasIcon = setRowEmojiIcon(header, folder.emoji)
-            val glyph = if (!hasIcon && folder.emoji.isNotBlank()) folder.emoji else ""
-            val headerLabel = header.findViewById<TextView>(R.id.go_label)
-            headerLabel.textSize = ROW_SP * textScale
-            scaleRowIcon(header, textScale)
-            scaleRowPadding(header, textScale)
+        // "Find anything" — the hub's own filter field, on the same rebuilt-in-place idiom as the
+        // root directory's (LedgerDirectory.showDirectoryList): no diffing, a full rebuild per
+        // keystroke, which on e-ink is still cheaper than any incremental scheme. Typing swaps the
+        // accordion for ONE flat list of every matching row across every folder, each captioned
+        // with the folder it lives in ("Incoming · ⭐ Starred"); clearing the field puts the
+        // accordion back as it opened. The root got a find field and the hub — more folders, more
+        // rows — stayed a fold-and-scan; this is the same answer to the same problem.
+        //
+        // Same threshold as the document directory's field: on a drawer of six rows or fewer
+        // (small showDirectory popovers ride this renderer too) a search box would be asking you
+        // to type what you can already see. The hub is always far past it.
+        val rowCount = folders.size + folders.sumOf { it.items.size }
+        val field = if (rowCount <= 6) null else android.widget.EditText(requireContext()).apply {
+            hint = "Find anything"; isSingleLine = true; textSize = 15f * textScale
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+        }
+        field?.let { list.addView(it) }
+        val body = LinearLayout(requireContext()).apply { orientation = LinearLayout.VERTICAL }
+        list.addView(body)
 
-            // A leaf entry ([action], no children) is a plain tappable row — no caret, no children.
-            if (folder.action != null && folder.items.isEmpty()) {
-                headerLabel.text = glyphLabel(glyph, folder.title)
-                header.setOnClickListener { dialog.dismiss(); folder.action.invoke() }
-                list.addView(header)
-                continue
+        // One flattened match: the folder's glyph in the icon slot, "Folder · row" as the label,
+        // and EXACTLY the tap the row itself would take — selecting a match navigates, never folds.
+        fun matchRow(emoji: String, text: CharSequence, action: () -> Unit) {
+            val r = layoutInflater.inflate(R.layout.item_go_to, body, false)
+            setRowEmojiIcon(r, emoji)
+            r.findViewById<TextView>(R.id.go_label).apply {
+                this.text = text; textSize = ROW_SP * textScale
             }
+            scaleRowIcon(r, textScale)
+            scaleRowPadding(r, textScale)
+            r.setOnClickListener { dialog.dismiss(); action() }
+            body.addView(r)
+        }
 
-            // An outline frames the expanded dropdown for clarity — in the vibe's accent, and as
-            // a SOLID: the old 40%-black stroke was exactly the translucent gray that dithers
-            // into mud on e-ink.
-            val outline = android.graphics.drawable.GradientDrawable().apply {
-                setColor(Color.TRANSPARENT)
-                setStroke(dp(1), com.toolsboox.ot.LedgerTheme.accent(requireContext()))
-                cornerRadius = dp(8).toFloat()
+        // Matching a FOLDER's name surfaces all of its rows — "incoming" lays the whole Incoming
+        // folder flat — and a door row (action set) is findable by its own name, which is the only
+        // name a leaf like Today has. Folder headers that merely toggle are not rows here: a match
+        // list is a list of places to go, and a header goes nowhere.
+        fun buildMatches(q: String) {
+            var any = false
+            for (folder in folders) {
+                val folderHit = folder.title.lowercase().contains(q)
+                if (folder.action != null && folderHit) {
+                    matchRow(folder.emoji, folder.title, folder.action); any = true
+                }
+                for ((label, action) in folder.items) {
+                    val clean = label.trim()
+                    if (!folderHit && !clean.lowercase().contains(q)) continue
+                    matchRow(folder.emoji, "${folder.title}  ·  $clean", action); any = true
+                }
             }
-            val children = LinearLayout(requireContext()).apply {
-                orientation = LinearLayout.VERTICAL
-                visibility = if (folder.expanded) View.VISIBLE else View.GONE
-                background = if (folder.expanded) outline else null
-                setPadding(dp(2), dp(2), dp(2), dp(4))
-            }
-            fun caret() = if (children.visibility == View.VISIBLE) "▾" else "▸"
-            if (folder.action != null) {
-                // BOTH action and children: the label is the door (one tap = the primary
-                // destination) and ONLY the caret at the row's end unfolds the sub-rows. A header
-                // that toggled would cost the destination its one-tap reach; one that navigated
-                // with no way in would orphan the children. The caret gets its own padded target
-                // (≈44dp with the row's height) so a fold is never a mis-tapped navigation.
-                headerLabel.text = glyphLabel(glyph, folder.title)
-                header.setOnClickListener { dialog.dismiss(); folder.action.invoke() }
-                val caretBtn = TextView(requireContext()).apply {
-                    text = caret()
-                    textSize = ROW_SP * textScale
-                    setTextColor(Color.BLACK)
-                    setPadding(dp(16), dp(6), dp(16), dp(6))
-                    setOnClickListener {
+            if (!any) body.addView(TextView(requireContext()).apply {
+                text = "Nothing matches “$q”."
+                textSize = 14f * textScale; setTextColor(0xFF888888.toInt())
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+            })
+        }
+
+        fun buildAccordion() {
+            openFolds.clear()
+            for (folder in folders) {
+                val header = layoutInflater.inflate(R.layout.item_go_to, body, false)
+                val hasIcon = setRowEmojiIcon(header, folder.emoji)
+                val glyph = if (!hasIcon && folder.emoji.isNotBlank()) folder.emoji else ""
+                val headerLabel = header.findViewById<TextView>(R.id.go_label)
+                headerLabel.textSize = ROW_SP * textScale
+                scaleRowIcon(header, textScale)
+                scaleRowPadding(header, textScale)
+
+                // A leaf entry ([action], no children) is a plain tappable row — no caret, no children.
+                if (folder.action != null && folder.items.isEmpty()) {
+                    headerLabel.text = glyphLabel(glyph, folder.title)
+                    header.setOnClickListener { dialog.dismiss(); folder.action.invoke() }
+                    body.addView(header)
+                    continue
+                }
+
+                // An outline frames the expanded dropdown for clarity — in the vibe's accent, and as
+                // a SOLID: the old 40%-black stroke was exactly the translucent gray that dithers
+                // into mud on e-ink.
+                val outline = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.TRANSPARENT)
+                    setStroke(dp(1), com.toolsboox.ot.LedgerTheme.accent(requireContext()))
+                    cornerRadius = dp(8).toFloat()
+                }
+                val children = LinearLayout(requireContext()).apply {
+                    orientation = LinearLayout.VERTICAL
+                    visibility = if (folder.expanded) View.VISIBLE else View.GONE
+                    background = if (folder.expanded) outline else null
+                    setPadding(dp(2), dp(2), dp(2), dp(4))
+                }
+                fun caret() = if (children.visibility == View.VISIBLE) "▾" else "▸"
+                if (folder.action != null) {
+                    // BOTH action and children: the label is the door (one tap = the primary
+                    // destination) and ONLY the caret at the row's end unfolds the sub-rows. A header
+                    // that toggled would cost the destination its one-tap reach; one that navigated
+                    // with no way in would orphan the children. The caret gets its own padded target
+                    // (≈44dp with the row's height) so a fold is never a mis-tapped navigation.
+                    headerLabel.text = glyphLabel(glyph, folder.title)
+                    header.setOnClickListener { dialog.dismiss(); folder.action.invoke() }
+                    val caretBtn = TextView(requireContext()).apply {
+                        text = caret()
+                        textSize = ROW_SP * textScale
+                        setTextColor(Color.BLACK)
+                        setPadding(dp(16), dp(6), dp(16), dp(6))
+                        setOnClickListener {
+                            val show = children.visibility != View.VISIBLE
+                            if (show) foldOthers(children)
+                            children.visibility = if (show) View.VISIBLE else View.GONE
+                            children.background = if (show) outline else null
+                            text = caret()
+                        }
+                    }
+                    (header as? LinearLayout)?.addView(caretBtn)
+                    openFolds += children to {
+                        children.visibility = View.GONE
+                        children.background = null
+                        caretBtn.text = caret()
+                    }
+                } else {
+                    // Glyph LEFT of the caret, matching where the mapped drawable icons sit.
+                    fun headerText(): CharSequence =
+                        if (glyph.isEmpty()) "${caret()}  ${folder.title}"
+                        else glyphLabel(glyph, "${caret()}  ${folder.title}")
+                    headerLabel.text = headerText()
+                    header.setOnClickListener {
                         val show = children.visibility != View.VISIBLE
                         if (show) foldOthers(children)
                         children.visibility = if (show) View.VISIBLE else View.GONE
                         children.background = if (show) outline else null
-                        text = caret()
+                        headerLabel.text = headerText()
+                    }
+                    openFolds += children to {
+                        children.visibility = View.GONE
+                        children.background = null
+                        headerLabel.text = headerText()
                     }
                 }
-                (header as? LinearLayout)?.addView(caretBtn)
-                openFolds += children to {
-                    children.visibility = View.GONE
-                    children.background = null
-                    caretBtn.text = caret()
+                for ((label, action) in folder.items) {
+                    val r = layoutInflater.inflate(R.layout.item_go_to, children, false)
+                    val text = applyRowIcon(r, label)
+                    r.findViewById<TextView>(R.id.go_label).apply {
+                        this.text = text; textSize = ROW_SP * textScale
+                        setPadding(dp(24), paddingTop, paddingRight, paddingBottom)
+                    }
+                    scaleRowIcon(r, textScale)
+                    scaleRowPadding(r, textScale)
+                    r.setOnClickListener { dialog.dismiss(); action() }
+                    children.addView(r)
                 }
-            } else {
-                // Glyph LEFT of the caret, matching where the mapped drawable icons sit.
-                fun headerText(): CharSequence =
-                    if (glyph.isEmpty()) "${caret()}  ${folder.title}"
-                    else glyphLabel(glyph, "${caret()}  ${folder.title}")
-                headerLabel.text = headerText()
-                header.setOnClickListener {
-                    val show = children.visibility != View.VISIBLE
-                    if (show) foldOthers(children)
-                    children.visibility = if (show) View.VISIBLE else View.GONE
-                    children.background = if (show) outline else null
-                    headerLabel.text = headerText()
-                }
-                openFolds += children to {
-                    children.visibility = View.GONE
-                    children.background = null
-                    headerLabel.text = headerText()
-                }
+                val childLp = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { setMargins(dp(6), dp(1), dp(6), dp(4)) }
+                body.addView(header); body.addView(children, childLp)
             }
-            for ((label, action) in folder.items) {
-                val r = layoutInflater.inflate(R.layout.item_go_to, children, false)
-                val text = applyRowIcon(r, label)
-                r.findViewById<TextView>(R.id.go_label).apply {
-                    this.text = text; textSize = ROW_SP * textScale
-                    setPadding(dp(24), paddingTop, paddingRight, paddingBottom)
-                }
-                scaleRowIcon(r, textScale)
-                scaleRowPadding(r, textScale)
-                r.setOnClickListener { dialog.dismiss(); action() }
-                children.addView(r)
-            }
-            val childLp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { setMargins(dp(6), dp(1), dp(6), dp(4)) }
-            list.addView(header); list.addView(children, childLp)
         }
+
+        fun redraw() {
+            body.removeAllViews()
+            val q = field?.text?.toString()?.trim()?.lowercase().orEmpty()
+            if (q.isEmpty()) buildAccordion() else buildMatches(q)
+            // Rebuilt rows are new views — re-dress them in the chosen reading face each pass.
+            com.toolsboox.ot.LedgerFonts.applyTree(body)
+        }
+        field?.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) { redraw() }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        redraw()
 
         // Menu text honours the chosen reading font too. SYSTEM is a no-op (leaves rows untouched).
         com.toolsboox.ot.LedgerFonts.applyTree(root)

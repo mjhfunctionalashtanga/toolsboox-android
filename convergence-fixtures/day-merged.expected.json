@@ -1,0 +1,153 @@
+{
+  "year": 2026,
+  "month": 7,
+  "day": 30,
+  "locale": "en-US",
+  "events": [],
+  "readingProgress": [],
+  "hasLanes": true,
+  "startHour": 6,
+  "calendarStrokes": {
+    "Default": [
+      {
+        "strokeId": "cccccccc-3333-4333-8333-333333333333",
+        "timestamp": 1000,
+        "strokePoints": [{"x": 10.0, "y": 20.0, "p": 0.5, "t": 1000}],
+        "color": -16777216,
+        "strokeWidth": 3.0,
+        "inkStyle": 1
+      },
+      {
+        "strokeId": "dddddddd-4444-4444-8444-444444444444",
+        "timestamp": 960,
+        "strokePoints": [{"x": 12.0, "y": 22.0, "p": 0.3, "t": 960}],
+        "color": -16777216,
+        "strokeWidth": 3.0
+      }
+    ]
+  },
+  "calendarValues": {
+    "Default": {"energy": 5.0, "mood": null},
+    "Health.v1": {"hr": 60.0}
+  },
+  "noteStrokes": {
+    "0": [
+      {
+        "strokeId": "ffffffff-6666-4666-8666-666666666666",
+        "timestamp": 1100,
+        "strokePoints": [{"x": 50.0, "y": 60.0, "p": 0.7, "t": 1100}],
+        "color": -65536,
+        "strokeWidth": 2.5
+      },
+      {
+        "strokeId": "99999999-8888-4888-8888-888888888888",
+        "timestamp": 1150,
+        "strokePoints": [{"x": 51.0, "y": 61.0, "p": 0.7, "t": 1150}],
+        "color": -16777216,
+        "strokeWidth": 2.5
+      }
+    ],
+    "write-200-1": [],
+    "board-2": []
+  },
+  "textElements": [
+    {
+      "elementId": "12121212-1212-4212-8212-121212121212",
+      "timestamp": 1600,
+      "x": 12.0,
+      "y": 22.0,
+      "width": 300.0,
+      "height": 60.0,
+      "text": "draft v2",
+      "pageKey": "default"
+    },
+    {
+      "elementId": "34343434-3434-4434-8434-343434343434",
+      "timestamp": 1300,
+      "x": 15.0,
+      "y": 25.0,
+      "width": 300.0,
+      "height": 60.0,
+      "text": "board card",
+      "pageKey": "board-2"
+    }
+  ],
+  "imageElements": [
+    {
+      "elementId": "56565656-5656-4656-8656-565656565656",
+      "timestamp": 2100,
+      "x": 150.0,
+      "y": 110.0,
+      "width": 200.0,
+      "height": 150.0,
+      "data": "IMGB",
+      "page": "0"
+    },
+    {
+      "elementId": "78787878-7878-4878-8878-787878787878",
+      "timestamp": 2200,
+      "x": 400.0,
+      "y": 410.0,
+      "width": 120.0,
+      "height": 90.0,
+      "data": "IMG2",
+      "page": "0"
+    }
+  ],
+  "readingEvents": [
+    {
+      "id": "read-1",
+      "kind": "article",
+      "date": 1720900000000,
+      "title": "On Practice",
+      "source": "Ashtanga Tech",
+      "url": "https://example.com/on-practice"
+    },
+    {
+      "id": "read-2",
+      "kind": "book",
+      "date": 1720901000000,
+      "title": "Light on Yoga",
+      "source": "B.K.S. Iyengar",
+      "excerpt": "Sthira sukham asanam."
+    }
+  ],
+  "avGrams": [
+    {"id": "av-1", "kind": "audio", "filename": "voice-1.m4a", "duration": 12.5, "date": 1720902222222},
+    {"id": "av-2", "kind": "audio", "filename": "voice-2.m4a", "duration": 3.5, "date": 1720904444444}
+  ],
+  "ledgerItems": [
+    {
+      "id": "task-l1",
+      "kind": "task",
+      "text": "call mom",
+      "date": 1720905000000,
+      "display": "text",
+      "done": true,
+      "stage": "todo"
+    },
+    {
+      "id": "task-l3",
+      "kind": "task",
+      "text": "water plants",
+      "date": 1720906000000,
+      "display": "text",
+      "done": false,
+      "stage": ""
+    }
+  ],
+  "deletedStrokeIds": [
+    "88888888-7777-4777-8777-777777777777",
+    "aaaaaaaa-1111-4111-8111-111111111111",
+    "bbbbbbbb-2222-4222-8222-222222222222",
+    "eeeeeeee-5555-4555-8555-555555555555"
+  ],
+  "deletedElementIds": [
+    "av-dead-1",
+    "dead1111-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "dead2222-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+  ],
+  "deletedItemIds": ["task-l2"],
+  "created": 1690000000000,
+  "updated": 2000000000000
+}

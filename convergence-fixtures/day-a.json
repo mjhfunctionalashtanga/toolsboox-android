@@ -1,0 +1,130 @@
+{
+  "year": 2026,
+  "month": 7,
+  "day": 30,
+  "locale": "en-US",
+  "events": [],
+  "readingProgress": [],
+  "hasLanes": true,
+  "startHour": 6,
+  "calendarStrokes": {
+    "Default": [
+      {
+        "strokeId": "cccccccc-3333-4333-8333-333333333333",
+        "timestamp": 1000,
+        "strokePoints": [{"x": 10.0, "y": 20.0, "p": 0.5, "t": 1000}],
+        "color": -16777216,
+        "strokeWidth": 3.0,
+        "inkStyle": 1
+      },
+      {
+        "strokeId": "bbbbbbbb-2222-4222-8222-222222222222",
+        "timestamp": 1001,
+        "strokePoints": [{"x": 30.0, "y": 40.0, "p": 0.6, "t": 1001}],
+        "color": -16777216,
+        "strokeWidth": 2.0
+      }
+    ]
+  },
+  "calendarValues": {
+    "Default": {"energy": 5.0, "mood": null}
+  },
+  "noteStrokes": {
+    "0": [
+      {
+        "strokeId": "ffffffff-6666-4666-8666-666666666666",
+        "timestamp": 1100,
+        "strokePoints": [{"x": 50.0, "y": 60.0, "p": 0.7, "t": 1100}],
+        "color": -65536,
+        "strokeWidth": 2.5
+      }
+    ],
+    "write-200-1": [],
+    "board-2": [
+      {
+        "strokeId": "88888888-7777-4777-8777-777777777777",
+        "timestamp": 1200,
+        "strokePoints": [{"x": 70.0, "y": 80.0, "p": 0.4, "t": 1200}],
+        "color": -16777216,
+        "strokeWidth": 3.0
+      }
+    ]
+  },
+  "textElements": [
+    {
+      "elementId": "12121212-1212-4212-8212-121212121212",
+      "timestamp": 1500,
+      "x": 10.0,
+      "y": 20.0,
+      "width": 300.0,
+      "height": 60.0,
+      "text": "draft",
+      "pageKey": "default"
+    },
+    {
+      "elementId": "34343434-3434-4434-8434-343434343434",
+      "timestamp": 1300,
+      "x": 15.0,
+      "y": 25.0,
+      "width": 300.0,
+      "height": 60.0,
+      "text": "board card",
+      "pageKey": "board-2"
+    }
+  ],
+  "imageElements": [
+    {
+      "elementId": "56565656-5656-4656-8656-565656565656",
+      "timestamp": 2000,
+      "x": 100.0,
+      "y": 110.0,
+      "width": 200.0,
+      "height": 150.0,
+      "data": "IMGA",
+      "page": "0"
+    }
+  ],
+  "readingEvents": [
+    {
+      "id": "read-1",
+      "kind": "article",
+      "date": 1720900000000,
+      "title": "On Practice",
+      "source": "Ashtanga Tech",
+      "url": "https://example.com/on-practice"
+    }
+  ],
+  "avGrams": [
+    {"id": "av-1", "kind": "audio", "filename": "voice-1.m4a", "duration": 12.5, "date": 1720902222222}
+  ],
+  "ledgerItems": [
+    {
+      "id": "task-l1",
+      "kind": "task",
+      "text": "call mom",
+      "date": 1720905000000,
+      "display": "text",
+      "done": false,
+      "stage": "todo"
+    },
+    {
+      "id": "task-l3",
+      "kind": "task",
+      "text": "water plants",
+      "date": 1720906000000,
+      "display": "text",
+      "done": false,
+      "stage": ""
+    }
+  ],
+  "deletedStrokeIds": [
+    "AAAAAAAA-1111-4111-8111-111111111111",
+    "EEEEEEEE-5555-4555-8555-555555555555"
+  ],
+  "deletedElementIds": [
+    "DEAD1111-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+    "AV-DEAD-1"
+  ],
+  "deletedItemIds": ["TASK-L2"],
+  "updated": 2000000000000
+}

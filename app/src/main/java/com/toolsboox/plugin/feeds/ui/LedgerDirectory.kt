@@ -405,11 +405,30 @@ private fun kindLabel(kind: String): String = when (kind) {
     else -> com.toolsboox.plugin.calendar.ot.LedgerDocuments.label(kind)
 }
 
-/** What a kind's count is counting. "412" alone is a number; "412 days" is an answer. */
-private fun kindCountLabel(kind: String, n: Int): String = when (kind) {
-    KIND_NOTES -> if (n == 1) "1 day" else "$n days"
-    KIND_TAGS -> if (n == 1) "1 tag" else "$n tags"
-    else -> if (n == 1) "1 document" else "$n documents"
+/**
+ * What a kind's count is counting. "412" alone is a number; "412 days" is an answer — and
+ * "3 boards" is a shelf where "3 documents" is a database. The nouns are iOS's
+ * `LedgerDocKind.noun`, to the word, so the two roots count in one vocabulary. Two deliberate
+ * departures from [com.toolsboox.plugin.calendar.ot.LedgerDocuments.noun]: Pickings COUNT in
+ * boards ("3 boards", the thing on the shelf) even though the action rows keep "pickings"
+ * ("New pickings…", the surface's own word); and Notes counts DAYS, not iOS's "notebooks" —
+ * Android's Notes rows ARE days ([directoryItems] lists dayDates), and the by-date spine reuses
+ * this same label for its year/month counts, where only "days" is true.
+ */
+private fun kindCountLabel(kind: String, n: Int): String {
+    val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    val noun = when (kind) {
+        KIND_NOTES -> if (n == 1) "day" else "days"
+        KIND_TAGS -> if (n == 1) "tag" else "tags"
+        docs.PICKINGS -> if (n == 1) "board" else "boards"
+        docs.SYNTHESIZE -> if (n == 1) "synthesis" else "syntheses"
+        docs.WRITE -> if (n == 1) "writing" else "writings"
+        docs.GRID -> if (n == 1) "grid" else "grids"
+        docs.JOT -> if (n == 1) "jot" else "jots"
+        docs.TEXT_NOTES -> if (n == 1) "note" else "notes"
+        else -> if (n == 1) "document" else "documents"
+    }
+    return "$n $noun"
 }
 
 private const val DIRECTORY_PREFS = "ledger_directory"
@@ -1041,8 +1060,12 @@ fun showLedgerRootDirectory(fragment: ScreenFragment, date: LocalDate = LocalDat
             // Searching flattens both spines: when you are looking for a named thing, which folder
             // it happens to live in is the one fact you don't have.
             val q = query.lowercase()
+            // Title AND date-iso: "2026-07" finds a month's work by name. iOS also matches blurbs;
+            // Android's index carries none — same query, widest scope each side owns.
             val hits = sortItems(
-                DIRECTORY_KINDS.flatMap { items(it) }.filter { it.title.lowercase().contains(q) },
+                DIRECTORY_KINDS.flatMap { items(it) }.filter {
+                    it.title.lowercase().contains(q) || it.date.toString().contains(q)
+                },
                 sort
             )
             val cap = unrolled["find"] ?: DIRECTORY_PAGE
@@ -1782,21 +1805,53 @@ fun showTagIndex(fragment: ScreenFragment) {
     }
 }
 
-/** One tag's pages, newest first — tap to jump straight to that day's page, landing on the tag's
- *  mark (the capture zone it was written in) when the occurrence recorded one. A ✎ marks the ones
- *  that will zoom to the mark; legacy occurrences with no rect just open the page. */
+/** One tag's pages — tap to jump straight to that day's page, landing on the tag's mark (the
+ *  capture zone it was written in) when the occurrence recorded one. A ✎ marks the ones that will
+ *  zoom to the mark; legacy occurrences with no rect just open the page.
+ *
+ *  On the shared [showDirectoryList] chassis, like every other hop in the drawer — this was the
+ *  ONE directory still shipping as a bare setItems alert, so the last step of tag navigation
+ *  dropped the idiom (no filter, no sort, no way back) exactly where a hot tag has the most rows. */
 private fun showTagPages(fragment: ScreenFragment, tag: com.toolsboox.plugin.calendar.ot.LedgerTags.TagInfo) {
     val ctx = fragment.requireContext()
-    val occ = tag.occurrences.sortedByDescending { it.first }
-    val labels = occ.map { "${if (it.third != null) "✎  " else ""}${it.first}  ·  ${it.second}" }.toTypedArray()
-    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-        .setTitle("#${tag.tag}")
-        .setItems(labels) { _, which ->
-            val (date, page, rect) = occ[which]
-            CalendarNavigator.toDayNote(fragment, date, page, rect)
+    val occ = tag.occurrences
+    showDirectoryList(
+        fragment,
+        title = "#${tag.tag}",
+        // Same threshold as the document directory: on a tag written six times the field would be
+        // a box asking you to type what you can already see.
+        searchHint = if (occ.size > 6) "Find a page" else null,
+        empty = "No pages yet.",
+    ) { query, redraw ->
+        val sort = directorySort(ctx)
+        val rows = mutableListOf<DirRow>()
+        rows += DirRow("⇅", "Sort · ${sort.label}", "date → name → kind", closes = false) {
+            setDirectorySort(ctx, sort.next()); redraw()
         }
-        .setNegativeButton("Close", null)
-        .show()
+        val q = query.lowercase()
+        // Match date-iso and page key both — the two things a row says are the two things you'd
+        // type to find it.
+        val shown = occ.filter {
+            q.isEmpty() || it.first.toString().contains(q) || it.second.lowercase().contains(q)
+        }
+        // One tag's pages are one kind, so "by kind" has nothing to group — it keeps newest-first,
+        // the order this list has always opened with.
+        val ordered = when (sort) {
+            DirectorySort.NAME -> shown.sortedWith(
+                compareBy<Triple<LocalDate, String, android.graphics.RectF?>> { it.second.lowercase() }
+                    .thenByDescending { it.first })
+            else -> shown.sortedByDescending { it.first }
+        }
+        if (ordered.isEmpty()) rows += DirRow("", "Nothing matches “$query”.", null, 1, closes = false) {}
+        for ((date, page, rect) in ordered) {
+            rows += DirRow(if (rect != null) "✎" else "", date.toString(), page) {
+                CalendarNavigator.toDayNote(fragment, date, page, rect)
+            }
+        }
+        // Up, not out — the drawer's terminal row: back to the index this tag was picked from.
+        rows += DirRow("‹", "All tags…") { showTagIndex(fragment) }
+        rows
+    }
 }
 
 /**

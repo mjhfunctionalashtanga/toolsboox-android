@@ -71,10 +71,10 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
     // Multi-site, keyed on SITE the way Mail's inbox is on account: null = every configured site
     // (the board list aggregates across them, each board tagged with its site — board ids collide
     // across sites, each FluentBoards starting at 1, so the site is what keeps them apart); a pick
-    // narrows to one. Persisted in the same board prefs. When narrowed, the site is made active and
-    // the existing single-site path (inbox row, columns, moves, comments) runs unchanged.
-    private var siteFilter: String? = null
-    private var sitesOpen = false
+    // narrows to one. Persisted in the same board prefs, through the shared [SiteFilterState] (one
+    // holder across the three switcher surfaces). When narrowed, the site is made active and the
+    // existing single-site path (inbox row, columns, moves, comments) runs unchanged.
+    private val siteState = SiteFilterState("ledger_site_boards")
     private var boardRows: List<SiteFetch.SiteBoardRow> = emptyList()   // the aggregate list
     // The mode is decided once per list load and held, so "up" from an opened board (and a
     // deep-linked board, which always uses the single-site path) redraws the list it actually built.
@@ -137,8 +137,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             if (b == null) loadBoards() else loadBoard(b)
         }
         showCovers = boardPrefs().getBoolean("showCovers", true)
-        siteFilter = boardPrefs().getString("site_filter", "")!!.ifBlank { null }
-        sitesOpen = boardPrefs().getBoolean("sites_open", false)
+        siteState.load(requireContext())
         view.findViewById<Button>(R.id.site_boards_covers).setOnClickListener {
             showCovers = !showCovers
             boardPrefs().edit().putBoolean("showCovers", showCovers).apply()
@@ -167,8 +166,8 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         // Narrowed to a site → make it active so the existing single-site path (inbox row, columns,
         // card moves, comments) targets it. A blank filter with several sites aggregates instead;
         // a deep-linked board always uses the single-site path (it targets the active site).
-        aggregateMode = siteFilter == null && allSites().size > 1 && pendingBoardId == 0
-        siteFilter?.let { SiteStore.activate(requireContext(), it) }
+        aggregateMode = siteState.filter == null && allSites().size > 1 && pendingBoardId == 0
+        siteState.filter?.let { SiteStore.activate(requireContext(), it) }
         lifecycleScope.launch {
             if (aggregateMode) {
                 // All sites: fan out the board lists in parallel, each with its own creds, per-site
@@ -245,14 +244,11 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
     private fun switcherBar(): View = SiteSwitcherBar.build(
         context = requireContext(),
         sites = allSites(),
-        filter = siteFilter,
-        open = sitesOpen,
-        onToggleOpen = { open ->
-            sitesOpen = open; boardPrefs().edit().putBoolean("sites_open", open).apply(); showList()
-        },
+        filter = siteState.filter,
+        open = siteState.open,
+        onToggleOpen = { open -> siteState.setOpen(requireContext(), open); showList() },
         onPick = { id ->
-            siteFilter = id
-            boardPrefs().edit().putString("site_filter", id ?: "").apply()
+            siteState.setFilter(requireContext(), id)
             loadBoards()
         },
         onManage = { SitesSettingsDialog.show(requireContext()) { loadBoards() } },

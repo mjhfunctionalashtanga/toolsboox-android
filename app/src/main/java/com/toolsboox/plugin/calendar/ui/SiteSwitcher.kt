@@ -28,6 +28,57 @@ import java.util.concurrent.TimeUnit
  * and re-renders on the callbacks — identical to how MailInboxFragment keeps `accountFilter` /
  * `accountsOpen` in its own prefs.
  */
+/**
+ * The (filter, open) pair every surface wearing [SiteSwitcherBar] keeps: which site the list is
+ * narrowed to (null = all sites) and whether the accordion rows are unfolded — persisted so the
+ * surface reopens the way it was left.
+ *
+ * ONE holder instead of the same four pref lines copied into Correspondence, PostsBrowser and
+ * SiteBoards: three private copies of "blank string means null" and "write on change" is exactly
+ * the kind of pattern that drifts one fragment at a time. Each surface keeps its OWN pref file
+ * ([prefsName] — the file the fragment already owns for its other keys), so nothing moves on disk
+ * and narrowing Posts never narrows Boards; the keys (`site_filter`, `sites_open`) are the shared
+ * part, MailInboxFragment's account_filter / accounts_open shape.
+ */
+class SiteFilterState(private val prefsName: String) {
+
+    /** The narrowed site id, or null for "All sites". In-memory face of the persisted value. */
+    var filter: String? = null
+        private set
+
+    /** Whether the switcher's accordion rows are unfolded. */
+    var open: Boolean = false
+        private set
+
+    private fun prefs(context: Context) =
+        context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+
+    /** Pick the persisted pair back up — call where the fragment reads its other prefs. */
+    fun load(context: Context) {
+        filter = prefs(context).getString("site_filter", "")!!.ifBlank { null }
+        open = prefs(context).getBoolean("sites_open", false)
+    }
+
+    /** Narrow to [id] (null = All sites) and persist — blank stands for null on disk, as always. */
+    fun setFilter(context: Context, id: String?) {
+        filter = id
+        prefs(context).edit().putString("site_filter", id ?: "").apply()
+    }
+
+    /** Fold/unfold the rows and persist. */
+    fun setOpen(context: Context, value: Boolean) {
+        open = value
+        prefs(context).edit().putBoolean("sites_open", value).apply()
+    }
+
+    /** A filter naming a site that has since been deleted = All — in memory only, the pref keeps
+     *  the id, which is what Correspondence has always done. */
+    fun dropMissing(knownIds: Collection<String>) {
+        val f = filter ?: return
+        if (f !in knownIds) filter = null
+    }
+}
+
 object SiteSwitcherBar {
 
     /**

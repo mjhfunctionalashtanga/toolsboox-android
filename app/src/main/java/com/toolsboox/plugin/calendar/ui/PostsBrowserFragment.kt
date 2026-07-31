@@ -62,12 +62,11 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
     /** Bumped by every fetch; only the newest one is allowed to paint. See [reload]. */
     private var loadSeq = 0
 
-    // Which site the list is narrowed to (null = every configured site). Persisted, so the browser
-    // reopens the way it was left — the aggregate stays the default, the narrowing a kept choice.
-    // Same prefs shape as MailInboxFragment's account_filter / accounts_open.
-    private var siteFilter: String? = null
-    private var sitesOpen = false
-    private fun uiPrefs() = requireContext().getSharedPreferences("ledger_posts_browser", 0)
+    // Which site the list is narrowed to (null = every configured site) + the switcher fold.
+    // Persisted, so the browser reopens the way it was left — the aggregate stays the default,
+    // the narrowing a kept choice. The shared [SiteFilterState] (one holder across the three
+    // switcher surfaces), in this browser's own pref file.
+    private val siteState = SiteFilterState("ledger_posts_browser")
 
     private data class Filter(val key: String, val label: String, val statuses: List<String>)
 
@@ -87,8 +86,7 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
         binding.postsCompose.setOnClickListener {
             NavHostFragment.findNavController(this).navigate(R.id.action_to_publish)
         }
-        siteFilter = uiPrefs().getString("site_filter", "")!!.ifBlank { null }
-        sitesOpen = uiPrefs().getBoolean("sites_open", false)
+        siteState.load(requireContext())
 
         // Passing onSelectPeriod is what makes the strip a FILTER rather than a way out of the
         // pane: a slot tap scopes the list in place instead of jumping to that period's calendar
@@ -174,14 +172,14 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
     /** The site the type list + the narrowed fetch reference: the narrowed site, else the active one. */
     private fun sitesInScope(): List<LedgerSite> {
         val all = SiteStore.all(requireContext())
-        val f = siteFilter
+        val f = siteState.filter
         return if (f != null) all.filter { it.id == f } else all
     }
 
     private fun referenceSite(): LedgerSite? {
         val ctx = requireContext()
         val scope = sitesInScope()
-        return scope.firstOrNull { it.id == siteFilter } ?: SiteStore.active(ctx) ?: scope.firstOrNull()
+        return scope.firstOrNull { it.id == siteState.filter } ?: SiteStore.active(ctx) ?: scope.firstOrNull()
     }
 
     private fun typeName(rest: String) = types.firstOrNull { it.restBase == rest }?.name ?: rest
@@ -256,14 +254,11 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
             SiteSwitcherBar.build(
                 context = ctx,
                 sites = SiteStore.all(ctx),
-                filter = siteFilter,
-                open = sitesOpen,
-                onToggleOpen = { open ->
-                    sitesOpen = open; uiPrefs().edit().putBoolean("sites_open", open).apply(); render()
-                },
+                filter = siteState.filter,
+                open = siteState.open,
+                onToggleOpen = { open -> siteState.setOpen(ctx, open); render() },
                 onPick = { id ->
-                    siteFilter = id
-                    uiPrefs().edit().putString("site_filter", id ?: "").apply()
+                    siteState.setFilter(ctx, id)
                     types = emptyList()   // the reference site changed — re-derive its types
                     reload()
                 },
@@ -302,7 +297,7 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
             // Name the window, not just the emptiness: "Nothing here" over a list that is scoped to
             // a month you happened to step onto reads as a broken pane rather than a quiet one.
             c.addView(TextView(ctx).apply {
-                text = if (siteFilter != null) "Nothing in this $navPeriod for this site."
+                text = if (siteState.filter != null) "Nothing in this $navPeriod for this site."
                 else "Nothing in this $navPeriod on any site."
                 setTextColor(0xFF888888.toInt()); setPadding(px(4), px(16), px(4), 0)
             })
@@ -311,7 +306,7 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
 
         // Show the per-row site tag only in the aggregate — a narrowed list already names its site
         // in the chip above, so repeating it on every row would be noise.
-        val showSiteTag = siteFilter == null && SiteStore.all(ctx).size > 1
+        val showSiteTag = siteState.filter == null && SiteStore.all(ctx).size > 1
         for (sp in items) {
             val p = sp.post
             val card = LinearLayout(ctx).apply {
