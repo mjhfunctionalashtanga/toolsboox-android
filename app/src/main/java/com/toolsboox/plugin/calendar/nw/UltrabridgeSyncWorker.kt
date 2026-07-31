@@ -477,7 +477,7 @@ class UltrabridgeSyncWorker(
         val pdfFileName = "ToolsForBoox-${groupKey.pageType}-${groupKey.period}.pdf"
         val pdfFile = File(tempDir, pdfFileName)
 
-        CalendarPdfRenderer.renderMonthToPdf(pages, pdfFile)
+        CalendarPdfRenderer.renderMonthToPdf(pages, pdfFile, context = applicationContext)
 
         Timber.i("$TAG: Rendered ${pages.size} pages to $pdfFileName")
         pdfFile

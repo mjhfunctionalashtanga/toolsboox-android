@@ -156,7 +156,11 @@ class CalendarDayPageIntake : Creator {
             kindKey: String, calendarDay: CalendarDay?, scoped: List<ImageElement>? = null
         ): List<ImageElement> =
             (scoped ?: calendarDay?.imageElements)
-                ?.filter { it.page == INTAKE_PAGE && it.intakeKind == kindKey && !it.decorative && it.data.isNotBlank() }
+                // A star's face may be inline (`data`) or by media ref (`dataRef`) — both are stars.
+            ?.filter {
+                it.page == INTAKE_PAGE && it.intakeKind == kindKey && !it.decorative &&
+                    (it.data.isNotBlank() || it.dataRef.isNotBlank())
+            }
                 ?.sortedByDescending { it.timestamp }
                 ?: emptyList()
 
@@ -181,7 +185,10 @@ class CalendarDayPageIntake : Creator {
          */
         fun drawPage(
             canvas: Canvas, intakeData: IntakePageData, calendarDay: CalendarDay? = null,
-            scopedGrams: List<ImageElement>? = null, scopeLabel: String = "TODAY"
+            scopedGrams: List<ImageElement>? = null, scopeLabel: String = "TODAY",
+            // Resolves media-store `dataRef` faces in the printed wider-window record; null
+            // (the notes-preview fallback) draws inline faces only.
+            context: android.content.Context? = null
         ) {
             // Today's own stars are live elements, so they must not ALSO be printed as part of the
             // wider-window record — identity by timestamp, which is what the day JSON carries.
@@ -261,7 +268,7 @@ class CalendarDayPageIntake : Creator {
                             ct += step * (overflow - depth)
                         }
                         val cell = RectF(cl, ct, cl + cellW, ct + cellH)
-                        drawGramInCell(canvas, img, cell)
+                        drawGramInCell(canvas, img, cell, context)
                         canvas.drawRect(cell, cellBorder)
                     }
                 }
@@ -289,9 +296,14 @@ class CalendarDayPageIntake : Creator {
          * near cell size, so eight full-page base64 decodes per panel don't drag the page turn. One
          * decode per cell, recycled as soon as it's on the canvas (the PickingsCover rule).
          */
-        private fun drawGramInCell(canvas: Canvas, img: ImageElement, cell: RectF) {
+        private fun drawGramInCell(
+            canvas: Canvas, img: ImageElement, cell: RectF, context: android.content.Context? = null
+        ) {
             runCatching {
-                val bytes = Base64.decode(img.data, Base64.DEFAULT)
+                val bytes = if (context != null)
+                    com.toolsboox.ot.LedgerMedia.resolveBytes(context, img.data, img.dataRef) ?: return@runCatching
+                else
+                    Base64.decode(img.data, Base64.DEFAULT)
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
                 // Decode with 2× headroom over the cell so zooming the page still reads crisply —

@@ -100,7 +100,7 @@ object PickingsCover {
             val left = slotLeft + i * (tileW + gap)
             val rect = RectF(left, tileTop, left + tileW, tileTop + tileH)
             // Alternate leans, like things taped down one after another rather than typeset.
-            drawTile(canvas, calendarDay, r, rect, if (i % 2 == 0) -1.6f else 1.8f)
+            drawTile(context, canvas, calendarDay, r, rect, if (i % 2 == 0) -1.6f else 1.8f)
             recorded.add(Tile(r.date, r.key, r.name, rect))
         }
         tiles = recorded
@@ -240,7 +240,7 @@ object PickingsCover {
      * how far back — for a board whose day JSON we won't parse just to decorate a thumbnail.
      * The ❝ stays, but as a small brand mark in the face's corner, not the whole content.
      */
-    private fun drawTile(canvas: Canvas, calendarDay: CalendarDay, r: Recent, rect: RectF, tilt: Float) {
+    private fun drawTile(context: Context, canvas: Canvas, calendarDay: CalendarDay, r: Recent, rect: RectF, tilt: Float) {
         val today = LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day)
         canvas.save()
         canvas.rotate(tilt, rect.centerX(), rect.centerY())
@@ -260,7 +260,7 @@ object PickingsCover {
         val strokes = if (r.sameDay) calendarDay.noteStrokes[r.key].orEmpty() else emptyList()
         val images = if (r.sameDay) calendarDay.imageElements.filter { it.page == r.key } else emptyList()
         val hasArt = r.sameDay && (strokes.isNotEmpty() || images.isNotEmpty())
-        if (hasArt) drawBoardArt(canvas, art, r, strokes, images) else drawInfoFace(canvas, art, r, today)
+        if (hasArt) drawBoardArt(context, canvas, art, r, strokes, images) else drawInfoFace(canvas, art, r, today)
 
         // Caption: the board's name (wrapping to a second line when it needs one), then what the
         // board holds — gram count and the newest gram's words for a live board, the day otherwise.
@@ -329,7 +329,7 @@ object PickingsCover {
      * so the tile is a picture OF the board rather than a stand-in for it.
      */
     private fun drawBoardArt(
-        canvas: Canvas, art: RectF, r: Recent,
+        context: Context, canvas: Canvas, art: RectF, r: Recent,
         strokes: List<com.toolsboox.da.Stroke>, images: List<com.toolsboox.da.ImageElement>
     ) {
         var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
@@ -362,7 +362,7 @@ object PickingsCover {
         // exactly the cost the cache exists to remove. Anything older still shapes the bounds,
         // so the layout stays honest.
         images.maxByOrNull { it.timestamp }?.let { img ->
-            thumbFor(r.date, r.key, images.size, img, img.width * scale)?.let { bmp ->
+            thumbFor(context, r.date, r.key, images.size, img, img.width * scale)?.let { bmp ->
                 // runCatching: a cached bitmap can in principle be evicted-and-recycled between
                 // lookup and draw; a lost thumbnail for one frame beats a crash.
                 runCatching {
@@ -480,14 +480,17 @@ object PickingsCover {
     }
 
     private fun thumbFor(
-        date: LocalDate, key: String, count: Int,
+        context: Context, date: LocalDate, key: String, count: Int,
         newest: com.toolsboox.da.ImageElement, targetW: Float
     ): Bitmap? {
         val id = newest.gramId?.takeIf { it.isNotBlank() } ?: newest.elementId.toString()
         val cacheKey = "$date|$key|$count|$id|${newest.timestamp}"
         synchronized(thumbCache) { if (thumbCache.containsKey(cacheKey)) return thumbCache[cacheKey] }
         val bmp = runCatching {
-            val bytes = Base64.decode(newest.data, Base64.DEFAULT)
+            // Inline base64 or a media-store ref — the resolver answers either, and the ref
+            // arm is one small file read (still memoized like the decode always was).
+            val bytes = com.toolsboox.ot.LedgerMedia.resolveBytes(context, newest.data, newest.dataRef)
+                ?: return@runCatching null
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
             // Downsample toward the on-tile size — a full-page gram decoded at full resolution

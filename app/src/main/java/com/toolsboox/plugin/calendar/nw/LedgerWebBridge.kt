@@ -112,7 +112,7 @@ object LedgerWebBridge {
         val col = if (item.done) 2 else if (item.stage == "doing") 1 else 0
         val stageId = stages[minOf(col, stages.size - 1)]
 
-        val png: ByteArray? = inkPng(item) ?: renderTextCard(item.text)
+        val png: ByteArray? = inkPng(context, item) ?: renderTextCard(item.text)
 
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("board_id", c.boardId.toString())
@@ -145,14 +145,11 @@ object LedgerWebBridge {
         }
     }
 
-    /** The card's ink face: the base64 PNG in `crop` (an old OCR filename simply fails to decode). */
-    private fun inkPng(item: LedgerItem): ByteArray? {
-        val b64 = item.crop ?: return null
-        return try {
-            val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
-            if (android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) != null) bytes else null
-        } catch (e: Exception) { null }
-    }
+    /** The card's ink face as encoded PNG bytes — resolved at this seam (`cropRef` first, then
+     *  base64 `crop`, then `crop`-as-filename) so the wire keeps receiving the bytes it always
+     *  has, wherever the face now lives. */
+    private fun inkPng(context: Context, item: LedgerItem): ByteArray? =
+        com.toolsboox.ot.LedgerMedia.resolveCropBytes(context, item.crop, item.cropRef)
 
     /** A clean rendered text card for cards with no ink, so the web cover still reads like Ledger. */
     private fun renderTextCard(text: String): ByteArray? {

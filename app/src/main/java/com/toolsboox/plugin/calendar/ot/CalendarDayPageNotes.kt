@@ -305,7 +305,7 @@ class CalendarDayPageNotes : Creator {
             if (notePage == "intake") {
                 // Fallback template only — CalendarDayFragment.renderPage draws the
                 // intake page directly with the day's typed panel data.
-                CalendarDayPageIntake.drawPage(canvas, com.toolsboox.plugin.michaelfilter.da.IntakePageData())
+                CalendarDayPageIntake.drawPage(canvas, com.toolsboox.plugin.michaelfilter.da.IntakePageData(), context = context)
                 return
             }
             // A NAMED synthesis topic ("synthesize-1753…") is a Synthesize page — same dot-grid

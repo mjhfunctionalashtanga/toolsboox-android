@@ -1592,7 +1592,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                         day.noteStrokes[p.key] ?: emptyList(),
                         day.imageElements.filter { it.page == p.key },
                         day.textElements.filter { it.pageKey == p.key },
-                        targetWidth = 1000
+                        targetWidth = 1000,
+                        context = context
                     )
                 }
                 if (!isAdded) return@launch
@@ -1672,7 +1673,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                                     day.noteStrokes[p.key] ?: emptyList(),
                                     day.imageElements.filter { it.page == p.key },
                                     day.textElements.filter { it.pageKey == p.key },
-                                    targetWidth = 320
+                                    targetWidth = 320,
+                                    context = context
                                 )
                             }.getOrNull()
                         }
@@ -1690,7 +1692,12 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         dialog.window?.setLayout(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
-    private data class GramPick(val date: java.time.LocalDate, val data: String, val label: String, val link: String)
+    // Carries BOTH faces of the gram — inline base64 and the media-store ref — so the picker's
+    // decode can resolve whichever the element actually has (data → dataRef → nothing).
+    private data class GramPick(
+        val date: java.time.LocalDate, val data: String, val dataRef: String,
+        val label: String, val link: String
+    )
 
     /** Pick an existing Gram (a dropped image element, carrying its own provenance) → attach it
      *  with that provenance. Scroll-safe thumbnail list over the recent window. */
@@ -1719,9 +1726,9 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                         val d = dayFileDate(f.name) ?: return@forEach
                         val day = runCatching { calendarDayService.load(f) }.getOrNull() ?: return@forEach
                         for (e in day.imageElements) {
-                            if (e.data.isBlank()) continue
+                            if (e.data.isBlank() && e.dataRef.isBlank()) continue
                             val label = e.sourceLabel.ifBlank { "Gram" }
-                            out.add(GramPick(d, e.data, label, e.sourceLink))
+                            out.add(GramPick(d, e.data, e.dataRef, label, e.sourceLink))
                             if (out.size >= 200) return@withContext out
                         }
                     }
@@ -1732,16 +1739,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             if (grams.isEmpty()) { listCol.addView(TextView(ctx).apply { text = "No grams yet."; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0) }); return@launch }
             for (g in grams) {
                 // Downsampled decode — 200 full-res bitmaps in one list is an OOM on e-ink RAM.
-                val thumb = runCatching {
-                    val bytes = android.util.Base64.decode(g.data, android.util.Base64.DEFAULT)
-                    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                    val target = px(72)
-                    var sample = 1
-                    while (bounds.outWidth / (sample * 2) >= target && bounds.outHeight / (sample * 2) >= target) sample *= 2
-                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size,
-                        android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
-                }.getOrNull() ?: continue
+                // The bounded pattern lives in LedgerMedia now, which also resolves a ref'd face.
+                val thumb = com.toolsboox.ot.LedgerMedia.resolveThumb(ctx, g.data, g.dataRef, px(72)) ?: continue
                 val row = LinearLayout(ctx).apply {
                     orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
                     setPadding(px(6), px(8), px(6), px(8)); setBackgroundResource(android.R.drawable.list_selector_background)
@@ -1761,10 +1760,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 })
                 row.setOnClickListener {
                     dialog.dismiss()
-                    val bmp = runCatching {
-                        val bytes = android.util.Base64.decode(g.data, android.util.Base64.DEFAULT)
-                        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    }.getOrNull()
+                    val bmp = com.toolsboox.ot.LedgerMedia.resolveBitmap(ctx, g.data, g.dataRef)
                     val cap = if (g.link.startsWith("http")) "🎴 gram · [${g.label}](${g.link})" else "🎴 gram · ${g.label}"
                     onPicked("Gram · ${g.label.take(24)}", bmp, cap)
                 }

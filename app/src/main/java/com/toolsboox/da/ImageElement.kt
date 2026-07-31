@@ -22,6 +22,12 @@ data class ImageElement(
     var width: Float,
     var height: Float,
     var data: String,
+    // Media-store name of the bytes that used to live in [data] — `<sha256-of-decoded-bytes>.<png|jpg>`,
+    // resolved against the `media/` sibling of `attachments/` (WIRE-MEDIA-BY-REFERENCE.md). [data]
+    // stays a required key on the wire: an externalized element carries `data = ""` plus a non-empty
+    // ref, and readers prefer inline [data], then this, then nothing — a missing blob renders a
+    // placeholder, never drops the element. New field with a default → backward-compatible.
+    var dataRef: String = "",
     // Which note page this image belongs to (notePage key, e.g. "pickings"/"0"/"default").
     // Kept as a flat list on CalendarDay; the fragment filters by page so images don't leak
     // across pages. New field with a default → backward-compatible with existing JSON.

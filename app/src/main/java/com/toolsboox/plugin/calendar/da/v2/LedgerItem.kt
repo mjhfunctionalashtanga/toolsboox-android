@@ -32,6 +32,11 @@ data class LedgerItem(
     val strokeIds: MutableList<String> = mutableListOf(),
     /** Optional cropped-ink PNG filename in the attachments dir (rendered lazily). */
     val crop: String? = null,
+    /** Media-store name of the card face (`<sha256-of-decoded-bytes>.<png|jpg>`,
+     *  WIRE-MEDIA-BY-REFERENCE.md). Goes FIRST in crop resolution, then try-base64([crop]), then
+     *  [crop]-as-attachments-filename — the dual-typed [crop] fallback is permanent; this just adds
+     *  a head to it. New field with a default → backward-compatible. */
+    var cropRef: String? = null,
     /** Which face to show in a list — per item. */
     var display: Display = Display.TEXT,
     /** Tasks: checked/done. */

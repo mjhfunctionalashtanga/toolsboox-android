@@ -288,6 +288,7 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
 
                                 // Carry annotation / A-V-gram media blobs too (immutable, UUID-named).
                                 runCatching { syncDriveAttachments(driveService, rootPath) }
+                                runCatching { syncDriveMedia(driveService, rootPath) }
                                     .onFailure { Timber.w(it, "Drive attachment sync failed") }
 
                                 if (syncList.isEmpty()) return@launch
@@ -386,6 +387,65 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
             runCatching {
                 File(dir, name).outputStream().use { GoogleDriveService.downloadFile(driveService, rf, it) }
             }.onFailure { Timber.w(it, "Drive attachment pull failed: $name") }
+        }
+    }
+
+    /**
+     * Sync the content-addressed media store (`media/`, the blobs behind `dataRef`/`cropRef` —
+     * see WIRE-MEDIA-BY-REFERENCE.md) to Drive: folder `media`, app property {type: media},
+     * the exact [syncDriveAttachments] shape — immutable files, push what Drive lacks, pull
+     * what we lack. The one addition the naming scheme buys: a pulled file is hashed and a
+     * SHA-256 that doesn't match the filename stem is discarded (a truncated download must
+     * never be installed under a name that vouches for its bytes), and the local write is
+     * temp-then-atomic-move for the same reason.
+     *
+     * Phase W ordering hook (comment only — no writer emits refs yet): new blobs must reach
+     * Drive BEFORE the day JSON that references them.
+     */
+    private fun syncDriveMedia(driveService: Drive, rootPath: File) {
+        val dir = File(rootPath, "media")
+        val local = dir.listFiles()
+            ?.filter { it.isFile && com.toolsboox.ot.LedgerMedia.isValidRef(it.name) } ?: emptyList()
+        val remote = GoogleDriveService.walkByProperty(driveService, Pair("type", "media"))
+        val remoteNames = remote.mapNotNull { it.name }.toSet()
+        val localNames = local.map { it.name }.toSet()
+
+        val toPush = local.filter { it.name !in remoteNames }
+        if (toPush.isNotEmpty()) {
+            val mediaRoot = GoogleDriveService.getOrCreateRootFolder(driveService, "media") ?: return
+            toPush.forEach { f ->
+                runCatching {
+                    GoogleDriveService.uploadFile(
+                        driveService, mediaRoot, f.name, FileContent(mimeFor(f.name), f), mapOf("type" to "media")
+                    )
+                }.onFailure { Timber.w(it, "Drive media push failed: ${f.name}") }
+            }
+        }
+
+        if (!dir.exists()) dir.mkdirs()
+        remote.forEach { rf ->
+            val name = rf.name ?: return@forEach
+            if (name in localNames || !com.toolsboox.ot.LedgerMedia.isValidRef(name)) return@forEach
+            runCatching {
+                val bytes = java.io.ByteArrayOutputStream()
+                    .also { GoogleDriveService.downloadFile(driveService, rf, it) }.toByteArray()
+                // The name IS the checksum of the bytes; anything else is not the file.
+                if (com.toolsboox.ot.LedgerMedia.sha256Hex(bytes) != name.substringBeforeLast('.')) {
+                    Timber.w("Drive media download failed its own checksum, discarding: $name")
+                    return@forEach
+                }
+                val temp = File(dir, "$name.tmp")
+                temp.writeBytes(bytes)
+                try {
+                    java.nio.file.Files.move(
+                        temp.toPath(), File(dir, name).toPath(),
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+                } catch (e: Exception) {
+                    java.nio.file.Files.move(
+                        temp.toPath(), File(dir, name).toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                }
+            }.onFailure { Timber.w(it, "Drive media pull failed: $name") }
         }
     }
 

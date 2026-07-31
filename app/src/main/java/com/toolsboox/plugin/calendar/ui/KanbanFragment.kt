@@ -206,15 +206,13 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
 
     private fun colOf(i: LedgerItem): String = if (i.done) "done" else if (i.stage == "doing") "doing" else "todo"
 
-    /** Decode a pinned gram's base64 PNG (carried in `crop` when display == INK). Null if not one /
-     *  if `crop` is instead an OCR filename (which won't base64-decode to a bitmap). */
+    /** A pinned gram's face when display == INK — through the shared crop resolution
+     *  ([com.toolsboox.ot.LedgerMedia.resolveCropBitmap]): `cropRef` first, then base64 in
+     *  `crop`, then `crop` as an OCR filename. Null when the item has no such face. */
     private fun cropBitmap(item: LedgerItem): android.graphics.Bitmap? {
         if (item.display != LedgerItem.Display.INK) return null
-        val b64 = item.crop ?: return null
-        return try {
-            val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
-            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        } catch (e: Exception) { null }
+        val ctx = context ?: return null
+        return com.toolsboox.ot.LedgerMedia.resolveCropBitmap(ctx, item.crop, item.cropRef)
     }
 
     /** Create a new card straight from the board — a task on today's page, in the To do column. */

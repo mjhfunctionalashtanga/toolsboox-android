@@ -208,13 +208,10 @@ class LedgerItemAdapter(
                 holder.ink.setImageBitmap(runCatching { CalendarPdfRenderer.renderInk(strokes, rect) }.getOrNull())
             } else {
                 // No strokes to re-render: a pinned gram or a hand-written face carries its own
-                // PNG in `crop`. Without this the ink face of those rows was simply blank.
-                val bmp = e.crop?.takeIf { it.isNotBlank() }?.let {
-                    runCatching {
-                        val bytes = Base64.decode(it, Base64.DEFAULT)
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    }.getOrNull()
-                }
+                // PNG — in `crop`, or in the media store via `cropRef`. Without this the ink
+                // face of those rows was simply blank.
+                val bmp = com.toolsboox.ot.LedgerMedia.resolveCropBitmap(
+                    holder.itemView.context, e.crop, e.cropRef)
                 if (bmp != null) holder.ink.setImageBitmap(bmp) else holder.ink.setImageDrawable(null)
             }
         }

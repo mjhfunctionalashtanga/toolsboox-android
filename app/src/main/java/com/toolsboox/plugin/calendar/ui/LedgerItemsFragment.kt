@@ -814,7 +814,9 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                     item.text = next
                     // An item whose ink face no longer matches its words is a lie. The words are
                     // what was just corrected, so the text face is the truthful one to show.
-                    if (item.display == LedgerItem.Display.INK && item.crop.isNullOrBlank()) {
+                    // A face can arrive by ref now (`cropRef`) — an item carrying one HAS ink.
+                    if (item.display == LedgerItem.Display.INK &&
+                        item.crop.isNullOrBlank() && item.cropRef.isNullOrBlank()) {
                         item.display = LedgerItem.Display.TEXT
                     }
                     persist(item)
@@ -832,12 +834,9 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
      * needs the face that travels WITH the item, which is what a drawn or pinned one has.
      */
     private fun inkFaceOf(item: LedgerItem): Bitmap? {
-        return item.crop?.takeIf { it.isNotBlank() }?.let {
-            runCatching {
-                val bytes = android.util.Base64.decode(it, android.util.Base64.DEFAULT)
-                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            }.getOrNull()
-        }
+        val ctx = context ?: return null
+        // `cropRef` first, then base64 `crop`, then filename — the shared crop resolution.
+        return com.toolsboox.ot.LedgerMedia.resolveCropBitmap(ctx, item.crop, item.cropRef)
     }
 
     /**

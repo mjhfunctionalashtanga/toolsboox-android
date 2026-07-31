@@ -125,12 +125,14 @@ object CalendarPdfRenderer {
      * @param outputFile the destination PDF file
      * @param pageWidth the page width in pixels (default 1404)
      * @param pageHeight the page height in pixels (default 1872)
+     * @param context resolves media-store `dataRef` faces; null renders inline faces only
      */
     fun renderMonthToPdf(
         pages: List<Pair<String, PageContent>>,
         outputFile: File,
         pageWidth: Int = 1404,
-        pageHeight: Int = 1872
+        pageHeight: Int = 1872,
+        context: android.content.Context? = null
     ) {
         if (pages.isEmpty()) return
 
@@ -145,7 +147,7 @@ object CalendarPdfRenderer {
 
                 canvas.drawColor(Color.WHITE)
                 // Same z-order as the live canvas: images under, strokes over, text on top.
-                drawImageElements(canvas, content.imageElements)
+                drawImageElements(canvas, content.imageElements, context)
                 drawAllStrokes(canvas, paint, content.calendarStrokes)
                 drawAllStrokes(canvas, paint, content.noteStrokes)
                 drawTextElements(canvas, content.textElements)
@@ -250,7 +252,8 @@ object CalendarPdfRenderer {
         noteStrokes: List<Stroke>,
         imageElements: List<ImageElement> = emptyList(),
         textElements: List<TextElement> = emptyList(),
-        targetWidth: Int = 1000
+        targetWidth: Int = 1000,
+        context: android.content.Context? = null
     ): Bitmap? {
         var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
         var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
@@ -275,7 +278,7 @@ object CalendarPdfRenderer {
         canvas.save()
         canvas.scale(scale, scale)
         canvas.translate(-rect.left, -rect.top)
-        drawImageElements(canvas, imageElements)
+        drawImageElements(canvas, imageElements, context)
         val paint = createStrokePaint()
         for (s in noteStrokes) drawStroke(canvas, paint, s)
         drawTextElements(canvas, textElements)
@@ -283,12 +286,19 @@ object CalendarPdfRenderer {
         return bmp
     }
 
-    private fun drawImageElements(canvas: Canvas, imageElements: List<ImageElement>) {
+    private fun drawImageElements(
+        canvas: Canvas, imageElements: List<ImageElement>, context: android.content.Context? = null
+    ) {
         if (imageElements.isEmpty()) return
         val imgPaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }
         for (element in imageElements) {
             try {
-                val bytes = Base64.decode(element.data, Base64.DEFAULT)
+                // Inline first, then the media store — a caller with no Context (none today;
+                // the null default is only the seam) still renders every inline face.
+                val bytes = if (context != null)
+                    com.toolsboox.ot.LedgerMedia.resolveBytes(context, element.data, element.dataRef) ?: continue
+                else
+                    Base64.decode(element.data, Base64.DEFAULT)
                 val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: continue
                 canvas.drawBitmap(
                     bmp, null,

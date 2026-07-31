@@ -168,7 +168,9 @@ object ListWidgetRenderer {
         val bands = listOf("read" to "READ", "watch" to "WATCH", "listen" to "LISTEN",
             "books" to "BOOKS", "educate" to "EMAIL")
         val grams = day?.imageElements.orEmpty()
-            .filter { it.page == "intake" && !it.decorative && it.data.isNotBlank() }
+            // A star's face may be inline (`data`) or in the media store (`dataRef`) — either
+            // way it counts; the widget never decodes it.
+            .filter { it.page == "intake" && !it.decorative && (it.data.isNotBlank() || it.dataRef.isNotBlank()) }
         val counts = bands.map { (key, _) -> grams.count { it.intakeKind == key } }
         val total = counts.sum()
 
@@ -233,9 +235,9 @@ object ListWidgetRenderer {
             }
         }
         for (img in day?.imageElements.orEmpty()) {
-            if (img.data.isBlank()) continue
+            if (img.data.isBlank() && img.dataRef.isBlank()) continue
             val label = img.sourceLabel.ifBlank { img.cardText.ifBlank { "Gram" } }
-            out.add(PilePiece("gram-${img.elementId}", "🖼", label.take(48), decodeThumb(img.data)))
+            out.add(PilePiece("gram-${img.elementId}", "🖼", label.take(48), decodeThumb(context, img)))
         }
 
         // The screen's own filters, re-read from the same SharedPreferences (formats mirror
@@ -277,17 +279,11 @@ object ListWidgetRenderer {
         return false
     }
 
-    /** Decode a gram's inline base64 PNG to a small thumbnail — sub-sampled so a full-res card
-     *  never inflates in the widget process. Failures just drop the thumbnail. */
-    private fun decodeThumb(data: String): Bitmap? = runCatching {
-        val bytes = Base64.decode(data, Base64.DEFAULT)
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        val target = 96
-        var sample = 1
-        while (bounds.outWidth / (sample * 2) >= target && bounds.outHeight / (sample * 2) >= target) sample *= 2
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-    }.getOrNull()
+    /** Decode a gram's face — inline base64 or a media-store `dataRef` — to a small thumbnail,
+     *  through the shared bounded decode so a full-res card never inflates in the widget
+     *  process. Failures just drop the thumbnail. */
+    private fun decodeThumb(context: Context, img: com.toolsboox.da.ImageElement): Bitmap? =
+        com.toolsboox.ot.LedgerMedia.resolveThumb(context, img.data, img.dataRef, 96)
 
     // ---- Feed cache read ----
 

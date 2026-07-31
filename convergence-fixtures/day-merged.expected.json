@@ -84,6 +84,39 @@
       "page": "0"
     },
     {
+      "elementId": "abcdabcd-1111-4111-8111-abcdabcdabcd",
+      "timestamp": 2300,
+      "x": 300.0,
+      "y": 310.0,
+      "width": 200.0,
+      "height": 150.0,
+      "data": "",
+      "dataRef": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
+      "page": "0"
+    },
+    {
+      "elementId": "beefbeef-2222-4222-8222-beefbeefbeef",
+      "timestamp": 2400,
+      "x": 500.0,
+      "y": 510.0,
+      "width": 200.0,
+      "height": 150.0,
+      "data": "",
+      "dataRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.jpg",
+      "page": "0"
+    },
+    {
+      "elementId": "cafecafe-3333-4333-8333-cafecafecafe",
+      "timestamp": 2600,
+      "x": 666.0,
+      "y": 610.0,
+      "width": 200.0,
+      "height": 150.0,
+      "data": "",
+      "dataRef": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.png",
+      "page": "0"
+    },
+    {
       "elementId": "78787878-7878-4878-8878-787878787878",
       "timestamp": 2200,
       "x": 400.0,
@@ -132,6 +165,16 @@
       "text": "water plants",
       "date": 1720906000000,
       "display": "text",
+      "done": false,
+      "stage": ""
+    },
+    {
+      "id": "task-l4",
+      "kind": "task",
+      "text": "pinned face",
+      "date": 1720909000000,
+      "display": "ink",
+      "cropRef": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.png",
       "done": false,
       "stage": ""
     }

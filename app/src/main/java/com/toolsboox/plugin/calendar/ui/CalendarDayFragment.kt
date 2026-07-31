@@ -1431,7 +1431,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     kind = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
                     text = element.sourceLabel.ifBlank { "Gram" },
                     date = java.util.Date(),
-                    crop = element.data,
+                    // Phase R writers speak inline base64, so a ref'd gram's face is resolved
+                    // back to it here; a missing blob pins a blank face rather than failing.
+                    crop = com.toolsboox.ot.LedgerMedia.resolveBase64(ctx, element.data, element.dataRef) ?: "",
                     display = com.toolsboox.plugin.calendar.da.v2.LedgerItem.Display.INK,
                     source = "gram", stage = "todo", board = boardId
                 )
@@ -4399,8 +4401,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val printed = StringBuilder()
         for (img in panelImages) {
             val bmp = withContext(Dispatchers.Default) {
-                val bytes = android.util.Base64.decode(img.data, android.util.Base64.DEFAULT)
-                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                com.toolsboox.ot.LedgerMedia.resolveBitmap(requireContext(), img.data, img.dataRef)
             } ?: continue
             val t = com.toolsboox.plugin.calendar.ot.PanelOcr.recognizeImage(bmp)
             if (t.isNotBlank()) printed.append(t).append('\n')
@@ -4831,7 +4832,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 // Intake page: four quarters, each a grid of just its own grams (Email / Read /
                 // Watch / Listen). No typing — the grams are the content; tap one to open it.
                 val intakeData = IntakePageStore.load(requireContext(), currentDate).also { intakePageData = it }
-                CalendarDayPageIntake.drawPage(templateCanvas, intakeData, calendarDay)
+                CalendarDayPageIntake.drawPage(templateCanvas, intakeData, calendarDay, context = requireContext())
             } else {
                 CalendarDayPageNotes.drawPage(this.requireContext(), templateCanvas, calendarDay, noteTemplate, notePage!!)
             }
@@ -5167,8 +5168,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                         .ifBlank { "Picking" }.take(40)
                     val board = com.toolsboox.plugin.calendar.ot.PickingsStore.add(ctx, currentDate, name)
                     // A copy of the gram's face onto the new board (already treated → no second tape).
-                    val bytes = android.util.Base64.decode(element.data, android.util.Base64.DEFAULT)
-                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { bmp ->
+                    com.toolsboox.ot.LedgerMedia.resolveBitmap(ctx, element.data, element.dataRef)?.let { bmp ->
                         com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
                             calendarDayService, root, bmp, currentDate, board.key,
                             sourceLink = element.sourceLink, sourceLabel = element.sourceLabel,
@@ -5197,7 +5197,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             // Reflect it immediately: stamp the in-memory gram and redraw the intake page's ✓.
             element.graduatedTo = boardKey
             CalendarDayPageIntake.drawPage(
-                templateCanvas, com.toolsboox.plugin.michaelfilter.da.IntakePageData(), calendarDay
+                templateCanvas, com.toolsboox.plugin.michaelfilter.da.IntakePageData(), calendarDay,
+                context = context
             )
             binding.templateImageView.invalidate()
             showMessage("Picked into its own board — tap ✓ to open it", binding.root)
@@ -5306,10 +5307,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     /** This intake gram onto a Pickings board — the same chooser every other card gets. */
     private fun intakeGramToPickings(element: ImageElement) {
-        val bmp = runCatching {
-            val bytes = android.util.Base64.decode(element.data, android.util.Base64.DEFAULT)
-            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        }.getOrNull() ?: return
+        val ctx = context ?: return
+        val bmp = com.toolsboox.ot.LedgerMedia.resolveBitmap(ctx, element.data, element.dataRef) ?: return
         placeGramToPickings(bmp)
     }
 
@@ -5420,7 +5419,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         if (starsScope == "day") {
             CalendarDayPageIntake.drawPage(
                 templateCanvas, intakePageData ?: com.toolsboox.plugin.michaelfilter.da.IntakePageData(),
-                calendarDay, null, "TODAY"
+                calendarDay, null, "TODAY", context = context
             )
             binding.templateImageView.invalidate()
             return
@@ -5429,7 +5428,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // swap in the fuller set when it lands. The page is never blank and never blocks the pen.
         CalendarDayPageIntake.drawPage(
             templateCanvas, intakePageData ?: com.toolsboox.plugin.michaelfilter.da.IntakePageData(),
-            calendarDay, null, starsScopeLabel() + " …"
+            calendarDay, null, starsScopeLabel() + " …", context = context
         )
         binding.templateImageView.invalidate()
         val scope = starsScope
@@ -5438,7 +5437,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             if (!isAdded || notePage != CalendarDayPageIntake.INTAKE_PAGE || starsScope != scope) return@launch
             CalendarDayPageIntake.drawPage(
                 templateCanvas, intakePageData ?: com.toolsboox.plugin.michaelfilter.da.IntakePageData(),
-                calendarDay, grams, starsScopeLabel()
+                calendarDay, grams, starsScopeLabel(), context = context
             )
             binding.templateImageView.invalidate()
         }
@@ -5525,12 +5524,19 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // and allocate no pixels at all.
         val appCtx = requireContext().applicationContext
         lifecycleScope.launch {
-            val element = withContext(Dispatchers.IO) { fetchPicking(appCtx, p) }
+            // Resolved to base64 HERE, still on IO: `placeGramAt` runs on Main and reads only the
+            // header, and a ref'd face's file read belongs off the main thread with the fetch.
+            // Phase R placements write inline, so the new element carries the base64 either way.
+            val pair = withContext(Dispatchers.IO) {
+                fetchPicking(appCtx, p)?.let { el ->
+                    com.toolsboox.ot.LedgerMedia.resolveBase64(appCtx, el.data, el.dataRef)?.let { el to it }
+                }
+            }
             if (!isAdded) return@launch
-            val ok = element != null && placeGramAt(
-                element.data, cx, cy,
-                sourceLink = element.sourceLink, sourceLabel = p.label,
-                cardText = element.cardText, sourceFeed = element.sourceFeed
+            val ok = pair != null && placeGramAt(
+                pair.second, cx, cy,
+                sourceLink = pair.first.sourceLink, sourceLabel = p.label,
+                cardText = pair.first.cardText, sourceFeed = pair.first.sourceFeed
             )
             showMessage(if (ok) "Brought in ${p.label}" else "Couldn't bring that picking in", binding.root)
         }
@@ -5697,9 +5703,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                             ?: return@withContext emptyMap()
                         val wanted = group.map { it.first.id }.toSet()
                         day.imageElements
-                            .filter { it.elementId.toString() in wanted && it.data.isNotBlank() }
+                            // A face is inline `data` OR a media ref — an externalized gram is
+                            // still a gram (data → dataRef → nothing, per the wire brief).
+                            .filter { it.elementId.toString() in wanted && (it.data.isNotBlank() || it.dataRef.isNotBlank()) }
                             .mapNotNull { e ->
-                                decodeGramThumb(e.data, thumbPx, android.graphics.Bitmap.Config.RGB_565)
+                                decodeGramThumb(e.data, e.dataRef, thumbPx, android.graphics.Bitmap.Config.RGB_565)
                                     ?.let { e.elementId.toString() to it }
                             }
                             .toMap()
@@ -5739,20 +5747,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * ([fileIntoIntake]) keeps the full config, because those pixels are re-encoded and kept.
      */
     private fun decodeGramThumb(
-        data: String, maxPx: Int,
+        data: String, ref: String, maxPx: Int,
         config: android.graphics.Bitmap.Config = android.graphics.Bitmap.Config.ARGB_8888
-    ): android.graphics.Bitmap? = runCatching {
-        val bytes = android.util.Base64.decode(data, android.util.Base64.DEFAULT)
-        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        var sample = 1
-        while (bounds.outWidth / (sample * 2) >= maxPx && bounds.outHeight / (sample * 2) >= maxPx) sample *= 2
-        android.graphics.BitmapFactory.decodeByteArray(
-            bytes, 0, bytes.size,
-            android.graphics.BitmapFactory.Options().apply {
-                inSampleSize = sample; inPreferredConfig = config
-            })
-    }.getOrNull()
+    ): android.graphics.Bitmap? {
+        // The bounded pattern itself now lives in [com.toolsboox.ot.LedgerMedia.resolveThumb],
+        // where every surface that resolves a media ref shares it — the rule above (nothing
+        // decodes a gram at full resolution) holds whether the face is inline or a `dataRef`.
+        val ctx = context ?: return null
+        return com.toolsboox.ot.LedgerMedia.resolveThumb(ctx, data, ref, maxPx, config)
+    }
 
     /**
      * Every card sitting on a Pickings board, newest day first — as references, holding no pixels.
@@ -5842,7 +5845,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private fun fetchPicking(ctx: android.content.Context, pick: PickingGram): ImageElement? {
         val file = com.toolsboox.ot.LedgerPaths.dayFile(ctx, pick.date) ?: return null
         val day = runCatching { calendarDayService.load(file) }.getOrNull() ?: return null
-        return day.imageElements.firstOrNull { it.elementId.toString() == pick.id && it.data.isNotBlank() }
+        return day.imageElements.firstOrNull {
+            // Inline or ref'd — an externalized face is still a face (WIRE-MEDIA-BY-REFERENCE.md).
+            it.elementId.toString() == pick.id && (it.data.isNotBlank() || it.dataRef.isNotBlank())
+        }
     }
 
     /** File a chosen picking into the intake quarter — the starred-gram path, verbatim. */
@@ -5860,7 +5866,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     // put a day file at 86 MB — only for `place` to immediately scale it down to
                     // 1200. The peak was the crash; the pixels were never wanted.
                     val bmp = decodeGramThumb(
-                        element.data, com.toolsboox.plugin.calendar.ot.PickingsPlacement.MAX_DIM
+                        element.data, element.dataRef, com.toolsboox.plugin.calendar.ot.PickingsPlacement.MAX_DIM
                     ) ?: return@runCatching false
                     com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
                         calendarDayService, com.toolsboox.ot.LedgerPaths.documentsRoot(appCtx), bmp,

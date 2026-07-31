@@ -203,7 +203,10 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             adj.getOrPut(b) { mutableListOf() }.add(a)
         }
 
-        val pieces = day.imageElements.filter { it.page == pageKey && it.data.isNotBlank() && it.mediaKind.isBlank() }
+        // A face is inline `data` OR a media `dataRef` — an externalized card still maps.
+        val pieces = day.imageElements.filter {
+            it.page == pageKey && (it.data.isNotBlank() || it.dataRef.isNotBlank()) && it.mediaKind.isBlank()
+        }
         val textPieces = day.textElements.filter { it.pageKey == pageKey && it.text.isNotBlank() }
 
         for (el in pieces) {

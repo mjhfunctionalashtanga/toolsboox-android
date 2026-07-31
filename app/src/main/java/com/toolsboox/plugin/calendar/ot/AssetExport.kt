@@ -29,15 +29,13 @@ object AssetExport {
 
     /**
      * Render [element] as an export-ready ARGB bitmap: full stored resolution, rotation applied,
-     * [MARGIN] transparent pixels on every side. Null when the stored bytes don't decode.
+     * [MARGIN] transparent pixels on every side. The face resolves inline-first, then through
+     * the media store (`dataRef`) — an export IS the path that wants the full stored pixels.
+     * Null when nothing decodes (including a ref whose blob hasn't synced yet).
      */
-    fun render(element: ImageElement): Bitmap? {
-        val src = try {
-            val bytes = Base64.decode(element.data, Base64.DEFAULT)
-            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        } catch (e: Exception) {
-            Timber.w(e, "asset export: stored bytes did not decode"); null
-        } ?: return null
+    fun render(context: Context, element: ImageElement): Bitmap? {
+        val src = com.toolsboox.ot.LedgerMedia.resolveBitmap(context, element.data, element.dataRef)
+            ?: run { Timber.w("asset export: stored bytes did not decode"); return null }
         return compose(listOf(src to element.rotation))
     }
 

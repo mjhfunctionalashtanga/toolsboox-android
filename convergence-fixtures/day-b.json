@@ -99,6 +99,27 @@
       "height": 90.0,
       "data": "IMG2",
       "page": "0"
+    },
+    {
+      "elementId": "beefbeef-2222-4222-8222-beefbeefbeef",
+      "timestamp": 2400,
+      "x": 555.0,
+      "y": 510.0,
+      "width": 200.0,
+      "height": 150.0,
+      "data": "IMGR",
+      "page": "0"
+    },
+    {
+      "elementId": "cafecafe-3333-4333-8333-cafecafecafe",
+      "timestamp": 2600,
+      "x": 666.0,
+      "y": 610.0,
+      "width": 200.0,
+      "height": 150.0,
+      "data": "",
+      "dataRef": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.png",
+      "page": "0"
     }
   ],
   "readingEvents": [
@@ -148,6 +169,16 @@
       "text": "erased on a pre-split build",
       "date": 1720908000000,
       "display": "text",
+      "done": false,
+      "stage": ""
+    },
+    {
+      "id": "task-l4",
+      "kind": "task",
+      "text": "pinned face",
+      "date": 1720909000000,
+      "display": "ink",
+      "cropRef": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.png",
       "done": false,
       "stage": ""
     }

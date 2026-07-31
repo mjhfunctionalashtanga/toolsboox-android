@@ -2363,13 +2363,12 @@ abstract class SurfaceFragment : ScreenFragment() {
 
     private fun bitmapForElement(element: ImageElement): Bitmap? {
         imageBitmapCache[element.elementId]?.let { return it }
-        return try {
-            val bytes = Base64.decode(element.data, Base64.DEFAULT)
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.also { imageBitmapCache[element.elementId] = it }
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to decode image element")
-            null
-        }
+        // Inline `data` first, then the media-store `dataRef` (WIRE-MEDIA-BY-REFERENCE.md).
+        // A face that resolves to nothing — including a ref whose blob hasn't synced yet — is
+        // skipped by the render, never a dropped element.
+        val ctx = context ?: return null
+        return com.toolsboox.ot.LedgerMedia.resolveBitmap(ctx, element.data, element.dataRef)
+            ?.also { imageBitmapCache[element.elementId] = it }
     }
 
     /** Render all image elements (drawn under strokes/text so the user can write over them). */
@@ -2993,8 +2992,12 @@ abstract class SurfaceFragment : ScreenFragment() {
         send.add(LedgerContextMenu.Item("Post to community…") { postGramToCommunity(element) })
         send.add(LedgerContextMenu.Item("Pin to Board…") { onImagePinToBoard(element) })
         send.add(LedgerContextMenu.Item("Save to Clippings") {
+            // The clippings sidecar stays base64 (out of the wire brief's scope), so a ref'd
+            // face is resolved back to base64 at this seam.
             com.toolsboox.plugin.calendar.ot.ClippingsStore.add(
-                requireContext(), element.data, label = element.sourceLabel,
+                requireContext(),
+                com.toolsboox.ot.LedgerMedia.resolveBase64(requireContext(), element.data, element.dataRef) ?: "",
+                label = element.sourceLabel,
                 gramId = element.gramId ?: "", sourceLink = element.sourceLink, sourceLabel = element.sourceLabel)
             Toast.makeText(requireContext(), "Saved to Clippings", Toast.LENGTH_SHORT).show()
         })
@@ -3045,7 +3048,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         val ctx = context ?: return
         viewLifecycleOwner.lifecycleScope.launch {
             val ok = withContext(Dispatchers.IO) {
-                val bmp = com.toolsboox.plugin.calendar.ot.AssetExport.render(element)
+                val bmp = com.toolsboox.plugin.calendar.ot.AssetExport.render(ctx, element)
                     ?: return@withContext false
                 com.toolsboox.plugin.calendar.nw.AssetWebhook.post(
                     ctx,
@@ -3097,7 +3100,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         val ctx = context ?: return
         viewLifecycleOwner.lifecycleScope.launch {
             val file = withContext(Dispatchers.IO) {
-                com.toolsboox.plugin.calendar.ot.AssetExport.render(element)?.let {
+                com.toolsboox.plugin.calendar.ot.AssetExport.render(ctx, element)?.let {
                     com.toolsboox.plugin.calendar.ot.AssetExport.writeTemp(
                         ctx, it, com.toolsboox.plugin.calendar.ot.AssetExport.filename(element))
                 }
@@ -3123,7 +3126,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         Toast.makeText(ctx, "Uploading…", Toast.LENGTH_SHORT).show()
         viewLifecycleOwner.lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                com.toolsboox.plugin.calendar.ot.AssetExport.render(element)?.let {
+                com.toolsboox.plugin.calendar.ot.AssetExport.render(ctx, element)?.let {
                     com.toolsboox.plugin.calendar.nw.WPPublish.uploadMediaAsset(
                         ctx, com.toolsboox.plugin.calendar.ot.AssetExport.pngBytes(it),
                         com.toolsboox.plugin.calendar.ot.AssetExport.filename(element))
@@ -3223,13 +3226,16 @@ abstract class SurfaceFragment : ScreenFragment() {
                 .setTitle("Post to space")
                 .setItems(labels) { _, which ->
                     val space = spaces[which]
+                    // The community bridge speaks base64, so a ref'd face is resolved back to
+                    // it at this seam; the lineage key stays md5-of-base64 (gramId's contract).
+                    val b64 = com.toolsboox.ot.LedgerMedia.resolveBase64(ctx, element.data, element.dataRef) ?: ""
                     val key = element.gramId?.ifBlank { null } ?: run {
-                        com.toolsboox.ot.CryptoUtils.md5Hash(element.data.toByteArray())
+                        com.toolsboox.ot.CryptoUtils.md5Hash(b64.toByteArray())
                     }
                     viewLifecycleOwner.lifecycleScope.launch {
                         val status = withContext(Dispatchers.IO) {
                             com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.postGram(
-                                ctx, element.data, element.sourceLabel, "gram-$key", space.id
+                                ctx, b64, element.sourceLabel, "gram-$key", space.id
                             )
                         }
                         Toast.makeText(ctx, status, Toast.LENGTH_SHORT).show()
@@ -3982,6 +3988,9 @@ abstract class SurfaceFragment : ScreenFragment() {
         cropped.compress(Bitmap.CompressFormat.PNG, 100, baos)
         seedGramId(element)
         element.data = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        // The new pixels live inline; a stale media ref would be a second face for a picture
+        // this element no longer is (writers never carry both — WIRE-MEDIA-BY-REFERENCE.md).
+        element.dataRef = ""
         element.x = c.left
         element.y = c.top
         element.width = c.width()
@@ -4288,6 +4297,9 @@ abstract class SurfaceFragment : ScreenFragment() {
         pushUndo()
         seedGramId(element)
         element.data = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        // Same as the crop above: transformed pixels are inline pixels, and the old ref no
+        // longer names them.
+        element.dataRef = ""
         // A frame baked into the pixels claims the one-decoration slot (ImageElement.edgeBaked):
         // the iPad's render-time GramEdge steps aside instead of framing the frame.
         if (bakesEdge) element.edgeBaked = true

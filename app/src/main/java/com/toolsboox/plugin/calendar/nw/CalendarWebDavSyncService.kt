@@ -264,6 +264,7 @@ class CalendarWebDavSyncService(
         if (failed == 0) writeWatermarks(maxRemoteSeen, maxLocalSeen)
 
         runCatching { syncAttachments() }.onFailure { Timber.w(it, "$TAG: attachment sync failed") }
+        runCatching { syncMedia() }.onFailure { Timber.w(it, "$TAG: media sync failed") }
 
         val stats = SyncStats(pushed, pulled, skipped, failed)
         Timber.i("$TAG: Day-JSON sync done: $stats")
@@ -307,6 +308,71 @@ class CalendarWebDavSyncService(
                     Files.move(temp.toPath(), File(dir, name).toPath(), StandardCopyOption.ATOMIC_MOVE)
                 } catch (e: Exception) {
                     Files.move(temp.toPath(), File(dir, name).toPath(), StandardCopyOption.REPLACE_EXISTING)
+                }
+            }
+        }
+    }
+
+    /**
+     * Sync the content-addressed media store (`media/`, sibling of `attachments/` — see
+     * WIRE-MEDIA-BY-REFERENCE.md): the blobs behind `imageElements[].dataRef` /
+     * `ledgerItems[].cropRef`. Same shape as [syncAttachments] — immutable files, so pure
+     * union: push what the server lacks, pull what we lack — with one upgrade the naming
+     * scheme buys: the filename IS the SHA-256 of the bytes, so a download is verified by
+     * hashing it and a mismatch (truncation, proxy damage) is discarded instead of installed.
+     * That verify replaces the Content-Length guard for media; the temp-then-atomic-move
+     * stays, so a kill mid-write can't leave half a blob under a name that vouches for it.
+     *
+     * Phase W ordering hook (comment only for now — no writer emits refs yet): when a save
+     * has produced NEW media, the blobs must be pushed BEFORE the day JSON that references
+     * them, so no reader anywhere sees a ref whose bytes don't exist remotely. This pass
+     * running after the day loop is fine in Phase R — there are no fresh local refs — but
+     * the Phase W writer must call the media push first, or reorder [sync].
+     */
+    private fun syncMedia() {
+        val dir = File(rootDir, "media/")
+        val local = dir.listFiles()?.filter { it.isFile && com.toolsboox.ot.LedgerMedia.isValidRef(it.name) }
+            ?: emptyList()
+        // A failed listing is NOT an empty server (same rule as attachments): pushing is
+        // harmless, but "remote lacks everything" would re-upload the whole media store.
+        val remote = runCatching { webdav.propfind("media/") }.getOrNull() ?: run {
+            Timber.w("$TAG: media listing failed; skipping media pass")
+            return
+        }
+        val remoteNames = remote.map { File(it.remotePath).name }.toSet()
+        val localNames = local.map { it.name }.toSet()
+
+        val toPush = local.filter { it.name !in remoteNames }
+        for (f in toPush) runCatching {
+            // Upload first so the steady state stays one round trip; on a failure, MKCOL the
+            // collection and retry once — the 9c4e702e lesson: stock Apache dav 409s a PUT
+            // into a collection that was never made, and a push path that never MKCOLs fails
+            // silently forever.
+            if (!webdav.upload(f, "media/${f.name}")) {
+                webdav.ensureDirectory("media/")
+                webdav.upload(f, "media/${f.name}")
+            }
+        }
+
+        if (!dir.exists()) dir.mkdirs()
+        for (r in remote) {
+            val name = File(r.remotePath).name
+            if (name !in localNames && com.toolsboox.ot.LedgerMedia.isValidRef(name)) {
+                val bytes = runCatching { webdav.download(r.remotePath) }.getOrNull() ?: continue
+                // The name is its own checksum: bytes that don't hash to it are not the file,
+                // however plausible they look. Discard; a later pass re-fetches.
+                if (com.toolsboox.ot.LedgerMedia.sha256Hex(bytes) != name.substringBeforeLast('.')) {
+                    Timber.w("$TAG: media download failed its own checksum, discarding: $name")
+                    continue
+                }
+                runCatching {
+                    val temp = File(dir, "$name.tmp")
+                    temp.writeBytes(bytes)
+                    try {
+                        Files.move(temp.toPath(), File(dir, name).toPath(), StandardCopyOption.ATOMIC_MOVE)
+                    } catch (e: Exception) {
+                        Files.move(temp.toPath(), File(dir, name).toPath(), StandardCopyOption.REPLACE_EXISTING)
+                    }
                 }
             }
         }

@@ -82,6 +82,38 @@
       "height": 150.0,
       "data": "IMGA",
       "page": "0"
+    },
+    {
+      "elementId": "abcdabcd-1111-4111-8111-abcdabcdabcd",
+      "timestamp": 2300,
+      "x": 300.0,
+      "y": 310.0,
+      "width": 200.0,
+      "height": 150.0,
+      "data": "",
+      "dataRef": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
+      "page": "0"
+    },
+    {
+      "elementId": "beefbeef-2222-4222-8222-beefbeefbeef",
+      "timestamp": 2400,
+      "x": 500.0,
+      "y": 510.0,
+      "width": 200.0,
+      "height": 150.0,
+      "data": "",
+      "dataRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.jpg",
+      "page": "0"
+    },
+    {
+      "elementId": "cafecafe-3333-4333-8333-cafecafecafe",
+      "timestamp": 2500,
+      "x": 600.0,
+      "y": 610.0,
+      "width": 200.0,
+      "height": 150.0,
+      "data": "IMGC",
+      "page": "0"
     }
   ],
   "readingEvents": [

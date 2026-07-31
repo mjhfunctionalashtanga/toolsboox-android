@@ -519,9 +519,10 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
                         calendarDayService.load(documentsRoot(), day, null, java.util.Locale.getDefault())
                             .imageElements
                             // Real static cards only. An A/V gram is a poster for a recording that
-                            // isn't coming with it, and a blank-data element is nothing to place —
-                            // either would land as a stray image on the synthesis.
-                            .filter { it.data.isNotBlank() && it.mediaKind.isBlank() }
+                            // isn't coming with it, and a faceless element is nothing to place —
+                            // either would land as a stray image on the synthesis. A face is
+                            // inline `data` OR a media `dataRef` (WIRE-MEDIA-BY-REFERENCE.md).
+                            .filter { (it.data.isNotBlank() || it.dataRef.isNotBlank()) && it.mediaKind.isBlank() }
                             .toList()
                     }.getOrNull().orEmpty()
                 }
@@ -566,8 +567,9 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
                 // The chosen pieces, brought over AS THEY LOOK — they keep their own faces
                 // (treatment = false, or a taped card would be taped twice) and a link home.
                 for (el in pieces) {
-                    val bytes = runCatching { android.util.Base64.decode(el.data, android.util.Base64.DEFAULT) }.getOrNull()
-                    val bmp = bytes?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
+                    val bmp = context?.let {
+                        com.toolsboox.ot.LedgerMedia.resolveBitmap(it, el.data, el.dataRef)
+                    }
                     if (bmp != null) runCatching {
                         place.place(calendarDayService, root, bmp, page.date, page.key,
                             sourceLink = el.sourceLink.ifBlank { back },
