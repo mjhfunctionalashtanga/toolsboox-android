@@ -189,7 +189,7 @@ object PathToVictoryEngine {
             kind = LedgerItem.Kind.TASK,
             text = text,
             // Canonical item.date: the due DAY at 12:00 UTC — the convention every creation path and
-            // reader uses (see LedgerChatFragment.executeCreates); device-local clock time drifted items.
+            // reader uses (see NotebotRegistry's add_task tool); device-local clock time drifted items.
             date = Date(day.atTime(12, 0).toInstant(ZoneOffset.UTC).toEpochMilli()),
             stage = "todo", source = "path", contactId = contactId
         )

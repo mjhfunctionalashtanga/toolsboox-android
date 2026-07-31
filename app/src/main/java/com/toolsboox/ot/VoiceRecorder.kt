@@ -47,32 +47,10 @@ object VoiceRecorder {
         onSaved: (File, Double) -> Unit,
         onDiscarded: () -> Unit = {}
     ) {
-        if (isRecording) {
-            // Someone is already at the microphone; finish that one rather than racing it.
-            stop(save = true)
-        }
-
-        val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context)
-        else @Suppress("DEPRECATION") MediaRecorder()
-
-        try {
-            rec.setAudioSource(MediaRecorder.AudioSource.MIC)
-            rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            rec.setOutputFile(out.absolutePath)
-            rec.prepare()
-            rec.start()
-        } catch (e: Exception) {
-            Timber.w(e, "voice recording failed to start")
-            runCatching { rec.release() }
+        if (!start(context, out, onSaved)) {
             onDiscarded()
             return
         }
-
-        recorder = rec
-        file = out
-        startedAt = SystemClock.elapsedRealtime()
-        onDone = onSaved
 
         val label = TextView(context).apply {
             textSize = 18f
@@ -98,6 +76,50 @@ object VoiceRecorder {
         }
         handler.postDelayed(tick, 500)
     }
+
+    /**
+     * Chromeless start — for surfaces that own their own recording chrome (Notebot's flat
+     * recording bar in the chat). Same microphone, same one-at-a-time rule, no dialog: the
+     * caller shows elapsed time itself and calls [stop] to finish (save=true) or discard.
+     * Returns false when the recorder couldn't start, so the caller can say so instead of
+     * showing a bar over silence.
+     *
+     * VOICE-STATE NOTE (e-ink canon): recording state stays FLAT — a counting label, never a
+     * waveform or level meter. A moving meter on e-ink is a strobing grey rectangle that costs
+     * refreshes and communicates nothing the counter doesn't.
+     */
+    fun start(context: Context, out: File, onSaved: (File, Double) -> Unit): Boolean {
+        if (isRecording) {
+            // Someone is already at the microphone; finish that one rather than racing it.
+            stop(save = true)
+        }
+
+        val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context)
+        else @Suppress("DEPRECATION") MediaRecorder()
+
+        try {
+            rec.setAudioSource(MediaRecorder.AudioSource.MIC)
+            rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            rec.setOutputFile(out.absolutePath)
+            rec.prepare()
+            rec.start()
+        } catch (e: Exception) {
+            Timber.w(e, "voice recording failed to start")
+            runCatching { rec.release() }
+            return false
+        }
+
+        recorder = rec
+        file = out
+        startedAt = SystemClock.elapsedRealtime()
+        onDone = onSaved
+        return true
+    }
+
+    /** Elapsed seconds of the current recording — for callers drawing their own counting bar. */
+    val elapsedSeconds: Int
+        get() = if (recorder == null) 0 else ((SystemClock.elapsedRealtime() - startedAt) / 1000).toInt()
 
     /**
      * Finish. [save] false throws the clip away.

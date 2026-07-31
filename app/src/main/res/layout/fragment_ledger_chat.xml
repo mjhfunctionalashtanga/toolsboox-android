@@ -1,4 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Notebot — the Ask-my-Ledger conversation surface (DESIGN-NOTEBOT-VOICE.md §7).
+
+  Transcript, not bubbles: chat bubbles on e-ink are grey rounded smudges that waste half the
+  line width on asymmetric margins. This is a ledger-page transcript — question in bold, full
+  width; answer in regular weight beneath it; a small receipt caption under answers that used
+  tools; a hairline rule between turns; newest at the bottom, scrolled to. Flat white.
+
+  The input row sits at the bottom. The recording bar, the countdown pill and the speaking pill
+  swap in place with the input row's space when active — states swap in place; nothing floats.
+
+  IF INK EVER BECOMES AN INPUT here (a scribbled question on a pad), the promptTitle rule
+  applies unmodified: action buttons build INTO the panel content, index 0, ABOVE the ink —
+  never platform buttons at the bottom under a hand. v1 is voice and type; the rule is recorded
+  here so the v2 that adds the pad inherits it.
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:orientation="vertical"
     android:layout_width="match_parent"
@@ -6,7 +22,7 @@
     android:background="#FFFFFF"
     android:padding="20dp">
 
-    <!-- Title row with the shared ▦ Ledger directory so you can get in/out consistently. -->
+    <!-- Title row: title, the remembered speaker toggle (voice-out override), the ▦ directory. -->
     <LinearLayout
         android:orientation="horizontal"
         android:gravity="center_vertical"
@@ -21,6 +37,19 @@
             android:textColor="#000000"
             android:layout_width="0dp"
             android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+        <!-- Voice-out default is symmetry (spoken question → spoken answer, typed → silent);
+             this toggle overrides in both directions and is remembered. Cycles Auto/On/Off. -->
+        <TextView
+            android:id="@+id/speaker_toggle"
+            android:text="🔊 Auto"
+            android:textSize="15sp"
+            android:textColor="#000000"
+            android:padding="6dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Speak answers"
+            android:layout_marginEnd="8dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"/>
         <ImageButton
             android:id="@+id/ledger_button"
@@ -37,10 +66,10 @@
         android:textColor="#333333"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="14dp"/>
+        android:layout_marginBottom="10dp"/>
 
     <!--
-      What was sent, sitting above the answer for the whole visit.
+      What was sent, sitting above the transcript for the whole visit.
 
       The passage has always ridden the grounding (`ask_context`); what it never did was show its
       face, so the one thing you could not check while choosing a prompt was WHICH highlight you
@@ -79,7 +108,7 @@
             android:layout_height="wrap_content"/>
     </LinearLayout>
 
-    <!-- Scope: everything, or pick sections -->
+    <!-- Scope: everything, or pick sections. Feeds search_ledger's corpus gather. -->
     <LinearLayout
         android:orientation="horizontal"
         android:layout_width="match_parent"
@@ -99,7 +128,7 @@
         android:orientation="horizontal"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp">
+        android:layout_marginBottom="6dp">
 
         <CheckBox android:id="@+id/scope_planner" android:text="@string/ledger_chat_scope_planner"
             android:checked="true" android:textColor="#000000"
@@ -110,21 +139,15 @@
     </LinearLayout>
 
     <!--
-      The prompt presets, as a row of chips directly over the question field.
-
-      They live HERE and not in the collapsed key/model panel where the persona button sits,
-      because a preset is spent at the moment of asking: it has to be one tap from the question,
-      or typing the question out again is cheaper than finding the saved one. (The persona button
-      being buried is a separate sin, and not this pass's to fix — a persona is chosen once and
-      then forgotten about, which is the one thing that makes its hiding place survivable.)
-
-      Filled programmatically by [LedgerChatFragment.rebuildPresetRow]: tapping a chip asks it,
-      holding one edits or deletes it — hold-to-act, no modes — and the trailing ＋ makes a new one.
+      The prompt presets, as a row of chips directly over the transcript. A preset is spent at
+      the moment of asking: it has to be one tap from the question. Presets now fire as TURNS in
+      the transcript instead of replacing a lone answer. Filled programmatically by
+      [LedgerChatFragment.rebuildPresetRow]: tap asks, hold edits/deletes — hold-to-act, no modes.
     -->
     <HorizontalScrollView
         android:id="@+id/preset_scroll"
         android:scrollbars="none"
-        android:layout_marginBottom="8dp"
+        android:layout_marginBottom="6dp"
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
         <LinearLayout
@@ -134,40 +157,23 @@
             android:layout_height="wrap_content"/>
     </HorizontalScrollView>
 
-    <EditText
-        android:id="@+id/question_edit"
-        android:hint="@string/ledger_chat_hint"
-        android:textColor="#000000"
-        android:textColorHint="#777777"
-        android:textSize="17sp"
-        android:inputType="textMultiLine|textCapSentences"
-        android:minLines="3"
-        android:gravity="top"
-        android:background="@drawable/eink_edit_bg"
-        android:padding="14dp"
+    <!-- The transcript: turns are appended programmatically (bold question, plain answer,
+         receipt caption, hairline rule). Appending a turn invalidates from the new turn down,
+         not the page — full-refresh discipline. -->
+    <ScrollView
+        android:id="@+id/transcript_scroll"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"/>
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="2dp">
 
-    <Button
-        android:id="@+id/mic_button"
-        android:text="@string/ledger_chat_dictate"
-        android:textSize="16sp"
-        android:layout_marginTop="8dp"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"/>
-
-    <Button
-        android:id="@+id/ask_button"
-        android:text="@string/ledger_chat_ask"
-        android:textColor="#FFFFFF"
-        android:textStyle="bold"
-        android:textSize="17sp"
-        android:background="@drawable/eink_button_solid"
-        android:stateListAnimator="@null"
-        android:layout_marginTop="12dp"
-        android:paddingVertical="12dp"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"/>
+        <LinearLayout
+            android:id="@+id/transcript"
+            android:orientation="vertical"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingBottom="8dp"/>
+    </ScrollView>
 
     <ProgressBar
         android:id="@+id/progress"
@@ -177,20 +183,97 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"/>
 
-    <ScrollView
+    <!-- Speaking state, flat: one pill over the answer area; tap stops the voice. No
+         pause/resume transport — an answer short enough to converse with doesn't need one. -->
+    <TextView
+        android:id="@+id/speaking_pill"
+        android:text="🔊 Speaking — tap to stop"
+        android:textSize="15sp"
+        android:textColor="#000000"
+        android:gravity="center"
+        android:visibility="gone"
+        android:background="@drawable/eink_edit_bg"
+        android:padding="10dp"
+        android:layout_marginBottom="6dp"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:layout_marginTop="8dp">
+        android:layout_height="wrap_content"/>
 
-        <TextView
-            android:id="@+id/answer_text"
+    <!-- VOICE STATES, all flat (e-ink canon: no waveform, no pulse — a moving level meter on
+         e-ink is a strobing grey rectangle). These swap in place with the input row below:
+         recording bar while the mic is open; countdown pill during the hold-path's visible
+         2.5 s "Sending — tap to edit" window. Labels update by the second, not by frame. -->
+    <TextView
+        android:id="@+id/recording_bar"
+        android:text="● Listening 0:00 — tap Stop"
+        android:textSize="16sp"
+        android:textColor="#000000"
+        android:gravity="center"
+        android:visibility="gone"
+        android:background="@drawable/eink_edit_bg"
+        android:padding="14dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+    <TextView
+        android:id="@+id/countdown_pill"
+        android:text="● Sending in 3 — tap to edit"
+        android:textSize="16sp"
+        android:textColor="#000000"
+        android:gravity="center"
+        android:visibility="gone"
+        android:background="@drawable/eink_edit_bg"
+        android:padding="14dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
+    <!-- The input row, bottom of screen: question field, mic (tap = dictate-then-edit,
+         hold = talk-and-send), send. Nothing is ever sent that was not first shown. -->
+    <LinearLayout
+        android:id="@+id/input_row"
+        android:orientation="horizontal"
+        android:gravity="bottom"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <EditText
+            android:id="@+id/question_edit"
+            android:hint="@string/ledger_chat_hint"
             android:textColor="#000000"
-            android:textSize="16sp"
-            android:textIsSelectable="true"
-            android:layout_width="match_parent"
+            android:textColorHint="#777777"
+            android:textSize="17sp"
+            android:inputType="textMultiLine|textCapSentences"
+            android:minLines="1"
+            android:maxLines="4"
+            android:gravity="top"
+            android:background="@drawable/eink_edit_bg"
+            android:padding="12dp"
+            android:layout_width="0dp"
+            android:layout_weight="1"
             android:layout_height="wrap_content"/>
-    </ScrollView>
+
+        <Button
+            android:id="@+id/mic_button"
+            android:text="🎤"
+            android:textSize="18sp"
+            android:contentDescription="@string/ledger_chat_dictate"
+            android:layout_marginStart="6dp"
+            android:minWidth="56dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+
+        <Button
+            android:id="@+id/ask_button"
+            android:text="@string/ledger_chat_ask"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:textSize="16sp"
+            android:background="@drawable/eink_button_solid"
+            android:stateListAnimator="@null"
+            android:layout_marginStart="6dp"
+            android:paddingHorizontal="18dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -273,6 +356,17 @@
             android:textColor="#000000"
             android:textColorHint="#888888"
             android:inputType="text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+        <!-- The one new credential FIELD (no new credential kinds): the mjh.yoga notes ingest
+             secret that unlocks Notebot's remote reach (the eight notes_* tools and the
+             create_note double-write). Same encrypted store as the API keys. -->
+        <EditText
+            android:id="@+id/secret_edit"
+            android:hint="mjh.yoga notes ingest secret (optional — unlocks the /notes reach)"
+            android:textColor="#000000"
+            android:textColorHint="#888888"
+            android:inputType="textPassword"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"/>
         <Button

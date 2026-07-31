@@ -1,9 +1,9 @@
 package com.toolsboox.plugin.chat.ui
 
 import android.content.SharedPreferences
-import android.os.Build
 import android.os.Bundle
-import android.os.Environment
+import android.os.SystemClock
+import android.view.MotionEvent
 import android.view.View
 import androidx.lifecycle.lifecycleScope
 import androidx.security.crypto.EncryptedSharedPreferences
@@ -13,6 +13,9 @@ import com.toolsboox.databinding.FragmentLedgerChatBinding
 import com.toolsboox.plugin.chat.da.Section
 import com.toolsboox.plugin.chat.fi.LedgerCorpusService
 import com.toolsboox.plugin.chat.nw.LedgerChatService
+import com.toolsboox.plugin.chat.nw.NotebotLoop
+import com.toolsboox.plugin.chat.nw.NotebotRegistry
+import com.toolsboox.plugin.chat.nw.NotebotRemote
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -22,10 +25,27 @@ import java.io.File
 import javax.inject.Inject
 
 /**
- * Ask my Ledger — a grounded chat over the whole corpus (book highlights, feed
- * annotations, planner text and A/V grams), scoped to everything or the sections you
- * pick. Reads the on-disk day JSON, retrieves the relevant snippets, and answers via
- * Claude with citations back to the source day/section.
+ * Notebot — one conversation surface, two reaches (DESIGN-NOTEBOT-VOICE.md).
+ *
+ * The local reach is the Ask-my-Ledger corpus plus the local doing verbs; the remote reach is
+ * the mjh.yoga notes-bot's world through eight curated tools. The model decides which reach a
+ * question needs — one bot with two arms, not two bots with a switcher (a switcher is a mode,
+ * and the standing rule is no modes). Each answer's receipt line names which arms it used.
+ *
+ * Voice in: tap the mic to dictate into the question field (read it, fix it, send it — the
+ * full TitlePad discipline); HOLD the mic to talk-and-send — release ends the recording, the
+ * transcript lands in the field visibly, a 2.5 s countdown pill offers "tap to edit", then it
+ * sends. Nothing is ever sent that was not first shown.
+ *
+ * Voice out: system TTS, symmetry by default — a spoken question gets a spoken answer, a typed
+ * question gets a read one — with a remembered speaker toggle overriding in both directions.
+ * Errors are spoken too when the turn was spoken: hands-free means eyes-free.
+ *
+ * VOICE STATES, all flat (e-ink canon — no waveform, no pulse, no meter):
+ *   idle → recording (counting bar, by the second) → transcribing (progress bar)
+ *        → [hold path] countdown pill (by the second) → asking (progress bar)
+ *        → answered (transcript turn) → speaking (one pill, tap to stop).
+ * States swap in place with the input row; nothing floats, nothing animates per-frame.
  */
 @AndroidEntryPoint
 class LedgerChatFragment @Inject constructor() : ScreenFragment() {
@@ -47,6 +67,17 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
     private var lastQuestion: String = ""
     private var lastAnswer: String = ""
 
+    /** Which tools the last answered turn used (call order, deduped) — the receipt the saved
+     *  note repeats, so the note and the screen cannot disagree about what was consulted. */
+    private var lastTools: List<String> = emptyList()
+
+    /** One id per visit; every history row this visit writes carries it. Per-device, no sync —
+     *  the chat is working material, and one-truth-per-thing is canon (brief §6). */
+    private var sessionId: String = ""
+
+    /** The answered turns of this visit, oldest first — the loop sees the last 8 as context. */
+    private val sessionTurns = mutableListOf<Pair<String, String>>()
+
     /**
      * The send-to-Ask bridge's provenance preamble — rides the system context (never the visible
      * question) for every ask in this visit, so follow-up questions stay grounded in where the
@@ -56,27 +87,59 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
      */
     private var askContext: String? = null
 
-    /** What the ask was grounded in, as the answer footer reports it — kept so a saved note can
-     *  say the same thing the screen said rather than a second, differently-counted version. */
-    private var lastHits = 0
-    private var lastCorpus = 0
-    private var lastCreated = 0
+    // ---- voice state ---------------------------------------------------------------------------
 
-    /** System speech-to-text → appended into the question box, for quick dictation. */
+    private enum class RecMode { NONE, TAP, HOLD }
+
+    private var recMode = RecMode.NONE
+    private var recShownSecond = -1
+    private var countdownDeadline = 0L
+    private var countdownShownSecond = -1
+
+    /** Was the question that is currently being asked (or answered) spoken in? Drives the
+     *  voice-in → voice-out symmetry and the spoken-errors rule. */
+    private var lastVoiced = false
+
+    private var tts: com.toolsboox.ui.plugin.LedgerTts? = null
+
+    private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var recTicker: Runnable? = null
+    private var countdownTicker: Runnable? = null
+
+    /** What to do once the mic permission comes back granted. */
+    private var pendingMicAction: (() -> Unit)? = null
+
+    private val micPermLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val action = pendingMicAction; pendingMicAction = null
+        if (granted) action?.invoke() else showMessage("Notebot needs the microphone for voice.")
+    }
+
+    /** When the RecognizerIntent fallback fires from a HOLD, its transcript auto-sends through
+     *  the same visible countdown the Whisper path uses. */
+    private var fallbackHold = false
+
+    /** System speech-to-text fallback (for units without an OpenAI key) → into the question box.
+     *  Tap path: dictate-then-edit. Hold path: the countdown takes it from here. */
     private val speechLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { res ->
         val text = res.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+        val hold = fallbackHold; fallbackHold = false
         if (!text.isNullOrBlank()) {
             val cur = binding.questionEdit.text?.toString().orEmpty()
-            binding.questionEdit.setText(if (cur.isBlank()) text else "$cur $text")
+            binding.questionEdit.setText(if (cur.isBlank() || hold) text else "$cur $text")
             binding.questionEdit.setSelection(binding.questionEdit.text?.length ?: 0)
+            if (hold) startCountdown()
         }
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentLedgerChatBinding.bind(view)
+
+        sessionId = "boox-" + java.util.UUID.randomUUID().toString().take(8)
 
         val prefs = encryptedPrefs()
         // One-time migration: an earlier build stored a single (Claude) key under the base keys.
@@ -104,20 +167,48 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
             binding.settingsPanel.visibility =
                 if (binding.settingsPanel.visibility == View.GONE) View.VISIBLE else View.GONE
         }
+        binding.secretEdit.setText(prefs.getString(NotebotRemote.KEY_SECRET, "") ?: "")
         binding.saveKeyButton.setOnClickListener {
             saveProviderFields(provider)
-            prefs.edit().putString(KEY_PROVIDER, provider).apply()
+            prefs.edit()
+                .putString(KEY_PROVIDER, provider)
+                // The one new credential field: the notes ingest secret that unlocks the remote
+                // reach. Same encrypted store as the keys (the standing Keychain equivalent).
+                .putString(NotebotRemote.KEY_SECRET, binding.secretEdit.text.toString().trim())
+                .apply()
             binding.modelEdit.setText(prefs.getString(modelKey(provider), LedgerChatService.defaultModel(provider)))
             binding.settingsPanel.visibility = View.GONE
             showMessage(R.string.ledger_chat_key_saved)
         }
-        binding.askButton.setOnClickListener { ask() }
+        binding.askButton.setOnClickListener { ask(voiced = false) }
         binding.personaButton.setOnClickListener { showPersonaDialog() }
-        binding.micButton.setOnClickListener { startDictation() }
         binding.saveNoteButton.setOnClickListener { saveAnswerAsNote() }
         binding.saveFeedButton.setOnClickListener { saveAnswerToFeed() }
         binding.historyButton.setOnClickListener { showHistoryDialog() }
         updatePersonaLabel()
+
+        // ---- the mic's two verbs (the app's standing gesture grammar: tap acts, hold is the
+        // second verb). Tap = dictate-then-edit; hold = talk-and-send with the visible countdown.
+        binding.micButton.setOnClickListener { startVoice(hold = false) }
+        binding.micButton.setOnLongClickListener { startVoice(hold = true); true }
+        binding.micButton.setOnTouchListener { _, ev ->
+            // Release ends a HOLD recording — that IS the gesture; the transcript then lands in
+            // the field and the countdown runs. Returning false keeps click/long-click alive.
+            if ((ev.action == MotionEvent.ACTION_UP || ev.action == MotionEvent.ACTION_CANCEL)
+                && recMode == RecMode.HOLD) finishRecording()
+            false
+        }
+        // Tap the counting bar to stop a tap-mode recording (the bar's own label says so).
+        binding.recordingBar.setOnClickListener { if (recMode == RecMode.TAP) finishRecording() }
+        // Tapping during the countdown cancels the send and leaves the transcript in the field
+        // for correction — the cheap, reversible mis-fire the hold gesture was priced for.
+        binding.countdownPill.setOnClickListener { cancelCountdown() }
+        binding.questionEdit.setOnClickListener { if (countdownTicker != null) cancelCountdown() }
+
+        // ---- voice out: the remembered speaker toggle + the tap-to-stop pill.
+        updateSpeakerLabel()
+        binding.speakerToggle.setOnClickListener { cycleSpeakerMode() }
+        binding.speakingPill.setOnClickListener { stopSpeaking() }
 
         // The presets that ship arrive on first look rather than at install, the same way the
         // personas do, so a fresh Ask has something on the chip row to tap.
@@ -145,13 +236,34 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
             arguments?.getString("initial_query")?.trim()?.takeIf { it.isNotEmpty() }?.let { seed ->
                 binding.questionEdit.setText(seed)
                 arguments?.remove("initial_query")
-                binding.questionEdit.post { ask() }
+                binding.questionEdit.post { ask(voiced = false) }
             }
         }
         // Shared ▦ Ledger directory — consistent "get in/out" nav across every surface.
         binding.ledgerButton.setOnClickListener {
             showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Leaving the screen mid-recording discards the clip (a chat question is not a memo),
+        // kills any countdown, and silences the voice — no state survives that the screen
+        // doesn't show.
+        if (::binding.isInitialized) {
+            if (recMode != RecMode.NONE) {
+                com.toolsboox.ot.VoiceRecorder.stop(save = false)
+                resetVoiceChrome()
+            }
+            cancelCountdown()
+        }
+        stopSpeaking()
+    }
+
+    override fun onDestroyView() {
+        tts?.shutdown(); tts = null
+        uiHandler.removeCallbacksAndMessages(null)
+        super.onDestroyView()
     }
 
     private fun apiKeyKey(provider: String) = "${KEY_API}_$provider"
@@ -188,20 +300,65 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
         return s
     }
 
-    /**
-     * Show an answer with its citations turned into doors.
-     *
-     * Every snippet the corpus hands the model is cited as `yyyy-MM-dd · kind · label`, so every
-     * claim in an answer already carries the date it came from — it was just sitting there as
-     * text. Making it tappable is the difference between "the machine says you wrote this" and
-     * being able to go and look.
-     *
-     * The destination is the day itself, since that is where every kind of object actually lives;
-     * a picking or a note page goes to its own page on that day rather than the day sheet.
-     */
-    private fun setAnswerWithLinks(text: String) {
-        val span = android.text.SpannableString(text)
+    // ---- the transcript ------------------------------------------------------------------------
 
+    /**
+     * Append one turn to the ledger-page transcript (brief §7): question in bold, full width;
+     * answer in regular weight beneath; the receipt caption under that in small type; a hairline
+     * rule between turns. Newest at the bottom, scrolled to. Returns the answer and receipt
+     * views so the ask can fill them in when the loop comes back — appending invalidates from
+     * the new turn down, never the page (full-refresh discipline).
+     */
+    private fun appendTurn(question: String): Pair<android.widget.TextView, android.widget.TextView> {
+        val ctx = requireContext()
+        val density = resources.displayMetrics.density
+        val transcript = binding.transcript
+
+        if (transcript.childCount > 0) {
+            transcript.addView(View(ctx).apply {
+                setBackgroundColor(0xFFBBBBBB.toInt())
+                layoutParams = android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 1
+                ).apply { topMargin = (10 * density).toInt(); bottomMargin = (10 * density).toInt() }
+            })
+        }
+
+        val q = android.widget.TextView(ctx).apply {
+            text = question
+            textSize = 17f
+            setTextColor(0xFF000000.toInt())
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextIsSelectable(true)
+        }
+        val a = android.widget.TextView(ctx).apply {
+            textSize = 16f
+            setTextColor(0xFF000000.toInt())
+            setTextIsSelectable(true)
+            setPadding(0, (6 * density).toInt(), 0, 0)
+        }
+        val receipt = android.widget.TextView(ctx).apply {
+            textSize = 12f
+            setTextColor(0xFF666666.toInt())
+            visibility = View.GONE
+            setPadding(0, (4 * density).toInt(), 0, 0)
+        }
+        transcript.addView(q); transcript.addView(a); transcript.addView(receipt)
+        scrollTranscriptToBottom()
+        return a to receipt
+    }
+
+    private fun scrollTranscriptToBottom() {
+        binding.transcriptScroll.post { binding.transcriptScroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    /**
+     * An answer with its citations turned into doors. Every snippet the corpus hands the model
+     * is cited as `yyyy-MM-dd · kind · label`; making that tappable is the difference between
+     * "the machine says you wrote this" and being able to go and look. Underline only, no
+     * colour — the standing e-ink rule.
+     */
+    private fun setAnswerWithLinks(target: android.widget.TextView, text: String) {
+        val span = android.text.SpannableString(text)
         for (link in com.toolsboox.plugin.calendar.ot.CitationLinks.find(text)) {
             span.setSpan(object : android.text.style.ClickableSpan() {
                 override fun onClick(widget: View) {
@@ -221,22 +378,223 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
                 }
             }, link.start, link.endExclusive, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-
-        binding.answerText.movementMethod = android.text.method.LinkMovementMethod.getInstance()
-        binding.answerText.text = span
+        target.movementMethod = android.text.method.LinkMovementMethod.getInstance()
+        target.text = span
     }
 
-    /** Launch system speech recognition. Result is appended to the question box. Falls back with a
-     *  message on devices without a recognizer (some Boox units lack Google services). */
-    private fun startDictation() {
+    // ---- voice in ------------------------------------------------------------------------------
+
+    /**
+     * Open the microphone. Primary path: [com.toolsboox.ot.VoiceRecorder] (AAC/m4a — capture is
+     * a solved problem here) → OpenAI Whisper via the key [com.toolsboox.plugin.chat.nw.EmbeddingIndex]
+     * already holds — it works on every unit that can chat at all, and it hears "Pasasana".
+     * Fallback: the system RecognizerIntent where present. Never a dead button: with neither,
+     * the mic says plainly what it needs.
+     */
+    private fun startVoice(hold: Boolean) {
+        if (recMode != RecMode.NONE) return
+        // Talking over the bot is the interrupt a conversation already has.
+        stopSpeaking()
+        val ctx = requireContext()
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                ctx, android.Manifest.permission.RECORD_AUDIO)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            pendingMicAction = { startVoice(hold) }
+            micPermLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        if (!com.toolsboox.plugin.calendar.nw.Transcribe.hasKey(ctx)) {
+            startDictationFallback(hold)
+            return
+        }
+        cancelCountdown()
+        val out = File(ctx.cacheDir, "notebot-ask.m4a")
+        val ok = com.toolsboox.ot.VoiceRecorder.start(ctx, out) { f, _ -> onRecorded(f) }
+        if (!ok) { showMessage("Couldn't open the microphone."); return }
+        recMode = if (hold) RecMode.HOLD else RecMode.TAP
+        recShownSecond = -1
+        binding.inputRow.visibility = View.GONE
+        binding.recordingBar.visibility = View.VISIBLE
+        tickRecordingBar()
+        val tick = object : Runnable {
+            override fun run() {
+                if (recMode == RecMode.NONE) return
+                tickRecordingBar()
+                uiHandler.postDelayed(this, 500)
+            }
+        }
+        recTicker = tick
+        uiHandler.postDelayed(tick, 500)
+    }
+
+    /** The flat recording bar: `● Listening 0:07 — release to send` (hold) or `— tap Stop`
+     *  (tap). Redrawn only when the displayed second changes — e-ink counts, it never pulses. */
+    private fun tickRecordingBar() {
+        val s = com.toolsboox.ot.VoiceRecorder.elapsedSeconds
+        if (s == recShownSecond) return
+        recShownSecond = s
+        val clock = "%d:%02d".format(s / 60, s % 60)
+        binding.recordingBar.text =
+            if (recMode == RecMode.HOLD) "● Listening $clock — release to send"
+            else "● Listening $clock — tap Stop"
+    }
+
+    /** End the recording (either mode). Sub-half-second clips are VoiceRecorder's mis-tap
+     *  discard; anything real flows on to [onRecorded]. */
+    private fun finishRecording() {
+        val wasHold = recMode == RecMode.HOLD
+        recMode = RecMode.NONE
+        recTicker?.let { uiHandler.removeCallbacks(it) }; recTicker = null
+        pendingHoldSend = wasHold
+        com.toolsboox.ot.VoiceRecorder.stop(save = true, onDiscarded = {
+            pendingHoldSend = false
+            resetVoiceChrome()
+        })
+    }
+
+    /** Set by [finishRecording], read by [onRecorded]: does this transcript auto-send? */
+    private var pendingHoldSend = false
+
+    /** Whisper the clip, land the transcript IN THE INPUT FIELD (editable — the auditable
+     *  record of what was actually asked), then either wait for the reader (tap path) or run
+     *  the visible countdown (hold path). */
+    private fun onRecorded(file: File) {
+        val hold = pendingHoldSend; pendingHoldSend = false
+        resetVoiceChrome()
+        binding.progress.visibility = View.VISIBLE
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) {
+                val t = com.toolsboox.plugin.calendar.nw.Transcribe.audio(requireContext(), file)
+                file.delete()
+                t
+            }
+            binding.progress.visibility = View.INVISIBLE
+            if (text.isNullOrBlank()) {
+                // The turn came in by voice, so its failure is said as well as shown —
+                // hands-free means eyes-free.
+                showMessage("Couldn't transcribe that — try again.")
+                if (shouldSpeak(voiced = true)) speak("I couldn't transcribe that. Try again.")
+                return@launch
+            }
+            binding.questionEdit.setText(text)
+            binding.questionEdit.setSelection(text.length)
+            if (hold) startCountdown()
+        }
+    }
+
+    /** The RecognizerIntent fallback (some Boox units lack Google services; some lack a key). */
+    private fun startDictationFallback(hold: Boolean) {
         val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, getString(R.string.ledger_chat_dictate))
         }
+        fallbackHold = hold
         runCatching { speechLauncher.launch(intent) }
-            .onFailure { showMessage("Speech input isn't available on this device.") }
+            .onFailure {
+                fallbackHold = false
+                showMessage("Voice needs an OpenAI key (Settings ⚙) — this device has no speech recognizer.")
+            }
     }
+
+    /** Put the input row back; clear recording chrome. */
+    private fun resetVoiceChrome() {
+        recMode = RecMode.NONE
+        recTicker?.let { uiHandler.removeCallbacks(it) }; recTicker = null
+        binding.recordingBar.visibility = View.GONE
+        binding.inputRow.visibility = View.VISIBLE
+    }
+
+    /**
+     * The hold-path's 2.5 s "Sending — tap to edit" window. Why auto-send is right here when it
+     * was wrong for titles: a misheard title is a document filed under a name you'll never
+     * search for; a misheard question produces a visibly wrong answer immediately, and the
+     * correction is a follow-up turn — which a conversation is made of anyway. The pill counts
+     * by the second (e-ink), and any tap cancels into the editable field.
+     */
+    private fun startCountdown() {
+        cancelCountdown()
+        countdownDeadline = SystemClock.elapsedRealtime() + 2500L
+        countdownShownSecond = -1
+        binding.countdownPill.visibility = View.VISIBLE
+        val tick = object : Runnable {
+            override fun run() {
+                val remaining = countdownDeadline - SystemClock.elapsedRealtime()
+                if (remaining <= 0) {
+                    binding.countdownPill.visibility = View.GONE
+                    countdownTicker = null
+                    ask(voiced = true)
+                    return
+                }
+                val sec = ((remaining + 999) / 1000).toInt()
+                if (sec != countdownShownSecond) {
+                    countdownShownSecond = sec
+                    binding.countdownPill.text = "● Sending in $sec — tap to edit"
+                }
+                uiHandler.postDelayed(this, 250)
+            }
+        }
+        countdownTicker = tick
+        tick.run()
+    }
+
+    /** Cancel the send; the transcript stays in the field for correction. */
+    private fun cancelCountdown() {
+        countdownTicker?.let { uiHandler.removeCallbacks(it) }
+        countdownTicker = null
+        binding.countdownPill.visibility = View.GONE
+    }
+
+    // ---- voice out -----------------------------------------------------------------------------
+
+    /** Speaker override: "auto" (symmetry — the default), "on" (always speak), "off" (never).
+     *  Remembered across visits; the symmetry rule is only the default. */
+    private fun speakerMode(): String =
+        encryptedPrefs().getString(KEY_SPEAKER, "auto") ?: "auto"
+
+    private fun cycleSpeakerMode() {
+        val next = when (speakerMode()) { "auto" -> "on"; "on" -> "off"; else -> "auto" }
+        encryptedPrefs().edit().putString(KEY_SPEAKER, next).apply()
+        updateSpeakerLabel()
+    }
+
+    private fun updateSpeakerLabel() {
+        binding.speakerToggle.text = when (speakerMode()) {
+            "on" -> "🔊 On"; "off" -> "🔇 Off"; else -> "🔊 Auto"
+        }
+    }
+
+    /** Voice in → voice out; typed → silent; the toggle overrides in both directions. */
+    private fun shouldSpeak(voiced: Boolean): Boolean = when (speakerMode()) {
+        "on" -> true
+        "off" -> false
+        else -> voiced
+    }
+
+    private fun ensureTts(): com.toolsboox.ui.plugin.LedgerTts {
+        tts?.let { return it }
+        val t = com.toolsboox.ui.plugin.LedgerTts(requireContext())
+        t.onStateChange = { speaking ->
+            if (::binding.isInitialized)
+                binding.speakingPill.visibility = if (speaking) View.VISIBLE else View.GONE
+        }
+        tts = t
+        return t
+    }
+
+    /** Speak an answer. Citation tags are for eyes — `[2026-07-13 · book · …]` read aloud is
+     *  noise — so they're stripped from the spoken copy only; the screen keeps them as doors. */
+    private fun speak(text: String) {
+        val spoken = text.replace(Regex("\\[[^\\[\\]]{0,80}·[^\\[\\]]{0,80}\\]"), "").trim()
+        if (spoken.isNotEmpty()) ensureTts().speak(spoken)
+    }
+
+    private fun stopSpeaking() {
+        tts?.takeIf { it.isActive }?.stop()
+        if (::binding.isInitialized) binding.speakingPill.visibility = View.GONE
+    }
+
+    // ---- keeps, history, persona, presets ------------------------------------------------------
 
     /** Save the current answer into the local "Ask my Ledger" feed (shows up in Feed Ledger). */
     private fun saveAnswerToFeed() {
@@ -245,7 +603,7 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
         showMessage(if (ok) "Saved to your Ask Answers feed." else "Couldn't save that — try again.")
     }
 
-    /** Browse past Ask-my-Ledger exchanges; tap one to reopen its answer. */
+    /** Browse past exchanges; tap one to re-read it as a turn in today's transcript. */
     private fun showHistoryDialog() {
         val ctx = requireContext()
         val turns = com.toolsboox.plugin.chat.nw.ChatHistoryStore.all(ctx)
@@ -259,13 +617,15 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
             .setItems(labels) { _, which ->
                 val t = turns[which]
                 lastQuestion = t.question; lastAnswer = t.answer
-                // The history keeps the question and the answer, not how they were retrieved. Zero
-                // the receipt rather than let the last live ask's counts follow a reopened answer
-                // into a saved note — a note that claimed a grounding this exchange never had would
-                // be worse than one that claims nothing.
-                lastHits = 0; lastCorpus = 0; lastCreated = 0
-                binding.questionEdit.setText(t.question)
-                setAnswerWithLinks(t.answer)
+                // The history keeps the question and the answer, not how they were retrieved.
+                // Zero the receipt rather than let a live ask's tool list follow a reopened
+                // answer into a saved note — a note claiming a grounding this exchange never
+                // had would be worse than one claiming nothing. Reopened turns do NOT join
+                // [sessionTurns] either: the model's context is this visit's conversation,
+                // not a scrapbook.
+                lastTools = emptyList()
+                val (answerView, _) = appendTurn(t.question)
+                setAnswerWithLinks(answerView, t.answer)
             }
             .setNegativeButton("Close", null)
             .show()
@@ -337,12 +697,13 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
     // ---- prompt presets ------------------------------------------------------------------------
 
     /**
-     * The chip row over the question field, rebuilt from the store.
+     * The chip row over the transcript, rebuilt from the store.
      *
      * Tapping a chip ASKS it — that is the whole point of a preset, and a chip that opened a
      * confirmation first would cost more taps than typing the question out. Holding one edits or
      * deletes it, which is this app's standing answer to "where do the management verbs live"
-     * (hold to act, no modes), and the trailing ＋ makes a new one.
+     * (hold to act, no modes), and the trailing ＋ makes a new one. Presets fire as TURNS now —
+     * the question lands in the transcript like any other.
      *
      * Tapping a preset does NOT touch the active persona, and that is the whole separation working:
      * the stance stays whatever it was while the question changes underneath it. Both the chip and
@@ -383,7 +744,7 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
                 // question into a slightly different one.
                 binding.questionEdit.setText(preset.prompt)
                 binding.questionEdit.setSelection(binding.questionEdit.text?.length ?: 0)
-                ask()
+                ask(voiced = false)
             }, onHold = { showPresetEditor(preset) }))
         }
         row.addView(chip("＋ Preset", onTap = { showPresetEditor(null) }, onHold = null))
@@ -463,16 +824,11 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
             sb.append(g.split("\n").joinToString("\n") { "> $it" })
             sb.append('\n')
         }
-        // The iPad writes a "used <tools>" receipt here, because over there the answer comes out of
-        // a tool loop that can name what it called. Android has no tool loop: retrieval happens up
-        // front and creation is the ```ledger-create block. So the honest Android receipt is what
-        // this fragment actually knows — how much of the corpus grounded the answer, and what the
-        // answer went on to create. Naming iOS's tools here would be a nicer-looking lie.
-        val receipt = buildList {
-            if (lastCorpus > 0) add("grounded in $lastHits of $lastCorpus entries in scope")
-            if (lastCreated > 0) add("created $lastCreated item(s) in the Ledger")
+        // The receipt now names the TOOLS the turn used — Android has the loop, so the honest
+        // receipt is the same one the screen's caption showed (the iOS "used <tools>" line).
+        if (lastTools.isNotEmpty()) {
+            sb.append("\n*Used: ").append(lastTools.joinToString(", ")).append(".*\n")
         }
-        if (receipt.isNotEmpty()) sb.append("\n*Used: ").append(receipt.joinToString("; ")).append(".*\n")
 
         // Titled by the question, trimmed to a line — a title that ran to a paragraph would make
         // the Text Notes picker unreadable, and the full question is in the body regardless.
@@ -485,16 +841,25 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
             .onFailure { showMessage("Couldn't save that note — try again.") }
     }
 
-    private fun ask() {
+    // ---- the ask -------------------------------------------------------------------------------
+
+    /**
+     * One conversational turn through the Notebot tool loop ([NotebotLoop] — the ported iOS
+     * registry/converse shape). Retrieval and creation are both TOOLS now; the old front-loaded
+     * corpus + ```ledger-create path survives only for the grounded one-shot callers
+     * (educate, zone prompts) in [LedgerChatService].
+     *
+     * [voiced] carries the voice-in → voice-out symmetry: it makes the answer (and any error)
+     * spoken. Errors render in the answer slot as plain sentences and are spoken when the turn
+     * was spoken — a blank answer area is never an error state.
+     */
+    private fun ask(voiced: Boolean = false) {
         if (asking) return
         val question = binding.questionEdit.text.toString().trim()
         if (question.isEmpty()) {
             showMessage(R.string.ledger_chat_need_question); return
         }
         val scope = selectedScope()
-        if (scope.isEmpty()) {
-            showMessage(R.string.ledger_chat_need_scope); return
-        }
         val prefs = encryptedPrefs()
         val provider = prefs.getString(KEY_PROVIDER, LedgerChatService.ANTHROPIC) ?: LedgerChatService.ANTHROPIC
         val apiKey = prefs.getString(apiKeyKey(provider), "")?.trim().orEmpty()
@@ -502,119 +867,63 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
             ?: LedgerChatService.defaultModel(provider)
 
         asking = true
+        lastVoiced = voiced
+        stopSpeaking()
+        cancelCountdown()
         binding.progress.visibility = View.VISIBLE
         binding.askButton.isEnabled = false
-        binding.answerText.text = getString(R.string.ledger_chat_thinking)
 
-        // Grounding from "Ask about this" (AskBridge): where the item came from, what was sent, and
-        // what already connects to it, riding ahead of the corpus excerpts in the system prompt —
-        // the model sees it, the visible question stays exactly what the reader typed or tapped.
-        // Deliberately NOT one-shot like initial_query: it lives in [askContext] for the whole
-        // visit, so follow-up questions and preset chips alike keep knowing what "this" is, until
-        // the banner's ✕ puts it down.
+        // The question moves into the page — bold, full width — and the field clears for the
+        // follow-up. The transcript, not the input box, is the record of what was asked.
+        val (answerView, receiptView) = appendTurn(question)
+        answerView.text = getString(R.string.ledger_chat_thinking)
+        binding.questionEdit.setText("")
+
+        // Grounding from "Ask about this" (AskBridge): rides the system context for the whole
+        // visit until the banner's ✕ puts it down; the visible question stays what was asked.
         val askContext = this.askContext
+        // The model sees the last 8 answered turns, not the whole history — the context window
+        // is a cost surface, and a conversation that needs turn 40 needed a note at turn 39.
+        val history = sessionTurns.takeLast(8)
 
         lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                val root = documentsRoot()
-                val all = corpusService.gather(root, scope)
-                val hits = corpusService.retrieveHybrid(all, question)
-                val context = corpusService.buildContext(hits)
-                val grounded = if (askContext == null) context else askContext + "\n\n" + context
+            val outcome = withContext(Dispatchers.IO) {
                 val persona = com.toolsboox.plugin.chat.nw.PersonaStore.activePrompt(requireContext())
-                val answer = chatService.ask(provider, apiKey, model, question, grounded, persona)
-                Triple(answer, hits.size, all.size)
+                val registry = NotebotRegistry.build(
+                    requireContext().applicationContext, corpusService, calendarDayService,
+                    documentsRoot(), scope)
+                NotebotLoop.converse(provider, apiKey, model, question, history, registry,
+                    persona, askContext)
             }
-            val (answer, hitCount, corpusCount) = result
-            when (answer) {
-                is LedgerChatService.Result.Ok -> {
-                    // If the model asked to create task/event/note, run it and confirm.
-                    val (clean, creates) = extractCreates(answer.answer)
-                    var shown = clean
-                    var created = 0
-                    if (creates.isNotEmpty()) {
-                        created = withContext(Dispatchers.IO) { executeCreates(creates) }
-                        if (created > 0) shown += "\n\n✓ Created $created item(s) in your Ledger."
+            when (outcome) {
+                is NotebotLoop.Outcome.Ok -> {
+                    setAnswerWithLinks(answerView, outcome.text)
+                    // The receipt caption: which arms the turn used. Small type, under the
+                    // answer, exactly what the saved note will repeat.
+                    if (outcome.toolsUsed.isNotEmpty()) {
+                        receiptView.text = "· used " + outcome.toolsUsed.joinToString(", ")
+                        receiptView.visibility = View.VISIBLE
                     }
-                    // Kept for the saved note's receipt, so the note reports the same retrieval the
-                    // footer under the answer does rather than a second count of its own.
-                    lastHits = hitCount; lastCorpus = corpusCount; lastCreated = created
-                    lastQuestion = question; lastAnswer = shown
-                    com.toolsboox.plugin.chat.nw.ChatHistoryStore.add(requireContext(), question, shown)
-                    setAnswerWithLinks(shown + "\n\n" + getString(R.string.ledger_chat_footer, hitCount, corpusCount))
+                    lastQuestion = question; lastAnswer = outcome.text
+                    lastTools = outcome.toolsUsed
+                    sessionTurns += question to outcome.text
+                    com.toolsboox.plugin.chat.nw.ChatHistoryStore.add(
+                        requireContext(), question, outcome.text, sessionId)
+                    // Voice in → voice out (or the remembered toggle's override).
+                    if (shouldSpeak(voiced)) speak(outcome.text)
                 }
-                is LedgerChatService.Result.Err -> binding.answerText.text = "⚠️ " + answer.message
+                is NotebotLoop.Outcome.Err -> {
+                    answerView.text = "⚠️ " + outcome.message
+                    // A spoken question's failure is spoken: an error that only renders is an
+                    // answer that silently never came.
+                    if (shouldSpeak(voiced)) speak("I couldn't get an answer. " + outcome.message)
+                }
             }
             binding.progress.visibility = View.INVISIBLE
             binding.askButton.isEnabled = true
             asking = false
+            scrollTranscriptToBottom()
         }
-    }
-
-    /** Pull the ```ledger-create fenced block out of an answer. Returns (answer-without-block, actions). */
-    private fun extractCreates(answer: String): Pair<String, List<org.json.JSONObject>> {
-        val m = Regex("```ledger-create\\s*([\\s\\S]*?)```").find(answer) ?: return answer to emptyList()
-        val body = m.groupValues[1].trim()
-        val actions = runCatching {
-            val tok = org.json.JSONTokener(body).nextValue()
-            when (tok) {
-                is org.json.JSONArray -> (0 until tok.length()).mapNotNull { tok.optJSONObject(it) }
-                is org.json.JSONObject -> listOf(tok)
-                else -> emptyList()
-            }
-        }.getOrDefault(emptyList())
-        return answer.removeRange(m.range).trim() to actions
-    }
-
-    /** Create the requested tasks/events (into the day's ledgerItems + CalDAV) and notes (Text Notes). */
-    private fun executeCreates(actions: List<org.json.JSONObject>): Int {
-        val ctx = requireContext()
-        val root = documentsRoot()
-        val locale = java.util.Locale.getDefault()
-        var count = 0
-        for (a in actions) {
-            val kind = a.optString("kind").trim().lowercase()
-            val text = a.optString("text").trim()
-            if (text.isEmpty()) continue
-            val date = runCatching { java.time.LocalDate.parse(a.optString("date")) }.getOrDefault(java.time.LocalDate.now())
-            val time = a.optString("time").trim().ifBlank { null }
-            when (kind) {
-                "note" -> {
-                    val title = a.optString("title").trim()
-                    com.toolsboox.plugin.textnotes.TextNotesStore.addNote(ctx, date, title, text)
-                    count++
-                }
-                "task", "event" -> {
-                    val itemKind = if (kind == "event") com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT
-                        else com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK
-                    // Canonical item.date: the due DAY at 12:00 UTC — every other creation
-                    // path and every reader (itemLocalDate, buildVTodo's UTC formatter) uses
-                    // that convention. Building it in the DEVICE timezone at the clock time
-                    // shifted evening items onto the wrong day. The clock time lives only in
-                    // `time`, which the sync layers already apply in local time.
-                    val item = com.toolsboox.plugin.calendar.da.v2.LedgerItem(
-                        id = "ask-${java.util.UUID.randomUUID()}", kind = itemKind, text = text,
-                        date = java.util.Date(
-                            date.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()
-                        ),
-                        time = time, source = "ask"
-                    )
-                    runCatching {
-                        val day = calendarDayService.load(root, date, null, locale)
-                        day.ledgerItems.add(item)
-                        calendarDayService.save(root, date, day)
-                    }
-                    runCatching {
-                        kotlinx.coroutines.runBlocking {
-                            com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(ctx, item)
-                            com.toolsboox.plugin.calendar.nw.LedgerEventSync.pushEvent(ctx, item)
-                        }
-                    }
-                    count++
-                }
-            }
-        }
-        return count
     }
 
     override fun showLoading() {
@@ -644,5 +953,6 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
         private const val KEY_API = "ledger_chat_api_key"
         private const val KEY_MODEL = "ledger_chat_model"
         private const val KEY_PROVIDER = "ledger_chat_provider"
+        private const val KEY_SPEAKER = "notebot_speaker_mode"
     }
 }
