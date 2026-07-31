@@ -29,6 +29,8 @@ open class CalendarWidgetProvider : AppWidgetProvider() {
             broadcastUpdate(context, MailWidgetProvider::class.java)
             broadcastUpdate(context, FeedWidgetProvider::class.java)
             broadcastUpdate(context, DailyPileWidgetProvider::class.java)
+            broadcastUpdate(context, TaskListWidgetProvider::class.java)
+            broadcastUpdate(context, AllStarsWidgetProvider::class.java)
         }
 
         private fun broadcastUpdate(context: Context, cls: Class<*>) {
@@ -54,9 +56,31 @@ open class CalendarWidgetProvider : AppWidgetProvider() {
                 context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
         }
+
+        /**
+         * A tap-through to a NAMED surface rather than the day page — "mail" / "feeds" /
+         * "allstars", consumed by MainActivity.onResume the way the share intents are. The
+         * request code is the destination's hash so each surface keeps its own PendingIntent;
+         * on a shared request code, FLAG_UPDATE_CURRENT would rewrite every widget's tap to
+         * whichever destination was filled in last.
+         */
+        fun openSurfaceIntent(context: Context, dest: String): PendingIntent {
+            val intent = Intent(context, MainActivity::class.java).apply {
+                putExtra("widgetDest", dest)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            return PendingIntent.getActivity(
+                context, dest.hashCode(), intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
     }
 
     protected open val mode: WidgetRenderer.Mode = WidgetRenderer.Mode.FULL
+
+    /** Where a tap on this widget lands: a surface name for [openSurfaceIntent], or null for the
+     *  default — today's day page. Every widget taps through to the surface it is a window onto. */
+    protected open val tapDest: String? = null
 
     /**
      * Run widget rendering on a background thread — file I/O, calendar queries,
@@ -77,6 +101,10 @@ open class CalendarWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
         for (id in appWidgetIds) updateWidget(context, appWidgetManager, id)
         scheduleMidnightUpdate(context)
+        // Belt to updatePeriodMillis's braces: a WorkManager periodic tick at the same 30 minutes,
+        // for launchers/battery managers that starve the platform's own widget alarm. KEEP-policy
+        // unique work, so re-landing here on every update never reschedules anything.
+        runCatching { WidgetRefreshWorker.schedule(context) }
     }
 
     /**
@@ -131,7 +159,8 @@ open class CalendarWidgetProvider : AppWidgetProvider() {
 
         val bitmap = renderBitmap(context, today, widthDp, heightDp)
         views.setImageViewBitmap(R.id.widget_page_image, bitmap)
-        views.setOnClickPendingIntent(R.id.widget_root, openAppIntent(context))
+        views.setOnClickPendingIntent(R.id.widget_root,
+            tapDest?.let { openSurfaceIntent(context, it) } ?: openAppIntent(context))
 
         manager.updateAppWidget(widgetId, views)
     }

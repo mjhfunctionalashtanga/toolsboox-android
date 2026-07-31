@@ -1112,6 +1112,27 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             }
         }
 
+        // Widget tap-through: each home-screen widget names the surface it is a window onto
+        // ("mail" / "feeds" / "allstars"; the day-page widgets carry no name and land on the start
+        // destination, which IS the day page). Consumed like the share intents above, so a
+        // re-resume doesn't re-navigate.
+        intent?.getStringExtra("widgetDest")?.let { dest ->
+            intent?.removeExtra("widgetDest")
+            val nav = binding.fragmentContent.findNavController()
+            runCatching {
+                when (dest) {
+                    "mail" -> nav.navigate(R.id.action_to_mail_inbox)
+                    "feeds" -> nav.navigate(R.id.action_to_feeds)
+                    "allstars" -> {
+                        val d = java.time.LocalDate.now()
+                        nav.navigate(R.id.action_to_calendar_day, bundleOf(
+                            "year" to "${d.year}", "month" to "${d.monthValue}",
+                            "day" to "${d.dayOfMonth}", "notePage" to "intake"))
+                    }
+                }
+            }
+        }
+
         val refreshToken = sharedPreferences.getString("refreshToken", null)
         val refreshTokenLastUpdate = sharedPreferences.getLong("refreshTokenLastUpdate", 0L)
         val accessTokenLastUpdate = sharedPreferences.getLong("accessTokenLastUpdate", 0L)

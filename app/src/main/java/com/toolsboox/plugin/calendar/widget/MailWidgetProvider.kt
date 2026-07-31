@@ -11,6 +11,8 @@ import java.time.LocalDate
  * plumbing from [CalendarWidgetProvider]; only the bitmap differs.
  */
 class MailWidgetProvider : CalendarWidgetProvider() {
+    override val tapDest: String = "mail"
+
     override fun renderBitmap(context: Context, date: LocalDate, widthDp: Int, heightDp: Int): Bitmap =
         ListWidgetRenderer.renderMail(context, widthDp, heightDp)
 }

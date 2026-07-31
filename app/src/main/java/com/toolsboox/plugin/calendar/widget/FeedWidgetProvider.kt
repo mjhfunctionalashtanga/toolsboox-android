@@ -11,6 +11,8 @@ import java.time.LocalDate
  * plumbing; only the bitmap differs.
  */
 class FeedWidgetProvider : CalendarWidgetProvider() {
+    override val tapDest: String = "feeds"
+
     override fun renderBitmap(context: Context, date: LocalDate, widthDp: Int, heightDp: Int): Bitmap =
         ListWidgetRenderer.renderFeed(context, widthDp, heightDp)
 }

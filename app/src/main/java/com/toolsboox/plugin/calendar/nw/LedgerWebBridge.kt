@@ -223,6 +223,16 @@ object LedgerCommunityBridge {
         Config(p.getString("communitySite", "") ?: "", p.getString("communityUser", "") ?: "", p.getString("communityPass", "") ?: "")
     } catch (e: Exception) { Config("", "", "") }
 
+    /**
+     * A specific site's config — for the aggregating surfaces (the Correspondence page's
+     * "All sites"), which fan reads out across every configured site with each request carrying
+     * its own creds, no global-state mutation (the [SiteFetch][com.toolsboox.plugin.calendar.ui.SiteFetch]
+     * move, brought to the community reads). A site without a password comes back not-[Config.ready]
+     * and its reads collapse to empty, quietly.
+     */
+    fun configFor(context: Context, site: LedgerSite): Config =
+        Config(site.url.trim().trimEnd('/'), site.username.trim(), SiteStore.password(context, site.id))
+
     fun saveConfig(context: Context, c: Config) {
         try {
             prefs(context).edit()
@@ -233,9 +243,10 @@ object LedgerCommunityBridge {
         } catch (e: Exception) { Timber.w(e, "community config save failed") }
     }
 
-    /** The site's spaces, or empty on any failure. Call from Dispatchers.IO. */
-    fun spaces(context: Context): List<Space> {
-        val c = config(context)
+    /** The site's spaces, or empty on any failure. Call from Dispatchers.IO.
+     *  [cfg] targets a specific site (see [configFor]); null = the active one. */
+    fun spaces(context: Context, cfg: Config? = null): List<Space> {
+        val c = cfg ?: config(context)
         if (!c.ready) return emptyList()
         return try {
             val req = Request.Builder()
@@ -384,9 +395,11 @@ object LedgerCorrespondence {
             .build()
     }
 
-    /** Replies to your posts + cards, newest first. Call from Dispatchers.IO. */
-    fun fetch(context: Context): List<LedgerReply> {
-        val c = LedgerCommunityBridge.config(context)
+    /** Replies to your posts + cards, newest first. Call from Dispatchers.IO.
+     *  [cfg] targets a specific site ([LedgerCommunityBridge.configFor]) so "All sites" can fan
+     *  this read out in parallel; null = the active site, as ever. */
+    fun fetch(context: Context, cfg: LedgerCommunityBridge.Config? = null): List<LedgerReply> {
+        val c = cfg ?: LedgerCommunityBridge.config(context)
         if (!c.ready) return emptyList()
         return try {
             val req = Request.Builder()
@@ -415,9 +428,11 @@ object LedgerCorrespondence {
         }
     }
 
-    /** A space's posts (the cute cards shared in), newest first. Call from Dispatchers.IO. */
-    fun fetchSpaceFeed(context: Context, spaceId: Long, limit: Int = 50): List<LedgerPost> {
-        val c = LedgerCommunityBridge.config(context)
+    /** A space's posts (the cute cards shared in), newest first. Call from Dispatchers.IO.
+     *  [cfg] targets a specific site — a space id only means anything on its own site, so the
+     *  aggregate always pairs each site with ITS chosen space. Null = the active site. */
+    fun fetchSpaceFeed(context: Context, spaceId: Long, limit: Int = 50, cfg: LedgerCommunityBridge.Config? = null): List<LedgerPost> {
+        val c = cfg ?: LedgerCommunityBridge.config(context)
         if (!c.ready) return emptyList()
         return try {
             val req = Request.Builder()

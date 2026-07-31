@@ -21,9 +21,14 @@ import com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge
 import com.toolsboox.plugin.calendar.nw.LedgerCorrespondence
 import com.toolsboox.plugin.calendar.nw.LedgerPost
 import com.toolsboox.plugin.calendar.nw.LedgerReply
+import com.toolsboox.plugin.calendar.nw.LedgerSite
+import com.toolsboox.plugin.calendar.nw.SiteStore
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -36,6 +41,13 @@ import com.toolsboox.ot.InkPadView
  * thread takes a handwritten reply: "✍ Reply in ink" opens a white card you write on with the
  * stylus; Done posts the ink as your comment via the bridge. Mirrors iOS CorrespondenceView.
  * Records exchanges; shows no unread counts, ever.
+ *
+ * MULTI-SITE (Michael: "Need access to multiple Fluent accounts at once"): keyed on SITE the way
+ * Mail's inbox is keyed on account — the 🌐 switcher at the top. "All sites" fans BOTH tabs out
+ * across every configured site in parallel (each row tagged with where it came from); a pick
+ * narrows to one. READS aggregate; WRITES never do — a reply, like or gram always targets the
+ * ONE site its row came from (the row-tap focuses that site first, the PostsBrowser/SiteBoards
+ * seam), and the compose surface names it, so nothing ever lands on the wrong community silently.
  */
 @AndroidEntryPoint
 class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
@@ -142,6 +154,91 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     private var spaceId = 25L                 // MichaelFilter — the first space
     private var spaceTitle = "MichaelFilter"
 
+    // --- Multi-site ---------------------------------------------------------------------------
+    //
+    // "Fluent accounts" here = the configured sites in [SiteStore] — one WordPress login per site
+    // powers its whole Fluent suite, so the account IS the site. null filter = All sites (both
+    // tabs aggregate, rows tagged with their site); an id narrows to one. Persisted in this
+    // page's own prefs, exactly like the posts browser and site-boards keep theirs.
+    private var siteFilter: String? = null
+    private var sitesOpen = false
+
+    // The last-fetched rows, kept so fold/unfold of the switcher redraws without a refetch.
+    // A null site on a row = the single-site path (no tag to draw).
+    private var replyRows: List<Pair<LedgerSite?, LedgerReply>> = emptyList()
+    private var communityRows: List<Pair<LedgerSite?, LedgerPost>> = emptyList()
+
+    private fun allSites() = SiteStore.all(requireContext())
+
+    /** All-sites aggregation only exists once there is more than one site to aggregate. */
+    private fun aggregate(): Boolean = context != null && siteFilter == null && allSites().size > 1
+
+    /**
+     * Point every ACTIVE-site consumer (thread reader, replies, likes, grams) at [site] — the
+     * seam the sister surfaces use: an aggregated row's tap activates ITS site first, then the
+     * proven single-site code runs unchanged. Also swings this page's space choice to the site's
+     * own, so "share as gram" from a reply lands in that site's space, never another site's.
+     */
+    private fun focusSite(site: LedgerSite?) {
+        val ctx = context ?: return
+        if (site == null) return
+        if (SiteStore.activeId(ctx) != site.id) SiteStore.activate(ctx, site.id)
+        val sid = spaceIdFor(site.id)
+        if (sid > 0) {
+            spaceId = sid
+            spaceTitle = spaceTitleFor(site.id).ifBlank { "Space $sid" }
+        }
+    }
+
+    // A community space id only means anything on its own site, so the choice is kept PER SITE
+    // (`space_id_<siteId>`). The unqualified legacy keys predate multi-site; migrateSpacePrefs
+    // stamps them onto whichever site they actually belonged to (the active one), once.
+    private fun spaceIdFor(siteId: String): Long = prefs().getLong("space_id_$siteId", 0L)
+    private fun spaceTitleFor(siteId: String): String = prefs().getString("space_title_$siteId", "") ?: ""
+    private fun setSpaceFor(siteId: String, id: Long, title: String) =
+        prefs().edit().putLong("space_id_$siteId", id).putString("space_title_$siteId", title).apply()
+
+    private fun migrateSpacePrefs() {
+        if (prefs().getBoolean("space_prefs_migrated", false)) return
+        prefs().edit().putBoolean("space_prefs_migrated", true).apply()
+        val active = SiteStore.active(requireContext()) ?: return
+        if (spaceIdFor(active.id) == 0L) setSpaceFor(
+            active.id,
+            prefs().getLong("space_id", 25L),
+            prefs().getString("space_title", "MichaelFilter") ?: "MichaelFilter"
+        )
+    }
+
+    /** The shared 🌐 switcher (Mail's account-switcher idiom) — same block Posts and Boards wear. */
+    private fun switcherBar(): View = SiteSwitcherBar.build(
+        context = requireContext(),
+        sites = allSites(),
+        filter = siteFilter,
+        open = sitesOpen,
+        onToggleOpen = { open ->
+            sitesOpen = open; prefs().edit().putBoolean("sites_open", open).apply(); renderCurrent()
+        },
+        onPick = { id ->
+            siteFilter = id
+            prefs().edit().putString("site_filter", id ?: "").apply()
+            load()
+        },
+        onManage = { SitesSettingsDialog.show(requireContext()) { load() } },
+    )
+
+    /** Redraw the current tab from the cached rows (fold/unfold, no refetch). */
+    private fun renderCurrent() {
+        if (mode == "community") renderCommunity(communityRows) else render(replyRows)
+    }
+
+    /** "· 🌐 site" for compose surfaces — naming the write target whenever there is more than one
+     *  place a write COULD go. Blank with a single site: nothing to disambiguate. */
+    private fun activeSiteLabel(): String {
+        val ctx = context ?: return ""
+        if (SiteStore.all(ctx).size < 2) return ""
+        return SiteStore.active(ctx)?.display ?: ""
+    }
+
     // Thread reader state — so a reply posted from inside it can reopen it fresh.
     private var threadReaderOpen = false
     private var threadReaderDialog: androidx.appcompat.app.AlertDialog? = null
@@ -192,23 +289,30 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
      */
     private fun hiddenKey(source: String, id: String) = "hidden_${source}_$id"
 
-    private fun isHidden(source: String, id: String) = prefs().getBoolean(hiddenKey(source, id), false)
+    // Post/comment ids collide across sites (each Fluent install counts from 1), so the marker
+    // keys carry the site id when one is known. Reads also accept the old unqualified key, so a
+    // hide or ✓ made before multi-site keeps holding.
+    private fun qualify(siteId: String, id: String) = if (siteId.isBlank()) id else "${siteId}_$id"
 
-    private fun hide(source: String, id: String) =
-        prefs().edit().putBoolean(hiddenKey(source, id), true).apply()
+    private fun isHidden(source: String, id: String, siteId: String = "") =
+        prefs().getBoolean(hiddenKey(source, qualify(siteId, id)), false) ||
+            prefs().getBoolean(hiddenKey(source, id), false)
+
+    private fun hide(source: String, id: String, siteId: String = "") =
+        prefs().edit().putBoolean(hiddenKey(source, qualify(siteId, id)), true).apply()
 
     private fun unhideAll() =
         prefs().all.keys.filter { it.startsWith("hidden_") }
             .let { keys -> prefs().edit().apply { keys.forEach { remove(it) } }.apply() }
 
     /** Long-press anywhere on a card offers to clear it (and to bring everything back). */
-    private fun wireHide(card: View, source: String, id: String, what: String) {
+    private fun wireHide(card: View, source: String, id: String, what: String, siteId: String = "") {
         card.setOnLongClickListener {
             val ctx = context ?: return@setOnLongClickListener false
             androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                 .setTitle("Hide this?")
                 .setMessage(what.take(160).ifBlank { "This item stops showing in your correspondence." })
-                .setPositiveButton("Hide") { _, _ -> hide(source, id); load() }
+                .setPositiveButton("Hide") { _, _ -> hide(source, id, siteId); load() }
                 .setNeutralButton("Show hidden again") { _, _ -> unhideAll(); load() }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
@@ -216,18 +320,34 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    private fun markReplied(source: String, id: Long) {
+    private fun markReplied(source: String, id: Long, siteId: String = "") {
         val set = prefs().getStringSet("repliedThreads", emptySet())!!.toMutableSet()
-        set.add("$source-$id"); prefs().edit().putStringSet("repliedThreads", set).apply()
+        set.add(if (siteId.isBlank()) "$source-$id" else "$siteId-$source-$id")
+        prefs().edit().putStringSet("repliedThreads", set).apply()
     }
-    private fun hasReplied(source: String, id: Long) =
-        prefs().getStringSet("repliedThreads", emptySet())!!.contains("$source-$id")
+    private fun hasReplied(source: String, id: Long, siteId: String = ""): Boolean {
+        val set = prefs().getStringSet("repliedThreads", emptySet())!!
+        return set.contains("$source-$id") || (siteId.isNotBlank() && set.contains("$siteId-$source-$id"))
+    }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentCorrespondenceBinding.bind(view)
-        spaceId = prefs().getLong("space_id", 25L)
-        spaceTitle = prefs().getString("space_title", "MichaelFilter") ?: "MichaelFilter"
+        // Fold any legacy single-site creds into the site list, seed the known sites (both no-ops
+        // after first run), and pick the page's site scope back up the way it was left.
+        SiteStore.seedIfNeeded(requireContext())
+        SiteStore.seedKnownSites(requireContext())
+        migrateSpacePrefs()
+        siteFilter = prefs().getString("site_filter", "")!!.ifBlank { null }
+        sitesOpen = prefs().getBoolean("sites_open", false)
+        // A filter naming a site that has since been deleted = All.
+        if (siteFilter != null && allSites().none { it.id == siteFilter }) siteFilter = null
+        // The space choice belongs to the active site; the unqualified prefs are the pre-multi-site
+        // fallback so nothing moves for a single-site install.
+        val act = SiteStore.active(requireContext())
+        spaceId = act?.let { spaceIdFor(it.id) }?.takeIf { it > 0 } ?: prefs().getLong("space_id", 25L)
+        spaceTitle = act?.let { spaceTitleFor(it.id) }?.takeIf { it.isNotBlank() }
+            ?: (prefs().getString("space_title", "MichaelFilter") ?: "MichaelFilter")
         binding.correspondenceClose.setOnClickListener { NavHostFragment.findNavController(this).popBackStack() }
         // The ▦ hub, top-left as on every other list surface — the same directory accordion the
         // feed, the mailbox and the garden pages carry. Until now the ✕ was the only way out of
@@ -304,15 +424,65 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         if (v is android.view.ViewGroup) for (i in 0 until v.childCount) wireImageZoom(v.getChildAt(i))
     }
 
+    // Two loads can be in flight (step the strip twice, fast); the last one asked for wins.
+    private var loadSeq = 0
+
     private fun load() {
         val ctx = context ?: return
+        val seq = ++loadSeq
+        // Narrowed → that site becomes the live one, so the whole proven single-site path (thread
+        // reader, replies, likes, grams) targets it unchanged — the SiteBoards seam.
+        siteFilter?.let { id -> focusSite(allSites().firstOrNull { it.id == id }) }
         lifecycleScope.launch {
             if (mode == "community") {
-                val posts = withContext(Dispatchers.IO) { LedgerCorrespondence.fetchSpaceFeed(ctx, spaceId) }
-                renderCommunity(posts)
+                if (aggregate()) {
+                    // All sites: each site paired with ITS chosen space (a space id means nothing
+                    // off its own site), fanned out in parallel, per-site failure collapsing to
+                    // empty so one unreachable site never empties the others.
+                    val plans = allSites().map { s ->
+                        Triple(s, spaceIdFor(s.id), LedgerCommunityBridge.configFor(ctx, s))
+                    }
+                    val rows = withContext(Dispatchers.IO) {
+                        coroutineScope {
+                            plans.map { (s, sid, cfg) ->
+                                async {
+                                    try {
+                                        if (sid <= 0L) emptyList()
+                                        else LedgerCorrespondence.fetchSpaceFeed(ctx, sid, cfg = cfg).map { s to it }
+                                    } catch (e: Exception) { emptyList() }
+                                }
+                            }.awaitAll().flatten()
+                        }
+                    }.sortedByDescending { it.second.createdAt }
+                    if (seq != loadSeq || !isAdded) return@launch
+                    communityRows = rows
+                } else {
+                    val posts = withContext(Dispatchers.IO) { LedgerCorrespondence.fetchSpaceFeed(ctx, spaceId) }
+                    if (seq != loadSeq || !isAdded) return@launch
+                    communityRows = posts.map { null to it }
+                }
+                renderCommunity(communityRows)
             } else {
-                val replies = withContext(Dispatchers.IO) { LedgerCorrespondence.fetch(ctx) }
-                render(replies)
+                if (aggregate()) {
+                    val plans = allSites().map { it to LedgerCommunityBridge.configFor(ctx, it) }
+                    val rows = withContext(Dispatchers.IO) {
+                        coroutineScope {
+                            plans.map { (s, cfg) ->
+                                async {
+                                    try { LedgerCorrespondence.fetch(ctx, cfg).map { s to it } }
+                                    catch (e: Exception) { emptyList() }
+                                }
+                            }.awaitAll().flatten()
+                        }
+                    }.sortedByDescending { it.second.createdAt }
+                    if (seq != loadSeq || !isAdded) return@launch
+                    replyRows = rows
+                } else {
+                    val replies = withContext(Dispatchers.IO) { LedgerCorrespondence.fetch(ctx) }
+                    if (seq != loadSeq || !isAdded) return@launch
+                    replyRows = replies.map { null to it }
+                }
+                render(replyRows)
             }
         }
     }
@@ -337,30 +507,57 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         row.addView(tab("Community", "community"))
         container.addView(row)
         if (mode == "community") {
-            container.addView(TextView(ctx).apply {
-                text = "❝  $spaceTitle   ▾"
-                textSize = 15f; setTextColor(0xFF2F6F96.toInt())
-                setPadding(px(6), 0, px(6), px(10))
-                setOnClickListener { pickSpace() }
-            })
+            if (aggregate()) {
+                // All sites: one ❝ chip per site, each naming ITS space (or asking for one) — a
+                // single space chip can't speak for several sites at once.
+                val chips = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+                for (s in allSites()) {
+                    val t = spaceTitleFor(s.id).ifBlank { if (spaceIdFor(s.id) > 0) "Space ${spaceIdFor(s.id)}" else "pick a space" }
+                    chips.addView(TextView(ctx).apply {
+                        text = "❝ ${s.display}: $t ▾"
+                        textSize = 13f; setTextColor(0xFF2F6F96.toInt())
+                        setPadding(px(6), 0, px(14), px(10))
+                        setOnClickListener { pickSpace(s) }
+                    })
+                }
+                container.addView(android.widget.HorizontalScrollView(ctx).apply {
+                    isHorizontalScrollBarEnabled = false; addView(chips)
+                })
+            } else {
+                container.addView(TextView(ctx).apply {
+                    text = "❝  $spaceTitle   ▾"
+                    textSize = 15f; setTextColor(0xFF2F6F96.toInt())
+                    setPadding(px(6), 0, px(6), px(10))
+                    setOnClickListener { pickSpace() }
+                })
+            }
         }
     }
 
-    /** Choose which community space to browse (persists). */
-    private fun pickSpace() {
+    /** Choose which community space to browse (persists, PER SITE).
+     *  [site] targets a specific site's spaces (the aggregate's chips); null = the active site. */
+    private fun pickSpace(site: LedgerSite? = null) {
         val ctx = requireContext()
+        val target = site ?: SiteStore.active(ctx)
         lifecycleScope.launch {
-            val spaces = withContext(Dispatchers.IO) { LedgerCommunityBridge.spaces(ctx) }
+            val cfg = target?.let { LedgerCommunityBridge.configFor(ctx, it) }
+            val spaces = withContext(Dispatchers.IO) { LedgerCommunityBridge.spaces(ctx, cfg) }
             if (spaces.isEmpty()) {
-                android.widget.Toast.makeText(ctx, "No spaces (check the community bridge in Settings)", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(ctx, "No spaces" + (target?.let { " on ${it.display}" } ?: "") + " (check the site's app password — 🌐 above)", android.widget.Toast.LENGTH_SHORT).show()
                 return@launch
             }
             val labels = spaces.map { it.title }.toTypedArray()
             androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-                .setTitle("Community space")
+                .setTitle("Community space" + (target?.let { " · ${it.display}" } ?: ""))
                 .setItems(labels) { _, i ->
-                    spaceId = spaces[i].id; spaceTitle = spaces[i].title
-                    prefs().edit().putLong("space_id", spaceId).putString("space_title", spaceTitle).apply()
+                    val chosen = spaces[i]
+                    target?.let { setSpaceFor(it.id, chosen.id, chosen.title) }
+                    // The unqualified legacy keys keep tracking the ACTIVE site's choice, so the
+                    // single-site path (and anything else still reading them) stays truthful.
+                    if (target == null || target.id == SiteStore.activeId(ctx)) {
+                        spaceId = chosen.id; spaceTitle = chosen.title
+                        prefs().edit().putLong("space_id", spaceId).putString("space_title", spaceTitle).apply()
+                    }
                     load()
                 }
                 .setNegativeButton(android.R.string.cancel, null)
@@ -368,24 +565,29 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    private fun renderCommunity(posts: List<LedgerPost>) {
+    private fun renderCommunity(rows: List<Pair<LedgerSite?, LedgerPost>>) {
         val ctx = context ?: return
         val dp = resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
         val container = binding.correspondenceContainer
         container.removeAllViews()
+        // The 🌐 switcher first — All sites aggregates, a pick narrows (the Mail-inbox idiom).
+        container.addView(switcherBar())
         addTabs(container)
+        fun sid(site: LedgerSite?) = site?.id ?: SiteStore.activeId(ctx)
 
-        if (!com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(ctx).ready) {
+        if (!aggregate() && !com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(ctx).ready) {
             container.addView(TextView(ctx).apply {
-                text = "Add your community site + application password in Calendar Settings, then a space's posts appear here."
+                text = "Add the site's application password (tap 🌐 above, or Calendar Settings), then a space's posts appear here."
                 textSize = 15f; setTextColor(0xFF444444.toInt()); setPadding(px(8), px(16), px(8), 0)
             })
             return
         }
-        if (posts.isEmpty()) {
+        if (rows.isEmpty()) {
             container.addView(TextView(ctx).apply {
-                text = "No posts in $spaceTitle yet."
+                text = if (aggregate())
+                    "No posts on any site yet.\n\nEach ❝ chip above names the space read on that site — a site without one (or without its app password, 🌐) contributes nothing here."
+                else "No posts in $spaceTitle yet."
                 textSize = 15f; setTextColor(0xFF444444.toInt()); setPadding(px(8), px(16), px(8), 0)
             })
             return
@@ -393,17 +595,18 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         // The strip sits above BOTH tabs, so it filters both. A date control that visibly did
         // nothing on one of the two piles under it would read as broken on that tab, and the
         // question "what was said in July" is the same question whichever pile you ask it of.
-        val shown = posts.filterNot { isHidden("community", it.id.toString()) }
-            .filter { inWindow(it.createdAt) }
+        val shown = rows.filterNot { (s, p) -> isHidden("community", p.id.toString(), sid(s)) }
+            .filter { inWindow(it.second.createdAt) }
         if (shown.isEmpty()) {
             container.addView(TextView(ctx).apply {
-                text = "Nothing in this ${windowLabel()}.\n\nNo posts in $spaceTitle landed in the " +
+                text = "Nothing in this ${windowLabel()}.\n\nNo posts " +
+                    (if (aggregate()) "on any site" else "in $spaceTitle") + " landed in the " +
                     "period the strip above is pointing at. Step it, or widen it, to see more."
                 textSize = 15f; setTextColor(0xFF444444.toInt()); setPadding(px(8), px(16), px(8), 0)
             })
             return
         }
-        for (post in shown) {
+        for ((site, post) in shown) {
             val card = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(px(10), px(8), px(10), px(8))
@@ -413,9 +616,12 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 ).apply { setMargins(0, 0, 0, px(8)) }
             }
             card.addView(TextView(ctx).apply {
+                // The site tag only in the aggregate (site != null) — a narrowed list already
+                // names its site in the switcher above, so repeating it would be noise.
                 text = listOfNotNull(post.author.ifBlank { null }, post.createdAt.take(16).ifBlank { null })
                     .joinToString("   ·   ") + (if (post.commentsCount > 0) "   ·   ${post.commentsCount}💬" else "") +
-                    (if (hasReplied("community", post.id)) "   ·   ✓ replied" else "")
+                    (if (hasReplied("community", post.id, sid(site))) "   ·   ✓ replied" else "") +
+                    (site?.let { "   ·   🌐 ${it.display}" } ?: "")
                 textSize = 12f; setTextColor(0xFF666666.toInt())
             })
             if (post.title.isNotBlank()) card.addView(TextView(ctx).apply {
@@ -443,6 +649,9 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 text = label()
                 textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(6), px(18), 0)
                 setOnClickListener {
+                    // The like must land on the post's OWN site — focus it first (a no-op when
+                    // it's already the active one), then the active-site client is right.
+                    focusSite(site)
                     val was = liked; val count0 = likeCount
                     liked = !liked; likeCount = (likeCount + if (liked) 1 else -1).coerceAtLeast(0)
                     text = label()   // optimistic flip
@@ -460,6 +669,9 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 text = "↩  Reply"
                 textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(6), px(18), 0)
                 setOnClickListener {
+                    // The reply composes AGAINST this row's site: focus it first, and the dialog
+                    // names it — a reply never lands on the wrong community silently.
+                    focusSite(site)
                     showReplyDialog(
                         post.id, post.title.ifBlank { spaceTitle },
                         replyingTo = quotedPost, provenanceDefault = provDefault, provUrl = post.url
@@ -469,12 +681,12 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             actions.addView(TextView(ctx).apply {
                 text = "📄  Post & replies"
                 textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(6), px(18), 0)
-                setOnClickListener { showThread("community", post.id, post.title.ifBlank { spaceTitle }) }
+                setOnClickListener { focusSite(site); showThread("community", post.id, post.title.ifBlank { spaceTitle }) }
             })
             actions.addView(TextView(ctx).apply {
                 text = "▸  Related"
                 textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(6), px(18), 0)
-                setOnClickListener { showPostRelated(post) }
+                setOnClickListener { focusSite(site); showPostRelated(post) }
             })
             if (post.url.isNotBlank() && post.public) actions.addView(TextView(ctx).apply {
                 text = "↗  Open"
@@ -482,45 +694,51 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 setOnClickListener { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(post.url))) }
             })
             card.addView(actionsScroll)
-            wireHide(card, "community", post.id.toString(), post.title.ifBlank { deHtml(post.excerpt) })
+            wireHide(card, "community", post.id.toString(), post.title.ifBlank { deHtml(post.excerpt) }, sid(site))
             container.addView(card)
         }
         // Size the freshly-built page to the reader's choice, and let its pictures open.
         applyReadingAids(container)
     }
 
-    private fun render(replies: List<LedgerReply>) {
+    private fun render(rows: List<Pair<LedgerSite?, LedgerReply>>) {
         val ctx = context ?: return
         val dp = resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
         val container = binding.correspondenceContainer
         container.removeAllViews()
+        // The 🌐 switcher first — All sites aggregates, a pick narrows (the Mail-inbox idiom).
+        container.addView(switcherBar())
         addTabs(container)
+        fun sid(site: LedgerSite?) = site?.id ?: SiteStore.activeId(ctx)
 
-        if (!com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(ctx).ready) {
+        if (!aggregate() && !com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(ctx).ready) {
             container.addView(TextView(ctx).apply {
-                text = "Add your community site + application password in Calendar Settings, and replies to your posts and cards gather here."
+                text = "Add the site's application password (tap 🌐 above, or Calendar Settings), and replies to your posts and cards gather here."
                 textSize = 15f; setTextColor(0xFF444444.toInt()); setPadding(px(8), px(24), px(8), 0)
             })
             return
         }
-        if (replies.isEmpty()) {
+        if (rows.isEmpty()) {
             container.addView(TextView(ctx).apply {
-                text = "No correspondence yet. When someone answers a post or a card of yours, the exchange appears here."
+                text = (if (aggregate()) "No correspondence on any site yet. " else "No correspondence yet. ") +
+                    "When someone answers a post or a card of yours, the exchange appears here."
                 textSize = 15f; setTextColor(0xFF444444.toInt()); setPadding(px(8), px(24), px(8), 0)
             })
             return
         }
 
         // Group by exchange, newest activity first (items arrive newest-first from the bridge).
+        // The site is part of the grouping key — thread ids collide across sites (each Fluent
+        // install counts from 1), and two sites' threads folding into one would be a quiet lie.
         //
         // THE WINDOW FILTERS THE REPLIES, and then any thread left with none drops out — rather
         // than testing a thread's own newest activity. A conversation that ran across a month
         // boundary should show you the half that happened in the month you are looking at, not
         // vanish because its last word came later.
-        val threads = replies.filter { inWindow(it.createdAt) }
-            .groupBy { "${it.source}-${it.threadId}" }.values
-            .sortedByDescending { it.first().createdAt }
+        val threads = rows.filter { inWindow(it.second.createdAt) }
+            .groupBy { "${it.first?.id ?: ""}|${it.second.source}-${it.second.threadId}" }.values
+            .sortedByDescending { it.first().second.createdAt }
 
         if (threads.isEmpty()) {
             // There IS correspondence — the window just doesn't hold any of it. Saying so, and
@@ -535,18 +753,23 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         }
 
         for (thread in threads) {
-            val head = thread.first()
-            val replied = hasReplied(head.source, head.threadId)
+            val site = thread.first().first
+            val head = thread.first().second
+            val replied = hasReplied(head.source, head.threadId, sid(site))
             container.addView(TextView(ctx).apply {
+                // The site tag only in the aggregate (site != null) — a narrowed list already
+                // names its site in the switcher above.
                 text = (if (head.source == "boards") "📋  " else "👥  ") +
-                    deHtml(head.thread).ifBlank { "Untitled thread" } + (if (replied) "   ✓ replied" else "")
+                    deHtml(head.thread).ifBlank { "Untitled thread" } + (if (replied) "   ✓ replied" else "") +
+                    (site?.let { "   ·  🌐 ${it.display}" } ?: "")
                 textSize = 16f; setTextColor(0xFF000000.toInt())
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
                 setPadding(px(4), px(14), px(4), px(6))
-                // Tap the thread title → open the original post (and its replies) in-app.
-                setOnClickListener { showThread(head.source, head.threadId, head.thread) }
+                // Tap the thread title → open the original post (and its replies) in-app,
+                // read from the thread's OWN site.
+                setOnClickListener { focusSite(site); showThread(head.source, head.threadId, head.thread) }
             })
-            for (r in thread.filterNot { isHidden("replies", it.id) }) {
+            for (r in thread.map { it.second }.filterNot { isHidden("replies", it.id, sid(site)) }) {
                 val card = LinearLayout(ctx).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(px(10), px(8), px(10), px(8))
@@ -564,14 +787,14 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     text = deHtml(r.content.ifBlank { r.excerpt }); textSize = 14f; setTextColor(0xFF000000.toInt())
                 })
                 r.imageUrl?.let { addImage(card, it, heightDp = 180) }
-                wireHide(card, "replies", r.id, deHtml(r.content.ifBlank { r.excerpt }))
+                wireHide(card, "replies", r.id, deHtml(r.content.ifBlank { r.excerpt }), sid(site))
                 container.addView(card)
             }
             container.addView(TextView(ctx).apply {
                 text = "📄  Open post & replies"
                 textSize = 15f; setTextColor(0xFF2F6F96.toInt())
                 setPadding(px(10), px(2), px(10), px(4))
-                setOnClickListener { showThread(head.source, head.threadId, head.thread) }
+                setOnClickListener { focusSite(site); showThread(head.source, head.threadId, head.thread) }
             })
             if (head.source == "community" && head.threadUrl.isNotBlank() && head.public) {
                 container.addView(TextView(ctx).apply {
@@ -588,7 +811,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 container.addView(TextView(ctx).apply {
                     text = "↩  Reply"; textSize = 15f; setTextColor(0xFF2F6F96.toInt())
                     setPadding(px(10), px(2), px(10), px(10))
-                    setOnClickListener { showReplyDialog(head.threadId, head.thread, replyingTo = quoted) }
+                    // Compose against the thread's own site — focused first, named in the dialog.
+                    setOnClickListener { focusSite(site); showReplyDialog(head.threadId, head.thread, replyingTo = quoted) }
                 })
             }
         }
@@ -605,7 +829,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         val scroll = android.widget.ScrollView(ctx).apply { addView(col) }
         col.addView(TextView(ctx).apply { text = "Loading…"; setTextColor(0xFF888888.toInt()); setPadding(0, px(12), 0, 0) })
         val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle(deHtml(title).ifBlank { "Thread" })
+            // With several sites configured, the reader names which one this thread lives on —
+            // its Reply/Delete actions all land there.
+            .setTitle(deHtml(title).ifBlank { "Thread" } +
+                activeSiteLabel().let { if (it.isBlank()) "" else "  ·  🌐 $it" })
             .setView(scroll)
             .setPositiveButton("Close", null)
             .create()
@@ -1003,6 +1230,14 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             orientation = LinearLayout.VERTICAL; setPadding(px(12), px(8), px(12), 0)
             addView(actionRow)
             addView(tabRow)
+            // With several sites configured, the compose surface NAMES where Send will land —
+            // the write target is the row you tapped, chosen there, never ambient.
+            activeSiteLabel().takeIf { it.isNotBlank() }?.let { name ->
+                addView(TextView(ctx).apply {
+                    text = "→  posts to 🌐 $name"
+                    textSize = 12f; setTextColor(0xFF666666.toInt()); setPadding(px(2), 0, 0, px(4))
+                })
+            }
             if (!replyingTo.isNullOrBlank()) addView(TextView(ctx).apply {
                 text = deHtml(replyingTo); textSize = 13f; setTextColor(0xFF333333.toInt())
                 setPadding(px(8), px(4), px(8), px(6)); maxHeight = (120 * dp).toInt()
@@ -1067,7 +1302,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                         else LedgerCorrespondence.postTextReply(ctx, feedId, text, parentId)
                     }
                     android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
-                    if (status == "Reply posted") { markReplied("community", feedId); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
+                    if (status == "Reply posted") { markReplied("community", feedId, SiteStore.activeId(ctx)); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
                 }
             } else {
                 // Draw mode: [attached image] stacked above [your ink], one combined PNG, with the
@@ -1120,7 +1355,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     if (inkBmp !== combined) inkBmp?.recycle()
                     if (combined !== attachedBitmap && combined !== inkBmp) combined?.recycle()
                     android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
-                    if (status == "Reply posted") { markReplied("community", feedId); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
+                    if (status == "Reply posted") { markReplied("community", feedId, SiteStore.activeId(ctx)); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
                 }
             }
         })
@@ -1170,7 +1405,9 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             addView(input)
         }
         androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle("Share as gram")
+            // Names both the space AND (multi-site) the site it posts into — outward-facing.
+            .setTitle("Share as gram · $spaceTitle" +
+                activeSiteLabel().let { if (it.isBlank()) "" else " · 🌐 $it" })
             .setView(box)
             .setPositiveButton("Share ↗") { _, _ ->
                 val baos = ByteArrayOutputStream()

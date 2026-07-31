@@ -14,11 +14,13 @@ import android.util.Base64
 import com.toolsboox.plugin.calendar.da.v2.LedgerItem
 import com.toolsboox.plugin.calendar.ot.ContactStore
 import com.toolsboox.plugin.mail.InboxStore
+import com.toolsboox.plugin.mail.MailAccountStore
 import java.io.File
 import java.time.Duration
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -42,6 +44,8 @@ object ListWidgetRenderer {
     private const val ROW_H = 84f
     private const val PAD = 26f
     private const val MAX_ROWS = 14
+    // The task widget shows fewer, deliberately: ~6 undone is a glance; a scroll's worth is a page.
+    private const val MAX_TASK_ROWS = 6
     private const val MAX_BITMAP_PX = 768
 
     /** One row of a list widget: an optional marker (emoji kind-glyph or ★), a bold primary line,
@@ -50,7 +54,9 @@ object ListWidgetRenderer {
         val primary: String,
         val secondary: String? = null,
         val marker: String? = null,
-        val thumb: Bitmap? = null
+        val thumb: Bitmap? = null,
+        /** Grey, non-bold — for meta rows like "+N more" that aren't content. */
+        val muted: Boolean = false
     )
 
     // ---- Public entry points (one per provider) ----
@@ -72,17 +78,29 @@ object ListWidgetRenderer {
             // answers "what wants me", and a letter you already wrote does not.
             .filter { !InboxStore.isSent(it.id) }
         val (starred, rest) = messages.partition { runCatching { InboxStore.isStarred(context, it.id) }.getOrDefault(false) }
+        val unread = messages.count { !InboxStore.isRead(context, it.id) }
         val ordered = starred + rest
         val rows = ordered.take(MAX_ROWS).map { m ->
             val sender = m.fromName.ifBlank { m.fromEmail.substringBefore('@') }.ifBlank { "Unknown" }
             Row(
                 primary = m.subject.ifBlank { "(no subject)" },
                 secondary = "$sender · ${relativeAge(m.date)}",
-                marker = if (InboxStore.isStarred(context, m.id)) "★" else "·"
+                marker = when {
+                    InboxStore.isStarred(context, m.id) -> "★"
+                    !InboxStore.isRead(context, m.id) -> "●"
+                    else -> "·"
+                }
             )
         }
-        return draw(context, "Mail", starred.size.takeIf { it > 0 }?.let { "$it ★" }, rows,
-            "Inbox clear", widthDp, heightDp)
+        // Whose inbox this is: the account name joins the header when there's exactly one account
+        // (with several, a per-account label would misdescribe a unified list).
+        val accounts = runCatching { MailAccountStore.all(context) }.getOrDefault(emptyList())
+        val title = if (accounts.size == 1) "✉ Mail · ${accounts[0].display}" else "✉ Mail"
+        val countLabel = buildList {
+            if (unread > 0) add("$unread unread")
+            if (starred.isNotEmpty()) add("${starred.size} ★")
+        }.joinToString(" · ").ifBlank { null }
+        return draw(context, title, countLabel, rows, "Inbox clear", widthDp, heightDp)
     }
 
     /** RSS headlines the app already surfaced. Reads the freshest cached entry list off disk
@@ -100,8 +118,84 @@ object ListWidgetRenderer {
                 marker = if (e.read) "·" else "●"
             )
         }
-        return draw(context, "Feed", unread.takeIf { it > 0 }?.let { "$it new" }, rows,
+        return draw(context, "⧉ Feed", unread.takeIf { it > 0 }?.let { "$it new" }, rows,
             "Feed all caught up", widthDp, heightDp)
+    }
+
+    /** Today's open tasks as checkbox rows — the day's ledgerItems read straight off the day JSON
+     *  (text + done only), first six undone, a muted "+N more" when they overflow, and the next
+     *  timed calendar event on top when there is one still ahead. Display only: a widget can't be
+     *  checked, it can only be glanced at; a tap opens the day page where the ink lives. */
+    fun renderTasks(context: Context, date: LocalDate, widthDp: Int, heightDp: Int): Bitmap {
+        val day = WidgetRenderer.loadCalendarDay(context, date)
+        val dead = (day?.deletedItemIds.orEmpty() + day?.deletedElementIds.orEmpty()).toSet()
+        val tasks = day?.ledgerItems.orEmpty()
+            .filter { it.kind == LedgerItem.Kind.TASK && it.text.isNotBlank() && it.id !in dead }
+        val undone = tasks.filter { !it.done && it.stage != "done" }
+
+        val rows = mutableListOf<Row>()
+
+        // The next timed event, from the same system-calendar read the day-page renderer does
+        // (already permission-guarded there). One row, on top — it's the time-critical line.
+        val now = System.currentTimeMillis()
+        runCatching { WidgetRenderer.loadCalendarEvents(context, date) }.getOrDefault(emptyList())
+            .filter { !it.allDay && it.endDate > now }
+            .minByOrNull { it.startDate }
+            ?.let { ev ->
+                val time = android.text.format.DateFormat.getTimeFormat(context)
+                    .format(java.util.Date(ev.startDate))
+                rows.add(Row(primary = ev.title.ifBlank { "(untitled)" }, secondary = time, marker = "📆"))
+            }
+
+        undone.take(MAX_TASK_ROWS).forEach { rows.add(Row(primary = it.text, marker = "☐")) }
+        if (undone.size > MAX_TASK_ROWS) {
+            rows.add(Row(primary = "+${undone.size - MAX_TASK_ROWS} more", muted = true))
+        }
+
+        val dateLabel = date.format(DateTimeFormatter.ofPattern("EEE · MMM d"))
+        val doneCount = tasks.size - undone.size
+        val empty = if (doneCount > 0) "All $doneCount done" else "No open tasks"
+        return draw(context, "⚡ Tasks", dateLabel, rows, empty, widthDp, heightDp)
+    }
+
+    /** All Stars at a glance: today's starred count per band — READ / WATCH / LISTEN / BOOKS /
+     *  EMAIL — as one row of five cells. Counts, not grams: decoding a band's worth of base64
+     *  cards in the widget process is exactly the weight this surface exists to avoid, and the
+     *  count is the glanceable truth. Same filter as the Stars page's own gramsFor (page ==
+     *  "intake", kind key per band, non-decorative; EMAIL keeps the legacy "educate" key). */
+    fun renderStars(context: Context, date: LocalDate, widthDp: Int, heightDp: Int): Bitmap {
+        val day = WidgetRenderer.loadCalendarDay(context, date)
+        val bands = listOf("read" to "READ", "watch" to "WATCH", "listen" to "LISTEN",
+            "books" to "BOOKS", "educate" to "EMAIL")
+        val grams = day?.imageElements.orEmpty()
+            .filter { it.page == "intake" && !it.decorative && it.data.isNotBlank() }
+        val counts = bands.map { (key, _) -> grams.count { it.intakeKind == key } }
+        val total = counts.sum()
+
+        val bandH = 250f
+        val canvasH = HEADER_H + bandH
+        val bitmap = Bitmap.createBitmap(CW.toInt(), canvasH.toInt(), Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawRect(0f, 0f, CW, canvasH, fillWhite)
+
+        canvas.drawRect(0f, 0f, CW, HEADER_H, fillGrey80)
+        canvas.drawText("★ All Stars", PAD, HEADER_H - 28f, textWhite)
+        if (total > 0) canvas.drawText("$total today", CW - PAD, HEADER_H - 28f, textWhiteRight)
+        canvas.drawLine(0f, HEADER_H, CW, HEADER_H, lineBlack)
+
+        val cellW = CW / bands.size
+        for (i in bands.indices) {
+            val left = i * cellW
+            if (i % 2 == 1) canvas.drawRect(left, HEADER_H, left + cellW, canvasH, fillGrey20)
+            val cx = left + cellW / 2f
+            canvas.drawText(counts[i].toString(), cx, HEADER_H + 155f,
+                if (counts[i] > 0) textStarCount else textStarCountZero)
+            canvas.drawText(bands[i].second, cx, canvasH - 26f, textStarBand)
+            if (i > 0) canvas.drawLine(left, HEADER_H, left, canvasH, lineGrey50)
+        }
+        canvas.drawLine(0f, canvasH - 1f, CW, canvasH - 1f, lineBlack)
+
+        return scaleToWidget(context, bitmap, widthDp, heightDp)
     }
 
     /** Today's gathered pile — the same read-side gather the Daily Pile screen does (tasks/events
@@ -282,9 +376,10 @@ object ListWidgetRenderer {
                     canvas.drawText(TextUtils.ellipsize(row.secondary, textSecondary, textW, TextUtils.TruncateAt.END).toString(),
                         x, top + 68f, textSecondary)
                 } else {
-                    // Single-line row (the pile): centre it vertically in the band.
-                    canvas.drawText(TextUtils.ellipsize(row.primary, textPrimary, textW, TextUtils.TruncateAt.END).toString(),
-                        x, top + ROW_H * 0.62f, textPrimary)
+                    // Single-line row (the pile / tasks): centre it vertically in the band.
+                    val paint = if (row.muted) textEmpty else textPrimary
+                    canvas.drawText(TextUtils.ellipsize(row.primary, paint, textW, TextUtils.TruncateAt.END).toString(),
+                        x, top + ROW_H * 0.62f, paint)
                 }
                 if (i > 0) canvas.drawLine(0f, top, CW, top, lineGrey50)
             }
@@ -332,4 +427,18 @@ object ListWidgetRenderer {
     private val textSecondary = TextPaint().apply { color = 0x99000000.toInt(); textSize = 27f; typeface = Typeface.DEFAULT }
     private val textMarker = TextPaint().apply { color = Color.BLACK; textSize = 34f; typeface = Typeface.DEFAULT }
     private val textEmpty = TextPaint().apply { color = 0x99000000.toInt(); textSize = 34f; typeface = Typeface.DEFAULT }
+
+    // All Stars cells — mono, per the Stars page's own aesthetic ("mono headers, thin rules").
+    private val textStarCount = TextPaint().apply {
+        color = Color.BLACK; textAlign = Paint.Align.CENTER; textSize = 110f
+        typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+    }
+    private val textStarCountZero = TextPaint().apply {
+        color = 0x55000000; textAlign = Paint.Align.CENTER; textSize = 110f
+        typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+    }
+    private val textStarBand = TextPaint().apply {
+        color = 0x99000000.toInt(); textAlign = Paint.Align.CENTER; textSize = 30f
+        typeface = Typeface.MONOSPACE
+    }
 }

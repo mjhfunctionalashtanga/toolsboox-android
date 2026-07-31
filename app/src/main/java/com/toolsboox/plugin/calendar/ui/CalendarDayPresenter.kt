@@ -5,7 +5,6 @@ import android.content.ContentResolver
 import android.net.Uri
 import android.os.Environment
 import com.toolsboox.R
-import com.toolsboox.plugin.calendar.widget.CalendarWidgetProvider
 import com.toolsboox.da.Stroke
 import com.toolsboox.databinding.FragmentCalendarBinding
 import com.toolsboox.plugin.calendar.da.v1.CalendarPattern
@@ -231,7 +230,9 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                         }
                         calendarPatternService.save(rootPath, currentDate, calendarPattern)
                     }
-                    CalendarWidgetProvider.refreshAll(fragment.requireContext())
+                    // (No widget poke here — CalendarDayService.save notifies the widgets itself
+                    // now, guarded to today's file, so every save path refreshes them, not just
+                    // this one. A second broadcast from here would just double the e-ink churn.)
                 } catch (e: IOException) {
                     withContext(Dispatchers.Main) { fragment.somethingHappened(e) }
                 }

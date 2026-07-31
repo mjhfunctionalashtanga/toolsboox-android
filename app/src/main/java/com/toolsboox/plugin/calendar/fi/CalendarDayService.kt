@@ -29,6 +29,14 @@ class CalendarDayService @Inject constructor() {
     lateinit var moshi: Moshi
 
     /**
+     * The application context — only for the home-screen widget poke below. Injected as a field
+     * like [moshi] so the no-arg constructor (and every existing call site) stays untouched.
+     */
+    @Inject
+    @dagger.hilt.android.qualifiers.ApplicationContext
+    lateinit var appContext: android.content.Context
+
+    /**
      * Returns with the sync item of the data class.
      *
      * @param userId the user ID
@@ -409,6 +417,20 @@ class CalendarDayService @Inject constructor() {
                 com.toolsboox.plugin.calendar.ot.PickingsCards.record(it, calendarDay)
             }
         }.onFailure { Timber.w(it, "card index update failed for $baseName") }
+
+        // The home-screen widgets mirror TODAY's file, so the same one-throat property the card
+        // index rides is the right place to tell them it changed — pen saves, gram placements,
+        // starred-mail drops and sync write-backs all pass through here, and instrumenting each
+        // separately would eventually miss one. Guarded to today's file: a sync merge rewriting
+        // last March must not re-render eight widgets per historical day. A cheap broadcast —
+        // each provider re-renders off this same JSON on its own background thread.
+        runCatching {
+            com.toolsboox.plugin.calendar.ot.PickingsCards.dateOf(baseName)?.let {
+                if (it == LocalDate.now() && ::appContext.isInitialized) {
+                    com.toolsboox.plugin.calendar.widget.CalendarWidgetProvider.refreshAll(appContext)
+                }
+            }
+        }.onFailure { Timber.w(it, "widget refresh failed for $baseName") }
 
         // Try to rename the old v1 file to .backup. REPLACE_EXISTING: if a .backup already
         // exists this used to throw FileAlreadyExistsException AFTER the save succeeded,
