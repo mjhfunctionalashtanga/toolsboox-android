@@ -116,7 +116,14 @@ internal fun promptTitle(
     val dialog = dialogBuilder.create()
 
     // The save path sometimes has to REFUSE (see below) — one handler serves both button homes.
+    // `saving` closes the double-tap window a platform positive button used to close by
+    // dismissing instantly: this handler does real work (crop, PNG, store write) before its
+    // dismiss, and a palm bounce on SAVE would otherwise mint the document twice. A REFUSAL
+    // resets it, because the user corrects the field and taps again.
+    var saving = false
     val trySave = fun() {
+        if (saving) return
+        saving = true
         val name = input.text.toString().trim()
         val face = pad?.let { croppedFace(it) }
         if (face != null && name.isEmpty()) {
@@ -125,6 +132,7 @@ internal fun promptTitle(
                     "a title that is only a picture can't be searched for."
             )
             face.recycle()
+            saving = false
             return
         }
         onSave(name, face)

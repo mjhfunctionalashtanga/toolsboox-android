@@ -320,6 +320,9 @@ object BookNotesPanel {
             text = "SAVE"; textSize = 15f; setTextColor(0xFF2F6F96.toInt())
             setTypeface(typeface, Typeface.BOLD); setPadding(px(24), px(2), 0, px(6))
             setOnClickListener {
+                // First tap wins — the PNG encode below is slow enough that a palm bounce
+                // used to mint two notes with two fresh ids before the dismiss landed.
+                isEnabled = false
                 val typed = input.text.toString().trim()
                 val drawn = if (textMode) null else pad.render()?.let { bmp ->
                     val baos = java.io.ByteArrayOutputStream()

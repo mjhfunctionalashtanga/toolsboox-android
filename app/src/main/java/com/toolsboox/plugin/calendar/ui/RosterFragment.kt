@@ -500,7 +500,9 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
             addView(TextView(ctx).apply {
                 text = "SAVE TO CRM"; textSize = 15f; setTextColor(Color.parseColor("#2F6F96"))
                 setTypeface(typeface, android.graphics.Typeface.BOLD); setPadding(px(28), px(6), 0, px(6))
-                setOnClickListener { saveNote(a, ink, dialog) }
+                // First tap only — saveNote launches OCR + a CRM write; a palm bounce
+                // used to run both twice (two paid recognitions, two CRM rows).
+                setOnClickListener { isEnabled = false; saveNote(a, ink, dialog) }
             })
         })
         col.addView(InkPadView.penBar(ctx, ink))
