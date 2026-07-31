@@ -199,9 +199,22 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         renderNav()
 
         val ctx = requireContext()
+        // Paint from memory FIRST — the keep piles and whatever the store already holds — so the
+        // list is on screen before anything touches a file. That instant first paint is why the
+        // download cache is never read from here.
         messages = InboxStore.messages(ctx)
         render()
-        if (InboxStore.hasAccounts(ctx)) refresh()
+        viewLifecycleOwner.lifecycleScope.launch {
+            // Then bring in the mail on disk, off the main thread. On a cold process this is what
+            // makes the inbox readable OFFLINE: a year of downloaded mail, before (and without) any
+            // IMAP round-trip. It reads ~2 MB of envelopes at the 5,000-message cap and no bodies
+            // at all — see InboxStore.warm — but "small" is not "free" on a Boox, and this fork has
+            // paid for that assumption twice (an 86 MB day file; 53 MB decoded on the main thread).
+            val warmed = withContext(Dispatchers.IO) { InboxStore.warm(ctx.applicationContext) }
+            if (!isAdded) return@launch
+            if (warmed) { messages = InboxStore.messages(ctx); render() }
+            if (InboxStore.hasAccounts(ctx)) refresh()
+        }
     }
 
     /**
@@ -392,6 +405,11 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             m.toName.contains(q, ignoreCase = true) ||
             m.toEmail.contains(q, ignoreCase = true) ||
             m.snippet.contains(q, ignoreCase = true) ||
+            // Bodies match only for rows that are carrying one — this session's fetch and the keep
+            // piles. Mail restored from the download cache is an envelope until you open it, so a
+            // word that appears nowhere but deep inside an old letter is a question for the SERVER
+            // search below, not for this instant layer. Reading 5,000 sidecars per keystroke to
+            // close that gap would cost the instant layer the only thing it has.
             m.body.contains(q, ignoreCase = true)
 
     /** The instant layer: filter the loaded pool — [InboxStore.messages] is already the fetch
@@ -711,7 +729,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         card.addView(col)
         card.addView(star)
 
-        card.setOnClickListener { InboxStore.markRead(ctx, m.id); openMessage(m) }
+        card.setOnClickListener { InboxStore.markRead(ctx, m.id); openHydrated(m) }
         // Long-press a row → Delete: sweeps this one message out of the inbox for good (unlike the
         // header 🧹 which only sweeps the unstarred pile, delete works on ANY row, starred included).
         card.setOnLongClickListener {
@@ -729,6 +747,24 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             true
         }
         return card
+    }
+
+    /**
+     * Open a row, fetching its letter off disk first if the row is only an envelope.
+     *
+     * A message that came back from the download cache after a restart carries no body — the bulk
+     * lives in a per-message sidecar so that drawing a list of 5,000 subjects doesn't mean reading
+     * 5,000 letters. Opening one IS the moment to read one. Anything already carrying its content
+     * (this session's fetch, a keep pile) opens straight away, with no coroutine hop, so the common
+     * tap is exactly as immediate as it was before any of this.
+     */
+    private fun openHydrated(m: InboxMessage) {
+        if (m.body.isNotBlank() || m.html.isNotBlank()) { openMessage(m); return }
+        val ctx = requireContext().applicationContext
+        lifecycleScope.launch {
+            val full = withContext(Dispatchers.IO) { InboxStore.hydrate(ctx, m) }
+            if (isAdded) openMessage(full)
+        }
     }
 
     /** An opened message: its body, and the moves that make it an assignable object. */

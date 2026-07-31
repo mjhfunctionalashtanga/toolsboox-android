@@ -1,6 +1,9 @@
 package com.toolsboox.plugin.mail
 
 import android.content.Context
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import timber.log.Timber
 
 /**
  * Bridges the IMAP/SMTP clients to the unified inbox and the configured accounts. [refresh] pulls
@@ -21,7 +24,11 @@ object MailSync {
     suspend fun refresh(context: Context, limit: Int = 25): String? {
         val accounts = MailAccountStore.all(context)
         if (accounts.isEmpty()) {
-            InboxStore.setFetched(emptyList())
+            // Deliberately NOT `setFetched(emptyList())` any more. That call made sense while the
+            // store was a session window — it cleared the screen. Now it would be an instruction to
+            // forget every message on the device because the account list is momentarily empty
+            // (mid-edit, or a password re-entry). [InboxStore.messages] already shows the seeded
+            // samples while no account is configured, so nothing is on screen that shouldn't be.
             return "No mail accounts yet -- add one with the gear in the Mail screen."
         }
         val all = ArrayList<InboxMessage>()
@@ -42,10 +49,18 @@ object MailSync {
                 errors.add("${a.email.ifBlank { "account" }}: ${e.message ?: "failed"}")
             }
         }
-        InboxStore.setFetched(all)
-        // With the window in hand, drop the cleared/read ids that can never resurface — only for
-        // accounts that just fetched cleanly (a failed account keeps all its state).
-        InboxStore.prune(context, okAccounts, all.map { it.id }.toSet())
+        // The window FOLDS INTO the store; it does not become it. And the pruning that follows is
+        // told about the whole store, not just this window — a cleared or read id whose message is
+        // still on the device must keep its state, or the first refresh after durability shipped
+        // would resurface every message you had swept away. Both calls read and write files, so
+        // both are held off the main thread; `refresh` is a suspend function called from the UI's
+        // scope, and the IO inside ImapClient never covered these two.
+        val merged = withContext(Dispatchers.IO) {
+            val merged = InboxStore.setFetched(context, all)
+            InboxStore.prune(context, okAccounts, merged.map { it.id }.toSet())
+            merged
+        }
+        Timber.i("mail refresh: ${all.size} in the window, ${merged.size} on the device")
         return if (errors.isEmpty()) null else errors.joinToString("\n")
     }
 

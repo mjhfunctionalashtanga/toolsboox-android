@@ -56,10 +56,15 @@ object ListWidgetRenderer {
     // ---- Public entry points (one per provider) ----
 
     /** Action mail: STARRED first, then the rest of the inbox, newest within each band. Reads the
-     *  same [InboxStore.messages] the inbox screen does — in a widget process the live fetch window
-     *  is empty, so this resolves to the persisted starred pile (files/mail/starred.json) union the
-     *  seeded samples on a fresh install. No IMAP, no fetch. */
+     *  same [InboxStore.messages] the inbox screen does — in a widget process nothing has fetched,
+     *  so this resolves to the keep piles plus the download cache, union the seeded samples on a
+     *  fresh install. No IMAP, no fetch. */
     fun renderMail(context: Context, widthDp: Int, heightDp: Int): Bitmap {
+        // The widget process has its own memory, so the cache has to be warmed here too — without
+        // this the widget would only ever show the keep piles while the app itself shows a year of
+        // mail. A widget draw already runs on a background thread (goAsync + Thread in
+        // CalendarWidgetProvider), which is the one precondition warm has.
+        runCatching { InboxStore.warm(context) }
         val messages = runCatching { InboxStore.messages(context) }
             .getOrDefault(emptyList())
             // Mail you SENT is keep-forever, so it comes back from messages() alongside the rest —
