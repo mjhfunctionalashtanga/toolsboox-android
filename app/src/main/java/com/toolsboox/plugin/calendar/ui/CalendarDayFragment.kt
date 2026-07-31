@@ -51,6 +51,27 @@ import javax.inject.Inject
 import kotlin.math.abs
 
 /**
+ * How many picking rows "Bring in a picking" draws before it offers "…and N more". The Ledger
+ * Directory's page size, deliberately the same number: it is the same unroll gesture on the same
+ * kind of list, and two different page sizes would be two different lists to the hand.
+ *
+ * It is also the face budget. Faces are decoded only for rows that were rendered, so unrolling is
+ * what pays for the next page of them.
+ */
+private const val PICK_ROWS_PAGE = 40
+
+/**
+ * How many un-indexed days one pass of the picker will DECODE before it stops and says so.
+ *
+ * The old gather parsed a hundred and twenty day files every single time it opened; this pays that
+ * cost only for days [com.toolsboox.plugin.calendar.ot.PickingsCards] has never met, and each one
+ * paid for repairs that day's sidecar permanently. So the number is a first-run allowance that
+ * shrinks to nothing by itself, not a standing tax — and whatever it does not reach is COUNTED and
+ * shown, never quietly dropped.
+ */
+private const val PICK_DAY_BUDGET = 40
+
+/**
  * Calendar day view fragment.
  *
  * @author <a href="mailto:gabor.auth@toolsboox.com">Gábor AUTH</a>
@@ -5170,11 +5191,51 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     // page already offers it by tap (graduate / open its board / open the source) plus the gram
     // verbs the canvas menu gives every other card.
 
-    /** One card already on a Pickings board, offered back to the intake page. */
+    /**
+     * One card already on a Pickings board, offered back to the intake page — as a REFERENCE to
+     * that card, never as a copy of it.
+     *
+     * ── Why this holds no pixels ──────────────────────────────────────────────────────────────
+     *
+     * It used to carry `data`: the card's complete base64 face, as a Java String, for as long as the
+     * picker dialog was on screen. [gatherPickingGrams] filled two hundred of those from a hundred
+     * and twenty fully-parsed day files. The 3150×4200 photograph that put one day file at 86 MB is
+     * ~40 MB of base64, which is ~80 MB of UTF-16 String held live behind an open menu — and that
+     * was the MEMORY FLOOR the "bring in a picking freezes then crashes" report landed on top of.
+     * The main-thread decodes were fixed in `4aaaa268`; this was the part that commit left, with its
+     * reason recorded honestly: "bounding it means either dropping a picking or restructuring
+     * PickingGram to hold a file offset instead of the payload — neither is contained, and I didn't
+     * want to silently hide his cards."
+     *
+     * The restructure is contained NOW because [PickingsCards] exists (`dab8cd18`). A card's label,
+     * board page, day and rectangle are all in a small sidecar per day; the only thing that is not
+     * is the face. So this is the index row plus the day it came from, and it is enough to LIST a
+     * card. The payload is fetched from the day file for the ONE card you actually choose
+     * ([fetchPicking]), and the faces shown in the list are decoded to thumbnail size and the
+     * source bytes dropped immediately ([decodeGramThumb]).
+     *
+     * [id] is the element's own UUID, which is what makes the fetch exact — two cards clipped from
+     * the same article carry the same label and the same source, and picking one must not bring the
+     * other.
+     */
     private data class PickingGram(
-        val date: LocalDate, val boardName: String, val data: String,
-        val label: String, val link: String, val cardText: String, val feed: String
+        val date: LocalDate, val page: String, val id: String,
+        val boardName: String, val label: String, val glyph: String
     )
+
+    /**
+     * What one pass over the ledger found: the cards, and the days it could not answer for yet.
+     *
+     * [unread] is the honest half. The card index is repaired lazily — it rides the app's ordinary
+     * decodes — so on a ledger that predates it, or one whose days arrived through
+     * `CalendarWebDavSyncService.writeLocal` (which installs pulled day files straight from bytes and
+     * can never call a save hook), there are days the index has simply never met. Those days are
+     * decoded here, but only [PICK_DAY_BUDGET] of them per pass, because a decode is the expensive
+     * thing this whole redesign exists to avoid doing a hundred and twenty times. Whatever is left
+     * over is COUNTED and SHOWN, never dropped: the picker says how many days it has not read and
+     * offers to read them, and every pass permanently repairs the days it did read.
+     */
+    private data class PickingHarvest(val rows: List<PickingGram>, val unread: Int)
 
     /**
      * The intake page's hold menu, resolved against [CalendarDayPageIntake]'s recorded cells.
@@ -5437,17 +5498,52 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * than paste a copy.
      */
     private fun bringPickingOntoPage(cx: Float, cy: Float) = pickPickingGram("Bring in a picking") { p ->
-        val ok = placeGramAt(p.data, cx, cy,
-            sourceLink = p.link, sourceLabel = p.label, cardText = p.cardText, sourceFeed = p.feed)
-        showMessage(if (ok) "Brought in ${p.label}" else "Couldn't bring that picking in", binding.root)
+        // The payload is fetched here, for this one card, off the main thread — see [PickingGram].
+        // `placeGramAt` itself must stay on Main (it touches the surface's element list and redraws),
+        // and it is safe there because `4aaaa268` made it read the face's HEADER for its aspect ratio
+        // and allocate no pixels at all.
+        val appCtx = requireContext().applicationContext
+        lifecycleScope.launch {
+            val element = withContext(Dispatchers.IO) { fetchPicking(appCtx, p) }
+            if (!isAdded) return@launch
+            val ok = element != null && placeGramAt(
+                element.data, cx, cy,
+                sourceLink = element.sourceLink, sourceLabel = p.label,
+                cardText = element.cardText, sourceFeed = element.sourceFeed
+            )
+            showMessage(if (ok) "Brought in ${p.label}" else "Couldn't bring that picking in", binding.root)
+        }
     }
 
     /**
-     * The picker itself: every card on your Pickings boards as a face you can recognise, and
-     * whatever the caller wants done with the one you choose.
+     * The picker itself: every card on your Pickings boards, and whatever the caller wants done with
+     * the one you choose.
+     *
+     * ── What changed, and what did not ────────────────────────────────────────────────────────
+     *
+     * What did not: it is still a list of FACES. Michael's whole reason for this door is "the boards
+     * you already made, as faces you can recognise", and a list of file names would not be that door.
+     *
+     * What did: the list is now built from [PickingsCards] — labels, boards and dates, out of small
+     * per-day sidecars — and the faces arrive AFTERWARDS, for the rows actually on screen, decoded to
+     * thumbnail size with the source bytes released immediately. Nothing holds a card's payload.
+     * Before: 120 day files parsed and up to 200 complete base64 payloads (~80 MB of String for a
+     * single oversized photograph) held for as long as the dialog stood open, and the dialog said
+     * "Reading your boards…" for all of it. After: the rows appear off the index, the faces fill in
+     * behind them, and the peak is one day file's decode plus a page of thumbnails.
+     *
+     * ── Two visible bounds, and no invisible ones ─────────────────────────────────────────────
+     *
+     * The old gather had two silent ones — newest 120 day files, first 200 cards — and a third that
+     * nobody had noticed: `if (thumb == null) continue` dropped the row for any card whose face
+     * failed to decode. All three are gone. Rows are paged [PICK_ROWS_PAGE] at a time behind an
+     * "…and N more" row, which is the Ledger Directory's own unroll idiom rather than a second kind
+     * of paging; a card whose face won't decode keeps its row and wears its glyph; and days the index
+     * has not met are counted and offered, not skipped. See [PickingHarvest].
      */
     private fun pickPickingGram(title: String, onPick: (PickingGram) -> Unit) {
         val ctx = context ?: return
+        val appCtx = ctx.applicationContext
         val dp = resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
 
@@ -5462,44 +5558,65 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .setNegativeButton(android.R.string.cancel, null)
             .create()
 
-        listCol.addView(android.widget.TextView(ctx).apply {
-            text = "Reading your boards…"; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0)
-        })
+        fun note(text: String) = android.widget.TextView(ctx).apply {
+            this.text = text; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), px(6))
+        }
+
+        listCol.addView(note("Reading your boards…"))
 
         val thumbPx = px(76)
-        lifecycleScope.launch {
-            // The thumbnails are decoded ON THE IO THREAD, beside the walk that found the grams.
-            // They used to be built in the row loop below — which runs after `withContext`
-            // returns, i.e. on MAIN — so opening this picker did up to two hundred base64
-            // decodes and four hundred BitmapFactory passes on the UI thread, each one
-            // allocating a multi-megabyte byte[] from a gram's payload. That is the freeze in
-            // "bring in a picking freezes then crashes": the dialog sits there saying nothing
-            // while the main thread chews through every card on every board.
-            val picks = withContext(Dispatchers.IO) {
-                gatherPickingGrams().map { it to decodeGramThumb(it.data, thumbPx) }
+        var cap = PICK_ROWS_PAGE
+        var faces: Job? = null
+
+        // Declared before it is defined because the "…and N more" row it builds calls it again with a
+        // bigger cap. Re-rendering is free — the rows are references, already in hand.
+        lateinit var render: (PickingHarvest) -> Unit
+
+        fun gather() {
+            lifecycleScope.launch {
+                val harvest = withContext(Dispatchers.IO) { gatherPickingGrams(appCtx) }
+                if (!isAdded || !dialog.isShowing) return@launch
+                render(harvest)
             }
-            if (!isAdded) return@launch
+        }
+
+        render = { harvest ->
+            faces?.cancel()
             listCol.removeAllViews()
-            if (picks.isEmpty()) {
-                listCol.addView(android.widget.TextView(ctx).apply {
-                    text = "No pickings with cards yet."; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0)
-                })
-                return@launch
+            val shown = harvest.rows.take(cap)
+
+            if (harvest.rows.isEmpty()) {
+                listCol.addView(note(
+                    if (harvest.unread > 0) "No pickings with cards yet — and ${harvest.unread} older days not read."
+                    else "No pickings with cards yet."
+                ))
             }
-            for ((p, thumb) in picks) {
-                if (thumb == null) continue
+
+            // (row, its face slot) so the face pass can find the view that wants each card.
+            val slots = mutableListOf<Pair<PickingGram, android.widget.ImageView>>()
+
+            for (p in shown) {
                 val row = LinearLayout(ctx).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = android.view.Gravity.CENTER_VERTICAL
                     setPadding(px(6), px(8), px(6), px(8))
                     setBackgroundResource(android.R.drawable.list_selector_background)
                 }
-                row.addView(com.toolsboox.ot.InkMount.wrap(ctx,
-                    android.widget.ImageView(ctx).apply {
-                        setImageBitmap(thumb); adjustViewBounds = true
-                        layoutParams = FrameLayout.LayoutParams(px(76), px(76))
-                        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-                    }, taped = false).apply {
+                // The glyph stands where the face will be until it arrives — and STAYS there if the
+                // face cannot be decoded at all. A row you can read is a row you can choose; the old
+                // loop skipped such a card entirely, which is the one thing this door must not do.
+                val face = android.widget.ImageView(ctx).apply {
+                    adjustViewBounds = true
+                    scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                    layoutParams = FrameLayout.LayoutParams(px(76), px(76))
+                }
+                val glyph = android.widget.TextView(ctx).apply {
+                    text = p.glyph; textSize = 26f; setTextColor(0xFF888888.toInt())
+                    gravity = android.view.Gravity.CENTER
+                    layoutParams = FrameLayout.LayoutParams(px(76), px(76))
+                }
+                val slot = FrameLayout(ctx).apply { addView(glyph); addView(face) }
+                row.addView(com.toolsboox.ot.InkMount.wrap(ctx, slot, taped = false).apply {
                     layoutParams = LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
                     ).apply { marginEnd = px(10) }
@@ -5510,9 +5627,76 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 })
                 row.setOnClickListener { dialog.dismiss(); onPick(p) }
                 listCol.addView(row)
+                slots += p to face
+            }
+
+            if (harvest.rows.size > cap) {
+                listCol.addView(android.widget.TextView(ctx).apply {
+                    text = "…and ${harvest.rows.size - cap} more"
+                    textSize = 14f; setTextColor(0xFF444444.toInt())
+                    setPadding(px(6), px(12), px(6), px(12))
+                    setBackgroundResource(android.R.drawable.list_selector_background)
+                    setOnClickListener { cap += PICK_ROWS_PAGE; render(harvest) }
+                })
+            }
+
+            // The days the index has never met. Tapping runs another pass, which reads another
+            // [PICK_DAY_BUDGET] of them — and the reading STICKS, because every decode repairs that
+            // day's sidecar on its way through CalendarDayService.load. So this row counts down.
+            if (harvest.unread > 0) {
+                listCol.addView(android.widget.TextView(ctx).apply {
+                    text = "⟳  ${harvest.unread} older days not read yet"
+                    textSize = 14f; setTextColor(0xFF444444.toInt())
+                    setPadding(px(6), px(12), px(6), px(12))
+                    setBackgroundResource(android.R.drawable.list_selector_background)
+                    setOnClickListener { listCol.removeAllViews(); listCol.addView(note("Reading…")); gather() }
+                })
+            }
+
+            // ── The faces ─────────────────────────────────────────────────────────────────────
+            //
+            // One day file open per DATE, not per card: a day whose board holds nine cards is read
+            // once and gives up all nine thumbnails. The decoded day and every payload in it go out
+            // of scope when the `withContext` returns, so what survives is a handful of 76dp
+            // bitmaps — this is the whole difference between the old picker's memory and this one's.
+            //
+            // Only the rows that were actually RENDERED are wanted, which is what keeps this bounded:
+            // an unrolled cap is what buys the next page of faces, and a ledger you never scroll
+            // costs one page of them. Unrolling re-renders from scratch and so re-reads the days it
+            // has already read — the simple thing rather than a face cache the dialog would have to
+            // own and evict, and the re-read is of days that are by then in the OS page cache.
+            // Cancelled by the next render, and abandoned as soon as the dialog goes away.
+            faces = lifecycleScope.launch {
+                for ((date, group) in slots.groupBy { it.first.date }) {
+                    if (!isAdded || !dialog.isShowing) return@launch
+                    val thumbs = withContext(Dispatchers.IO) {
+                        val file = com.toolsboox.ot.LedgerPaths.dayFile(appCtx, date)
+                            ?: return@withContext emptyMap<String, android.graphics.Bitmap>()
+                        val day = runCatching { calendarDayService.load(file) }.getOrNull()
+                            ?: return@withContext emptyMap()
+                        val wanted = group.map { it.first.id }.toSet()
+                        day.imageElements
+                            .filter { it.elementId.toString() in wanted && it.data.isNotBlank() }
+                            .mapNotNull { e ->
+                                decodeGramThumb(e.data, thumbPx, android.graphics.Bitmap.Config.RGB_565)
+                                    ?.let { e.elementId.toString() to it }
+                            }
+                            .toMap()
+                    }
+                    if (!isAdded || !dialog.isShowing) return@launch
+                    for ((p, view) in group) thumbs[p.id]?.let {
+                        view.setImageBitmap(it)
+                        (view.parent as? FrameLayout)?.getChildAt(0)?.visibility = View.GONE
+                    }
+                }
             }
         }
+
+        // Shown first, THEN read: every guard in the render and the face pass asks
+        // `dialog.isShowing`, and a pass that started before the dialog was up would answer that
+        // question wrongly and abandon itself.
         showModal(dialog)
+        gather()
     }
 
     /**
@@ -5526,8 +5710,17 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      *
      * Returns null on any failure (including OOM, which `runCatching` catches as a Throwable) —
      * a card that won't decode is skipped, never fatal.
+     *
+     * [config] exists for the picker's list, and only for it. `inSampleSize` is a power of two, so a
+     * face asked for at 76dp lands anywhere up to twice that — around 370 KB apiece in ARGB_8888,
+     * which across a page of rows is a new floor put in where the old one was just taken out. The
+     * list is looking at grey paper on a grey screen, so it takes RGB_565 and halves them. Placement
+     * ([fileIntoIntake]) keeps the full config, because those pixels are re-encoded and kept.
      */
-    private fun decodeGramThumb(data: String, maxPx: Int): android.graphics.Bitmap? = runCatching {
+    private fun decodeGramThumb(
+        data: String, maxPx: Int,
+        config: android.graphics.Bitmap.Config = android.graphics.Bitmap.Config.ARGB_8888
+    ): android.graphics.Bitmap? = runCatching {
         val bytes = android.util.Base64.decode(data, android.util.Base64.DEFAULT)
         val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
         android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
@@ -5535,39 +5728,100 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         while (bounds.outWidth / (sample * 2) >= maxPx && bounds.outHeight / (sample * 2) >= maxPx) sample *= 2
         android.graphics.BitmapFactory.decodeByteArray(
             bytes, 0, bytes.size,
-            android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+            android.graphics.BitmapFactory.Options().apply {
+                inSampleSize = sample; inPreferredConfig = config
+            })
     }.getOrNull()
 
-    /** Every card sitting on a Pickings board across the recent window, newest day first. */
-    private fun gatherPickingGrams(): List<PickingGram> {
+    /**
+     * Every card sitting on a Pickings board, newest day first — as references, holding no pixels.
+     *
+     * ── The walk ──────────────────────────────────────────────────────────────────────────────
+     *
+     * Every day that has a day file, newest first. There is no 120-day window any more: that window
+     * existed because each day inside it cost a full parse, and it silently truncated the answer —
+     * a board made four months ago simply was not offered, with nothing on screen saying so. An
+     * INDEXED day now costs one small sidecar read, so the window's whole justification is gone and
+     * the ledger can be answered end to end.
+     *
+     * ── The two kinds of day ──────────────────────────────────────────────────────────────────
+     *
+     *  • INDEXED and fresh ([PickingsCards.isFresh] — two file stats, no decode): its cards come
+     *    straight out of the sidecar. This is the ordinary case and it is nearly free.
+     *  • NOT indexed, or behind the day file: the index cannot be assumed complete, because it is
+     *    repaired lazily and because `CalendarWebDavSyncService.writeLocal` deliberately installs
+     *    pulled day files without going near a save hook. Treating those days as empty would be
+     *    exactly the silent hiding this rewrite is meant to end, so they are DECODED — through
+     *    [com.toolsboox.plugin.calendar.fi.CalendarDayService.load], which repairs the sidecar as it
+     *    passes, so a given day is paid for the expensive way at most once and every later opening
+     *    of this picker is faster than the last.
+     *
+     * The decodes are budgeted at [PICK_DAY_BUDGET] per pass, because a hundred and twenty parses is
+     * the wait the old picker was blamed for. What the budget did not reach is RETURNED AS A COUNT
+     * ([PickingHarvest.unread]) and shown as a row the user can tap to read more — the bound is real,
+     * so it is on screen, the way the directory's "…and N more" is.
+     *
+     * Nothing here retains a [CalendarDay]: the decoded day is scoped to one loop iteration and only
+     * the index rows leave it.
+     */
+    private fun gatherPickingGrams(ctx: android.content.Context): PickingHarvest {
         val out = mutableListOf<PickingGram>()
-        val calendarRoot = java.io.File(documentsRoot(), "calendar")
-        if (!calendarRoot.exists()) return out
-        val ctx = context ?: return out
-        calendarRoot.walkTopDown()
-            .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
-            .sortedByDescending { it.name }.take(120)
-            .forEach { file ->
-                val m = Regex("day-(\\d{4})-(\\d{2})-(\\d{2})").find(file.name) ?: return@forEach
-                val ld = runCatching {
-                    LocalDate.of(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt())
-                }.getOrNull() ?: return@forEach
-                val day = runCatching { calendarDayService.load(file) }.getOrNull() ?: return@forEach
-                val names = runCatching {
-                    com.toolsboox.plugin.calendar.ot.PickingsStore.list(ctx, ld).associate { it.key to it.name }
-                }.getOrNull().orEmpty()
-                for (img in day.imageElements) {
-                    if (img.data.isBlank() || img.decorative) continue
-                    if (!com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(img.page)) continue
-                    out.add(PickingGram(
-                        ld, names[img.page] ?: "Pickings", img.data,
-                        img.cardText.ifBlank { img.sourceLabel }.ifBlank { "Picking" }.take(80),
-                        img.sourceLink, img.cardText, img.sourceFeed
-                    ))
-                    if (out.size >= 200) return out
-                }
+        var budget = PICK_DAY_BUDGET
+        var unread = 0
+        // Board names are read per day, and only for days that turned out to have cards.
+        val names = HashMap<LocalDate, Map<String, String>>()
+
+        for (date in LedgerDocuments.dayDates(ctx)) {
+            val cards: List<PickingsCards.Card> = if (PickingsCards.isFresh(ctx, date)) {
+                PickingsCards.cards(ctx, date)
+            } else if (budget > 0) {
+                budget--
+                val file = com.toolsboox.ot.LedgerPaths.dayFile(ctx, date)
+                val day = file?.let { runCatching { calendarDayService.load(it) }.getOrNull() }
+                if (day == null) emptyList() else PickingsCards.cardsIn(day)
+            } else {
+                unread++
+                continue
             }
-        return out
+
+            val boards = cards.filter { PickingsStore.isPickings(it.page) }
+            if (boards.isEmpty()) continue
+            val byKey = names.getOrPut(date) {
+                runCatching { PickingsStore.list(ctx, date).associate { it.key to it.name } }
+                    .getOrNull().orEmpty()
+            }
+            for (c in boards) {
+                out.add(PickingGram(
+                    date = date,
+                    page = c.page,
+                    id = c.id,
+                    boardName = byKey[c.page.substringBefore('#')] ?: byKey[c.page] ?: "Pickings",
+                    label = PickingsCards.labelFor(c),
+                    glyph = PickingsCards.glyphFor(c)
+                ))
+            }
+        }
+        return PickingHarvest(out, unread)
+    }
+
+    /**
+     * The chosen card's element, read out of its day file — the only place a picking's payload is
+     * ever loaded, and only ever one of them.
+     *
+     * This is what makes [PickingGram] able to hold nothing: the list carries identity, and identity
+     * is enough until you commit. Matched on the element's own UUID rather than on the label, because
+     * two clippings from the same article are the same label and the same source and a different
+     * card. Null when the day cannot be read (the 86 MB defence in
+     * [com.toolsboox.plugin.calendar.fi.CalendarDayService.load] returns null rather than throwing) or
+     * when the index row has outlived the element — both of which the callers already say
+     * "Couldn't bring that picking in" for.
+     *
+     * MUST be called off the main thread; both callers do.
+     */
+    private fun fetchPicking(ctx: android.content.Context, pick: PickingGram): ImageElement? {
+        val file = com.toolsboox.ot.LedgerPaths.dayFile(ctx, pick.date) ?: return null
+        val day = runCatching { calendarDayService.load(file) }.getOrNull() ?: return null
+        return day.imageElements.firstOrNull { it.elementId.toString() == pick.id && it.data.isNotBlank() }
     }
 
     /** File a chosen picking into the intake quarter — the starred-gram path, verbatim. */
@@ -5576,21 +5830,24 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         lifecycleScope.launch {
             val ok = withContext(Dispatchers.IO) {
                 runCatching {
+                    // The payload arrives HERE, for this one card, and dies with this block — see
+                    // [PickingGram] for why the picker no longer carries it.
+                    val element = fetchPicking(appCtx, pick) ?: return@runCatching false
                     // Bounded decode, capped at what the placement is going to keep anyway
                     // (PickingsPlacement.MAX_DIM): the full-resolution decode that used to stand
                     // here allocated the whole source bitmap — ~53 MB for the 3150×4200 face that
                     // put a day file at 86 MB — only for `place` to immediately scale it down to
                     // 1200. The peak was the crash; the pixels were never wanted.
                     val bmp = decodeGramThumb(
-                        pick.data, com.toolsboox.plugin.calendar.ot.PickingsPlacement.MAX_DIM
+                        element.data, com.toolsboox.plugin.calendar.ot.PickingsPlacement.MAX_DIM
                     ) ?: return@runCatching false
                     com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
                         calendarDayService, com.toolsboox.ot.LedgerPaths.documentsRoot(appCtx), bmp,
                         currentDate, CalendarDayPageIntake.INTAKE_PAGE,
-                        sourceLink = pick.link, sourceLabel = pick.label,
+                        sourceLink = element.sourceLink, sourceLabel = pick.label,
                         // The card already wears its treatment in its own pixels — taping it
                         // twice is the one-decoration contract's whole point.
-                        treatment = false, cardText = pick.cardText, sourceFeed = pick.feed,
+                        treatment = false, cardText = element.cardText, sourceFeed = element.sourceFeed,
                         intakeKind = kindKey
                     )
                     true

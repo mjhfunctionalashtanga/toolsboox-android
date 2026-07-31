@@ -209,12 +209,15 @@ object LedgerDocumentPages {
      * tombstone fields (`deletedStrokeIds`, `deletedElementIds`) are already shared with iOS, so
      * nothing new goes on the wire; this simply uses them for what they are for.
      *
-     * ONE RESIDUE, NAMED SO NOBODY CHASES IT LATER. `CalendarDayMerger.unionStrokeMap` unions the
-     * `noteStrokes` KEY SET before it filters the strokes, so a merge with a device that has not seen
-     * the deletion puts the page key back with an EMPTY stroke list. That is harmless and invisible —
-     * every reader that lists pages filters empty stroke lists out, and the document's index entry is
-     * gone, so nothing lists it — but a later scan will see the key. It is a headstone in the day
-     * file, not a resurrection: no ink comes back with it.
+     * THE RESIDUE THIS ONCE HAD IS GONE, and it is worth saying what it was, because the erase below
+     * is the thing that produces the evidence the fix runs on. `CalendarDayMerger.unionStrokeMap`
+     * unioned the `noteStrokes` KEY SET before it filtered the strokes, so a merge with a device that
+     * had not seen the deletion put the page key back with an EMPTY stroke list — invisible while
+     * every page-lister filtered empties out, and no longer invisible now that Grid and Jot are
+     * documents whose pages are counted straight off `noteStrokes.keys`. The merger declines to
+     * re-add such a key, and it can tell a deleted page from a merely blank one ONLY because this
+     * method removes the key outright and tombstones what stood on it. Both marks matter: the missing
+     * key is the "one side only" signal, the tombstones are the proof of what happened to it.
      */
     fun erase(context: Context, service: CalendarDayService, pages: DocumentPages): PagesErased {
         val root = runCatching { LedgerPaths.documentsRoot(context) }.getOrNull()

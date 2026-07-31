@@ -262,6 +262,22 @@ object PickingsCards {
         }
     }
 
+    /**
+     * The cards inside a day that is ALREADY DECODED — the same rule [record] indexes by, offered to
+     * the one caller that legitimately has a [CalendarDay] in its hand and no sidecar to read.
+     *
+     * The "Bring in a picking" gather needs this. It lists from the index, but the index is repaired
+     * lazily (see [refreshIfStale]) and so cannot be assumed complete: a day that has never been
+     * opened since this store existed has no sidecar, and the picker must not pretend that day holds
+     * nothing. So it decodes those days itself — and when it does, it must count their cards by the
+     * SAME rule the sidecar would have recorded, or the picker's answer would change depending on
+     * whether a day happened to have been indexed yet. One rule, two sources.
+     *
+     * (The decode also repairs the sidecar on its way past, because it goes through
+     * [CalendarDayService.load]. So a day is answered the expensive way at most once.)
+     */
+    fun cardsIn(day: CalendarDay): List<Card> = cardsOf(day)
+
     /** Every day this store holds an index for, newest first — filenames only, nothing opened.
      *  The [PickingsStore.dates] move, for the same reason: a directory has to know which days are
      *  worth asking about before it knows which day you want. */
