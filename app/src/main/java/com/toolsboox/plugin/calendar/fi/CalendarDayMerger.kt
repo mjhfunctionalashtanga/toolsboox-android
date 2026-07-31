@@ -180,16 +180,15 @@ object CalendarDayMerger {
      * seen you page to it — losing a page you can still reach is a far worse failure than a page key
      * that lingers, and the whole delete design (`9c1d807c`) is arranged around never stranding one.
      *
-     * ── The iOS half, stated rather than assumed ──────────────────────────────────────────────
+     * ── The iOS half ──────────────────────────────────────────────────────────────────────────
      *
-     * `CalendarDayMerger.swift` unions its key set the same way and needs the same change; until it
-     * has it, an Android↔iPad pair converges back to the empty key after one round trip (Android
-     * drops it, the iPad's next merge re-adds it empty, and by then no tombstoned stroke survives to
-     * prove what happened, so guard 3 correctly declines to drop it a second time). It CONVERGES
-     * rather than ping-ponging, which is what mattered: both forks still stop re-uploading. This is
-     * the same honest limit [com.toolsboox.plugin.calendar.ot.LedgerDocumentTombstones] already
-     * records for titles — deletion is durable between Android devices now, and complete when iOS
-     * grows the matching rule.
+     * `CalendarDayMerger.swift` carries the same rule since 2026-07-31 (guards verbatim, with its
+     * own `CalendarDayMergerTests` pinning each one), so deletion is durable across the
+     * Android↔iPad pair too, not just between Android devices. Before that landed, the pair
+     * converged back to the empty key after one round trip (Android dropped it, the iPad's next
+     * merge re-added it empty, and by then no tombstoned stroke survived to prove what happened,
+     * so guard 3 correctly declined to drop it a second time) — it CONVERGED rather than
+     * ping-ponging, which is why shipping the Android half first was safe.
      */
     private fun unionStrokeMap(
         m1: Map<String, List<Stroke>>, m2: Map<String, List<Stroke>>, deleted: Set<String> = emptySet(),
