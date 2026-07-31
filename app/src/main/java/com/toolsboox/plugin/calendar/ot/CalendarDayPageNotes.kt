@@ -172,6 +172,10 @@ class CalendarDayPageNotes : Creator {
                 base == SynthPageStore.DEFAULT_KEY -> null
                 SynthPageStore.isSynth(base) ->
                     SynthPageStore.list(context).firstOrNull { it.key == base }?.name
+                // Grid and Jot answer exactly as Write does — daily page scoped by date, minted
+                // document by key — because their store is Write's store parameterised.
+                GridPageStore.isMine(base) -> GridPageStore.nameOf(context, base, date)
+                JotPageStore.isMine(base) -> JotPageStore.nameOf(context, base, date)
                 else -> null
             }?.trim()?.takeIf { it.isNotEmpty() }
         }
@@ -325,14 +329,35 @@ class CalendarDayPageNotes : Creator {
                 if (synthPage == 0) drawTitleInk(context, canvas, base, calendarDay)
                 return
             }
-            if (base == "grid") {
-                drawGridNotesPage(canvas)
+            // A NAMED grid ("grid-1753…") is a grid page — same ruled squares, same header slot.
+            // Without [GridPageStore.isMine] it would fall past this branch to the generic NOTES
+            // look at the foot of this method, so naming a grid would silently change the surface
+            // underneath it: the identical bug the Synthesize branch above and the Write branch
+            // below each carry a note about, on the two halves of the same pair.
+            if (GridPageStore.isMine(base)) {
+                // The header was a hard-coded "GRID NOTES" inside the template until the surface
+                // could hold a name. It is passed in now for the reason WRITE passes one: a titled
+                // document whose page still says GRID NOTES is a filing system, not a title.
+                drawGridNotesPage(canvas, headerFor(context, base, calendarDay, "GRID NOTES"))
+                if (subIndex == 0) drawTitleInk(context, canvas, base, calendarDay)
                 return
             }
-            if (base == "sketch") {
-                // Sketch Notes: the same light dot grid as the synthesize whiteboard — dots stay
-                // out of the way of a drawing far better than rules or a full grid do.
+            if (JotPageStore.isMine(base)) {
+                // Jot: the same light dot grid as the synthesize whiteboard — dots stay out of the
+                // way of a drawing far better than rules or a full grid do. (Its page keys are
+                // "sketch"; see [JotPageStore] for why the label and the key disagree.)
                 drawBrainstormPage(canvas)
+                // A jot page has never carried a header, and an UNNAMED one still doesn't — the
+                // whole surface is a blank dotted sheet and stamping "JOT NOTES" across the top of
+                // every one of Michael's existing sketches to announce a feature he hasn't used
+                // would be the change paying for itself with his pages. Only a document he actually
+                // titled draws its title, which is exactly what titling it was for.
+                documentName(context, base, calendarDay)?.let { name ->
+                    val fitted = Creator.textDefaultBlack.breakText(name, true, HEADER_MAX_WIDTH, null)
+                    val shown = if (fitted >= name.length) name else name.take(fitted).trimEnd() + "…"
+                    canvas.drawText(shown, lo, to - 16.0f, Creator.textDefaultBlack)
+                }
+                if (subIndex == 0) drawTitleInk(context, canvas, base, calendarDay)
                 return
             }
             if (base == GRAM_PICKS) {
@@ -525,9 +550,9 @@ class CalendarDayPageNotes : Creator {
          * and arrows, where lined paper fights you. Always a grid, whatever the notes template is
          * set to, since choosing "Grid Notes" already said what you wanted.
          */
-        private fun drawGridNotesPage(canvas: Canvas) {
+        private fun drawGridNotesPage(canvas: Canvas, header: String = "GRID NOTES") {
             canvas.drawRect(0f, 0f, 1404f, 1872f, Creator.fillWhite)
-            canvas.drawText("GRID NOTES", lo, to - 16.0f, Creator.textDefaultBlack)
+            canvas.drawText(header, lo, to - 16.0f, Creator.textDefaultBlack)
 
             val step = 50.0f
             val bottom = to + 35 * ceh

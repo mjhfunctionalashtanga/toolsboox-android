@@ -76,9 +76,16 @@ fun ledgerDirectoryFolders(
                 com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> "Notes"
                 // A NAMED document ("pickings-…", "synthesize-…", "write-…") calls the same folder
                 // home as the surface it belongs to — the "-<millis>" tail is storage, never a
-                // different kind of page.
-                else -> if (com.toolsboox.plugin.calendar.ot.LedgerDocuments.surfaceOf(page) != null) "Flow"
-                else "Notes"   // lined pages ("0", "1", …) and named notebooks
+                // different kind of page. Which is exactly why a named GRID or JOT has to be asked
+                // about by surface rather than swept into Flow with the rest: they became documents
+                // without leaving the Notes folder their daily pages sit in, and "grid-1753…" would
+                // otherwise open the hub with Flow expanded around a page that isn't in it.
+                else -> when (com.toolsboox.plugin.calendar.ot.LedgerDocuments.surfaceOf(page)) {
+                    null -> "Notes"   // lined pages ("0", "1", …) and named notebooks
+                    com.toolsboox.plugin.calendar.ot.LedgerDocuments.GRID,
+                    com.toolsboox.plugin.calendar.ot.LedgerDocuments.JOT -> "Notes"
+                    else -> "Flow"
+                }
             }
         else -> null   // almanac pages (week/month/…), dashboard — no folder to call home
     }
@@ -351,13 +358,22 @@ private fun openSiteWeb(nav: androidx.navigation.NavController, target: String) 
 private const val KIND_NOTES = "notes"
 private const val KIND_TAGS = "tags"
 
-/** Michael's order, and the order every view here uses: what you catch, what you work it into,
- *  what you write from it, then the two indexes over the whole thing. */
+/**
+ * Michael's order, and the order every view here uses: what you catch, what you work it into,
+ * what you write from it, then the note surfaces, then the two indexes over the whole thing.
+ *
+ * Grid and Jot sit between the days and the text notes, in the order the hub's own Notes folder
+ * lists them (Notes · Grid Notes · Jot Notes · … · Text Notes). They are folders here rather than
+ * rows because they are folders THERE, and a directory that reordered the doors he navigates by
+ * would be a second taxonomy pretending to be the same one.
+ */
 private val DIRECTORY_KINDS = listOf(
     com.toolsboox.plugin.calendar.ot.LedgerDocuments.PICKINGS,
     com.toolsboox.plugin.calendar.ot.LedgerDocuments.SYNTHESIZE,
     com.toolsboox.plugin.calendar.ot.LedgerDocuments.WRITE,
     KIND_NOTES,
+    com.toolsboox.plugin.calendar.ot.LedgerDocuments.GRID,
+    com.toolsboox.plugin.calendar.ot.LedgerDocuments.JOT,
     com.toolsboox.plugin.calendar.ot.LedgerDocuments.TEXT_NOTES,
     KIND_TAGS,
 )
@@ -485,7 +501,9 @@ private fun directoryItems(context: android.content.Context, kind: String): List
     val today = LocalDate.now()
     return when (kind) {
         // Global index + today's implicit daily document, which is what forSurface already returns.
-        docs.WRITE, docs.SYNTHESIZE ->
+        // Grid and Jot are here rather than with the per-day stores below because their index is
+        // global too: a grid you named is a thing you return to, filed by the day it was started on.
+        docs.WRITE, docs.SYNTHESIZE, docs.GRID, docs.JOT ->
             docs.forSurface(context, kind, today).map { DirItem(kind, it.key, it.title, it.date) }
 
         // Per-day stores: the days the store has files for, plus today (which always has a page in
@@ -524,7 +542,12 @@ private fun directoryItems(context: android.content.Context, kind: String): List
 private fun dayDocuments(context: android.content.Context, date: LocalDate): List<DirItem> {
     val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
     val out = mutableListOf<DirItem>()
-    for (surface in listOf(docs.PICKINGS, docs.SYNTHESIZE, docs.WRITE, docs.TEXT_NOTES)) {
+    // Grid and Jot supply their day's implicit pad here for the same reason Write does: the by-kind
+    // view can only afford to list what the STORES know, so a grid page written on and never named
+    // exists in this tree only at its own day — which is where you would look for it.
+    for (surface in listOf(
+        docs.PICKINGS, docs.SYNTHESIZE, docs.WRITE, docs.GRID, docs.JOT, docs.TEXT_NOTES
+    )) {
         docs.forSurface(context, surface, date)
             .filter { it.date == date }
             .forEach { out.add(DirItem(surface, it.key, it.title, date)) }

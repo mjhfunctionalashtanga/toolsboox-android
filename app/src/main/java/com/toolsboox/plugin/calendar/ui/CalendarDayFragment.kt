@@ -262,9 +262,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      *  what the almanac-as-filter interception below counts as a notes surface on pages Michael has
      *  real content in. Their directory therefore lists them as single-page, which is what they are.) */
     private fun isSubPageableBase(base: String?): Boolean =
-        base == "write" || base == "grid" || base == "sketch" || base == "synthesize" ||
+        base == "write" || base == "synthesize" ||
             base == com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS ||
-            com.toolsboox.plugin.calendar.ot.WritePageStore.isWrite(base)
+            com.toolsboox.plugin.calendar.ot.WritePageStore.isWrite(base) ||
+            // "grid"/"sketch" used to be literals here. They are their stores' questions now, so a
+            // NAMED grid or jot pages exactly like the daily one — the document is what's named;
+            // the pages inside it are still a run. Widening this also widens [isNotesTagSurface],
+            // which is correct: a named grid is a notes surface by every other measure too.
+            com.toolsboox.plugin.calendar.ot.GridPageStore.isMine(base) ||
+            com.toolsboox.plugin.calendar.ot.JotPageStore.isMine(base)
 
     /**
      * Whether the current surface is a NOTES page for the almanac-as-filter interception: the
@@ -404,8 +410,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         return com.toolsboox.ot.CardTreatment.card(face)
     }
 
-    /** Grid Notes snaps dragged objects to its 50px grid; other pages don't snap. */
-    override fun snapStep(): Float = if (baseNotePage(notePage) == "grid") 50f else 0f
+    /** Grid Notes snaps dragged objects to its 50px grid; other pages don't snap. Asked of the
+     *  STORE, not of the literal key: a named grid ("grid-1753…") draws the same squares, so it must
+     *  snap to them — the alternative is a document that stops behaving like a grid the moment you
+     *  title it, which is the exact bug the template branch beside it carries a note about. */
+    override fun snapStep(): Float =
+        if (com.toolsboox.plugin.calendar.ot.GridPageStore.isMine(notePage)) 50f else 0f
 
     /** This page's element address, for the connection graph. */
     private fun elementUri(elementId: java.util.UUID): String =
@@ -1967,9 +1977,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * page's #tags, this surface's DOCUMENTS with the one you're in marked, this document's PAGES,
      * ＋ New page, ＋ New <noun>…, ✎ Name this <noun>…, 📅 Go to a date…, 🗂 All <label>….
      *
-     * Grid and Sketch fall through it unchanged. They are one implicit pad per day with nothing to
-     * name ([com.toolsboox.plugin.calendar.ot.LedgerDocuments.surfaceOf] returns null for them), and
-     * a control that would write nowhere isn't offered.
+     * Grid and Jot used to fall through it: one implicit pad per day with nothing to name, because
+     * [com.toolsboox.plugin.calendar.ot.LedgerDocuments.surfaceOf] returned null for them, and a
+     * control that would write nowhere isn't offered. They have stores now, so they get the whole
+     * menu — documents, pages, naming, untitling, deleting — off the same `surface != null` test as
+     * Write, without a line here knowing which surface it is. Gram Picks still falls through, and
+     * still should: see the fallback row at the foot of this method.
      *
      * DELETION IS TWO ROWS, NOT ONE. This menu carried a note for a while explaining why it had no
      * Delete at all, and the note was right about the problem: "A text note IS its record, so
@@ -2113,15 +2126,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 com.toolsboox.plugin.feeds.ui.showDocumentDirectory(this, surface, currentDate, notePage)
             }
         } else {
-            // GRID, JOT AND GRAM PICKS GET A DOOR TOO. They are sub-pageable — so they arrive here
-            // rather than at the numbered-notes menu — but none of them maps to a document store
-            // (`surfaceOf` knows only Pickings, Synthesize and Write), so the row above never drew
-            // and they were left as the surfaces you could page but never leave. Michael, having
-            // just found the same hole on Notes: "grid notes jot notes got 'em too?"
+            // GRAM PICKS, and now only Gram Picks.
             //
-            // They open the ROOT rather than a per-kind list, for the same reason Notes does: a
-            // ruled page is not a named thing, so there is no per-kind shelf to open — the shelf
-            // itself is the honest destination.
+            // This branch was built for grid, jot and Gram Picks together: three sub-pageable
+            // surfaces that arrived here rather than at the numbered-notes menu, and none of which
+            // mapped to a document store, so the "🗂 All <label>…" row above never drew and they
+            // were the surfaces you could page but never leave. Grid and Jot have real stores now —
+            // "I think grid and jot should be savable" — so they take the ordinary `surface != null`
+            // path with everything else on it, and this is the fallback's remaining tenant.
+            //
+            // Gram Picks is NOT being promoted and keeps it. It is an inbox you sort out of rather
+            // than a shelf of things you keep, so there is no per-kind list for it to open; the root
+            // — every kind at once — is the honest destination for a page that is nobody's document.
             rows += "🗂  All notes & documents…" to {
                 com.toolsboox.plugin.feeds.ui.showLedgerRootDirectory(this, currentDate)
             }
@@ -2131,7 +2147,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // a dialog title tells you nothing, and the document's title is the whole point of naming
         // it. An UNnamed document keeps the surface's own name ("Write"), because the date default
         // is already the day the whole screen is showing and repeating it says nothing.
-        val heading = if (doc != null && doc.named) doc.title else base.replaceFirstChar { it.uppercase() }
+        // An UNnamed document takes the SURFACE's own name rather than its key capitalised. The key
+        // was a good enough stand-in while the two agreed ("write" → "Write"); Jot's key is "sketch",
+        // so capitalising it would head the menu with a word Michael has never called that surface.
+        val heading = when {
+            doc != null && doc.named -> doc.title
+            surface != null -> docs0.label(surface)
+            else -> base.replaceFirstChar { it.uppercase() }
+        }
         val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(heading)
             .setItems(rows.map { it.first }.toTypedArray()) { _, which -> rows[which].second() }
@@ -2725,9 +2748,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // Only the surfaces that accumulate DOCUMENTS get a chip; a page you only ever have one of
         // has nothing to list, and a chip over it would be chrome for its own sake. Pickings was
         // the one wired here at first — Write and Synthesize now qualify too, on the same query,
-        // because they are the same kind of thing (a titled document with pages). Grid and Sketch
-        // stay out: they are sub-pageable but hold exactly one implicit document per day, so their
-        // ‹ N › pager already says everything a chip could.
+        // because they are the same kind of thing (a titled document with pages). Grid and Jot
+        // joined them when they gained stores, and they did so without a line changing here: the
+        // chip asks the surface, not the key, so "which grid am I in, and what else is there" is
+        // answered by the code that already answered it for writing.
         val surface = docs.surfaceOf(page)
         if (surface == null) {
             chip.visibility = View.GONE
@@ -4569,6 +4593,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         else -> when {
             com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(currentNotePage()) -> R.drawable.ic_swap
             com.toolsboox.plugin.calendar.ot.WritePageStore.isWrite(currentNotePage()) -> R.drawable.ic_edit
+            com.toolsboox.plugin.calendar.ot.GridPageStore.isMine(currentNotePage()) -> R.drawable.ic_reader_view
+            com.toolsboox.plugin.calendar.ot.JotPageStore.isMine(currentNotePage()) -> R.drawable.ic_edit
             else -> R.drawable.ic_pencil
         }
     }
@@ -4587,9 +4613,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         "sketch" -> "⌱"
         com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> "◈"
         "selfexec" -> "🐘"
+        // Named documents wear their surface's glyph — a grid you named is still a grid.
         else -> when {
             com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(currentNotePage()) -> "🔬"
             com.toolsboox.plugin.calendar.ot.WritePageStore.isWrite(currentNotePage()) -> "✍"
+            com.toolsboox.plugin.calendar.ot.GridPageStore.isMine(currentNotePage()) -> "📈"
+            com.toolsboox.plugin.calendar.ot.JotPageStore.isMine(currentNotePage()) -> "⌱"
             else -> "✒"
         }
     }

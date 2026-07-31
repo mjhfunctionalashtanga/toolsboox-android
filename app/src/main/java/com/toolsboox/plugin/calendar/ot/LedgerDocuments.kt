@@ -56,14 +56,35 @@ object LedgerDocuments {
     const val PICKINGS = "pickings"
     const val TEXT_NOTES = "textnote"
 
+    /**
+     * The two ruled surfaces, promoted. Michael: "I think grid and jot should be savable."
+     *
+     * A surface id here is the PAGE KEY FAMILY, not the label — which is why Jot's is "sketch". The
+     * id is what [surfaceOf] hands back for a key and what [LedgerTitleInk] files a face under, so
+     * making it agree with the keys already on disk is the difference between an addition and a
+     * migration. What the surface is CALLED is [label]'s job, and it says "Jot Notes".
+     *
+     * Gram Picks is deliberately NOT here. It is sub-pageable like these two and it looked like the
+     * third member of the set, but it is one inbox you sort out of rather than a thing you keep and
+     * name — Michael named grid and jot, and only those.
+     */
+    const val GRID = "grid"
+    const val JOT = "sketch"
+
     /** The date a never-renamed document is titled by. ISO, matching every other date the app shows. */
     fun dateTitle(date: LocalDate): String = date.toString()
 
     /**
      * Which document surface a note-page key belongs to, or null for the surfaces that have no
-     * documents to list (the plain day, the ritual stations, the numeric notes, and grid/sketch —
-     * those last two are sub-pageable but hold exactly ONE implicit document per day, so a chip over
-     * them would promise siblings that cannot exist; their ‹ N › pager already lists their pages).
+     * documents to list (the plain day, the ritual stations, the numeric notes, and Gram Picks —
+     * that last one is sub-pageable but is an inbox holding exactly ONE implicit page run per day,
+     * so a chip over it would promise siblings that cannot exist; its ‹ N › pager already lists its
+     * pages).
+     *
+     * Grid and Jot used to be in that list with Gram Picks, and this is where their promotion
+     * begins: once a key resolves to a surface here, the day chip, the ‹ N › menu's document rows,
+     * the naming/untitle/delete verbs, the handwritten title and the directory all follow, because
+     * every one of them is written against a surface rather than against a key.
      */
     fun surfaceOf(key: String?): String? {
         val base = key?.substringBefore('#') ?: return null
@@ -71,33 +92,61 @@ object LedgerDocuments {
             PickingsStore.isPickings(base) -> PICKINGS
             SynthPageStore.isSynth(base) -> SYNTHESIZE
             WritePageStore.isWrite(base) -> WRITE
+            GridPageStore.isMine(base) -> GRID
+            JotPageStore.isMine(base) -> JOT
             else -> null
         }
     }
 
-    /** The glyph the hub, the chip and the directory all wear for this surface — one vocabulary. */
+    /** The glyph the hub, the chip and the directory all wear for this surface — one vocabulary.
+     *  Grid and Jot keep the ones the hub's Notes folder and the section pill already give them
+     *  (📈 and ⌱); inventing a second glyph for a surface at the moment it gains a directory would
+     *  be the directory renaming a door he already knows by sight. */
     fun glyph(surface: String): String = when (surface) {
         WRITE -> "✍"
         SYNTHESIZE -> "🔬"
         PICKINGS -> "❝"
+        GRID -> "📈"
+        JOT -> "⌱"
         else -> "⌗"
     }
 
-    /** The SURFACE's name — what the hub row and the folder call it. */
+    /** The SURFACE's name — what the hub row and the folder call it. "Grid Notes" / "Jot Notes", to
+     *  the letter, because that is what the hub rows they came from say. */
     fun label(surface: String): String = when (surface) {
         WRITE -> "Write"
         SYNTHESIZE -> "Synthesize"
         PICKINGS -> "Pickings"
+        GRID -> "Grid Notes"
+        JOT -> "Jot Notes"
         else -> "Text Notes"
     }
 
     /** What ONE of this surface's documents is called. "New Write…" is a door; "New writing…" is
-     *  a thing you are about to make, which is what the button actually does. */
+     *  a thing you are about to make, which is what the button actually does. Grid and Jot take
+     *  Michael's own words for them — "grid and jot" — so "New grid…" and "Delete a jot…" read as
+     *  the things he asked to be able to save. */
     fun noun(surface: String): String = when (surface) {
         WRITE -> "writing"
         SYNTHESIZE -> "synthesis"
         PICKINGS -> "pickings"
+        GRID -> "grid"
+        JOT -> "jot"
         else -> "text note"
+    }
+
+    /**
+     * The parameterised name index behind a ruled surface, or null for the surfaces whose stores are
+     * hand-written ([WritePageStore], [SynthPageStore], [PickingsStore]).
+     *
+     * This is the ONE place the two new surfaces are told apart from each other. Everything else
+     * about them — how they list, sync, rename, delete and title — is identical, so anywhere else
+     * that switched on GRID versus JOT would be a second place for them to drift.
+     */
+    private fun storeOf(surface: String): LedgerDocumentStore? = when (surface) {
+        GRID -> GridPageStore
+        JOT -> JotPageStore
+        else -> null
     }
 
     /** The key of a document's [sub]-th page — the convention CalendarDayFragment pages by. */
@@ -151,6 +200,23 @@ object LedgerDocuments {
             }
         }
 
+        // Grid and Jot are Write's shape exactly — an implicit daily pad plus the named ones you
+        // kept — so they are listed by the same three lines rather than by a branch of their own.
+        // The only thing that differs between them is which index is asked, which is [storeOf].
+        GRID, JOT -> {
+            val store = storeOf(surface)!!
+            val dailyName = store.nameOf(context, store.defaultKey, date)
+            listOf(
+                LedgerDocument(
+                    store.defaultKey, dailyName ?: dateTitle(date), date, dailyName != null
+                ) { subPageCount(context, store.defaultKey, date, knownPageKeys) }
+            ) + store.documents(context).map { p ->
+                LedgerDocument(p.key, p.name.ifBlank { dateTitle(p.date) }, p.date, p.name.isNotBlank()) {
+                    subPageCount(context, p.key, p.date, if (p.date == date) knownPageKeys else emptySet())
+                }
+            }
+        }
+
         // Boards are of the day and single-page: no drill-down to build, so the count is always 1.
         // PickingsStore.list already guarantees the default board leads the list even on a day whose
         // index file was never written.
@@ -186,6 +252,7 @@ object LedgerDocuments {
     fun dates(context: Context, surface: String): List<LocalDate> = when (surface) {
         WRITE -> WritePageStore.list(context).map { it.date }.distinct().sortedDescending()
         SYNTHESIZE -> SynthPageStore.list(context).map { it.date }.distinct().sortedDescending()
+        GRID, JOT -> storeOf(surface)!!.list(context).map { it.date }.distinct().sortedDescending()
         PICKINGS -> PickingsStore.dates(context)
         TEXT_NOTES -> com.toolsboox.plugin.textnotes.TextNotesStore.dates(context)
         else -> emptyList()
@@ -237,7 +304,8 @@ object LedgerDocuments {
      * for a day-file scan whose answer can only ever be 1.
      */
     private fun hasSubPageSeries(base: String): Boolean =
-        WritePageStore.isWrite(base) || base == SynthPageStore.DEFAULT_KEY
+        WritePageStore.isWrite(base) || base == SynthPageStore.DEFAULT_KEY ||
+            GridPageStore.isMine(base) || JotPageStore.isMine(base)
 
     /**
      * How many pages a document holds. Single-page documents are 1 by definition; a multi-page
@@ -315,6 +383,7 @@ object LedgerDocuments {
         when (surface) {
             WRITE -> WritePageStore.sync(context)
             SYNTHESIZE -> SynthPageStore.sync(context)
+            GRID, JOT -> storeOf(surface)!!.sync(context)
             PICKINGS -> PickingsStore.sync(context, date)
         }
     }
@@ -323,6 +392,9 @@ object LedgerDocuments {
     fun canRename(surface: String, key: String): Boolean = when (surface) {
         // Write can name its daily page too: its index scopes DEFAULT_KEY entries by date.
         WRITE -> true
+        // Grid and Jot for the same reason — [LedgerDocumentStore] is Write's rule parameterised,
+        // so "today's grid" is nameable exactly as "today's writing" is.
+        GRID, JOT -> true
         // The other two can only name what they minted; their daily/default page is the date.
         SYNTHESIZE -> key != SynthPageStore.DEFAULT_KEY
         PICKINGS -> true
@@ -335,6 +407,8 @@ object LedgerDocuments {
             .let { LedgerDocument(it.key, it.name, it.date, true) { 1 } }
         SYNTHESIZE -> SynthPageStore.add(context, name, date)
             .let { LedgerDocument(it.key, it.name, it.date, true) { 1 } }
+        GRID, JOT -> storeOf(surface)!!.add(context, name, date)
+            .let { LedgerDocument(it.key, it.name, it.date, true) { 1 } }
         PICKINGS -> PickingsStore.add(context, date, name)
             .let { LedgerDocument(it.key, it.name, date, true) { 1 } }
         else -> null
@@ -345,6 +419,7 @@ object LedgerDocuments {
         when (surface) {
             WRITE -> WritePageStore.rename(context, key, name, date)
             SYNTHESIZE -> SynthPageStore.rename(context, key, name)
+            GRID, JOT -> storeOf(surface)!!.rename(context, key, name, date)
             PICKINGS -> PickingsStore.rename(context, date, key, name)
         }
     }
@@ -354,6 +429,7 @@ object LedgerDocuments {
     fun defaultKey(surface: String): String = when (surface) {
         WRITE -> WritePageStore.DEFAULT_KEY
         SYNTHESIZE -> SynthPageStore.DEFAULT_KEY
+        GRID, JOT -> storeOf(surface)!!.defaultKey
         PICKINGS -> PickingsStore.DEFAULT_KEY
         else -> "0"
     }
@@ -410,12 +486,16 @@ object LedgerDocuments {
     /**
      * Whether the destructive path is offered on this surface at all.
      *
-     * Only the two multi-page document surfaces. Pickings and Text Notes are excluded on purpose and
-     * for different reasons: a board's deletion is really a question about its CARDS and belongs with
-     * the board, and Text Notes already has its own Delete in its own fragment, where a note IS its
-     * record and the question doesn't arise.
+     * The multi-page document surfaces, which now means Grid and Jot as well: the whole reason the
+     * destructive path is theirs is that they are the shape where a document's INK and its TITLE sit
+     * in two different places, so both verbs are needed and neither can stand in for the other.
+     *
+     * Pickings and Text Notes stay excluded on purpose and for different reasons: a board's deletion
+     * is really a question about its CARDS and belongs with the board, and Text Notes already has its
+     * own Delete in its own fragment, where a note IS its record and the question doesn't arise.
      */
-    fun canDelete(surface: String): Boolean = surface == WRITE || surface == SYNTHESIZE
+    fun canDelete(surface: String): Boolean =
+        surface == WRITE || surface == SYNTHESIZE || surface == GRID || surface == JOT
 
     /**
      * Drop the index entry outright — the half of deletion that happens after the pages are gone.
@@ -432,6 +512,7 @@ object LedgerDocuments {
         when (surface) {
             WRITE -> WritePageStore.delete(context, key, date)
             SYNTHESIZE -> SynthPageStore.delete(context, key)
+            GRID, JOT -> storeOf(surface)!!.delete(context, key, date)
         }
         // The written title goes with the document, and ONLY here. [untitle] deliberately leaves it
         // — see that method — so this is the single path on which a face is destroyed, and it is

@@ -93,15 +93,21 @@ object LedgerTitleInk {
     /**
      * Which surfaces can hold a written title.
      *
-     * Only the two multi-page document surfaces, and for the same reason they are the only two
-     * [LedgerDocuments.canDelete] admits: a Write or Synthesize document is a piece you return to,
-     * whose title has nowhere to live but a menu — which is precisely the gap a title drawn on the
-     * page fills. A Pickings board is one page of a day and its name already rides its own row in
-     * the picker; a Text Note IS its title field. Neither has a page-one header for a face to sit
-     * beside, so offering the pen there would promise something the template cannot draw.
+     * The multi-page document surfaces, and for the same reason they are the ones
+     * [LedgerDocuments.canDelete] admits: a Write, Synthesize, Grid or Jot document is a piece you
+     * return to, whose title has nowhere to live but a menu — which is precisely the gap a title
+     * drawn on the page fills. A Pickings board is one page of a day and its name already rides its
+     * own row in the picker; a Text Note IS its title field. Neither has a page-one header for a
+     * face to sit beside, so offering the pen there would promise something the template cannot draw.
+     *
+     * Grid and Jot did not arrive here for free, and that is worth recording: this list, [idFor] and
+     * [indexDir] are three explicit whitelists, so a surface that gains a name index still has no
+     * face until it is named in all three. The template had to be taught to DRAW one as well (see
+     * [CalendarDayPageNotes.drawPage]) — a grid page's margin had no title in it at all before this.
      */
     fun supports(surface: String?): Boolean =
-        surface == LedgerDocuments.WRITE || surface == LedgerDocuments.SYNTHESIZE
+        surface == LedgerDocuments.WRITE || surface == LedgerDocuments.SYNTHESIZE ||
+            surface == LedgerDocuments.GRID || surface == LedgerDocuments.JOT
 
     /**
      * The id a document's face is filed under — the SAME identity its name index looks a row up by.
@@ -120,6 +126,12 @@ object LedgerTitleInk {
                 if (base == WritePageStore.DEFAULT_KEY) WritePageStore.idOf(base, date) else base
             LedgerDocuments.SYNTHESIZE ->
                 if (base == SynthPageStore.DEFAULT_KEY) null else base
+            // Write's rule again, because Grid and Jot ARE Write's rule: their daily page is scoped
+            // by key AND date (every day shares "grid"), a minted document is unique by key alone.
+            LedgerDocuments.GRID ->
+                if (base == GridPageStore.defaultKey) GridPageStore.idOf(base, date) else base
+            LedgerDocuments.JOT ->
+                if (base == JotPageStore.defaultKey) JotPageStore.idOf(base, date) else base
             else -> null
         }
     }
@@ -311,6 +323,8 @@ object LedgerTitleInk {
     private fun indexDir(surface: String?): String? = when (surface) {
         LedgerDocuments.WRITE -> WritePageStore.DIR
         LedgerDocuments.SYNTHESIZE -> SynthPageStore.DIR
+        LedgerDocuments.GRID -> GridPageStore.dir
+        LedgerDocuments.JOT -> JotPageStore.dir
         else -> null
     }
 
