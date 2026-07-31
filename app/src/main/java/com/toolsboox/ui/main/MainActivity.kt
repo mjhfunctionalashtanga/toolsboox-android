@@ -728,7 +728,15 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     private val screenOffReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
             if (intent.action == android.content.Intent.ACTION_SCREEN_OFF) {
+                // BOTH barrels, deliberately. The direct thread wins when the network survives
+                // the screen going dark — but Onyx's power manager cuts app networking AT
+                // screen-off (observed live: every DNS lookup, ours and googleapis alike, dies
+                // with EAI_NODATA the moment the panel sleeps, appops notwithstanding). So the
+                // WorkManager one-shot rides along: it holds the CONNECTED constraint and runs
+                // the moment the system allows — usually seconds later in the maintenance
+                // window, at worst on next wake. Late by moments beats lost by hours.
                 com.toolsboox.plugin.calendar.nw.QuickDayMirror.fire(context, "screen-off")
+                com.toolsboox.plugin.calendar.nw.UltrabridgeSyncWorker.syncNow(context)
             }
         }
     }
