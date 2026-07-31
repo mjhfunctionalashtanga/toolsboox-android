@@ -101,14 +101,16 @@ object LedgerDocuments {
     /** The glyph the hub, the chip and the directory all wear for this surface — one vocabulary.
      *  Grid and Jot keep the ones the hub's Notes folder and the section pill already give them
      *  (📈 and ⌱); inventing a second glyph for a surface at the moment it gains a directory would
-     *  be the directory renaming a door he already knows by sight. */
+     *  be the directory renaming a door he already knows by sight. Text Notes wears Ⓣ (Michael:
+     *  "a uniform Ⓣ") — its old ⌗ read as one more hash beside Tags' #, and two doors wearing
+     *  the same mark is the collision this vocabulary exists to prevent. */
     fun glyph(surface: String): String = when (surface) {
         WRITE -> "✍"
         SYNTHESIZE -> "🔬"
         PICKINGS -> "❝"
         GRID -> "📈"
         JOT -> "⌱"
-        else -> "⌗"
+        else -> "Ⓣ"
     }
 
     /** The SURFACE's name — what the hub row and the folder call it. "Grid Notes" / "Jot Notes", to

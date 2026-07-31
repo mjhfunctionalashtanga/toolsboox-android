@@ -277,7 +277,7 @@ fun ledgerDirectoryFolders(
                     com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
                 )
             },
-            "⌗  Text Notes" to { nav.navigate(R.id.action_to_text_notes) },
+            "Ⓣ  Text Notes" to { nav.navigate(R.id.action_to_text_notes) },
             // #hashtags harvested off note pages → jump to any page a tag appears on. No naming.
             "#  Tags" to { showTagIndex(fragment) },
             // Notes & Tags — a period-filtered list ("it's like Feeds") of the days that hold note
@@ -390,7 +390,7 @@ private val DIRECTORY_KINDS = listOf(
  * A kind's glyph. The four document surfaces take theirs from [LedgerDocuments] rather than
  * carrying a second copy here — that object's glyph/label/noun trio is the one vocabulary the hub,
  * the day chip and the per-kind directories all speak, and a root directory that renamed Text Notes
- * from ⌗ to 📝 would have you looking for a door you'd never seen. Notes and Tags borrow the hub's
+ * from Ⓣ to 📝 would have you looking for a door you'd never seen. Notes and Tags borrow the hub's
  * own row glyphs for the same reason.
  */
 private fun kindGlyph(kind: String): String = when (kind) {

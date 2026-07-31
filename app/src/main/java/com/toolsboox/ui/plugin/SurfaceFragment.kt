@@ -1226,8 +1226,11 @@ abstract class SurfaceFragment : ScreenFragment() {
             val buttonPx = ((availDp / rows).coerceIn(minButtonDp, maxButtonDp) * density).toInt()
 
             if (columns <= 1) {
-                // Single column (portrait): keep the XML layout (tools at top, nav pinned to the
-                // bottom), just sized to fit. Fresh XML is restored on rotation recreation.
+                // Single column (portrait): the XML layout (tools at top, nav pinned to the
+                // bottom), just sized to fit. Rotation does NOT recreate the activity (manifest
+                // configChanges), so "fresh XML" never arrives on its own — if the landscape grid
+                // rewrote the constraints, put the saved XML ones back by hand first.
+                for (v in buttonViews) restoreToolbarXmlConstraints(v)
                 resizeToolbarButtons(buttonViews, buttonPx)
                 toolbar.root.layoutParams?.let { lp ->
                     lp.width = buttonPx
@@ -1283,8 +1286,10 @@ abstract class SurfaceFragment : ScreenFragment() {
      * top-to-bottom, then the next, and so on. Every button becomes a uniform [sizePx] square and
      * columns tile left-to-right from the start edge. This overrides the XML constraint chains
      * while the toolbar is expanded in a multi-column (short / landscape) configuration, so the
-     * columns stay uniform and no column overflows the screen height. Fresh XML is restored on the
-     * activity recreation that follows a rotation back to a single-column (portrait) layout.
+     * columns stay uniform and no column overflows the screen height. There is NO activity
+     * recreation on rotation (manifest configChanges), so each button's pristine XML params are
+     * snapshotted here and [restoreToolbarXmlConstraints] puts them back when the toolbar returns
+     * to a single-column (portrait) layout.
      */
     private fun applyToolbarGridLayout(buttons: List<View>, columns: Int, sizePx: Int) {
         val parentId = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
@@ -1292,6 +1297,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         val rows = Math.ceil(buttons.size.toDouble() / columns).toInt().coerceAtLeast(1)
         for ((i, view) in buttons.withIndex()) {
             val lp = view.layoutParams as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams ?: continue
+            snapshotToolbarXmlConstraints(view, lp)
             val col = i / rows
             val row = i % rows
             lp.width = sizePx
@@ -1319,13 +1325,42 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     /**
+     * Remember a toolbar button's pristine XML constraints the first time the grid is about to
+     * rewrite them. A full LayoutParams COPY (the ConstraintLayout copy-constructor carries every
+     * anchor and margin), taken once — later grid passes must not snapshot their own rewrites.
+     */
+    private fun snapshotToolbarXmlConstraints(
+        view: View, lp: androidx.constraintlayout.widget.ConstraintLayout.LayoutParams
+    ) {
+        if (view.getTag(R.id.tag_toolbar_xml_lp) != null) return
+        view.setTag(
+            R.id.tag_toolbar_xml_lp,
+            androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(lp)
+        )
+    }
+
+    /**
+     * Put a button's XML constraints back (no-op for buttons the grid never touched). Hands the
+     * view a fresh COPY, so the live params can be rewritten again without corrupting the saved
+     * ones — rotation can flip back and forth all day.
+     */
+    private fun restoreToolbarXmlConstraints(view: View) {
+        val saved = view.getTag(R.id.tag_toolbar_xml_lp)
+            as? androidx.constraintlayout.widget.ConstraintLayout.LayoutParams ?: return
+        view.layoutParams = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(saved)
+    }
+
+    /**
      * Reposition the toolbar buttons into one or two vertical columns based on
      * available height. In single-column mode buttons stay as the XML defines them
      * (start+end anchored, vertically chained). In two-column mode the right-column
      * buttons are re-anchored to flow top-down from the toolbar top.
      */
     private fun applyToolbarTwoColumnLayout(twoColumns: Boolean) {
-        if (!twoColumns) return  // rely on fresh XML on activity recreation (rotation)
+        // Single-column: nothing to do here — applyToolbarCollapsedState already restored the
+        // XML constraints by hand (rotation never recreates the activity, so there is no
+        // "fresh XML on recreation" to rely on).
+        if (!twoColumns) return
 
         val toolbar = provideToolbarDrawing()
         val unset = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
@@ -1542,6 +1577,35 @@ abstract class SurfaceFragment : ScreenFragment() {
         panX = 0f
         // Top of the page. Positive panY pushes content down, revealing what's above; the clamp in
         // updateTransformMatrix trims it to the exact edge, so overshooting deliberately is safe.
+        panY = Float.MAX_VALUE / 4f
+        updateTransformMatrix()
+        applyStrokes(strokes, true)
+    }
+
+    /**
+     * Rotation re-fit: zoom so the page fills the new surface WIDTH.
+     *
+     * [updateTransformMatrix]'s baseScale is fit-to-PAGE (the min of the width and height fits),
+     * so a portrait 1404×1872 page rotated to landscape shrank to the height and sat letterboxed
+     * in the middle — the old zoom pointed at the old shape. Michael: "the rotation should zoom
+     * to match the new rotation width zoom." So on a flip the zoom is recomputed to the width-fit
+     * for the new dimensions and the pan reset to the top of the page — full width, page start,
+     * whatever the zoom was before. Rotating back to portrait computes a width-fit of 1.0, i.e.
+     * the plain unzoomed page, so the flip is reversible.
+     *
+     * zoomScale's setter writes [carriedZoom], so paging while rotated keeps the width-fit — and
+     * the fit is derived, not user-chosen, so overwriting whatever zoom the reader had before the
+     * flip is the point, not a loss.
+     */
+    fun refitZoomToWidth() {
+        val sw = surfaceSize.width().toFloat()
+        val sh = surfaceSize.height().toFloat()
+        if (sw <= 0f || sh <= 0f) return
+        baseScale = minOf(sw / CANVAS_WIDTH.toFloat(), sh / CANVAS_HEIGHT.toFloat())
+        zoomScale = (sw / (CANVAS_WIDTH.toFloat() * baseScale)).coerceIn(MIN_ZOOM, MAX_ZOOM)
+        panX = 0f
+        // Top of the page; the clamp in updateTransformMatrix trims the deliberate overshoot
+        // to the exact edge (and to 0 when the page fits, i.e. back in portrait).
         panY = Float.MAX_VALUE / 4f
         updateTransformMatrix()
         applyStrokes(strokes, true)
@@ -4836,14 +4900,33 @@ abstract class SurfaceFragment : ScreenFragment() {
 
                 override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
                     Timber.i("surfaceChanged: ${width}x${height}")
+                    // A screen FLIP, as opposed to the open-time relayout churn: both the old and
+                    // new sizes are real and the long axis changed sides. Rotation never recreates
+                    // the activity (manifest configChanges), so this callback is the one place the
+                    // live surface learns its shape changed.
+                    val wasPortrait = surfaceSize.width() < surfaceSize.height()
+                    val flipped = surfaceSize.width() > 0 && surfaceSize.height() > 0 &&
+                        width > 0 && height > 0 && wasPortrait != (width < height)
                     surfaceSize = Rect(0, 0, width, height)
-                    // Take up the zoom the last page was left at. Paging the day surface NAVIGATES,
-                    // so the fragment is rebuilt and an instance field can't survive it — the zoom
-                    // was lost on every page turn no matter what the pan state did. Owner-gated:
-                    // only the same surface class adopts, so a day-page zoom stays on day pages.
-                    if (carriedZoomOwner == javaClass.name && carriedZoom > 1.01f && zoomScale <= 1.01f) zoomScale = carriedZoom
-                    updateTransformMatrix()
-                    if (zoomScale > 1.01f) refitZoomForPage()
+                    if (flipped) {
+                        // Re-zoom to the new width (Michael: "the rotation should zoom to match
+                        // the new rotation width zoom") — full-width fit, page top, pan reset.
+                        refitZoomToWidth()
+                        // …and re-lay the docked pen toolbar for the new height. Its column count
+                        // and button size are computed from screenHeightDp at setup and nothing
+                        // recreates the view on rotation, so without this the portrait column
+                        // overflowed a landscape screen (and the landscape grid survived the way
+                        // back). Preserves the user's collapsed/expanded choice — that's in prefs.
+                        applyToolbarCollapsedState(sharedPreferences.getBoolean("toolbarCollapsed", false))
+                    } else {
+                        // Take up the zoom the last page was left at. Paging the day surface NAVIGATES,
+                        // so the fragment is rebuilt and an instance field can't survive it — the zoom
+                        // was lost on every page turn no matter what the pan state did. Owner-gated:
+                        // only the same surface class adopts, so a day-page zoom stays on day pages.
+                        if (carriedZoomOwner == javaClass.name && carriedZoom > 1.01f && zoomScale <= 1.01f) zoomScale = carriedZoom
+                        updateTransformMatrix()
+                        if (zoomScale > 1.01f) refitZoomForPage()
+                    }
                     // Activate Viwoods T1000 AutoDraw for this surface. The hardware then
                     // renders pen strokes live; we draw nothing during the stroke. Uses
                     // full-screen metrics (not just the surface) to register the region.

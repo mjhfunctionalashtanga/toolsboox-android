@@ -163,9 +163,11 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentMailInboxBinding.bind(view)
-        binding.mailClose.setOnClickListener { NavHostFragment.findNavController(this).popBackStack() }
         // The ☰ by the almanac's left carat opens the main Ledger menu (the accordion hub every
-        // surface carries), so Mail isn't a dead-end — the title bar it replaces is gone.
+        // surface carries), so Mail isn't a dead-end — the title bar it replaces is gone, and so
+        // is the top-right ✕: all it did was popBackStack, which the system back gesture already
+        // does, so it was a second spelling of an exit the device carries everywhere. (The reader
+        // never leaned on it — an open message is a dialog with its own Close button.)
         binding.mailMenu.setOnClickListener { showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this)) }
         binding.mailRefresh.setOnClickListener { refresh() }
         binding.mailSettings.setOnClickListener { showAccountsList() }
@@ -267,7 +269,14 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             if (accounts.isNotEmpty()) accountsOpen = !accountsOpen || mailView != VIEW_ALL
             ctx.getSharedPreferences("ledger_mail_inbox", 0).edit()
                 .putBoolean("accounts_open", accountsOpen).apply()
-            setMailView(VIEW_ALL)
+            // The SECOND tap — already on ✉ All, folding the account rows back up so the list
+            // gets its height back — must repaint HERE: setMailView returns early when the lens
+            // hasn't moved, so the fold this chip just decided (and persisted) never reached the
+            // screen, and the dropdown read as un-collapsible on the device. One renderChips, no
+            // render(): the fold changes the chrome, never which mail is listed.
+            if (mailView == VIEW_ALL && !showingSent) {
+                if (accounts.isNotEmpty()) renderChips()
+            } else setMailView(VIEW_ALL)
         }
 
         // The mailbox's face while the dropdown is folded: one selected chip naming it, so a

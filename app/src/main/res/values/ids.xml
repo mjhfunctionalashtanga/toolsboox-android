@@ -9,4 +9,12 @@
     <!-- Marks a pill that already has its touch-delegate layout listener, so re-applying
          the sizing never stacks a second listener. -->
     <item name="tag_pill_delegate" type="id" />
+    <!-- Marks a pill whose PARENT already has the rotation/resize listener that rescales
+         and re-clamps the pill's dragged position, so re-applying never stacks a second. -->
+    <item name="tag_pill_rotation_listener" type="id" />
+    <!-- A toolbar button's pristine XML ConstraintLayout params, captured before the
+         landscape grid rewrites them — rotation never recreates the activity (manifest
+         configChanges), so "fresh XML on recreation" never happens and the constraints
+         must be put back by hand when returning to a single column. -->
+    <item name="tag_toolbar_xml_lp" type="id" />
 </resources>

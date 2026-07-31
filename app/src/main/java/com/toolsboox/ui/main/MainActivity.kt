@@ -306,7 +306,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         R.drawable.ic_toolbar_text, R.drawable.ic_camera, R.drawable.ic_mic
     )
     /** The glyph for each style, shown in the hold-out picker. Same order as the labels/faces. */
-    private val quickNoteGlyphs = arrayOf("✒", "📈", "⌱", "⌗", "📷", "🎤", "◈")
+    private val quickNoteGlyphs = arrayOf("✒", "📈", "⌱", "Ⓣ", "📷", "🎤", "◈")
 
     companion object {
         /** Hold-picker entries; the index is stored as the remembered tap action, so keep order stable. */

@@ -5,10 +5,13 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <!-- Almanac nav row FIRST: a ☰ main-menu next to the left carat, the date-filter strip, and
-         the ✕ close. The "Mail" title is gone — the strip is the header. The navigator keeps its
-         fitXY full width of THIS row; CalendarNavBarHost maps taps by the view's own width
-         (px = x * 1404 / view.width), so sharing the row with the ☰/✕ doesn't shift the slots. -->
+    <!-- Almanac nav row FIRST: a ☰ main-menu next to the left carat, then the date-filter strip.
+         The "Mail" title is gone — the strip is the header. There is NO close ✕ any more: all it
+         ever did was pop the back stack, which the system back gesture already does, and the ☰
+         directory is the door to every other surface — a second exit at the top right said
+         nothing the chrome wasn't already saying. The navigator keeps its fitXY full width of
+         THIS row; CalendarNavBarHost maps taps by the view's own width (px = x * 1404 /
+         view.width), so sharing the row with the ☰ doesn't shift the slots. -->
     <LinearLayout
         android:orientation="horizontal"
         android:gravity="center_vertical"
@@ -34,15 +37,6 @@
             android:layout_marginHorizontal="4dp"
             android:scaleType="fitXY"
             android:contentDescription="@null"/>
-
-        <TextView
-            android:id="@+id/mail_close"
-            android:text="✕"
-            android:textSize="20sp"
-            android:textColor="#000000"
-            android:padding="8dp"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"/>
     </LinearLayout>
 
     <!-- Search line BENEATH the almanac (Michael's layout): the field takes the row, and the sweep

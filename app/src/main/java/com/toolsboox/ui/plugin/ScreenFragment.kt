@@ -450,6 +450,55 @@ abstract class ScreenFragment : Fragment() {
             }
         })
         pill.post { clampInParent(pill, handle) }
+        // Keep the pill through a screen flip. Rotation never recreates this fragment (the
+        // manifest declares configChanges for orientation/screenSize), so the pill's dragged
+        // translation simply survives — measured against the OLD screen. A bottom-anchored pill
+        // mostly rides its anchor, but one dragged along the long axis (parked near the top of a
+        // portrait page, say) lands past the new, shorter edge and is unreachable — which reads
+        // as "the pill lost its position". Nothing re-clamped: the one-shot layout listener above
+        // removes itself after the first real layout.
+        //
+        // On a parent resize, SCALE the translation to the new size and clamp. Scaling rather
+        // than only clamping keeps the pill at the same RELATIVE spot — halfway up stays halfway
+        // up — and makes portrait→landscape→portrait return it to where it started. Persisted,
+        // so the stylus exclude rects and the next cold open agree with what's on screen.
+        if (pill.getTag(R.id.tag_pill_rotation_listener) == null) {
+            pill.setTag(R.id.tag_pill_rotation_listener, true)
+            pill.post postParent@{
+                val parent = pill.parent as? View ?: return@postParent
+                var lastW = parent.width
+                var lastH = parent.height
+                parent.addOnLayoutChangeListener { _, l, t, r, b, _, _, _, _ ->
+                    val w = r - l
+                    val h = b - t
+                    if (w <= 0 || h <= 0 || lastW <= 0 || lastH <= 0) {
+                        if (w > 0 && h > 0) { lastW = w; lastH = h }
+                        return@addOnLayoutChangeListener
+                    }
+                    // Only a genuine FLIP rescales-and-persists. The parent also resizes a
+                    // little when the system bars come and go (immersive enter/leave around
+                    // onResume/onPause) — rescaling and saving on those near-1.0 ratios would
+                    // compound a small drift into the stored position every session. A flip is
+                    // the long axis changing sides; everything else just re-clamps, unsaved.
+                    val flipped = (w < h) != (lastW < lastH)
+                    if (flipped) {
+                        pill.translationX = pill.translationX * w / lastW
+                        pill.translationY = pill.translationY * h / lastH
+                        // Clamp once the pill itself has re-laid-out inside the new parent —
+                        // clampInParent reads pill.left/right, which are stale mid-pass.
+                        pill.post {
+                            clampInParent(pill, handle)
+                            prefs.edit().putFloat("${key}_px", pill.translationX)
+                                .putFloat("${key}_py", pill.translationY).apply()
+                        }
+                    } else if (w != lastW || h != lastH) {
+                        pill.post { clampInParent(pill, handle) }
+                    }
+                    lastW = w
+                    lastH = h
+                }
+            }
+        }
         val slop = 12f * resources.displayMetrics.density
         var downX = 0f; var downY = 0f; var startTx = 0f; var startTy = 0f
         var downAt = 0L; var moved = false
@@ -1370,6 +1419,20 @@ abstract class ScreenFragment : Fragment() {
 
         // ONE dial: Modal size (see showGoModal for why the menu dial no longer stacks here).
         val textScale = com.toolsboox.ot.ModalScale.sizeScale(requireContext())
+
+        // Michael: "only one submenu in hamburger open at a time." A strict accordion — expanding
+        // a folder folds whichever other folder is open (the Search·Ask·Directory group included),
+        // so the drawer never becomes a wall of every submenu at once. Enforced at EXPANSION time
+        // only: the initial expanded flags stay the caller's to choose (ledgerDirectoryFolders
+        // opens at most one — the surface's home folder; showDirectory flattens its groups open).
+        // Nothing persists — the fold state lives and dies with this one opening of the drawer.
+        val openFolds = mutableListOf<Pair<LinearLayout, () -> Unit>>()
+        fun foldOthers(except: LinearLayout) {
+            for ((view, fold) in openFolds) {
+                if (view !== except && view.visibility == View.VISIBLE) fold()
+            }
+        }
+
         for (folder in folders) {
             val header = layoutInflater.inflate(R.layout.item_go_to, list, false)
             val hasIcon = setRowEmojiIcon(header, folder.emoji)
@@ -1417,12 +1480,18 @@ abstract class ScreenFragment : Fragment() {
                     setPadding(dp(16), dp(6), dp(16), dp(6))
                     setOnClickListener {
                         val show = children.visibility != View.VISIBLE
+                        if (show) foldOthers(children)
                         children.visibility = if (show) View.VISIBLE else View.GONE
                         children.background = if (show) outline else null
                         text = caret()
                     }
                 }
                 (header as? LinearLayout)?.addView(caretBtn)
+                openFolds += children to {
+                    children.visibility = View.GONE
+                    children.background = null
+                    caretBtn.text = caret()
+                }
             } else {
                 // Glyph LEFT of the caret, matching where the mapped drawable icons sit.
                 fun headerText(): CharSequence =
@@ -1431,8 +1500,14 @@ abstract class ScreenFragment : Fragment() {
                 headerLabel.text = headerText()
                 header.setOnClickListener {
                     val show = children.visibility != View.VISIBLE
+                    if (show) foldOthers(children)
                     children.visibility = if (show) View.VISIBLE else View.GONE
                     children.background = if (show) outline else null
+                    headerLabel.text = headerText()
+                }
+                openFolds += children to {
+                    children.visibility = View.GONE
+                    children.background = null
                     headerLabel.text = headerText()
                 }
             }
@@ -1469,8 +1544,15 @@ abstract class ScreenFragment : Fragment() {
             val lp = w.attributes
             lp.gravity = Gravity.START or Gravity.TOP
             val metrics = resources.displayMetrics
-            // Flush left, but BELOW the date-nav strip across the top (it stays usable).
-            lp.x = 0; lp.y = dp(64)
+            // Flush left, but BELOW the date-nav strip AND the directory chip the making surfaces
+            // hang just under it — the "❝ Board ▾" label that says which Pickings board (or Write/
+            // Synthesize/Grid/Jot document) you are standing in. The old fixed 64dp was tuned for
+            // the phone's 50dp strip; the strip is 60dp on sw600 and 76dp on sw900, so on a Boox
+            // the drawer's top edge landed inside the chip's band (strip bottom + ~30dp) on every
+            // bucket and opening the ▦ hub covered the page's own label. Measured off the strip's
+            // dimen plus the chip band's height, so the label stays readable while the drawer is up.
+            lp.x = 0
+            lp.y = resources.getDimensionPixelSize(R.dimen.ledger_navigator_height) + dp(36)
             // Grows with the text, like the other two menus. Pinned, the labels simply clipped:
             // item_go_to rows are single-line and ellipsized, so raising the size made the words
             // shorter rather than bigger and the setting looked like it did nothing at all.
