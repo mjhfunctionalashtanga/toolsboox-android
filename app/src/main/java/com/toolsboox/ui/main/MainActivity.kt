@@ -723,8 +723,28 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         }
     } catch (e: Exception) { null }
 
+    /** Screen going dark = the honest commit point for sync: the pen is down, the case is
+     *  closing. Fires the CHEAP day mirror only — see [com.toolsboox.plugin.calendar.nw.QuickDayMirror]. */
+    private val screenOffReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
+            if (intent.action == android.content.Intent.ACTION_SCREEN_OFF) {
+                com.toolsboox.plugin.calendar.nw.QuickDayMirror.fire(context, "screen-off")
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(screenOffReceiver) }
+        super.onDestroy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // ACTION_SCREEN_OFF is delivery-only-to-registered receivers (no manifest route), and the
+        // registration dies with the activity — which is exactly the scope wanted: an app that
+        // isn't running has nothing unsynced to push.
+        registerReceiver(screenOffReceiver,
+            android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF))
         // (The saved light/dark scheme is applied in BaseApplication.onCreate — before any activity
         // exists. Applying it here, after super.onCreate, forced a wrong-scheme first frame plus a
         // full recreate on every cold launch.)

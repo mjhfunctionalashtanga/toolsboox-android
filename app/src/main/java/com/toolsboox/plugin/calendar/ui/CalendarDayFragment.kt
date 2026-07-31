@@ -4756,6 +4756,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // fresh without a manual capture (skips when the ink is unchanged).
         runCatching { autoCaptureSections() }
         syncPresenter.backgroundSync(this@CalendarDayFragment, UUID.randomUUID())
+        // Leaving any ink page — a page turn, a surface switch, the screen going dark — is the
+        // moment this page should reach the other devices. The cheap day-JSON mirror only; the
+        // heavy PDF pass keeps its own schedule and its own foreground guard.
+        context?.let { com.toolsboox.plugin.calendar.nw.QuickDayMirror.fire(it, "page-leave") }
     }
 
     override fun onTransformChanged(matrix: Matrix) {
