@@ -396,6 +396,12 @@ object LedgerDocuments {
      * id, so a locally-blanked name beats the server's stale copy of the old one. Removing the row
      * would have lost that race — an absence loses a union — which is the same asymmetry
      * [LedgerDocumentTombstones] exists to work around for the destructive path.
+     *
+     * The handwritten title, if there is one, is NOT touched. That is what the blank-name choice
+     * bought: [LedgerTitleInk] files a face against the same row this keeps alive, so untitle →
+     * retitle returns the title he wrote rather than asking him to write it again. The page stops
+     * DRAWING the face while the document has no name (see [CalendarDayPageNotes]), which is the
+     * honest reading of "untitled" without being a deletion of anything.
      */
     fun untitle(context: Context, surface: String, key: String, date: LocalDate) {
         rename(context, surface, key, "", date)
@@ -427,5 +433,9 @@ object LedgerDocuments {
             WRITE -> WritePageStore.delete(context, key, date)
             SYNTHESIZE -> SynthPageStore.delete(context, key)
         }
+        // The written title goes with the document, and ONLY here. [untitle] deliberately leaves it
+        // — see that method — so this is the single path on which a face is destroyed, and it is
+        // the one that has already erased the pages the face was a title for.
+        LedgerTitleInk.forget(context, surface, key, date)
     }
 }

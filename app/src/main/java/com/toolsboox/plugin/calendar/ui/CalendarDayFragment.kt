@@ -2049,6 +2049,30 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     ) { redrawNoteTemplate() }
                 }
             }
+            // THE SHOW / DON'T-SHOW TOGGLE, and it lives here rather than in Settings on purpose.
+            // Michael asked for the written title "with a show/don't show toggle", and what it
+            // governs is one document's page one — so it belongs beside that document's other
+            // verbs, on the menu you open from the page it affects, where the answer is visible the
+            // instant you tap it. A global preference would have been a switch in another room
+            // deciding what this page looks like.
+            //
+            // Only offered when there IS a face AND a title for it to be the face OF: a checkbox
+            // governing nothing is a promise that something would appear if you ticked it, and an
+            // untitled document draws no face however this is set (see [CalendarDayPageNotes]) —
+            // its ink is being kept for the retitle, not shown. The date passed is the one the
+            // document is filed under; [LedgerTitleInk.idFor] says why it only matters for the
+            // daily page.
+            val inkDate = doc?.date ?: currentDate
+            if (doc != null && doc.named &&
+                com.toolsboox.plugin.calendar.ot.LedgerTitleInk.has(ctx, surface, base, inkDate)) {
+                val shownNow = com.toolsboox.plugin.calendar.ot.LedgerTitleInk
+                    .isShown(ctx, surface, base, inkDate)
+                rows += ((if (shownNow) "☑" else "☐") + "  Show the written title on page one") to {
+                    com.toolsboox.plugin.calendar.ot.LedgerTitleInk
+                        .setShown(ctx, surface, base, inkDate, !shownNow)
+                    redrawNoteTemplate()
+                }
+            }
             // ⌫ only when there is a title to take off — on an untitled document it would be a row
             // offering to undo something that never happened, which is exactly the wording problem
             // "Name this" avoids one line up.

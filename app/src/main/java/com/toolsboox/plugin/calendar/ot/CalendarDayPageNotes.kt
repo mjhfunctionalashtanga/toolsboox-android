@@ -145,10 +145,25 @@ class CalendarDayPageNotes : Creator {
             calendarDay: CalendarDay,
             fallback: String,
         ): String {
+            val name = documentName(context, base, calendarDay) ?: return fallback
+            val fitted = Creator.textDefaultBlack.breakText(name, true, HEADER_MAX_WIDTH, null)
+            return if (fitted >= name.length) name else name.take(fitted).trimEnd() + "…"
+        }
+
+        /**
+         * The document's EXPLICIT name, or null when it has never been named.
+         *
+         * Split out of [headerFor] because two things now depend on the same answer and they must
+         * not be allowed to disagree: the header draws the name, and [drawTitleInk] draws the face
+         * he wrote it with. A page showing handwriting where the header says "WRITE" would be the
+         * page contradicting the directory — see [drawTitleInk] for why an untitled document keeps
+         * its face in storage but stops showing it.
+         */
+        private fun documentName(context: Context, base: String, calendarDay: CalendarDay): String? {
             val date = runCatching {
                 LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day)
-            }.getOrNull() ?: return fallback
-            val name = when {
+            }.getOrNull() ?: return null
+            return when {
                 WritePageStore.isWrite(base) -> WritePageStore.nameOf(context, base, date)
                 // The daily synthesis cannot hold a name — SynthPageStore keys by key alone and
                 // every day's daily page shares "synthesize", so one day's title would stand in for
@@ -158,9 +173,100 @@ class CalendarDayPageNotes : Creator {
                 SynthPageStore.isSynth(base) ->
                     SynthPageStore.list(context).firstOrNull { it.key == base }?.name
                 else -> null
-            }?.trim()?.takeIf { it.isNotEmpty() } ?: return fallback
-            val fitted = Creator.textDefaultBlack.breakText(name, true, HEADER_MAX_WIDTH, null)
-            return if (fitted >= name.length) name else name.take(fitted).trimEnd() + "…"
+            }?.trim()?.takeIf { it.isNotEmpty() }
+        }
+
+        // ── THE WRITTEN TITLE, TOP RIGHT ──────────────────────────────────────────────────────
+        //
+        // Michael: "Keep the ink, put it on page one — it always goes at the top right or something
+        // like that with a show/don't show toggle."
+        //
+        // WHAT IS ALREADY AT THE TOP RIGHT, and how the collision was settled. Three things are
+        // drawn in this page's top margin and all three are constants in this file, so the answer is
+        // arithmetic rather than a hope:
+        //
+        //   • the HEADER (the typed name, or "WRITE"/"SYNTHESIZE") — LEFT at x = lo (52), capped at
+        //     HEADER_MAX_WIDTH, so it can never pass x = 472;
+        //   • the day's #tags on page one — RIGHT-aligned with their right edge at lo + cew - 10
+        //     (1342) and ellipsized to cew - 240 (1060 px), so in the worst case they run from
+        //     x = 282 all the way to 1342. THE TOP RIGHT OF THIS PAGE IS THE TAG STRIP;
+        //   • the big grey page number — right-aligned at the same 1342 but on baseline
+        //     to + 3*ceh - 10 (201), 160 px tall, so its glyphs start around y = 85.
+        //
+        // "Top right" therefore lands squarely on the tags, exactly as the HEADER_MAX_WIDTH note
+        // warned. It was NOT resolved by moving the ink somewhere else and calling it top right, and
+        // it was NOT resolved by drawing over the tags. The two share the margin: the face claims a
+        // right-hand slot capped at TITLE_INK_MAX_WIDTH — the mirror of the header's own 420 cap, so
+        // the typed name is capped on the left and the written one on the right — and the tag strip
+        // is then right-aligned to the face's LEFT edge with its ellipsize width reduced by exactly
+        // the same amount. The two rectangles are computed from one measurement, so they cannot
+        // overlap; and when the face is hidden or absent the claim is zero and the tags get their
+        // full width back, which is the old behaviour byte for byte.
+        //
+        // Vertically the band ends at TITLE_INK_TOP + TITLE_INK_MAX_HEIGHT = 56, which is above both
+        // the frame's top rule (to = 61) and the page-number watermark (y ≈ 85), so nothing below
+        // the margin is touched either. The band is a little taller than the 40 px header text on
+        // purpose: handwriting needs the ascenders and descenders the typeface's cap height doesn't.
+        //
+        // Rejected: the top right of the WRITING AREA (bigger, and where a letterhead would really
+        // sit) — it is occupied by the 160 px page number and, worse, it is the paper, so a face
+        // there would be ink he didn't write sitting in the space he writes in. Rejected too:
+        // shrinking the tags to a fixed narrower width regardless of the face, which would have
+        // taken width away on every page for a face most pages don't have.
+
+        /** The face's slot: the mirror of [HEADER_MAX_WIDTH], hard against the same right edge the
+         *  tags and the page number use. */
+        private const val TITLE_INK_MAX_WIDTH = 420.0f
+
+        /** Bounded by the top margin (to = 61) and cleared of the frame's top rule. */
+        private const val TITLE_INK_TOP = 4.0f
+        private const val TITLE_INK_MAX_HEIGHT = 52.0f
+
+        /** White space between the face and whatever the tag strip has shrunk to. */
+        private const val TITLE_INK_GUTTER = 24.0f
+
+        /**
+         * Draw the handwritten title in the top-right of the margin, and report how much width it
+         * took (its own width plus the gutter), so the caller can keep the tag strip clear of it.
+         * Zero when there is nothing to draw — no face, hidden, or a document with no name.
+         *
+         * PAGE ONE ONLY: the caller gates on that. His words were "put it on page one", and the
+         * reason holds up — a title repeated on every page of a long piece would stop being a title
+         * and become a watermark, and the ‹ N › pager plus the header already say which document
+         * you are in on every other page.
+         *
+         * A document with no NAME draws no face even when one is stored. Untitling deliberately
+         * keeps the ink ([LedgerTitleInk.forget] is only reached by an actual delete), so this is
+         * the whole of what untitling does to the page: the handwriting stops showing, and titling
+         * it again brings back the face he wrote rather than asking him to write it twice.
+         */
+        private fun drawTitleInk(
+            context: Context,
+            canvas: Canvas,
+            base: String,
+            calendarDay: CalendarDay,
+        ): Float {
+            if (documentName(context, base, calendarDay) == null) return 0.0f
+            val date = runCatching {
+                LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day)
+            }.getOrNull() ?: return 0.0f
+            val surface = LedgerDocuments.surfaceOf(base) ?: return 0.0f
+            val face = LedgerTitleInk.face(context, surface, base, date) ?: return 0.0f
+            if (face.width <= 0 || face.height <= 0) return 0.0f
+
+            // Fit inside the slot, never up: a face is stored at up to 160 px tall for the iPad's
+            // benefit and blowing a small one up would only make his handwriting fuzzy.
+            val scale = minOf(
+                1.0f,
+                TITLE_INK_MAX_WIDTH / face.width.toFloat(),
+                TITLE_INK_MAX_HEIGHT / face.height.toFloat()
+            )
+            val w = face.width * scale
+            val h = face.height * scale
+            val right = lo + cew - 10.0f
+            val dst = android.graphics.RectF(right - w, TITLE_INK_TOP, right, TITLE_INK_TOP + h)
+            canvas.drawBitmap(face, null, dst, null)
+            return w + TITLE_INK_GUTTER
         }
 
         /**
@@ -212,6 +318,11 @@ class CalendarDayPageNotes : Creator {
                     headerFor(context, base, calendarDay, "SYNTHESIZE"),
                     lo, to - 16.0f, Creator.textDefaultBlack)
                 canvas.drawText("${synthPage + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)
+                // A synthesis draws no tag strip (this branch returns before the block that does),
+                // so the face has the whole right-hand margin to itself and nothing to be measured
+                // against. Its return value is dropped rather than not asked for, so the two
+                // surfaces stay one call apart if a synthesis ever grows tags of its own.
+                if (synthPage == 0) drawTitleInk(context, canvas, base, calendarDay)
                 return
             }
             if (base == "grid") {
@@ -265,8 +376,12 @@ class CalendarDayPageNotes : Creator {
 
             canvas.drawText("${page + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)
 
-            // Page one carries the day's #tags in its top margin — the lightweight index, on the
-            // page itself, so a glance shows what the day is about without naming anything.
+            // Page one carries the title he wrote by hand (top right) and the day's #tags — the
+            // lightweight index, on the page itself, so a glance shows what the day is about
+            // without naming anything. The face is drawn FIRST and reports its width, because the
+            // tag strip is measured against it: see the note above [drawTitleInk] for how the two
+            // share the margin instead of fighting over it.
+            val inkClaim = if (page == 0 && isWrite) drawTitleInk(context, canvas, base, calendarDay) else 0.0f
             if (page == 0) {
                 val tags = LedgerTags.tagsFor(context, LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day))
                 if (tags.isNotEmpty()) {
@@ -279,9 +394,12 @@ class CalendarDayPageNotes : Creator {
                         textAlign = Paint.Align.RIGHT
                     }
                     val line = tags.joinToString("   ") { "#$it" }
+                    // Both the strip's right edge AND its allowance move by the face's claim.
+                    // Shrinking one without the other is the bug this is written out to avoid:
+                    // narrower tags still ending at 1342 would sit under the handwriting.
                     val shown = android.text.TextUtils.ellipsize(
-                        line, tagPaint, cew - 240f, android.text.TextUtils.TruncateAt.END)
-                    canvas.drawText(shown, 0, shown.length, lo + cew - 10.0f, to - 16.0f, tagPaint)
+                        line, tagPaint, cew - 240f - inkClaim, android.text.TextUtils.TruncateAt.END)
+                    canvas.drawText(shown, 0, shown.length, lo + cew - 10.0f - inkClaim, to - 16.0f, tagPaint)
                 }
             }
 

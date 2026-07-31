@@ -1339,22 +1339,19 @@ private fun showDocumentDatePicker(
 internal fun promptNewDocument(fragment: ScreenFragment, surface: String, date: LocalDate) {
     val ctx = fragment.requireContext()
     val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
-    val input = android.widget.EditText(ctx).apply {
-        hint = "What's this ${docs0.noun(surface)} about?"; setSingleLine()
+    promptTitle(
+        fragment, surface,
+        dialogTitle = "New ${docs0.noun(surface)}",
+        fieldHint = "What's this ${docs0.noun(surface)} about?",
+        seed = null,
+        saveLabel = "Create",
+    ) { name, face ->
+        val doc = docs0.create(ctx, surface, name, date) ?: return@promptTitle
+        // The face is filed AFTER the document exists, because until [create] returns there is no
+        // key to file it under — a minted key is the store's to choose, not this dialog's.
+        face?.let { com.toolsboox.plugin.calendar.ot.LedgerTitleInk.put(ctx, surface, doc.key, doc.date, it) }
+        CalendarNavigator.toDayNote(fragment, doc.date, doc.key)
     }
-    val pad = (16 * ctx.resources.displayMetrics.density).toInt()
-    val box = android.widget.LinearLayout(ctx).apply {
-        orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
-    }
-    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-        .setTitle("New ${docs0.noun(surface)}")
-        .setView(box)
-        .setPositiveButton("Create") { _, _ ->
-            val doc = docs0.create(ctx, surface, input.text.toString().trim(), date) ?: return@setPositiveButton
-            CalendarNavigator.toDayNote(fragment, doc.date, doc.key)
-        }
-        .setNegativeButton(android.R.string.cancel, null)
-        .show()
 }
 
 /**
@@ -1379,22 +1376,21 @@ private fun promptRenameDocument(
             // Seed the field with the EXPLICIT name only. Pre-filling an unnamed document with its
             // date would make "rename" mean "confirm the date as the name", which is the one answer
             // the date default already gives for free.
-            val input = android.widget.EditText(ctx).apply {
-                if (doc.named) setText(doc.title) else hint = doc.date.toString()
-                setSingleLine()
-            }
-            val pad = (16 * ctx.resources.displayMetrics.density).toInt()
-            val box = android.widget.LinearLayout(ctx).apply {
-                orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
-            }
-            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-                .setTitle("Rename ${docs0.noun(surface)}")
-                .setView(box)
-                .setPositiveButton("Save") { _, _ ->
-                    docs0.rename(ctx, surface, doc.key, input.text.toString().trim(), doc.date)
+            promptTitle(
+                fragment, surface,
+                dialogTitle = "Rename ${docs0.noun(surface)}",
+                fieldHint = doc.date.toString(),
+                seed = if (doc.named) doc.title else null,
+                saveLabel = "Save",
+            ) { name, face ->
+                docs0.rename(ctx, surface, doc.key, name, doc.date)
+                // A rename with a blank pad leaves the stored face alone: he came here to change the
+                // words, and silently dropping the handwriting because he didn't write it out again
+                // would make every rename a destructive act.
+                face?.let {
+                    com.toolsboox.plugin.calendar.ot.LedgerTitleInk.put(ctx, surface, doc.key, doc.date, it)
                 }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
+            }
         }
         .setNegativeButton(android.R.string.cancel, null)
         .show()
@@ -1428,23 +1424,19 @@ internal fun promptRenameCurrentDocument(
     val ctx = fragment.requireContext()
     val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
     val doc = docs0.forSurface(ctx, surface, date).firstOrNull { it.key == key }
-    val input = android.widget.EditText(ctx).apply {
-        if (doc != null && doc.named) setText(doc.title) else hint = date.toString()
-        setSingleLine()
+    promptTitle(
+        fragment, surface,
+        dialogTitle = "Name this ${docs0.noun(surface)}",
+        fieldHint = date.toString(),
+        seed = if (doc != null && doc.named) doc.title else null,
+        saveLabel = "Save",
+    ) { name, face ->
+        docs0.rename(ctx, surface, key, name, date)
+        face?.let { com.toolsboox.plugin.calendar.ot.LedgerTitleInk.put(ctx, surface, key, date, it) }
+        // The redraw is what puts BOTH halves on the page — the typed name in the header and the
+        // written one top right — without waiting for a navigation.
+        onRenamed()
     }
-    val pad = (16 * ctx.resources.displayMetrics.density).toInt()
-    val box = android.widget.LinearLayout(ctx).apply {
-        orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
-    }
-    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-        .setTitle("Name this ${docs0.noun(surface)}")
-        .setView(box)
-        .setPositiveButton("Save") { _, _ ->
-            docs0.rename(ctx, surface, key, input.text.toString().trim(), date)
-            onRenamed()
-        }
-        .setNegativeButton(android.R.string.cancel, null)
-        .show()
 }
 
 // ── DELETION: two verbs, kept apart ───────────────────────────────────────────────────────────

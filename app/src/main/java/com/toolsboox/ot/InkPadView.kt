@@ -96,6 +96,32 @@ class InkPadView(context: Context) : View(context) {
 
     fun isBlank() = strokes.isEmpty()
 
+    /**
+     * The box everything written actually occupies, in view pixels, padded by half a pen width so a
+     * stroke's own thickness isn't sliced off — or null when the pad is empty.
+     *
+     * Exists for callers that keep the writing rather than just reading it: a title written on a
+     * pad three inches tall is one line of ink in the top third of it, and storing the whole pad
+     * would store mostly blank paper and then scale the writing down to nothing to make it fit.
+     * The iPad twin crops the same way for the same reason (`canvas.drawing.bounds` in
+     * `InkTaskStrip`), so a face written on either device lands the same size on the other.
+     */
+    fun inkBounds(): android.graphics.RectF? {
+        var l = Float.MAX_VALUE; var t = Float.MAX_VALUE
+        var r = -Float.MAX_VALUE; var b = -Float.MAX_VALUE
+        var pad = 0f
+        for (s in strokes) {
+            for ((x, y) in s.points) {
+                if (x < l) l = x; if (y < t) t = y
+                if (x > r) r = x; if (y > b) b = y
+            }
+            if (s.strokeWidth > pad) pad = s.strokeWidth
+        }
+        if (r < l || b < t) return null
+        val air = pad / 2f + 2f
+        return android.graphics.RectF(l - air, t - air, r + air, b + air)
+    }
+
     /** The written card as a bitmap, or null when nothing has been written. */
     fun render(): Bitmap? {
         if (strokes.isEmpty() || width == 0 || height == 0) return null
