@@ -307,16 +307,19 @@ object BookNotesPanel {
         typeTab.setOnClickListener { textMode = true; applyMode() }
         applyMode()
 
-        val root = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
-            setPadding(px(14), px(12), px(14), px(4))
-            addView(tabRow); addView(pane)
+        // Buttons at the TOP, above the pad — the rule every handwriting panel follows (see
+        // LedgerTitlePad): the writing hand rests below a 300dp pad, and platform dialog buttons
+        // down there get palm-tapped mid-word. Cancel on the left, Save on the right, tabs between.
+        lateinit var dialog: AlertDialog
+        val cancelBtn = TextView(context).apply {
+            text = "CANCEL"; textSize = 15f; setTextColor(0xFF555555.toInt())
+            setTypeface(typeface, Typeface.BOLD); setPadding(0, px(2), px(24), px(6))
+            setOnClickListener { dialog.dismiss() }
         }
-
-        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
-            .setView(root)
-            .setPositiveButton("Save") { _, _ ->
+        val saveBtn = TextView(context).apply {
+            text = "SAVE"; textSize = 15f; setTextColor(0xFF2F6F96.toInt())
+            setTypeface(typeface, Typeface.BOLD); setPadding(px(24), px(2), 0, px(6))
+            setOnClickListener {
                 val typed = input.text.toString().trim()
                 val drawn = if (textMode) null else pad.render()?.let { bmp ->
                     val baos = java.io.ByteArrayOutputStream()
@@ -324,7 +327,7 @@ object BookNotesPanel {
                     android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
                 }
                 // Nothing written in either mode is a cancel, not an empty note.
-                if (typed.isBlank() && drawn == null && existing == null) return@setPositiveButton
+                if (typed.isBlank() && drawn == null && existing == null) { dialog.dismiss(); return@setOnClickListener }
                 val now = System.currentTimeMillis()
                 val note = existing?.copy(
                     note = if (textMode) typed else existing.note,
@@ -336,9 +339,29 @@ object BookNotesPanel {
                 )
                 BookNoteStore.put(context, currentBook, note)
                 onSaved()
+                dialog.dismiss()
             }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+        }
+        val topRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(cancelBtn)
+            addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
+            addView(tabRow)
+            addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
+            addView(saveBtn)
+        }
+
+        val root = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+            setPadding(px(14), px(12), px(14), px(4))
+            addView(topRow); addView(pane)
+        }
+
+        dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
+            .setView(root)
+            .create()
+        dialog.show()
     }
 
     private fun rule(context: Context) = View(context).apply {

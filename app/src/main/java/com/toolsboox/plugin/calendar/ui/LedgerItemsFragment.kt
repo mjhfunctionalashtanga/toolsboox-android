@@ -860,9 +860,43 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT, px(300)
             ))
         }
+        // Cancel / Save ride ABOVE the pad — the handwriting-panel rule (see LedgerTitlePad):
+        // platform dialog buttons render at the bottom, exactly where the writing hand rests.
+        lateinit var dialog: androidx.appcompat.app.AlertDialog
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(px(12), px(6), px(12), 0)
+            addView(LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, 0, 0, px(6))
+                addView(TextView(ctx).apply {
+                    text = "CANCEL"; textSize = 15f; setTextColor(0xFF555555.toInt())
+                    setTypeface(typeface, android.graphics.Typeface.BOLD); setPadding(0, px(4), px(28), px(6))
+                    setOnClickListener { dialog.dismiss() }
+                })
+                addView(android.view.View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
+                addView(TextView(ctx).apply {
+                    text = "SAVE"; textSize = 15f; setTextColor(0xFF2F6F96.toInt())
+                    setTypeface(typeface, android.graphics.Typeface.BOLD); setPadding(px(28), px(4), 0, px(6))
+                    setOnClickListener {
+                        val bmp = pad.render()
+                        if (bmp == null) {
+                            android.widget.Toast.makeText(ctx, "Nothing written", android.widget.Toast.LENGTH_SHORT).show()
+                            return@setOnClickListener
+                        }
+                        val baos = java.io.ByteArrayOutputStream()
+                        bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
+                        bmp.recycle()
+                        // `crop` carries the PNG inline, the same way a pinned gram does.
+                        val written = item.copy(
+                            crop = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+                        ).also { it.display = LedgerItem.Display.INK; it.done = item.done; it.stage = item.stage }
+                        persist(written)
+                        load()
+                        dialog.dismiss()
+                    }
+                })
+            })
             addView(TextView(ctx).apply {
                 text = item.text.ifBlank { "Write this one out" }
                 textSize = 13f; setTextColor(0xFF666666.toInt()); setPadding(0, 0, 0, px(6))
@@ -871,27 +905,11 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             addView(frame)
         }
 
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Write it in pen")
             .setView(box)
-            .setPositiveButton("Save") { _, _ ->
-                val bmp = pad.render()
-                if (bmp == null) {
-                    android.widget.Toast.makeText(ctx, "Nothing written", android.widget.Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-                val baos = java.io.ByteArrayOutputStream()
-                bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
-                bmp.recycle()
-                // `crop` carries the PNG inline, the same way a pinned gram does.
-                val written = item.copy(
-                    crop = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
-                ).also { it.display = LedgerItem.Display.INK; it.done = item.done; it.stage = item.stage }
-                persist(written)
-                load()
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create()
+        dialog.show()
     }
 
     /**

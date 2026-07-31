@@ -316,6 +316,11 @@ class BlueskyFragment @Inject constructor() : ScreenFragment() {
             orientation = LinearLayout.VERTICAL
             setPadding(px(12), px(8), px(12), 0)
             addView(actionRow)
+            // The toggle rides above the pad with the other controls (handwriting-panel rule,
+            // see LedgerTitlePad) — a palm-tap under the pad was silently flipping whether the
+            // ink shipped with the reply. The recognise button below is the sanctioned exception:
+            // tapping it by accident reads the pad and changes nothing.
+            addView(attachToggle)
             addView(theirs)
             addView(penBar)
             addView(inkFrame)
@@ -323,7 +328,6 @@ class BlueskyFragment @Inject constructor() : ScreenFragment() {
             addView(review, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
             addView(counter)
-            addView(attachToggle)
         }
 
         val dialog = androidx.appcompat.app.AlertDialog.Builder(ModalScale.wrap(ctx))

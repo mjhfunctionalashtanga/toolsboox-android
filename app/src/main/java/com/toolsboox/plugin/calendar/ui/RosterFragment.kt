@@ -485,6 +485,24 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
         })
 
         val ink = InkPadView(ctx)
+        // Close / Save ABOVE the pad, not as platform buttons below it — the handwriting-panel
+        // rule (see LedgerTitlePad): a hand resting under a 240dp pad palm-taps whatever is there.
+        lateinit var dialog: AlertDialog
+        col.addView(LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, px(6))
+            addView(TextView(ctx).apply {
+                text = "CLOSE"; textSize = 15f; setTextColor(Color.parseColor("#555555"))
+                setTypeface(typeface, android.graphics.Typeface.BOLD); setPadding(0, px(6), px(28), px(6))
+                setOnClickListener { dialog.dismiss() }
+            })
+            addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
+            addView(TextView(ctx).apply {
+                text = "SAVE TO CRM"; textSize = 15f; setTextColor(Color.parseColor("#2F6F96"))
+                setTypeface(typeface, android.graphics.Typeface.BOLD); setPadding(px(28), px(6), 0, px(6))
+                setOnClickListener { saveNote(a, ink, dialog) }
+            })
+        })
         col.addView(InkPadView.penBar(ctx, ink))
         col.addView(FrameLayout(ctx).apply {
             setBackgroundColor(Color.BLACK)
@@ -494,15 +512,10 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
 
         scroll.addView(col)
 
-        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Attendee")
             .setView(scroll)
-            .setNegativeButton("Close", null)
-            .setPositiveButton("Save to CRM", null)   // overridden below so it doesn't auto-dismiss
             .create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { saveNote(a, ink, dialog) }
-        }
         showModal(dialog)
     }
 

@@ -728,6 +728,14 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; setPadding(px(12), px(6), px(12), 0)
             addView(actionRow)
+            // Share-as-gram sits ABOVE the pad with the other actions (handwriting-panel rule,
+            // see LedgerTitlePad) — under the pad it was square beneath the writing hand.
+            addView(TextView(ctx).apply {
+                text = "↗  Share as gram instead…"
+                setTextColor(Color.parseColor("#2F6F96")); textSize = 15f
+                setPadding(px(2), 0, 0, px(6))
+                setOnClickListener { shareAsGram?.invoke() }
+            })
             // The same pen toolbar the reply pad has — undo, three inks, fine↔bold.
             addView(InkPadView.penBar(ctx, ink))
             addView(inkFrame, LinearLayout.LayoutParams(
@@ -736,13 +744,6 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             addView(input, LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = px(8) })
-            // Share this handwriting out as a gram (into a community space), citing the card.
-            addView(TextView(ctx).apply {
-                text = "↗  Share as gram instead…"
-                setTextColor(Color.parseColor("#2F6F96")); textSize = 15f
-                setPadding(px(2), px(10), 0, px(2))
-                setOnClickListener { shareAsGram?.invoke() }
-            })
         }
         val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Reply · ${d.title.take(36)}")

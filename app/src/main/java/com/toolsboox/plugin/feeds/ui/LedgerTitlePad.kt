@@ -101,15 +101,58 @@ internal fun promptTitle(
     box.addView(input, LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
-    val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+    // A PANEL YOU WRITE ON KEEPS ITS BUTTONS AT THE TOP — Michael's rule, stated while watching
+    // this very dialog: the writing hand RESTS below the pad, so anything tappable down there gets
+    // hit by a palm mid-word. Cancel and Save therefore ride in a row ABOVE everything when a pad
+    // is present (the pen bar already lives up there for the same reason). The typed-only variant
+    // keeps the platform's bottom buttons: nothing rests on a dialog you only type into.
+    val dialogBuilder = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
         .setTitle(dialogTitle)
         .setView(ScrollView(ctx).apply { addView(box) })
-        .setPositiveButton(saveLabel, null)          // wired after show(); see below
-        .setNegativeButton(android.R.string.cancel, null)
-        .create()
+    if (pad == null) {
+        dialogBuilder.setPositiveButton(saveLabel, null)     // wired after show(); see below
+        dialogBuilder.setNegativeButton(android.R.string.cancel, null)
+    }
+    val dialog = dialogBuilder.create()
+
+    // The save path sometimes has to REFUSE (see below) — one handler serves both button homes.
+    val trySave = fun() {
+        val name = input.text.toString().trim()
+        val face = pad?.let { croppedFace(it) }
+        if (face != null && name.isEmpty()) {
+            fragment.showMessage(
+                "Read the handwriting into the field first (or type the title) — " +
+                    "a title that is only a picture can't be searched for."
+            )
+            face.recycle()
+            return
+        }
+        onSave(name, face)
+        dialog.dismiss()
+    }
 
     if (pad != null) {
         readBtn.setOnClickListener { recogniseTitle(fragment, pad, input) }
+        val actionRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, px(6))
+            addView(TextView(ctx).apply {
+                text = "CANCEL"
+                textSize = 15f; setTextColor(0xFF555555.toInt())
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(0, px(6), px(28), px(6))
+                setOnClickListener { dialog.dismiss() }
+            })
+            addView(android.view.View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
+            addView(TextView(ctx).apply {
+                text = saveLabel.uppercase()
+                textSize = 15f; setTextColor(0xFF2F6F96.toInt())
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(px(28), px(6), 0, px(6))
+                setOnClickListener { trySave() }
+            })
+        }
+        box.addView(actionRow, 0)
     }
 
     fragment.showModal(dialog)
@@ -119,18 +162,7 @@ internal fun promptTitle(
     // only a picture is the one outcome this whole dialog exists to prevent; catching it by closing
     // the dialog and popping a toast would leave him with the ink gone and nothing named.
     dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
-        val name = input.text.toString().trim()
-        val face = pad?.let { croppedFace(it) }
-        if (face != null && name.isEmpty()) {
-            fragment.showMessage(
-                "Read the handwriting into the field first (or type the title) — " +
-                    "a title that is only a picture can't be searched for."
-            )
-            face.recycle()
-            return@setOnClickListener
-        }
-        onSave(name, face)
-        dialog.dismiss()
+        trySave()
     }
 }
 

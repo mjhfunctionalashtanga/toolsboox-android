@@ -1009,12 +1009,15 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 movementMethod = android.text.method.ScrollingMovementMethod()
             })
             addView(attachPreview)
-            addView(contentFrame, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ))
+            // EVERY tappable above the canvas, nothing below it — the handwriting-panel rule
+            // (see LedgerTitlePad): the attach pickers, the save-to-Ledger toggle and the
+            // share-as-gram door all used to sit under the pad, square under the writing hand.
             addView(withRow)
             addView(saveToggle)
             if (provenanceDefault != null) addView(gramRow)
+            addView(contentFrame, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
         }
 
         fun applyMode() {
