@@ -1906,9 +1906,17 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val marks = com.toolsboox.plugin.calendar.ot.LedgerTags
             .marksOn(ctx, currentDate, notePage ?: "default")
 
+        // …AND THE SHELF. Every other note surface's ‹ N › ends on "🗂 All …" — the door out of
+        // this page's own pages and into everything you have. Notes was the one that didn't, so
+        // from the surface you write on most there was no way to reach the directory at all.
+        // Michael, on the Boox: "the notes don't look like they have a directory."
+        //
+        // It opens the root rather than a Notes-only list because Notes has no document store to
+        // list — a numbered page is not a named thing — so the honest destination is the shelf
+        // itself, where Notes is a folder of days beside the kinds that do have names.
         val labels = (marks.map { "#${it.first}" }
             + ordered.map { if (it.toString() == notePage) "Page ${it + 1}  ·  here" else "Page ${it + 1}" }
-            + "＋  New page" + "📅  Go to a date…").toTypedArray()
+            + "＋  New page" + "📅  Go to a date…" + "🗂  All notes & documents…").toTypedArray()
         val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Jump to")
             .setItems(labels) { _, which ->
@@ -1923,7 +1931,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                         if (target.toString() != notePage) CalendarNavigator.toDayNote(this, currentDate, target.toString())
                     }
                     p == ordered.size -> CalendarNavigator.toDayNote(this, currentDate, newPage.toString())
-                    else -> showNoteDatePicker()   // navigate notes BY DATE
+                    p == ordered.size + 1 -> showNoteDatePicker()   // navigate notes BY DATE
+                    else -> com.toolsboox.plugin.feeds.ui.showLedgerRootDirectory(this, currentDate)
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
@@ -2102,6 +2111,19 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         if (surface != null) {
             rows += "🗂  All ${docs0.label(surface)}…" to {
                 com.toolsboox.plugin.feeds.ui.showDocumentDirectory(this, surface, currentDate, notePage)
+            }
+        } else {
+            // GRID, JOT AND GRAM PICKS GET A DOOR TOO. They are sub-pageable — so they arrive here
+            // rather than at the numbered-notes menu — but none of them maps to a document store
+            // (`surfaceOf` knows only Pickings, Synthesize and Write), so the row above never drew
+            // and they were left as the surfaces you could page but never leave. Michael, having
+            // just found the same hole on Notes: "grid notes jot notes got 'em too?"
+            //
+            // They open the ROOT rather than a per-kind list, for the same reason Notes does: a
+            // ruled page is not a named thing, so there is no per-kind shelf to open — the shelf
+            // itself is the honest destination.
+            rows += "🗂  All notes & documents…" to {
+                com.toolsboox.plugin.feeds.ui.showLedgerRootDirectory(this, currentDate)
             }
         }
 
