@@ -336,6 +336,14 @@ abstract class ScreenFragment : Fragment() {
      * there; it just wasn't in the copy on screen, and then it wasn't anywhere.
      *
      * The standalone reader never showed this because leaving and returning reloads the day.
+     *
+     * REMOVAL IS THE SAME EVENT, and is told the same way rather than through a hook of its own.
+     * Deleting a document ([com.toolsboox.plugin.calendar.ot.LedgerDocumentPages.erase]) rewrites the
+     * day file under a surface that may be showing one of those very pages — and the failure is
+     * worse in that direction, because the stale copy still holds the ink that was just deleted and
+     * the next pen-up save would put every stroke of it back. What the surface has to do is
+     * identical: re-read, never save. A third near-identical hook would only be a third place for
+     * that rule to be forgotten.
      */
     open fun onExternalGramPlaced(pageKey: String) {}
 

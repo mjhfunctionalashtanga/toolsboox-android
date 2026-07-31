@@ -1962,11 +1962,19 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      * name ([com.toolsboox.plugin.calendar.ot.LedgerDocuments.surfaceOf] returns null for them), and
      * a control that would write nowhere isn't offered.
      *
-     * DELIBERATELY NO DELETE, though Text Notes' list has one. A text note IS its record, so
+     * DELETION IS TWO ROWS, NOT ONE. This menu carried a note for a while explaining why it had no
+     * Delete at all, and the note was right about the problem: "A text note IS its record, so
      * deleting the entry deletes the writing. A Write document's ink lives in the day JSON under its
-     * key and the index holds only its title — so "delete" would either drop the title and strand
+     * key and the index holds only its title — so 'delete' would either drop the title and strand
      * the pages under a key nothing can reach again, or reach into the day file and destroy work.
-     * That is a decision about what deletion MEANS here, not a missing button, and it is Michael's.
+     * That is a decision about what deletion MEANS here, not a missing button, and it is Michael's."
+     *
+     * He made it: both, separately, because they are genuinely different acts and one word cannot
+     * carry both. ⌫ takes the title off and leaves every page where it is; 🗑 says how many pages
+     * there are and that the ink goes with them, and asks. Neither can strand a page — see
+     * [com.toolsboox.plugin.calendar.ot.LedgerDocuments.untitle] for why the untitle keeps the index
+     * row, and [com.toolsboox.plugin.calendar.ot.LedgerDocumentPages] for how the delete finds every
+     * page before it removes the row that reaches them.
      */
     private fun showNoteSubPageJump(base: String) {
         val ctx = context ?: return
@@ -2023,6 +2031,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             rows += "＋  New page" to { CalendarNavigator.toDayNote(this, currentDate, keyFor(newSub)) }
         }
 
+        // The document you are standing in, resolved once: the naming rows need to know whether it
+        // has a title (so "Remove the title" isn't offered on one that has none) and the heading
+        // needs the title itself.
+        val doc = docs0.documentFor(ctx, base, currentDate, knownNotePageKeys())
+
         if (surface != null) {
             rows += "＋  New ${docs0.noun(surface)}…" to {
                 com.toolsboox.plugin.feeds.ui.promptNewDocument(this, surface, currentDate)
@@ -2034,6 +2047,29 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     com.toolsboox.plugin.feeds.ui.promptRenameCurrentDocument(
                         this, surface, base, currentDate
                     ) { redrawNoteTemplate() }
+                }
+            }
+            // ⌫ only when there is a title to take off — on an untitled document it would be a row
+            // offering to undo something that never happened, which is exactly the wording problem
+            // "Name this" avoids one line up.
+            if (doc != null && doc.named && docs0.canUntitle(surface, base)) {
+                rows += "⌫  Remove this ${docs0.noun(surface)}'s title" to {
+                    com.toolsboox.plugin.feeds.ui.untitleDocument(
+                        this, surface, base, doc.date, doc.title
+                    ) { redrawNoteTemplate() }
+                }
+            }
+            if (docs0.canDelete(surface)) {
+                // The count and the warning live in the confirmation, not in this label — a menu row
+                // that already said "and its 4 pages" would be reading a day file to draw a menu.
+                rows += "🗑  Delete this ${docs0.noun(surface)}…" to {
+                    com.toolsboox.plugin.feeds.ui.confirmDeleteDocument(
+                        this, surface, base, doc?.title ?: base, doc?.date ?: currentDate
+                    ) {
+                        // The page under you has just ceased to exist. The surface's own daily page
+                        // for that day is the nearest place that still does.
+                        CalendarNavigator.toDayNote(this, currentDate, docs0.defaultKey(surface))
+                    }
                 }
             }
         }
@@ -2049,7 +2085,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // a dialog title tells you nothing, and the document's title is the whole point of naming
         // it. An UNnamed document keeps the surface's own name ("Write"), because the date default
         // is already the day the whole screen is showing and repeating it says nothing.
-        val doc = docs0.documentFor(ctx, base, currentDate)
         val heading = if (doc != null && doc.named) doc.title else base.replaceFirstChar { it.uppercase() }
         val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(heading)

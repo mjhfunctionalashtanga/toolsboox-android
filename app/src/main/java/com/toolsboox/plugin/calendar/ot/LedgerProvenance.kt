@@ -92,6 +92,22 @@ object LedgerProvenance {
         }.onFailure { Timber.w(it, "provenance: could not remember the published URL") }
     }
 
+    /**
+     * Forget where a page was published, because the page no longer exists.
+     *
+     * The identity here is (day, page key) rather than the title, which is right for a rename and
+     * wrong for a deletion: the DAILY page keys ("write", "synthesize") are shared by every day in
+     * history, so a day whose writing is deleted and then written afresh would inherit the old
+     * page's canonical URL and quietly claim to be a piece it has nothing to do with. Called from
+     * [com.toolsboox.plugin.calendar.ot.LedgerDocumentPages.erase], the one place a page ceases to be.
+     */
+    fun forgetPublished(context: Context, date: LocalDate?, pageKey: String?) {
+        runCatching {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .remove(keyFor(date, pageKey)).apply()
+        }.onFailure { Timber.w(it, "provenance: could not forget the published URL") }
+    }
+
     /** The canonical URL for this page, or null if it has never been published from this device. */
     fun publishedUrl(context: Context, date: LocalDate?, pageKey: String?): String? = runCatching {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

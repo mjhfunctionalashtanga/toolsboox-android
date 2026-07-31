@@ -190,6 +190,67 @@ object LedgerTags {
     }
 
     /**
+     * Forget every tag occurrence on [pageKeys] of [date], and sever the tag↔page edges with them.
+     *
+     * Called when those pages STOP EXISTING — the destructive half of deleting a document (see
+     * [LedgerDocumentPages.erase]). Without it the Tags index keeps offering rows that open a page
+     * whose ink is gone, and `directoryMarkCounts` keeps drawing a 🏷 badge on a document that has
+     * been deleted: an index pointing at something that isn't there, which is the failure mode a
+     * derived store has to be cleaned up to avoid.
+     *
+     * NOT called on an ordinary erase of ink, and deliberately. A tag whose word you rubbed out is a
+     * tag the next capture simply won't re-record; forgetting on every stroke change would make the
+     * occurrence store a live mirror of the page rather than the record of what was harvested from
+     * it. This is only for the page CEASING TO BE.
+     *
+     * The edge is severed through [ConnectionStore.disconnect] rather than dropped, because that
+     * tombstones — and the tombstone is what syncs. Deleting the edge outright would let the other
+     * device's surviving copy put the tag back on the next merge, which is the same resurrection the
+     * day-file tombstones exist to prevent one layer down.
+     *
+     * ONLY THE TAG EDGES. The page may also be joined to contacts, to other pages, to a book — and
+     * those are left alone on purpose, because [ConnectionStore.neighbours] says why in its own
+     * words: it deliberately never checks that the far end still exists, since "a rhizome broken at
+     * one point carries on along its other lines rather than collapsing". A tag edge is different
+     * only because the Tags index turns it into a ROW you can tap, and a row that opens nothing is
+     * not a broken line, it is a lie.
+     */
+    fun forgetPages(context: Context, date: LocalDate, pageKeys: Set<String>) {
+        if (pageKeys.isEmpty()) return
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        var changed = false
+        for (key in prefs.all.keys.filter { it.startsWith("tag:") && it.endsWith(":occ") }) {
+            val occs = prefs.getStringSet(key, emptySet()).orEmpty()
+            val kept = occs.filterNot { o ->
+                val page = parseOccurrence(o) ?: return@filterNot false
+                page.first == date && page.second in pageKeys
+            }.toSet()
+            if (kept.size == occs.size) continue
+            changed = true
+            // A tag with no occurrences left is a tag nobody wrote anywhere. `buildList` already
+            // drops an empty one from the index; removing the key as well keeps the prefs file from
+            // accumulating a headstone for every tag that ever existed.
+            if (kept.isEmpty()) {
+                editor.remove(key)
+                editor.remove("tag:" + key.removePrefix("tag:").removeSuffix(":occ") + ":created")
+            } else editor.putStringSet(key, kept)
+        }
+        if (changed) editor.apply()
+        for (page in pageKeys) {
+            val uri = "ledger://$date/$page"
+            runCatching {
+                for (edge in ConnectionStore.touching(context, uri)) {
+                    if (edge.otherEnd(uri)?.startsWith("tag://") == true) {
+                        ConnectionStore.disconnect(context, edge.id)
+                    }
+                }
+            }
+        }
+        if (changed) bumpGeneration()
+    }
+
+    /**
      * Tag ANY object, not just a note page: an email, an article, a book, a recording.
      *
      * [record] is page-shaped — it stores a "date|page" occurrence and builds a

@@ -1119,6 +1119,11 @@ fun showDocumentDirectory(
     // else is there" — the same "· here" the iPad's directory uses. One shape on both platforms.
     val hereBase = currentKey?.substringBefore('#')
     val renameable = docs.any { docs0.canRename(surface, it.key) }
+    // Which of the two deletion verbs this listing can honestly offer. Untitling needs something
+    // with a title on it; deleting is a property of the SURFACE (see LedgerDocuments.canDelete —
+    // boards and text notes answer the question elsewhere).
+    val titled = docs.filter { it.named && docs0.canUntitle(surface, it.key) }
+    val deletable = docs0.canDelete(surface) && docs.isNotEmpty()
 
     showDirectoryList(
         fragment,
@@ -1164,6 +1169,19 @@ fun showDocumentDirectory(
         }
         rows += DirRow("＋", "New ${docs0.noun(surface)}…") { promptNewDocument(fragment, surface, date) }
         if (renameable) rows += DirRow("✎", "Rename…") { promptRenameDocument(fragment, surface, date, docs) }
+        // The two deletions, in that order and never merged into one row. The untitle row appears
+        // only when something on this surface actually has a title to remove, so it isn't a control
+        // that does nothing on a shelf of date-titled documents.
+        if (titled.isNotEmpty()) {
+            rows += DirRow("⌫", "Remove a title…", "keeps the pages") {
+                promptUntitleDocument(fragment, surface, date, docs)
+            }
+        }
+        if (deletable) {
+            rows += DirRow("🗑", "Delete a ${docs0.noun(surface)}…", "the ink goes too") {
+                promptDeleteDocument(fragment, surface, date, docs, currentKey)
+            }
+        }
         // The one place a SWEEP is offered, and it is offered rather than run.
         //
         // Every board made before the card index existed has a day file the index has never read,
@@ -1424,6 +1442,232 @@ internal fun promptRenameCurrentDocument(
         .setPositiveButton("Save") { _, _ ->
             docs0.rename(ctx, surface, key, input.text.toString().trim(), date)
             onRenamed()
+        }
+        .setNegativeButton(android.R.string.cancel, null)
+        .show()
+}
+
+// ── DELETION: two verbs, kept apart ───────────────────────────────────────────────────────────
+//
+// Michael's instruction, after the naming work deliberately left this open with its reasons written
+// down: do NOT ship one ambiguous "Delete". A Write document is two things in two places — a TITLE
+// in the index and INK in the day JSON under the document's key — so "delete it" has two honest
+// meanings and one button would have to choose one silently.
+//
+//  ⌫ Remove the title  — non-destructive, no confirmation, undone by naming it again.
+//  🗑 Delete …         — destructive, says how many pages and that the ink goes with them.
+//
+// They live here, beside [promptRenameDocument] and [promptRenameCurrentDocument], because a
+// document's verbs should sit together: naming, renaming, untitling and deleting are one small
+// vocabulary and splitting them across files is how they drift out of agreement.
+
+/**
+ * Take the title off the document you name, and say so.
+ *
+ * No confirmation, on purpose. Nothing is lost — the pages stay exactly where they are and the
+ * document goes back to wearing its date — and the undo is the ✎ row two lines up. A confirmation
+ * on a reversible act only teaches you to dismiss confirmations.
+ *
+ * See [com.toolsboox.plugin.calendar.ot.LedgerDocuments.untitle] for why this blanks the name rather
+ * than dropping the index row: for a minted document that row is the only thing that makes its pages
+ * reachable.
+ */
+internal fun untitleDocument(
+    fragment: ScreenFragment,
+    surface: String,
+    key: String,
+    date: LocalDate,
+    title: String,
+    onDone: () -> Unit = {},
+) {
+    val ctx = fragment.requireContext()
+    val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    docs0.untitle(ctx, surface, key, date)
+    fragment.showMessage("“$title” is untitled again — the pages are still there.")
+    onDone()
+}
+
+/** "Remove which title?" — the directory's own list, filtered to the ones that actually have one. */
+private fun promptUntitleDocument(
+    fragment: ScreenFragment,
+    surface: String,
+    date: LocalDate,
+    docs: List<com.toolsboox.plugin.calendar.ot.LedgerDocument>,
+) {
+    val ctx = fragment.requireContext()
+    val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    val target = docs.filter { it.named && docs0.canUntitle(surface, it.key) }
+    if (target.isEmpty()) return
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle("Remove which title?")
+        .setItems(target.map { it.title }.toTypedArray()) { _, which ->
+            val doc = target[which]
+            untitleDocument(fragment, surface, doc.key, doc.date, doc.title)
+        }
+        .setNegativeButton(android.R.string.cancel, null)
+        .show()
+}
+
+/** "Delete which ‹noun›?" — then the count, then the question. */
+private fun promptDeleteDocument(
+    fragment: ScreenFragment,
+    surface: String,
+    date: LocalDate,
+    docs: List<com.toolsboox.plugin.calendar.ot.LedgerDocument>,
+    currentKey: String?,
+) {
+    val ctx = fragment.requireContext()
+    val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    if (docs.isEmpty()) return
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle("Delete which ${docs0.noun(surface)}?")
+        .setItems(docs.map { it.title }.toTypedArray()) { _, which ->
+            val doc = docs[which]
+            confirmDeleteDocument(fragment, surface, doc.key, doc.title, doc.date) {
+                // Only if you were standing in it. Landing you on the surface's own daily page for
+                // that day is the nearest thing to "where you were" that still exists.
+                if (currentKey?.substringBefore('#') == doc.key) {
+                    CalendarNavigator.toDayNote(fragment, doc.date, docs0.defaultKey(surface))
+                }
+            }
+        }
+        .setNegativeButton(android.R.string.cancel, null)
+        .show()
+}
+
+/**
+ * Find the pages, ask the real question, then clear them.
+ *
+ * THE COUNT COMES OFF THE DISK. [com.toolsboox.plugin.calendar.ot.LedgerDocumentPages.locate] streams
+ * the day files looking for the document's page keys; it does not ask the index, which holds a title
+ * and nothing else, and it does not ask [LedgerDocument.subPageCount], which only ever looks at the
+ * document's home date. That difference is the point: a document's pages can have been carried to
+ * other days by "📅 Go to a date…" or by the centre pill's tap-to-today, and a confirmation that
+ * under-counted them would be promising to delete less than it deletes.
+ *
+ * The scan is a disk walk, so it runs on a background thread and the dialog waits for it. On e-ink
+ * that is a real pause and it gets a "Looking…" rather than a frozen menu.
+ */
+internal fun confirmDeleteDocument(
+    fragment: ScreenFragment,
+    surface: String,
+    key: String,
+    title: String,
+    date: LocalDate,
+    onDeleted: () -> Unit = {},
+) {
+    val app = fragment.requireContext().applicationContext
+    val service = runCatching {
+        dagger.hilt.android.EntryPointAccessors
+            .fromActivity(fragment.requireActivity(), DirectoryDayServiceEntryPoint::class.java)
+            .calendarDayService()
+    }.getOrNull()
+    if (service == null) {
+        fragment.showMessage("Couldn't open the day reader")
+        return
+    }
+    fragment.showMessage("Looking for its pages…")
+    Thread {
+        val pages = runCatching {
+            com.toolsboox.plugin.calendar.ot.LedgerDocumentPages.locate(app, key, date)
+        }.getOrNull()
+        runCatching {
+            fragment.requireActivity().runOnUiThread {
+                if (!fragment.isAdded) return@runOnUiThread
+                if (pages == null) {
+                    fragment.showMessage("Couldn't read the days this one is on — nothing deleted.")
+                    return@runOnUiThread
+                }
+                askAndErase(fragment, service, surface, key, title, date, pages, onDeleted)
+            }
+        }
+    }.apply { isDaemon = true }.start()
+}
+
+/** The question itself. Every number in it was counted off a day file a moment ago. */
+private fun askAndErase(
+    fragment: ScreenFragment,
+    service: com.toolsboox.plugin.calendar.fi.CalendarDayService,
+    surface: String,
+    key: String,
+    title: String,
+    date: LocalDate,
+    pages: com.toolsboox.plugin.calendar.ot.DocumentPages,
+    onDeleted: () -> Unit,
+) {
+    val ctx = fragment.requireContext()
+    val app = ctx.applicationContext
+    val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    val noun = docs0.noun(surface)
+
+    // Nothing on disk: there is no ink to warn about, so don't invent a warning. This is a title
+    // over an empty document and saying so plainly is the whole message.
+    if (pages.isEmpty) {
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Delete “$title”?")
+            .setMessage("Nothing has been written in this $noun — there are no pages to lose. The title goes.")
+            .setPositiveButton("Delete the title") { _, _ ->
+                docs0.forget(app, surface, key, date)
+                fragment.showMessage("Deleted “$title”.")
+                runCatching { fragment.onExternalGramPlaced(key) }
+                onDeleted()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+        return
+    }
+
+    val n = pages.pageCount
+    val pageWord = if (n == 1) "1 page" else "$n pages"
+    val body = buildString {
+        append("Deleting this $noun deletes its $pageWord and all the ink on them. ")
+        // A document whose pages ended up on more than one day is unusual enough that the
+        // confirmation has to say so — otherwise the number looks wrong and you cancel a correct
+        // delete, or worse, accept a bigger one than you thought.
+        if (pages.dates.size > 1) {
+            append("They are on ${pages.dates.size} days (")
+            append(pages.dates.joinToString(", ") { it.toString() })
+            append("). ")
+        }
+        append("This cannot be undone.")
+    }
+    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle("Delete “$title”?")
+        .setMessage(body)
+        // The last thing you touch says what it does. "OK" against a message you have already
+        // stopped reading is how a destructive button gets pressed by accident.
+        .setPositiveButton("Delete $pageWord") { _, _ ->
+            fragment.showMessage("Deleting…")
+            Thread {
+                val result = runCatching {
+                    com.toolsboox.plugin.calendar.ot.LedgerDocumentPages.erase(app, service, pages)
+                }.getOrNull()
+                // The index entry goes LAST, and only for the days that were actually cleared. A
+                // day we could not read still holds its pages, and dropping the title while they
+                // survive is the one outcome this whole design is arranged to prevent.
+                val stranded = result?.unreadable.orEmpty()
+                if (result != null && stranded.isEmpty()) docs0.forget(app, surface, key, date)
+                runCatching {
+                    fragment.requireActivity().runOnUiThread {
+                        if (!fragment.isAdded) return@runOnUiThread
+                        when {
+                            result == null ->
+                                fragment.showMessage("Couldn't delete “$title” — nothing was changed.")
+                            stranded.isNotEmpty() -> fragment.showMessage(
+                                "Kept “$title”: ${stranded.size} day(s) couldn't be read, " +
+                                    "so its pages are still there."
+                            )
+                            else -> fragment.showMessage("Deleted “$title” and its $pageWord.")
+                        }
+                        // RE-READ, NEVER BLIND-SAVE. If the day page below is showing one of the
+                        // days just rewritten, its in-memory copy still holds the ink we removed and
+                        // its next pen-up save would write every stroke back. This is the same
+                        // telling a background placement gives, for the same reason.
+                        runCatching { fragment.onExternalGramPlaced(key) }
+                        if (stranded.isEmpty()) onDeleted()
+                    }
+                }
+            }.apply { isDaemon = true }.start()
         }
         .setNegativeButton(android.R.string.cancel, null)
         .show()

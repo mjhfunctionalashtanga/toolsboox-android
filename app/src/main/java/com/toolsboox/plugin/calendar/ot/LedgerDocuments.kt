@@ -348,4 +348,84 @@ object LedgerDocuments {
             PICKINGS -> PickingsStore.rename(context, date, key, name)
         }
     }
+
+    /** The key of the surface's own implicit daily document — where to land after deleting the
+     *  document you were standing in, so a delete never leaves you on a page that no longer exists. */
+    fun defaultKey(surface: String): String = when (surface) {
+        WRITE -> WritePageStore.DEFAULT_KEY
+        SYNTHESIZE -> SynthPageStore.DEFAULT_KEY
+        PICKINGS -> PickingsStore.DEFAULT_KEY
+        else -> "0"
+    }
+
+    // ── The two verbs of deletion ─────────────────────────────────────────────────────────────
+    //
+    // NOT ONE VERB. Michael's instruction, and the reason the naming work left this open: a Write
+    // document is two things sitting in two places — a TITLE in the index, and INK in the day JSON
+    // under the document's key — and "delete" can honestly mean either. One button would have to
+    // pick, silently, and whichever it picked would be wrong half the time.
+    //
+    //  • [untitle] takes the title off and leaves the writing. It is the small, reversible one.
+    //  • [forget] + [LedgerDocumentPages.erase] take the writing too. It is the one that asks first,
+    //    with the page count in the question.
+
+    /**
+     * Whether taking the title off this document means anything — i.e. whether it has one.
+     *
+     * Same surfaces [canRename] allows, because untitling is a rename to nothing and cannot be
+     * offered anywhere a name cannot be held.
+     */
+    fun canUntitle(surface: String, key: String): Boolean = canRename(surface, key)
+
+    /**
+     * Take the title off, KEEP the pages.
+     *
+     * This is a rename to blank, NOT a removal of the index entry, and that choice is the whole
+     * safety of this path. For a MINTED document ("write-1753900000000") the index entry is the only
+     * record that the document exists at all — its pages are reachable because that row is in the
+     * list. Dropping the row would leave the ink on disk under a key nothing lists: precisely the
+     * stranding this feature is not allowed to cause. A blank name costs one row and strands nothing.
+     *
+     * The stores already read a blank name as "never named" — [WritePageStore.nameOf] returns null
+     * for it, and [forSurface] falls back to `name.ifBlank { dateTitle(p.date) }` with `named =
+     * false` — so an untitled document is, to every listing in the app, exactly the document it was
+     * before anyone named it: present, titled by its date, and one tap from being named again. That
+     * is the undo, and it is why this path asks no confirmation.
+     *
+     * It also survives sync for free. The merge is a union with the LOCAL side winning on a shared
+     * id, so a locally-blanked name beats the server's stale copy of the old one. Removing the row
+     * would have lost that race — an absence loses a union — which is the same asymmetry
+     * [LedgerDocumentTombstones] exists to work around for the destructive path.
+     */
+    fun untitle(context: Context, surface: String, key: String, date: LocalDate) {
+        rename(context, surface, key, "", date)
+    }
+
+    /**
+     * Whether the destructive path is offered on this surface at all.
+     *
+     * Only the two multi-page document surfaces. Pickings and Text Notes are excluded on purpose and
+     * for different reasons: a board's deletion is really a question about its CARDS and belongs with
+     * the board, and Text Notes already has its own Delete in its own fragment, where a note IS its
+     * record and the question doesn't arise.
+     */
+    fun canDelete(surface: String): Boolean = surface == WRITE || surface == SYNTHESIZE
+
+    /**
+     * Drop the index entry outright — the half of deletion that happens after the pages are gone.
+     *
+     * Only ever called with [LedgerDocumentPages.erase], never alone: an entry removed while its
+     * pages survive is the stranding case, and the only reason it is safe here is that by this point
+     * there is nothing left to reach.
+     */
+    fun forget(context: Context, surface: String, key: String, date: LocalDate) {
+        // A key the store cannot hold a name for has no entry to drop — the daily Synthesize page is
+        // the one that reaches here. Writing a headstone for it would put a permanent subtraction on
+        // an id no entry can ever legitimately use, which is a small thing that gets confusing later.
+        if (!canRename(surface, key)) return
+        when (surface) {
+            WRITE -> WritePageStore.delete(context, key, date)
+            SYNTHESIZE -> SynthPageStore.delete(context, key)
+        }
+    }
 }

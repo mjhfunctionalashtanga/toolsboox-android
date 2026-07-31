@@ -36,9 +36,16 @@ data class WritePage(val key: String, var name: String, val date: LocalDate)
  * unique by key and are looked up by key alone, as elsewhere.
  */
 object WritePageStore {
-    private const val DIR = "write-index"
+    const val DIR = "write-index"
     private const val FILE = "pages.json"
     const val DEFAULT_KEY = "write"
+
+    /** The identity two devices merge an entry on — key AND date, because every day shares the key
+     *  "write". [LedgerDocumentTombstones] is handed this same function so a headstone can never
+     *  address something different from what the merge addresses. */
+    fun idOf(key: String, date: LocalDate) = "$key|$date"
+
+    private fun idOf(p: WritePage) = idOf(p.key, p.date)
 
     /** True for the daily Write page or any named Write document (sub-page tails included). */
     fun isWrite(key: String?): Boolean {
@@ -101,11 +108,26 @@ object WritePageStore {
         if (existing != null) existing.name = name
         else pages.add(0, WritePage(key, name, date))
         save(context, pages)
+        // Writing under an id that was deleted un-deletes it. The daily page is the case that
+        // matters: delete the 21st's writing, write on the 21st again, name it — without this the
+        // merge would keep subtracting the entry you just made and the name would evaporate on the
+        // next sync. A blank name is NOT a re-creation (that is untitling, see LedgerDocuments), but
+        // it is still an entry the user wants kept, so the headstone goes either way.
+        LedgerDocumentTombstones.forget(context, DIR, idOf(key, date))
         sync(context)
     }
 
+    /**
+     * Drop the entry AND record that it is gone.
+     *
+     * The record is the whole point — see [LedgerDocumentTombstones]. Removing the entry alone is
+     * what this method used to do, and it did not work: [sync] folds the server's copy back in
+     * whenever the local side lacks it, so the deletion was undone within seconds by a background
+     * thread and nothing said so.
+     */
     fun delete(context: Context, key: String, date: LocalDate) {
         save(context, list(context).filterNot { it.key == key && (key != DEFAULT_KEY || it.date == date) })
+        LedgerDocumentTombstones.add(context, DIR, idOf(key, date))
         sync(context)
     }
 
@@ -131,9 +153,21 @@ object WritePageStore {
      */
     fun sync(context: Context) {
         com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.background {
+            // Headstones first: the union of what every device knows to be deleted is what the
+            // entry merge below is allowed to keep. Round-tripped exactly like the index itself, on
+            // its own path, so an iOS reader of pages.json never sees it.
+            val dead = LedgerDocumentTombstones.merge(
+                context,
+                DIR,
+                com.toolsboox.plugin.calendar.nw.LedgerSidecarSync
+                    .pull(context, LedgerDocumentTombstones.remotePath(DIR))
+            )
+            com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.push(
+                context, LedgerDocumentTombstones.remotePath(DIR), LedgerDocumentTombstones.encode(dead)
+            )
+
             val local = list(context)
             val remoteText = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.pull(context, remotePath())
-            fun idOf(p: WritePage) = "${p.key}|${p.date}"
             val merged = if (remoteText.isNullOrBlank()) local else {
                 val byId = LinkedHashMap<String, WritePage>()
                 for (p in local) byId[idOf(p)] = p
@@ -148,6 +182,10 @@ object WritePageStore {
                 }
                 byId.values.toMutableList()
             }
+            // Subtract the headstones from BOTH sides. The remote side is the resurrection this
+            // exists to stop; the local side is belt and braces for a device that deleted while
+            // offline and whose own file was rewritten by an older build in the meantime.
+            merged.removeAll { idOf(it) in dead }
             if (merged.map { idOf(it) } != local.map { idOf(it) }) save(context, merged)
             val arr = JSONArray()
             for (p in merged) arr.put(JSONObject()

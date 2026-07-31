@@ -27,7 +27,7 @@ data class SynthPage(val key: String, var name: String, val date: LocalDate)
  * NOT listed here; this is only the named topic pages.
  */
 object SynthPageStore {
-    private const val DIR = "synth-index"
+    const val DIR = "synth-index"
     private const val FILE = "pages.json"
     const val DEFAULT_KEY = "synthesize"
 
@@ -74,11 +74,16 @@ object SynthPageStore {
     fun rename(context: Context, key: String, name: String) {
         val pages = list(context)
         pages.firstOrNull { it.key == key }?.let { it.name = name; save(context, pages) }
+        LedgerDocumentTombstones.forget(context, DIR, key)
         sync(context)
     }
 
+    /** Drop the entry AND record that it is gone — see [WritePageStore.delete] and
+     *  [LedgerDocumentTombstones] for why an absence cannot express a deletion here. Synthesize
+     *  merges on the key alone (its keys are unique), so that is the headstone's id. */
     fun delete(context: Context, key: String) {
         save(context, list(context).filterNot { it.key == key })
+        LedgerDocumentTombstones.add(context, DIR, key)
         sync(context)
     }
 
@@ -93,6 +98,18 @@ object SynthPageStore {
     /** Round-trip the registry so a topic page made on one device appears on the others. */
     fun sync(context: Context) {
         com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.background {
+            // Headstones first — see [WritePageStore.sync]. Same round trip, its own path, invisible
+            // to an iOS reader of pages.json.
+            val dead = LedgerDocumentTombstones.merge(
+                context,
+                DIR,
+                com.toolsboox.plugin.calendar.nw.LedgerSidecarSync
+                    .pull(context, LedgerDocumentTombstones.remotePath(DIR))
+            )
+            com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.push(
+                context, LedgerDocumentTombstones.remotePath(DIR), LedgerDocumentTombstones.encode(dead)
+            )
+
             val local = list(context)
             val remoteText = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.pull(context, remotePath())
             val merged = if (remoteText.isNullOrBlank()) local else {
@@ -109,6 +126,7 @@ object SynthPageStore {
                 }
                 byKey.values.toMutableList()
             }
+            merged.removeAll { it.key in dead }
             if (merged.map { it.key } != local.map { it.key }) save(context, merged)
             val arr = JSONArray()
             for (p in merged) arr.put(JSONObject()
