@@ -55,7 +55,22 @@ object LedgerSidecarSync {
     /** Upload [text] to [remotePath] (overwrite). No-op if Ultrabridge isn't configured. */
     fun push(context: Context, remotePath: String, text: String) {
         val svc = service(context) ?: return
-        runCatching { svc.uploadBytes(text.toByteArray(Charsets.UTF_8), remotePath) }
+        runCatching {
+            // Stock Apache dav (dav.mjh.yoga) 409s a PUT whose parent collection does not exist,
+            // and this path never MKCOLed — which is why grid-index/, sketch-index/, synth-index/
+            // and write-index/ silently never appeared at the remote root while the two calendar
+            // sync services (which do ensure their dirs) landed fine. Upload first so the steady
+            // state stays one round trip; on failure, MKCOL each ancestor and retry once.
+            svc.uploadBytes(text.toByteArray(Charsets.UTF_8), remotePath) || run {
+                val segments = remotePath.trim('/').split("/").dropLast(1)
+                var prefix = ""
+                for (segment in segments) {
+                    prefix = if (prefix.isEmpty()) segment else "$prefix/$segment"
+                    svc.ensureDirectory(prefix)
+                }
+                segments.isNotEmpty() && svc.uploadBytes(text.toByteArray(Charsets.UTF_8), remotePath)
+            }
+        }
             .onFailure { Timber.w(it, "LedgerSidecarSync: push failed for $remotePath") }
             .getOrNull()?.let { if (it) rememberReached() }
     }
