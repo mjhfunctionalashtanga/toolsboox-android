@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Auto Backup rules for API 30 and below (android:fullBackupContent). The API 31+ twin is
+  backup_rules.xml — keep the two lists identical, the split is Android's, not ours.
+
+  Shared prefs are excluded wholesale: the EncryptedSharedPreferences stores (WebDAV creds,
+  AssetWebhook, PanelWebhookStore, AI creds) restore as ciphertext with no key — the master key
+  lives in the device keystore and never leaves it — so a restored copy is undecryptable noise,
+  while the PLAIN prefs still hold tokens (the Later feed token in ledger_later_prefs) that must
+  not ride a cloud backup in cleartext. The device-protected mirror is excluded for the same
+  reason. The ledger tree under external Documents is the day files WITH their inline
+  base64 media — multi-gigabyte against Auto Backup's 25 MB quota, so including it would not
+  back it up, it would just make every backup pass fail early; WebDAV/Drive sync is the ledger's
+  real backup, so the tree is excluded on purpose.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="."/>
+    <exclude domain="device_sharedpref" path="."/>
+    <exclude domain="external" path="."/>
+</full-backup-content>

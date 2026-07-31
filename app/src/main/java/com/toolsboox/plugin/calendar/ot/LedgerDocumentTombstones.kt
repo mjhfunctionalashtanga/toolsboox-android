@@ -49,66 +49,171 @@ import java.io.File
 object LedgerDocumentTombstones {
 
     private const val FILE = "deleted.json"
+    private const val EPOCHS = "epochs.json"
+
+    /**
+     * ── WHY EPOCHS EXIST (2026-07-31) ─────────────────────────────────────────────────────────
+     *
+     * A bare id set cannot express revival. `forget` removed the id locally, but the merge below
+     * is a union, so the very next sync pulled the remote headstone back in and re-buried the row
+     * the user had just recreated — deterministically, forever, on every device. Rename-after-
+     * delete IS a conflict two devices can have about a deletion, and a union has no way to lose.
+     *
+     * So each id carries two clocks in `<dir>/epochs.json` — `{"<id>":{"d":millis,"r":millis}}`,
+     * sorted keys — d for the last deletion, r for the last revival, merged per id by MAX of each.
+     * An id is DEAD iff d > r; a tie goes to the revival, because a phantom name over a document
+     * with no pages is a smaller wrong than killing the name of a document that exists.
+     *
+     * `deleted.json` stays exactly what it always was — the sorted array of currently-dead ids —
+     * DERIVED from the epochs on every save, so an old build (either fork) keeps reading the same
+     * wire it always did. A legacy id found in a `deleted.json` with no epochs entry is treated as
+     * {d: 1, r: 0}: dead, but at the dawn of time, so any real revival outranks it. That is also
+     * how timestampless sources (the names backup) must record deletions — [addLegacy], never
+     * [add] — or an old backup could out-shout a revival that happened after it was taken.
+     */
+    private const val LEGACY_DELETED_AT = 1L
 
     /** The remote path, alongside the index it belongs to. */
     fun remotePath(dir: String) = "$dir/$FILE"
 
+    /** The epochs file's remote path, beside [remotePath]. */
+    fun epochsRemotePath(dir: String) = "$dir/$EPOCHS"
+
     private fun file(context: Context, dir: String) =
         File(context.filesDir, dir).apply { mkdirs() }.let { File(it, FILE) }
 
-    /** Every id this device knows to be deleted. Empty on any problem — a tombstone store that
-     *  cannot be read must fail towards KEEPING data, never towards hiding it. */
-    fun ids(context: Context, dir: String): Set<String> {
+    private fun epochsFile(context: Context, dir: String) =
+        File(context.filesDir, dir).apply { mkdirs() }.let { File(it, EPOCHS) }
+
+    /** Last-deleted / last-revived, millis. Dead iff d > r. */
+    data class Epoch(val d: Long, val r: Long)
+
+    /** Every id's clocks — legacy `deleted.json` entries folded in as {d:1, r:0}. Empty on any
+     *  problem: a tombstone store that cannot be read must fail towards KEEPING data. */
+    fun epochs(context: Context, dir: String): Map<String, Epoch> {
+        val out = LinkedHashMap<String, Epoch>()
+        val ef = epochsFile(context, dir)
+        if (ef.exists()) runCatching {
+            val obj = org.json.JSONObject(ef.readText())
+            for (id in obj.keys()) {
+                val e = obj.optJSONObject(id) ?: continue
+                if (id.isNotBlank()) out[id] = Epoch(e.optLong("d"), e.optLong("r"))
+            }
+        }
         val f = file(context, dir)
-        if (!f.exists()) return emptySet()
-        return runCatching {
+        if (f.exists()) runCatching {
             val arr = JSONArray(f.readText())
-            (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() } }.toSet()
-        }.getOrDefault(emptySet())
+            for (i in 0 until arr.length()) {
+                val id = arr.optString(i)
+                if (id.isNotBlank() && id !in out) out[id] = Epoch(LEGACY_DELETED_AT, 0L)
+            }
+        }
+        return out
     }
 
-    /** Sorted on write so the file is byte-stable and an unchanged set doesn't read as a change. */
-    fun save(context: Context, dir: String, ids: Set<String>) {
+    /** Every id this device knows to be deleted — the d > r subset of [epochs]. */
+    fun ids(context: Context, dir: String): Set<String> =
+        epochs(context, dir).filterValues { it.d > it.r }.keys
+
+    /** Both files, atomically derived from one truth: epochs first, then `deleted.json` as the
+     *  dead subset old builds still read. Sorted on write so an unchanged set isn't a change. */
+    fun save(context: Context, dir: String, epochs: Map<String, Epoch>) {
         runCatching {
+            val obj = org.json.JSONObject()
+            for (id in epochs.keys.sorted()) {
+                val e = epochs.getValue(id)
+                obj.put(id, org.json.JSONObject().put("d", e.d).put("r", e.r))
+            }
+            epochsFile(context, dir).writeText(obj.toString())
             val arr = JSONArray()
-            for (id in ids.sorted()) arr.put(id)
+            for (id in epochs.filterValues { it.d > it.r }.keys.sorted()) arr.put(id)
             file(context, dir).writeText(arr.toString())
         }.onFailure { Timber.w(it, "document tombstones save failed for $dir") }
     }
 
-    /** Record a deletion. Idempotent. */
+    /** Record a deletion the user made NOW. Idempotent within a millisecond, which is enough. */
     fun add(context: Context, dir: String, id: String) {
         if (id.isBlank()) return
-        save(context, dir, ids(context, dir) + id)
+        val all = epochs(context, dir).toMutableMap()
+        all[id] = Epoch(System.currentTimeMillis(), all[id]?.r ?: 0L)
+        save(context, dir, all)
     }
 
-    /** Un-record one — what naming a document again after deleting it has to do, or the merge would
-     *  keep subtracting the entry the user just recreated. Only reachable for keys that can be
-     *  re-created under the same id, which in practice means Write's date-scoped daily page. */
+    /** Record a deletion from a TIMESTAMPLESS source (a names backup). Only lands on an id this
+     *  store has never heard of — a known id already has real clocks, and legacy knowledge must
+     *  never outrank them. */
+    fun addLegacy(context: Context, dir: String, id: String) {
+        if (id.isBlank()) return
+        val all = epochs(context, dir).toMutableMap()
+        if (id in all) return
+        all[id] = Epoch(LEGACY_DELETED_AT, 0L)
+        save(context, dir, all)
+    }
+
+    /** Un-record one — what naming a document again after deleting it has to do. Stamps a revival
+     *  clock rather than erasing the record: an erased record loses the merge to every remote copy
+     *  of the deletion, which was the bug — the recreated title vanished on the next sync, forever.
+     *  Only reachable for keys that can be re-created under the same id, which in practice means
+     *  the date-scoped daily pages. */
     fun forget(context: Context, dir: String, id: String) {
-        val current = ids(context, dir)
-        if (id !in current) return
-        save(context, dir, current - id)
+        val all = epochs(context, dir).toMutableMap()
+        val e = all[id] ?: return
+        if (e.d <= e.r) return   // already alive
+        all[id] = Epoch(e.d, System.currentTimeMillis())
+        save(context, dir, all)
     }
 
-    /** Fold the other devices' headstones in with ours and push the union back. Deletions only ever
-     *  accumulate, so a union is the whole merge — there is no conflict two devices can have about a
-     *  document they both agree is gone. */
-    fun merge(context: Context, dir: String, remoteText: String?): Set<String> {
-        val local = ids(context, dir)
-        val remote = if (remoteText.isNullOrBlank()) emptySet() else runCatching {
-            val arr = JSONArray(remoteText)
-            (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() } }.toSet()
-        }.getOrDefault(emptySet())
-        val union = local + remote
-        if (union != local) save(context, dir, union)
-        return union
-    }
+    /**
+     * The whole round trip: pull both remote files, merge per id by MAX of each clock, save, push
+     * both back. Returns the dead set the caller's row merge is allowed to subtract.
+     *
+     * The legacy `deleted.json` is still read from the remote (an old build may have written it
+     * moments ago) and still pushed (an old build will read it moments from now) — but it can only
+     * ever contribute dawn-of-time deletions, so a revival recorded by any current build survives
+     * every old build's re-pushed union.
+     */
+    fun roundTrip(context: Context, dir: String): Set<String> {
+        val local = epochs(context, dir)
+        val merged = local.toMutableMap()
 
-    /** The payload to push back. */
-    fun encode(ids: Set<String>): String {
-        val arr = JSONArray()
-        for (id in ids.sorted()) arr.put(id)
-        return arr.toString()
+        val remoteEpochsText = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync
+            .pull(context, epochsRemotePath(dir))
+        if (!remoteEpochsText.isNullOrBlank()) runCatching {
+            val obj = org.json.JSONObject(remoteEpochsText)
+            for (id in obj.keys()) {
+                val e = obj.optJSONObject(id) ?: continue
+                if (id.isBlank()) continue
+                val theirs = Epoch(e.optLong("d"), e.optLong("r"))
+                val ours = merged[id]
+                merged[id] = if (ours == null) theirs
+                else Epoch(maxOf(ours.d, theirs.d), maxOf(ours.r, theirs.r))
+            }
+        }
+        val remoteDeletedText = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync
+            .pull(context, remotePath(dir))
+        if (!remoteDeletedText.isNullOrBlank()) runCatching {
+            val arr = JSONArray(remoteDeletedText)
+            for (i in 0 until arr.length()) {
+                val id = arr.optString(i)
+                if (id.isNotBlank() && id !in merged) merged[id] = Epoch(LEGACY_DELETED_AT, 0L)
+            }
+        }
+
+        if (merged != local) save(context, dir, merged)
+        val dead = merged.filterValues { it.d > it.r }.keys
+        // An empty store is not pushed — absence reads as empty on every build, and this runs on
+        // every Directory open; see the iOS twin's note on the same guard.
+        if (merged.isNotEmpty()) {
+            val obj = org.json.JSONObject()
+            for (id in merged.keys.sorted()) {
+                val e = merged.getValue(id)
+                obj.put(id, org.json.JSONObject().put("d", e.d).put("r", e.r))
+            }
+            com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.push(context, epochsRemotePath(dir), obj.toString())
+            val arr = JSONArray()
+            for (id in dead.sorted()) arr.put(id)
+            com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.push(context, remotePath(dir), arr.toString())
+        }
+        return dead
     }
 }

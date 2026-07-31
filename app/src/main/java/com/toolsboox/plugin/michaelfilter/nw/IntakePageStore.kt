@@ -24,6 +24,16 @@ import java.time.LocalDate
  * text-only submission. Delivered markers on the data class prevent
  * re-enqueueing unchanged content; the server additionally dedups by URL.
  */
+/**
+ * Canonical form of a URL for tombstone matching: whitespace trimmed, fragment dropped, trailing
+ * slash dropped. The QUERY STAYS — nothing on this path strips tracking params
+ * ([IntakePageStore.fileLink] stores the URL exactly as shared), so two intake links differing
+ * only by query are genuinely two links and must not tombstone each other. File-scoped because
+ * both the merge's matching and [LaterRemovals.forget] have to agree on what "the same URL" is.
+ */
+private fun canonUrl(url: String): String =
+    url.trim().substringBefore('#').trimEnd('/')
+
 object IntakePageStore {
 
     private const val TAG = "IntakePageStore"
@@ -97,16 +107,33 @@ object IntakePageStore {
      * tombstoned URL is dropped from BOTH sides — which also means the merged page pushed back up
      * no longer carries it, so the deletion propagates to the other devices instead of fighting
      * them. Nothing else is filtered: a tombstone is only ever written by an explicit delete.
+     * Naming means the line's own URL EQUALS the tombstoned one (see [lineIsRemoved]) — it used to
+     * be `contains`, and one deleted bare-domain URL substring-killed every line on that domain,
+     * across every day.
      */
     private fun unionLines(a: String, b: String, removed: Set<String>): String {
         val seen = LinkedHashSet<String>()
         for (s in (a + "\n" + b).split("\n")) {
             val t = s.trim()
             if (t.isEmpty()) continue
-            if (removed.any { t.contains(it) }) continue
+            if (lineIsRemoved(t, removed)) continue
             seen.add(t)
         }
         return seen.joinToString("\n")
+    }
+
+    /**
+     * True when [line] names a tombstoned URL. A line is "title — url" ([fileLink]), and the URL
+     * is the only reliable half (the title is reconstructed when the row is built — see
+     * [unfileLink]): extract the line's URLs and compare them canonicalized, EQUAL not contains.
+     * A line with no URL falls back to exact whole-line match — never contains(). [removed] must
+     * already be canonicalized (see [merge]).
+     */
+    private fun lineIsRemoved(line: String, removed: Set<String>): Boolean {
+        if (removed.isEmpty()) return false
+        val urls = ShareTextParser.extractUrls(line)
+        return if (urls.isEmpty()) line.trim() in removed
+        else urls.any { canonUrl(it) in removed }
     }
 
     /**
@@ -117,7 +144,9 @@ object IntakePageStore {
      */
     private fun merge(context: Context, local: IntakePageData, remote: IntakePageData): IntakePageData {
         val m = IntakePageData()
-        val removed = LaterRemovals.all(context)
+        // Canonicalized once here so every line comparison below is canon-vs-canon; the stored
+        // set keeps whatever exact string was deleted (see [LaterRemovals]).
+        val removed = LaterRemovals.all(context).map { canonUrl(it) }.toSet()
         m.readTyped = unionLines(local.readTyped, remote.readTyped, removed)
         m.watchTyped = unionLines(local.watchTyped, remote.watchTyped, removed)
         m.listenTyped = unionLines(local.listenTyped, remote.listenTyped, removed)
@@ -127,7 +156,7 @@ object IntakePageStore {
         val educate = if (remote.educateTyped.length > local.educateTyped.length) remote.educateTyped else local.educateTyped
         m.educateTyped =
             if (removed.isEmpty()) educate
-            else educate.split("\n").filterNot { l -> removed.any { l.contains(it) } }.joinToString("\n")
+            else educate.split("\n").filterNot { l -> lineIsRemoved(l, removed) }.joinToString("\n")
         m.deliveredLinkUrls = (local.deliveredLinkUrls + remote.deliveredLinkUrls).distinct().toMutableList()
         m.deliveredEducateNote = local.deliveredEducateNote.ifBlank { remote.deliveredEducateNote }
         for (k in (local.sections.keys + remote.sections.keys)) {
@@ -295,11 +324,14 @@ object IntakePageStore {
         val data = load(context, date)
         val lines = data.typedFor(kind).split("\n")
         val link = url?.trim()?.takeIf { it.isNotEmpty() }
+        val canonLink = link?.let { canonUrl(it) }
         val kept = lines.filter { raw ->
             val line = raw.trim()
             when {
                 line.isEmpty() -> true
-                link != null -> !line.contains(link)
+                // The line's own URL must EQUAL the deleted one (canonicalized) — `contains`
+                // here meant deleting a bare-domain link took every line on that domain with it.
+                canonLink != null -> ShareTextParser.extractUrls(line).none { canonUrl(it) == canonLink }
                 else -> line != title
             }
         }
@@ -614,9 +646,12 @@ object LaterRemovals {
     }
 
     fun forget(context: Context, link: String) {
-        val key = link.trim()
+        // Canonical match, same as the merge's: the stored tombstone may differ from the re-filed
+        // URL by a trailing slash or fragment, and a forget that misses it would leave the merge
+        // quietly eating the deliberate second filing forever.
+        val key = canonUrl(link)
         if (key.isEmpty()) return
         val s = HashSet(all(context))
-        if (s.remove(key)) prefs(context).edit().putStringSet(KEY, s).apply()
+        if (s.removeAll { canonUrl(it) == key }) prefs(context).edit().putStringSet(KEY, s).apply()
     }
 }

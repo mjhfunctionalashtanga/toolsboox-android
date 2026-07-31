@@ -75,16 +75,31 @@ class CalendarDayService @Inject constructor() {
      * @param locale the current locale
      */
     fun load(rootPath: File, currentDate: LocalDate, defaultStartHour: Int?, locale: Locale): CalendarDay {
-        val calendarDay = CalendarDay(
+        return loadOrNull(rootPath, currentDate, defaultStartHour, locale) ?: CalendarDay(
             currentDate.year, currentDate.monthValue, currentDate.dayOfMonth, locale,
             mutableListOf(), mutableListOf(), true, defaultStartHour
         )
+    }
 
+    /**
+     * Load the data class from JSON file on the specified path, or null when nothing loadable.
+     *
+     * Callers who must tell "no file yet" apart from "a file exists but wouldn't load" — the
+     * distinction the read-only guard in CalendarDayPresenter lives on — pair this with [exists],
+     * instead of taking [load]'s fresh-day fallback and losing the difference.
+     *
+     * @param rootPath the root path
+     * @param currentDate the current date
+     * @param defaultStartHour the default start hour
+     * @param locale the current locale
+     * @return the data class, or null when no readable day file exists
+     */
+    fun loadOrNull(rootPath: File, currentDate: LocalDate, defaultStartHour: Int?, locale: Locale): CalendarDay? {
         val year = currentDate.format(DateTimeFormatter.ofPattern("yyyy"))
         val month = currentDate.format(DateTimeFormatter.ofPattern("MM"))
         val day = currentDate.format(DateTimeFormatter.ofPattern("dd"))
 
-        val loadedCalendarDay = load(rootPath, "$year/$month/", "day-$year-$month-$day") ?: calendarDay
+        val loadedCalendarDay = load(rootPath, "$year/$month/", "day-$year-$month-$day") ?: return null
         // A concrete start-hour SETTING wins over whatever the day cached. It used to be the other
         // way — the day's saved value took precedence — so once a day had been opened at the old
         // 5am default, changing the setting to 7am never took on that day. When the caller passes
@@ -94,6 +109,23 @@ class CalendarDayService @Inject constructor() {
             else loadedCalendarDay.startHour ?: defaultStartHour
 
         return loadedCalendarDay
+    }
+
+    /**
+     * True when a day file (v2 or v1) exists on disk for this date — readable or not.
+     *
+     * @param rootPath the root path
+     * @param currentDate the current date
+     * @return true when a file is present
+     */
+    fun exists(rootPath: File, currentDate: LocalDate): Boolean {
+        val year = currentDate.format(DateTimeFormatter.ofPattern("yyyy"))
+        val month = currentDate.format(DateTimeFormatter.ofPattern("MM"))
+        val day = currentDate.format(DateTimeFormatter.ofPattern("dd"))
+
+        val fullPath = File(rootPath, "calendar/$year/$month/")
+        return File(fullPath, "day-$year-$month-$day-v2.json").exists() ||
+                File(fullPath, "day-$year-$month-$day.json").exists()
     }
 
     /**
@@ -139,9 +171,11 @@ class CalendarDayService @Inject constructor() {
         // A day too large to read is treated as unwritten, the same as a corrupt one. That is the
         // least-bad answer available here (see the caller: it renders a fresh empty day), and it is
         // strictly better than dying — but it is NOT harmless, because a save over that empty day
-        // would discard the file's real content. The durable fix is to stop putting megabytes of
-        // base64 inside the day JSON at all; LedgerImageCodec now writes photographs as JPEG, and
-        // externalising blobs entirely is the follow-on.
+        // would discard the file's real content. That save is what the read-only guard in
+        // CalendarDayPresenter now blocks: a day whose file EXISTS but wouldn't load renders blank
+        // and refuses every save until a load succeeds. The durable fix is to stop putting
+        // megabytes of base64 inside the day JSON at all; LedgerImageCodec now writes photographs
+        // as JPEG, and externalising blobs entirely is the follow-on.
         val json = try {
             item.readText(Charsets.UTF_8)
         } catch (e: Throwable) {

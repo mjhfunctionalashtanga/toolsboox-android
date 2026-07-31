@@ -137,6 +137,8 @@ android {
 dependencies {
     // Commons
     implementation 'com.jakewharton.timber:timber:5.0.1'
+    // HTML allowlist-cleaning for feed/article content before it reaches a JS-enabled WebView
+    implementation 'org.jsoup:jsoup:1.17.2'
 
     // Google clients and libraries
     implementation 'com.android.billingclient:billing:8.0.0'

@@ -28,7 +28,12 @@ class PanelWebhookWorker(
         var retry = false
         for (file in jobs) {
             val job = PanelWebhookQueue.load(file) ?: run { file.delete(); null } ?: continue
-            when (PanelWebhookClient.post(job)) {
+            // The job JSON on disk carries no auth key (see PanelWebhookQueue.enqueue): resolve
+            // it from the encrypted store by destination name, falling back to whatever a
+            // pre-migration job still holds in its own record.
+            val key = PanelWebhookStore.list(applicationContext)
+                .firstOrNull { it.name == job.webhookName }?.key ?: job.key
+            when (PanelWebhookClient.post(job, key)) {
                 is PanelWebhookClient.Result.Ok -> {
                     Timber.i("$TAG: delivered ${job.panelId} → ${job.webhookName}")
                     PanelWebhookQueue.delete(file)

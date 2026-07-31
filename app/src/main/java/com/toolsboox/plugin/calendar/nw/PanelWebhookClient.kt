@@ -32,10 +32,13 @@ object PanelWebhookClient {
         object NetworkFailure : Result()
     }
 
-    fun post(job: PanelWebhookJob): Result {
+    /** [key] rides separately from the job because queued job JSON no longer carries it — the
+     *  worker resolves it from the encrypted [PanelWebhookStore] at send time. The default keeps
+     *  a job queued before that change (whose JSON still holds its key) deliverable. */
+    fun post(job: PanelWebhookJob, key: String? = job.key): Result {
         val image = File(job.imageFile)
         val body = MultipartBody.Builder().setType(MultipartBody.FORM).apply {
-            job.key?.takeIf { it.isNotBlank() }?.let { addFormDataPart("key", it) }
+            key?.takeIf { it.isNotBlank() }?.let { addFormDataPart("key", it) }
             addFormDataPart("panel", job.panelId)
             addFormDataPart("title", job.title)
             addFormDataPart("text", job.text)

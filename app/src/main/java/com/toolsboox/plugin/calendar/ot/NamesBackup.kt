@@ -408,7 +408,6 @@ object NamesBackup {
         }
 
         var buried = 0
-        val newDead = LinkedHashSet(dead)
         val stones = sec.optJSONArray("deleted") ?: JSONArray()
         for (i in 0 until stones.length()) {
             val id = stones.optString(i)
@@ -417,14 +416,16 @@ object NamesBackup {
                 Timber.i("names import: headstone $id ignored, ${s.id} has a live row for it")
                 continue
             }
-            newDead.add(id)
+            // addLegacy, never add: a backup's headstones carry no clocks, so they land at the
+            // dawn of time — a revival recorded on any device after this backup was taken
+            // outranks them, instead of the backup re-burying the recreated document.
+            LedgerDocumentTombstones.addLegacy(context, s.dir, id)
             byId.remove(id)   // only ever removes a row this same file just handed us
             buried++
         }
 
         if (restored > 0 || buried > 0) {
             writeRows(context, s.dir, byId.values.toList())
-            if (buried > 0) LedgerDocumentTombstones.save(context, s.dir, newDead)
             syncOf(s, context)
         }
         return restored to buried

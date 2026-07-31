@@ -119,6 +119,18 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
                 serve(request.url)
 
+            // The reader WebView never leaves its own origin. The bridge is exposed to whatever
+            // page is loaded ([addJavascriptInterface] above), so an EPUB link that navigated the
+            // main frame to an outside page would hand AndroidReaderBridge to that page's scripts.
+            // Anything off-origin goes to a real browser instead.
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                if (request.url.host == HOST) return false
+                runCatching {
+                    startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, request.url))
+                }.onFailure { Timber.w(it, "No browser for ${request.url}") }
+                return true
+            }
+
             override fun onPageFinished(view: WebView, url: String?) {
                 // Belt-and-suspenders shim if document-start isn't supported.
                 if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {

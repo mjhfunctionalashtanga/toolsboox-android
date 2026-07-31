@@ -9,6 +9,7 @@ import java.io.FileReader
 import java.io.FileWriter
 import java.io.PrintWriter
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.time.Instant
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -108,15 +109,27 @@ class CalendarQuarterService @Inject constructor() {
         if (!item.exists()) return null
         if (!item.name.startsWith("quarter-")) return null
 
-        FileReader(item).use { fileReader ->
-            Timber.i("Try to load from ${item.name}")
-            if (item.absolutePath.endsWith("-v2.json")) {
-                moshi.adapter(CalendarQuarter::class.java)
-                    .fromJson(fileReader.readText())?.let { return it }
-            } else {
-                moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarQuarter::class.java)
-                    .fromJson(fileReader.readText())?.let { return CalendarQuarter.convert(it) }
+        // A corrupt or unreadable file must not throw out of the presenter — but the caller
+        // falls back to a fresh empty quarter, and a later save would replace the file. So the
+        // bytes are quarantined aside first: a truncated-but-recoverable quarter can be repaired
+        // by hand, an overwritten one cannot. Throwable, not Exception — OutOfMemoryError is
+        // an Error and walks straight past `catch (e: Exception)`.
+        try {
+            FileReader(item).use { fileReader ->
+                Timber.i("Try to load from ${item.name}")
+                if (item.absolutePath.endsWith("-v2.json")) {
+                    moshi.adapter(CalendarQuarter::class.java)
+                        .fromJson(fileReader.readText())?.let { return it }
+                } else {
+                    moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarQuarter::class.java)
+                        .fromJson(fileReader.readText())?.let { return CalendarQuarter.convert(it) }
+                }
             }
+        } catch (e: Throwable) {
+            val quarantine = File(item.parentFile, "${item.name}.corrupt-${System.currentTimeMillis() / 1000}")
+            Timber.w(e, "Corrupt ${item.name}; quarantining to ${quarantine.name}")
+            runCatching { Files.move(item.toPath(), quarantine.toPath()) }
+            return null
         }
 
         return null
@@ -153,8 +166,29 @@ class CalendarQuarterService @Inject constructor() {
         val fullPath = File(rootPath, "calendar/$path")
         fullPath.mkdirs()
 
-        // Try to save to v2
-        PrintWriter(FileWriter(File(fullPath, "$baseName-v2.json"))).use { it.write(json(calendarQuarter)) }
+        // Write to a temp file first, then atomically move it into place. A direct write to the
+        // final name leaves a truncated, unparseable file if the process is killed mid-write —
+        // and quarter ink has no remote copy (day-only sync), so that would be the only copy gone.
+        val target = File(fullPath, "$baseName-v2.json")
+        val temp = File(fullPath, "$baseName-v2.json.tmp")
+        // PrintWriter swallows IOExceptions — on a full disk it "succeeds" with a truncated
+        // temp file. checkError() surfaces the failure so we abort before the move.
+        PrintWriter(FileWriter(temp)).use {
+            it.write(json(calendarQuarter))
+            it.flush()
+            if (it.checkError()) {
+                temp.delete()
+                throw java.io.IOException("write failed (disk full?) for $baseName-v2.json")
+            }
+        }
+        try {
+            Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } catch (e: Exception) {
+            // ATOMIC_MOVE can be unsupported on some filesystems; fall back to a
+            // plain replace, which is still safer than writing the target directly.
+            Timber.w(e, "Atomic move unavailable for $baseName-v2.json; falling back to replace")
+            Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
 
         // Try to rename the old file to .backup
         val source = File(fullPath, "$baseName.json")

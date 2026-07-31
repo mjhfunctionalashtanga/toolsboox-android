@@ -153,18 +153,10 @@ object WritePageStore {
      */
     fun sync(context: Context) {
         com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.background {
-            // Headstones first: the union of what every device knows to be deleted is what the
-            // entry merge below is allowed to keep. Round-tripped exactly like the index itself, on
-            // its own path, so an iOS reader of pages.json never sees it.
-            val dead = LedgerDocumentTombstones.merge(
-                context,
-                DIR,
-                com.toolsboox.plugin.calendar.nw.LedgerSidecarSync
-                    .pull(context, LedgerDocumentTombstones.remotePath(DIR))
-            )
-            com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.push(
-                context, LedgerDocumentTombstones.remotePath(DIR), LedgerDocumentTombstones.encode(dead)
-            )
+            // Headstones first: what every device knows to be deleted, less what any device has
+            // since revived (the epochs round trip; see LedgerDocumentTombstones), is what the
+            // entry merge below is allowed to keep. Its own paths, invisible to pages.json readers.
+            val dead = LedgerDocumentTombstones.roundTrip(context, DIR)
 
             val local = list(context)
             val remoteText = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.pull(context, remotePath())

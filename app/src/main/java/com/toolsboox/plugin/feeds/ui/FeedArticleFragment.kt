@@ -19,6 +19,7 @@ import com.toolsboox.plugin.calendar.da.v2.ReadingEvent
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
 import com.toolsboox.plugin.feeds.da.FeedEntry
 import com.toolsboox.plugin.feeds.nw.MinifluxClient
+import com.toolsboox.plugin.feeds.ot.ArticleSanitizer
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -348,7 +349,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         val real = e.id > 0
         binding.artStar.visibility = if (real) View.VISIBLE else View.GONE
         binding.artAnnotate.visibility = if (real) View.VISIBLE else View.GONE
-        binding.articleWeb.loadDataWithBaseURL(articleBaseUrl(e), buildHtml(e, e.content), "text/html", "UTF-8", null)
+        binding.articleWeb.loadDataWithBaseURL(articleBaseUrl(), buildHtml(e, e.content), "text/html", "UTF-8", null)
         updateStar()
         updateParse()
         // A content-less entry (opened from a Stars & Events row, where only the URL rides along)
@@ -378,7 +379,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         val e = entry ?: return
         if (parsed) {
             parsed = false
-            binding.articleWeb.loadDataWithBaseURL(articleBaseUrl(e), buildHtml(e, e.content), "text/html", "UTF-8", null)
+            binding.articleWeb.loadDataWithBaseURL(articleBaseUrl(), buildHtml(e, e.content), "text/html", "UTF-8", null)
             updateParse()
             return
         }
@@ -396,7 +397,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
             when (res) {
                 is MinifluxClient.Result.Ok -> {
                     parsed = true
-                    binding.articleWeb.loadDataWithBaseURL(articleBaseUrl(e), buildHtml(e, res.value.ifBlank { e.content }), "text/html", "UTF-8", null)
+                    binding.articleWeb.loadDataWithBaseURL(articleBaseUrl(), buildHtml(e, res.value.ifBlank { e.content }), "text/html", "UTF-8", null)
                     updateParse()
                 }
                 is MinifluxClient.Result.Err -> showMessage("⚠️ " + res.message)
@@ -405,9 +406,12 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
     }
 
     /** A real https baseUrl gives the WebView document a valid origin/referer. A null baseUrl leaves
-     *  embeds on an opaque origin, which makes YouTube fail with "error 150" (embedding not allowed). */
-    private fun articleBaseUrl(e: FeedEntry): String =
-        e.url.takeIf { it.startsWith("http", ignoreCase = true) } ?: "https://www.youtube.com"
+     *  embeds on an opaque origin, which makes YouTube fail with "error 150" (embedding not allowed).
+     *  But the origin must NOT be the entry's own url: that field is feed-supplied, this WebView's
+     *  cookie jar holds real logged-in sessions (see SiteWebFragment), and feed HTML rendered on a
+     *  session origin could read those cookies. Any real https origin satisfies YouTube, so every
+     *  article loads on the sanitizer's sentinel instead. */
+    private fun articleBaseUrl(): String = ArticleSanitizer.BASE_URL
 
     /**
      * YouTube refuses many embeds in a WebView (error 150/152 — embedding disabled), leaving a
@@ -429,7 +433,11 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
     }
 
     private fun buildHtml(e: FeedEntry, rawContent: String): String {
-        val content = rewriteYouTubeEmbeds(rawContent)
+        // Somebody else's HTML: allowlist-clean it (scripts/on*/javascript: gone, relative media
+        // absolutised against the entry url) BEFORE the YouTube rewrite — the sanitizer lets the
+        // YouTube embed iframes through, and cleaning first keeps the rewrite's own inline-styled
+        // thumbnail card intact. The selection bridge only reads text, so cleaning costs it nothing.
+        val content = rewriteYouTubeEmbeds(ArticleSanitizer.clean(rawContent, e.url))
         val meta = listOf(e.feedTitle, e.author ?: "").filter { it.isNotBlank() }.joinToString(" · ")
         return """
             <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">

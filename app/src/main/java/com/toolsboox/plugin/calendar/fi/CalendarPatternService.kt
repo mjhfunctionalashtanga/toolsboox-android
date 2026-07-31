@@ -9,6 +9,7 @@ import java.io.FileReader
 import java.io.FileWriter
 import java.io.PrintWriter
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.*
@@ -64,15 +65,27 @@ class CalendarPatternService @Inject constructor() {
      */
     fun load(item: File): CalendarPattern? {
         if (item.exists()) {
-            FileReader(item).use { fileReader ->
-                Timber.i("Try to load from ${item.name}")
-                if (item.absolutePath.endsWith("-v1.json")) {
-                    moshi.adapter(CalendarPattern::class.java)
-                        .fromJson(fileReader.readText())?.let { return it }
-                } else {
-                    moshi.adapter(CalendarPattern::class.java)
-                        .fromJson(fileReader.readText())?.let { return it }
+            // A corrupt or unreadable file must not throw out of the presenter — but the caller
+            // falls back to a fresh filled pattern, and a later save would replace the file. So
+            // the bytes are quarantined aside first: a truncated-but-recoverable pattern can be
+            // repaired by hand, an overwritten one cannot. Throwable, not Exception —
+            // OutOfMemoryError is an Error and walks straight past `catch (e: Exception)`.
+            try {
+                FileReader(item).use { fileReader ->
+                    Timber.i("Try to load from ${item.name}")
+                    if (item.absolutePath.endsWith("-v1.json")) {
+                        moshi.adapter(CalendarPattern::class.java)
+                            .fromJson(fileReader.readText())?.let { return it }
+                    } else {
+                        moshi.adapter(CalendarPattern::class.java)
+                            .fromJson(fileReader.readText())?.let { return it }
+                    }
                 }
+            } catch (e: Throwable) {
+                val quarantine = File(item.parentFile, "${item.name}.corrupt-${System.currentTimeMillis() / 1000}")
+                Timber.w(e, "Corrupt ${item.name}; quarantining to ${quarantine.name}")
+                runCatching { Files.move(item.toPath(), quarantine.toPath()) }
+                return null
             }
         }
 
@@ -95,9 +108,29 @@ class CalendarPatternService @Inject constructor() {
         val baseName = "pattern-$year"
 
         Timber.i("Try to save of ${baseName}-v1.json to $path")
-        PrintWriter(FileWriter(File(path, "$baseName-v1.json"))).use {
+        // Write to a temp file first, then atomically move it into place. A direct write to the
+        // final name leaves a truncated, unparseable file if the process is killed mid-write —
+        // and the pattern has no remote copy (day-only sync), so that would be the only copy gone.
+        val target = File(path, "$baseName-v1.json")
+        val temp = File(path, "$baseName-v1.json.tmp")
+        // PrintWriter swallows IOExceptions — on a full disk it "succeeds" with a truncated
+        // temp file. checkError() surfaces the failure so we abort before the move.
+        PrintWriter(FileWriter(temp)).use {
             val adapter = moshi.adapter(CalendarPattern::class.java)
             it.write(adapter.toJson(calendarPattern))
+            it.flush()
+            if (it.checkError()) {
+                temp.delete()
+                throw java.io.IOException("write failed (disk full?) for $baseName-v1.json")
+            }
+        }
+        try {
+            Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } catch (e: Exception) {
+            // ATOMIC_MOVE can be unsupported on some filesystems; fall back to a
+            // plain replace, which is still safer than writing the target directly.
+            Timber.w(e, "Atomic move unavailable for $baseName-v1.json; falling back to replace")
+            Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
         }
 
         // Try to rename the old file to .backup

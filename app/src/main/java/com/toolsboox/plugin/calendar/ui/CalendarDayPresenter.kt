@@ -80,7 +80,18 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                 try {
                     val rootPath = rootPath(fragment, Environment.DIRECTORY_DOCUMENTS)
 
-                    val calendarDay = calendarDayService.load(rootPath, currentDate, defaultStartHour, locale)
+                    // The service treats an unreadable day file (OOM-large, corrupt beyond the
+                    // blank-file fallback) as unwritten so the page still renders — but a save over
+                    // that blank render would discard the file's real content. When a file EXISTS
+                    // and still wouldn't load, mark the day read-only: render the blank, say so,
+                    // and refuse every save until a load succeeds. The flag is set on every load,
+                    // so navigating to another day (or a repaired file) clears it.
+                    val loadedCalendarDay = calendarDayService.loadOrNull(rootPath, currentDate, defaultStartHour, locale)
+                    val dayReadOnly = loadedCalendarDay == null && calendarDayService.exists(rootPath, currentDate)
+                    val calendarDay = loadedCalendarDay ?: CalendarDay(
+                        currentDate.year, currentDate.monthValue, currentDate.dayOfMonth, locale,
+                        mutableListOf(), mutableListOf(), true, defaultStartHour
+                    )
                     val calendarPattern = calendarPatternService.load(rootPath, currentDate, locale)
                     var calendarEvents = calendarEventsService.loadEvents(fragment, currentDate)
                     // The setting is authoritative when it names an hour; see CalendarDayService.
@@ -93,7 +104,10 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                     val measureCtx = fragment.context?.applicationContext
 
                     var dayDirty = false
-                    if (currentDate.isEqual(LocalDate.now())) {
+                    // Carry-over would prune yesterday's tasks after copying them into a blank
+                    // today that will never be saved — losing them from both days — so a
+                    // read-only day skips it (and the reflow rewrite) entirely.
+                    if (currentDate.isEqual(LocalDate.now()) && !dayReadOnly) {
                         val yesterday = currentDate.minusDays(1)
                         val yesterdayCalendarDay = calendarDayService.load(rootPath, yesterday, defaultStartHour, locale)
 
@@ -111,7 +125,7 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                     // Repair pass: days written by the old fixed-pitch placement hold task boxes
                     // that draw straight through the row below them. Re-laying them on measured
                     // heights is idempotent, so a day is rewritten once and then goes quiet.
-                    if (LedgerTaskCarryOver.reflow(measureCtx, calendarDay)) dayDirty = true
+                    if (!dayReadOnly && LedgerTaskCarryOver.reflow(measureCtx, calendarDay)) dayDirty = true
 
                     if (dayDirty) {
                         CalendarPatternService.mutex.withLock {
@@ -145,7 +159,15 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                         calendarDay.events.addAll(journalEvents)
                     }
 
-                    withContext(Dispatchers.Main) { fragment.renderPage(calendarDay, calendarPattern, calendarEvents) }
+                    withContext(Dispatchers.Main) {
+                        fragment.dayReadOnly = dayReadOnly
+                        if (dayReadOnly) {
+                            fragment.runOnActivity {
+                                fragment.showMessage("Couldn't read this day — showing blank, not saving.", binding.root)
+                            }
+                        }
+                        fragment.renderPage(calendarDay, calendarPattern, calendarEvents)
+                    }
                 } catch (e: IOException) {
                     withContext(Dispatchers.Main) { fragment.somethingHappened(e) }
                 }
@@ -172,6 +194,22 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
         if (!checkPermissions(fragment, binding.root)) return
 
         GlobalScope.launch(Dispatchers.IO) {
+            // Every save of the day file funnels through here, which makes this the one place
+            // the read-only guard has to hold: a day that rendered blank because its file
+            // wouldn't load must never be written over — the on-disk bytes are the only copy
+            // of its real content. The flag is read on Main, where load sets it. Per-stroke
+            // saves are refused silently (a snackbar per pen-up would flash the e-ink);
+            // explicit actions get the message again.
+            val dayReadOnly = withContext(Dispatchers.Main) { fragment.dayReadOnly }
+            if (dayReadOnly) {
+                Timber.w("Refusing save for $currentDate: day file exists but wouldn't load")
+                if (showProgress) withContext(Dispatchers.Main) {
+                    fragment.runOnActivity {
+                        fragment.showMessage("Couldn't read this day — showing blank, not saving.", binding.root)
+                    }
+                }
+                return@launch
+            }
             try {
                 // Per-stroke saves pass showProgress=false: flashing mainProgress VISIBLE/
                 // INVISIBLE on every pen-up forces an e-ink refresh + relayout, which on the

@@ -87,7 +87,14 @@ object BookNoteStore {
             val f = file(context)
             val tmp = File(f.parentFile, f.name + ".tmp")
             tmp.writeText(obj.toString())
-            if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
+            // Never delete the good copy to make room for the rename — a kill between the
+            // delete and the rename loses the only local copy. Files.move replaces in one step.
+            try {
+                java.nio.file.Files.move(tmp.toPath(), f.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+            } catch (_: Exception) {
+                // ATOMIC_MOVE can be unsupported on some filesystems; fall back to a plain replace.
+                java.nio.file.Files.move(tmp.toPath(), f.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            }
         }.onFailure { Timber.w(it, "book notes save failed") }.let {}
 
     private fun toJson(n: BookNote): JSONObject = JSONObject()

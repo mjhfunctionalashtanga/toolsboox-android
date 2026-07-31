@@ -44,7 +44,14 @@ object AnnotationCorpus {
             val dest = file(context)
             val tmp = File(dest.parentFile, dest.name + ".tmp")
             tmp.writeText(obj.toString())
-            if (!tmp.renameTo(dest)) { dest.writeText(obj.toString()); tmp.delete() }
+            // Files.move, not a renameTo fallback that writes the destination directly — a kill
+            // during that direct write is exactly the truncation the temp file exists to prevent.
+            try {
+                java.nio.file.Files.move(tmp.toPath(), dest.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+            } catch (_: Exception) {
+                // ATOMIC_MOVE can be unsupported on some filesystems; fall back to a plain replace.
+                java.nio.file.Files.move(tmp.toPath(), dest.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            }
         }
     }
 

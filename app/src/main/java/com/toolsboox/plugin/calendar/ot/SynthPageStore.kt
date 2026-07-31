@@ -98,17 +98,9 @@ object SynthPageStore {
     /** Round-trip the registry so a topic page made on one device appears on the others. */
     fun sync(context: Context) {
         com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.background {
-            // Headstones first — see [WritePageStore.sync]. Same round trip, its own path, invisible
-            // to an iOS reader of pages.json.
-            val dead = LedgerDocumentTombstones.merge(
-                context,
-                DIR,
-                com.toolsboox.plugin.calendar.nw.LedgerSidecarSync
-                    .pull(context, LedgerDocumentTombstones.remotePath(DIR))
-            )
-            com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.push(
-                context, LedgerDocumentTombstones.remotePath(DIR), LedgerDocumentTombstones.encode(dead)
-            )
+            // Headstones first — see [WritePageStore.sync]. Same epochs round trip, its own paths,
+            // invisible to an iOS reader of pages.json.
+            val dead = LedgerDocumentTombstones.roundTrip(context, DIR)
 
             val local = list(context)
             val remoteText = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.pull(context, remotePath())

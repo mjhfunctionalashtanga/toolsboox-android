@@ -1158,8 +1158,12 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // entries fall through to the plain article path unchanged.)
         val ytId = if (entry.kind == "watch") entry.youTubeId else null
         if (ytId != null) {
-            val base = entry.url.takeIf { it.startsWith("http", ignoreCase = true) } ?: "https://www.youtube.com"
-            binding.articleWeb.loadDataWithBaseURL(base, buildYouTubeHtml(entry, ytId), "text/html", "UTF-8", null)
+            // The skin escapes everything feed-supplied, but the document still must not adopt the
+            // entry's (feed-supplied) url as its origin — the sanitizer's sentinel is a real https
+            // origin, which is all the tap-to-play embed needs. See ArticleSanitizer.BASE_URL.
+            binding.articleWeb.loadDataWithBaseURL(
+                com.toolsboox.plugin.feeds.ot.ArticleSanitizer.BASE_URL,
+                buildYouTubeHtml(entry, ytId), "text/html", "UTF-8", null)
             kickChapterResolve(entry)
             return
         }
@@ -1173,9 +1177,13 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             return
         }
         // A real https baseUrl gives the document a valid origin/referer; a null baseUrl makes YouTube
-        // (and other) embeds fail with "error 150" (embedding-not-allowed for the opaque origin).
-        val base = httpUrl ?: "https://www.youtube.com"
-        binding.articleWeb.loadDataWithBaseURL(base, buildArticleHtml(entry, body), "text/html", "UTF-8", null)
+        // (and other) embeds fail with "error 150" (embedding-not-allowed for the opaque origin). But
+        // NOT the entry's own url: that field is feed-supplied, and this WebView's cookie jar holds
+        // real logged-in sessions (see SiteWebFragment). Any real https origin satisfies YouTube, so
+        // the article loads on the sanitizer's sentinel — see ArticleSanitizer.BASE_URL.
+        binding.articleWeb.loadDataWithBaseURL(
+            com.toolsboox.plugin.feeds.ot.ArticleSanitizer.BASE_URL,
+            buildArticleHtml(entry, body), "text/html", "UTF-8", null)
     }
 
     /** Whether the pill is shrunk to the slim article drawer (↑ ↓ · next · back). */
@@ -1348,6 +1356,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     private fun buildArticleHtml(e: FeedEntry, content: String = e.content): String {
         val meta = listOf(e.feedTitle, e.author ?: "").filter { it.isNotBlank() }.joinToString(" · ")
         fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        // Somebody else's HTML: allowlist-clean it (scripts/on*/javascript: gone, relative media
+        // absolutised against the entry url) BEFORE the YouTube rewrite — the sanitizer lets the
+        // YouTube embed iframes through, and cleaning first keeps the rewrite's own inline-styled
+        // thumbnail card intact. Same pass as the standalone Articles reader.
+        val safeBody = rewriteYouTubeEmbeds(com.toolsboox.plugin.feeds.ot.ArticleSanitizer.clean(content, e.url))
         return """
             <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
@@ -1364,7 +1377,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             </style></head><body>
             <h1>${esc(e.title)}</h1>
             <div class="meta">${esc(meta)}</div>
-            ${rewriteYouTubeEmbeds(content)}
+            $safeBody
             </body></html>
         """.trimIndent()
     }
@@ -1398,7 +1411,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
      * white throughout; nothing shaded to vanish on e-ink.
      */
     private fun buildYouTubeHtml(e: FeedEntry, videoId: String): String {
-        fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        // Quotes escaped too — [thumb] below is feed-supplied and lands inside a src="…" attribute.
+        fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
         val chaptersLib = com.toolsboox.plugin.feeds.nw.FeedChapters
         val chapters = chaptersLib.quick(requireContext(), e)
         val date = publishedDate(e)?.format(
@@ -1441,7 +1455,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
               .desc { font-size: 16px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: break-word; }
             </style></head><body>
             <div id="player" onclick="if(!played)play(0)">
-              <img src="$thumb"/><div class="cue"><span>▶</span></div>
+              <img src="${esc(thumb)}"/><div class="cue"><span>▶</span></div>
             </div>
             <div class="wrap">
               <h1>${esc(e.title)}</h1>

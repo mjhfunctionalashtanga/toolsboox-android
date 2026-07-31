@@ -169,6 +169,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private lateinit var calendarPattern: CalendarPattern
 
     /**
+     * True when this day's file exists on disk but could not be read (OOM-large, corrupt beyond
+     * the blank-file fallback in CalendarDayService.load) — the page renders blank and the
+     * presenter refuses every save, because a save over the blank would discard the file's real
+     * content. Set fresh by every presenter.load, so navigating away (or a repaired file) clears
+     * it; it never sticks to another day.
+     */
+    var dayReadOnly = false
+
+    /**
      * Typed content of the MichaelFilter intake page (loaded lazily per day).
      */
     private var intakePageData: IntakePageData? = null
@@ -1433,7 +1442,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     // Same-file discipline as the share-in path: the open page re-saves today's
                     // file wholesale on every pen-up, so this cycle must serialize against it.
                     DayLocks.withDay(today) {
-                        val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
+                        // The presenter's read-only rule holds for this load→mutate→save too: a
+                        // day file that exists but wouldn't load must not be saved over.
+                        val day = calendarDayService.loadOrNull(root, today, null, java.util.Locale.getDefault())
+                            ?: if (calendarDayService.exists(root, today)) return@withDay
+                            else calendarDayService.load(root, today, null, java.util.Locale.getDefault())
                         day.ledgerItems.add(item)
                         calendarDayService.save(root, today, day)
                     }
@@ -5160,7 +5173,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     }
                     // Persist the graduation on the intake gram.
                     DayLocks.withDay(currentDate) {
-                        val day = calendarDayService.load(root, currentDate, null, java.util.Locale.getDefault())
+                        // The presenter's read-only rule holds for this load→mutate→save too: a
+                        // day file that exists but wouldn't load must not be saved over.
+                        val day = calendarDayService.loadOrNull(root, currentDate, null, java.util.Locale.getDefault())
+                            ?: if (calendarDayService.exists(root, currentDate)) return@withDay
+                            else calendarDayService.load(root, currentDate, null, java.util.Locale.getDefault())
                         day.imageElements.firstOrNull { it.elementId == element.elementId }
                             ?.graduatedTo = board.key
                         calendarDayService.save(root, currentDate, day)

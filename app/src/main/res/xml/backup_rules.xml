@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Auto Backup rules for API 31+ (android:dataExtractionRules). The API ≤30 twin is
+  backup_content.xml, which carries the full reasoning — keep the two lists identical.
+  Device-to-device transfer gets the same exclusions as cloud: encrypted prefs are keystore-bound
+  and don't decrypt on the new device either, and the plain-prefs credentials shouldn't ride a
+  transfer cable any more than a cloud backup.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="."/>
+        <exclude domain="device_sharedpref" path="."/>
+        <exclude domain="external" path="."/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="."/>
+        <exclude domain="device_sharedpref" path="."/>
+        <exclude domain="external" path="."/>
+    </device-transfer>
+</data-extraction-rules>

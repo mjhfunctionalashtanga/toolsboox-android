@@ -27,12 +27,16 @@ object PanelWebhookQueue {
     fun queueDir(context: Context): File =
         File(context.filesDir, QUEUE_DIR).apply { mkdirs() }
 
-    /** Persist [pngBytes] + a job JSON that points at it. Returns the job's id (or null). */
+    /** Persist [pngBytes] + a job JSON that points at it. Returns the job's id (or null).
+     *  The webhook's `key` auth field is deliberately NOT persisted: the job JSON is a plain
+     *  file, and the key already lives in the encrypted [PanelWebhookStore] — the drain worker
+     *  looks it up by destination name at send time (which also means a rotated key applies to
+     *  jobs queued before the rotation). */
     fun enqueue(context: Context, job: PanelWebhookJob, pngBytes: ByteArray): String? = try {
         val id = UUID.randomUUID().toString()
         val png = File(queueDir(context), "$id.png")
         png.writeBytes(pngBytes)
-        val stored = job.copy(imageFile = png.absolutePath)
+        val stored = job.copy(imageFile = png.absolutePath, key = null)
         File(queueDir(context), "$id.json").writeText(adapter.toJson(stored))
         id
     } catch (e: Exception) {
