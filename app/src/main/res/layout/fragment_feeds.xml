@@ -141,6 +141,39 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"/>
 
+    <!-- Later List selection bar: shown only while selecting rows for bulk delete. Sits ABOVE
+         the list (not floating over it) so no row hides under it; flat black-on-white with a
+         hairline underline — no elevation or tint to gray out on e-ink. -->
+    <LinearLayout
+        android:id="@+id/later_select_bar"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:visibility="gone"
+        android:background="#FFFFFF"
+        android:paddingHorizontal="12dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+        <TextView
+            android:id="@+id/later_select_count"
+            android:textColor="#000000"
+            android:textStyle="bold"
+            android:textSize="15sp"
+            android:layout_width="0dp" android:layout_weight="1"
+            android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/later_select_delete"
+            android:text="@string/feeds_select_delete"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        <Button
+            android:id="@+id/later_select_cancel"
+            android:text="@android:string/cancel"
+            android:layout_marginStart="6dp"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </LinearLayout>
+    <View android:id="@+id/later_select_divider"
+        android:visibility="gone"
+        android:layout_width="match_parent" android:layout_height="1dp" android:background="#000000"/>
+
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/feeds_recycler"
         android:layout_width="match_parent"

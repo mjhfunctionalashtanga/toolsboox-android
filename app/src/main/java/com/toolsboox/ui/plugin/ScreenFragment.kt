@@ -1083,9 +1083,11 @@ abstract class ScreenFragment : Fragment() {
     }
 
     /**
-     * One entry in the [showAccordion] directory. With [action] set it renders as a standalone
-     * tappable row (no caret) — for top-level items like All / Stars that aren't folders;
-     * otherwise it's a collapsible folder over [items].
+     * One entry in the [showAccordion] directory. With [action] set and no [items] it renders as
+     * a standalone tappable row (no caret) — for top-level items like All / Stars that aren't
+     * folders; with [items] alone it's a collapsible folder. BOTH together make a door with a
+     * caret: tapping the label fires [action] (the row's primary destination), and only the
+     * caret at the row's end unfolds [items] — the Search·Ask·Directory row is why this exists.
      */
     data class Folder(
         val emoji: String, val title: String,
@@ -1377,8 +1379,8 @@ abstract class ScreenFragment : Fragment() {
             scaleRowIcon(header, textScale)
             scaleRowPadding(header, textScale)
 
-            // A leaf entry (has [action]) is a plain tappable row — no caret, no children.
-            if (folder.action != null) {
+            // A leaf entry ([action], no children) is a plain tappable row — no caret, no children.
+            if (folder.action != null && folder.items.isEmpty()) {
                 headerLabel.text = glyphLabel(glyph, folder.title)
                 header.setOnClickListener { dialog.dismiss(); folder.action.invoke() }
                 list.addView(header)
@@ -1400,16 +1402,39 @@ abstract class ScreenFragment : Fragment() {
                 setPadding(dp(2), dp(2), dp(2), dp(4))
             }
             fun caret() = if (children.visibility == View.VISIBLE) "▾" else "▸"
-            // Glyph LEFT of the caret, matching where the mapped drawable icons sit.
-            fun headerText(): CharSequence =
-                if (glyph.isEmpty()) "${caret()}  ${folder.title}"
-                else glyphLabel(glyph, "${caret()}  ${folder.title}")
-            headerLabel.text = headerText()
-            header.setOnClickListener {
-                val show = children.visibility != View.VISIBLE
-                children.visibility = if (show) View.VISIBLE else View.GONE
-                children.background = if (show) outline else null
+            if (folder.action != null) {
+                // BOTH action and children: the label is the door (one tap = the primary
+                // destination) and ONLY the caret at the row's end unfolds the sub-rows. A header
+                // that toggled would cost the destination its one-tap reach; one that navigated
+                // with no way in would orphan the children. The caret gets its own padded target
+                // (≈44dp with the row's height) so a fold is never a mis-tapped navigation.
+                headerLabel.text = glyphLabel(glyph, folder.title)
+                header.setOnClickListener { dialog.dismiss(); folder.action.invoke() }
+                val caretBtn = TextView(requireContext()).apply {
+                    text = caret()
+                    textSize = ROW_SP * textScale
+                    setTextColor(Color.BLACK)
+                    setPadding(dp(16), dp(6), dp(16), dp(6))
+                    setOnClickListener {
+                        val show = children.visibility != View.VISIBLE
+                        children.visibility = if (show) View.VISIBLE else View.GONE
+                        children.background = if (show) outline else null
+                        text = caret()
+                    }
+                }
+                (header as? LinearLayout)?.addView(caretBtn)
+            } else {
+                // Glyph LEFT of the caret, matching where the mapped drawable icons sit.
+                fun headerText(): CharSequence =
+                    if (glyph.isEmpty()) "${caret()}  ${folder.title}"
+                    else glyphLabel(glyph, "${caret()}  ${folder.title}")
                 headerLabel.text = headerText()
+                header.setOnClickListener {
+                    val show = children.visibility != View.VISIBLE
+                    children.visibility = if (show) View.VISIBLE else View.GONE
+                    children.background = if (show) outline else null
+                    headerLabel.text = headerText()
+                }
             }
             for ((label, action) in folder.items) {
                 val r = layoutInflater.inflate(R.layout.item_go_to, children, false)

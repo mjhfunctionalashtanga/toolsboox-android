@@ -1654,6 +1654,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
 
     /** Set the current view/kind and reload (used by the dropdown rows). */
     private fun switchTo(newMode: String, kind: String?) {
+        // A view switch ends any Later selection in progress — the checkboxes belong to the list
+        // they were ticked on, and a bar promising "Delete (3)" over a different corpus is a bar
+        // that deletes rows nobody is looking at. (No-op when not selecting.)
+        exitLaterSelection()
         // Picking a lens while browsing a PAST window stays in that window (read timeline),
         // instead of snapping to the live unread view — the date and the lens compose.
         val liveToday = navGranularity == "day" && navAnchor == java.time.LocalDate.now()
@@ -1774,6 +1778,14 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     val on = prefs().getBoolean("feeds_tap_zones", true)
                     prefs().edit().putBoolean("feeds_tap_zones", !on).apply()
                     binding.articleTapZones.visibility = if (!on) View.VISIBLE else View.GONE
+                },
+                // The inline Now Playing transport in the drawer, off unless asked for — the ▦
+                // hub's "▶️ Now Playing" row reaches the same controls from every surface, so the
+                // card is a convenience, not the only door. Re-render immediately: a display
+                // toggle whose effect waits for the next playback is a toggle that looks broken.
+                ((if (nowPlayingCardOn()) "☑" else "☐") + "  Now Playing card in drawer") to {
+                    prefs().edit().putBoolean("feeds_now_playing_card", !nowPlayingCardOn()).apply()
+                    renderDirectory()
                 }
             ),
             // Menu and dialog sizes moved to Settings → Text size…; this one stays because it
@@ -1899,6 +1911,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     /** How opening/scrolling marks entries read: "open" (default) · "scroll" · "off". */
     private fun markReadMode(): String = prefs().getString("feeds_mark_read", "open") ?: "open"
 
+    /** Whether the drawer seats the inline Now Playing card while something plays. Default OFF:
+     *  the hub's "▶️ Now Playing" row already reaches the transport from every surface, and the
+     *  card is a permanent block above the views for whoever didn't ask for it. */
+    private fun nowPlayingCardOn(): Boolean = prefs().getBoolean("feeds_now_playing_card", false)
+
     /** Long-press a row → mark every article ABOVE it read (the common reader gesture; parity with
      *  the iPad's "Mark above as read" context item). Confirmed first, because on e-ink a long-press
      *  can be accidental and this is a bulk change. Marks the same "above" set the scroll-mode
@@ -1925,7 +1942,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     }
 
     /**
-     * A HOLD on a Later List row — the two verbs the list is FOR: keep this one, or be done with it.
+     * A HOLD on a Later List row — the verbs the list is FOR: keep this one, or be done with it,
+     * one at a time or by the screenful (Select… and Clear-above are "faster than one at a time",
+     * as asked; both drain through [removeLaterRows], the same path as the single delete).
      *
      * Michael: "I would like to be able to star items from the later list tho and delete them."
      * Both shipped hidden, and the reasoning was sound as far as it went — a later-list entry is a
@@ -1944,34 +1963,107 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
      * step and asks for no further confirmation: choosing a row does the thing.
      */
     private fun showLaterRowMenu(entry: FeedEntry) {
-        val items = arrayOf(
-            if (entry.starred) "☆  Unstar" else "★  Star",
-            "🗑  Remove from Later List"
+        // Clearing-above only exists where there IS an above; on the top row the menu doesn't
+        // offer a verb that can only apologize.
+        val aboveCount = adapter.current().indexOfFirst { it.id == entry.id }
+        val items = mutableListOf<Pair<String, () -> Unit>>(
+            (if (entry.starred) "☆  Unstar" else "★  Star") to { toggleStar(entry) },
+            // Select… puts the list in checkbox mode with THIS row already ticked — the row you
+            // held is the row you meant. Harmless on its own: nothing is removed until the bar's
+            // Delete, so it can sit second without weakening the first-row defence above.
+            "☑  Select rows…" to { enterLaterSelection(entry.id) },
         )
+        if (aboveCount > 0) items.add(
+            // The feeds list's "mark above as read" gesture, translated to the list where "done
+            // with it" means REMOVE (a filed link has no read flag) — and confirmed with its
+            // count, same as over there, because it's one hold acting on a screenful.
+            "⇞  Clear all above…" to { clearLaterAbove(entry) })
+        items.add(
+            "🗑  Remove from Later List" to { removeLaterRows(listOf(entry)) })
         androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(entry.title)
-            .setItems(items) { _, which ->
-                if (which == 0) { toggleStar(entry); return@setItems }
-                lifecycleScope.launch {
-                    val removed = withContext(Dispatchers.IO) {
-                        com.toolsboox.plugin.feeds.nw.LaterFeed.remove(requireContext(), entry.id)
-                    }
-                    if (!isAdded) return@launch
-                    // A stale row (the list has since reloaded, or another device removed it first)
-                    // is silent about it rather than raising an error for something already true.
-                    if (!removed) return@launch
-                    // Drop it from the list in place instead of reloading: loadLaterList re-walks
-                    // 120 day files and would flash the whole panel on e-ink to communicate the
-                    // disappearance of one row.
-                    allEntries = allEntries.filterNot { it.id == entry.id }
-                    val shown = adapter.current().filterNot { it.id == entry.id }
-                    adapter.submit(shown)
-                    if (shown.isEmpty()) showEmpty(laterEmptyText())
-                    showMessage("Removed from Later List", binding.root)
-                }
-            }
+            .setItems(items.map { it.first }.toTypedArray()) { _, which -> items[which].second() }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    /** "Clear above" on a Later List row: remove every row ABOVE this one in the CURRENT view —
+     *  the lane/search narrowing included, so what clears is exactly what is on screen above your
+     *  finger. Confirmed with the count first: it is one hold acting on a screenful, the same
+     *  reasoning [markAboveAsRead] gives, and unlike a mark-read there is no Undo on the other
+     *  side of this one. */
+    private fun clearLaterAbove(entry: FeedEntry) {
+        val list = adapter.current()
+        val idx = list.indexOfFirst { it.id == entry.id }
+        if (idx <= 0) return
+        val above = list.take(idx).filter { com.toolsboox.plugin.feeds.nw.LaterFeed.isLater(it.id) }
+        if (above.isEmpty()) return
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+            .setTitle("Clear ${above.size} above this?")
+            .setPositiveButton("Clear") { _, _ -> removeLaterRows(above) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /**
+     * Remove Later rows — one or many — through the ONE removal path the single delete has always
+     * used: [com.toolsboox.plugin.feeds.nw.LaterFeed.remove] → `IntakePageStore.unfileLink`, which
+     * writes the LaterRemovals tombstone per link so the cross-device merge can't resurrect a
+     * bulk-cleared screen any more than a single delete. A private bulk writer here would be a
+     * second opinion about what "removed" means.
+     *
+     * Rows whose line had already gone (reloaded list, another device got there first) stay
+     * silent, as the single delete always has — the count reported is what actually came off.
+     */
+    private fun removeLaterRows(rows: List<FeedEntry>) {
+        if (rows.isEmpty()) return
+        val appCtx = requireContext().applicationContext
+        lifecycleScope.launch {
+            val removedIds = withContext(Dispatchers.IO) {
+                rows.mapNotNull { r ->
+                    if (com.toolsboox.plugin.feeds.nw.LaterFeed.remove(appCtx, r.id)) r.id else null
+                }.toSet()
+            }
+            if (!isAdded || removedIds.isEmpty()) return@launch
+            // Drop them from the list in place instead of reloading: loadLaterList re-walks
+            // 120 day files and would flash the whole panel on e-ink to communicate the
+            // disappearance of rows it already knows are gone.
+            allEntries = allEntries.filterNot { it.id in removedIds }
+            val shown = adapter.current().filterNot { it.id in removedIds }
+            adapter.submit(shown)
+            if (shown.isEmpty()) showEmpty(laterEmptyText())
+            showMessage(
+                if (removedIds.size == 1) "Removed from Later List"
+                else "Removed ${removedIds.size} from Later List",
+                binding.root
+            )
+        }
+    }
+
+    /** Enter Later List selection mode: checkboxes on every row, the held row pre-ticked, and the
+     *  Delete/Cancel bar pinned above the list. Delete runs [removeLaterRows] on the ticked set —
+     *  no further confirm: ticking boxes one by one IS the deliberate act, the same reasoning
+     *  [showLaterRowMenu] gives for its own rows. */
+    private fun enterLaterSelection(seedId: Long) {
+        adapter.onSelectionChanged = { n ->
+            binding.laterSelectCount.text = if (n == 1) "1 selected" else "$n selected"
+            binding.laterSelectDelete.isEnabled = n > 0
+        }
+        adapter.beginSelection(seedId)
+        binding.laterSelectBar.visibility = View.VISIBLE
+        binding.laterSelectDivider.visibility = View.VISIBLE
+        binding.laterSelectDelete.setOnClickListener {
+            val chosen = adapter.current().filter { it.id in adapter.selectedIds }
+            exitLaterSelection()
+            removeLaterRows(chosen)
+        }
+        binding.laterSelectCancel.setOnClickListener { exitLaterSelection() }
+    }
+
+    private fun exitLaterSelection() {
+        adapter.endSelection()
+        binding.laterSelectBar.visibility = View.GONE
+        binding.laterSelectDivider.visibility = View.GONE
     }
 
     /** Mark one entry read: locally (greys the row) + on Miniflux (durable). Idempotent. */
@@ -2183,7 +2275,14 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // sidebar), not a popup from the sidebar". The card drives whichever backend is live
         // (podcast audio or TTS), keeps its own 1s clock while attached, and asks for a re-render
         // when playback ends so it folds away. (Surfaced when playback starts, see playEntryAudio.)
-        if (com.toolsboox.ui.plugin.LedgerPlayer.isActive) {
+        //
+        // Behind a wrench toggle now, OFF by default — Michael: the strip "becomes redundant/
+        // should be hideable since we have the now-playing in the sidebar available pretty much
+        // everywhere". The hub's "▶️ Now Playing" row (ledgerDirectoryFolders, reachable from this
+        // page's own ▦ button) carries the full transport modal whenever anything is playing, so
+        // hiding the card loses no control — only the permanent block above the views. The fold
+        // survives for whoever turns the card back on.
+        if (com.toolsboox.ui.plugin.LedgerPlayer.isActive && nowPlayingCardOn()) {
             container.addView(NowPlayingCard.build(ctx) { if (isAdded) renderDirectory() })
         }
 

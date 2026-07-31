@@ -58,7 +58,15 @@ object PickingsPlacement {
         val scaled = if (treatment) CardTreatment.card(fitted) else fitted
         val baos = ByteArrayOutputStream(); scaled.compress(Bitmap.CompressFormat.PNG, 100, baos)
         val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
-        val w = (CANVAS_W * 0.42f).coerceAtMost(scaled.width.toFloat())
+        // All Stars arrivals land at HALF the ordinary card width (Michael, 2026-07-31, over a
+        // full EMAIL band: "grams added to all stars should be 1/2 the size they currently are
+        // when added so they don't have to overlap") — the register's bands carry twice as many
+        // stars before anything piles, and the page zooms for reading anyway. Every other board
+        // keeps the natural card width; existing elements are untouched — this only sizes what
+        // lands from now on, and a landed card is still yours to resize like any other.
+        val isIntakeArrival = pageKey == CalendarDayPageIntake.INTAKE_PAGE && intakeKind.isNotBlank()
+        val naturalW = (CANVAS_W * 0.42f).coerceAtMost(scaled.width.toFloat())
+        val w = if (isIntakeArrival) naturalW / 2f else naturalW
         val h = w * scaled.height / scaled.width
         // Load→mutate→save under the day lock: placements arrive from raw threads (placeAsync)
         // and race the open day page's per-pen-up save; interleaved writers drop each other's items.

@@ -417,6 +417,7 @@
     <string name="feeds_add_later">Add to Later</string>
     <string name="feeds_added_later">Added to Later List.</string>
     <string name="feeds_added_later_dl">Added to Later — downloading audio for offline…</string>
+    <string name="feeds_select_delete">Delete</string>
     <string name="feeds_need_creds">Add your Miniflux URL and API token to load your feeds.</string>
     <string name="feeds_nothing_to_mark">Nothing to mark read.</string>
     <string name="feeds_marking_read">Marking %d read…</string>

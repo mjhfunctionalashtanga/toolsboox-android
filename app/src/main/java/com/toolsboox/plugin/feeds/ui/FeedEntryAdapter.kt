@@ -68,6 +68,47 @@ class FeedEntryAdapter(
     /** The currently shown list (for paging in the article reader). */
     fun current(): List<FeedEntry> = items
 
+    // ---- Selection mode (Later List bulk delete) ---------------------------------------------
+
+    /** While true, rows render a flat ☐/☑ checkbox before the title and a tap TOGGLES the row
+     *  instead of opening it — selection is a mode you enter on purpose (from the row's hold
+     *  menu) and leave through the action bar, never something a stray tap starts. Solid glyphs
+     *  in the title run, no tinted overlays: a translucent "selected" wash is exactly the gray
+     *  that dies on e-ink. */
+    var selecting = false
+        private set
+
+    /** Ids chosen so far. Entry ids, not positions — the Later List's ids are content hashes
+     *  (see [com.toolsboox.plugin.feeds.nw.LaterFeed.entryId]), so a background reload can't
+     *  shift a choice onto the row below it. */
+    val selectedIds = LinkedHashSet<Long>()
+
+    /** Fired with the new count after every toggle, so the host's action bar can say "Delete (3)"
+     *  without polling. */
+    var onSelectionChanged: (Int) -> Unit = {}
+
+    fun beginSelection(seedId: Long?) {
+        selecting = true
+        selectedIds.clear()
+        seedId?.let { selectedIds.add(it) }
+        notifyDataSetChanged()
+        onSelectionChanged(selectedIds.size)
+    }
+
+    fun endSelection() {
+        if (!selecting) return
+        selecting = false
+        selectedIds.clear()
+        notifyDataSetChanged()
+    }
+
+    private fun toggleSelected(e: FeedEntry) {
+        if (!selectedIds.add(e.id)) selectedIds.remove(e.id)
+        val i = items.indexOfFirst { it.id == e.id }
+        if (i >= 0) notifyItemChanged(i)
+        onSelectionChanged(selectedIds.size)
+    }
+
     /** Flip one row's star IN PLACE. Starring used to route through refresh(), which reloads the
      *  feed and closes any open in-pane article — so a star kicked you out of what you were
      *  reading. This repaints just the one row (no scroll reset, no pane teardown). */
@@ -105,7 +146,11 @@ class FeedEntryAdapter(
             holder.image.layoutParams = holder.image.layoutParams.apply { width = side; height = side }
         }
 
-        holder.title.text = e.title
+        // In selection mode the checkbox leads the title — same typeface run, so it stays crisp
+        // at every tier without a second view or a layout change.
+        holder.title.text =
+            if (selecting) (if (selectedIds.contains(e.id)) "☑  " else "☐  ") + e.title
+            else e.title
         // Unread stands out (bold, full weight); read is normal + dimmed.
         holder.title.setTypeface(null, if (isRead) android.graphics.Typeface.NORMAL else android.graphics.Typeface.BOLD)
         holder.title.alpha = if (isRead) 0.55f else 1f
@@ -131,9 +176,14 @@ class FeedEntryAdapter(
         // tier), so the title and thumbnail keep the row's width. Its VISUAL size stays small…
         holder.star.textSize = 14f * scale
         holder.star.contentDescription = if (e.starred) "Unstar" else "Star"
-        holder.itemView.setOnClickListener { onOpen(e) }   // fragment marks read per the user's setting
-        holder.itemView.setOnLongClickListener { onLongPress(e); true }   // → mark everything above read
-        holder.star.setOnClickListener { onStar(e) }
+        // Selection mode claims every gesture on the row — tap, hold and the star alike all
+        // toggle. Mixed verbs mid-selection (one tap toggles, the next opens an article) is how
+        // a bulk delete ends up with a row in it nobody chose.
+        holder.itemView.setOnClickListener { if (selecting) toggleSelected(e) else onOpen(e) }   // fragment marks read per the user's setting
+        holder.itemView.setOnLongClickListener {
+            if (selecting) toggleSelected(e) else onLongPress(e); true
+        }   // → mark everything above read
+        holder.star.setOnClickListener { if (selecting) toggleSelected(e) else onStar(e) }
         // …while its TOUCH target grows to ≥44dp via a TouchDelegate on the row: taps in the
         // halo land on the star (toggle), taps anywhere else on the row still open the entry.
         holder.itemView.post {

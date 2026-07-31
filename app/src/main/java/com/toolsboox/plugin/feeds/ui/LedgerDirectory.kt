@@ -53,8 +53,10 @@ fun ledgerDirectoryFolders(
         is com.toolsboox.plugin.calendar.ui.NotesTagsFragment -> "Notes"
         is com.toolsboox.plugin.reader.ui.ReaderFragment -> "Bookshelf"
         // ReadingLogFragment serves both Search and History; either way its folder home is Log.
-        is com.toolsboox.plugin.calendar.ui.ReadingLogFragment,
-        is com.toolsboox.plugin.chat.ui.LedgerChatFragment -> "Log"
+        is com.toolsboox.plugin.calendar.ui.ReadingLogFragment -> "Log"
+        // Ask lives in the Search group now (Michael: Search, Ask and Directory in one dropdown),
+        // so the chat surface calls that group home.
+        is com.toolsboox.plugin.chat.ui.LedgerChatFragment -> "Search"
         is com.toolsboox.plugin.calendar.ui.SiteBoardsFragment,
         is com.toolsboox.plugin.calendar.ui.CorrespondenceFragment,
         is com.toolsboox.plugin.calendar.ui.MessagesFragment,
@@ -149,25 +151,31 @@ fun ledgerDirectoryFolders(
             action = { com.toolsboox.ui.plugin.LedgerPlayer.showModal(fragment.requireContext()) })
     else null
 
-    // Order per Michael: Search · Today (straight to the page, no submenu) · Feed · Flow ·
-    // Desk · Garden · Notes · Bookshelf · Ledger Log · Community · Sites · Settings.
-    // Flow sits directly under Feed: the world comes in through Feed, then Flow is where you
-    // catch and make from it (Intake → Pickings → Synthesize → Write).
+    // What to open when the Search row is tapped: the Log/history surface, arriving ready to
+    // type — the one field that searches the whole Ledger, OCR/text layer and semantic layer both.
+    val openSearch = {
+        ReadingLogSelection.focusSearch = true
+        openHistory(null)
+    }
+
+    // Order per Michael: Search (one dropdown holding Ask and the Directory) · Today (straight to
+    // the page, no submenu) · Feed · Flow · Desk · Garden · Notes · Bookshelf · Ledger Log ·
+    // Community · Sites · Settings. Flow sits directly under Feed: the world comes in through
+    // Feed, then Flow is where you catch and make from it (Intake → Pickings → Synthesize → Write).
     return listOfNotNull(
         nowPlaying,
-        // Search — one tap onto the Log/history surface, arriving ready to type: the one field
-        // that searches the whole Ledger, OCR/text layer and semantic layer both.
-        ScreenFragment.Folder("🔍", "Search", action = {
-            ReadingLogSelection.focusSearch = true
-            openHistory(null)
-        }),
-        // The DIRECTORY, directly under Search, because they are the two halves of the same
-        // question: Search reads what you wrote, the Directory shows what you have. Michael asked
-        // for "the directory folder system for things like picking synthesize, write notes, etc." —
-        // one findable, sortable place across every kind. Until this row existed the per-kind
-        // directories could only be reached from INSIDE a kind, so "what do I have?" was a question
-        // you could only ask once you had already gone somewhere and stopped needing to ask it.
-        ScreenFragment.Folder("🗂", "Directory", action = { showLedgerRootDirectory(fragment) }),
+        // Search · Ask · Directory — ONE row above Today (Michael: "put Search, Ask and Directory
+        // in a single dropdown above Today"). The three are one question asked three ways: Search
+        // reads what you wrote, Ask asks the same corpus in prose, the Directory shows what you
+        // have. Tapping the label goes straight to Search (the row's primary act, so the common
+        // case stays one tap); the caret unfolds the three as sub-rows. Ask moved here from the
+        // Log folder; the destinations themselves are untouched — this is regrouping, not
+        // rerouting.
+        ScreenFragment.Folder("🔍", "Search", listOf(
+            "🔍  Search" to openSearch,
+            "🔎  Ask" to { nav.navigate(R.id.action_to_ledger_chat) },
+            "🗂  Directory" to { showLedgerRootDirectory(fragment) },
+        ), expanded = home == "Search", action = openSearch),
         // One-tap jump to today's Day page — no submenu. If we're leaving an open article/book,
         // drop a return anchor so the Day page can jump straight back.
         ScreenFragment.Folder("☀️", "Today", action = {
@@ -279,13 +287,13 @@ fun ledgerDirectoryFolders(
             }
         ), expanded = home == "Notes"),
         bookshelf,
-        // Log — the zettelkasten: one screen with range/origin/search inside; Ask lives with it
-        // (asking IS querying the log).
+        // Log — the zettelkasten: one screen with range/origin/search inside. Ask lived here
+        // (asking IS querying the log) until Michael grouped it with Search and the Directory at
+        // the top; the door up there reaches the same chat surface.
         ScreenFragment.Folder("🕘", "Log", listOf(
             // "History", not "Log" — the child shares the folder's name and Search's destination,
             // and a distinct name + glyph is what tells you it's the browse-the-past door.
-            "🕰  History" to { openHistory(null) },
-            "🔎  Ask" to { nav.navigate(R.id.action_to_ledger_chat) }
+            "🕰  History" to { openHistory(null) }
         ), expanded = home == "Log"),
         // Community: the NATIVE people-facing surfaces — your desk's connection to others. The active
         // site's member-facing WEB portals live in their own "Sites" folder below, so it's clear at a

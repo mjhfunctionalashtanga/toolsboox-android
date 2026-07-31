@@ -51,7 +51,9 @@ import javax.inject.Inject
 @AndroidEntryPoint
 class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
 
-    /** Picks a settings JSON to import (finger-friendly; any file type so JSON always shows). */
+    /** Picks a settings JSON to import (finger-friendly; any file type so JSON always shows).
+     *  A file carrying the `encryptedSecrets` envelope prompts for its passphrase first; a legacy
+     *  plaintext backup imports straight through, exactly as before. */
     private val importSettingsLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.GetContent()
     ) { uri ->
@@ -59,8 +61,23 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         try {
             val json = requireContext().contentResolver.openInputStream(uri)!!
                 .bufferedReader().use { it.readText() }
-            val applied = com.toolsboox.plugin.calendar.ot.SettingsBackup.importJson(requireContext(), json)
-            if (applied.contains("webdav")) {
+            if (com.toolsboox.plugin.calendar.ot.SettingsBackup.hasEncryptedSecrets(json)) {
+                promptImportPassphrase { pass -> applySettingsImport(json, pass) }
+            } else {
+                applySettingsImport(json, null)
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "settings import failed")
+            showMessage("Import failed", binding.root)
+        }
+    }
+
+    /** Apply a settings JSON (passphrase already collected if the file needed one) and report —
+     *  a wrong passphrase is a CLEAR message, and the non-secret fields land either way. */
+    private fun applySettingsImport(json: String, passphrase: String?) {
+        try {
+            val result = com.toolsboox.plugin.calendar.ot.SettingsBackup.importJson(requireContext(), json, passphrase)
+            if (result.applied.contains("webdav")) {
                 sharedPreferences.edit().putBoolean("ultrabridgeEnabled", true).apply()
                 val ub = getUltrabridgeEncryptedPrefs()
                 binding.ultrabridgeUrlInput.setText(ub.getString("ultrabridge_webdav_url", ""))
@@ -68,8 +85,15 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 binding.ultrabridgePassInput.setText(ub.getString("ultrabridge_webdav_pass", ""))
                 binding.ultrabridgeEnableSwitch.isChecked = true
             }
+            val imported = if (result.applied.isEmpty()) "nothing else to import"
+                else "imported: ${result.applied.joinToString(", ")}"
             showMessage(
-                if (applied.isEmpty()) "Nothing to import" else "Imported: ${applied.joinToString(", ")}",
+                when {
+                    result.wrongPassphrase -> "Wrong passphrase — passwords skipped; $imported"
+                    result.hadEncryptedSecrets && !result.secretsUnlocked -> "Passwords skipped; $imported"
+                    result.applied.isEmpty() -> "Nothing to import"
+                    else -> "Imported: ${result.applied.joinToString(", ")}"
+                },
                 binding.root
             )
         } catch (e: Exception) {
@@ -101,11 +125,130 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
+    /**
+     * The settings JSON staged for the share sheet, deleted in [onResume] — the "finally" of the
+     * share flow. startActivity(chooser) pauses this fragment; whatever happens in the share
+     * sheet (sent, saved, backed out), control returns through onResume, so the file's lifetime
+     * is exactly the share sheet's. It used to sit in cacheDir/exports forever — a creds file
+     * parked on disk (cleartext then; even encrypted it has no business outliving the share).
+     */
+    private var stagedSettingsExport: java.io.File? = null
+
+    /** Stage the settings JSON (secrets enveloped, or omitted when [passphrase] is null) and hand
+     *  it to the share sheet. Any stale staged file from an earlier run is deleted FIRST; a
+     *  failure after the write deletes the fresh one before rethrowing. */
+    private fun shareSettingsExport(passphrase: String?) {
+        try {
+            // Must live under a FileProvider-declared root (res/xml/file_paths.xml). "exports/"
+            // is the declared share-sheet cache dir; "settings/" was never declared, so
+            // getUriForFile threw "Failed to find configured root" and export silently failed.
+            val dir = java.io.File(requireContext().cacheDir, "exports").apply { mkdirs() }
+            val file = java.io.File(dir, "ledger-settings.json")
+            file.delete()   // a stale copy from an earlier (possibly cleartext-era) export
+            try {
+                val json = com.toolsboox.plugin.calendar.ot.SettingsBackup.exportJson(requireContext(), passphrase)
+                file.writeText(json)
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    requireContext(), "${requireContext().packageName}.fileprovider", file
+                )
+                val share = android.content.Intent(android.content.Intent.ACTION_SEND)
+                    .setType("application/json")
+                    .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    .putExtra(android.content.Intent.EXTRA_SUBJECT, "Ledger settings")
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                stagedSettingsExport = file
+                startActivity(android.content.Intent.createChooser(share, getString(R.string.calendar_settings_button_export_settings)))
+            } catch (e: Exception) {
+                file.delete()
+                stagedSettingsExport = null
+                throw e
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "settings export failed")
+            showMessage("Export failed", binding.root)
+        }
+    }
+
+    /**
+     * Passphrase + confirm for an export. Typed-only dialog, so the platform buttons are fine
+     * (the buttons-on-top rule is for handwriting panels). Empty BOTH fields = export with no
+     * secrets at all, and the message says so rather than leaving blank to mean something silent.
+     * A mismatch re-opens the dialog instead of exporting something other than what was typed;
+     * Cancel exports nothing.
+     */
+    private fun promptExportPassphrase(onReady: (String?) -> Unit) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        fun passwordField(hintText: String) = android.widget.EditText(ctx).apply {
+            hint = hintText
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val pass = passwordField("Passphrase")
+        val confirm = passwordField("Confirm passphrase")
+        val col = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(px(20), px(8), px(20), 0)
+            addView(pass); addView(confirm)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Protect your passwords")
+            .setMessage("Passwords, tokens and API keys are encrypted with this passphrase — you'll type it again when importing. Leave BOTH fields blank to export with no secrets at all.")
+            .setView(col)
+            .setPositiveButton("Export") { _, _ ->
+                val p1 = pass.text?.toString() ?: ""
+                val p2 = confirm.text?.toString() ?: ""
+                if (p1 != p2) {
+                    Toast.makeText(ctx, "Passphrases didn't match — try again", Toast.LENGTH_LONG).show()
+                    promptExportPassphrase(onReady)
+                } else {
+                    onReady(if (p1.isEmpty()) null else p1)
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /**
+     * Passphrase for an import whose file carries the `encryptedSecrets` envelope. "Skip secrets"
+     * is an explicit choice, not a hidden default: the non-secret fields import either way, and
+     * a wrong passphrase reports itself clearly (see [applySettingsImport]).
+     */
+    private fun promptImportPassphrase(onReady: (String?) -> Unit) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val pass = android.widget.EditText(ctx).apply {
+            hint = "Passphrase"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val col = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(px(20), px(8), px(20), 0)
+            addView(pass)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Backup is passphrase-protected")
+            .setMessage("This backup's passwords and keys are encrypted. Enter the passphrase it was exported with, or skip to import everything except the secrets.")
+            .setView(col)
+            .setPositiveButton("Unlock") { _, _ -> onReady(pass.text?.toString() ?: "") }
+            .setNegativeButton("Skip secrets") { _, _ -> onReady(null) }
+            .show()
+    }
+
+    /** The passphrase collected (or explicitly left blank) BEFORE [backupCreateLauncher] runs —
+     *  the create-document picker sits between the prompt and the write, so it rides a field. */
+    private var backupPassphrase: String? = null
+
     /** FULL ledger backup: zip the entire external Documents tree into the file the user picked.
      *  APFS-style cheap it is not, but a personal ledger zips in seconds on device. */
     private val backupCreateLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/zip")
     ) { uri ->
+        val passphrase = backupPassphrase
+        backupPassphrase = null
         uri ?: return@registerForActivityResult
         val ctx = requireContext()
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -115,9 +258,11 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 else java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS), "toolsBoox")
                 ctx.contentResolver.openOutputStream(uri)!!.use { out ->
                     java.util.zip.ZipOutputStream(out.buffered()).use { zip ->
-                        // Settings ride inside the backup.
+                        // Settings ride inside the backup — secrets under the passphrase
+                        // envelope (or absent entirely when the passphrase was left blank),
+                        // never as cleartext inside a zip parked on a drive.
                         zip.putNextEntry(java.util.zip.ZipEntry("ledger-settings.json"))
-                        zip.write(com.toolsboox.plugin.calendar.ot.SettingsBackup.exportJson(ctx).toByteArray())
+                        zip.write(com.toolsboox.plugin.calendar.ot.SettingsBackup.exportJson(ctx, passphrase).toByteArray())
                         zip.closeEntry()
                         root.walkTopDown().filter { it.isFile }.forEach { f ->
                             zip.putNextEntry(java.util.zip.ZipEntry(f.relativeTo(root).path))
@@ -141,6 +286,7 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         val ctx = requireContext()
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             var files = 0
+            var settingsJson: String? = null
             val ok = runCatching {
                 val root = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
                     ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)!!
@@ -151,10 +297,9 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                         while (entry != null) {
                             if (!entry.isDirectory) {
                                 if (entry.name == "ledger-settings.json") {
-                                    val json = zip.readBytes().toString(Charsets.UTF_8)
-                                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                        runCatching { com.toolsboox.plugin.calendar.ot.SettingsBackup.importJson(ctx, json) }
-                                    }
+                                    // Held for AFTER the unzip: applying may need a passphrase
+                                    // prompt, and a dialog cannot block the middle of a stream.
+                                    settingsJson = zip.readBytes().toString(Charsets.UTF_8)
                                 } else if (!entry.name.contains("..")) {   // zip-slip guard
                                     val dest = java.io.File(root, entry.name)
                                     dest.parentFile?.mkdirs()
@@ -168,6 +313,15 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 }
             }.isSuccess
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                settingsJson?.let { json ->
+                    runCatching {
+                        if (com.toolsboox.plugin.calendar.ot.SettingsBackup.hasEncryptedSecrets(json)) {
+                            promptImportPassphrase { pass -> applySettingsImport(json, pass) }
+                        } else {
+                            com.toolsboox.plugin.calendar.ot.SettingsBackup.importJson(ctx, json, null)
+                        }
+                    }.onFailure { Timber.w(it, "backup settings import failed") }
+                }
                 showMessage(if (ok) "Restored $files files — restart the app" else "Restore failed", binding.root)
             }
         }
@@ -307,6 +461,15 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
      */
     override fun onResume() {
         super.onResume()
+
+        // The "finally" of the settings-export share: the chooser paused this fragment, and any
+        // way out of it — sent, saved, dismissed — resumes it here, so the staged creds file is
+        // deleted the moment control returns. (A share target that defers its read past this
+        // point loses the stream, which is the acceptable edge of not parking secrets on disk.)
+        stagedSettingsExport?.let { f ->
+            runCatching { f.delete() }
+            stagedSettingsExport = null
+        }
 
         toolbar.root.title = getString(R.string.calendar_main_title, getString(R.string.calendar_settings_title))
 
@@ -573,28 +736,10 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         }
 
         // Settings transfer: export the connection settings (WebDAV / RSS / AI keys) as a JSON to
-        // share to another device; import applies one. Same schema as the iPad.
+        // share to another device; import applies one. Same schema as the iPad. The passphrase
+        // dialog comes first: secrets ride encrypted (or not at all) — never cleartext.
         binding.buttonExportSettings.setOnClickListener {
-            try {
-                val json = com.toolsboox.plugin.calendar.ot.SettingsBackup.exportJson(requireContext())
-                // Must live under a FileProvider-declared root (res/xml/file_paths.xml). "exports/"
-                // is the declared share-sheet cache dir; "settings/" was never declared, so
-                // getUriForFile threw "Failed to find configured root" and export silently failed.
-                val dir = java.io.File(requireContext().cacheDir, "exports").apply { mkdirs() }
-                val file = java.io.File(dir, "ledger-settings.json").apply { writeText(json) }
-                val uri = androidx.core.content.FileProvider.getUriForFile(
-                    requireContext(), "${requireContext().packageName}.fileprovider", file
-                )
-                val share = android.content.Intent(android.content.Intent.ACTION_SEND)
-                    .setType("application/json")
-                    .putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                    .putExtra(android.content.Intent.EXTRA_SUBJECT, "Ledger settings")
-                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                startActivity(android.content.Intent.createChooser(share, getString(R.string.calendar_settings_button_export_settings)))
-            } catch (e: Exception) {
-                Timber.w(e, "settings export failed")
-                showMessage("Export failed", binding.root)
-            }
+            promptExportPassphrase { pass -> shareSettingsExport(pass) }
         }
         binding.buttonImportSettings.setOnClickListener { importSettingsLauncher.launch("*/*") }
 
@@ -653,10 +798,15 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
 
         // FULL ledger backup/restore (data, not just settings): long-press Export = zip the whole
         // Documents tree (every day page, contact, board, clipping) to a file you pick; long-press
-        // Import = restore a backup zip over it. Settings JSON is included in the zip.
+        // Import = restore a backup zip over it. Settings JSON is included in the zip — which is
+        // why the passphrase dialog comes first here too: the embedded copy carries the same
+        // secrets the standalone export does.
         binding.buttonExportSettings.setOnLongClickListener {
-            val df = java.text.SimpleDateFormat("yyyy-MM-dd-HHmm", java.util.Locale.US)
-            backupCreateLauncher.launch("ledger-backup-${df.format(java.util.Date())}.zip")
+            promptExportPassphrase { pass ->
+                backupPassphrase = pass
+                val df = java.text.SimpleDateFormat("yyyy-MM-dd-HHmm", java.util.Locale.US)
+                backupCreateLauncher.launch("ledger-backup-${df.format(java.util.Date())}.zip")
+            }
             true
         }
         binding.buttonImportSettings.setOnLongClickListener {

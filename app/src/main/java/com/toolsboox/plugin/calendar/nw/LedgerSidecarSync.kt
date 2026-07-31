@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import timber.log.Timber
+import java.util.concurrent.Executors
 
 /**
  * One shared WebDAV entry point for the small "sidecar" stores (Text Notes, Intake pages, Pickings
@@ -196,9 +197,30 @@ object LedgerSidecarSync {
         if (reached) rememberReached() else rememberUnreachable()
     }
 
-    /** Run [block] on a daemon thread (the stores' sync is fire-and-forget from UI callers). */
+    /**
+     * The one thread every sidecar round trip runs on, in strict submission order.
+     *
+     * SERIALIZATION IS THE CORRECTNESS MECHANISM; PARALLEL SIDECAR SYNCS LOSE WRITES. Every
+     * sidecar store is a whole-file read-modify-write, and its sync() snapshots the file at
+     * thread start, round-trips the network, then writes the merge back to disk and pushes it.
+     * With one unbounded Thread per call — the old shape here — two quick edits raced: the sync
+     * that snapshotted FIRST could write back LAST, clobbering the second edit on disk and then
+     * pushing the loss to the server. A single-threaded executor makes every later sync()
+     * snapshot strictly AFTER the earlier one's write-back, which removes that interleaving.
+     * Do not widen this pool and do not add a second one: the queue is the fix.
+     */
+    private val syncExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "sidecar-sync").apply { isDaemon = true }
+    }
+
+    /**
+     * Run [block] on the shared "sidecar-sync" daemon thread (the stores' sync is fire-and-forget
+     * from UI callers). Strictly FIFO — see [syncExecutor] for why the ordering, not just the
+     * off-main-ness, is load-bearing.
+     */
     fun background(block: () -> Unit) {
-        Thread { runCatching { block() }.onFailure { Timber.w(it, "LedgerSidecarSync: bg task failed") } }
-            .apply { isDaemon = true }.start()
+        syncExecutor.execute {
+            runCatching { block() }.onFailure { Timber.w(it, "LedgerSidecarSync: bg task failed") }
+        }
     }
 }
