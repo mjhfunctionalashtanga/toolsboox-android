@@ -518,7 +518,9 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
             .setTitle("Attendee")
             .setView(scroll)
             .create()
-        showModal(dialog)
+        // The pad holds a CRM note mid-write — a palm outside the dialog must not cost the ink.
+        // CLOSE / SAVE above the pad and the back gesture remain the ways out.
+        showGuardedModal(dialog)
     }
 
     /** Open the attendee's FluentCRM record IN-APP: the wp-admin subscriber deep link rendered in the

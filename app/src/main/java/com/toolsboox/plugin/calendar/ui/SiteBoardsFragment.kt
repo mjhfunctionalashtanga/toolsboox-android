@@ -773,7 +773,9 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             if (bmp == null) toast("Nothing written")
             else { dialog.dismiss(); shareCardAsGram(bmp, board, d) }
         }
-        dialog.show()
+        // The pad holds a reply mid-write — a palm outside the dialog must not cost the ink.
+        // Cancel / Send above the pad and the back gesture remain the ways out.
+        showGuardedModal(dialog)
         dialog.window?.setLayout(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         )
@@ -823,7 +825,10 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
                 })
                 addView(provInput)
             }
-            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            // The share carries rendered ink and an edited provenance line — work a stray touch
+            // outside must not throw away (and an outside dismiss would skip the Cancel path
+            // that recycles the bitmap). Cancel and the back gesture remain the ways out.
+            val shareDialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                 .setTitle("Share as gram")
                 .setView(box)
                 .setPositiveButton("Share ↗") { _, _ ->
@@ -843,7 +848,8 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
                     }
                 }
                 .setNegativeButton("Cancel") { _, _ -> bmp.recycle() }
-                .show()
+                .create()
+            showGuardedModal(shareDialog)
         }
     }
 

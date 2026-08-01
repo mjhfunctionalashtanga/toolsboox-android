@@ -524,8 +524,45 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             // anyone for — the bed is already in the ledger.
             "🌰  Seeds — what's incubating" to { showSeeds() },
             "✎  Type an outline…" to { showOutlineDialog("") },
-            "🧠  Ask for a map…" to { showPersonaMenu() }
+            "🧠  Ask for a map…" to { showPersonaMenu() },
+            // The way OUT sits in the same menu as the ways in: this menu is the Map's one
+            // actions door (the header has no toolbar of its own), and 📤 is the share glyph
+            // the day surface's panel menu already wears.
+            "📤  Share as image" to { exportMap() }
         ))
+    }
+
+    /**
+     * The map as a PNG through the system share sheet — the same door every other export here
+     * takes: render → cacheDir/exports (the FileProvider-declared root in res/xml/file_paths.xml;
+     * an undeclared dir makes getUriForFile throw and the export silently die) → ACTION_SEND.
+     *
+     * The bitmap comes from [MindMapView.exportBitmap], which renders the WHOLE laid-out picture
+     * at 2× resolution with white baked in — not a crop of wherever the volume keys had nudged
+     * the viewport, and never transparent (a transparent PNG reads as black in most viewers).
+     */
+    private fun exportMap() {
+        if (adjacency.isEmpty() || focus.isBlank()) {
+            // Nothing drawn yet — an empty PNG through the share sheet would just be confusing.
+            showMessage(getString(R.string.map_nothing_to_map), binding.root)
+            return
+        }
+        try {
+            val bmp = map.exportBitmap()
+            val dir = java.io.File(requireContext().cacheDir, "exports").apply { mkdirs() }
+            val file = java.io.File(dir, "ledger-map-${java.time.LocalDate.now()}.png")
+            file.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                requireContext(), "${requireContext().packageName}.fileprovider", file)
+            startActivity(android.content.Intent.createChooser(
+                android.content.Intent(android.content.Intent.ACTION_SEND).setType("image/png")
+                    .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                "Share the map"))
+        } catch (e: Exception) {
+            Timber.w(e, "map export failed")
+            showMessage("Export failed", binding.root)
+        }
     }
 
     private fun showPersonaMenu() {
@@ -553,12 +590,14 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             })
             addView(input)
         }
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Guarded: a typed (or pasted) subject is work — a stray touch outside must not throw
+        // it away.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(persona.label)
             .setView(box)
             .setPositiveButton("Draw it") { _, _ -> runPersona(persona, input.text.toString().trim()) }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create())
     }
 
     private fun runPersona(persona: MapPersona.Persona, subject: String) {
@@ -604,12 +643,13 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0)
             addView(input)
         }
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Guarded: the outline under edit is work — a stray touch outside must not throw it away.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Outline")
             .setView(android.widget.ScrollView(ctx).apply { addView(box) })
             .setPositiveButton("Draw it") { _, _ -> showOutline(input.text.toString()) }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create())
     }
 
     /** Draw a markdown outline instead of the connection graph. */

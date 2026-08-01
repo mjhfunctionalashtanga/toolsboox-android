@@ -371,7 +371,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         val input = android.widget.EditText(requireContext()).apply {
             hint = "Feed URL — or any YouTube channel/video link"; setSingleLine(); setText("https://")
         }
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+        // Guarded: a pasted URL is work — a stray touch outside must not throw it away.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle("Add feed")
             .setView(input)
             .setPositiveButton("Add") { _, _ ->
@@ -379,7 +380,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 if (url.length > 8) lifecycleScope.launch { addFeedByUrl(url) }
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create())
     }
 
     /** One paste box, two doors: a YouTube link resolves to the channel's real RSS feed and
@@ -1720,7 +1721,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             setPadding(dpPx(20), dpPx(8), dpPx(20), 0)
             addView(name); addView(query)
         }
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Guarded: a name and search terms being typed are work — a stray touch outside must
+        // not throw them away.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("New smart feed")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
@@ -1733,7 +1736,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create())
     }
 
     /** Tapping a category drills one level down: a sub-menu of the specific feeds inside it
@@ -2195,7 +2198,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             addView(label("Send to a webhook")); addView(hookUrlIn); addView(hookSecretIn)
             addView(autoSynth)
         }
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Guarded: typed hosts and secrets are work — a stray touch outside must not throw
+        // them away.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Feed settings")
             .setView(android.widget.ScrollView(ctx).apply { addView(box) })
             .setPositiveButton("Save") { _, _ ->
@@ -2211,7 +2216,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             }
             .setNeutralButton("Refresh") { _, _ -> refresh() }
             .setNegativeButton("Close", null)
-            .show()
+            .create())
     }
 
     /**

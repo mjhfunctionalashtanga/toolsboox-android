@@ -404,7 +404,8 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
         }
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Guarded: a name being typed is work — a stray touch outside must not throw it away.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(if (taxonomy == "categories") "New category" else "New tag")
             .setView(box)
             .setPositiveButton("Create") { _, _ ->
@@ -424,7 +425,7 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
                 }
             }
             .setNegativeButton(android.R.string.cancel) { _, _ -> pickTerms(taxonomy) }
-            .show()
+            .create())
     }
 
     private fun successLabel(): String = when {

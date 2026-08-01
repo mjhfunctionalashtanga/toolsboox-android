@@ -364,6 +364,11 @@ object BookNotesPanel {
         dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
             .setView(root)
             .create()
+        // This dialog collects work — a stray touch outside the pad must not cost the ink. On an
+        // e-ink slab a palm lands outside the dialog constantly; Cancel / Save above the pad and
+        // the back gesture remain the ways out. (Set directly: this panel only has a Context, so
+        // it can't route through ScreenFragment.showGuardedModal.)
+        dialog.setCanceledOnTouchOutside(false)
         dialog.show()
     }
 

@@ -97,6 +97,8 @@ object NamedPromptEditor {
         if (onDelete != null && original.isNotBlank()) {
             builder.setNeutralButton("Delete") { _, _ -> onDelete(original) }
         }
-        fragment.showModal(builder.create())
+        // The guarded door: a preset's name and prompt mid-edit are work — a stray touch
+        // outside must not throw them away. Cancel and the back gesture remain the ways out.
+        fragment.showGuardedModal(builder.create())
     }
 }

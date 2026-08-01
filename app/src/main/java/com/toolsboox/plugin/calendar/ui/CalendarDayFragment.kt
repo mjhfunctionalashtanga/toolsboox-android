@@ -601,13 +601,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0)
             addView(urlIn); addView(titleIn)
         }
-        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Guarded: a pasted link and its title are work being typed — a stray touch outside
+        // must not throw them away. Cancel and the back gesture remain the ways out.
+        showGuardedModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Intake a link")
             .setView(box)
             .setPositiveButton("Place") { _, _ -> placeLinkObject(urlIn.text.toString().trim(), titleIn.text.toString().trim(), cx, cy, alsoFile = false) }
             .setNeutralButton("Place & file to Later") { _, _ -> placeLinkObject(urlIn.text.toString().trim(), titleIn.text.toString().trim(), cx, cy, alsoFile = true) }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create())
     }
 
     private fun placeLinkObject(rawUrl: String, title: String, cx: Float, cy: Float, alsoFile: Boolean) {
@@ -975,7 +977,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .setNeutralButton("Send…") { _, _ -> persist(); shareEssay() }
             .setNegativeButton("Cancel", null)
             .create()
-        showModal(dialog)
+        // The guarded door: a whole essay can be sitting in this field unsaved — a palm outside
+        // the dialog must not cost it. Cancel and the back gesture remain the ways out.
+        showGuardedModal(dialog)
     }
 
     private fun suggestTagsForPage() {
@@ -1184,7 +1188,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             orientation = android.widget.LinearLayout.VERTICAL
             setPadding(px(16), px(8), px(16), 0); addView(titleIn); addView(tagsIn)
         }
-        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Guarded: the title and tags are work being typed — a stray touch outside must not
+        // throw them away.
+        showGuardedModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Share essay")
             .setView(box)
             .setPositiveButton("Next") { _, _ ->
@@ -1196,7 +1202,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 pickEssayDestination(title, tagsIn.text.toString().trim())
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .create())
     }
 
     private fun pickEssayDestination(title: String, tags: String) {
@@ -1237,12 +1243,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val box = android.widget.LinearLayout(ctx).apply {
             orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(toIn)
         }
-        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle("Email the essay").setView(box)
+        // Guarded: an address being typed is work — a stray touch outside must not throw it away.
+        showGuardedModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle("Email the essay").setView(box)
             .setPositiveButton("Send") { _, _ ->
                 val to = toIn.text.toString().trim()
                 if (to.isNotBlank()) sendEssay(site.site, site.user, site.pass, "email", title, tags, to)
             }
-            .setNegativeButton("Cancel", null).show()
+            .setNegativeButton("Cancel", null).create())
     }
 
     private fun postEssayToSpace(title: String) {
@@ -1350,6 +1357,25 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      *  ink and companions around it are. The old stars dialog is gone with the stars — they
      *  surface in the feeds now. */
     override fun onCanvasSingleTap(cx: Float, cy: Float): Boolean {
+        // All Stars: a tap on a starred gram OPENS it — the graduated board when it has one, else
+        // its source (the letter for mail://, the in-pane reader for a feed, the browser for the
+        // web). The long-press menu always offered "Open the source"; the tap is the promise the
+        // grid makes just by looking like a launcher, and until now it kept nothing ("clicking on
+        // an email doesn't take me to the email"). Only a tap that LANDS on a gram is consumed —
+        // anywhere else falls through so the tap-to-type strips and page gestures keep working.
+        if (notePage == "intake") {
+            val gram = com.toolsboox.plugin.calendar.ot.CalendarDayPageIntake.gramAt(cx, cy) ?: return false
+            val element = calendarDay.imageElements.firstOrNull {
+                it.elementId.toString().lowercase() == gram.elementId
+            } ?: return false
+            when {
+                element.graduatedTo.isNotBlank() ->
+                    CalendarNavigator.toDayNote(this, currentDate, element.graduatedTo)
+                element.sourceLink.isNotBlank() -> onImageSource(element)
+                else -> return false
+            }
+            return true
+        }
         if (notePage != null) return false
         // The Roots-band glimpse sits in its own slice above the panel; a tap there opens the ⚡
         // Quick Wins surface — where each win carries its ✧ Path to victory — matching how
@@ -3689,11 +3715,21 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     /**
      * Jump back to a gram's origin from its long-press menu. Routes the stored source link:
-     * ledger://<date>/<pageKey> → that ledger page; book://<path> → the reader; http(s) → the browser.
+     * ledger://<date>/<pageKey> → that ledger page; book://<path> → the reader; mail://<id> → that
+     * letter in the inbox; http(s) → the browser.
      */
     override fun onImageSource(element: com.toolsboox.da.ImageElement) {
         val link = element.sourceLink
         when {
+            link.startsWith("mail://") -> {
+                // A starred email's gram files its address as mail://<id> (MailInboxFragment writes
+                // it so rhizome edges and grams share one name for the letter). Without this arm the
+                // router fell through in silence — "Open the source" on a mail gram, and the All
+                // Stars tap that funnels here, did nothing at all. The handoff rides a pending
+                // static, the same shape FeedSelection.pendingInPaneEntry uses for the feeds pane.
+                com.toolsboox.plugin.mail.ui.MailInboxFragment.pendingOpenId = link.removePrefix("mail://")
+                findNavController().navigate(R.id.action_to_mail_inbox)
+            }
             link.startsWith("ledger://") -> {
                 val rest = link.removePrefix("ledger://")
                 val slash = rest.indexOf('/')

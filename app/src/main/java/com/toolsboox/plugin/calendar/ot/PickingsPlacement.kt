@@ -148,11 +148,14 @@ object PickingsPlacement {
                         val box = android.widget.LinearLayout(ctx).apply {
                             orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
                         }
-                        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle("New pickings").setView(box)
-                            .setPositiveButton("Create") { _, _ ->
-                                val page = PickingsStore.add(ctx, date, input.text.toString().trim())
-                                placeAsync(fragment, service, root, bitmaps, date, page.key, page.name, sourceLink, sourceLabel, media, cardText, sourceFeed)
-                            }.setNegativeButton(android.R.string.cancel, null).show()
+                        // Guarded: a name being typed is work — a stray touch outside must
+                        // not throw it away.
+                        fragment.showGuardedModal(
+                            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle("New pickings").setView(box)
+                                .setPositiveButton("Create") { _, _ ->
+                                    val page = PickingsStore.add(ctx, date, input.text.toString().trim())
+                                    placeAsync(fragment, service, root, bitmaps, date, page.key, page.name, sourceLink, sourceLabel, media, cardText, sourceFeed)
+                                }.setNegativeButton(android.R.string.cancel, null).create())
                     }
                     else -> {
                         // Offset 3, not 2: Gram Picks now leads the list.

@@ -110,7 +110,18 @@ abstract class ScreenFragment : Fragment() {
         private const val ICON_DP = 22f         // item_go_to's go_icon, square
         private const val ICON_MENU_DP = 340f   // showIconMenu's card
         private const val GO_MODAL_DP = 170f    // showGoModal's narrower card
-        private const val ACCORDION_DP = 320f   // showAccordion's left drawer
+        /**
+         * showAccordion's left drawer. 320 made "🔬 Synthesize" and its neighbours wrap to a
+         * second line on the tablets — Michael: "the hamburger menu is too narrow by default."
+         * The width a row actually needs, added up from item_go_to and the accordion's own
+         * chrome: 14+14 row padding + 22 icon + 18 label margin + up to 48 of sub-fold indent
+         * ≈ 116, plus ≈ 44 for the caret target a door-with-children header wears on the right,
+         * and ≈ 200 for the longest shipping label at 16sp with its enlarged leading glyph
+         * ("☑ Tasks & Events", "✧ Missed Rhizomes") — ≈ 360 all told, padded to 400 so a label
+         * one word longer doesn't reopen this. The 66%-of-screen cap below still governs narrow
+         * devices (the Palma), where wrapping is the acceptable trade.
+         */
+        private const val ACCORDION_DP = 400f
 
         // Error-bar debounce (see showError): same message within 30s stays quiet.
         private var lastErrorResId = 0
@@ -1388,6 +1399,19 @@ abstract class ScreenFragment : Fragment() {
         dialog.setOnShowListener { onModalShown() }
         dialog.setOnDismissListener { onModalDismissed() }
         dialog.show()
+    }
+
+    /**
+     * The door for every dialog that COLLECTS WORK — an ink pad, a note being typed, a voice
+     * recording in flight. On an e-ink slab a palm or stray finger lands outside the dialog
+     * constantly, and the default tap-outside-to-dismiss throws the ink away with it. So work
+     * dialogs must not die to an outside touch; the back gesture and the dialog's own ✕ /
+     * Cancel / Save remain the ways out. Menus, pickers, and viewers keep [showModal] —
+     * tapping outside IS how you close a menu.
+     */
+    fun showGuardedModal(dialog: AlertDialog) {
+        dialog.setCanceledOnTouchOutside(false)
+        showModal(dialog)
     }
 
     /** Set a row's icon slot directly from an emoji (folder headers), else hide it. */

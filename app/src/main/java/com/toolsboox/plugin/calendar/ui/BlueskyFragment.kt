@@ -361,7 +361,9 @@ class BlueskyFragment @Inject constructor() : ScreenFragment() {
         recogniseBtn.setOnClickListener {
             recognise(ink, review) { page -> written = stackVertically(written, page) }
         }
-        showModal(dialog)
+        // The composer holds ink and a reply mid-edit — a palm outside the dialog must not cost
+        // them. Cancel and the back gesture remain the ways out.
+        showGuardedModal(dialog)
     }
 
     /** Two pad-fulls, one above the other, on white — the same stacking the Correspondence reply
@@ -487,7 +489,8 @@ class BlueskyFragment @Inject constructor() : ScreenFragment() {
             setPadding(px(16), px(8), px(16), 0)
             addView(baseIn); addView(secretIn); addView(note)
         }
-        showModal(
+        // Typed credentials are work too — a stray touch outside must not throw them away.
+        showGuardedModal(
             androidx.appcompat.app.AlertDialog.Builder(ModalScale.wrap(ctx))
                 .setTitle("Bluesky bridge")
                 .setView(box)

@@ -115,6 +115,9 @@ object SynthEngines {
             orientation = android.widget.LinearLayout.VERTICAL
             setPadding(px(16), px(8), px(16), 0); addView(nameIn); addView(promptIn)
         }
+        // Guarded: the engine's name and prompt mid-edit are work — a stray touch outside must
+        // not throw them away. (Set directly: this object only has a Context, so it can't route
+        // through ScreenFragment.showGuardedModal.)
         androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
             .setTitle(if (existing == null) "New engine" else "Edit engine")
             .setView(box)
@@ -128,7 +131,8 @@ object SynthEngines {
                 onDone()
             }
             .setNegativeButton("Cancel") { _, _ -> onDone() }
-            .show()
+            .create()
+            .apply { setCanceledOnTouchOutside(false); show() }
     }
 
     /** Edit/delete the custom engines (built-ins are fixed). */

@@ -70,6 +70,17 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
          * UUIDs), and it is the same one the iPad reserves in `mail_account_filter`.
          */
         private const val SENT_MAILBOX = "__sent"
+
+        /**
+         * A one-shot "open this letter on arrival" handoff for mail://<id> source links — the gram
+         * router (CalendarDayFragment.onImageSource) sets it and navigates here; the inbox opens
+         * that message as soon as it holds it. A static pending value rather than a nav argument,
+         * the same shape FeedSelection.pendingInPaneEntry uses and for the same reason the account
+         * filter is a pref: the nav graph's doors take no arguments, and a second channel is one
+         * more way to disagree. Cleared once consumed — or after the warm load if the letter is
+         * gone from the store — so a stale request can't fire on a later ordinary visit.
+         */
+        var pendingOpenId: String? = null
     }
 
 
@@ -206,6 +217,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         // download cache is never read from here.
         messages = InboxStore.messages(ctx)
         render()
+        consumePendingOpen()
         viewLifecycleOwner.lifecycleScope.launch {
             // Then bring in the mail on disk, off the main thread. On a cold process this is what
             // makes the inbox readable OFFLINE: a year of downloaded mail, before (and without) any
@@ -215,6 +227,10 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             val warmed = withContext(Dispatchers.IO) { InboxStore.warm(ctx.applicationContext) }
             if (!isAdded) return@launch
             if (warmed) { messages = InboxStore.messages(ctx); render() }
+            // Second and last chance for a mail:// arrival: the letter either surfaced with the
+            // warm load or it is not in the store — clear either way so it cannot fire later.
+            consumePendingOpen()
+            pendingOpenId = null
             if (InboxStore.hasAccounts(ctx)) refresh()
         }
     }
@@ -767,6 +783,14 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
      * (this session's fetch, a keep pile) opens straight away, with no coroutine hop, so the common
      * tap is exactly as immediate as it was before any of this.
      */
+    /** Open the letter a mail://<id> source link asked for, if the pile holds it yet. */
+    private fun consumePendingOpen() {
+        val id = pendingOpenId ?: return
+        val m = messages.firstOrNull { it.id == id } ?: return
+        pendingOpenId = null
+        openHydrated(m)
+    }
+
     private fun openHydrated(m: InboxMessage) {
         if (m.body.isNotBlank() || m.html.isNotBlank()) { openMessage(m); return }
         val ctx = requireContext().applicationContext
@@ -1121,7 +1145,9 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             })
             addView(input)
         }
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Guarded: a reply being typed is work — a stray touch outside must not throw it away.
+        // Cancel and the back gesture remain the ways out.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Reply")
             .setView(box)
             .setPositiveButton("Send") { _, _ ->
@@ -1145,7 +1171,7 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
                 }
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .create())
     }
 
     // Star -> to-do: create a task on today's page (like Kanban's add-card), and mark the mail starred.
@@ -1330,7 +1356,9 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
             messages = InboxStore.messages(ctx); renderChips(); render()
         }
         val dialog = builder.create()
-        dialog.show()
+        // Guarded: a whole account's settings mid-edit — a stray touch outside must not throw
+        // them away. Cancel and the back gesture remain the ways out.
+        showGuardedModal(dialog)
         dialog.window?.setLayout(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT

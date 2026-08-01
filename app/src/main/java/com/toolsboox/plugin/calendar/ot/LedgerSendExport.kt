@@ -287,7 +287,8 @@ object LedgerSendExport {
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(toIn)
         }
-        fragment.showModal(
+        // Guarded: an address being typed is work — a stray touch outside must not throw it away.
+        fragment.showGuardedModal(
             AlertDialog.Builder(ModalScale.wrap(ctx))
                 .setTitle("Email this page")
                 .setView(box)

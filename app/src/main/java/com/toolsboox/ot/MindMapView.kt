@@ -83,15 +83,47 @@ class MindMapView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         boxes.clear()
+        drawMap(canvas, width.toFloat(), height.toFloat(), panY, boxes)
+    }
+
+    /**
+     * The whole laid-out map as a bitmap, ready for a PNG — the export door's renderer.
+     *
+     * Not a screenshot: [pan] is forced to zero, so a picture nudged half off the panel with the
+     * volume keys still exports centred and whole, and the radial layout already fits every ring
+     * inside the given bounds, so panel-sized geometry IS the entire graph — nothing off-screen
+     * to lose. [scale] buys resolution on top of that (2× reads crisply when the PNG lands in a
+     * chat or a document). White is baked in because this view never paints its own background —
+     * on the panel the layout behind it is white, but a bare export would be transparent, and
+     * transparent PNGs read as solid black in most viewers.
+     */
+    fun exportBitmap(scale: Float = 2f): android.graphics.Bitmap {
+        val w = width.coerceAtLeast(1)
+        val h = height.coerceAtLeast(1)
+        val bmp = android.graphics.Bitmap.createBitmap(
+            (w * scale).toInt(), (h * scale).toInt(), android.graphics.Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.drawColor(Color.WHITE)
+        c.scale(scale, scale)
+        drawMap(c, w.toFloat(), h.toFloat(), pan = 0f, hits = null)
+        return bmp
+    }
+
+    /**
+     * The one drawing routine, shared by the live panel and [exportBitmap] — so the export can
+     * never drift out of step with what the panel shows. [hits] collects the tappable boxes when
+     * this is the panel and is null for an export, where nothing is tappable.
+     */
+    private fun drawMap(canvas: Canvas, w: Float, h: Float, pan: Float, hits: MutableList<Pair<RectF, String>>?) {
         if (placed.isEmpty()) return
 
-        val cx = width / 2f
+        val cx = w / 2f
         // Boxes are laid out (and remembered for hit-testing) in already-panned screen space,
         // so taps keep landing on what the finger sees without any coordinate translation.
-        val cy = height / 2f + panY
+        val cy = h / 2f + pan
         // Leave a margin so the outer ring's boxes stay on the panel rather than half off it.
-        val rx = width / 2f - dp(70f)
-        val ry = height / 2f - dp(46f)
+        val rx = w / 2f - dp(70f)
+        val ry = h / 2f - dp(46f)
 
         fun px(p: MindMap.Placed) = cx + p.x * rx
         fun py(p: MindMap.Placed) = cy + p.y * ry
@@ -119,15 +151,21 @@ class MindMapView(context: Context) : View(context) {
             textPaint.isFakeBoldText = focus || w1 >= 0.75f
 
             val maxW = dp(if (focus) 190f else 150f)
-            val label = ellipsize(p.label, maxW)
-            val tw = textPaint.measureText(label)
+            // Full words, not "Synthes…". A label that overruns the box wraps onto a second line
+            // before the ellipsis is ever reached for — the box grows downward by one line-height,
+            // which the layout absorbs: the ring gaps (INNER_R→OUTER_R in unit space, times the
+            // margins above) are several line-heights at any panel size this runs on, and boxes
+            // are filled white and drawn after the lines, so even a close pair stays legible.
+            // The hit-target below is the real (possibly taller) box, so taps track the eye.
+            val lines = wrapLabel(p.label, maxW)
+            val tw = lines.maxOf { textPaint.measureText(it) }
             val padX = dp(10f)
             val padY = dp(7f)
-            val h = textPaint.fontSpacing + padY * 2
-            val w = tw + padX * 2
+            val bh = textPaint.fontSpacing * lines.size + padY * 2
+            val bw = tw + padX * 2
 
             val x = px(p); val y = py(p)
-            val box = RectF(x - w / 2f, y - h / 2f, x + w / 2f, y + h / 2f)
+            val box = RectF(x - bw / 2f, y - bh / 2f, x + bw / 2f, y + bh / 2f)
             val r = dp(6f)
             canvas.drawRoundRect(box, r, r, boxFill)
             boxLine.strokeWidth = dp(if (focus) 3.5f else if (p.depth == 1) 1f + 2f * w1 else 1.4f)
@@ -142,10 +180,32 @@ class MindMapView(context: Context) : View(context) {
                 canvas.drawRoundRect(inner, ir, ir, tagLine)
             }
 
-            val baseline = y - (textPaint.descent() + textPaint.ascent()) / 2f
-            canvas.drawText(label, x, baseline, textPaint)
-            boxes += box to p.uri
+            // Each line centred on its own share of the block, the block centred on the node.
+            lines.forEachIndexed { i, line ->
+                val lineCy = y + (i - (lines.size - 1) / 2f) * textPaint.fontSpacing
+                val baseline = lineCy - (textPaint.descent() + textPaint.ascent()) / 2f
+                canvas.drawText(line, x, baseline, textPaint)
+            }
+            hits?.add(box to p.uri)
         }
+    }
+
+    /**
+     * A label as the box will carry it: one line when it fits, two when it must, and only a label
+     * still overrunning TWO lines gets the ellipsis — the complaint this answers was ordinary
+     * words ("Synthesize", a contact's name) being eaten mid-word, and the last-resort case is a
+     * genuinely enormous label, where a third line would swallow the ring.
+     */
+    private fun wrapLabel(text: String, maxWidth: Float): List<String> {
+        if (textPaint.measureText(text) <= maxWidth) return listOf(text)
+        // Break at the last space that fits, so whole words survive; a single word wider than the
+        // box breaks mid-word, which still reads better than losing its tail entirely.
+        val fit = textPaint.breakText(text, true, maxWidth, null).coerceAtLeast(1)
+        val cut = text.lastIndexOf(' ', fit - 1).takeIf { it > 0 } ?: fit
+        val first = text.substring(0, cut).trim()
+        val rest = text.substring(cut).trim()
+        if (rest.isEmpty()) return listOf(first)
+        return listOf(first, ellipsize(rest, maxWidth))
     }
 
     private fun ellipsize(text: String, maxWidth: Float): String {

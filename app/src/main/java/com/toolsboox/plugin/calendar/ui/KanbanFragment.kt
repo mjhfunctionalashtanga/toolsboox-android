@@ -126,7 +126,8 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
             addView(cSite); addView(cUser); addView(cPass)
         }
         val scroll = android.widget.ScrollView(ctx).apply { addView(box) }
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Guarded: typed credentials are work — a stray touch outside must not throw them away.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Web bridge")
             .setView(scroll)
             .setPositiveButton("Save") { _, _ ->
@@ -145,7 +146,7 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
                 )
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .create())
     }
 
     /** Push one card to the web board; toast the result. */
@@ -188,7 +189,8 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
         val input = android.widget.EditText(ctx).apply { hint = "Board name"; setSingleLine() }
         val pad = (16 * resources.displayMetrics.density).toInt()
         val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input) }
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Guarded: a name being typed is work — a stray touch outside must not throw it away.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("New board")
             .setView(box)
             .setPositiveButton("Create") { _, _ ->
@@ -196,7 +198,7 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
                 if (name.isNotBlank()) { selectedBoard = BoardsStore.add(ctx, name).id; load() }
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .create())
     }
 
     override fun onResume() {
@@ -221,7 +223,8 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
         val input = android.widget.EditText(ctx).apply { hint = "New task"; setSingleLine() }
         val pad = (16 * resources.displayMetrics.density).toInt()
         val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input) }
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Guarded: a task being typed is work — a stray touch outside must not throw it away.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("New card")
             .setView(box)
             .setPositiveButton("Add") { _, _ ->
@@ -229,7 +232,7 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
                 if (text.isNotBlank()) addTask(text)
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .create())
     }
 
     private fun addTask(text: String) {
@@ -505,7 +508,8 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
             setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0)
             addView(input)
         }
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Guarded: a correction being typed is work — a stray touch outside must not throw it away.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Edit card")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
@@ -513,7 +517,7 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
                 if (next.isNotBlank() && next != item.text) mutateCard(item) { it.text = next }
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create())
     }
 
     /** 🔎 The universal menu's Ask, from the board: the card's words go to Ask my Ledger with its

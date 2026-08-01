@@ -521,6 +521,8 @@ class CloudFragment @Inject constructor() : ScreenFragment() {
         signUpDialog.setNegativeButton(R.string.cancel) { dialog, _ -> dialog.cancel() }
 
         val dialog = signUpDialog.show()
+        // Guarded: typed credentials are work — a stray touch outside must not throw them away.
+        dialog.setCanceledOnTouchOutside(false)
         val signUpButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
         signUpButton.isEnabled = false
 
@@ -565,6 +567,8 @@ class CloudFragment @Inject constructor() : ScreenFragment() {
         loginDialog.setNegativeButton(R.string.cancel) { dialog, _ -> dialog.cancel() }
 
         val dialog = loginDialog.show()
+        // Guarded: typed credentials are work — a stray touch outside must not throw them away.
+        dialog.setCanceledOnTouchOutside(false)
         val loginButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
         loginButton.isEnabled = false
 

@@ -219,7 +219,9 @@ object FeedNoteGram {
             }
             .setNegativeButton(android.R.string.cancel, null)
         if (sel.isNotBlank()) b.setMessage("“${sel.take(400)}”")
-        b.show()
+        // A note being typed is work — a stray touch outside must not throw it away. Cancel and
+        // the back gesture remain the ways out.
+        fragment.showGuardedModal(b.create())
     }
 
     // --- ✍ Handwriting ------------------------------------------------------------------------
@@ -282,7 +284,10 @@ object FeedNoteGram {
             addView(InkPadView.penBar(ctx, pad)); addView(frame)
         }
         dialog = AlertDialog.Builder(ModalScale.wrap(ctx)).setView(box).create()
-        dialog.show()
+        // The pad is work in progress — the writing hand lands outside the dialog constantly on
+        // a slab, and that touch must not cost the ink. Cancel / SAVE up top and the back
+        // gesture remain the ways out.
+        fragment.showGuardedModal(dialog)
     }
 
     /**

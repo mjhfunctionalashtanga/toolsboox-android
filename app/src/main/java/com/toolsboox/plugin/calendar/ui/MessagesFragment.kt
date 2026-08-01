@@ -356,7 +356,9 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
                 pollOnce(thread)
             }
         })
-        dialog.show()
+        // The pad holds a message mid-write — a palm outside the dialog must not cost the ink.
+        // Cancel / Send above the pad and the back gesture remain the ways out.
+        showGuardedModal(dialog)
         dialog.window?.setLayout(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
         )

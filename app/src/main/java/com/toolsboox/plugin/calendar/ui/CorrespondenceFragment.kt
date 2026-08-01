@@ -1360,7 +1360,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             if (bmp == null) android.widget.Toast.makeText(ctx, "Nothing written", android.widget.Toast.LENGTH_SHORT).show()
             else { dialog.dismiss(); showGramProvenanceEditor(bmp, provenanceDefault ?: "", provUrl) }
         }
-        dialog.show()
+        // The reply surface holds ink, typed markdown and attachments mid-compose — a palm
+        // outside the dialog must not cost them. Cancel / Send above the pad and the back
+        // gesture remain the ways out.
+        showGuardedModal(dialog)
         dialog.window?.setLayout(
             android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT
         )
@@ -1400,7 +1403,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             })
             addView(input)
         }
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // The share carries rendered ink and an edited provenance line — work a stray touch
+        // outside must not throw away (and an outside dismiss would skip the Cancel path that
+        // recycles the bitmap). Cancel and the back gesture remain the ways out.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             // Names both the space AND (multi-site) the site it posts into — outward-facing.
             .setTitle("Share as gram · $spaceTitle" +
                 activeSiteLabel().let { if (it.isBlank()) "" else " · 🌐 $it" })
@@ -1422,7 +1428,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 }
             }
             .setNegativeButton("Cancel") { _, _ -> bmp.recycle() }
-            .show()
+            .create())
     }
 
     /** Minimal stylus pad: white background, black ink, no Onyx pipeline needed for a short reply. */

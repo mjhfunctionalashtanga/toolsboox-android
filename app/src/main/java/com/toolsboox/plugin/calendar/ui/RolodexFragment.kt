@@ -420,7 +420,9 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
             .setPositiveButton("Edit") { _, _ -> openEditor(contact) }
             .setNegativeButton("Close", null)
             .create()
-        dialog.show()
+        // Guarded: the card carries an "Add a note…" field — a half-typed note must not be lost
+        // to a stray touch outside. Close and the back gesture remain the ways out.
+        showGuardedModal(dialog)
 
         val who = contact.name.ifBlank { "Unnamed" }
         askRow.setOnClickListener {
@@ -632,7 +634,9 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
                 }
             }
         }
-        builder.show()
+        // Guarded: a whole contact's fields mid-edit — a stray touch outside must not throw
+        // them away. Cancel and the back gesture remain the ways out.
+        showGuardedModal(builder.create())
     }
 
     override fun showLoading() {}

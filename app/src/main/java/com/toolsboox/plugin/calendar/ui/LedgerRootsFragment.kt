@@ -608,12 +608,14 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
                     val box = LinearLayout(ctx).apply {
                         orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
                     }
-                    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                    // Guarded: a name being typed is work — a stray touch outside must not
+                    // throw it away.
+                    showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                         .setTitle("New synthesis").setView(box)
                         .setPositiveButton("Create") { _, _ ->
                             onPick(store.add(ctx, input.text.toString().trim()))
                         }
-                        .setNegativeButton(android.R.string.cancel, null).show()
+                        .setNegativeButton(android.R.string.cancel, null).create())
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)

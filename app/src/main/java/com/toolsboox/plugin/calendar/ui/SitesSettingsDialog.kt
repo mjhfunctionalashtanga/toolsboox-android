@@ -169,6 +169,10 @@ object SitesSettingsDialog {
                 onChanged(); dialog.dismiss(); show(context, onChanged)
             }
         }
+        // A whole site's credentials mid-edit are work — a stray touch outside must not throw
+        // them away. Cancel and the back gesture remain the ways out. (Set directly: this object
+        // only has a Context, so it can't route through ScreenFragment.showGuardedModal.)
+        dialog.setCanceledOnTouchOutside(false)
         dialog.show()
     }
 }

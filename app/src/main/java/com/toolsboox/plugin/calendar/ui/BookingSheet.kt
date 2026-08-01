@@ -233,6 +233,9 @@ object BookingSheet {
             setPadding(px(ctx, 14), px(ctx, 12), px(ctx, 14), px(ctx, 12))
             minLines = 2
         }
+        // The reason field collects typed work — a stray touch outside must not throw it away.
+        // "Keep it" and the back gesture remain the ways out. (Set directly: BookingSheet holds a
+        // plain Fragment, so it can't route through ScreenFragment.showGuardedModal.)
         AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Cancel · ${d.booking.title.take(32)}")
             .setMessage("${d.booking.person} will be emailed.")
@@ -249,7 +252,8 @@ object BookingSheet {
                 }
             }
             .setNegativeButton("Keep it", null)
-            .show()
+            .create()
+            .apply { setCanceledOnTouchOutside(false); show() }
     }
 
     /* ---------------------------------------------------------------
@@ -371,6 +375,10 @@ object BookingSheet {
             }
         })
 
+        // The pad holds a note mid-write — a palm outside the dialog must not cost the ink.
+        // Cancel / Save above the pad and the back gesture remain the ways out. (Set directly:
+        // BookingSheet holds a plain Fragment, so it can't route through showGuardedModal.)
+        dialog.setCanceledOnTouchOutside(false)
         dialog.show()
         dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
     }

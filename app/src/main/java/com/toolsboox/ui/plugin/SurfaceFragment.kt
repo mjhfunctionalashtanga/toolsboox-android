@@ -2913,8 +2913,9 @@ abstract class SurfaceFragment : ScreenFragment() {
             setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0)
             addView(input)
         }
-        // Through showModal — pauses the hardware pen so stylus taps land on the dialog.
-        showModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Through the guarded door — pauses the hardware pen, and a stray touch outside must not
+        // throw away the words being typed. Cancel and the back gesture remain the ways out.
+        showGuardedModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Edit the card's words")
             .setView(android.widget.ScrollView(ctx).apply { addView(box) })
             .setPositiveButton("Save") { _, _ ->
@@ -3083,7 +3084,8 @@ abstract class SurfaceFragment : ScreenFragment() {
             setPadding((20 * dp).toInt(), (8 * dp).toInt(), (20 * dp).toInt(), 0)
             addView(urlIn); addView(secretIn)
         }
-        showModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Guarded: typed credentials are work — a stray touch outside must not throw them away.
+        showGuardedModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Asset webhook")
             .setView(android.widget.ScrollView(ctx).apply { addView(box) })
             .setPositiveButton("Save") { _, _ ->
@@ -3380,8 +3382,9 @@ abstract class SurfaceFragment : ScreenFragment() {
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
         }
-        // Through showModal — typed over the ink page, so the pen must be parked first.
-        showModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Through the guarded door — typed over the ink page, so the pen must be parked first,
+        // and a stray touch outside must not throw away the prompt being typed.
+        showGuardedModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Generate image")
             .setView(box)
             .setPositiveButton("Generate") { _, _ ->
@@ -3656,7 +3659,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                             val input = EditText(ctx).apply { hint = "Name"; setText(c.label); setSingleLine() }
                             val pad = px(16)
                             val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input) }
-                            showModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                            // Guarded: a name being typed is work — a stray touch outside
+                            // must not throw it away.
+                            showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                                 .setTitle("Rename clipping").setView(box)
                                 .setPositiveButton("Save") { _, _ ->
                                     com.toolsboox.plugin.calendar.ot.ClippingsStore.rename(ctx, c.id, input.text.toString().trim())
@@ -3911,8 +3916,9 @@ abstract class SurfaceFragment : ScreenFragment() {
         editText.layoutParams = params
         container.addView(editText)
 
-        // Through showModal — pauses the hardware pen so stylus taps land on the dialog.
-        showModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Through the guarded door — pauses the hardware pen, and a stray touch outside must not
+        // throw away the words being edited. Cancel and the back gesture remain the ways out.
+        showGuardedModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(R.string.calendar_text_dialog_title)
             .setView(container)
             .setPositiveButton(R.string.ok) { dialog, _ ->
@@ -4032,10 +4038,11 @@ abstract class SurfaceFragment : ScreenFragment() {
             .setNeutralButton("Clear", null)
             .setNegativeButton("Cancel", null)
             .create()
-        // Through showModal: THE punch-list freeze ("pen touching the edit-in-ink menu freezes
-        // the device"). Unrouted, the Onyx raw session kept consuming the stylus under the
-        // dialog, so pen taps on Done/Clear/Cancel — and on the pad itself — never arrived.
-        showModal(dialog)
+        // Through the guarded door: THE punch-list freeze ("pen touching the edit-in-ink menu
+        // freezes the device"). Unrouted, the Onyx raw session kept consuming the stylus under
+        // the dialog, so pen taps on Done/Clear/Cancel — and on the pad itself — never arrived.
+        // Guarded because the pad holds ink mid-edit — a palm outside must not cost it.
+        showGuardedModal(dialog)
         // Keep the dialog open on Clear — re-bind after show().
         dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { pad.clear() }
     }
@@ -4261,8 +4268,9 @@ abstract class SurfaceFragment : ScreenFragment() {
             setPadding(pad, pad / 2, pad, 0)
             addView(input)
         }
-        // Through showModal — pauses the hardware pen so stylus taps land on the dialog.
-        showModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Through the guarded door — pauses the hardware pen, and a stray touch outside must not
+        // throw away the title being typed.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Name this gram")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
@@ -4744,8 +4752,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                 dialog.cancel()
             }
 
-        // Through showModal — pauses the hardware pen so stylus taps land on the dialog.
-        showModal(builder.create())
+        // Through the guarded door — pauses the hardware pen, and a stray touch outside must not
+        // throw away the note being typed. Cancel and the back gesture remain the ways out.
+        showGuardedModal(builder.create())
         editText.requestFocus()
     }
 

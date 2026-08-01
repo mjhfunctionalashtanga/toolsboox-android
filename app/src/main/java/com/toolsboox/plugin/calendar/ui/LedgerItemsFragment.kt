@@ -470,6 +470,10 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 ).show()
             }
         }
+        // A task being typed is work — a stray touch outside must not throw it away. Cancel and
+        // the back gesture remain the ways out. (Flag set directly: this dialog wires its own
+        // setOnShowListener for focus + the Date button, which showGuardedModal would replace.)
+        dialog.setCanceledOnTouchOutside(false)
         dialog.show()
     }
 
@@ -805,7 +809,9 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             setPadding(px(18), px(8), px(18), 0)
             addView(input)
         }
-        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // A correction being typed is work — a stray touch outside must not throw it away.
+        // Cancel and the back gesture remain the ways out.
+        showGuardedModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle(if (item.kind == LedgerItem.Kind.TASK) "Edit task" else "Edit event")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
@@ -824,7 +830,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 }
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .create())
     }
 
     /**
@@ -908,7 +914,9 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             .setTitle("Write it in pen")
             .setView(box)
             .create()
-        dialog.show()
+        // The pad holds the task's face mid-write — a palm outside the dialog must not cost the
+        // ink. CANCEL / SAVE above the pad and the back gesture remain the ways out.
+        showGuardedModal(dialog)
     }
 
     /**

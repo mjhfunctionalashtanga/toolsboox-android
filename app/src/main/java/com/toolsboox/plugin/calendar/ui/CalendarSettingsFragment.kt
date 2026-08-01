@@ -192,7 +192,9 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             setPadding(px(20), px(8), px(20), 0)
             addView(pass); addView(confirm)
         }
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Guarded: a passphrase being typed is work — a stray touch outside must not throw it
+        // away mid-entry.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Protect your passwords")
             .setMessage("Passwords, tokens and API keys are encrypted with this passphrase — you'll type it again when importing. Leave BOTH fields blank to export with no secrets at all.")
             .setView(col)
@@ -207,7 +209,7 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 }
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .create())
     }
 
     /**
@@ -229,13 +231,15 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             setPadding(px(20), px(8), px(20), 0)
             addView(pass)
         }
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        // Guarded: same as the export prompt — the passphrase mid-entry must not be lost to a
+        // stray touch outside.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Backup is passphrase-protected")
             .setMessage("This backup's passwords and keys are encrypted. Enter the passphrase it was exported with, or skip to import everything except the secrets.")
             .setView(col)
             .setPositiveButton("Unlock") { _, _ -> onReady(pass.text?.toString() ?: "") }
             .setNegativeButton("Skip secrets") { _, _ -> onReady(null) }
-            .show()
+            .create())
     }
 
     /** The passphrase collected (or explicitly left blank) BEFORE [backupCreateLauncher] runs —

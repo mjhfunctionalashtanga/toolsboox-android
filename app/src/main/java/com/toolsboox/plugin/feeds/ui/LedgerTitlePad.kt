@@ -163,7 +163,9 @@ internal fun promptTitle(
         box.addView(actionRow, 0)
     }
 
-    fragment.showModal(dialog)
+    // The guarded door: the pad and the field hold a title mid-write — a palm outside the
+    // dialog must not cost them. Cancel / Save and the back gesture remain the ways out.
+    fragment.showGuardedModal(dialog)
 
     // Wired AFTER show() rather than through setPositiveButton's own listener, because that one
     // dismisses the dialog before it runs and this button sometimes has to REFUSE. A title that is
