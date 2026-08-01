@@ -201,8 +201,25 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
     private fun showBookDirectory() {
         // In-book navigation + the AI pipeline. Shelf/import/read-aloud/screen controls moved to the
         // wrench (🔧) in the bottom bar; this ☰ stays about moving *within* the open book.
-        val chapterRows: List<Pair<String, () -> Unit>> = tocItems.map { e ->
-            ("${"  ".repeat(e.depth)}${if (e.depth == 0) "◦ " else "· "}${e.label}") to { goToHref(e.href) }
+        //
+        // The table of contents used to fake its depth with leading spaces — every section of
+        // every chapter stood in one flat run, and an eighty-row scroll is the slowest thing
+        // there is on e-ink. The depth is real now: the top-level chapters are the rows (the
+        // label still navigates, exactly as before), and a chapter's sections tuck into a
+        // genuine sub-fold behind a caret on its row — the hub's Mail / Later List shape,
+        // menu → Chapters → chapter → its sections. TOCs nested deeper than two levels keep
+        // the two-level shape by folding everything under its nearest top-level chapter, with
+        // a residual indent on those labels so the deeper nesting still reads.
+        val chapterItems = mutableListOf<Pair<String, () -> Unit>>()
+        val chapterSubFolds = mutableMapOf<String, List<Pair<String, () -> Unit>>>()
+        for (e in tocItems) {
+            if (e.depth == 0 || chapterItems.isEmpty()) {
+                chapterItems += "◦ ${e.label}" to { goToHref(e.href) }
+            } else {
+                val parent = chapterItems.last().first
+                chapterSubFolds[parent] = chapterSubFolds[parent].orEmpty() +
+                    (("${"  ".repeat(e.depth - 1)}· ${e.label}") to { goToHref(e.href) })
+            }
         }
         // Marks belong on ☰ rather than the pill: they are ways of moving *within* the book,
         // which is what this menu is for, and the pill is already eight items wide on a panel
@@ -227,16 +244,17 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
                 "🗒  Essay outline → Write" to { readerOutline() }
             )
         )
-        // A book with eighty chapters turns this accordion into a scroll, which on e-ink is the
-        // slowest thing there is. Past a couple of screens' worth, offer a filter instead of the
-        // whole list — the list is still there under it.
-        if (chapterRows.isNotEmpty()) {
+        // A book with eighty chapters turns this accordion into a scroll even with its sections
+        // folded away. Past a couple of screens' worth (measured against the WHOLE tree, folds
+        // included — that's what the finder searches), offer a filter above the list — the list
+        // is still there under it.
+        if (chapterItems.isNotEmpty()) {
             groups += "Chapters" to
-                (if (chapterRows.size > 18)
-                    listOf("🔎  Find a chapter…" to { showChapterFinder() }) + chapterRows
-                 else chapterRows)
+                (if (tocItems.size > 18)
+                    listOf("🔎  Find a chapter…" to { showChapterFinder() }) + chapterItems
+                 else chapterItems)
         }
-        showDirectory(groups)
+        showDirectory(groups, chapterSubFolds)
     }
 
     /** ▦ Ledger directory — the shared cross-surface "get in/out" menu (Almanac/History/…). */
@@ -269,6 +287,24 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         }
         val tapOn = readerNavPrefs().getBoolean("tap_zones", true)
         val volOn = readerNavPrefs().getBoolean("volume_turn", true)
+        // The floating pills' size, adjustable from INSIDE the reader. Not a reader-private
+        // setting: this reads and writes the one shared PILL dial (ModalScale.PILL_SIZE_KEY —
+        // the same "Pill size" row Settings → Legibility shows), because the pills are one
+        // system and their size is one number. It appears here too because the reader is where
+        // the pill most needs adjusting — it parks in the book margin, and at this panel's
+        // dimens it can come up genuinely tiny — while the settings row sits three surfaces
+        // away behind the "size everything together" switch. Touching it from here detaches
+        // the pill dial from that switch exactly as touching the row in Settings does.
+        // Applied on the spot through the same pass every surface's pills get on open
+        // (reapplyPillScale); the pen button follows by itself — MainActivity listens on the key.
+        val a11y = requireContext().getSharedPreferences("ledger_a11y", 0)
+        val pillTier = a11y.getString(com.toolsboox.ot.ModalScale.PILL_SIZE_KEY,
+            a11y.getString(com.toolsboox.ot.ModalScale.SIZE_KEY, "standard"))
+        fun pt(m: String) = if (pillTier == m) "◉" else "○"
+        fun setPillTier(m: String) {
+            a11y.edit().putString(com.toolsboox.ot.ModalScale.PILL_SIZE_KEY, m).apply()
+            reapplyPillScale(binding.readerGrip, binding.readerBar, "reader")
+        }
         showDirectory(listOf(
             "Books" to bookRows,
             "Reading" to readingRows,
@@ -277,6 +313,11 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
                 // A book wants a clean page; not everyone wants the floating pen on top of it.
                 ((if (quickNoteShown()) "🖉  Hide the quick-note button" else "🖉  Show the quick-note button")
                     to { setQuickNoteShown(!quickNoteShown()) })
+            ),
+            "Pill size" to listOf(
+                "${pt("compact")}  Compact" to { setPillTier("compact") },
+                "${pt("standard")}  Standard" to { setPillTier("standard") },
+                "${pt("expanded")}  Expanded" to { setPillTier("expanded") }
             ),
             "Page turn (finger)" to listOf(
                 ((if (tapOn) "☑" else "☐") + "  Tap sides to turn") to { toggleReaderNav("tap_zones", !tapOn); setupTapZones() },

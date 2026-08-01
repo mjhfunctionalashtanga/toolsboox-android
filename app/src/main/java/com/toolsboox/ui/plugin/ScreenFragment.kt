@@ -424,6 +424,12 @@ abstract class ScreenFragment : Fragment() {
      * Drag [handle] to move [pill] freely (via translation), persisted under [key].
      * A plain tap on the handle (no drag) fires [onTap] — used to collapse/expand the
      * pill, so the grip itself is the obvious affordance, not just the small caret.
+     *
+     * Every pill's movement runs through here — the drag, the clamp, the per-surface position
+     * memory, the flip-rescale — one implementation so a pill moves the same way on every
+     * surface that has one. (The Weeks popout can additionally DOCK to a chosen side and tuck
+     * away, which is in some ways the better behavior; if the pills ever learn edge-docking,
+     * this is the seam it lands in, so it arrives on all of them at once.)
      */
     @android.annotation.SuppressLint("ClickableViewAccessibility")
     protected fun makeDraggable(handle: View, pill: View, key: String, onTap: (() -> Unit)? = null) {
@@ -1123,6 +1129,32 @@ abstract class ScreenFragment : Fragment() {
     }
 
     /**
+     * Re-dress a pill in place after the shared PILL dial changes — the same sizing pass
+     * [makeDraggable] runs when a surface opens, for the surfaces that let you turn the dial
+     * WHILE standing on them (the reader's wrench). Buttons and grip resize together (the grip
+     * off its own orientation-aware pass, or the two disagree the moment the dials differ — see
+     * [applyGripOrientation]), and then one re-clamp: the pill just changed size under a
+     * translation measured against its old footprint, so growing while parked at an edge could
+     * otherwise carry it past the screen. One relayout, one settle, no animation frames —
+     * followed by a full panel clean on Onyx, because a resize leaves the old outline ghosted
+     * on e-ink exactly the way a drag does.
+     */
+    protected fun reapplyPillScale(grip: View, pill: View, key: String) {
+        applyPillSizing(pill, skip = grip)
+        applyGripOrientation(grip, requireContext().getSharedPreferences("ledger_widgets", 0)
+            .getBoolean("${key}_vertical", pillDefaultVertical()))
+        pill.post {
+            clampInParent(pill, grip)
+            (this as? SurfaceFragment)?.refreshRawExcludeRects()
+            try {
+                com.onyx.android.sdk.api.device.epd.EpdController.repaintEveryThing(
+                    com.onyx.android.sdk.api.device.epd.UpdateMode.GC
+                )
+            } catch (t: Throwable) { /* non-Onyx device — no panel to clean */ }
+        }
+    }
+
+    /**
      * Keep [pill] within reach — translation can never strand it somewhere you can't get it back
      * from, and a pill longer than the screen can still be slid to either of its ends.
      * See [com.toolsboox.ot.PillBounds.range] for why that second half matters on a Palma.
@@ -1456,7 +1488,7 @@ abstract class ScreenFragment : Fragment() {
         // a folder folds whichever other folder is open (the Search·Ask·Directory group included),
         // so the drawer never becomes a wall of every submenu at once. Enforced at EXPANSION time
         // only: the initial expanded flags stay the caller's to choose (ledgerDirectoryFolders
-        // opens at most one — the surface's home folder; showDirectory flattens its groups open).
+        // opens at most one — the surface's home folder; showDirectory opens its first group).
         // Nothing persists at THIS level — a folder's fold state lives and dies with this one
         // opening of the drawer. (Second-level folds inside a folder are the opposite on both
         // counts: multi-open and remembered — see the subFolds block below.)
@@ -1750,17 +1782,34 @@ abstract class ScreenFragment : Fragment() {
      * the surfaces to jump to. Each row is (label, action).
      */
     /**
-     * Grouped directory — now ONE visual language with the accordion: each named group becomes
-     * a collapsible Folder (▸/▾), headerless groups flatten to plain rows. Keeping a single
-     * renderer is what stops the app from growing two directory styles again.
+     * Grouped directory — ONE visual language AND one doctrine with the accordion: each named
+     * group becomes a collapsible Folder (▸/▾), headerless groups flatten to plain rows, and
+     * only the FIRST named group opens. Every group used to come up spread, which made these
+     * popovers the one place the one-open accordion rule didn't hold — a directory door that
+     * opened as a wall of every submenu at once. Now the caller's first (most relevant) group
+     * stands open and the rest wait behind their carets, exactly like the ▦ hub.
+     *
+     * [subFolds] hands a row a real second-level fold, keyed by that row's exact drawn label —
+     * the same shape as [Folder.subFolds], so a directory can nest the way the hub does
+     * (menu → group → sub-fold → leaves). One flat map for the whole call because row labels
+     * are already the identity the fold state hangs on (see HubSubFold); each folder takes only
+     * the entries naming its own rows, so the accordion's row count stays honest.
      */
-    protected fun showDirectory(groups: List<Pair<String, List<Pair<String, () -> Unit>>>>) {
+    protected fun showDirectory(
+        groups: List<Pair<String, List<Pair<String, () -> Unit>>>>,
+        subFolds: Map<String, List<Pair<String, () -> Unit>>> = emptyMap()
+    ) {
         val folders = mutableListOf<Folder>()
+        var firstGroup = true
         for ((header, items) in groups) {
             if (header.isEmpty()) {
                 items.forEach { (label, action) -> folders.add(Folder("", label, action = action)) }
             } else {
-                folders.add(Folder("", header, items, expanded = true))
+                folders.add(Folder(
+                    "", header, items, expanded = firstGroup,
+                    subFolds = subFolds.filterKeys { key -> items.any { it.first == key } }
+                ))
+                firstGroup = false
             }
         }
         showAccordion(folders)

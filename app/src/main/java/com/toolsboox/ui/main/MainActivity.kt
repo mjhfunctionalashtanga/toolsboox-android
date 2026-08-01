@@ -235,6 +235,49 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                 refreshPenTouchDelegate()
             }
         })
+        // Keep the button through a screen flip, the way every pill is kept — the same rule as
+        // ScreenFragment.makeDraggable, which this button cannot ride only because it lives on
+        // the activity. It used to keep its raw translation across a rotation, so a pen parked
+        // down a portrait edge landed past the shorter landscape edge, unreachable — the pills
+        // all rescaled to the new screen and the pen button alone "lost its position". A genuine
+        // flip scales the translation (halfway up stays halfway up) and persists; any other
+        // parent resize (system bars coming and going) just re-clamps, unsaved, so a near-1.0
+        // ratio can't compound drift into the stored spot.
+        view.post {
+            val parent = view.parent as? android.view.View ?: return@post
+            var lastW = parent.width
+            var lastH = parent.height
+            fun clampNow(persist: Boolean) {
+                view.post {
+                    val p = view.parent as? android.view.View ?: return@post
+                    view.translationX = view.translationX
+                        .coerceIn(com.toolsboox.ot.PillBounds.range(view.left, view.right, p.width))
+                    view.translationY = view.translationY
+                        .coerceIn(com.toolsboox.ot.PillBounds.range(view.top, view.bottom, p.height))
+                    if (persist) prefs.edit().putFloat("floatNoteTx", view.translationX)
+                        .putFloat("floatNoteTy", view.translationY).apply()
+                    refreshPenTouchDelegate()
+                }
+            }
+            parent.addOnLayoutChangeListener { _, l, t, r, b, _, _, _, _ ->
+                val w = r - l
+                val h = b - t
+                if (w <= 0 || h <= 0 || lastW <= 0 || lastH <= 0) {
+                    if (w > 0 && h > 0) { lastW = w; lastH = h }
+                    return@addOnLayoutChangeListener
+                }
+                val flipped = (w < h) != (lastW < lastH)
+                if (flipped) {
+                    view.translationX = view.translationX * w / lastW
+                    view.translationY = view.translationY * h / lastH
+                    clampNow(persist = true)
+                } else if (w != lastW || h != lastH) {
+                    clampNow(persist = false)
+                }
+                lastW = w
+                lastH = h
+            }
+        }
         var downX = 0f; var downY = 0f; var startTx = 0f; var startTy = 0f; var dragging = false
         val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
         view.setOnTouchListener { v, e ->

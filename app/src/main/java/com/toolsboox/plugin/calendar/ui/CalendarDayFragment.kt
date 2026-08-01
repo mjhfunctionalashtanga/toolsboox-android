@@ -3721,12 +3721,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     override fun onImageSource(element: com.toolsboox.da.ImageElement) {
         val link = element.sourceLink
         when {
-            link.startsWith("mail://") -> {
+            link.startsWith("mail://") || link.startsWith("acct:") -> {
                 // A starred email's gram files its address as mail://<id> (MailInboxFragment writes
                 // it so rhizome edges and grams share one name for the letter). Without this arm the
                 // router fell through in silence — "Open the source" on a mail gram, and the All
                 // Stars tap that funnels here, did nothing at all. The handoff rides a pending
                 // static, the same shape FeedSelection.pendingInPaneEntry uses for the feeds pane.
+                // The bare "acct:<accountId>:uid:<n>" spelling is iOS archaeology: the iPad wrote
+                // raw ids before build 42 adopted the mail:// convention, and those grams are
+                // already on synced boards. Route them too — the pending id simply won't match a
+                // letter this device's accounts don't hold, and the inbox is still the right room.
                 com.toolsboox.plugin.mail.ui.MailInboxFragment.pendingOpenId = link.removePrefix("mail://")
                 findNavController().navigate(R.id.action_to_mail_inbox)
             }
