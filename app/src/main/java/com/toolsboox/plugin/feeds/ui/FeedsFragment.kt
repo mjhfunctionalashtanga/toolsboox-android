@@ -2640,6 +2640,60 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         lensRow("📖", "The Read", "read")
         lensRow("📺", "The Watch", "watch")
         lensRow("🎧", "The Listen", "listen")
+        // 📧 Emails — mail as a sibling of the media lenses (Michael: "email can be put right
+        // into feeds, just like The Listen — and then the drop down is the accounts"). First
+        // cut of the mail/feeds unification: the folder rides the same single-open lens state,
+        // its dropdown lists the configured accounts, and a tap lands on the Mail surface with
+        // that account already the filter (the filter is a pref, the same channel the inbox's
+        // own account rows use — the nav graph's doors take no arguments). The full merge —
+        // messages as rows IN this list — is the next step; this makes mail a room off the
+        // same hallway now.
+        run {
+            val accounts = com.toolsboox.plugin.mail.MailAccountStore.all(ctx)
+            val open = lensOpen == "email"
+            fun goToMail(accountId: String?) {
+                requireContext().getSharedPreferences("ledger_mail_inbox", 0).edit()
+                    .putString("account_filter", accountId ?: "").apply()
+                androidx.navigation.fragment.NavHostFragment.findNavController(this@FeedsFragment)
+                    .navigate(R.id.action_to_mail_inbox)
+            }
+            row("📧  ${if (open) "▾" else "▸"}  Emails", true, false) {
+                if (open) {
+                    a11y.edit().putString("feeds_lens_open", "").apply()
+                    renderDirectory()
+                } else {
+                    a11y.edit().putString("feeds_lens_open", "email").apply()
+                    renderDirectory()
+                }
+            }
+            if (open) {
+                val box = android.widget.LinearLayout(ctx).apply {
+                    orientation = android.widget.LinearLayout.VERTICAL
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        setColor(android.graphics.Color.TRANSPARENT)
+                        setStroke(dpPx(1), com.toolsboox.ot.LedgerTheme.accent(ctx))
+                        cornerRadius = dpPx(8).toFloat()
+                    }
+                    setPadding(dpPx(2), dpPx(2), dpPx(2), dpPx(4))
+                }
+                fun mailRow(label: String, onClick: () -> Unit) {
+                    box.addView(android.widget.TextView(ctx).apply {
+                        text = label; textSize = 12.5f; setTextColor(0xFF000000.toInt())
+                        setPadding(dpPx(18), dpPx(7), dpPx(6), dpPx(7))
+                        maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
+                        isClickable = true
+                        setOnClickListener { onClick() }
+                    })
+                }
+                mailRow("✉  All accounts") { goToMail(null) }
+                for (a in accounts) mailRow("·  ${a.display}") { goToMail(a.id) }
+                if (accounts.isEmpty()) mailRow("(no accounts yet — set one up in Mail)") { goToMail(null) }
+                container.addView(box, android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { setMargins(dpPx(6), dpPx(1), dpPx(6), dpPx(4)) })
+            }
+        }
         laterFolder()
         // Asks & Answers rides with the media folders per Michael's list, but it's a different
         // corpus (the local AskFeedStore Q&A log, mode "asklog") with no Miniflux categories —

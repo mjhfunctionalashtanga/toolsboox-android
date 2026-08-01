@@ -123,10 +123,7 @@ class CalendarNavBarHost(
                 calendarPattern.getQuarterPages(quarter) > 0, calendarPattern.getQuarterNotes(quarter)),
             NavigatorRenderer.Slot("${date.year}", emph("year", NavigatorRenderer.Emphasis.MUTED),
                 calendarPattern.getYearPages() > 0, calendarPattern.getYearNotes()),
-        ),
-            // The anchor day's moon phase in the corner the retired hamburger freed — the same
-            // badge the day page's strip wears, so the bar stays one bar everywhere.
-            cornerBadge = com.toolsboox.plugin.calendar.ot.WeatherMoon.moon(date).first)
+        ))
     }
 
     /** One step of the active granularity — the carets walk the filter's unit, never reset. */

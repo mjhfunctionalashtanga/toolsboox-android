@@ -86,6 +86,29 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
         binding.postsCompose.setOnClickListener {
             NavHostFragment.findNavController(this).navigate(R.id.action_to_publish)
         }
+        // The header's verb buttons retire into the rail: ✎ compose rides as an icon, Close goes
+        // entirely (it only popped the back stack, which the system back gesture already does),
+        // and the rail gains the sort flip Michael asked for — newest-first by default, one tap
+        // to read the archive forward instead. The choice is kept in this browser's own prefs.
+        binding.postsCompose.visibility = View.GONE
+        binding.postsClose.visibility = View.GONE
+        setupActionRail(
+            binding.postsRail, "posts",
+            actions = { listOf(
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_pencil, "Compose") {
+                    binding.postsCompose.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(0,
+                    if (oldestFirst()) "Oldest first — tap for newest" else "Newest first — tap for oldest",
+                    glyph = if (oldestFirst()) "⇡" else "⇣") {
+                    requireContext().getSharedPreferences("ledger_posts_browser", 0).edit()
+                        .putBoolean("oldest_first", !oldestFirst()).apply()
+                    rebuildActionRail("posts")
+                    items = sortForOrder(items)
+                    render()
+                }
+            ) }
+        )
         siteState.load(requireContext())
 
         // Passing onSelectPeriod is what makes the strip a FILTER rather than a way out of the
@@ -161,6 +184,14 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
         return !d.isBefore(start) && !d.isAfter(end)
     }
 
+    /** The rail's sort flip — newest-first unless the kept choice says to read forward. */
+    private fun oldestFirst(): Boolean =
+        requireContext().getSharedPreferences("ledger_posts_browser", 0).getBoolean("oldest_first", false)
+
+    /** The list in the chosen order, one place, so the flip and the fetch can't disagree. */
+    private fun sortForOrder(list: List<com.toolsboox.plugin.calendar.ui.SiteFetch.SitePost>) =
+        if (oldestFirst()) list.sortedBy { it.post.date } else list.sortedByDescending { it.post.date }
+
     override fun onResume() {
         super.onResume()
         // A publish/edit/trash happens in a pushed destination (which may have re-pointed the active
@@ -233,7 +264,7 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
                 // An overtaken fetch drops its answer rather than painting it: it was asked about a
                 // window nobody is looking at any more.
                 if (seq != loadSeq) return@launch
-                items = merged.filter { inWindow(it.post) }.sortedByDescending { it.post.date }
+                items = sortForOrder(merged.filter { inWindow(it.post) })
                 if (isAdded) { loading = false; render() }
             } finally {
                 // Also on cancellation — a wedged flag here would refuse every future reload.

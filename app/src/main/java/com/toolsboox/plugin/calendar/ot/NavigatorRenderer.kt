@@ -30,23 +30,8 @@ object NavigatorRenderer {
         val noteCount: Int = 0,
     )
 
-    fun render(context: Context, canvas: Canvas, slots: List<Slot>,
-               /** A single glyph for the strip's far-left corner — the margin the retired
-                *  header hamburger used to float over, free real estate since the rail took
-                *  the ☰ (Michael: "we can use that space now"). The day strip passes the moon
-                *  phase; null leaves the corner quiet. */
-               cornerBadge: String? = null) {
+    fun render(context: Context, canvas: Canvas, slots: List<Slot>) {
         canvas.drawRect(0.0f, 0.0f, 1404.0f, 140.4f, Creator.fillWhite)
-
-        if (cornerBadge != null) {
-            val badgePaint = TextPaint().apply {
-                textAlign = Paint.Align.CENTER; textSize = 58f; isAntiAlias = true
-                color = Color.BLACK
-            }
-            // Centered in the 0–100 gutter left of the ‹ caret (which sits at 120) — the exact
-            // footprint the old floating ☰ occupied, so nothing else moves.
-            canvas.drawText(cornerBadge, 52f, 98f, badgePaint)
-        }
 
         val atkinsonBold = try {
             ResourcesCompat.getFont(context, R.font.atkinson_hyperlegible_bold)
@@ -68,8 +53,14 @@ object NavigatorRenderer {
         // Slot geometry FIRST, because the type is sized to fit it rather than the other way
         // round. The strip's footprint is fixed by design (1404 wide, no reflow), so the width a
         // label gets is a constant we solve against — not something the dial can negotiate with.
-        val slotsLeft = 175f
-        val slotsRight = 1264f
+        //
+        // The band runs nearly edge to edge now. The old 175/1264 margins existed for the ▦ hub
+        // button the almanac pages floated over the strip's left edge — that hamburger retired
+        // into the rail on every surface, so the header takes the whole space back (Michael:
+        // "I would like the almanac header to use the whole space"). Only the carets' own tap
+        // zones bound the slots.
+        val slotsLeft = SLOTS_LEFT
+        val slotsRight = SLOTS_RIGHT
         val slotWidth = (slotsRight - slotsLeft) / slots.size
         val slotGap = 12f
         val maxLabelWidth = slotWidth - slotGap * 2f
@@ -142,11 +133,11 @@ object NavigatorRenderer {
         }
 
         val rowCenterY = 98f
-        // The "<" sits at 170, not 60: the almanac pages float the ▦ hub button over the strip's
-        // left edge, and on a narrow panel (Tab Mini C) a 60px caret vanished underneath it —
-        // along with most of its tap zone. 150 skims just clear of the button on the Mini C (measured on a screenshot) without exiling the caret to the middle distance.
-        canvas.drawText("<", 120f, rowCenterY, arrowPaint)
-        canvas.drawText(">", 1344f, rowCenterY, arrowPaint)
+        // The carets sit near the true edges now — the hub button that used to float over the
+        // strip's left corner (and pushed the "<" inboard to 120) retired into the rail, so
+        // nothing covers them at any panel width.
+        canvas.drawText("<", 55f, rowCenterY, arrowPaint)
+        canvas.drawText(">", 1352f, rowCenterY, arrowPaint)
 
         // (Slot geometry and the fitted scale are computed above, before the paints — the type is
         // sized to the slots, not the slots to the type.)
@@ -219,9 +210,11 @@ object NavigatorRenderer {
         }
     }
 
-    // Hit-testing geometry — MUST stay in sync with render()'s slot layout above.
-    const val SLOTS_LEFT = 175.0f
-    const val SLOTS_RIGHT = 1264.0f
+    // Hit-testing geometry — MUST stay in sync with render()'s slot layout above. Widened with
+    // the header (the retired hub button no longer needs a margin): the carets keep ~110px tap
+    // zones at the edges and the slots take everything between.
+    const val SLOTS_LEFT = 110.0f
+    const val SLOTS_RIGHT = 1300.0f
     const val ARROW_PREV = -1
     const val ARROW_NEXT = -2
 
