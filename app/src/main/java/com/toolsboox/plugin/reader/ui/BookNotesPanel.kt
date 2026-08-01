@@ -40,6 +40,10 @@ object BookNotesPanel {
     /**
      * @param tocOrder chapter labels in book order — the group ordering, since the marks
      *   themselves only know which chapter they were made in.
+     * @param showModal the fragment's modal door (`ScreenFragment.showModal`), which pauses the
+     *   Onyx pen around the dialog. This panel only has a Context, so the door is passed in —
+     *   same shape as [com.toolsboox.ot.TagPicker] — and defaults to a plain show for callers
+     *   that have no fragment to route through.
      * @param onJump go to this mark's location in the open book.
      * @param onUnmark drop the drawn highlight from the page (the store forgets it either way).
      */
@@ -48,6 +52,7 @@ object BookNotesPanel {
         book: String,
         tocOrder: List<String>,
         startType: String = BookNote.ANNOTATION,
+        showModal: (AlertDialog) -> Unit = { it.show() },
         onJump: (BookNote) -> Unit,
         onUnmark: (BookNote) -> Unit
     ) {
@@ -131,7 +136,7 @@ object BookNotesPanel {
                         setPadding(0, px(16), 0, px(4))
                     })
                     for (note in groups[chapter].orEmpty()) {
-                        list.addView(row(context, note, dialog, onJump, onUnmark) { rebuild() })
+                        list.addView(row(context, note, dialog, showModal, onJump, onUnmark) { rebuild() })
                     }
                 }
             }
@@ -139,7 +144,7 @@ object BookNotesPanel {
         }
         rebuild()
 
-        dialog.show()
+        showModal(dialog)
         dialog.window?.let { w ->
             val metrics = context.resources.displayMetrics
             val lp = w.attributes
@@ -156,6 +161,7 @@ object BookNotesPanel {
         context: Context,
         note: BookNote,
         dialog: AlertDialog,
+        showModal: (AlertDialog) -> Unit,
         onJump: (BookNote) -> Unit,
         onUnmark: (BookNote) -> Unit,
         onChanged: () -> Unit
@@ -215,12 +221,12 @@ object BookNotesPanel {
         })
 
         box.setOnClickListener {
-            if (note.cfi.isBlank()) { editNote(context, note) { onChanged() }; return@setOnClickListener }
+            if (note.cfi.isBlank()) { editNote(context, note, showModal) { onChanged() }; return@setOnClickListener }
             dialog.dismiss()
             onJump(note)
         }
         box.setOnLongClickListener {
-            rowMenu(context, note, dialog, onJump, onUnmark, onChanged); true
+            rowMenu(context, note, dialog, showModal, onJump, onUnmark, onChanged); true
         }
         return box
     }
@@ -230,6 +236,7 @@ object BookNotesPanel {
         context: Context,
         note: BookNote,
         dialog: AlertDialog,
+        showModal: (AlertDialog) -> Unit,
         onJump: (BookNote) -> Unit,
         onUnmark: (BookNote) -> Unit,
         onChanged: () -> Unit
@@ -237,7 +244,7 @@ object BookNotesPanel {
         val rows = mutableListOf<Pair<String, () -> Unit>>()
         if (note.cfi.isNotBlank()) rows += "↪  Go to this spot" to { dialog.dismiss(); onJump(note) }
         rows += (if (note.note.isBlank() && note.image == null) "🖍  Add a note" else "✎  Edit the note") to {
-            editNote(context, note) { onChanged() }
+            editNote(context, note, showModal) { onChanged() }
         }
         if (note.text.isNotBlank()) rows += "📋  Copy the passage" to {
             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -248,10 +255,10 @@ object BookNotesPanel {
             onUnmark(note)
             onChanged()
         }
-        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
+        showModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
             .setItems(rows.map { it.first }.toTypedArray()) { _, which -> rows[which].second() }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create())
     }
 
     /** Which book the rows and the composer write to; set by the reader before either opens. */
@@ -265,7 +272,12 @@ object BookNotesPanel {
      * Saves onto [existing] when editing, or as a new book-level [BookNote.NOTE] when null.
      */
     @SuppressLint("ClickableViewAccessibility")
-    fun editNote(context: Context, existing: BookNote?, onSaved: () -> Unit) {
+    fun editNote(
+        context: Context,
+        existing: BookNote?,
+        showModal: (AlertDialog) -> Unit = { it.show() },
+        onSaved: () -> Unit
+    ) {
         val dp = context.resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
 
@@ -366,10 +378,11 @@ object BookNotesPanel {
             .create()
         // This dialog collects work — a stray touch outside the pad must not cost the ink. On an
         // e-ink slab a palm lands outside the dialog constantly; Cancel / Save above the pad and
-        // the back gesture remain the ways out. (Set directly: this panel only has a Context, so
-        // it can't route through ScreenFragment.showGuardedModal.)
+        // the back gesture remain the ways out. The guard lives HERE, not in the passed door, so
+        // it holds for every caller — fragments pass plain `showModal` (the pen-pause door), not
+        // `showGuardedModal`, and the guard is applied exactly once.
         dialog.setCanceledOnTouchOutside(false)
-        dialog.show()
+        showModal(dialog)
     }
 
     private fun rule(context: Context) = View(context).apply {

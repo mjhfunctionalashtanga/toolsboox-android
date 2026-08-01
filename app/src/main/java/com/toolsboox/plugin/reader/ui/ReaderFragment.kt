@@ -1003,6 +1003,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         BookNotesPanel.bind(book)
         BookNotesPanel.show(
             requireContext(), book, tocItems.map { it.label }, startType,
+            showModal = { showModal(it) },
             onJump = { mark ->
                 skipRelocates++   // the jump's own relocate must not re-stamp the saved spot
                 val esc = mark.cfi.replace("\\", "\\\\").replace("'", "\\'")
@@ -1029,7 +1030,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
     private fun composeBookNote() {
         val book = bookNoteKey().ifBlank { showMessage("Open a book first."); return }
         BookNotesPanel.bind(book)
-        BookNotesPanel.editNote(requireContext(), null) {
+        BookNotesPanel.editNote(requireContext(), null, showModal = { showModal(it) }) {
             // getView(), not `view` — on ScreenFragment that name is the layout RESOURCE ID.
             val root = getView() ?: return@editNote
             com.google.android.material.snackbar.Snackbar
