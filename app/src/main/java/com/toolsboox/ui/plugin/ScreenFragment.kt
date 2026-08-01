@@ -1214,8 +1214,15 @@ abstract class ScreenFragment : Fragment() {
      * The compact "Go to…" modal (grouped rows), anchored top-left (directories) or up from the
      * bottom pill (sections). Lifted from the day page so the almanac pages use the SAME modal
      * instead of the old accordion drawer.
+     *
+     * [anchorEnd] hangs it from the RIGHT edge instead. The spatial rule (Michael: "have it
+     * come from the same side as the popout"): a menu opened from an edge control grows from
+     * that edge — the day rail docked right opens its menus on the right, so the hand and the
+     * eye stay where the tap was. Doors that aren't edge controls keep the left default.
      */
-    protected fun showGoModal(groups: List<Pair<String, List<GoItem>>>, anchorTop: Boolean) {
+    protected fun showGoModal(
+        groups: List<Pair<String, List<GoItem>>>, anchorTop: Boolean, anchorEnd: Boolean = false
+    ) {
         val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
         val list = root.findViewById<LinearLayout>(R.id.go_to_list)
         root.findViewById<TextView>(R.id.go_to_title).visibility = View.GONE
@@ -1231,6 +1238,7 @@ abstract class ScreenFragment : Fragment() {
         // Group headers carry the vibe's accent — a solid, so it stays a crisp gray on a
         // monochrome Boox rather than dithering. The rows themselves stay black.
         val accent = com.toolsboox.ot.LedgerTheme.accent(requireContext())
+        val rowLabels = mutableListOf<TextView>()
         for ((header, items) in groups) {
             val tv = TextView(requireContext())
             tv.text = header.uppercase()
@@ -1242,6 +1250,7 @@ abstract class ScreenFragment : Fragment() {
                 r.findViewById<TextView>(R.id.go_label).apply {
                     text = applyRowIcon(r, "${item.emoji}  ${item.label}")
                     textSize = ROW_SP * textScale
+                    rowLabels.add(this)
                 }
                 scaleRowIcon(r, textScale)
                 scaleRowPadding(r, textScale)
@@ -1253,18 +1262,42 @@ abstract class ScreenFragment : Fragment() {
         // Menu text honours the chosen reading font too. SYSTEM is a no-op (leaves rows untouched).
         com.toolsboox.ot.LedgerFonts.applyTree(root)
 
+        // Measured AFTER the reading face lands on the rows — each label with its own final
+        // paint — so the card below can be cut to its longest word rather than to a guess.
+        // Measuring before the font swap under-counted by exactly the width of the reading
+        // face, which is how "Synthesize" kept wrapping after the first fix.
+        val widestLabelPx = rowLabels.maxOfOrNull { it.paint.measureText(it.text.toString()) } ?: 0f
+
         dialog.setOnShowListener { onModalShown() }
         dialog.setOnDismissListener { onModalDismissed() }
         dialog.show()
         dialog.window?.let { w ->
             val lp = w.attributes
-            // Narrow, with a clear edge margin — never more than ~46% of the screen width.
-            // Widens with the text scale, so Large doesn't just ellipsize the same box.
-            lp.width = minOf(dp((GO_MODAL_DP * textScale).toInt()),
-                (resources.displayMetrics.widthPixels * 0.44f).toInt())
-            // Always top-left, matching showAccordion/showDirectory — so the menu appears in the
-            // SAME position on every screen (day, feeds, reader) instead of jumping to the pill.
-            lp.gravity = Gravity.START or Gravity.TOP
+            // Sized to the LONGEST label, within a hard screen cap — not to a fixed card
+            // width. The fixed card ("never more than ~46%") cut "Synthesize" mid-word on a
+            // Palma, and a menu that hyphenates its own destinations reads as broken. The
+            // fixed width stays as the FLOOR (short menus keep their familiar shape); the
+            // measured widest row (its icon slot, margins and padding added back, plus slack
+            // for the reading face applied after measuring) can widen it, and 60% of the
+            // screen is the line past which wrapping honestly beats eating the page.
+            // Everything standing between the window's edges and the label's own box, all of
+            // it real and counted: dialog_go_to's ScrollView margins (16+16), the card's
+            // horizontal padding (12+12), the row's (14+14), the icon slot and its 18dp label
+            // margin, plus a little slack. The first cut guessed 58dp, came up 44dp short, and
+            // "Synthesize" kept wrapping by exactly those five pixels.
+            val rowChrome = dp((ICON_DP * textScale).toInt()) + dp(32 + 24 + 28 + 18 + 8)
+            lp.width = minOf(
+                maxOf(dp((GO_MODAL_DP * textScale).toInt()), widestLabelPx.toInt() + rowChrome),
+                (resources.displayMetrics.widthPixels * 0.60f).toInt()
+            )
+            // Through setLayout, as showAccordion does — width written onto the attributes
+            // alone never reached the already-shown window, which is why the first cut of the
+            // measure-to-widest fix appeared to change nothing on device.
+            w.setLayout(lp.width, android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+            // Top-left, matching showAccordion/showDirectory — so the menu appears in the SAME
+            // position on every screen (day, feeds, reader) instead of jumping to the pill —
+            // except when the opener is an edge control on the other side (see [anchorEnd]).
+            lp.gravity = (if (anchorEnd) Gravity.END else Gravity.START) or Gravity.TOP
             lp.x = dp(22); lp.y = dp(54)
             w.attributes = lp
         }
@@ -1462,8 +1495,13 @@ abstract class ScreenFragment : Fragment() {
     /**
      * Collapsible-folder directory popover (top-left). Each folder header toggles its
      * children — Almanac, Feed, Bookshelf, Ask, Settings, etc.
+     *
+     * [anchorEnd] hangs the drawer from the RIGHT edge instead — the spatial rule (Michael:
+     * "have it come from the same side as the popout"): a menu opened from an edge control
+     * grows from that edge, so the day rail docked right opens the hub on the right. Every
+     * other door keeps the flush-left drawer.
      */
-    protected fun showAccordion(folders: List<Folder>) {
+    protected fun showAccordion(folders: List<Folder>, anchorEnd: Boolean = false) {
         val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
         val list = root.findViewById<LinearLayout>(R.id.go_to_list)
         root.findViewById<TextView>(R.id.go_to_title).visibility = View.GONE
@@ -1747,9 +1785,9 @@ abstract class ScreenFragment : Fragment() {
         // the one surface still speaking in the system font.
         com.toolsboox.ot.LedgerFonts.applyTree(root)
         dialog.window?.let { w ->
-            // Left drawer: flush-left, full-height, scrolls internally. No animation (e-ink).
+            // Edge drawer: flush to its edge, scrolls internally. No animation (e-ink).
             val lp = w.attributes
-            lp.gravity = Gravity.START or Gravity.TOP
+            lp.gravity = (if (anchorEnd) Gravity.END else Gravity.START) or Gravity.TOP
             val metrics = resources.displayMetrics
             // Flush left, but BELOW the date-nav strip AND the directory chip the making surfaces
             // hang just under it — the "❝ Board ▾" label that says which Pickings board (or Write/

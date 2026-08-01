@@ -122,12 +122,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private lateinit var binding: FragmentCalendarBinding
 
     /**
-     * The tucked action panel — the day page is the first surface converted to the Weeks
-     * popout's tuck-in/tuck-out idiom (see [com.toolsboox.ot.TuckPanel]). It carries what the
-     * floating NAV pill used to: the section stepper, the today jump, the sections switcher,
-     * and the hub door — plus a Tools fold mirroring the floating tool pill's options. The nav
-     * pill itself no longer shows here; on a converted surface the panel IS the way (Ledgable
-     * doesn't do modes, so there is no per-surface panel-vs-pill preference to leave behind).
+     * The tucked action rail — the day page is the first surface converted to the Weeks side
+     * toolbar's tuck-in/tuck-out idiom (see [com.toolsboox.ot.TuckPanel]). One slim in-flow
+     * icon column carries the whole action layer: the tools the floating tool pill used to
+     * float and the nav actions the nav pill carried. Both pills no longer show here — on a
+     * converted surface the rail IS the way (Ledgable doesn't do modes, so there is no
+     * per-surface rail-vs-pills preference to leave behind); tucking the rail to its edge
+     * strip is what "hide the tools" means now.
      */
     private var tuckPanel: com.toolsboox.ot.TuckPanel? = null
 
@@ -335,14 +336,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     // your stars. Michael: "all stars should be manipulatable just like pickings."
     override fun provideDisableRawInkCapture(): Boolean = false
 
-    // Exclude the floating tool pill, the notes pager, and the tuck panel's tab/body from the
-    // raw stylus reader so the stylus can drag/tap them (and never inks a stray dot over them).
-    // The nav pill left this list with the surface's conversion to the tuck panel — a hidden
-    // view is skipped by rawExcludeRects anyway, but the list should say what's true.
+    // Exclude the notes pager from the raw stylus reader so the stylus can tap it (and never
+    // inks a stray dot over it). Both pills left this list with the surface's conversion to
+    // the tucked action rail — and the rail itself needs no exclusion, because it lives in the
+    // layout flow BESIDE the surface, not over it.
     override fun provideExcludeViews(): List<View> =
-        if (::binding.isInitialized)
-            listOf(binding.toolWidget, binding.notePager) + (tuckPanel?.excludeViews() ?: emptyList())
-        else emptyList()
+        if (::binding.isInitialized) listOf(binding.notePager) else emptyList()
 
     /**
      * Provide toolbar of drawing's bindings.
@@ -1808,23 +1807,23 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 CalendarNavigator.toDayNote(this, currentDate, "intake")
             }
         }
-        // Calendar button + top-left hamburger both open the consolidated Ledger hub.
+        // Calendar button (hidden with the upstream toolbar group; kept wired for performClick).
         binding.toolbarDrawing.toolbarCalendarView.setOnClickListener { showLedgerHub() }
-        binding.goAppsButton.visibility = View.VISIBLE
-        binding.goAppsButton.setOnClickListener { showLedgerHub() }
+        // The header's top-left ☰ retired with the rail: its one job on this page was
+        // showLedgerHub(), and the rail's Hub button is the same door — two hamburgers to one
+        // hub is chrome saying the same thing twice (Michael: "the hamburger in the upper left
+        // becomes unnecessary with the hamburger on the popout"). The rail — or its tucked
+        // strip, which can never be hidden with it — is now the one way in. When the rail
+        // spreads to other surfaces, their ☰ retires with the same conversion.
+        binding.goAppsButton.visibility = View.GONE
         bindDirectoryChip()
 
-        // Retire the fixed pen strip on the day page — the floating pills + gear now cover
-        // everything. The real buttons stay in the (hidden) layout so performClick still
-        // drives the Onyx ink actions; nothing about drawing changes.
-        binding.toolbarDrawing.root.visibility = View.GONE
-
-        // The floating NAV pill retired from this page: its actions (section stepper, today
-        // jump, sections switcher, hub door) live in the tuck panel now — see the TuckPanel
-        // construction below. The pill's views stay in the layout, hidden, exactly the way the
-        // fixed pen strip does, so nothing else that references them has to change. The TOOL
-        // pill stays floating: an eraser you need between two strokes must not become two taps.
+        // BOTH floating pills retired from this page — the tucked action rail (built on the
+        // toolbar's own slot in the layout, see the TuckPanel construction below) carries the
+        // nav layer AND the tools now, the way the Weeks side toolbar always carried its own.
+        // The pills' views stay in the layout, hidden, so nothing else referencing them breaks.
         binding.navWidget.visibility = View.GONE
+        binding.toolWidget.visibility = View.GONE
 
         // Inline ‹ N › pager. Two families carry it, never the ritual stations:
         //  • Numeric notes ("0","1",…): ‹ › reuse the stepper's ↑/↓ (which walk the numeric tail),
@@ -1901,70 +1900,88 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             }
         }
 
-        // Floating tool selector: each button drives the real (hidden) toolbar action,
-        // so the Onyx ink wiring is unchanged. The active tool is marked on the pill so
-        // you can always tell what the stylus is doing. Long-press the eraser to clear.
-        binding.toolWidget.visibility = View.VISIBLE
-        binding.toolPen.setOnClickListener { binding.toolbarDrawing.toolbarPen.performClick(); markActiveTool(binding.toolPen) }
-        // Long-press the pen → pick ballpoint vs calligraphy (shows the active one).
-        binding.toolPen.setOnLongClickListener { showPenStylePicker(); true }
-        binding.toolEraser.setOnClickListener { binding.toolbarDrawing.toolbarEraser.performClick(); markActiveTool(binding.toolEraser) }
-        binding.toolEraser.setOnLongClickListener {
-            AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
-                .setTitle(R.string.calendar_drawing_toolbar_eraser)
-                .setItems(arrayOf(getString(R.string.eraser_clear_page))) { d, _ ->
-                    binding.toolbarDrawing.toolbarTrash.performClick(); d.dismiss()
-                }
-                .show()
-            true
-        }
-        binding.toolLasso.setOnClickListener { binding.toolbarDrawing.toolbarLasso.performClick(); markActiveTool(binding.toolLasso) }
-        binding.toolUndo.setOnClickListener { binding.toolbarDrawing.toolbarUndo.performClick() }
-        binding.toolRedo.setOnClickListener { binding.toolbarDrawing.toolbarRedo.performClick() }
-        // Wrench now lives on the tool pill (quick tools/layout menu).
-        binding.toolGear.setOnClickListener { showWidgetGearMenu() }
-
-        applyWidgetOrientation()
-
-        // Lift the floating overlays above the drawing surface without elevation (which
+        // Lift the floating overlay above the drawing surface without elevation (which
         // renders as an ugly black shadow-box on e-ink).
-        binding.goAppsButton.bringToFront()
-        binding.toolWidget.bringToFront()
         binding.notePager.bringToFront()
 
-        // Repositionable tool pill: drag the grip to move it anywhere (persisted).
-        // A plain tap on the grip collapses/expands the pill (grip = the obvious handle).
-        makeDraggable(binding.toolGrip, binding.toolWidget, "tool") { togglePill("tool") }
-
-        // Collapse/expand is entirely on the grip (tap the handle) — no separate carets.
-        applyPillCollapse()
-        // Pen is the default tool — reflect that on the pill from the start.
-        markActiveTool(binding.toolPen)
-        // The panel's Tools row can put the whole tool pill away (a pure page); re-assert the
-        // per-surface choice after the pill wiring above defaulted it visible.
-        applyToolPillHidden()
-
-        // The tucked action panel — the nav layer's new home. Attached to the fragment's ROOT
-        // layout (not drawing_layout, whose ConstraintSet CalendarUtils clones and re-applies —
-        // a child that set doesn't describe comes back 0×0). The panel borrows this fragment's
-        // row-dressing pass and modal pen pause rather than growing its own, so one vocabulary
-        // and one pause discipline serve both.
-        tuckPanel = com.toolsboox.ot.TuckPanel(
+        // The tucked action rail — the Weeks side toolbar's tuck-in/tuck-out idiom, rebuilt on
+        // the toolbar's own slot in the constraint chain (in flow: the page ends where the rail
+        // begins, so the pen stays honest with no exclude rects and no modal pause). Top
+        // cluster: the tools the floating pill used to float. Bottom cluster: the nav actions
+        // the retired nav pill carried, plus the ⇄ edge-hop the toolbar always had. Every
+        // button drives the real hidden toolbar action, so the Onyx ink wiring is unchanged.
+        val rail = com.toolsboox.ot.TuckPanel(
             host = this,
-            container = binding.root,
+            toolbar = binding.toolbarDrawing,
             surfaceKey = "day",
-            dressRow = { row, label -> applyRowIcon(row, label) },
-            onOpened = { onModalShown() },
-            onTucked = { onModalDismissed() },
-            onGeometryChanged = { refreshRawExcludeRects() }
-        ).also { it.setEntries(buildTuckEntries()) }
+            sideIsLeft = { !railOnRight() }
+        )
+        tuckPanel = rail
+        rail.setClusters(
+            top = listOf(
+                // The hub door LEADS the rail (Michael: "hamburger at the top of the popout")
+                // — it's the door to everything, so it stands first, wearing the same ☰ face
+                // the retired top-left hamburger wore; the tools follow beneath it.
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_bar_sections, "Hub") {
+                    showLedgerHub()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_pen,
+                    getString(R.string.calendar_drawing_toolbar_pen), activeId = "pen",
+                    // The pill precedent, kept: holding the pen picks ballpoint vs calligraphy.
+                    longPress = { showPenStylePicker() }) {
+                    binding.toolbarDrawing.toolbarPen.performClick(); rail.markActive("pen")
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_eraser,
+                    getString(R.string.calendar_drawing_toolbar_eraser), activeId = "eraser",
+                    longPress = { showClearPageConfirm() }) {
+                    binding.toolbarDrawing.toolbarEraser.performClick(); rail.markActive("eraser")
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_lasso,
+                    getString(R.string.calendar_drawing_toolbar_lasso), activeId = "lasso") {
+                    binding.toolbarDrawing.toolbarLasso.performClick(); rail.markActive("lasso")
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_undo, "Undo") {
+                    binding.toolbarDrawing.toolbarUndo.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_redo, "Redo") {
+                    binding.toolbarDrawing.toolbarRedo.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_trash,
+                    getString(R.string.eraser_clear_page)) { showClearPageConfirm() },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_wrench, "Quick tools") {
+                    showWidgetGearMenu()
+                }
+            ),
+            bottom = listOf(
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_up, "Section up") {
+                    binding.toolbarDrawing.toolbarSwipeUp.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_down, "Section down") {
+                    binding.toolbarDrawing.toolbarSwipeDown.performClick()
+                },
+                // The nav pill's centre button, as an icon: jump to today's version of the
+                // section you're on; already on today, the same tap opens the sections menu
+                // (the iPad feed-carrot pattern, unchanged).
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_today, "Today") {
+                    onCenterTapped()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_folder, "Sections") {
+                    showSectionSwitcher()
+                },
+                // The toolbar's own edge-hop: performClick runs the real switch-side handler
+                // (onSideSwitched → updateToolbar flips the shared side pref + re-navigate), so
+                // the rail hops edges by exactly the mechanism the Weeks toolbar hops.
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_switch_side, "Other side") {
+                    binding.toolbarDrawing.toolbarSwitchSide.performClick()
+                }
+            )
+        )
+        // Pen is the default tool — box it on the rail from the start.
+        rail.markActive("pen")
 
         utils.updateToolbar(binding)
-        // Inset the date bar so the top-left hamburger sits in its own gutter (no caret overlap).
-        (binding.navigatorImageView.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let {
-            it.marginStart = (52 * resources.displayMetrics.density).toInt()
-            binding.navigatorImageView.layoutParams = it
-        }
+        // (The date bar's 52dp hamburger inset left with the hamburger — the strip reclaims
+        // its full width beside the rail.)
         initializeSurface(true)
     }
 
@@ -2769,30 +2786,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /**
-     * Each pill keeps its own orientation.
-     *
-     * They used to share one, so turning the tools turned the navigator with it — which is never
-     * what you meant, since the two sit in different places and get in each other's way in
-     * different directions.
-     */
-    private fun applyWidgetOrientation() {
-        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
-        // The same fallback every other pill uses: the shape you last chose, and only a
-        // screen-width guess before you have ever chosen one. Two copies of this rule would drift.
-        // Only the tool pill remains since the nav pill's conversion to the tuck panel — the
-        // panel's geometry is edge-relative and has no orientation preference to apply.
-        val narrow = pillDefaultVertical()
-        for ((key, pair) in listOf(
-            "tool" to (binding.toolWidget to binding.toolGrip)
-        )) {
-            val vertical = prefs.getBoolean("${key}_vertical", narrow)
-            pair.first.orientation = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
-            applyGripOrientation(pair.second, vertical)
-        }
-    }
-
-    /**
-     * Center-pill tap: when you're not on today, jump to TODAY's version of the section
+     * The rail's Today tap: when you're not on today, jump to TODAY's version of the section
      * you're currently on; once you're already on today, a tap opens the Ledger hub. This
      * is the iPad feed-carrot pattern — first tap goes home, the next reveals the menu.
      */
@@ -2911,7 +2905,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             })
         }.filter { it.label != currentFolder }
 
-        showGoModal(listOf(sections, "Go to" to siblings), anchorTop = false)
+        // From the rail, so it grows from the rail's edge (see railOnRight).
+        showGoModal(listOf(sections, "Go to" to siblings), anchorTop = false, anchorEnd = railOnRight())
     }
 
     /** The next station of the daily ritual after the page we're on, or null off-flow. */
@@ -2927,12 +2922,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         else -> null
     }
 
-    /** Mark which tool is active on the floating pill (mirrors the hidden toolbar's tint). */
-    private fun markActiveTool(active: View) {
-        for (v in listOf(binding.toolPen, binding.toolEraser, binding.toolLasso)) {
-            v.setBackgroundResource(if (v === active) R.drawable.tool_active_bg else 0)
-        }
-    }
+    /**
+     * Which edge the rail is docked on — the same `calendarToolbarSide` truth the ⇄ button
+     * flips. The menus the rail opens ask this so they can grow from the rail's own edge
+     * (Michael: "have it come from the same side as the popout").
+     */
+    private fun railOnRight(): Boolean =
+        sharedPreferences.getString("calendarToolbarSide", "LEFT") == "RIGHT"
 
     /** Pen style picker (ballpoint vs calligraphy), showing the active choice. */
     private fun showPenStylePicker() {
@@ -2946,128 +2942,19 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .show()
     }
 
-    /** Minimize a floating pill to grip + one button + expander; toggle back on tap. */
-    /**
-     * The handle IS the control: tap it again and again and the pill walks its four states.
-     *
-     *   wide open → wide collapsed → tall open → tall collapsed → wide open …
-     *
-     * There are only four ways a pill can be, so a dedicated Horizontal/Vertical row in a menu
-     * was a button to reach a thing you are already touching. Collapsing and turning are the same
-     * gesture now, and one fewer row sits in the menu.
-     *
-     * Orientation is shared by both pills (they should never disagree); collapse is per-pill, so
-     * tapping the tools handle turns both and folds only the tools.
-     */
-    private fun togglePill(which: String) {
-        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
-        val key = "${which}_collapsed"
-        val narrow = pillDefaultVertical()
-        val before = prefs.getBoolean("${which}_vertical", narrow)
-        // Shared with every other pill's handle — folds, then turns, one change per tap.
-        val (_, after) = advancePillState(key, "${which}_vertical", narrow)
-        if (after != before) applyWidgetOrientation()
-        applyPillCollapse()
+    /** Clear-page confirm — one deliberate step between a tap and a blank page. It used to hide
+     *  behind the tool pill's eraser long-press; the rail keeps that hold on its eraser AND
+     *  gives it the trash button's face, since a destructive act deserves a visible door. */
+    private fun showClearPageConfirm() {
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+            .setTitle(R.string.calendar_drawing_toolbar_eraser)
+            .setItems(arrayOf(getString(R.string.eraser_clear_page))) { d, _ ->
+                binding.toolbarDrawing.toolbarTrash.performClick(); d.dismiss()
+            }
+            .show()
     }
 
-    /** Apply the persisted collapsed/expanded state to the tool pill (the one pill left afloat
-     *  on this surface — the nav layer tucked into the panel). */
-    private fun applyPillCollapse() {
-        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
-        val toolCollapsed = prefs.getBoolean("tool_collapsed", false)
-
-        val toolHidden = listOf(
-            binding.toolEraser, binding.toolLasso, binding.toolUndo, binding.toolRedo, binding.toolGear
-        )
-        for (v in toolHidden) v.visibility = if (toolCollapsed) View.GONE else View.VISIBLE
-    }
-
-    /** Return the tool pill to its anchored home position. (The stale nav keys are cleared too,
-     *  so a build that still read them can't strand a pill off-screen.) */
-    private fun resetPillPositions() {
-        requireContext().getSharedPreferences("ledger_widgets", 0).edit()
-            .remove("nav_px").remove("nav_py").remove("tool_px").remove("tool_py").apply()
-        binding.toolWidget.translationX = 0f
-        binding.toolWidget.translationY = 0f
-    }
-
-    /**
-     * What the tuck panel holds on the day page — the nav pill's old cargo, unpacked into rows.
-     *
-     * The pill's centre button packed two acts into one face (tap = today, tap-again = the
-     * sections menu, long-press = the menu directly) because a pill has one button's worth of
-     * room. Rows are cheap, so the panel says both things plainly: Today is a row, Sections is a
-     * row, and nothing needs a long-press to be found.
-     *
-     * The Tools fold mirrors the floating tool pill row for row by calling THE PILL'S OWN
-     * BUTTONS (performClick / performLongClick on toolPen, toolEraser, …) — one implementation,
-     * two mounts. The pill's long-press affordances (pen style, clear page) become named rows,
-     * because a long-press on a row is a gesture nobody would look for. So someone who hides the
-     * floating pill still works entirely from the panel; the pill is a convenience, not the only
-     * door to the tools.
-     */
-    private fun buildTuckEntries(): List<com.toolsboox.ot.TuckPanel.Entry> {
-        fun entry(emoji: String, label: String, action: () -> Unit) =
-            com.toolsboox.ot.TuckPanel.Entry(emoji, { label }, action)
-        fun row(emoji: String, label: () -> String, action: () -> Unit) =
-            com.toolsboox.ot.TuckPanel.Row(emoji, label, action)
-        return listOf(
-            // The section stepper, exactly as the pill's ↑ ↓ drove it: through the hidden
-            // toolbar's swipe actions, so the ritual chain (Intake → … → Write) stays defined
-            // in one place.
-            entry("▲", "Section up") { binding.toolbarDrawing.toolbarSwipeUp.performClick() },
-            entry("▼", "Section down") { binding.toolbarDrawing.toolbarSwipeDown.performClick() },
-            // The centre button's glyph and behavior, as a row: jump to today's version of the
-            // section you're on (and once on today, the same call opens the sections menu —
-            // the iPad feed-carrot pattern, unchanged).
-            entry(sectionEmoji(), "Today") { onCenterTapped() },
-            entry("🗂", "Sections…") { showSectionSwitcher() },
-            entry("▦", "Hub") { showLedgerHub() },
-            com.toolsboox.ot.TuckPanel.Entry("🖊", { "Tools" }, rows = listOf(
-                row("🖊", { "Pen" }) { binding.toolPen.performClick() },
-                row("✒", { "Pen style…" }) { binding.toolPen.performLongClick() },
-                row("⌫", { "Eraser" }) { binding.toolEraser.performClick() },
-                row("⊘", { "Clear page…" }) { binding.toolEraser.performLongClick() },
-                row("◌", { "Lasso" }) { binding.toolLasso.performClick() },
-                row("↶", { "Undo" }) { binding.toolUndo.performClick() },
-                row("↷", { "Redo" }) { binding.toolRedo.performClick() },
-                row("🔧", { "Quick tools…" }) { binding.toolGear.performClick() },
-                // Hidden tools = a pure page; this row is the obvious recovery, which is why it
-                // lives in the panel and not behind the thing it hides. Same shape as the
-                // wrench's master pill switch, scoped to this surface's tool pill alone.
-                row("🫥", {
-                    if (toolPillHidden()) "Show the tool pill" else "Hide the tool pill"
-                }) { toggleToolPillHidden() }
-            ))
-        )
-    }
-
-    /** Whether this surface keeps its floating tool pill put away (panel-only tools). */
-    private fun toolPillHidden(): Boolean =
-        requireContext().getSharedPreferences("ledger_widgets", 0)
-            .getBoolean("tuck_day_toolpill_hidden", false)
-
-    /**
-     * Re-assert the per-surface tool-pill choice. Runs after anything that defaults the pill
-     * visible — makeDraggable at wiring time, and the master pill switch's applyPillsHidden on
-     * every resume — because those speak for all pills everywhere and this preference speaks
-     * for one pill on one surface, which is the more specific voice and should win.
-     */
-    private fun applyToolPillHidden() {
-        if (toolPillHidden()) binding.toolWidget.visibility = View.GONE
-        else if (!pillsHidden()) binding.toolWidget.visibility = View.VISIBLE
-    }
-
-    private fun toggleToolPillHidden() {
-        val prefs = requireContext().getSharedPreferences("ledger_widgets", 0)
-        prefs.edit().putBoolean("tuck_day_toolpill_hidden", !toolPillHidden()).apply()
-        applyToolPillHidden()
-        // The pill's footprint just appeared or vanished — the raw pen reader's exclude rects
-        // must agree with the screen, or ink dies (or lands) where nothing is.
-        refreshRawExcludeRects()
-    }
-
-    /** Wrench on the nav pill → the quick tools/layout shortcut (a subset of the hub). */
+    /** Wrench on the rail → the quick tools/layout shortcut (a subset of the hub). */
     private fun showWidgetGearMenu() {
         // The Synthesize→Write creative pipeline lives on the Synthesize page (Card / 3 questions /
         // outline) with the writing prompt also reachable from Write — so it doesn't clutter every
@@ -3098,23 +2985,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             listOf(
                 "Tools" to tools,
                 "Layout" to listOf(
-                    // Modal text size lived ONLY on the feed wrench, which is why it couldn't be
-                    // found from the page you spend the day on. Same setting, reachable here.
-                    GoItem("🎯", "Reset pill positions") { resetPillPositions() },
-                    // BOTH pills, one switch. Each handle already folds its own pill down to a
-                    // grip, which is the right control when you want the tools out of the way and
-                    // the pager still there — and the wrong one when the answer is "the page has
-                    // furniture on it". Michael: "hide pill leaves the pageskipper. It should
-                    // hide." Reachable back from Settings → Legibility, since this wrench is
-                    // itself on a pill.
-                    GoItem(
-                        if (pillsHidden()) "🫧" else "🫥",
-                        if (pillsHidden()) "Show the floating pills" else "Hide the floating pills"
-                    ) { togglePillsHidden() },
+                    // "Reset pill positions" and the master pill switch left this menu with the
+                    // pills themselves: the rail replaced them on this surface, and it has no
+                    // position to reset — tucking it to the edge strip is what "hide" means now.
+                    // (Other surfaces' pills still answer to Settings → Legibility.)
                     GoItem("⚙️", "Settings") { binding.toolbarDrawing.toolbarSettings.performClick() }
                 )
             ),
-            anchorTop = false
+            anchorTop = false,
+            // The wrench lives on the rail now, so its menu grows from the rail's edge too.
+            anchorEnd = railOnRight()
         )
     }
 
@@ -4718,7 +4598,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // this day's recently-opened books folded into the Bookshelf folder.
         val books: List<Pair<String, () -> Unit>> =
             recentBooks().map { f -> ("📖  " + f.nameWithoutExtension) to { openBookInReader(f) } }
-        showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this, books))
+        // Every hub opening on this page comes from the rail (its Hub button — the top-left ☰
+        // retired with the conversion), so the drawer grows from the rail's own edge.
+        showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this, books), anchorEnd = railOnRight())
     }
 
     /** The three most-recently-opened books (recency = file mtime, touched on open). */
@@ -4749,10 +4631,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     // (sectionIcon(), the drawable twin of sectionEmoji below, left with the nav pill it drove —
-    // the tuck panel's Today row wears the emoji through the hub's row-dressing pass instead.)
+    // the rail's Today button wears the fixed ic_nav_today face instead.)
 
-    /** The section currently on screen as its monochrome glyph — used to front the tuck panel's
-     *  Today row (it used to drive the nav pill's centre button). */
+    /** The section currently on screen as its monochrome glyph — labels what a gram was
+     *  captured from (it used to drive the nav pill's centre button too). */
     private fun sectionEmoji(): String = when (baseNotePage(currentNotePage())) {
         // Text-presentation sun (VS15) renders as a solid black glyph — high contrast on e-ink,
         // unlike the washed-out yellow colour emoji. Base glyphs (no VS16) throughout, so the
@@ -4791,13 +4673,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         binding.navigatorImageView.setImageBitmap(navigatorBitmap)
         updateNavigator(true)
 
-        // The master pill switch just ran in super.onResume (applyPillsHidden speaks for every
-        // pill on every surface); re-assert this surface's own tool-pill choice on top of it.
-        applyToolPillHidden()
-        // Then restore the panel's persisted open state — posted, so the Onyx pen finishes
-        // arming before the panel's modal pause takes it back; opened inline here the pause
-        // would land first and the pen would re-arm underneath the open panel.
-        binding.root.post { if (isResumed) tuckPanel?.applyPersistedOpen() }
+        // super.onResume just re-dressed the upstream toolbar (root tap → the shared collapse
+        // state, button group VISIBLE); the rail takes its slot back before anything paints.
+        tuckPanel?.assertTakeover()
 
         // The feeds directory's back button lands here with the today menu open, Feed Ledger
         // folder expanded — the last rung of the slim-pane ⇄ directory ⇄ today-menu ladder.
