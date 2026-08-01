@@ -6,8 +6,22 @@
      stepping through it, and it dies with the fragment underneath. A page can be arrived at,
      lingered on and left. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="vertical"
+    android:orientation="horizontal"
     android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <!-- The tucked action rail's gutter — in the layout flow, so the page ends where the rail
+         begins; setupActionRail re-docks it when the shared side pref says RIGHT. -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/roots_rail"
+        android:layout_width="14dp"
+        android:layout_height="match_parent"/>
+
+<LinearLayout
+    android:orientation="vertical"
+    android:layout_width="0dp"
+    android:layout_weight="1"
     android:layout_height="match_parent"
     android:background="#FFFFFF">
 
@@ -81,4 +95,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"/>
     </ScrollView>
+</LinearLayout>
+
 </LinearLayout>

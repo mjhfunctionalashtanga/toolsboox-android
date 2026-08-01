@@ -1,7 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- A horizontal row so the tucked action rail sits IN THE LAYOUT FLOW beside the feed — the
+     list and article pane end where the rail begins (no floating pill over rows), the day
+     page's toolbarDrawing argument carried over. The gutter is authored on the start edge;
+     setupActionRail re-docks it when the shared side pref says RIGHT. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="horizontal"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/feeds_rail"
+        android:layout_width="14dp"
+        android:layout_height="match_parent"/>
+
+<FrameLayout
+    android:layout_width="0dp"
+    android:layout_height="match_parent"
+    android:layout_weight="1"
     android:background="#FFFFFF">
 
 <LinearLayout
@@ -319,5 +335,6 @@
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_next_article"/>
     </LinearLayout>
 
-
 </FrameLayout>
+
+</LinearLayout>

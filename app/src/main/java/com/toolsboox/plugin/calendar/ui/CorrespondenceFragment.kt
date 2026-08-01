@@ -345,14 +345,29 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         spaceTitle = act?.let { spaceTitleFor(it.id) }?.takeIf { it.isNotBlank() }
             ?: (prefs().getString("space_title", "MichaelFilter") ?: "MichaelFilter")
         binding.correspondenceClose.setOnClickListener { NavHostFragment.findNavController(this).popBackStack() }
-        // The ▦ hub, top-left as on every other list surface — the same directory accordion the
-        // feed, the mailbox and the garden pages carry. Until now the ✕ was the only way out of
-        // here, and popBackStack lands wherever you came from, which is nearly always the almanac
-        // day page; that is not a route to anywhere else, it is the absence of one.
         binding.correspondenceHubButton.setOnClickListener {
             showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
         }
         binding.correspondenceRefresh.setOnClickListener { load() }
+        // The header chrome retires into the rail: its ☰ Hub is the same accordion door the
+        // header ▦ opened, the reading-size A and the ⟳ ride as rail icons, and the ✕ goes
+        // entirely — it only popped the back stack, which the system back gesture already does
+        // (the same argument that removed Mail's ✕). The hidden buttons keep the one wiring.
+        binding.correspondenceHubButton.visibility = View.GONE
+        binding.correspondenceTextSize.visibility = View.GONE
+        binding.correspondenceRefresh.visibility = View.GONE
+        binding.correspondenceClose.visibility = View.GONE
+        setupActionRail(
+            binding.correspondenceRail, "correspondence",
+            actions = { listOf(
+                com.toolsboox.ot.TuckPanel.Item(0, "Reading size", glyph = "A") {
+                    binding.correspondenceTextSize.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_refresh, "Refresh") {
+                    binding.correspondenceRefresh.performClick()
+                }
+            ) }
+        )
         // Step the reading size. The page re-lays out at the new size rather than being
         // magnified, so the text stays as sharp as the panel can draw it.
         binding.correspondenceTextSize.setOnClickListener {

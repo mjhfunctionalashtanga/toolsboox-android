@@ -66,6 +66,12 @@ class LedgerRootsFragment @Inject constructor() : ScreenFragment() {
         binding.gotoButton.setOnClickListener {
             showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
         }
+        // The header ☰ and Close retire into the rail — ☰ Hub is the same door, and Close only
+        // repeated the system back gesture. The roots had no other chrome, so the rail is just
+        // Hub · ⇄ · ✕.
+        binding.gotoButton.visibility = View.GONE
+        binding.rootsClose.visibility = View.GONE
+        setupActionRail(binding.rootsRail, "roots", actions = { emptyList() })
 
         // The almanac strip, as on Write and Synthesize. The roots are the whole ledger at once,
         // not one day — so here the date is a place to LEAVE from: step to a day and open it, or

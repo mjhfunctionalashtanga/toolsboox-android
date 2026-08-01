@@ -107,8 +107,25 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 anchor = LocalDate.now(); load()
             }
         }
-        binding.itemsPill.bringToFront()
-        cyclePillOnTap(binding.itemsGrip, binding.itemsPill, "items_pill")
+        // The floating pill and the header's directory button retire into the rail: ☰ Hub is
+        // the same accordion door, and the pill's ‹ ☀ › trio ride as rail icons. The add bar
+        // (＋ Task / ＋ Event / ☑ Select) stays where it is — that is capture, not chrome.
+        binding.itemsPill.visibility = View.GONE
+        binding.ledgerButton.visibility = View.GONE
+        setupActionRail(
+            binding.itemsRail, "items",
+            actions = { listOf(
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_up, "Page up") {
+                    binding.itemsPageUp.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_today, "Today") {
+                    binding.itemsGoto.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_down, "Page down") {
+                    binding.itemsPageDown.performClick()
+                }
+            ) }
+        )
 
         // Enter bulk-select without hunting for a long-press; the whole row then toggles.
         binding.selectButton.setOnClickListener { adapter.startEmptySelection() }

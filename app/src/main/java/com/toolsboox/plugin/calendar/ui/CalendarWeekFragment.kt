@@ -115,9 +115,6 @@ class CalendarWeekFragment @Inject constructor() : SurfaceFragment() {
      */
     override fun provideSurfaceView(): SurfaceView = binding.surfaceView
 
-    override fun provideExcludeViews(): List<android.view.View> =
-        if (::binding.isInitialized) listOf(binding.navWidget) else emptyList()
-
 
     /**
      * Provide toolbar of drawing's bindings.
@@ -245,22 +242,13 @@ class CalendarWeekFragment @Inject constructor() : SurfaceFragment() {
             CalendarNavigator.toDayPage(this, LocalDate.now())
         }
 
-        // Top-left hamburger → the shared Ledger directory (Ask, Bookshelf, Notes/Ledger Log, Write,
-        // Text Notes, …). The week page reuses the day layout but never wired this, so its only "menu"
-        // was the date-strip navigator — hence "the old menu pops out on weeks".
-        //
-        // Wired to the same accordion directory the day page opens, so there is one directory
-        // rather than two that drift apart. (The old nine-row section list it briefly pointed at
-        // has since been deleted.)
-        binding.goAppsButton.visibility = View.VISIBLE
-        binding.goAppsButton.setOnClickListener {
-            showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
-        }
-        binding.goAppsButton.bringToFront()
-
-        setupAlmanacNavPill(
-            binding.navWidget, binding.navGrip, binding.navUp, binding.navDown, binding.navGoto,
-            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, com.toolsboox.R.drawable.ic_calendar_today,
+        // The rail takes the Weeks page — the very page whose upstream toolbar the rail's idiom
+        // came from. The old popout retires into its descendant: TuckPanel supersedes the
+        // toolbar's own chrome in the same slot, the floating nav pill never comes up, and the
+        // header ☰ retires with the rail's Hub button carrying the same door (one door, and the
+        // tucked strip can never be hidden). `calendarToolbarSide` stays the one side truth.
+        setupAlmanacRail(
+            surfaceKey = "week",
             isAtPresent = {
                 val wf = java.time.temporal.WeekFields.ISO; val n = LocalDate.now()
                 currentDate.get(wf.weekOfWeekBasedYear()) == n.get(wf.weekOfWeekBasedYear()) &&

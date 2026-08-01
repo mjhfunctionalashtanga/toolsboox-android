@@ -113,10 +113,6 @@ class CalendarYearFragment @Inject constructor() : SurfaceFragment() {
      */
     override fun provideSurfaceView(): SurfaceView = binding.surfaceView
 
-    override fun provideExcludeViews(): List<android.view.View> =
-        if (::binding.isInitialized) listOf(binding.navWidget) else emptyList()
-
-
     /**
      * Provide toolbar of drawing's bindings.
      *
@@ -233,9 +229,10 @@ class CalendarYearFragment @Inject constructor() : SurfaceFragment() {
             CalendarNavigator.toDayPage(this, LocalDate.now())
         }
 
-        setupAlmanacNavPill(
-            binding.navWidget, binding.navGrip, binding.navUp, binding.navDown, binding.navGoto,
-            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, com.toolsboox.R.drawable.ic_calendar_today,
+        // The rail, as on the day and Weeks pages: the upstream toolbar's slot carries both the
+        // ink tools and the nav pill's unpacked actions, and the pill itself never comes up.
+        setupAlmanacRail(
+            surfaceKey = "year",
             isAtPresent = { currentDate.year == LocalDate.now().year }
         ) { CalendarNavigator.toYearPage(this, LocalDate.now(), CalendarYear.DEFAULT_STYLE) }
 

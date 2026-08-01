@@ -47,7 +47,9 @@ import com.toolsboox.databinding.ToolbarDrawingBinding
  */
 class TuckPanel(
     private val host: Fragment,
-    private val toolbar: ToolbarDrawingBinding,
+    /** The upstream drawing toolbar whose slot the rail takes over on an ink surface — null on
+     *  a surface that never had one, where the rail lives on a bare [gutter] instead. */
+    private val toolbar: ToolbarDrawingBinding?,
     /** Prefs are keyed per surface: the day page tucking its rail must not tuck the Weeks
      *  toolbar, whose collapsed state lives under upstream's own `toolbarCollapsed` key. */
     private val surfaceKey: String,
@@ -57,7 +59,12 @@ class TuckPanel(
     private val sideIsLeft: () -> Boolean,
     /** Fired after every state application with the rail's current width, so the host can move
      *  anything of its own out of the gutter (the day page's top-left hamburger). */
-    private val onStateApplied: (widthPx: Int, open: Boolean) -> Unit = { _, _ -> }
+    private val onStateApplied: (widthPx: Int, open: Boolean) -> Unit = { _, _ -> },
+    /** The rail's slot on a surface WITHOUT an upstream drawing toolbar: an empty
+     *  ConstraintLayout column the host layout keeps in its own flow (first or last in a
+     *  horizontal row), so the same in-flow argument holds — the page ends where the rail
+     *  begins. Ignored when [toolbar] is present, which brings its own root. */
+    gutter: ConstraintLayout? = null
 ) {
 
     /**
@@ -88,7 +95,8 @@ class TuckPanel(
      *  them ("Compact slims chrome into the reading margin") must keep its promise here. */
     private val scale get() = ModalScale.pillScale(context)
 
-    private val root: ConstraintLayout = toolbar.root
+    private val root: ConstraintLayout = toolbar?.root
+        ?: requireNotNull(gutter) { "a rail needs either a toolbar slot or a gutter to live in" }
 
     private val activeById = HashMap<String, ImageButton>()
 
@@ -150,7 +158,7 @@ class TuckPanel(
         // rail takes the toolbar over again. No loop — the takeover leaves the group GONE, so
         // the next layout pass finds nothing to heal.
         root.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ ->
-            if (toolbar.toolbarButtonGroup.visibility == View.VISIBLE) assertTakeover()
+            if (toolbar != null && toolbar.toolbarButtonGroup.visibility == View.VISIBLE) assertTakeover()
             // The tucked strip hugs a screen edge, exactly where the system back gesture
             // lives; the Weeks toolbar excludes its collapsed strip for the same reason (its
             // comment: makes it "reliably tappable without needing to be wide").
@@ -169,8 +177,10 @@ class TuckPanel(
      * rail would fold the Weeks toolbar with it.
      */
     fun assertTakeover() {
-        toolbar.toolbarButtonGroup.visibility = View.GONE
-        toolbar.toolbarToggle.visibility = View.GONE
+        // On a gutter-hosted rail there is no upstream chrome to stand down — the slot was
+        // built empty for the rail, so takeover is just wiring the summon tap and laying out.
+        toolbar?.toolbarButtonGroup?.visibility = View.GONE
+        toolbar?.toolbarToggle?.visibility = View.GONE
         root.visibility = View.VISIBLE
         root.setOnClickListener { if (isOpen) tuck() else open() }
         applyState()

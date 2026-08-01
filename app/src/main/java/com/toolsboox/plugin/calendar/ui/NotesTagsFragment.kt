@@ -164,8 +164,29 @@ class NotesTagsFragment @Inject constructor() : ScreenFragment() {
                 level = Level.WEEK; anchor = LocalDate.now(); renderNav(); load()
             }
         }
-        binding.notesPill.bringToFront()
-        cyclePillOnTap(binding.notesGrip, binding.notesPill, "notes_tags_pill")
+        // The floating pill and the header ☰ retire into the rail: ☰ Hub is the same accordion
+        // door, the level cycle wears the current level's initial (W/M/Q/Y — re-dressed on each
+        // cycle), and the ‹ ☀ › trio ride as icons.
+        binding.notesPill.visibility = View.GONE
+        binding.gotoButton.visibility = View.GONE
+        setupActionRail(
+            binding.notesRail, "notes_tags",
+            actions = { listOf(
+                com.toolsboox.ot.TuckPanel.Item(0, "Level: ${level.label}",
+                    glyph = level.label.take(1)) {
+                    binding.levelButton.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_up, "Page up") {
+                    binding.notesPageUp.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_today, "Today") {
+                    binding.notesGoto.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_down, "Page down") {
+                    binding.notesPageDown.performClick()
+                }
+            ) }
+        )
 
         renderNav()
         load()
@@ -179,6 +200,8 @@ class NotesTagsFragment @Inject constructor() : ScreenFragment() {
     /** Redraw the Almanac navigator strip for the current anchor, with the level's slot focal. */
     private fun renderNav() {
         binding.levelButton.text = level.label
+        // The rail's level button wears the level's initial — keep it current with the cycle.
+        rebuildActionRail("notes_tags")
         binding.periodText.text = periodLabel()
         lifecycleScope.launch {
             val root = documentsRoot()

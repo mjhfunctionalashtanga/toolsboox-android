@@ -4,8 +4,22 @@
      with a Close, then a column of cards that scrolls on e-ink. Each fragment fills the column
      differently; the frame is one. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="vertical"
+    android:orientation="horizontal"
     android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <!-- The tucked action rail's gutter — in the layout flow, so the cards end where the rail
+         begins; setupActionRail re-docks it when the shared side pref says RIGHT. -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/semantic_rail"
+        android:layout_width="14dp"
+        android:layout_height="match_parent"/>
+
+<LinearLayout
+    android:orientation="vertical"
+    android:layout_width="0dp"
+    android:layout_weight="1"
     android:layout_height="match_parent"
     android:background="#FFFFFF">
 
@@ -93,4 +107,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"/>
     </ScrollView>
+</LinearLayout>
+
 </LinearLayout>

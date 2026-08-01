@@ -58,6 +58,23 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
         binding.kanbanClose.setOnClickListener { NavHostFragment.findNavController(this).popBackStack() }
         binding.kanbanNew.setOnClickListener { promptNewTask() }
         binding.kanbanBoard.setOnClickListener { showBoardPicker() }
+        // The header's verb buttons retire into the rail: ＋ New rides as an icon, Close goes
+        // entirely (it only popped the back stack, which the system back gesture already does),
+        // and the rail's ☰ Hub gives the board the house key it never had. The board-name
+        // dropdown stays in the header — it names where you are, like a directory chip.
+        binding.kanbanNew.visibility = View.GONE
+        binding.kanbanClose.visibility = View.GONE
+        setupActionRail(
+            binding.kanbanRail, "kanban",
+            actions = { listOf(
+                com.toolsboox.ot.TuckPanel.Item(0, "New task", glyph = "＋") {
+                    binding.kanbanNew.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(0, "Boards", glyph = "▤") {
+                    binding.kanbanBoard.performClick()
+                }
+            ) }
+        )
         load()
     }
 

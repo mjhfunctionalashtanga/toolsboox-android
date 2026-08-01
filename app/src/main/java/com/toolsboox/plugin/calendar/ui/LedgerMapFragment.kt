@@ -118,6 +118,23 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             if (trail.isEmpty()) findNavController().popBackStack()
             else { focus = trail.removeLast(); render() }
         }
+        // The header chrome retires into the rail: ☰ Hub is the same door the ▦ opened, Draw…
+        // rides as ✎, and the Close — which is really "step back up the focus trail" — rides
+        // as ‹. The title/subject line stays: it names what the picture is.
+        binding.gotoButton.visibility = View.GONE
+        binding.mapMenu.visibility = View.GONE
+        binding.mapClose.visibility = View.GONE
+        setupActionRail(
+            binding.mapRail, "map",
+            actions = { listOf(
+                com.toolsboox.ot.TuckPanel.Item(0, getString(R.string.map_menu), glyph = "✎") {
+                    binding.mapMenu.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_left, "Back up") {
+                    binding.mapClose.performClick()
+                }
+            ) }
+        )
 
         map = MindMapView(requireContext()).apply {
             onNodeTap = { uri -> if (uri != focus) { trail.addLast(focus); focus = uri; render() } }

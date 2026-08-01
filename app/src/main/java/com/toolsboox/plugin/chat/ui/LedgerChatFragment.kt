@@ -243,6 +243,11 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
         binding.ledgerButton.setOnClickListener {
             showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
         }
+        // The header ▦ retires into the rail — ☰ Hub is the same door. The speaker toggle
+        // stays in the title row: it shows a state, and the rail's icons don't. Ask has no
+        // other chrome: Hub · ⇄ · ✕.
+        binding.ledgerButton.visibility = View.GONE
+        setupActionRail(binding.chatRail, "chat", actions = { emptyList() })
     }
 
     override fun onPause() {

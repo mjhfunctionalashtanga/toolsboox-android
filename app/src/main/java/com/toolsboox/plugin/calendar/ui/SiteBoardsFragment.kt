@@ -149,6 +149,24 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         titleView.setOnClickListener {
             if (openBoard == null) NavHostFragment.findNavController(this).navigate(com.toolsboox.R.id.action_to_kanban)
         }
+        // The header's verb buttons retire into the rail: covers and refresh ride as icons,
+        // Close goes entirely (it only popped the back stack, which the system back gesture
+        // already does), and ☰ Hub gives the boards the house key. The title (Local ⇄ Site
+        // flip) and the ‹ Boards breadcrumb stay in the header — they name where you are.
+        view.findViewById<Button>(R.id.site_boards_covers).visibility = View.GONE
+        view.findViewById<Button>(R.id.site_boards_refresh).visibility = View.GONE
+        view.findViewById<Button>(R.id.site_boards_close).visibility = View.GONE
+        setupActionRail(
+            view.findViewById(R.id.site_boards_rail), "site_boards",
+            actions = { listOf(
+                com.toolsboox.ot.TuckPanel.Item(0, "Card images", glyph = "🖼") {
+                    view.findViewById<Button>(R.id.site_boards_covers).performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_refresh, "Refresh") {
+                    view.findViewById<Button>(R.id.site_boards_refresh).performClick()
+                }
+            ) }
+        )
         // Deep link: a dated Site card tapped in the timeline (kanban / Tasks) passes its board id.
         pendingBoardId = arguments?.getInt("site_board_id", 0) ?: 0
         loadBoards()

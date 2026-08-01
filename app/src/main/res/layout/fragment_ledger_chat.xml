@@ -16,8 +16,23 @@
   here so the v2 that adds the pad inherits it.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="vertical"
+    android:orientation="horizontal"
     android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <!-- The tucked action rail's gutter — in the layout flow at the true screen edge (the page
+         padding moved inward with the content), so the transcript ends where the rail begins;
+         setupActionRail re-docks it when the shared side pref says RIGHT. -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/chat_rail"
+        android:layout_width="14dp"
+        android:layout_height="match_parent"/>
+
+<LinearLayout
+    android:orientation="vertical"
+    android:layout_width="0dp"
+    android:layout_weight="1"
     android:layout_height="match_parent"
     android:background="#FFFFFF"
     android:padding="20dp">
@@ -380,4 +395,6 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"/>
     </LinearLayout>
+</LinearLayout>
+
 </LinearLayout>

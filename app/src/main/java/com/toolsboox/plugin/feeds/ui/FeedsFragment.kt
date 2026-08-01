@@ -155,12 +155,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             refresh()
         }
         binding.refreshButton.setOnClickListener { refresh() }
-        // Top button = ☰ jump-to-section menu; the RSS-feed button (pill centre) toggles
-        // the directory drawer (their locations are swapped).
-        // Top-left = RSS button that pops the directory drawer in/out.
-        // ▦ hub, same door the day page's top-left button opens.
-        binding.feedsHubButton.setOnClickListener { showLedgerDirectory() }
-        binding.ledgerButton.setImageResource(R.drawable.ic_feed)
+        // The header's ▦ hub and RSS drawer buttons retire with the rail: the rail's ☰ Hub is
+        // the same door, and the drawer toggle rides the rail with the rest of the surface's
+        // actions (one door per action — the navigator strip keeps the whole header width).
+        binding.feedsHubButton.visibility = View.GONE
+        binding.ledgerButton.visibility = View.GONE
         binding.ledgerButton.setOnClickListener {
             applyDirectoryDrawer(binding.directoryScroll.visibility != View.VISIBLE)
         }
@@ -205,35 +204,18 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         binding.feedsDwPrev.setOnClickListener { openAdjacentArticle(-1) }
         binding.feedsDwNext.setOnClickListener { openAdjacentArticle(1) }
 
-        binding.feedsPill.bringToFront()
-        // Grip tap: while reading, shrink the pill to a slim drawer (↑ ↓ · next · back); tapping
-        // again drops the full set back out.
-        cyclePillOnTap(
-            binding.feedsGrip, binding.feedsPill, "feeds_pill", "feeds_pill_vertical",
-            alsoOnTap = {
-                // While an article is open, the grip CYCLES the reading modal: full-horizontal →
-                // full-vertical → slim drawer → back. This gives the vertical flip by the handle (like
-                // the other pills) without losing the slim shrunk drawer.
-                if (currentArticle != null) {
-                    val vertical = prefs().getBoolean("feeds_pill_vertical", false)
-                    when {
-                        !pillShrunk && !vertical -> {
-                            prefs().edit().putBoolean("feeds_pill_vertical", true).apply()
-                            applyFeedsPillOrientation()
-                        }
-                        !pillShrunk && vertical -> { pillShrunk = true; applyArticlePill() }
-                        else -> {
-                            pillShrunk = false
-                            prefs().edit().putBoolean("feeds_pill_vertical", false).apply()
-                            applyFeedsPillOrientation(); applyArticlePill()
-                        }
-                    }
-                    true
-                } else false
-            }
+        // BOTH floating pills retire — the tucked action rail carries the paging trio, the
+        // occasional controls AND the article actions, adapting its dress to the mode the way
+        // the pill's visibility dance used to (see applyArticlePill, which now re-dresses the
+        // rail). The pills' views stay in the layout, hidden, so nothing referencing them
+        // breaks; their buttons keep answering performClick.
+        binding.feedsPill.visibility = View.GONE
+        binding.feedsNavPill.visibility = View.GONE
+        setupActionRail(
+            binding.feedsRail, "feeds",
+            actions = { feedsRailActions() },
+            hub = { showLedgerDirectory() }
         )
-
-        applyFeedsPillOrientation()
 
         // System Back closes an open in-pane article (returns to the list) before leaving.
         articleBackCallback = object : androidx.activity.OnBackPressedCallback(false) {
@@ -260,6 +242,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // Arriving on a Later lane from the hub opens the folder it belongs to, so the drawer shows
         // where you are instead of a folded row and a list you can't account for.
         if (laterLane != null) a11y.edit().putBoolean("feeds_later_open", true).apply()
+        // Same truth for the media lenses: arriving on The Listen must fold whatever lens the
+        // drawer last remembered open (The Read stayed expanded beside a Listen list — "not
+        // correct ux"). The single-open rule the pane's own taps keep applies to arrivals too.
+        if (k != null) a11y.edit().putString("feeds_lens_open", k).apply()
         refresh()
 
         // The article's ☰ asks the list to pop the RSS directory open on return.
@@ -1219,6 +1205,63 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // Article jump (⏫ last / ⏬ next article) lives ONLY in the slim shrunk drawer. On the full
         // modal it read as stray double-carrots that "don't go anywhere", so it stays with its drawer.
         binding.feedsDwPrev.visibility = vis(shrunk); binding.feedsDwNext.visibility = vis(shrunk)
+        // The rail wears the same mode: list dress or article dress, and the star's fill follows
+        // the open article — this call is the rail's whole "visibility dance".
+        rebuildActionRail("feeds")
+    }
+
+    /**
+     * The rail's surface actions, by mode — the retired pills' buttons unpacked into icons.
+     * Every action drives the hidden pill button where one exists, so the single wiring the
+     * pill had keeps working for anything else that performClicks it (the day-page rule).
+     */
+    private fun feedsRailActions(): List<com.toolsboox.ot.TuckPanel.Item> {
+        val base = listOf(
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_feed, "Feeds drawer") {
+                binding.ledgerButton.performClick()
+            },
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_today, "Today") {
+                binding.feedsGoto.performClick()
+            },
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_up, "Page up") {
+                binding.feedsPageUp.performClick()
+            },
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_down, "Page down") {
+                binding.feedsPageDown.performClick()
+            },
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_refresh, getString(R.string.feeds_refresh)) {
+                binding.refreshButton.performClick()
+            },
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_wrench, getString(R.string.feeds_settings)) {
+                binding.settingsButton.performClick()
+            }
+        )
+        if (currentArticle == null) return base
+        // Reading dress: the article actions join, prev/next article included — the rail has
+        // the height the pill never had, so the shrunk-drawer compromise isn't needed.
+        return base + listOf(
+            com.toolsboox.ot.TuckPanel.Item(
+                if (currentArticle?.starred == true) R.drawable.ic_starred else R.drawable.ic_star,
+                "Star") { binding.feedsStar.performClick() },
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_pencil, "Note") {
+                binding.feedsNote.performClick()
+            },
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_reader_view, "Reader view") {
+                binding.feedsParsed.performClick()
+            },
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_speaker, "Read aloud") {
+                binding.feedsTts.performClick()
+            },
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_go_later, getString(R.string.feeds_add_later)) {
+                binding.feedsLater.performClick()
+            },
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_up2, getString(R.string.feeds_prev_article)) {
+                binding.feedsDwPrev.performClick()
+            },
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_down2, getString(R.string.feeds_next_article)) {
+                binding.feedsDwNext.performClick()
+            }
+        )
     }
 
     /** Open the previous (dir=-1) or next (dir=+1) article in the displayed list. */
@@ -1635,7 +1678,20 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     ?: com.toolsboox.plugin.calendar.da.v1.CalendarPattern(navAnchor.year, loc).fill()
                 cd to p
             }
-            if (isAdded) navBar?.render(day, pat)
+            if (isAdded) {
+                // The live feed (day granularity, anchored on today) is UNFILTERED — every
+                // unread item, yesterday's included (see filterByNavDay's escape). The strip
+                // used to dress today as the focal slot anyway, promising a day filter it
+                // wasn't applying — "the almanac says today's date but it's pulling up
+                // yesterday's feeds". The strip already has the honest idiom for this:
+                // anchored-but-not-filtered draws NO focal slot. Claim a focus only when a
+                // filter is really on.
+                navBar?.setGranularity(
+                    if (navGranularity == "day" && navAnchor == java.time.LocalDate.now()) null
+                    else navGranularity
+                )
+                navBar?.render(day, pat)
+            }
         }
     }
 
@@ -2125,47 +2181,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         }
     }
 
-    /** Apply the persisted pill orientation to the feeds pill (vertical on narrow screens by choice). */
-    private fun applyFeedsPillOrientation() {
-        val vertical = prefs().getBoolean("feeds_pill_vertical", false)
-        binding.feedsPill.orientation =
-            if (vertical) android.widget.LinearLayout.VERTICAL else android.widget.LinearLayout.HORIZONTAL
-        applyGripOrientation(binding.feedsGrip, vertical)
-        // The right-edge nav trio is static (never passes through makeDraggable), so it must
-        // opt into the modal-size dial itself or it stays full-width in the reserved gutter.
-        applyPillSizing(binding.feedsNavPill)
-        keepListClearOfPill()
-    }
-
-    /**
-     * The vertical strip fits IN the right margin; the rows take the rest.
-     *
-     * The right edge carries the paging trio (always vertical) and, when flipped, the main
-     * pill. Rather than letting them park over the row's thumbnail column, the list reserves
-     * exactly the widest strip's width as its end gutter — the strip sits in that margin, and
-     * every row's title/blurb/image get the full remaining width. A horizontal main pill still
-     * gets its clearance at the bottom.
-     *
-     * Measured from the pills rather than hard-coded, so it stays right when the main pill is
-     * flipped or collapsed (and when the shared pill sizing slims down, the margin narrows with
-     * it). `clipToPadding=false` keeps the scroll range whole: rows still travel the full
-     * height, they just come to rest somewhere you can reach them.
-     */
-    private fun keepListClearOfPill() {
-        binding.feedsPill.post {
-            if (!isAdded) return@post
-            val vertical = binding.feedsPill.orientation == android.widget.LinearLayout.VERTICAL
-            val gap = (4 * resources.displayMetrics.density).toInt()
-            val navW = if (binding.feedsNavPill.visibility == View.VISIBLE) binding.feedsNavPill.width else 0
-            val mainW = if (vertical) binding.feedsPill.width else 0
-            val end = maxOf(navW, mainW).let { if (it > 0) it + gap else 0 }
-            val bottom = if (vertical) 0 else binding.feedsPill.height + gap
-            binding.feedsRecycler.clipToPadding = false
-            binding.feedsRecycler.setPaddingRelative(
-                binding.feedsRecycler.paddingStart, binding.feedsRecycler.paddingTop, end, bottom
-            )
-        }
-    }
+    // (The pill-orientation and list-gutter machinery retired with the pills: the rail is in
+    // the layout flow, so the list is clear of it by construction — no reserved margins, no
+    // measured clearance, nothing to keep in step.)
 
     private fun showFeedSettings() {
         val ctx = requireContext()
@@ -2373,9 +2391,13 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { setMargins(dpPx(4), dpPx(2), dpPx(4), dpPx(2)) })
         container.addView(android.widget.RadioGroup(ctx).apply {
-            orientation = android.widget.RadioGroup.HORIZONTAL
+            // Stacked, not in a row: three labeled radios never fit the slim pane's width in
+            // portrait — the third clipped mid-word and the 10sp labels were squint-reading on
+            // e-ink (Michael: "All / This feed / This category are not legible in portrait").
+            // Three short rows always fit, at a size that reads at arm's length.
+            orientation = android.widget.RadioGroup.VERTICAL
             fun radio(lbl: String, sc: String) = android.widget.RadioButton(ctx).apply {
-                text = lbl; textSize = 10f; setPadding(dpPx(1), 0, dpPx(6), 0); isChecked = searchScope == sc
+                text = lbl; textSize = 13f; setPadding(dpPx(1), 0, dpPx(6), 0); isChecked = searchScope == sc
                 setOnClickListener { searchScope = sc; runSearch() }
             }
             addView(radio("All", "all")); addView(radio("This feed", "feed")); addView(radio("This category", "category"))
@@ -2798,6 +2820,8 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             currentArticle = currentArticle?.copy(starred = nowStarred)
             // Reflect the filled/hollow star on the reader toolbar immediately.
             binding.feedsStar.setImageResource(if (nowStarred) R.drawable.ic_starred else R.drawable.ic_star)
+            // …and on the rail, which wears the same star.
+            rebuildActionRail("feeds")
         }
     }
 

@@ -148,6 +148,9 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
     // Whether the ✉ All chip's account dropdown is unfolded (persisted, like the feed drawer's).
     private var accountsOpen = false
 
+    /** Whether the 🧹 sweep applies to the current view — the rail's re-dress reads this. */
+    private var sweepAvailable = true
+
     // --- Search: one field, two layers. A submitted query filters the LOADED mail (fetch window +
     // starred pile) instantly; the 🔎 row under those results asks the servers (IMAP UID SEARCH)
     // and, once answered, the server matches replace the local ones until the search clears.
@@ -174,15 +177,35 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentMailInboxBinding.bind(view)
-        // The ☰ by the almanac's left carat opens the main Ledger menu (the accordion hub every
-        // surface carries), so Mail isn't a dead-end — the title bar it replaces is gone, and so
-        // is the top-right ✕: all it did was popBackStack, which the system back gesture already
-        // does, so it was a second spelling of an exit the device carries everywhere. (The reader
-        // never leaned on it — an open message is a dialog with its own Close button.)
+        // The header ☰ retired with the rail — the rail's Hub is the same accordion door (its
+        // wiring stays for performClick). The search row's sweep/gear/refresh ride the rail as
+        // icons now; their hidden header twins keep the single wiring.
         binding.mailMenu.setOnClickListener { showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this)) }
         binding.mailRefresh.setOnClickListener { refresh() }
         binding.mailSettings.setOnClickListener { showAccountsList() }
         binding.mailClear.setOnClickListener { clearUnstarred() }
+        binding.mailSettings.visibility = View.GONE
+        binding.mailRefresh.visibility = View.GONE
+        binding.mailClear.visibility = View.GONE
+        setupActionRail(
+            binding.mailRail, "mail",
+            actions = {
+                // The sweep only exists where sweeping means something — same rule as the
+                // header button it replaces (absent on the starred pile and Sent).
+                (if (sweepAvailable)
+                    listOf(com.toolsboox.ot.TuckPanel.Item(0, "Sweep unstarred", glyph = "🧹") {
+                        binding.mailClear.performClick()
+                    })
+                else emptyList()) + listOf(
+                    com.toolsboox.ot.TuckPanel.Item(0, "Accounts", glyph = "⚙") {
+                        binding.mailSettings.performClick()
+                    },
+                    com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_refresh, "Refresh") {
+                        binding.mailRefresh.performClick()
+                    }
+                )
+            }
+        )
         val uiPrefs = requireContext().getSharedPreferences("ledger_mail_inbox", 0)
         mailbox = uiPrefs.getString("account_filter", "")!!.ifBlank { null }
         accountsOpen = uiPrefs.getBoolean("accounts_open", false)
@@ -321,8 +344,10 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
 
         // Clear only makes sense while triaging All — it sweeps everything you didn't star. Not in
         // Sent either: every row there is keep-forever, so the sweep would be guarded down to
-        // nothing and the 🧹 would be a promise the store refuses to keep.
-        binding.mailClear.visibility = if (onlyStarred || showingSent) View.GONE else View.VISIBLE
+        // nothing and the 🧹 would be a promise the store refuses to keep. The button lives on
+        // the rail now; this field is the state the rail's re-dress reads.
+        sweepAvailable = !(onlyStarred || showingSent)
+        rebuildActionRail("mail")
 
         renderAccountRows(accounts)
     }

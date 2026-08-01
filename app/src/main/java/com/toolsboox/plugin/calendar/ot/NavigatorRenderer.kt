@@ -30,8 +30,23 @@ object NavigatorRenderer {
         val noteCount: Int = 0,
     )
 
-    fun render(context: Context, canvas: Canvas, slots: List<Slot>) {
+    fun render(context: Context, canvas: Canvas, slots: List<Slot>,
+               /** A single glyph for the strip's far-left corner — the margin the retired
+                *  header hamburger used to float over, free real estate since the rail took
+                *  the ☰ (Michael: "we can use that space now"). The day strip passes the moon
+                *  phase; null leaves the corner quiet. */
+               cornerBadge: String? = null) {
         canvas.drawRect(0.0f, 0.0f, 1404.0f, 140.4f, Creator.fillWhite)
+
+        if (cornerBadge != null) {
+            val badgePaint = TextPaint().apply {
+                textAlign = Paint.Align.CENTER; textSize = 58f; isAntiAlias = true
+                color = Color.BLACK
+            }
+            // Centered in the 0–100 gutter left of the ‹ caret (which sits at 120) — the exact
+            // footprint the old floating ☰ occupied, so nothing else moves.
+            canvas.drawText(cornerBadge, 52f, 98f, badgePaint)
+        }
 
         val atkinsonBold = try {
             ResourcesCompat.getFont(context, R.font.atkinson_hyperlegible_bold)

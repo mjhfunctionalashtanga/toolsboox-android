@@ -148,6 +148,27 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
         binding.textNotesMenu.setOnClickListener {
             showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
         }
+        // The header's chrome retires into the rail: ☰ Hub is the same door, and New / List /
+        // Preview ride as icons. The ‹ date › stepper stays in the header — it names the day
+        // the way the almanac strip does elsewhere.
+        binding.textNotesMenu.visibility = View.GONE
+        binding.textNotesNew.visibility = View.GONE
+        binding.textNotesList.visibility = View.GONE
+        binding.textNotesPreview.visibility = View.GONE
+        setupActionRail(
+            binding.textNotesRail, "text_notes",
+            actions = { listOf(
+                com.toolsboox.ot.TuckPanel.Item(0, "New note", glyph = "＋") {
+                    binding.textNotesNew.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(0, "Notes list", glyph = "≡") {
+                    binding.textNotesList.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_reader_view, "Preview") {
+                    binding.textNotesPreview.performClick()
+                }
+            ) }
+        )
     }
 
     private var previewing = false

@@ -81,20 +81,19 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
         scroll = view.findViewById(R.id.semantic_scroll)
         navBar = SemanticNavBar(this, view.findViewById(R.id.semantic_navigator),
             calendarDayService, calendarPatternService) { documentsRoot() }
-        // The ▦ hub, top-left as everywhere — the shared layout grew it for all three surfaces,
-        // and an unwired button here would be a dead door.
+        // The header ☰ and Close retire into the rail (☰ Hub is the same door; Close only
+        // repeated the system back gesture), and the board-wide Sequence action rides as ⇅.
+        // The generative per-win "path to victory" stays on each card's ✧ Path chip.
         view.findViewById<android.widget.ImageButton>(R.id.semantic_hub_button)
             .setOnClickListener { showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this)) }
-        view.findViewById<TextView>(R.id.semantic_close)
-            .setOnClickListener { findNavController().popBackStack() }
-        // The top action now SEQUENCES the whole board: order the visible wins' paths by expediency
-        // (fastest-to-done first). The generative per-win "path to victory" — the one that pre-writes
-        // the email or the task list — lives on each card's ✧ Path chip.
-        view.findViewById<TextView>(R.id.semantic_action).apply {
-            text = "⇅ Sequence"
-            visibility = View.VISIBLE
-            setOnClickListener { narratePath() }
-        }
+        view.findViewById<android.widget.ImageButton>(R.id.semantic_hub_button).visibility = View.GONE
+        view.findViewById<TextView>(R.id.semantic_close).visibility = View.GONE
+        setupActionRail(
+            view.findViewById(R.id.semantic_rail), "quick_wins",
+            actions = { listOf(
+                com.toolsboox.ot.TuckPanel.Item(0, "Sequence", glyph = "⇅") { narratePath() }
+            ) }
+        )
         load()
     }
 

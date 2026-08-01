@@ -115,10 +115,6 @@ class CalendarQuarterFragment @Inject constructor() : SurfaceFragment() {
      */
     override fun provideSurfaceView(): SurfaceView = binding.surfaceView
 
-    override fun provideExcludeViews(): List<android.view.View> =
-        if (::binding.isInitialized) listOf(binding.navWidget) else emptyList()
-
-
     /**
      * Provide toolbar of drawing's bindings.
      *
@@ -241,9 +237,10 @@ class CalendarQuarterFragment @Inject constructor() : SurfaceFragment() {
             CalendarNavigator.toDayPage(this, LocalDate.now())
         }
 
-        setupAlmanacNavPill(
-            binding.navWidget, binding.navGrip, binding.navUp, binding.navDown, binding.navGoto,
-            binding.toolbarDrawing.toolbarSwipeUp, binding.toolbarDrawing.toolbarSwipeDown, com.toolsboox.R.drawable.ic_calendar_today,
+        // The rail, as on the day and Weeks pages: the upstream toolbar's slot carries both the
+        // ink tools and the nav pill's unpacked actions, and the pill itself never comes up.
+        setupAlmanacRail(
+            surfaceKey = "quarter",
             isAtPresent = { val n = LocalDate.now(); currentDate.year == n.year && (currentDate.monthValue - 1) / 3 == (n.monthValue - 1) / 3 }
         ) { CalendarNavigator.toQuarterPage(this, LocalDate.now(), CalendarQuarter.DEFAULT_STYLE) }
 

@@ -1,8 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- A horizontal row so the tucked action rail lives IN THE LAYOUT FLOW beside the book:
+     the reader pane ends where the rail begins (no overlay over prose, no exclude rects),
+     exactly the day page's toolbarDrawing argument. The rail gutter is authored on the start
+     edge; setupActionRail re-docks it to the row's other end when the shared side pref says
+     RIGHT. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="horizontal"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#FFFFFF">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/reader_rail"
+        android:layout_width="14dp"
+        android:layout_height="match_parent"/>
+
+    <FrameLayout
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1">
 
     <WebView
         android:id="@+id/reader_web"
@@ -87,4 +103,6 @@
             android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_aa"/>
     </LinearLayout>
 
-</FrameLayout>
+    </FrameLayout>
+
+</LinearLayout>

@@ -153,7 +153,11 @@ class CalendarDayNavigator {
                     calendarPattern.getQuarterPages(quarterOfYear) > 0, calendarPattern.getQuarterNotes(quarterOfYear)),
                 NavigatorRenderer.Slot("$year", NavigatorRenderer.Emphasis.MUTED,
                     calendarPattern.getYearPages() > 0, calendarPattern.getYearNotes()),
-            ))
+            ),
+                // The day's moon phase, seated in the corner the retired hamburger freed — it
+                // used to hide down in the page's weather line; the header margin gives it a
+                // proper home at a glance.
+                cornerBadge = WeatherMoon.moon(currentDate).first)
         }
     }
 }

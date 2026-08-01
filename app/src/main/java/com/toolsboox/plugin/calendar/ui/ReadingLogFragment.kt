@@ -252,8 +252,35 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 range = Range.DAY; anchor = LocalDate.now(); renderNav(); load()
             }
         }
-        binding.readingPill.bringToFront()
-        cyclePillOnTap(binding.readingGrip, binding.readingPill, "reading_pill")
+        // The floating pill and the header ☰ retire into the rail: ☰ Hub is the same accordion
+        // door, and the pill's buttons — origin filter, A/V gram capture, export, the ‹ ☀ ›
+        // trio — ride as rail icons. The search field, Ask and the scope chips stay in the
+        // page: they are the surface's content, not chrome.
+        binding.readingPill.visibility = View.GONE
+        binding.gotoButton.visibility = View.GONE
+        setupActionRail(
+            binding.readingRail, "reading_log",
+            actions = { listOf(
+                com.toolsboox.ot.TuckPanel.Item(0, "Origins filter", glyph = "🗂") {
+                    binding.originButton.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_camera, "Capture gram") {
+                    binding.gramButton.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(0, "Export", glyph = "⬆") {
+                    binding.exportButton.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_up, "Page up") {
+                    binding.readingPageUp.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_today, "Today") {
+                    binding.readingGoto.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_down, "Page down") {
+                    binding.readingPageDown.performClick()
+                }
+            ) }
+        )
 
         renderNav()
         load()

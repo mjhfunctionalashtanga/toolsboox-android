@@ -92,11 +92,11 @@ class SproutsFragment @Inject constructor() : ScreenFragment() {
         navBar = SemanticNavBar(this, view.findViewById(R.id.semantic_navigator),
             calendarDayService, calendarPatternService,
             onFilter = { _, _ -> if (isAdded) render() }) { documentsRoot() }
-        // The ▦ hub, top-left as everywhere — the same directory accordion the feed carries.
-        view.findViewById<android.widget.ImageButton>(R.id.semantic_hub_button)
-            .setOnClickListener { showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this)) }
-        view.findViewById<TextView>(R.id.semantic_close)
-            .setOnClickListener { findNavController().popBackStack() }
+        // The header ☰ and Close retire into the rail — ☰ Hub is the same door, and Close only
+        // repeated the system back gesture. Sprouts has no other chrome: Hub · ⇄ · ✕.
+        view.findViewById<android.widget.ImageButton>(R.id.semantic_hub_button).visibility = View.GONE
+        view.findViewById<TextView>(R.id.semantic_close).visibility = View.GONE
+        setupActionRail(view.findViewById(R.id.semantic_rail), "sprouts", actions = { emptyList() })
         load()
     }
 

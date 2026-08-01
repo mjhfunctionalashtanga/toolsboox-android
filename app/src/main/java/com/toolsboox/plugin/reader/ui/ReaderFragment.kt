@@ -139,36 +139,46 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             }
         }
 
+        // The floating pill retires: the tucked action rail (an in-flow gutter beside the book —
+        // the reader pane narrows rather than being covered, so the foliate margin stays prose)
+        // carries everything the pill carried, unpacked into icons. The pill's views stay in the
+        // layout, hidden, so nothing else referencing them breaks; the buttons keep answering
+        // performClick for anything that drives them programmatically.
+        binding.readerBar.visibility = View.GONE
+        setupActionRail(
+            binding.readerRail, "reader",
+            actions = { listOf(
+                // The book's own ☰ — moving *within* the open book (TOC, marks, search).
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_menu, "This book") { showBookDirectory() },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_left, getString(R.string.reader_prev)) {
+                    web.evaluateJavascript("window.pageLeft && window.pageLeft()", null)
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_pencil, getString(R.string.reader_highlight)) {
+                    web.evaluateJavascript("window.highlightSelection && window.highlightSelection()", null)
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_right, getString(R.string.reader_next)) {
+                    web.evaluateJavascript("window.pageRight && window.pageRight()", null)
+                },
+                // The wrench keeps its whole controls modal reachable — shelf/import/read-aloud/
+                // rotate/page-turn toggles, and the 🔧 settings rows within it.
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_wrench, getString(R.string.reader_controls)) {
+                    showReaderControls()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_text_size, getString(R.string.reader_aa)) {
+                    openSettings()
+                }
+            ) }
+        )
+        // The retired pill's buttons keep their handlers for performClick-driven callers.
         binding.prevButton.setOnClickListener { web.evaluateJavascript("window.pageLeft && window.pageLeft()", null) }
         binding.nextButton.setOnClickListener { web.evaluateJavascript("window.pageRight && window.pageRight()", null) }
         binding.highlightButton.setOnClickListener {
             web.evaluateJavascript("window.highlightSelection && window.highlightSelection()", null)
         }
-        // Wrench in the bottom bar → the book's controls modal (shelf/import/read-aloud/rotate/turns).
         binding.openButton.setOnClickListener { showReaderControls() }
-        // Sunshine brings up the section nav (selection) rather than jumping straight back.
         binding.todayButton.setOnClickListener { showLedgerDirectory() }
         binding.settingsButton.setOnClickListener { openSettings() }
         binding.gotoButton.setOnClickListener { showBookDirectory() }
-        // Drag to move; tap the grip to fold/turn — the SHARED four-state pill (wide open →
-        // wide folded → tall open → tall folded), replacing the reader's private collapse.
-        // The reader was the one surface whose pill could never turn vertical, and vertical is
-        // exactly the shape that fits the book margin once the modal-size dial slims it: at
-        // Compact a tall pill is ~42dp wide against the reader's ~46dp foliate gutter. The
-        // "reader" key keeps the position you'd already dragged it to; the old collapse pref
-        // seeds the new shared one so a folded bar stays folded across the change.
-        requireContext().getSharedPreferences("ledger_widgets", 0).let { p ->
-            if (!p.contains("reader_collapsed") && p.getBoolean("reader_bar_collapsed", false))
-                p.edit().putBoolean("reader_collapsed", true).apply()
-        }
-        // Folding leaves ☀ today and ✎ highlight showing (grip + the two essentials), as before.
-        cyclePillOnTap(
-            binding.readerGrip, binding.readerBar, "reader",
-            collapsible = listOf(
-                binding.gotoButton, binding.prevButton, binding.nextButton,
-                binding.settingsButton, binding.openButton
-            )
-        )
         setupTapZones()
 
         // Empty-state add-book affordance (visible until a book is open).

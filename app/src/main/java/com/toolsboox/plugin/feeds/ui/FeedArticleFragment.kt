@@ -106,9 +106,41 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
             }
         }
 
-        // Floating nav pill: grip drags/collapses; ‹ › page, ⌃ ⌄ step articles, ✎ annotate.
-        cyclePillOnTap(binding.artGrip, binding.artPill, "article", "article_pill_vertical")
-        applyArticlePillOrientation()
+        // The floating pill retires into the rail — every button unpacked to an icon, the ☰'s
+        // long-press article menu kept as the rail item's own hold. Hidden buttons keep the one
+        // wiring for anything that performClicks them.
+        binding.artPill.visibility = View.GONE
+        setupActionRail(
+            binding.artRail, "article",
+            actions = { listOf(
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_menu, "Feeds",
+                    longPress = { showArticleMenu() }) { binding.artMenu.performClick() },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_today, "Today's page") {
+                    binding.artToday.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(
+                    if (entry?.starred == true) R.drawable.ic_starred else R.drawable.ic_star,
+                    "Star") { binding.artStar.performClick() },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_reader_view, "Reader view") {
+                    binding.artParse.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_pencil, "Annotate") {
+                    binding.artAnnotate.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_up2, getString(R.string.feeds_article_first)) {
+                    binding.artPrev.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_down2, getString(R.string.feeds_article_last)) {
+                    binding.artNext.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_left, getString(R.string.reader_prev)) {
+                    binding.artPageUp.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_right, getString(R.string.reader_next)) {
+                    binding.artPageDown.performClick()
+                }
+            ) }
+        )
         binding.artMenu.setOnClickListener { openRssDirectory() }
         binding.artToday.setOnClickListener {
             androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.action_to_calendar_day)
@@ -328,9 +360,10 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = null
     }
 
-    /** Filled star when starred, outline when not. */
+    /** Filled star when starred, outline when not — on the hidden pill button and the rail alike. */
     private fun updateStar() {
         binding.artStar.setImageResource(if (entry?.starred == true) R.drawable.ic_starred else R.drawable.ic_star)
+        rebuildActionRail("article")
     }
 
     /** Make the current view obvious: the reader-view icon shows the active-tool chip while in

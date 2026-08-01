@@ -1,8 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- A horizontal row so the tucked action rail sits IN THE LAYOUT FLOW beside the page — the
+     thread column ends where the rail begins. The gutter is authored on the start edge;
+     setupActionRail re-docks it when the shared side pref says RIGHT. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="vertical"
+    android:orientation="horizontal"
     android:background="#FFFFFF"
     android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/correspondence_rail"
+        android:layout_width="14dp"
+        android:layout_height="match_parent"/>
+
+<LinearLayout
+    android:orientation="vertical"
+    android:background="#FFFFFF"
+    android:layout_width="0dp"
+    android:layout_weight="1"
     android:layout_height="match_parent">
 
     <!-- Nav line: the ▦ hub, then the real Almanac strip (the same 1404×140 navigator the day page
@@ -109,4 +124,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"/>
     </ScrollView>
+</LinearLayout>
+
 </LinearLayout>

@@ -1,7 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Text Notes — multiple titled notes per day (Simplenote-style, instantly saved). -->
+<!-- Text Notes — multiple titled notes per day (Simplenote-style, instantly saved).
+
+     A horizontal row so the tucked action rail sits IN THE LAYOUT FLOW beside the note — the
+     editor ends where the rail begins. The gutter is authored on the start edge;
+     setupActionRail re-docks it when the shared side pref says RIGHT. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:background="@android:color/white">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/text_notes_rail"
+        android:layout_width="14dp"
+        android:layout_height="match_parent"/>
+
+<LinearLayout
+    android:layout_width="0dp"
+    android:layout_weight="1"
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="@android:color/white">
@@ -144,4 +160,6 @@
             android:textColor="@android:color/black"
             android:textIsSelectable="true"/>
     </ScrollView>
+</LinearLayout>
+
 </LinearLayout>

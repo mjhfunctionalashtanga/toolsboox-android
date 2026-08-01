@@ -640,35 +640,88 @@ abstract class ScreenFragment : Fragment() {
         }
     }
 
-    /**
-     * Wire the shared floating nav pill on an almanac page (month/quarter/week/year) so it
-     * behaves like the day-page pill: the grip drags and taps-to-collapse, ↑ performs the
-     * page's swipe-up, ↓ its swipe-down, and the centre glyph jumps to the current period.
-     * All the almanac pages reuse this so navigation feels identical across the ledger.
-     */
-    protected fun setupAlmanacNavPill(
-        navWidget: View, navGrip: View, navUp: View, navDown: View,
-        navGoto: ImageView, swipeUp: View, swipeDown: View,
-        @androidx.annotation.DrawableRes iconRes: Int,
-        isAtPresent: () -> Boolean = { false }, onHome: () -> Unit
-    ) {
-        navWidget.visibility = View.VISIBLE
-        navUp.setOnClickListener { swipeUp.performClick() }
-        navDown.setOnClickListener { swipeDown.performClick() }
-        navGoto.setImageResource(iconRes)
-        // First tap → jump to the present period; a second tap (already on the present
-        // period) brings down the Ledger directory. The accordion, not the old nine-row
-        // section list (since deleted) — this pill is on every almanac page, so that one call
-        // was most of why last generation's drawer still appeared to be alive.
-        navGoto.setOnClickListener {
-            if (isAtPresent()) showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
-            else onHome()
-        }
-        navWidget.bringToFront()
+    // (The shared almanac nav pill retired with the rail conversion — the almanac pages carry
+    // their nav on the tucked rail now, built by SurfaceFragment.setupAlmanacRail.)
 
-        // Vertical on narrow (phone) screens so it can't collide with the tool pill.
-        cyclePillOnTap(navGrip, navWidget, "nav", collapsible = listOf(navUp, navDown))
+    // --- The tucked action rail on non-ink surfaces --------------------------------------------
+    //
+    // The rail idiom (see [com.toolsboox.ot.TuckPanel]) began on the ink pages, where it takes
+    // over the upstream drawing toolbar's slot. A list/reader surface has no such slot, so its
+    // layout provides an empty gutter instead: a ConstraintLayout column standing first (or
+    // last) in a horizontal row whose other cell is the whole original page. The same in-flow
+    // argument carries over — the page ends where the rail begins, nothing overlays content,
+    // and the tucked strip is always reachable because it IS part of the layout.
+
+    /** Which edge a rail docks on — upstream's `calendarToolbarSide`, the ONE side truth every
+     *  rail in the app shares, so hopping the day page's rail hops them all. */
+    protected fun railDockedRight(): Boolean =
+        requireContext().getSharedPreferences("MAIN", 0)
+            .getString("calendarToolbarSide", "LEFT") == "RIGHT"
+
+    /**
+     * Build a rail in a layout-provided [gutter] for a surface with no ink tools: ☰ Hub leads,
+     * the surface's own [actions] follow (whatever its nav pill or header buttons did, unpacked
+     * into icons), then the ⇄ edge-hop and the rail's own ✕. The ⇄ moves the gutter to the row's
+     * other end and flips the shared side pref, so every rail in the app hops together.
+     *
+     * [hub] is the ☰ door — the shared Ledger directory unless the surface has a richer hub of
+     * its own (the day page's showLedgerHub precedent).
+     */
+    protected fun setupActionRail(
+        gutter: androidx.constraintlayout.widget.ConstraintLayout,
+        surfaceKey: String,
+        /** A provider, not a list: surfaces whose actions depend on state (the feed list vs an
+         *  open article) re-ask it through [rebuildActionRail] and the rail re-dresses. */
+        actions: () -> List<com.toolsboox.ot.TuckPanel.Item>,
+        hub: (() -> Unit)? = null
+    ): com.toolsboox.ot.TuckPanel {
+        val rail = com.toolsboox.ot.TuckPanel(
+            host = this,
+            toolbar = null,
+            surfaceKey = surfaceKey,
+            sideIsLeft = { !railDockedRight() },
+            gutter = gutter
+        )
+        // The gutter is authored on the row's start edge; a remembered RIGHT dock moves it
+        // before first paint. LinearLayout order is the whole mechanism — no constraints to
+        // rewrite, the weighted content cell simply takes whatever the rail leaves.
+        fun dock() {
+            val row = gutter.parent as? android.widget.LinearLayout ?: return
+            val end = railDockedRight()
+            row.removeView(gutter)
+            row.addView(gutter, if (end) row.childCount else 0)
+        }
+        dock()
+        fun rebuild() = rail.setClusters(
+            top = listOf(
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_bar_sections, "Hub") {
+                    hub?.invoke() ?: showAccordion(
+                        com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this),
+                        anchorEnd = railDockedRight()
+                    )
+                }
+            ),
+            bottom = actions() + com.toolsboox.ot.TuckPanel.Item(
+                R.drawable.ic_toolbar_switch_side, "Other side"
+            ) {
+                val p = requireContext().getSharedPreferences("MAIN", 0)
+                p.edit().putString("calendarToolbarSide", if (railDockedRight()) "LEFT" else "RIGHT").apply()
+                dock()
+                rail.applyState()
+            }
+        )
+        rebuild()
+        actionRailRebuilds[surfaceKey] = { rebuild() }
+        return rail
     }
+
+    /** Re-ask a rail's action provider and re-dress it — for surfaces whose actions follow
+     *  their state, called wherever the retired pill used to re-show its buttons. */
+    protected fun rebuildActionRail(surfaceKey: String) {
+        actionRailRebuilds[surfaceKey]?.invoke()
+    }
+
+    private val actionRailRebuilds = HashMap<String, () -> Unit>()
 
     /**
      * Cycle the screen orientation through the user's allowed set (rotationOrientationMask) — the

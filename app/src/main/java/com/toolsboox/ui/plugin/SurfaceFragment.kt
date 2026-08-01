@@ -701,6 +701,114 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     open fun onSideSwitched() {}
 
+    // --- The tucked action rail on the almanac pages -------------------------------------------
+    //
+    // The day page converted first (see its TuckPanel construction); the Week/Month/Quarter/Year
+    // pages share one anatomy — the same upstream toolbar in the same layout, a nav pill whose
+    // three buttons all delegate to that toolbar, and (on Weeks) a top-left ☰ — so their
+    // conversion is one helper here rather than four drifting copies. Registered on
+    // [almanacRail] so the base onResume can re-assert the takeover the moment it has finished
+    // re-dressing the upstream toolbar, exactly the way the day page re-asserts its own.
+
+    /** The almanac page's rail, when the page has converted; re-asserted after every resume. */
+    protected var almanacRail: com.toolsboox.ot.TuckPanel? = null
+
+    /** Which edge the rail (and before it, the toolbar) docks on — upstream's own side truth. */
+    protected fun railOnRightSide(): Boolean =
+        sharedPreferences.getString("calendarToolbarSide", "LEFT") == "RIGHT"
+
+    /**
+     * Convert an almanac page to the rail: the upstream toolbar stands down (its buttons keep
+     * answering performClick — that is how the rail drives the real ink actions), the floating
+     * nav pill never comes up, and the rail carries both layers. Top cluster: ☰ Hub, then the
+     * ink tools the day rail carries. Bottom cluster: the nav pill's three actions unpacked
+     * (↑ ↓ and the jump-to-present centre), then the toolbar's own ⇄ edge-hop.
+     */
+    protected fun setupAlmanacRail(
+        surfaceKey: String,
+        isAtPresent: () -> Boolean,
+        onHome: () -> Unit
+    ): com.toolsboox.ot.TuckPanel {
+        val tb = provideToolbarDrawing()
+        val rail = com.toolsboox.ot.TuckPanel(
+            host = this,
+            toolbar = tb,
+            surfaceKey = surfaceKey,
+            sideIsLeft = { !railOnRightSide() }
+        )
+        almanacRail = rail
+        rail.setClusters(
+            top = listOf(
+                // The hub door leads, wearing the ☰ face the Weeks header hamburger wore — the
+                // same accordion directory, one door instead of two.
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_bar_sections, "Hub") {
+                    showAccordion(
+                        com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this),
+                        anchorEnd = railOnRightSide()
+                    )
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_pen,
+                    getString(R.string.calendar_drawing_toolbar_pen), activeId = "pen") {
+                    tb.toolbarPen.performClick(); rail.markActive("pen")
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_eraser,
+                    getString(R.string.calendar_drawing_toolbar_eraser), activeId = "eraser",
+                    // The pill precedent, kept from the day rail: holding the eraser reaches
+                    // clear-page (the upstream trash, which brings its own confirm).
+                    longPress = { tb.toolbarTrash.performClick() }) {
+                    tb.toolbarEraser.performClick(); rail.markActive("eraser")
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_lasso,
+                    getString(R.string.calendar_drawing_toolbar_lasso), activeId = "lasso") {
+                    tb.toolbarLasso.performClick(); rail.markActive("lasso")
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_undo, "Undo") {
+                    tb.toolbarUndo.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_redo, "Redo") {
+                    tb.toolbarRedo.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_trash,
+                    getString(R.string.eraser_clear_page)) { tb.toolbarTrash.performClick() },
+                // The wrench keeps the upstream buttons the rail doesn't carry as buttons —
+                // nothing the old toolbar offered goes unreachable on a converted page.
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_wrench, "Quick tools") {
+                    showGoModal(listOf("Tools" to listOf(
+                        GoItem("👆", "Finger / hand") { tb.toolbarHandTouch.performClick() },
+                        GoItem("⧉", "Copy selection") { tb.toolbarCopy.performClick() },
+                        GoItem("⎘", "Paste") { tb.toolbarPaste.performClick() },
+                        GoItem("Ⓣ", "Text box") { tb.toolbarText.performClick() },
+                        GoItem("📅", "Today's day page") { tb.toolbarCalendarView.performClick() },
+                        GoItem("🔄", "Rotate screen") { tb.toolbarRotate.performClick() },
+                        GoItem("⚙️", "Settings") { tb.toolbarSettings.performClick() }
+                    )), anchorTop = false, anchorEnd = railOnRightSide())
+                }
+            ),
+            bottom = listOf(
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_up, "Up / previous") {
+                    tb.toolbarSwipeUp.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_down, "Down / notes") {
+                    tb.toolbarSwipeDown.performClick()
+                },
+                // The nav pill's centre, unpacked: jump to the present period; already there,
+                // the same tap opens the directory (the pill's own second-tap rule, kept).
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_today, "Present") {
+                    if (isAtPresent()) showAccordion(
+                        com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this),
+                        anchorEnd = railOnRightSide()
+                    ) else onHome()
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_switch_side, "Other side") {
+                    tb.toolbarSwitchSide.performClick()
+                }
+            )
+        )
+        // Pen is every surface's default tool — box it from the start.
+        rail.markActive("pen")
+        return rail
+    }
+
     /**
      * Delete strokes callback.
      *
@@ -1093,6 +1201,11 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
         provideToolbarDrawing().toolbarToggle.setOnClickListener(toggleAction)
         provideToolbarDrawing().root.setOnClickListener(toggleAction)
+
+        // Everything above just re-dressed the upstream toolbar (root tap → the shared collapse
+        // state, button group VISIBLE). On a converted almanac page the rail takes its slot back
+        // before anything paints — the same re-assert the day page makes after ITS super.onResume.
+        almanacRail?.assertTakeover()
 
         templateBitmap = Bitmap.createBitmap(1404, 1872, Bitmap.Config.ARGB_8888)
         templateCanvas = Canvas(templateBitmap)

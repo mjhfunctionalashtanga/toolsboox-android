@@ -1,17 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- A horizontal row so the tucked action rail sits IN THE LAYOUT FLOW beside the inbox — the
+     mail column ends where the rail begins, the day page's toolbarDrawing argument carried
+     over. The gutter is authored on the start edge; setupActionRail re-docks it when the
+     shared side pref says RIGHT. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="vertical"
+    android:orientation="horizontal"
     android:background="#FFFFFF"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <!-- Almanac nav row FIRST: a ☰ main-menu next to the left carat, then the date-filter strip.
-         The "Mail" title is gone — the strip is the header. There is NO close ✕ any more: all it
-         ever did was pop the back stack, which the system back gesture already does, and the ☰
-         directory is the door to every other surface — a second exit at the top right said
-         nothing the chrome wasn't already saying. The navigator keeps its fitXY full width of
-         THIS row; CalendarNavBarHost maps taps by the view's own width (px = x * 1404 /
-         view.width), so sharing the row with the ☰ doesn't shift the slots. -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/mail_rail"
+        android:layout_width="14dp"
+        android:layout_height="match_parent"/>
+
+<LinearLayout
+    android:orientation="vertical"
+    android:background="#FFFFFF"
+    android:layout_width="0dp"
+    android:layout_weight="1"
+    android:layout_height="match_parent">
+
+    <!-- Almanac nav row FIRST: the date-filter strip is the header. The ☰ main-menu that led
+         this row retired with the rail — the rail's Hub is the same door (one door; the strip
+         can never be hidden). The navigator keeps its fitXY full width of THIS row;
+         CalendarNavBarHost maps taps by the view's own width (px = x * 1404 / view.width). -->
     <LinearLayout
         android:orientation="horizontal"
         android:gravity="center_vertical"
@@ -26,6 +39,7 @@
             android:textSize="22sp"
             android:textColor="#000000"
             android:padding="8dp"
+            android:visibility="gone"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"/>
 
@@ -159,4 +173,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"/>
     </ScrollView>
+</LinearLayout>
+
 </LinearLayout>

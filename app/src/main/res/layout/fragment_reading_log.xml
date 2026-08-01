@@ -1,8 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Notes & Annotations — the day/week/… log of book highlights + starred articles
-     (CalendarDay.readingEvents), mirroring the iPad ReadingTimelineView. -->
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+     (CalendarDay.readingEvents), mirroring the iPad ReadingTimelineView.
+
+     A horizontal row so the tucked action rail sits IN THE LAYOUT FLOW beside the log — the
+     rows end where the rail begins. The gutter is authored on the start edge; setupActionRail
+     re-docks it when the shared side pref says RIGHT. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="horizontal"
     android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/reading_rail"
+        android:layout_width="14dp"
+        android:layout_height="match_parent"/>
+
+<FrameLayout
+    android:layout_width="0dp"
+    android:layout_weight="1"
     android:layout_height="match_parent"
     android:background="#FFFFFF">
 
@@ -140,3 +156,5 @@
     </LinearLayout>
 
 </FrameLayout>
+
+</LinearLayout>

@@ -2,8 +2,22 @@
 <!-- Notes & Tags — a period-filtered list (week / month / quarter / year window around a date)
      of the days that hold note content and/or #tags, driven by the Almanac navigator as its
      filter. Modeled on the Feed / Reading-log list surfaces (same nav strip + floating pill). -->
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="horizontal"
     android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+    <!-- The tucked action rail's gutter — in the layout flow, so the list ends where the rail
+         begins; setupActionRail re-docks it when the shared side pref says RIGHT. -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/notes_rail"
+        android:layout_width="14dp"
+        android:layout_height="match_parent"/>
+
+<FrameLayout
+    android:layout_width="0dp"
+    android:layout_weight="1"
     android:layout_height="match_parent"
     android:background="#FFFFFF">
 
@@ -110,3 +124,5 @@
     </LinearLayout>
 
 </FrameLayout>
+
+</LinearLayout>
