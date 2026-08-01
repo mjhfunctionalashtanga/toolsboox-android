@@ -309,6 +309,18 @@ class UltrabridgeSyncWorker(
                 val dayJsonFiles = allFiles.filter { it.name.startsWith("day-") }
                 var jsonUploadCount = 0
                 webdavService.ensureDirectory("ToolsForBoox/json")
+                // Blobs before the day JSONs that reference them — the pinned wire ordering,
+                // applied to the processor's copy of the tree. The VPS processor resolves
+                // `dataRef`/`cropRef` against LEDGER_MEDIA_DIR, which defaults to the `media/`
+                // sibling of the day tree (json-dir/../../media = the same `media/` collection
+                // at this sync root that the day mirror pushes to). The mirror above normally
+                // pushed everything already, so this is a zero-round-trip no-op via the shared
+                // pushed-set; it exists for the pass where the mirror failed but the raw upload
+                // still runs — the processor must never compose a page whose refs we could have
+                // carried. A blob failure logs inside and never blocks the JSON upload: the
+                // processor skips a missing image rather than erroring the day.
+                runCatching { CalendarWebDavSyncService.pushMediaBlobs(webdavService, rootDir) }
+                    .onFailure { Timber.w(it, "$TAG: media blob push before json/ failed (non-fatal)") }
                 for (file in dayJsonFiles) {
                     try {
                         val remotePath = "ToolsForBoox/json/${file.name}"

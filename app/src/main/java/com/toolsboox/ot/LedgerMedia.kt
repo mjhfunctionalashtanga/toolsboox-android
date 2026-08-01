@@ -19,9 +19,10 @@ import java.security.MessageDigest
  * ONE file, a truncated download can never be mistaken for the real thing, and sync is pure
  * union with nothing to merge.
  *
- * This object is the READ half (Phase R): nothing here writes a ref, clears a payload, or
- * externalizes anything — it only answers "give me the pixels this element means", wherever
- * they happen to live. Resolution order is pinned by the wire brief:
+ * This object holds both halves now. The READ half (Phase R) answers "give me the pixels this
+ * element means", wherever they happen to live. The WRITE half (Phase W, [externalizeDay]) runs
+ * at exactly one chokepoint — the day-save seam in CalendarDayService.save — and moves
+ * over-threshold inline payloads into the store. Resolution order is pinned by the wire brief:
  *
  *  - [ImageElement.data]: inline `data` first (a build that wrote inline meant it, and every
  *    pre-migration file is inline), then `dataRef` against the media store, then nothing.
@@ -32,6 +33,26 @@ import java.security.MessageDigest
  * a reason to drop an element, clear a ref, or fail a save or sync. Nothing here throws.
  */
 object LedgerMedia {
+
+    /**
+     * THIS CONSTANT IS THE PHASE W SWITCH (WIRE-MEDIA-BY-REFERENCE.md, "Phasing — and why it
+     * is strict"). While true, the day-save seam externalizes over-threshold inline payloads
+     * into refs; flipping it to false and rebuilding is the rollback — writers go back to
+     * leaving everything inline, and the permanent read-both rule means nothing already
+     * externalized breaks. It must NEVER ship true to a fleet with pre-Phase-R readers: both
+     * forks drop unknown JSON fields on re-save, so an old build that opens a ref-bearing day
+     * silently deletes the `dataRef` — and the image with it, fleet-wide, via sync. Every
+     * syncing device (both forks + the VPS processor) runs Phase R as of 1.06.11-00, which is
+     * the only reason this is allowed to be true.
+     */
+    const val EMIT_MEDIA_REFS = true
+
+    /**
+     * The pinned inline threshold: DECODED payloads at or under this many bytes stay inline.
+     * Small stickers and shapes cost nothing inline and skip a fetch round-trip on e-ink;
+     * photographs and card faces are what bloat. One number, both forks, pinned by the wire.
+     */
+    const val INLINE_MAX_BYTES = 65536
 
     /**
      * The one legal shape of a media-store name: 64 lowercase hex chars (the SHA-256 of the
@@ -174,5 +195,134 @@ object LedgerMedia {
             File(LedgerPaths.attachmentsDir(context), inline).takeIf { it.isFile }?.readBytes()
                 ?.takeIf { BitmapFactory.decodeByteArray(it, 0, it.size) != null }
         }.getOrNull()
+    }
+
+    // ── The WRITE half (Phase W): externalize-on-save ─────────────────────────────────────────
+    //
+    // No janitor lives here yet, on purpose: local mark-sweep GC (a media file referenced by no
+    // local day/board and untouched for ≥30 days may be deleted LOCALLY) is deferred —
+    // content-addressing means nothing is deletable for 30 days from first ship anyway, so
+    // deferring it costs zero storage today. Remote deletion is out of scope permanently per the
+    // wire: the remote is the archive (and the future cold tier).
+
+    /**
+     * The extension the bytes honestly are, by magic number: PNG (`\x89PNG`) → "png", JPEG
+     * (`\xFF\xD8`) → "jpg", anything else → null. Null means "leave it inline": the media store
+     * never externalizes bytes it can't name honestly, because the ref's extension is a promise
+     * to every reader (including the VPS processor's MIME handling) about what the file is.
+     */
+    internal fun extensionByMagic(bytes: ByteArray): String? = when {
+        bytes.size >= 4 && bytes[0] == 0x89.toByte() && bytes[1] == 'P'.code.toByte()
+                && bytes[2] == 'N'.code.toByte() && bytes[3] == 'G'.code.toByte() -> "png"
+        bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() -> "jpg"
+        else -> null
+    }
+
+    /**
+     * Write [bytes] into [mediaDir] under their content-addressed name, temp-then-atomic-move
+     * like every hardened store, and return the name ONLY when the file provably exists
+     * afterwards. Content-addressing makes this idempotent: already-present means done, no
+     * write at all. Null on any failure — and the caller keeps the payload inline, because
+     * losing pixels to a full disk is not an option; the day file stays the fallback of record
+     * until the blob is safely on disk.
+     */
+    internal fun storeBlob(mediaDir: File, bytes: ByteArray, ext: String): String? {
+        val name = sha256Hex(bytes) + "." + ext
+        val target = File(mediaDir, name)
+        if (target.isFile) return name
+        return runCatching {
+            mediaDir.mkdirs()
+            // Unique temp name: two saves racing on the same content must not truncate each
+            // other's temp mid-move. Whoever moves first wins; the loser's move fails and the
+            // target check below settles it.
+            val temp = File(mediaDir, "$name.${System.nanoTime()}.tmp")
+            try {
+                temp.writeBytes(bytes)
+                try {
+                    java.nio.file.Files.move(
+                        temp.toPath(), target.toPath(),
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE
+                    )
+                } catch (e: Exception) {
+                    java.nio.file.Files.move(
+                        temp.toPath(), target.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                    )
+                }
+            } finally {
+                temp.delete()
+            }
+            if (target.isFile) name else null
+        }.getOrNull()
+    }
+
+    /**
+     * The Phase W chokepoint: externalize [day]'s over-threshold inline payloads into
+     * [mediaDir], in place, just before serialization. This runs ONLY from the day-save seam
+     * (CalendarDayService.save) — writers keep producing inline elements exactly as before,
+     * and the save externalizes. That one placement covers new elements (externalized on their
+     * first save, which follows placement immediately), transforms (Phase R hygiene re-encodes
+     * inline and clears the ref; the next save re-externalizes under the new hash), and the
+     * lazy migration of old days (any day being saved anyway sheds its inline payloads — no
+     * sweep, no bulk pass; a day untouched forever stays inline forever, and read-both is
+     * permanent).
+     *
+     * Per element: decode; ≤ [INLINE_MAX_BYTES] stays inline; unknown magic stays inline; a
+     * failed blob write stays inline (no ref is ever set for bytes that aren't on disk).
+     * `elementId` and `timestamp` are never touched — the pixels are identical, and a minted
+     * timestamp would make the migrated copy win merges it has no business winning. Before
+     * `data` is cleared, an empty `gramId` is backfilled with md5-of-the-base64-STRING via
+     * [CryptoUtils.md5Hash] — exactly the match key the contentKey / "where used" derivation
+     * computes, so the lineage survives the base64 leaving the file. (gramId stays
+     * md5-of-base64; the media NAME is sha256-of-bytes. Two different jobs; never unified.)
+     *
+     * A `ledgerItems[].crop` externalizes only when it base64-decodes to bytes wearing a
+     * known image magic — the dual-typed crop's other meaning is an attachments FILENAME,
+     * which must never be externalized or altered; a filename "decodes" to a handful of
+     * magic-less bytes and falls out at the size and magic gates. The pass is idempotent:
+     * an already-externalized element (empty payload, ref set) is skipped outright, and
+     * re-storing existing content writes no new files.
+     *
+     * Context-free (a plain [File] media dir) so the whole contract is a JVM unit test.
+     * Never throws: any per-element surprise leaves that element inline, which is always safe.
+     */
+    fun externalizeDay(day: com.toolsboox.plugin.calendar.da.v2.CalendarDay, mediaDir: File) {
+        if (!EMIT_MEDIA_REFS) return
+
+        for (element in day.imageElements) runCatching {
+            // Empty data = already externalized (or faceless) — untouched, which is what makes
+            // re-saving a migrated day a no-op instead of field churn.
+            if (element.data.isBlank()) return@runCatching
+            val bytes = runCatching { java.util.Base64.getMimeDecoder().decode(element.data) }
+                .getOrNull()?.takeIf { it.isNotEmpty() } ?: return@runCatching
+            if (bytes.size <= INLINE_MAX_BYTES) return@runCatching
+            val ext = extensionByMagic(bytes) ?: return@runCatching
+            val name = storeBlob(mediaDir, bytes, ext) ?: return@runCatching
+            // Only now — the blob is provably on disk. Backfill the lineage BEFORE the base64
+            // leaves the file, then flip the faces: ref set, data emptied ("" stays present as
+            // a key on the wire; both decoders hard-require it).
+            if (element.gramId.isNullOrBlank()) {
+                element.gramId = CryptoUtils.md5Hash(element.data.toByteArray())
+            }
+            element.dataRef = name
+            element.data = ""
+        }
+
+        for (index in day.ledgerItems.indices) runCatching {
+            val item = day.ledgerItems[index]
+            val crop = item.crop?.takeIf { it.isNotBlank() } ?: return@runCatching
+            // The try-decode discriminator, same as the read side: only a crop that decodes to
+            // actual image bytes is a base64 face. The MIME decoder skips a filename's dots and
+            // letters into a few stray bytes, so the magic and size gates are what keep a
+            // filename crop untouchable here.
+            val bytes = runCatching { java.util.Base64.getMimeDecoder().decode(crop) }
+                .getOrNull()?.takeIf { it.isNotEmpty() } ?: return@runCatching
+            if (bytes.size <= INLINE_MAX_BYTES) return@runCatching
+            val ext = extensionByMagic(bytes) ?: return@runCatching
+            val name = storeBlob(mediaDir, bytes, ext) ?: return@runCatching
+            // crop is a val (its dual typing predates mutability), so the externalized item is
+            // a copy — same id, same done/stage/board, cropRef set and the payload gone.
+            day.ledgerItems[index] = item.copy(crop = null, cropRef = name)
+        }
     }
 }

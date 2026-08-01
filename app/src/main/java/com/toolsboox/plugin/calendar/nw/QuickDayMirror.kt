@@ -27,6 +27,14 @@ import java.util.concurrent.atomic.AtomicLong
  * together need one pass, and [CalendarWebDavSyncService]'s own mutex keeps a quick pass from
  * colliding with the worker's full pass. Pen-up is deliberately NOT a trigger — per-stroke
  * uploads are what bloated the server's version history to 22 GB once already.
+ *
+ * Media ordering (Phase W) rides [CalendarWebDavSyncService.sync] itself: the pass pushes any
+ * unconfirmed media blobs BEFORE the day loop, off a pushed-set that makes the steady state
+ * zero extra round trips — so a page turn that just placed a photo carries the photo's bytes
+ * up ahead of the day JSON naming them, and a page turn that placed nothing pays nothing. A
+ * blob push failure logs and skips the blob but the day still mirrors: peers and the processor
+ * render a placeholder for a missing blob, and refusing to mirror ink over a picture would
+ * invert priorities.
  */
 object QuickDayMirror {
 

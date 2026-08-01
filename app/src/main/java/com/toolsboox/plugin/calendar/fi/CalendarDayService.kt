@@ -368,6 +368,26 @@ class CalendarDayService @Inject constructor() {
         val fullPath = File(rootPath, "calendar/$path")
         fullPath.mkdirs()
 
+        // ── Externalize-on-save (Phase W, WIRE-MEDIA-BY-REFERENCE.md) ─────────────────────────
+        //
+        // This is the same one-throat property the card index and the widget poke ride, applied
+        // to pixels: every placement, transform, dedupe, board move and sync write-back funnels
+        // through here, so externalizing at this seam covers all of them without touching a
+        // single placement writer. Over-threshold inline base64 moves to the content-addressed
+        // media store and the element keeps only its ref; blob-write failures leave the payload
+        // inline (the day file stays the copy of record until the bytes are safely on disk).
+        // The media dir comes from the app context — the same LedgerPaths root every resolver
+        // reads — not from rootPath, so a ref written here is a ref the readers can find.
+        // Guarded: an externalization surprise must cost that element its migration, never the
+        // save. (In JVM tests appContext is uninitialized and the pass is exercised directly.)
+        if (com.toolsboox.ot.LedgerMedia.EMIT_MEDIA_REFS && ::appContext.isInitialized) {
+            runCatching {
+                com.toolsboox.ot.LedgerMedia.externalizeDay(
+                    calendarDay, com.toolsboox.ot.LedgerMedia.mediaDir(appContext)
+                )
+            }.onFailure { Timber.w(it, "media externalization failed for $baseName; saving inline") }
+        }
+
         // Write to a temp file first, then atomically move it into place. A direct
         // write to the final name leaves a truncated, unparseable file if the
         // process is killed mid-write (low-memory kill, crash, battery death) —

@@ -288,8 +288,17 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
 
                                 // Carry annotation / A-V-gram media blobs too (immutable, UUID-named).
                                 runCatching { syncDriveAttachments(driveService, rootPath) }
-                                runCatching { syncDriveMedia(driveService, rootPath) }
                                     .onFailure { Timber.w(it, "Drive attachment sync failed") }
+                                // Media blobs BEFORE the day loop below — the pinned wire ordering
+                                // (Phase W): a day uploaded to Drive may carry `dataRef`/`cropRef`
+                                // names, and its blobs must already be up so no peer ever pulls a
+                                // day whose refs point at bytes Drive doesn't hold. A blob without
+                                // a referencing day is invisible; a day without its blob is a
+                                // placeholder on someone else's screen — push in the order that
+                                // makes the failure mode the benign one. Failures log and never
+                                // block the day sync.
+                                runCatching { syncDriveMedia(driveService, rootPath) }
+                                    .onFailure { Timber.w(it, "Drive media sync failed") }
 
                                 if (syncList.isEmpty()) return@launch
 
@@ -399,8 +408,9 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
      * never be installed under a name that vouches for its bytes), and the local write is
      * temp-then-atomic-move for the same reason.
      *
-     * Phase W ordering hook (comment only — no writer emits refs yet): new blobs must reach
-     * Drive BEFORE the day JSON that references them.
+     * Ordering (Phase W, live): the writer emits refs now, so this runs from [backgroundSync]
+     * BEFORE the day upload loop — new blobs reach Drive ahead of the day JSON referencing
+     * them, the pinned wire rule.
      */
     private fun syncDriveMedia(driveService: Drive, rootPath: File) {
         val dir = File(rootPath, "media")

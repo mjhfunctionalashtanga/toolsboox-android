@@ -69,6 +69,67 @@ class CalendarWebDavSyncService(
         private const val MTIME_MARGIN_MS = 2_000L
 
         /**
+         * The set of media blob names this device has CONFIRMED uploaded to this WebDAV root —
+         * one name per line, beside the watermark file. It exists so the steady state of the
+         * push adds ZERO round trips: media names are immutable and content-addressed, so
+         * "uploaded once" is "uploaded forever", and a pass with nothing new needs no PROPFIND
+         * and no PUT before mirroring days. The pull pass reconciles it against a real remote
+         * listing (adds names the server proves it has, drops names the server no longer has),
+         * so a lost set file or a reset server only costs re-pushes, never a missing blob.
+         */
+        private fun pushedSetFile(rootDir: File) = File(rootDir, ".media_webdav_pushed")
+
+        private fun readPushedSet(rootDir: File): MutableSet<String> = runCatching {
+            pushedSetFile(rootDir).readLines().filter { it.isNotBlank() }.toMutableSet()
+        }.getOrDefault(mutableSetOf())
+
+        private fun writePushedSet(rootDir: File, names: Set<String>) {
+            runCatching {
+                val f = pushedSetFile(rootDir)
+                val tmp = File(f.parentFile, f.name + ".tmp")
+                tmp.writeText(names.joinToString("\n"))
+                Files.move(tmp.toPath(), f.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }.onFailure { Timber.w(it, "$TAG: failed to store media pushed-set") }
+        }
+
+        /**
+         * Push every local media blob not yet confirmed on the server. THE ORDER IS THE POINT
+         * (the pinned wire rule): blobs go up BEFORE any day JSON that references them, so no
+         * reader anywhere — the other fork, another device, the VPS processor — ever sees a
+         * ref whose bytes don't exist remotely. Shared with [UltrabridgeSyncWorker], whose raw
+         * json/ upload feeds the processor and needs the same guarantee against the same root.
+         *
+         * A failed PUT logs, stays out of the pushed-set (so the next pass retries), and never
+         * blocks the day push that follows: readers tolerate a missing blob with a placeholder,
+         * and refusing to mirror ink over a picture would invert priorities.
+         */
+        fun pushMediaBlobs(webdav: UltrabridgeWebDavService, rootDir: File) {
+            val dir = File(rootDir, "media/")
+            val local = dir.listFiles()?.filter { it.isFile && com.toolsboox.ot.LedgerMedia.isValidRef(it.name) }
+                ?: emptyList()
+            val pushed = readPushedSet(rootDir)
+            val toPush = local.filter { it.name !in pushed }
+            if (toPush.isEmpty()) return
+            var changed = false
+            for (f in toPush) runCatching {
+                // Upload first so the steady state stays one round trip; on a failure, MKCOL
+                // the collection and retry once — the 9c4e702e lesson: stock Apache dav 409s a
+                // PUT into a collection that was never made, and a push path that never MKCOLs
+                // fails silently forever. Immutable content-addressed names make a blind PUT
+                // safe: re-PUTting an already-present blob writes the same bytes.
+                val ok = webdav.upload(f, "media/${f.name}") ||
+                        (webdav.ensureDirectory("media/") && webdav.upload(f, "media/${f.name}"))
+                if (ok) {
+                    pushed.add(f.name)
+                    changed = true
+                } else {
+                    Timber.w("$TAG: media blob push failed (day still mirrors): ${f.name}")
+                }
+            }
+            if (changed) writePushedSet(rootDir, pushed)
+        }
+
+        /**
          * Build a Moshi instance matching the app's NetworkModule.provideMoshi().
          */
         private fun buildMoshi(): Moshi {
@@ -174,6 +235,18 @@ class CalendarWebDavSyncService(
         var maxRemoteSeen = watermark
         var maxLocalSeen = localWatermark
 
+        // Media blobs BEFORE the day loop — the pinned wire ordering. Every day pushed below may
+        // carry `dataRef`/`cropRef` names; if the day reached the server first and the pass died
+        // before the blobs did (the truncated-pass case this service already designs for), every
+        // other reader would hold refs whose bytes don't exist remotely until some later pass
+        // completed. Pushing blobs first makes the failure mode benign in the only direction that
+        // matters: a blob without a referencing day is invisible; a day without its blob is a
+        // placeholder on someone else's screen. The pull half stays after the day loop — remote
+        // blobs are only needed once the pulled days referencing them are here, and read paths
+        // tolerate the gap. Failures here log and never block the day mirror.
+        runCatching { pushMediaBlobs(webdav, rootDir) }
+            .onFailure { Timber.w(it, "$TAG: media blob push failed (non-fatal)") }
+
         for (remotePath in allPaths) {
             val local = localByPath[remotePath]
             val remote = remoteByPath[remotePath]
@@ -264,7 +337,7 @@ class CalendarWebDavSyncService(
         if (failed == 0) writeWatermarks(maxRemoteSeen, maxLocalSeen)
 
         runCatching { syncAttachments() }.onFailure { Timber.w(it, "$TAG: attachment sync failed") }
-        runCatching { syncMedia() }.onFailure { Timber.w(it, "$TAG: media sync failed") }
+        runCatching { pullMedia() }.onFailure { Timber.w(it, "$TAG: media pull failed") }
 
         val stats = SyncStats(pushed, pulled, skipped, failed)
         Timber.i("$TAG: Day-JSON sync done: $stats")
@@ -314,45 +387,44 @@ class CalendarWebDavSyncService(
     }
 
     /**
-     * Sync the content-addressed media store (`media/`, sibling of `attachments/` — see
-     * WIRE-MEDIA-BY-REFERENCE.md): the blobs behind `imageElements[].dataRef` /
-     * `ledgerItems[].cropRef`. Same shape as [syncAttachments] — immutable files, so pure
-     * union: push what the server lacks, pull what we lack — with one upgrade the naming
-     * scheme buys: the filename IS the SHA-256 of the bytes, so a download is verified by
-     * hashing it and a mismatch (truncation, proxy damage) is discarded instead of installed.
-     * That verify replaces the Content-Length guard for media; the temp-then-atomic-move
-     * stays, so a kill mid-write can't leave half a blob under a name that vouches for it.
+     * The PULL half of the content-addressed media store sync (`media/`, sibling of
+     * `attachments/` — see WIRE-MEDIA-BY-REFERENCE.md): the blobs behind
+     * `imageElements[].dataRef` / `ledgerItems[].cropRef`. The push half is [pushMediaBlobs],
+     * which runs BEFORE the day loop — blobs before the days that reference them, the pinned
+     * wire ordering — while pulling stays down here: a remote blob matters only once a pulled
+     * day referencing it is present, and every read path renders a placeholder for the gap.
+     * Immutable files, so pulling is pure union: fetch what we lack, with the upgrade the
+     * naming scheme buys — the filename IS the SHA-256 of the bytes, so a download is verified
+     * by hashing it and a mismatch (truncation, proxy damage) is discarded instead of
+     * installed. That verify replaces the Content-Length guard for media; the
+     * temp-then-atomic-move stays, so a kill mid-write can't leave half a blob under a name
+     * that vouches for it.
      *
-     * Phase W ordering hook (comment only for now — no writer emits refs yet): when a save
-     * has produced NEW media, the blobs must be pushed BEFORE the day JSON that references
-     * them, so no reader anywhere sees a ref whose bytes don't exist remotely. This pass
-     * running after the day loop is fine in Phase R — there are no fresh local refs — but
-     * the Phase W writer must call the media push first, or reorder [sync].
+     * The remote listing this pass already paid for also reconciles the pushed-set that keeps
+     * [pushMediaBlobs] round-trip-free: names the server provably holds are confirmed, and a
+     * local blob the server no longer holds loses its confirmation so the next push re-uploads.
      */
-    private fun syncMedia() {
+    private fun pullMedia() {
         val dir = File(rootDir, "media/")
         val local = dir.listFiles()?.filter { it.isFile && com.toolsboox.ot.LedgerMedia.isValidRef(it.name) }
             ?: emptyList()
-        // A failed listing is NOT an empty server (same rule as attachments): pushing is
-        // harmless, but "remote lacks everything" would re-upload the whole media store.
+        // A failed listing is NOT an empty server (same rule as attachments): treating it as
+        // one would wrongly strip the whole pushed-set and re-upload the entire media store.
         val remote = runCatching { webdav.propfind("media/") }.getOrNull() ?: run {
-            Timber.w("$TAG: media listing failed; skipping media pass")
+            Timber.w("$TAG: media listing failed; skipping media pull")
             return
         }
         val remoteNames = remote.map { File(it.remotePath).name }.toSet()
         val localNames = local.map { it.name }.toSet()
 
-        val toPush = local.filter { it.name !in remoteNames }
-        for (f in toPush) runCatching {
-            // Upload first so the steady state stays one round trip; on a failure, MKCOL the
-            // collection and retry once — the 9c4e702e lesson: stock Apache dav 409s a PUT
-            // into a collection that was never made, and a push path that never MKCOLs fails
-            // silently forever.
-            if (!webdav.upload(f, "media/${f.name}")) {
-                webdav.ensureDirectory("media/")
-                webdav.upload(f, "media/${f.name}")
-            }
-        }
+        // Reconcile push confirmations against what the server actually holds: confirm every
+        // local blob the listing proves is up (heals a lost set file without re-uploading),
+        // un-confirm anything the server lost (a restored-from-backup server must not leave
+        // refs pointing at bytes only this device still has).
+        val pushed = readPushedSet(rootDir)
+        val reconciled = (localNames intersect remoteNames).toMutableSet()
+        reconciled.addAll(pushed intersect remoteNames)
+        if (reconciled != pushed) writePushedSet(rootDir, reconciled)
 
         if (!dir.exists()) dir.mkdirs()
         for (r in remote) {
