@@ -820,6 +820,38 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // EDGE-TO-EDGE, APP-WIDE. The window draws behind the system bars and the insets come
+        // back SELECTIVELY, because fitsSystemWindows="true" on the DrawerLayout honoured all
+        // four sides — and in landscape the navigation bar reports as a HORIZONTAL inset, so
+        // every non-ink surface kept a dead white band past the rail (Palma, 824×1648: content
+        // ended at 1558; Michael: "extra space being used for no reason"). Ink pages never
+        // showed it only because they go immersive. The listener keeps:
+        //   • top    — headers must clear the status bar (the clock stays legible);
+        //   • bottom — Boox 3-button nav is a real bottom bar; content must not slide under it
+        //              (zero in the gesture-nav case, where nothing real sits there);
+        //   • sides  — DROPPED: the rail's strip belongs AT the physical edge — that is the
+        //              whole point of the rail — and its gesture-exclusion rects are set in
+        //              view coordinates (TuckPanel), so they ride along to the new edge.
+        // The ink surfaces' immersive dance (SurfaceFragment.onResume/onPause) rides this same
+        // listener: hiding the bars dispatches zero insets, showing them pads the drawer back.
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // A side/bottom bar over the page must be see-through, or the freed band would just
+            // repaint as an opaque bar; and the system must not scrim it back for "contrast" —
+            // on a monochrome panel there is no contrast to enforce.
+            window.navigationBarColor = android.graphics.Color.TRANSPARENT
+            window.isNavigationBarContrastEnforced = false
+        }
+        // The padding goes on mainContentFrame, NOT the DrawerLayout: DrawerLayout measures and
+        // lays out its content child against its full bounds, ignoring its own padding (its
+        // fitsSystemWindows path was special-cased internally, never padding-based) — padding
+        // set on it lands nowhere, verified live on the Palma.
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            binding.mainContentFrame.setPadding(0, bars.top, 0, bars.bottom)
+            androidx.core.view.WindowInsetsCompat.CONSUMED
+        }
+
         // Global "pull up the Notes surface" button — available on every screen. It reopens the
         // note page you last had open (same memory the menus' "✒ Notes" uses), falling back to
         // today's first page. Hold it instead to switch over to Text Notes.

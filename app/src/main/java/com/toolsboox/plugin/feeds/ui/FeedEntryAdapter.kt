@@ -157,7 +157,10 @@ class FeedEntryAdapter(
 
         // Meta: unread ● dot · read/watch/listen lens · the feed folder · author · date + time.
         val dot = if (isRead) "" else "●  "
-        val lens = when (e.kind) { "watch" -> "📺"; "listen" -> "🎧"; else -> "📖" }
+        // A letter is not an article: The Mail's rows carry a mail:// address, and the medium
+        // glyph should say so rather than dressing every email as 📖 The Read.
+        val lens = if (e.url.startsWith("mail://")) "✉"
+        else when (e.kind) { "watch" -> "📺"; "listen" -> "🎧"; else -> "📖" }
         val folder = e.categoryLabel?.takeIf { it.isNotBlank() } ?: e.feedTitle
         holder.meta.text = dot + lens + "  " + listOf(folder, e.author ?: "", formatWhen(e.publishedAt))
             .filter { it.isNotBlank() }.joinToString(" · ")

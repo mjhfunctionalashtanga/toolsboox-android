@@ -1,12 +1,8 @@
 package com.toolsboox.plugin.mail.ui
 
-import android.annotation.SuppressLint
 import android.os.Bundle
-import android.text.InputType
 import android.view.Gravity
 import android.view.View
-import android.widget.CheckBox
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -15,7 +11,6 @@ import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.NavHostFragment
 import com.toolsboox.R
 import com.toolsboox.databinding.FragmentMailInboxBinding
-import com.toolsboox.plugin.calendar.da.v2.LedgerItem
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
 import com.toolsboox.plugin.mail.InboxMessage
 import com.toolsboox.plugin.mail.InboxStore
@@ -42,6 +37,14 @@ import javax.inject.Inject
  * The gear opens Mail settings -- the accounts list and a per-account editor whose password is kept
  * in EncryptedSharedPreferences. Mirrors iOS UnifiedInboxView; matches CorrespondenceFragment's
  * conventions (programmatic rows in a ScrollView, ModalScale-wrapped dialogs, Dispatchers.IO work).
+ *
+ * STANDING NOTICE (2026-08): the feeds pane now carries 📧 The Mail — the same inbox as feed rows,
+ * with the feed drawer's view chips, search field, almanac window and rail verbs serving it. This
+ * screen's own header chrome — the Starred/Unread/Read/All chips, the search row, and the accounts
+ * accordion — is exactly the redundancy that lens supersedes. The screen STAYS for now (its hub row
+ * included): retiring it is Michael's call after he has lived with the lens. The verbs themselves
+ * (star-to-todo, reply, accounts editor) already moved to [MailVerbs], so both doors act on mail
+ * identically whichever one he keeps.
  */
 @AndroidEntryPoint
 class MailInboxFragment @Inject constructor() : ScreenFragment() {
@@ -1155,77 +1158,22 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    /** A plain reply, sent out the account the message arrived on (via SMTP). */
+    /** A plain reply — the dialog itself lives in [MailVerbs] now, shared with the feeds lens. */
     private fun showReply(m: InboxMessage) {
-        val ctx = requireContext()
-        val input = EditText(ctx).apply {
-            hint = "Write a reply…"; setSingleLine(false); minLines = 6; gravity = Gravity.TOP
-            setPadding(dp(10), dp(10), dp(10), dp(10))
+        MailVerbs.reply(this, m) {
+            messages = InboxStore.messages(requireContext())   // reflect the new keep-forever row
+            render()
         }
-        val box = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), 0)
-            addView(TextView(ctx).apply {
-                text = "To ${m.fromName.ifBlank { m.fromEmail }}\nRe: ${m.subject}"
-                textSize = 13f; setTextColor(0xFF666666.toInt()); setPadding(0, 0, 0, dp(8))
-            })
-            addView(input)
-        }
-        // Guarded: a reply being typed is work — a stray touch outside must not throw it away.
-        // Cancel and the back gesture remain the ways out.
-        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle("Reply")
-            .setView(box)
-            .setPositiveButton("Send") { _, _ ->
-                val text = input.text.toString().trim()
-                if (text.isBlank()) { toast("Nothing to send"); return@setPositiveButton }
-                lifecycleScope.launch {
-                    val err = try { withContext(Dispatchers.IO) { MailSync.sendReply(ctx, text, m) }; null }
-                    catch (e: Exception) { e.message ?: "Send failed" }
-                    // A sent reply is a keep-forever event: the mail you answered persists its body and
-                    // never prunes, exactly like a star. Recorded off the main thread (it writes a file).
-                    // The reply text you wrote also persists to its own sent pile, so your outgoing
-                    // words are kept forever and searchable alongside the mail you received.
-                    if (err == null) withContext(Dispatchers.IO) {
-                        InboxStore.markReplied(ctx.applicationContext, m.id)
-                        InboxStore.recordSent(ctx.applicationContext, m, text)
-                    }
-                    if (!isAdded) return@launch          // send outlives the fragment; toast needs it attached
-                    if (err == null) messages = InboxStore.messages(ctx)   // reflect the new keep-forever row
-                    toast(if (err == null) "Reply sent" else "Send failed: $err")
-                    if (err == null) render()
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .create())
     }
 
     // Star -> to-do: create a task on today's page (like Kanban's add-card), and mark the mail starred.
     // Grams for stars, mail edition: the same star ALSO mints a link-face gram onto today's Intake.
+    // The ceremony itself lives in [MailVerbs.starToTodo], shared with the feeds lens; this wrapper
+    // owns only what this screen does with the answer — the three-way toast and the repaint.
     private fun starToTodo(m: InboxMessage) {
         val ctx = requireContext()
-        val item = LedgerItem(
-            id = "li-" + UUID.randomUUID().toString().lowercase(),
-            kind = LedgerItem.Kind.TASK, text = m.subject, date = Date(), stage = "todo", source = "email"
-        )
-        lifecycleScope.launch {
-            val placedGram = withContext(Dispatchers.IO) {
-                InboxStore.setStarred(ctx, m, true)   // persists the message content; off the main thread
-                val root = documentsRoot()
-                val today = LocalDate.now()
-                // The open day page's per-pen-up save does the same whole-file load→mutate→save;
-                // unserialized, one of the two writes silently drops the other's items.
-                com.toolsboox.plugin.calendar.ot.DayLocks.withDay(today) {
-                    val day = calendarDayService.load(root, today, null, Locale.getDefault())
-                    day.ledgerItems.add(item)
-                    calendarDayService.save(root, today, day)
-                }
-                runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(ctx, item) }
-                // null = the placement itself failed; false = the dedupe declined it. The two must
-                // toast differently — a re-star that answers "Starred" reads as a star that did
-                // nothing, when what actually happened is the gram is already on the register.
-                runCatching { placeMailStarGram(root, m, today) }.getOrNull()
-            }
-            if (!isAdded) return@launch
+        MailVerbs.starToTodo(this, calendarDayService, documentsRoot(), m) { placedGram ->
+            if (!isAdded) return@starToTodo
             toast(
                 when (placedGram) {
                     true -> "★ → All Stars"
@@ -1238,164 +1186,28 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    /**
-     * Grams for stars, mail edition — mirrors FeedNoteGram.placeStarGram: starring a message mints
-     * a movable link-face gram onto TODAY's Intake page, so the mail sits on the board like a
-     * starred article does. The face is rendered by [LinkCardRenderer] wearing the ✉ MAIL chip,
-     * the subject as its title, and "sender · date" on the source line (the render's url stays blank —
-     * a `mail://` address is no host to print; the address rides sourceLink instead, so tapping
-     * the gram can resolve the message and dedupe works).
-     *
-     * Starring the same message twice must not stack twins: an intake gram already carrying this
-     * sourceLink today wins. And unstarring deliberately does NOT remove the gram — once placed,
-     * the Intake page is his board, not a mirror of the star state. Call OFF the main thread.
-     *
-     * @return true when a gram was placed, false when today's intake already had it.
-     */
-    private fun placeMailStarGram(root: java.io.File, m: InboxMessage, today: LocalDate): Boolean {
-        val mailUri = "mail://${m.id}"
-        // Dedupe by sourceLink. Read-before-place is unlocked, but stars arrive at human speed
-        // and re-stars route through this same path, so a stale read can't stack twins in practice.
-        val day = calendarDayService.load(root, today, null, Locale.getDefault())
-        if (day.imageElements.any { it.page == "intake" && it.sourceLink == mailUri }) return false
-        val sender = m.fromName.ifBlank { m.fromEmail }.ifBlank { "Unknown sender" }
-        val dateLabel = java.time.Instant.ofEpochMilli(m.date)
-            .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-            .format(java.time.format.DateTimeFormatter.ofPattern("MMM d", Locale.getDefault()))
-        val face = com.toolsboox.plugin.calendar.ot.LinkCardRenderer.render(
-            url = "", title = m.subject.ifBlank { "(no subject)" }, kind = "mail",
-            sourceName = "$sender · $dateLabel",
-            // The letter's own opening lines are its excerpt — the iPad's mail gram passes the
-            // same snippet. A subject alone tells you a message arrived; the first sentence tells
-            // you what it wants, which is what makes the gram worth arranging on the board.
-            excerpt = m.snippet.ifBlank { m.body }.trim().take(400)
-        )
-        com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
-            calendarDayService, root, face, today, pageKey = "intake",
-            sourceLink = mailUri, sourceLabel = sender, cardText = m.subject,
-            // A starred email belongs to the EMAIL quarter of Star Sort — whose storage key is the
-            // legacy "educate". Without this the gram carried NO intakeKind, matched no quarter, and
-            // landed at the default spot, i.e. on top of THE READ.
-            intakeKind = "educate"
-        )
-        return true
-    }
-
     private fun unstar(m: InboxMessage) {
         val ctx = requireContext()
-        InboxStore.setStarred(ctx, m, false)
+        MailVerbs.unstar(ctx, m)
         messages = InboxStore.messages(ctx)
         render()
     }
 
-    // Mail settings -- accounts list + per-account editor.
+    // Mail settings -- accounts list + per-account editor, shared through [MailVerbs].
 
     private fun showAccountsList() {
-        val ctx = requireContext()
-        val accounts = MailAccountStore.all(ctx)
-        val labels = (accounts.map { it.display } + "➕  Add account").toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle("Mail accounts")
-            .setItems(labels) { _, i ->
-                if (i < accounts.size) showAccountEditor(accounts[i]) else showAccountEditor(MailAccount())
-            }
-            .setNegativeButton("Close", null)
-            .show()
-    }
-
-    @SuppressLint("SetTextI18n")
-    private fun showAccountEditor(account: MailAccount) {
-        val ctx = requireContext()
-        val a = account.copy()
-        val exists = MailAccountStore.all(ctx).any { it.id == a.id }
-
-        fun label(t: String) = TextView(ctx).apply {
-            text = t; textSize = 12f; setTextColor(0xFF888888.toInt()); setPadding(0, dp(10), 0, dp(2))
-        }
-        fun field(value: String, numeric: Boolean = false) = EditText(ctx).apply {
-            setText(value); setSingleLine()
-            inputType = if (numeric) InputType.TYPE_CLASS_NUMBER else InputType.TYPE_CLASS_TEXT
-        }
-        fun check(text: String, on: Boolean) = CheckBox(ctx).apply { this.text = text; isChecked = on }
-
-        val displayName = field(a.displayName)
-        val email = field(a.email).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS }
-        val imapHost = field(a.imapHost)
-        val imapPort = field(a.imapPort.toString(), numeric = true)
-        val imapSSL = check("Use SSL/TLS (IMAP)", a.imapSSL)
-        val username = field(a.username)
-        val password = field(MailAccountStore.password(ctx, a.id)).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        }
-        val smtpHost = field(a.smtpHost)
-        val smtpPort = field(a.smtpPort.toString(), numeric = true)
-        val smtpSSL = check("Use SSL/TLS (SMTP)", a.smtpSSL)
-
-        val preset = TextView(ctx).apply {
-            text = "✨  Fill hosts from provider…"; textSize = 14f; setTextColor(0xFF2F6F96.toInt())
-            setPadding(0, dp(8), 0, dp(2))
-            setOnClickListener {
-                val names = MailAccount.presets.map { it.first }.toTypedArray()
-                androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-                    .setTitle("Provider")
-                    .setItems(names) { _, i ->
-                        val p = MailAccount.presets[i]
-                        imapHost.setText(p.second); smtpHost.setText(p.third)
-                        imapPort.setText("993"); smtpPort.setText("465")
-                        imapSSL.isChecked = true; smtpSSL.isChecked = true
-                    }
-                    .show()
-            }
-        }
-
-        val form = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(4), dp(18), dp(4))
-            addView(label("Display name")); addView(displayName)
-            addView(label("Email address")); addView(email)
-            addView(preset)
-            addView(label("Incoming — IMAP host")); addView(imapHost)
-            addView(label("IMAP port")); addView(imapPort); addView(imapSSL)
-            addView(label("Username (default: the address)")); addView(username)
-            addView(label("Password (app-specific if 2FA)")); addView(password)
-            addView(label("Outgoing — SMTP host")); addView(smtpHost)
-            addView(label("SMTP port (implicit TLS, usually 465)")); addView(smtpPort); addView(smtpSSL)
-        }
-
-        val builder = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle(if (exists) "Edit account" else "New account")
-            .setView(ScrollView(ctx).apply { addView(form) })
-            .setPositiveButton("Save") { _, _ ->
-                a.displayName = displayName.text.toString().trim()
-                a.email = email.text.toString().trim()
-                a.imapHost = imapHost.text.toString().trim()
-                a.imapPort = imapPort.text.toString().toIntOrNull() ?: 993
-                a.imapSSL = imapSSL.isChecked
-                a.username = username.text.toString().trim()
-                a.smtpHost = smtpHost.text.toString().trim()
-                a.smtpPort = smtpPort.text.toString().toIntOrNull() ?: 465
-                a.smtpSSL = smtpSSL.isChecked
-                if (a.email.isBlank() || a.imapHost.isBlank()) { toast("An email address and IMAP host are required"); return@setPositiveButton }
-                MailAccountStore.upsert(ctx, a)
-                MailAccountStore.setPassword(ctx, a.id, password.text.toString())
-                toast("Saved")
+        MailVerbs.showAccountsList(
+            this,
+            onChanged = {
                 renderChips()   // a first/renamed account changes the account-filter chip
                 refresh()
+            },
+            onDeleted = { id ->
+                // Never leave the list narrowed to an account that no longer exists. (Sent survives an
+                // account deletion: the letters were still sent, and their pile is file-backed.)
+                if (accountFilter == id) setMailbox(null, redraw = false)
+                messages = InboxStore.messages(requireContext()); renderChips(); render()
             }
-            .setNegativeButton("Cancel", null)
-        if (exists) builder.setNeutralButton("Delete") { _, _ ->
-            MailAccountStore.delete(ctx, a.id); toast("Account deleted")
-            // Never leave the list narrowed to an account that no longer exists. (Sent survives an
-            // account deletion: the letters were still sent, and their pile is file-backed.)
-            if (accountFilter == a.id) setMailbox(null, redraw = false)
-            messages = InboxStore.messages(ctx); renderChips(); render()
-        }
-        val dialog = builder.create()
-        // Guarded: a whole account's settings mid-edit — a stray touch outside must not throw
-        // them away. Cancel and the back gesture remain the ways out.
-        showGuardedModal(dialog)
-        dialog.window?.setLayout(
-            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-            android.view.ViewGroup.LayoutParams.WRAP_CONTENT
         )
     }
 

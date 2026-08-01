@@ -441,6 +441,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .forEach { if (it.elementId.toString() !in calendarDay.deletedElementIds) calendarDay.deletedElementIds.add(it.elementId.toString()) }
         val others = calendarDay.imageElements.filter { it.page != pageKey }
         calendarDay.imageElements = (others + imageElements).toMutableList()
+        // ALL STARS FILES ON THE DROP — the one moment position is evidence of intent. A card
+        // whose centre was left inside another band's box adopts that band's kind, then the
+        // settle pass pulls every card onto its own kind's shelf ("Correcting a mis-detected
+        // kind still works — drag it across and it stays"). This mutates the same instances the
+        // element layer holds, and every commit path repaints after this callback, so the
+        // settled positions are what land on screen; the template redraw below re-sizes the
+        // bands and re-teaches the hit-test map.
+        if (pageKey == CalendarDayPageIntake.INTAKE_PAGE &&
+            CalendarDayPageIntake.fileAllStarsDrop(calendarDay)
+        ) redrawIntakePage()
         calendarPattern.updateDay(calendarDay)
         presenter.save(this, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
     }
@@ -1540,9 +1550,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     override fun onTextBoxDropped(element: TextElement) {
         if (notePage != "intake") return
         val bounds = textElementBounds(element)
-        val panel = CalendarDayPageIntake.panels.firstOrNull {
-            it.rect.contains(bounds.centerX(), bounds.centerY())
-        } ?: return
+        // Resolved against the geometry as DRAWN — the bands are sized to their content, so the
+        // boxes on screen are the only honest answer to "which band was this dropped on".
+        val panel = CalendarDayPageIntake.panelAt(bounds.centerX(), bounds.centerY()) ?: return
         val url = element.sourceUrl
             ?: com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.extractUrls(element.text).firstOrNull()
             ?: return
@@ -3876,9 +3886,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     /** Encode the gram card and add it as an image element on [pageKey] of the current day.
      *  [intakeKind] only means anything when the destination is the All Stars register — there
-     *  the card lands inside its kind's band at half width, exactly as [PickingsPlacement.place]
-     *  sizes an intake arrival, so the two placement paths agree about what the register looks
-     *  like. */
+     *  the card lands aspect-fit into the next slot of its kind's band, the size and spot
+     *  [CalendarDayPageIntake.arrivalFrame] chooses, exactly as [PickingsPlacement.place] places
+     *  an intake arrival, so the two placement paths agree about what the register looks like. */
     private fun addGramToPickingPage(bmp: android.graphics.Bitmap, pageKey: String, intakeKind: String = "") {
         if (!::calendarDay.isInitialized) return
         val max = 1200
@@ -3888,16 +3898,20 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val baos = java.io.ByteArrayOutputStream(); scaled.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
         val base64 = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
         val isIntakeArrival = pageKey == CalendarDayPageIntake.INTAKE_PAGE && intakeKind.isNotBlank()
-        val naturalW = (1404f * 0.42f).coerceAtMost(scaled.width.toFloat())
-        val w = if (isIntakeArrival) naturalW / 2f else naturalW
+        val w = (1404f * 0.42f).coerceAtMost(scaled.width.toFloat())
         val h = w * scaled.height / scaled.width
         val count = calendarDay.imageElements.count { it.page == pageKey }
-        val bandSlot = if (isIntakeArrival) {
-            val taken = calendarDay.imageElements.count { it.page == pageKey && it.intakeKind == intakeKind }
-            CalendarDayPageIntake.bandSlotFor(intakeKind, taken, w, h)
-        } else null
-        val x = bandSlot?.first ?: (60f + (count % 3) * (w + 30f)).coerceIn(0f, (1404f - w).coerceAtLeast(0f))
-        val y = bandSlot?.second ?: (120f + (count / 3) * (h + 30f)).coerceIn(0f, (1872f - h).coerceAtLeast(0f))
+        // The band slot carries the fitted SIZE as well as the position — the register aspect-fits
+        // each arrival into the next slot of its kind's band (the shelf grows a row as it fills,
+        // so where the slot sits only the whole day file can answer) — so an intake arrival takes
+        // the whole rect; everywhere else keeps the natural card size and the plain stagger.
+        val bandSlot = if (isIntakeArrival)
+            CalendarDayPageIntake.arrivalFrame(intakeKind, calendarDay, w, h)
+        else null
+        val placedW = bandSlot?.width() ?: w
+        val placedH = bandSlot?.height() ?: h
+        val x = bandSlot?.left ?: (60f + (count % 3) * (w + 30f)).coerceIn(0f, (1404f - w).coerceAtLeast(0f))
+        val y = bandSlot?.top ?: (120f + (count / 3) * (h + 30f)).coerceIn(0f, (1872f - h).coerceAtLeast(0f))
         // Remember the ledger page this card was grammed from so the placed gram can jump back to it.
         val srcPage = notePage ?: "day"
         val srcLabel =
@@ -3905,7 +3919,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 com.toolsboox.plugin.calendar.ot.PickingsStore.nameOf(requireContext(), currentDate, srcPage)
             else notePage?.replaceFirstChar { it.uppercase() } ?: "Day"
         calendarDay.imageElements.add(com.toolsboox.da.ImageElement(
-            x = x, y = y, width = w, height = h, data = base64, page = pageKey,
+            x = x, y = y, width = placedW, height = placedH, data = base64, page = pageKey,
             sourceLink = "ledger://$currentDate/$srcPage", sourceLabel = srcLabel,
             intakeKind = intakeKind))
         calendarPattern.updateDay(calendarDay)
@@ -4858,6 +4872,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val deadElements = HashSet<String>(calendarDay.deletedElementIds.size + calendarDay.deletedItemIds.size)
         calendarDay.deletedElementIds.forEach { deadElements.add(it.lowercase()) }
         calendarDay.deletedItemIds.forEach { deadElements.add(it.lowercase()) }
+        // ALL STARS SETTLES ON LOAD, before its elements reach the surface: the register's bands
+        // are sized to their content, so a band's top moves when a band above it grows — and a
+        // card's stored x/y may date from a geometry that no longer exists. The kind is the
+        // authority on membership ([CalendarDayPageIntake.settleAllStars] — the iOS twin runs the
+        // identical pass over the identical file, and if the two forks settled the same cards to
+        // different shelves every sync would ping-pong positions). Settled in memory only; the
+        // corrected coordinates ride the next ordinary save, because renderPage is a read path
+        // and must not start writing day files.
+        if (imgPageKey == CalendarDayPageIntake.INTAKE_PAGE)
+            CalendarDayPageIntake.settleAllStars(calendarDay)
         setTextElements(
             calendarDay.textElements
                 .filter { it.pageKey == imgPageKey && it.elementId.toString().lowercase() !in deadElements }
@@ -4885,8 +4909,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             CalendarDayPage.clearWinRows()
             CalendarDayPage.clearGlimpseRows()
             if (notePage == "intake") {
-                // Intake page: four quarters, each a grid of just its own grams (Email / Read /
-                // Watch / Listen). No typing — the grams are the content; tap one to open it.
+                // All Stars: five labeled bands (The Read / The Watch / The Listen / The Books /
+                // The Mail), each a shelf of just its own grams. No typing — the grams are the
+                // content; tap one to open it.
                 val intakeData = IntakePageStore.load(requireContext(), currentDate).also { intakePageData = it }
                 CalendarDayPageIntake.drawPage(templateCanvas, intakeData, calendarDay, context = requireContext())
             } else {
@@ -5334,11 +5359,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private fun showIntakeHoldMenu(cx: Float, cy: Float, pressX: Float, pressY: Float) {
         if (!::calendarDay.isInitialized) return
         val gram = CalendarDayPageIntake.gramAt(cx, cy)
-        // A gram held → its own quarter; empty paper → the quarter under the finger; neither →
+        // A gram held → its own band; empty paper → the band under the finger; neither →
         // The Read, so the menu still works when the hold lands in a gutter.
         val panel = CalendarDayPageIntake.panelAt(cx, cy)
-        val kindKey = gram?.kindKey ?: panel?.kindKey ?: CalendarDayPageIntake.panels.first().kindKey
-        val kindTitle = CalendarDayPageIntake.panels.firstOrNull { it.kindKey == kindKey }?.title ?: "ALL STARS"
+        val kindKey = gram?.kindKey ?: panel?.kindKey ?: CalendarDayPageIntake.kinds.first().kindKey
+        val kindTitle = CalendarDayPageIntake.kinds.firstOrNull { it.kindKey == kindKey }?.title ?: "ALL STARS"
         val element = gram?.let { g ->
             calendarDay.imageElements.firstOrNull { it.elementId.toString().lowercase() == g.elementId }
         }
@@ -5422,7 +5447,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val targets = mutableListOf<Triple<String, String, String>>()
         targets.add(Triple("◈  Gram Picks", gramPicks, ""))
         for (b in boards) targets.add(Triple("❝  ${b.name}", b.key, ""))
-        for (p in CalendarDayPageIntake.panels)
+        for (p in CalendarDayPageIntake.kinds)
             targets.add(Triple("★  All Stars · ${p.title}", CalendarDayPageIntake.INTAKE_PAGE, p.kindKey))
         targets.add(Triple("🔬  Synthesize", "synthesize", ""))
 

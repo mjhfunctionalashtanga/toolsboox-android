@@ -54,7 +54,7 @@ object GramDestinations {
             else b.name.ifBlank { "Pickings" }
             out.add(Destination("❝", name, b.key))
         }
-        for (p in CalendarDayPageIntake.panels) {
+        for (p in CalendarDayPageIntake.kinds) {
             out.add(Destination("★", "All Stars · ${p.title}", CalendarDayPageIntake.INTAKE_PAGE, p.kindKey))
         }
         out.add(Destination("🔬", "Synthesize", "synthesize"))
@@ -186,15 +186,14 @@ object PickingsPlacement {
         val scaled = if (treatment) CardTreatment.card(fitted) else fitted
         val baos = ByteArrayOutputStream(); scaled.compress(Bitmap.CompressFormat.PNG, 100, baos)
         val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
-        // All Stars arrivals land at HALF the ordinary card width (Michael, 2026-07-31, over a
-        // full EMAIL band: "grams added to all stars should be 1/2 the size they currently are
-        // when added so they don't have to overlap") — the register's bands carry twice as many
-        // stars before anything piles, and the page zooms for reading anyway. Every other board
-        // keeps the natural card width; existing elements are untouched — this only sizes what
-        // lands from now on, and a landed card is still yours to resize like any other.
+        // All Stars sizes its own arrivals: the register's twelve-slot shelf IS the half-size
+        // Michael asked for ("grams added to all stars should be 1/2 the size they currently are
+        // when added so they don't have to overlap") — [CalendarDayPageIntake.arrivalFrame] fits
+        // the card into the next slot of its band, and the page zooms for reading anyway. Every
+        // other board keeps the natural card width; existing elements are untouched — this only
+        // sizes what lands from now on, and a landed card is still yours to resize like any other.
         val isIntakeArrival = pageKey == CalendarDayPageIntake.INTAKE_PAGE && intakeKind.isNotBlank()
-        val naturalW = (CANVAS_W * 0.42f).coerceAtMost(scaled.width.toFloat())
-        val w = if (isIntakeArrival) naturalW / 2f else naturalW
+        val w = (CANVAS_W * 0.42f).coerceAtMost(scaled.width.toFloat())
         val h = w * scaled.height / scaled.width
         // Load→mutate→save under the day lock: placements arrive from raw threads (placeAsync)
         // and race the open day page's per-pen-up save; interleaved writers drop each other's items.
@@ -203,24 +202,28 @@ object PickingsPlacement {
             val count = day.imageElements.count { it.page == pageKey }        // grid-stagger new cards
             // ALL STARS lands each arrival inside the band for its kind, so the register organises
             // itself without anyone filing anything — and the card is an ordinary element from that
-            // moment on, free to be dragged into another band and left there. Every other page keeps
-            // the plain three-across stagger.
+            // moment on, free to be dragged around its band (the settle pass keeps it on its own
+            // kind's shelf). Every other page keeps the plain three-across stagger.
             //
-            // Counted per KIND, not per page: staggering All Stars by the page's total would march
-            // arrivals diagonally away from their own band as the day filled up.
-            val bandSlot = if (pageKey == CalendarDayPageIntake.INTAKE_PAGE && intakeKind.isNotBlank()) {
-                val taken = day.imageElements.count { it.page == pageKey && it.intakeKind == intakeKind }
-                CalendarDayPageIntake.bandSlotFor(intakeKind, taken, w, h)
-            } else null
+            // Resolved from the DAY, not from a per-page count: the register's bands are sized to
+            // their content, so where the next slot sits depends on how full every band above it
+            // is — geometry only the whole day file can answer.
+            val bandSlot = if (isIntakeArrival)
+                CalendarDayPageIntake.arrivalFrame(intakeKind, day, w, h)
+            else null
             // Every board is the standard full-height page now (the daily cover band is gone), so
-            // picked cards start at the normal top for all of them.
+            // picked cards start at the normal top for all of them. A band slot carries the fitted
+            // SIZE as well as the spot — the register aspect-fits each arrival into its half-cell
+            // so its rows stay rows — so an All Stars arrival takes the whole rect.
             val yBase = 120f
-            val x = bandSlot?.first
+            val placedW = bandSlot?.width() ?: w
+            val placedH = bandSlot?.height() ?: h
+            val x = bandSlot?.left
                 ?: (60f + (count % 3) * (w + 30f)).coerceIn(0f, (CANVAS_W - w).coerceAtLeast(0f))
-            val y = bandSlot?.second
+            val y = bandSlot?.top
                 ?: (yBase + (count / 3) * (h + 30f)).coerceIn(0f, (CANVAS_H - h).coerceAtLeast(0f))
             day.imageElements.add(ImageElement(
-                x = x, y = y, width = w, height = h, data = base64, page = pageKey,
+                x = x, y = y, width = placedW, height = placedH, data = base64, page = pageKey,
                 sourceLink = sourceLink, sourceLabel = sourceLabel,
                 mediaKind = media?.kind ?: "",
                 attachmentId = media?.attachmentId ?: "",

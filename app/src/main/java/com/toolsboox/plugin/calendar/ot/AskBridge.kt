@@ -2,7 +2,6 @@ package com.toolsboox.plugin.calendar.ot
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.RectF
 import android.util.Base64
 import androidx.core.os.bundleOf
 import androidx.navigation.fragment.NavHostFragment
@@ -223,61 +222,39 @@ object AskBridge {
     // ---- Educate Me panel placement ----------------------------------------------------------
 
     /**
-     * Drop a rendered question gram inside the intake sheet's EDUCATE ME panel.
+     * Drop a rendered question gram inside the intake sheet's mail band.
      *
-     * Geometry comes from the SAME [CalendarDayPageIntake.panels] the sheet draws and hit-tests
-     * with, so there is no second copy of the layout to drift: the usable area is the whole EMAIL
-     * quarter rect (the tap-to-type strip is gone — the quarter is a pure gram grid now, and the
-     * Intake page re-lays these out itself; this stored geometry only seeds a sane initial spot).
-     * Grams grid-stagger 2-up inside it (the PickingsPlacement discipline, scaled to a panel),
-     * wrapping into a slightly-offset pile after six so a busy day reads as a stack, not a spill.
+     * Geometry comes from the SAME [CalendarDayPageIntake.arrivalFrame] every star lands
+     * through, so there is no second copy of the layout to drift: All Stars' bands are sized to
+     * their content, and where the next slot sits only the whole day file can answer — which is
+     * why the frame is resolved INSIDE the lock, against the day as it stands at that moment.
      *
      * Mirrors [PickingsPlacement.place]'s element construction (CardTreatment ground, inline
      * base64 PNG, edgeBaked) under the same [DayLocks] so background placements never race the
-     * open day page's per-pen-up save. PickingsPlacement itself takes no position, hence the
+     * open day page's per-pen-up save. PickingsPlacement itself doesn't take a raw day, hence the
      * local twin rather than a call.
      */
     private fun placeOnEducatePanel(
         service: CalendarDayService, root: File, bitmap: Bitmap,
         sourceLink: String, sourceLabel: String, cardText: String
     ) {
-        val panel = CalendarDayPageIntake.panels.first { it.kindKey == "educate" }
-        // Usable zone: the whole EMAIL quarter (no more tap-to-type strip).
-        val inner = RectF(panel.rect)
         val treated = CardTreatment.card(bitmap)
         val baos = ByteArrayOutputStream()
         treated.compress(Bitmap.CompressFormat.PNG, 100, baos)
         val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
 
-        val margin = 18f
-        val cols = 2
-        var w = (inner.width() - margin * (cols + 1)) / cols          // ≈ 304 on the 1404 canvas
-        var h = w * treated.height / treated.width
-        // A long question makes a tall card; keep it inside the panel rather than under the strip.
-        val maxH = inner.height() - 2 * margin
-        if (h > maxH) { h = maxH; w = h * treated.width / treated.height }
-        val slotPitch = (inner.height() - 2 * margin) / 3f            // three rows of grid
-
         val today = LocalDate.now()
         DayLocks.withDay(today) {
             val day = service.load(root, today, null, Locale.getDefault())
-            // Stagger by what is already in the panel, not on the whole page — the intake page
-            // holds four lanes and their grams must not count against each other.
-            val count = day.imageElements.count {
-                it.page == "intake" && inner.contains(it.x + it.width / 2f, it.y + it.height / 2f)
-            }
-            val col = count % cols
-            val row = (count / cols) % 3
-            val wrap = (count / (cols * 3)) * 16f                     // 7th onward: offset pile
-            val x = (inner.left + margin + col * (w + margin) + wrap)
-                .coerceIn(inner.left, (inner.right - w).coerceAtLeast(inner.left))
-            val y = (inner.top + margin + row * slotPitch + wrap)
-                .coerceIn(inner.top, (inner.bottom - h - 8f).coerceAtLeast(inner.top))
+            val frame = CalendarDayPageIntake.arrivalFrame(
+                "educate", day, treated.width.toFloat(), treated.height.toFloat()
+            ) ?: return@withDay
             day.imageElements.add(
                 ImageElement(
-                    x = x, y = y, width = w, height = h, data = base64, page = "intake",
+                    x = frame.left, y = frame.top, width = frame.width(), height = frame.height(),
+                    data = base64, page = "intake",
                     sourceLink = sourceLink, sourceLabel = sourceLabel, cardText = cardText,
-                    // The EMAIL quarter's storage key, so an Educate-me question-gram slots into it.
+                    // The mail band's legacy storage key, so an Educate-me question-gram slots into it.
                     intakeKind = "educate",
                     // Wears its CardTreatment in its own pixels — render-time edges stand down.
                     edgeBaked = true

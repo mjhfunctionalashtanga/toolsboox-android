@@ -37,7 +37,9 @@ data class LedgerPanel(
             "pickings" -> listOf(
                 LedgerPanel("quotes", "Pickings", Kind.TEXT, RectF(60f, 40f, 1344f, 1820f))
             )
-            "intake" -> CalendarDayPageIntake.panels.map {
+            // All Stars' bands are sized to their content, so their boxes come from the page as
+            // last DRAWN — the only geometry that matches what is actually on screen.
+            "intake" -> CalendarDayPageIntake.panelsNow().map {
                 LedgerPanel(it.kindKey, it.title, Kind.TEXT, RectF(it.rect))
             }
             null, "default", "0" -> listOf(

@@ -18,6 +18,10 @@ import com.toolsboox.plugin.calendar.da.v2.ReadingEvent
 import com.toolsboox.plugin.calendar.fi.CalendarDayService
 import com.toolsboox.plugin.feeds.da.FeedEntry
 import com.toolsboox.plugin.feeds.nw.MinifluxClient
+import com.toolsboox.plugin.mail.InboxMessage
+import com.toolsboox.plugin.mail.InboxStore
+import com.toolsboox.plugin.mail.MailReaderHtml
+import com.toolsboox.plugin.mail.MailSync
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -279,6 +283,35 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     private var laterLane: String? = null
     /** Sidebar search scope: "all" · "feed" (the selected feed) · "category" (the current lens). */
     private var searchScope = "all"
+    /**
+     * The Mail lens's MAILBOX: null = all accounts, an account id = that inbox, [MAIL_SENT] = the
+     * Sent pile. Only read while [kindFilter] == [KIND_MAIL]. Its own field and not a pref shared
+     * with the standalone Mail screen: the lens and the screen are two doors onto the same store,
+     * and silently moving the other one's narrowing from here would be spooky action at a distance.
+     */
+    private var mailMailbox: String? = null
+    /**
+     * Synthetic row id → the letter it stands for — the same held-beside-the-list mapping
+     * [bskyUriById] is, and for the same reason: [FeedEntry] is shared by every source on this
+     * screen and must not widen for one source's key. Rebuilt on every [gatherMailRows].
+     */
+    private val mailById = HashMap<Long, InboxMessage>()
+    /** Single-flight for the background IMAP pull — refresh() re-entry must not stack fetches. */
+    private var mailRefreshing = false
+    /** The last mail row opened, so the list-dress ⏫⏬ can step email-to-email from where the
+     *  reading left off rather than always from the top. */
+    private var lastMailId: Long? = null
+    /**
+     * The letter OPEN in the pane, held beside the map rather than only in it. [gatherMailRows]
+     * rebuilds [mailById] from the shown corpus, and a background refresh can re-gather while a
+     * letter is open — in the Unread view the just-opened (now read) message drops out of the
+     * list, and without this the rebuild would un-map the letter out from under its own reader
+     * (the pane fell back to the article renderer mid-read on device). Cleared with the pane.
+     */
+    private var openMail: Pair<Long, InboxMessage>? = null
+    /** Whether the OPEN letter loads its remote images. Reset per open; flipped by the in-body
+     *  "load images" door. Off by default — a tracking pixel's whole payload is the request. */
+    private var mailImagesOn = false
     /** Selected local subscription (null = all local) when mode == "local". */
     private var localSub: com.toolsboox.plugin.feeds.nw.LocalSub? = null
     /** The active smart feed (saved search) when mode == "smart". */
@@ -329,6 +362,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
 
     private fun applyKind(entries: List<FeedEntry>): List<FeedEntry> {
         val k = kindFilter ?: return entries
+        // The Mail is a CORPUS lens, not a sieve: with it active, allEntries already holds only
+        // mail rows (gatherMailRows built them), and FeedEntry.kind — a guess made from category
+        // and URL — would call every one of them "read" and empty the list. Same pass-through the
+        // Later List earns for the same reason: the narrowing happened where the rows were made.
+        if (k == KIND_MAIL) return entries
         return entries.filter { it.kind == k }
     }
 
@@ -470,6 +508,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // Changing feed/view returns to the list from any open in-pane article.
         if (binding.articlePane.visibility == View.VISIBLE) closeArticlePane()
         binding.viewToggleButton.setText(if (mode == "stars") R.string.feeds_view_unread else R.string.feeds_view_starred)
+        // The Mail lens swaps the corpus, not the pipeline: the view chips still pick the mode,
+        // the almanac window and the search still narrow the shown list — but the rows come from
+        // the mail store rather than Miniflux. Checked before the mode branches because the lens
+        // only ever rides the composable modes (feed/read/both/stars/edition).
+        if (kindFilter == KIND_MAIL) { loadMailInbox(); return }
         if (mode == "later") { loadLaterList(); return }
         if (mode == "local") { loadLocal(); return }
         if (mode == "smart") { loadSmart(); return }
@@ -988,6 +1031,436 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             .toString()
     }.getOrElse { local }
 
+    /* ---------------------------------------------------------------
+     * 📧 The Mail — the unified inbox, as one more source in this list
+     * ------------------------------------------------------------- */
+
+    /**
+     * WHY MAIL RIDES THE FEEDS PANE. Michael, from the Palma: "this part of the mail screen
+     * becomes redundant when we move it to the feeds section 'The Mail' instead of 'Emails' —
+     * the feed pane filter works, and we can search the same way, and we can also use those
+     * 'clear' etc in the same way on the popout, and the jumps will take you from email to email
+     * or pagination within email."
+     *
+     * So mail is a SOURCE here, the way Bluesky and the Later List are sources — but unlike them
+     * it is also a LENS: kindFilter == [KIND_MAIL] swaps the corpus while the whole pane grammar
+     * keeps working over it. The VIEWS chips are the mail view axis (Unread/Read/All/Starred map
+     * onto InboxStore's read and star state), the drawer search field searches sender, subject
+     * and snippet through the same runSearch every article ride[s], the almanac strip windows the
+     * pile by date — STACKING with the chips, since mail is all local — and the 📧 folder's
+     * dropdown is the mailboxes: All accounts, each account, and Sent as the last row.
+     *
+     * NOTHING here fetches mail itself. [InboxStore] is the offline pile (warm → messages) and
+     * [MailSync.refresh] is the one IMAP pull, exactly as the standalone screen uses them — this
+     * lens is a second door onto the same store, never a second sync.
+     */
+    private fun loadMailInbox() {
+        binding.progress.visibility = View.VISIBLE
+        binding.emptyText.visibility = View.GONE
+        lifecycleScope.launch {
+            val ctx = requireContext()
+            // Fold the download cache in first (off main — it is the one expensive read), so the
+            // lens is readable OFFLINE before any IMAP round-trip, same as the standalone screen.
+            withContext(Dispatchers.IO) { InboxStore.warm(ctx.applicationContext) }
+            if (!isAdded) return@launch
+            binding.progress.visibility = View.INVISIBLE
+            submitMailRows()
+            // Then the background pull through the ONE refresh path, single-flight. The list is
+            // already on screen from the store; the pull only makes it fresher.
+            if (InboxStore.hasAccounts(ctx) && !mailRefreshing) {
+                mailRefreshing = true
+                try {
+                    val problem = MailSync.refresh(ctx)   // suspends; fetch runs on Dispatchers.IO within
+                    if (isAdded && kindFilter == KIND_MAIL) {
+                        submitMailRows()
+                        if (problem != null) showMessage(problem.split("\n").first(), binding.root)
+                    }
+                } finally {
+                    // Also on cancellation — a wedged flag here would refuse every future refresh.
+                    mailRefreshing = false
+                }
+            }
+        }
+    }
+
+    /** Put the mail rows on screen through the same seams the articles use: the corpus into
+     *  allEntries, the almanac window over it, the drawer's counts refreshed. */
+    private fun submitMailRows() {
+        val rows = gatherMailRows()
+        allEntries = rows
+        val shown = filterByNavDay(rows)
+        adapter.submit(shown)
+        if (shown.isEmpty()) showEmpty(mailEmptyText()) else binding.emptyText.visibility = View.GONE
+        renderDirectory()
+    }
+
+    /**
+     * The inbox as feed rows: the store's pile, narrowed by the mailbox and the view mode. The
+     * mode does here what it does for articles — decide which corpus lands in allEntries — and
+     * the date window and search compose on top, downstream, through the shared pipeline.
+     *
+     * Sent is a DIFFERENT PILE, not a lens over this one (the standalone screen's rule, kept):
+     * the view axis stands aside for it — Unread and Read mean nothing about a letter you wrote,
+     * and Starred would empty the mailbox for no reason a reader could work out.
+     */
+    private fun gatherMailRows(): List<FeedEntry> {
+        val ctx = requireContext()
+        mailById.clear()
+        val all = InboxStore.messages(ctx)
+        val base = if (mailMailbox == MAIL_SENT) all.filter { InboxStore.isSent(it.id) }
+        else {
+            // Sent rows are excluded from every incoming view — they are keep-forever rows in the
+            // same store, not incoming mail (see the standalone screen's shown() for the history).
+            var b = all.filter { !InboxStore.isSent(it.id) }
+            b = when (mode) {
+                "stars" -> b.filter { InboxStore.isStarred(ctx, it.id) }
+                "feed" -> b.filter { !InboxStore.isRead(ctx, it.id) }
+                "read" -> b.filter { InboxStore.isRead(ctx, it.id) }
+                else -> b   // "both" / "edition" — everything; the window narrows downstream
+            }
+            // Narrow to one account by ORIGIN (the acct:<id> prefix), not by display label —
+            // labels get renamed; the id a message arrived through doesn't.
+            mailMailbox?.let { id -> b = b.filter { MailSync.accountId(it.id) == id } }
+            b
+        }
+        val rows = base.map { mailEntry(it) }
+        // The letter being read survives the rebuild even when the view no longer lists it —
+        // see [openMail] for the mid-read failure this prevents.
+        openMail?.let { (id, msg) -> mailById.putIfAbsent(id, msg) }
+        return rows
+    }
+
+    /**
+     * One letter as a feed row. The mapping mirrors what the mail list already shows: sender on
+     * the feed-title line (a Sent row shows its RECIPIENT — you know who wrote it), subject as
+     * the title, snippet as the excerpt (escaped into the content so [FeedEntry.blurb] finds it),
+     * unread as the feeds' unread, star as the mail star. The id is minted into mail's own
+     * negative band from a hash of the message id, so a reload keeps rows stable and nothing
+     * collides with Miniflux, local-feed or the other synthetic bands.
+     */
+    private fun mailEntry(m: InboxMessage): FeedEntry {
+        val ctx = requireContext()
+        val id = MAIL_ID_BASE - (m.id.hashCode().toLong() and 0xFFFFFFFFL)
+        mailById[id] = m
+        val sent = InboxStore.isSent(m.id)
+        val who = if (sent) "To " + m.toName.ifBlank { m.toEmail }.ifBlank { m.account }.ifBlank { "—" }
+        else m.fromName.ifBlank { m.fromEmail }.ifBlank { "Unknown sender" }
+        fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return FeedEntry(
+            id = id,
+            title = m.subject.ifBlank { "(no subject)" },
+            feedTitle = who,
+            url = "mail://${m.id}",
+            author = null,
+            content = "<p>${esc(m.snippet)}</p>",
+            publishedAt = java.time.Instant.ofEpochMilli(m.date)
+                .atZone(java.time.ZoneId.systemDefault()).toOffsetDateTime().toString(),
+            starred = InboxStore.isStarred(ctx, m.id),
+            // A letter you wrote is never "unread" — the one row that has had all your attention.
+            read = sent || InboxStore.isRead(ctx, m.id),
+            category = null,
+        )
+    }
+
+    /** The empty pane names the filter that emptied it — a filtered-empty list that just says
+     *  "empty" reads as broken (the standalone screen's rule, in this pane's shorter voice). */
+    private fun mailEmptyText(): String {
+        val windowed = !(navGranularity == "day" && navAnchor == java.time.LocalDate.now())
+        return when {
+            mailMailbox == MAIL_SENT && windowed -> "Nothing sent in ${windowLabel()} — tap today on the strip for everything you've sent."
+            mailMailbox == MAIL_SENT -> "Nothing sent from this device yet. Replies and letters you compose are kept here."
+            windowed -> "No mail in ${windowLabel()} — tap today on the strip for the whole inbox."
+            mode == "stars" -> "No starred mail yet. Open a letter and star it to keep it."
+            mode == "feed" -> "Nothing unread — you're caught up."
+            mode == "read" -> "Nothing read yet."
+            mailMailbox != null -> "No mail from this account yet."
+            InboxStore.hasAccounts(requireContext()) -> "Inbox empty."
+            else -> "No accounts yet — ⚙ on the rail adds one. Until then a few samples show here."
+        }
+    }
+
+    /** The 🧹 sweep, on the list AS SHOWN: everything visible that isn't kept (starred, replied-to
+     *  or sent), swept with the same held breath the standalone screen holds — the snackbar's Undo
+     *  puts the whole sweep back until it lapses. */
+    private fun sweepMail() {
+        val ctx = requireContext()
+        val swept = adapter.current().mapNotNull { mailById[it.id] }
+            .filter { !InboxStore.isStarred(ctx, it.id) && !InboxStore.isReplied(ctx, it.id) && !InboxStore.isSent(it.id) }
+            .map { it.id }
+        if (swept.isEmpty()) { showMessage("Nothing to clear — it's all kept", binding.root); return }
+        InboxStore.clear(ctx, swept)
+        submitMailRows()
+        com.google.android.material.snackbar.Snackbar.make(
+            binding.root, "Cleared ${swept.size} — starred mail kept",
+            com.google.android.material.snackbar.Snackbar.LENGTH_LONG
+        ).setAction("Undo") {
+            // The app context outlives the fragment; the sweep must be reversible even if the
+            // reader has already wandered off this screen.
+            InboxStore.restore(ctx.applicationContext, swept)
+            if (isAdded && kindFilter == KIND_MAIL) submitMailRows()
+        }.show()
+    }
+
+    /** The mail star, both directions — [MailVerbs] owns the ceremony (to-do + All Stars gram on
+     *  the way up, the cheap un-keep on the way down); this reflects it into the row in place,
+     *  never through refresh() (which would close an open letter). */
+    private fun toggleMailStar(entry: FeedEntry, m: InboxMessage) {
+        val ctx = requireContext()
+        if (entry.starred) {
+            com.toolsboox.plugin.mail.ui.MailVerbs.unstar(ctx, m)
+            showMessage(R.string.feeds_unstarred)
+            reflectStar(entry, false)
+        } else {
+            com.toolsboox.plugin.mail.ui.MailVerbs.starToTodo(this, calendarDayService, documentsRoot(), m) { placedGram ->
+                if (!isAdded) return@starToTodo
+                showMessage(
+                    when (placedGram) {
+                        true -> "★ → All Stars"
+                        false -> "★ already on All Stars"
+                        null -> "Starred"
+                    }, binding.root
+                )
+                reflectStar(entry, true)
+            }
+        }
+    }
+
+    /** Open a letter: mark it read (per the mark-read setting, like any row), hydrate its body
+     *  off disk if the store only holds the envelope, then read it in the pane. */
+    private fun openMailEntry(entry: FeedEntry, m: InboxMessage) {
+        if (markReadMode() != "off") markEntryRead(entry)
+        lastMailId = entry.id
+        mailImagesOn = false
+        lifecycleScope.launch {
+            val full = withContext(Dispatchers.IO) { InboxStore.hydrate(requireContext().applicationContext, m) }
+            if (!isAdded) return@launch
+            mailById[entry.id] = full
+            openMail = entry.id to full
+            showMailInPane(entry, full)
+        }
+    }
+
+    /**
+     * Dress the pane's WebView for a letter, then enter the pane through the same door articles
+     * use. Mail runs NO scripts and loads NO remote images until asked — the markup is disarmed
+     * by [MailReaderHtml.blockRemote] as well as the settings, because a tracking pixel's whole
+     * payload is the request. Link taps get the same menu the article reader gives them; the two
+     * ledger:// doors below are the letter's own — load images, and fetch the rest of a
+     * truncated message.
+     */
+    private fun showMailInPane(entry: FeedEntry, m: InboxMessage) {
+        FeedSelection.entry = entry
+        FeedSelection.list = adapter.current()
+        binding.articleWeb.settings.apply {
+            javaScriptEnabled = false
+            domStorageEnabled = false
+            mediaPlaybackRequiresUserGesture = true
+            setSupportZoom(true)
+            builtInZoomControls = true
+            displayZoomControls = false
+            useWideViewPort = true
+            loadWithOverviewMode = true
+        }
+        binding.articleWeb.webChromeClient = android.webkit.WebChromeClient()
+        binding.articleWeb.webViewClient = object : android.webkit.WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                view: android.webkit.WebView?, request: android.webkit.WebResourceRequest?
+            ): Boolean {
+                if (request?.isForMainFrame == false) return false
+                val url = request?.url?.toString().orEmpty()
+                if (url.startsWith(MAIL_IMAGES_SCHEME)) { mailImagesOn = true; renderArticle(); return true }
+                if (url.startsWith(MAIL_MORE_SCHEME)) { loadRestOfMail(); return true }
+                if (url.startsWith("http")) { showPaneLinkMenu(url); return true }
+                return false
+            }
+        }
+        binding.articleWeb.setOnLongClickListener(null)
+        // The row's content is only the snippet; hand the reader actions (TTS above all) the
+        // whole letter. Same id, so stars and the prev/next stepping still find the row.
+        val esc = m.body.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        enterArticlePane(entry.copy(content = "<p>${esc.replace("\n", "<br/>")}</p>"))
+    }
+
+    /** The letter in the pane, through the mail reader's own shaping. The parsed toggle (rail's
+     *  Reader view) means Reader (reflowed for e-ink) vs As-sent (the sender's design); a plain-
+     *  text letter renders as a quiet serif column either way. */
+    private fun renderMailArticle(e: FeedEntry, m: InboxMessage) {
+        val html = buildMailHtml(e, m)
+        val safe = if (mailImagesOn) html else MailReaderHtml.blockRemote(html)
+        binding.articleWeb.settings.blockNetworkImage = !mailImagesOn
+        binding.articleWeb.settings.loadsImagesAutomatically = mailImagesOn
+        // No baseUrl on purpose (the standalone reader's choice too): mail markup gets no origin,
+        // no referer, and nothing to resolve relative fetches against.
+        binding.articleWeb.loadDataWithBaseURL(null, safe, "text/html", "UTF-8", null)
+    }
+
+    /** The letter as a document: sender · date (and the images/truncated doors) over the body. */
+    private fun buildMailHtml(e: FeedEntry, m: InboxMessage): String {
+        fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        val sent = InboxStore.isSent(m.id)
+        val who = if (sent) "To " + m.toName.ifBlank { m.toEmail }.ifBlank { m.account }
+        else listOf(m.fromName, m.fromEmail).filter { it.isNotBlank() }.joinToString("  ·  ")
+        val date = java.time.Instant.ofEpochMilli(m.date).atZone(java.time.ZoneId.systemDefault())
+            .format(java.time.format.DateTimeFormatter.ofPattern("MMM d, HH:mm", java.util.Locale.getDefault()))
+        val doors = buildString {
+            if (!mailImagesOn && m.html.isNotBlank() && MailReaderHtml.hasRemoteRefs(m.html)) {
+                append("<div style=\"margin:4px 0\"><a href=\"$MAIL_IMAGES_SCHEME\" style=\"color:#000\">🖼  Images not loaded — tap to load</a></div>")
+            }
+            if (m.truncated) {
+                // The fetch was bounded on purpose (usually attachments); say so, or a cut-off
+                // body reads as the parser failing. Tappable only when there's a server id to
+                // fetch the rest by — the honest, un-tappable note otherwise.
+                if (m.uid != null && MailSync.accountId(m.id) != null) {
+                    append("<div style=\"margin:4px 0\"><a href=\"$MAIL_MORE_SCHEME\" style=\"color:#000\">✂  Large message — tap to load the rest</a></div>")
+                } else {
+                    append("<div style=\"margin:4px 0;color:#666\">✂  Large message — only the beginning was fetched.</div>")
+                }
+            }
+        }
+        val header = """
+            <div style="font-family:serif;padding:10px 12px;border-bottom:1px solid #000;">
+              <div style="font-size:13px;color:#444">${esc(listOf(who, date).filter { it.isNotBlank() }.joinToString("  ·  "))}</div>
+              $doors
+            </div>
+        """.trimIndent()
+        val body = if (m.html.isNotBlank()) {
+            if (showParsed) MailReaderHtml.reader(m.html) else MailReaderHtml.asSent(m.html)
+        } else {
+            // Plain text (or nothing readable): a quiet serif column, never a blank pane.
+            val text = m.body.ifBlank {
+                m.snippet.ifBlank { "(No readable text in this message — it may be images or attachments only.)" }
+            }
+            val paras = text.split(Regex("\n{2,}")).filter { it.isNotBlank() }
+                .joinToString("") { "<p>${esc(it.trim()).replace("\n", "<br/>")}</p>" }
+            """<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+               <style>body{margin:16px 22px;color:#000;background:#fff;font-family:serif;font-size:17px;line-height:1.55}</style>
+               </head><body>$paras</body></html>"""
+        }
+        // The header rides INSIDE the shaped document (which owns the <head> and the viewport),
+        // right after its body opens — prepending outside would break a full-document letter.
+        val bodyOpen = Regex("<body[^>]*>", RegexOption.IGNORE_CASE).find(body)
+        return if (bodyOpen != null) {
+            body.substring(0, bodyOpen.range.last + 1) + header + body.substring(bodyOpen.range.last + 1)
+        } else header + body
+    }
+
+    /** Fetch the whole of a truncated letter through the one on-demand path ([MailSync.fetchFull],
+     *  which also lands it in the store), and re-render in place. */
+    private fun loadRestOfMail() {
+        val entry = currentArticle ?: return
+        val m = mailById[entry.id] ?: return
+        showMessage("✂ Loading the rest…", binding.root)
+        lifecycleScope.launch {
+            val full = runCatching { withContext(Dispatchers.IO) { MailSync.fetchFull(requireContext(), m) } }
+            if (!isAdded) return@launch
+            full.onSuccess {
+                mailById[entry.id] = it
+                if (openMail?.first == entry.id) openMail = entry.id to it
+                if (currentArticle?.id == entry.id) renderArticle()
+            }.onFailure {
+                showMessage("✂ Couldn't load the rest (${it.message ?: "fetch failed"})", binding.root)
+            }
+        }
+    }
+
+    /** Reply to the open letter — [MailVerbs.reply] is the one reply dialog; a sent reply refolds
+     *  the list (the answered mail became keep-forever). */
+    private fun replyToOpenMail() {
+        val m = currentArticle?.let { mailById[it.id] } ?: return
+        com.toolsboox.plugin.mail.ui.MailVerbs.reply(this, m) {
+            if (kindFilter == KIND_MAIL && binding.articlePane.visibility != View.VISIBLE) submitMailRows()
+        }
+    }
+
+    /** The accounts editor, shared with the standalone screen through [MailVerbs]. */
+    private fun showMailAccounts() {
+        com.toolsboox.plugin.mail.ui.MailVerbs.showAccountsList(
+            this,
+            onChanged = { if (kindFilter == KIND_MAIL) { renderDirectory(); refresh() } else renderDirectory() },
+            onDeleted = { id ->
+                // Never leave the lens narrowed to an account that no longer exists.
+                if (mailMailbox == id) mailMailbox = null
+                if (kindFilter == KIND_MAIL) { renderDirectory(); refresh() } else renderDirectory()
+            }
+        )
+    }
+
+    /** Step email-to-email FROM THE LIST — the reading rail's ⏫⏬ continue from the open letter
+     *  via openAdjacentArticle; these pick the thread back up from the last letter read (or the
+     *  top of the pile when nothing has been). */
+    private fun stepMail(dir: Int) {
+        val list = adapter.current()
+        if (list.isEmpty()) {
+            showMessage(if (dir > 0) R.string.feeds_no_next else R.string.feeds_no_prev, binding.root)
+            return
+        }
+        val i = lastMailId?.let { id -> list.indexOfFirst { it.id == id } } ?: -1
+        val j = if (i < 0) (if (dir > 0) 0 else list.size - 1) else i + dir
+        if (j in list.indices) openEntry(list[j])
+        else showMessage(if (dir > 0) R.string.feeds_no_next else R.string.feeds_no_prev, binding.root)
+    }
+
+    /**
+     * The rail in The Mail dress. The list wears the mail verbs the standalone screen's rail
+     * carries — 🧹 sweep (only where sweeping means something: never over the kept pile or Sent),
+     * ✎ compose, ⚙ accounts, ⟳ — plus the ⏫⏬ jumps, which step EMAIL TO EMAIL. With a letter
+     * open the dress turns to reading: ↑↓ (the base pair) page WITHIN the email and ⏫⏬ cross to
+     * the previous/next letter — exactly the articles' within-vs-across idiom — with the mail
+     * verbs that act on the open letter (star, note, ↩ reply, Reader view, read-aloud).
+     */
+    private fun mailRailActions(): List<com.toolsboox.ot.TuckPanel.Item> {
+        val items = mutableListOf(
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_feed, "Feeds drawer") {
+                binding.ledgerButton.performClick()
+            },
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_today, "Today") {
+                binding.feedsGoto.performClick()
+            },
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_up, "Page up") {
+                binding.feedsPageUp.performClick()
+            },
+            com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_down, "Page down") {
+                binding.feedsPageDown.performClick()
+            }
+        )
+        if (currentArticle == null) {
+            // The sweep only exists where sweeping means something — same rule as the standalone
+            // screen (absent on the starred pile and Sent, where every row is keep-forever).
+            if (mode != "stars" && mailMailbox != MAIL_SENT) {
+                items += com.toolsboox.ot.TuckPanel.Item(0, "Sweep unstarred", glyph = "🧹") { sweepMail() }
+            }
+            items += com.toolsboox.ot.TuckPanel.Item(0, "Compose", glyph = "✎") {
+                runCatching { findNavController().navigate(R.id.action_to_mail_compose) }
+            }
+            items += com.toolsboox.ot.TuckPanel.Item(0, "Accounts", glyph = "⚙") { showMailAccounts() }
+            items += com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_refresh, "Refresh") { refresh() }
+            items += com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_up2, "Previous email") { stepMail(-1) }
+            items += com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_down2, "Next email") { stepMail(1) }
+            return items
+        }
+        // Reading dress.
+        items += com.toolsboox.ot.TuckPanel.Item(
+            if (currentArticle?.starred == true) R.drawable.ic_starred else R.drawable.ic_star,
+            "Star") { binding.feedsStar.performClick() }
+        items += com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_pencil, "Note") {
+            binding.feedsNote.performClick()
+        }
+        items += com.toolsboox.ot.TuckPanel.Item(0, "Reply", glyph = "↩") { replyToOpenMail() }
+        items += com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_reader_view, "Reader view") {
+            binding.feedsParsed.performClick()
+        }
+        items += com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_speaker, "Read aloud") {
+            binding.feedsTts.performClick()
+        }
+        items += com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_up2, "Previous email") {
+            binding.feedsDwPrev.performClick()
+        }
+        items += com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_down2, "Next email") {
+            binding.feedsDwNext.performClick()
+        }
+        return items
+    }
+
     /** Saved Ask-my-Ledger answers, surfaced as a local feed. */
     private fun loadAskLog() {
         val entries = com.toolsboox.plugin.feeds.nw.AskFeedStore.list(requireContext())
@@ -1017,6 +1490,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
      *  A podcast/"listen" entry with real audio plays through the player instead of opening the pane. */
     @android.annotation.SuppressLint("SetJavaScriptEnabled")
     private fun openEntry(entry: FeedEntry) {
+        // A Mail row opens the LETTER — in this same pane, so the reading grammar (volume keys,
+        // tap zones, the rail's within-vs-across jumps) is the one the articles taught.
+        mailById[entry.id]?.let { openMailEntry(entry, it); return }
         // A Feed Pickings row jumps straight to its board (ledger://pickings/<date>/<key>).
         if (entry.url.startsWith("ledger://pickings/")) {
             val parts = entry.url.removePrefix("ledger://pickings/").split("/")
@@ -1088,6 +1564,13 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                 else -> false
             }
         }
+        enterArticlePane(entry)
+    }
+
+    /** The pane's entry dance — title, render, swap the list out, collapse the drawer, arm Back —
+     *  shared by the article path above and the mail reader, which differ only in how they dress
+     *  the WebView before arriving here. */
+    private fun enterArticlePane(entry: FeedEntry) {
         binding.articleTitle.text = entry.title
         currentArticle = entry
         renderArticle()
@@ -1100,6 +1583,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         binding.articleBack.setOnClickListener { closeArticlePane(restoreDrawer = false) }
         // Open-externally fallback: a video whose owner blocks embedding errors (150/152) in the
         // in-pane player — this opens the original URL in the YouTube app / browser instead.
+        // (A mail:// address has no browser to open in, so the door hides itself for letters.)
         val ext = entry.url.takeIf { it.startsWith("http", ignoreCase = true) }
         binding.articleBrowser.visibility = if (ext != null) View.VISIBLE else View.GONE
         binding.articleBrowser.setOnClickListener {
@@ -1139,6 +1623,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     /** Render the open article as parsed (reader view) or unparsed (original). */
     private fun renderArticle() {
         val entry = currentArticle ?: return
+        // A letter renders through the mail reader's own shaping (MailReaderHtml — the same
+        // renderer the standalone Mail screen uses, so message rendering stays one thing), with
+        // the parsed toggle meaning Reader vs As-sent instead of parsed vs raw RSS.
+        mailById[entry.id]?.let { renderMailArticle(entry, it); return }
         // A YouTube entry under The Watch gets the skinned episode page — thumbnail with a
         // tap-to-play embed, tappable chapter rows, the description cleaned of timestamp
         // cruft — instead of whatever iframe soup the feed shipped. (Non-YouTube watch
@@ -1216,6 +1704,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
      * pill had keeps working for anything else that performClicks it (the day-page rule).
      */
     private fun feedsRailActions(): List<com.toolsboox.ot.TuckPanel.Item> {
+        // The Mail re-dresses the whole rail — same provider, different verbs (the spread's
+        // rebuildActionRail pattern). See mailRailActions.
+        if (kindFilter == KIND_MAIL) return mailRailActions()
         val base = listOf(
             com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_feed, "Feeds drawer") {
                 binding.ledgerButton.performClick()
@@ -1267,10 +1758,20 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     /** Open the previous (dir=-1) or next (dir=+1) article in the displayed list. */
     private fun openAdjacentArticle(dir: Int) {
         val cur = currentArticle ?: return
-        val list = applyKind(allEntries)
+        // Mail steps through the list AS SHOWN — chips, window and search included — because
+        // "next" while triaging unread-in-July must mean the next row of that triage, not the
+        // next of the whole pile. Articles keep their historical corpus-wide stepping.
+        val list = if (kindFilter == KIND_MAIL) adapter.current() else applyKind(allEntries)
         val i = list.indexOfFirst { it.id == cur.id }
-        val j = i + dir
-        if (i >= 0 && j in list.indices) openEntry(list[j])
+        // Triage flow: an open letter in the Unread view is already read, so it has dropped OUT
+        // of the shown list — "next" then means the top of what's left, which is exactly the
+        // next unread. Without this the jump answered "no next" mid-triage.
+        val j = when {
+            i >= 0 -> i + dir
+            kindFilter == KIND_MAIL && list.isNotEmpty() -> if (dir > 0) 0 else list.size - 1
+            else -> -1
+        }
+        if (j in list.indices) openEntry(list[j])
         else showMessage(if (dir > 0) R.string.feeds_no_next else R.string.feeds_no_prev, binding.root)
     }
 
@@ -1332,6 +1833,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     private fun closeArticlePane(restoreDrawer: Boolean = true) {
         binding.articlePane.visibility = View.GONE
         binding.articleWeb.loadUrl("about:blank")
+        openMail = null
         binding.feedsRecycler.visibility = View.VISIBLE
         // On an explicit Back, return straight to the article list — don't pop the drawer open as an
         // intermediate step. Only restore it when the article was closed by picking a feed (in the drawer).
@@ -1352,6 +1854,20 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     /** Read the current selection (if any), then note/annotate the open article. A saved note
      *  IS a gram now — [FeedNoteGram] asks for its medium and places it on today's Notes page. */
     private fun noteArticle(e: FeedEntry) {
+        // Mail renders with JavaScript OFF (a letter runs no scripts), so the selection probe
+        // below can't run — the note simply annotates the whole letter. Provenance rides the
+        // mail:// address, the same discriminator every other mail annotation carries.
+        if (mailById.containsKey(e.id)) {
+            com.toolsboox.plugin.feeds.ot.FeedNoteGram.show(
+                this, calendarDayService, documentsRoot(),
+                selection = "", articleTitle = e.title, feedTitle = e.feedTitle, articleUrl = e.url,
+                captureAv = { kind, sink -> captureAvGramDirect(kind, sink) },
+                logEvent = { excerpt, note ->
+                    lifecycleScope.launch(Dispatchers.IO) { logArticleEvent(e, excerpt = excerpt, note = note) }
+                }
+            )
+            return
+        }
         binding.articleWeb.evaluateJavascript(
             "(function(){var s=window.getSelection&&window.getSelection();return s?s.toString():'';})()"
         ) { raw ->
@@ -1551,6 +2067,17 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     /** Stepping/selecting keeps the chosen lens (The Watch stays The Watch across dates);
      *  today = the live view, past windows pull the read timeline for filtering. */
     private fun onDateChanged() {
+        // The Mail stacks the two axes instead of trading one for the other. An article window
+        // becomes the EDITION (a server fetch by publish date, replacing the view) because the
+        // corpus lives on Miniflux; mail is all on the device, so the almanac window is a plain
+        // local filter that COMPOSES with whatever chip is lit — Starred ∩ July is a real
+        // question and it has a real answer. Nothing selected (day-on-today) means no date
+        // filter at all: the whole pile, exactly like the feeds' anchored-but-unfiltered state.
+        if (kindFilter == KIND_MAIL) {
+            updateWindowLabel()
+            refresh()
+            return
+        }
         // Today = the live unread feed. Any other window = that day's EDITION: everything
         // published inside the window (read and unread alike), fetched server-side by
         // published date — stepping the date nav pages through finished daily papers.
@@ -1725,9 +2252,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // that deletes rows nobody is looking at. (No-op when not selecting.)
         exitLaterSelection()
         // Picking a lens while browsing a PAST window stays in that window (read timeline),
-        // instead of snapping to the live unread view — the date and the lens compose.
+        // instead of snapping to the live unread view — the date and the lens compose. Mail is
+        // exempt from the feed→read coercion: its unread state is local, so "unread in July" is
+        // answerable directly and the chip should keep meaning what it says.
         val liveToday = navGranularity == "day" && navAnchor == java.time.LocalDate.now()
-        mode = if (newMode == "feed" && !liveToday) "read" else newMode
+        mode = if (newMode == "feed" && !liveToday && kind != KIND_MAIL) "read" else newMode
         kindFilter = kind
         // Leaving the Later List drops its lane with it: a lane is a narrowing of THAT corpus and
         // means nothing over any other, and a stale one would silently narrow the list the next
@@ -2139,6 +2668,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         if (FeedReadState.isRead(entry.id)) return
         FeedReadState.mark(entry.id)
         if (notify) adapter.notifyDataSetChanged()
+        // A mail row's durable read state lives in the mail store, not on Miniflux — write it
+        // there so the Unread chip and the standalone screen agree with what just happened.
+        // (Idempotent; covers the open tap, mark-above, and mark-read-on-scroll alike.)
+        mailById[entry.id]?.let { m -> InboxStore.markRead(requireContext(), m.id) }
         val p = prefs(); val u = p.getString(KEY_URL, "").orEmpty(); val tk = p.getString(KEY_TOKEN, "").orEmpty()
         // Only real Miniflux entries have positive ids — synthetic rows (Later, Pickings,
         // local feeds) are all negative and must never be pushed to the server, where a
@@ -2434,8 +2967,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         chipPair(stateChip("📋 Intake a link…", false) { intakeLinkFromClipboard() })
         // Clear rides with the view controls, not at the bottom of a scroll: it acts on the
         // LIST AS DISPLAYED, so it belongs beside the chips that decide what's displayed.
-        // (Undo snackbar included — markAllRead holds the swept ids until it lapses.)
-        chipPair(stateChip("🧹 Clear", false) { markAllRead() })
+        // (Undo snackbar included — markAllRead holds the swept ids until it lapses.) In The
+        // Mail it IS the mail sweep — same chip, mail's meaning of "clear" (unstarred out,
+        // kept mail stays), exactly as Michael asked the popout's clear to carry over.
+        chipPair(stateChip("🧹 Clear", false) { if (kindFilter == KIND_MAIL) sweepMail() else markAllRead() })
 
         // ── FEEDS ── the media folders. One tap on The Read does BOTH things — loads that
         // medium's All (within the active view) in the right panel AND drops its categories out
@@ -2640,30 +3175,55 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         lensRow("📖", "The Read", "read")
         lensRow("📺", "The Watch", "watch")
         lensRow("🎧", "The Listen", "listen")
-        // 📧 Emails — mail as a sibling of the media lenses (Michael: "email can be put right
-        // into feeds, just like The Listen — and then the drop down is the accounts"). First
-        // cut of the mail/feeds unification: the folder rides the same single-open lens state,
-        // its dropdown lists the configured accounts, and a tap lands on the Mail surface with
-        // that account already the filter (the filter is a pref, the same channel the inbox's
-        // own account rows use — the nav graph's doors take no arguments). The full merge —
-        // messages as rows IN this list — is the next step; this makes mail a room off the
-        // same hallway now.
+        // 📧 THE MAIL — mail as a lens beside the media lenses, named in their grammar (The Read /
+        // The Watch / The Listen / The Mail). Michael: "this part of the mail screen becomes
+        // redundant when we move it to the feeds section 'The Mail' instead of 'Emails' — the
+        // feed pane filter works, and we can search the same way, and we can also use those
+        // 'clear' etc in the same way on the popout, and the jumps will take you from email to
+        // email or pagination within email." Selecting it renders the inbox AS FEED ROWS right
+        // here (see loadMailInbox) — no jump to the standalone Mail surface, whose header chips,
+        // search row and accounts panel are exactly the redundancy this lens supersedes (that
+        // screen stays, hub row and all, until Michael has lived with the lens and retires it).
+        //
+        // The folder rides the same single-open lens state; its dropdown is the MAILBOXES —
+        // All accounts, one row per account, and Sent riding last, set apart by a rule because
+        // it is the one pile whose mail goes the other way (the standalone screen's idiom).
         run {
             val accounts = com.toolsboox.plugin.mail.MailAccountStore.all(ctx)
             val open = lensOpen == "email"
-            fun goToMail(accountId: String?) {
-                requireContext().getSharedPreferences("ledger_mail_inbox", 0).edit()
-                    .putString("account_filter", accountId ?: "").apply()
-                androidx.navigation.fragment.NavHostFragment.findNavController(this@FeedsFragment)
-                    .navigate(R.id.action_to_mail_inbox)
+            // Pick a mailbox AND make sure the lens is on — a mailbox row is a place to stand,
+            // so tapping one from cold both narrows and enters.
+            fun pickMailbox(box: String?) {
+                mailMailbox = box
+                if (kindFilter != KIND_MAIL) {
+                    a11y.edit().putString("feeds_lens_open", "email").apply()
+                    if (composable) {
+                        kindFilter = KIND_MAIL
+                        renderDirectory(); refresh()
+                    } else {
+                        renderDirectory(); switchTo("feed", KIND_MAIL)
+                    }
+                } else {
+                    renderDirectory(); refresh()
+                }
             }
-            row("📧  ${if (open) "▾" else "▸"}  Emails", true, false) {
+            row(
+                "📧  ${if (open) "▾" else "▸"}  The Mail", true, kindFilter == KIND_MAIL
+            ) {
                 if (open) {
+                    // Fold AND leave the lens — same exit the media lenses make back to the
+                    // view's plain All over the article corpus.
                     a11y.edit().putString("feeds_lens_open", "").apply()
-                    renderDirectory()
+                    if (kindFilter == KIND_MAIL) kindFilter = null
+                    renderDirectory(); refresh()
                 } else {
                     a11y.edit().putString("feeds_lens_open", "email").apply()
-                    renderDirectory()
+                    if (composable) {
+                        kindFilter = KIND_MAIL
+                        renderDirectory(); refresh()
+                    } else {
+                        renderDirectory(); switchTo("feed", KIND_MAIL)
+                    }
                 }
             }
             if (open) {
@@ -2676,18 +3236,34 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
                     }
                     setPadding(dpPx(2), dpPx(2), dpPx(2), dpPx(4))
                 }
-                fun mailRow(label: String, onClick: () -> Unit) {
+                fun mailRow(label: String, selected: Boolean, onClick: () -> Unit) {
                     box.addView(android.widget.TextView(ctx).apply {
                         text = label; textSize = 12.5f; setTextColor(0xFF000000.toInt())
+                        if (selected) {
+                            setTypeface(typeface, android.graphics.Typeface.BOLD)
+                            paintFlags = paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
+                        }
                         setPadding(dpPx(18), dpPx(7), dpPx(6), dpPx(7))
                         maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
                         isClickable = true
-                        setOnClickListener { onClick() }
+                        setOnClickListener {
+                            if (binding.articlePane.visibility == View.VISIBLE) closeArticlePane()
+                            onClick()
+                        }
                     })
                 }
-                mailRow("✉  All accounts") { goToMail(null) }
-                for (a in accounts) mailRow("·  ${a.display}") { goToMail(a.id) }
-                if (accounts.isEmpty()) mailRow("(no accounts yet — set one up in Mail)") { goToMail(null) }
+                val inMail = kindFilter == KIND_MAIL
+                mailRow("✉  All accounts", inMail && mailMailbox == null) { pickMailbox(null) }
+                for (a in accounts) mailRow("@  ${a.display}", inMail && mailMailbox == a.id) { pickMailbox(a.id) }
+                if (accounts.isEmpty()) mailRow("(no accounts yet — add one…)", false) { showMailAccounts() }
+                // The rule that says the pile below goes the other way.
+                box.addView(View(ctx).apply {
+                    setBackgroundColor(0xFF000000.toInt())
+                    layoutParams = android.widget.LinearLayout.LayoutParams(
+                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT, dpPx(1)
+                    ).apply { setMargins(dpPx(14), dpPx(4), dpPx(6), dpPx(4)) }
+                })
+                mailRow("➤  Sent", inMail && mailMailbox == MAIL_SENT) { pickMailbox(MAIL_SENT) }
                 container.addView(box, android.widget.LinearLayout.LayoutParams(
                     android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
                     android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
@@ -2805,6 +3381,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     private fun showLedgerDirectory() = showAccordion(ledgerDirectoryFolders(this))
 
     private fun toggleStar(entry: FeedEntry) {
+        // A Mail row stars through the MAIL ceremony — InboxStore's keep pile, the to-do on
+        // today's page, and the All Stars intake gram — not the Miniflux/ReadingEvent one.
+        // MailVerbs is the single owner of that ceremony (shared with the standalone screen),
+        // so the star means the same thing whichever door it came through.
+        mailById[entry.id]?.let { toggleMailStar(entry, it); return }
         if (com.toolsboox.plugin.feeds.nw.LocalFeedStore.isLocal(entry.id)) {
             com.toolsboox.plugin.feeds.nw.LocalFeedStore.setStar(requireContext(), entry.url, !entry.starred)
             // Newly starred → log to today's Ledger too, exactly like a Miniflux star, so local-feed
@@ -3014,6 +3595,25 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
          *  be recognised by [openEntry]'s navigation interceptor and turned into a fragment jump.
          *  Which post it means is the one the reader has open, so it carries no argument. */
         const val BSKY_REPLY_SCHEME = "ledger://bsky-reply"
+
+        /** The Mail lens's kindFilter token — a corpus lens beside read/watch/listen, resolved by
+         *  the mail store rather than by what a row guesses about itself (see applyKind). */
+        private const val KIND_MAIL = "mail"
+
+        /** Sent as a mailbox token in [mailMailbox] — the same reserved string the standalone
+         *  screen and the iPad use, so the three surfaces name the outgoing pile identically. */
+        private const val MAIL_SENT = "__sent"
+
+        /** Mail's synthetic-row band. Minted as BASE − (32-bit hash of the message id), so the
+         *  band spans −1.4e9 down to about −5.7e9 — beneath every other band (local feeds bottom
+         *  out at −1e9; Pickings, Later and Bluesky all live in the −1.1e9…−1.3e9 shelf) — and a
+         *  reload keeps each letter's row id stable, which is what lets stars repaint in place. */
+        private const val MAIL_ID_BASE = -1_400_000_000L
+
+        /** The open letter's two ledger:// doors — recognised by the mail pane's interceptor the
+         *  way [BSKY_REPLY_SCHEME] is; which letter they mean is the one that's open. */
+        private const val MAIL_IMAGES_SCHEME = "ledger://mail-images"
+        private const val MAIL_MORE_SCHEME = "ledger://mail-more"
     }
 }
 

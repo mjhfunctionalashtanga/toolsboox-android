@@ -37,7 +37,6 @@ import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.GestureDetectorCompat
-import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
@@ -97,28 +96,6 @@ abstract class SurfaceFragment : ScreenFragment() {
         const val CANVAS_HEIGHT = 1872
         const val MIN_ZOOM = 1.0f
         const val MAX_ZOOM = 4.0f
-
-        /**
-         * The zoom to carry onto the next page.
-         *
-         * Deliberately in-memory and process-wide rather than in prefs. Paging the day surface
-         * navigates, so the fragment is rebuilt and no instance field survives it — but a zoom
-         * level is a reading posture, not a preference, and it should not still be waiting for
-         * you a week later. Losing it when the app restarts is the correct behaviour, not a gap.
-         *
-         * Reset by [resetZoom], so a deliberate double-tap out really does end it.
-         */
-        @Volatile
-        var carriedZoom: Float = 1.0f
-
-        /**
-         * Which fragment class last wrote [carriedZoom]. The carry is meant for paging within ONE
-         * surface (the rebuilt fragment is the same class); without the owner check the
-         * process-wide value leaked a day-page zoom into Week/Month/notes, which arrived
-         * pre-zoomed. Only the matching class adopts.
-         */
-        @Volatile
-        var carriedZoomOwner: String? = null
 
         /**
          * Debounce window for re-applying the Onyx raw-drawing limit rect after a
@@ -462,7 +439,12 @@ abstract class SurfaceFragment : ScreenFragment() {
     // --- Zoom and pan state ---
     protected var twoFingerGesture = false
     private var zoomScale = 1.0f
-        set(value) { field = value; carriedZoom = value; carriedZoomOwner = javaClass.name }
+    // The reader took the zoom by hand (pinch, double-tap, or a tag's focus jump) — from then
+    // until the next page change, relayout churn keeps their posture instead of re-fitting to
+    // the width. An instance field on purpose: every pagination rebuilds the fragment, so a new
+    // page always starts back at the width-fit default. The old cross-page zoom carry is gone
+    // for the same reason — Michael: "All of the paginations should autozoom full width."
+    private var zoomTakenByHand = false
     private var panX = 0.0f
     private var panY = 0.0f
     private var baseScale = 1.0f
@@ -852,7 +834,8 @@ abstract class SurfaceFragment : ScreenFragment() {
         // still be revealed by swiping from the edge for back/home access.
         (requireActivity() as? androidx.appcompat.app.AppCompatActivity)?.supportActionBar?.hide()
         requireActivity().window.let { window ->
-            WindowCompat.setDecorFitsSystemWindows(window, false)
+            // decorFitsSystemWindows is FALSE for the whole app now (MainActivity.onCreate) —
+            // hiding the bars is all that's left of going immersive.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 window.attributes = window.attributes.apply {
                     layoutInDisplayCutoutMode =
@@ -864,13 +847,11 @@ abstract class SurfaceFragment : ScreenFragment() {
                 hide(WindowInsetsCompat.Type.systemBars())
             }
         }
-        // The activity's DrawerLayout has fitsSystemWindows="true" which reserves
-        // space for the now-hidden bars (visible as black strips). Turn it off here
-        // and restore in onPause so the settings/about screens still inset correctly.
-        requireActivity().findViewById<View>(R.id.drawerLayout)?.let { drawer ->
-            drawer.fitsSystemWindows = false
-            drawer.setPadding(0, 0, 0, 0)
-        }
+        // MainActivity's edge-to-edge listener pads mainContentFrame by the bar insets, and
+        // hiding the bars above dispatches zero insets — but that dispatch can trail the first
+        // frame, and on e-ink a trailing re-layout is a visible flash. Zero the padding NOW so
+        // the canvas gets its full-bleed layout in one pass.
+        requireActivity().findViewById<View>(R.id.mainContentFrame)?.setPadding(0, 0, 0, 0)
 
         initializeSurface()
         touchHelper?.setRawDrawingEnabled(true)
@@ -1239,13 +1220,14 @@ abstract class SurfaceFragment : ScreenFragment() {
         com.toolsboox.plugin.calendar.nw.UltrabridgeSyncWorker.inkSurfaceActive = false
 
         // Restore system bars and action bar so other screens (settings, etc.) behave normally.
+        // decorFitsSystemWindows stays FALSE — the whole app is edge-to-edge now; showing the
+        // bars re-dispatches their insets and MainActivity's listener pads the drawer back
+        // (top/bottom only — the sides stay at the physical edge, which is the rail's home).
         (requireActivity() as? androidx.appcompat.app.AppCompatActivity)?.supportActionBar?.show()
         requireActivity().window.let { window ->
-            WindowCompat.setDecorFitsSystemWindows(window, true)
             WindowInsetsControllerCompat(window, window.decorView)
                 .show(WindowInsetsCompat.Type.systemBars())
         }
-        requireActivity().findViewById<View>(R.id.drawerLayout)?.fitsSystemWindows = true
 
         // Drop pending debounced work (limit-rect apply, deferred stroke re-bake) so it can't
         // run after teardown.
@@ -1668,22 +1650,18 @@ abstract class SurfaceFragment : ScreenFragment() {
         zoomScale = 1.0f
         panX = 0.0f
         panY = 0.0f
-        carriedZoom = 1.0f
         updateTransformMatrix()
         applyStrokes(strokes, true)
     }
 
     /**
-     * Carry the zoom across a page change, refitted to the page.
+     * Re-point a by-hand zoom at the page: keep the scale the reader chose, re-centre
+     * horizontally, and start at the top, which is where a page starts.
      *
-     * Zoom used to survive a page turn only by accident — nothing reset it, so it kept both the
-     * scale AND the pan offset, and the new page arrived scrolled to wherever the last one had
-     * been left. Which is rarely where its content is: you'd turn the page while reading and land
-     * in its margin.
-     *
-     * Keeping the scale and re-centring horizontally means the new page arrives filling the width
-     * at the magnification you chose, and starting at its top, which is where a page starts. It is
-     * still your zoom; it is just pointed at the new page rather than at the old one's coordinates.
+     * This used to carry a zoom across page turns; pagination now lands at the width-fit instead
+     * (see surfaceChanged), so the one caller left is the relayout churn while the zoom is taken
+     * by hand — the surface resized under a posture the reader chose, and the honest response is
+     * to keep their magnification and re-aim it at the page rather than at stale coordinates.
      */
     fun refitZoomForPage() {
         if (!isZoomed()) return
@@ -1706,14 +1684,17 @@ abstract class SurfaceFragment : ScreenFragment() {
      * whatever the zoom was before. Rotating back to portrait computes a width-fit of 1.0, i.e.
      * the plain unzoomed page, so the flip is reversible.
      *
-     * zoomScale's setter writes [carriedZoom], so paging while rotated keeps the width-fit — and
-     * the fit is derived, not user-chosen, so overwriting whatever zoom the reader had before the
-     * flip is the point, not a loss.
+     * Pagination arrives at this same fit (see surfaceChanged): the width-fit is the default
+     * posture of every page, and the fit is derived, not user-chosen, so overwriting whatever
+     * zoom the reader had before the flip is the point, not a loss.
      */
     fun refitZoomToWidth() {
         val sw = surfaceSize.width().toFloat()
         val sh = surfaceSize.height().toFloat()
         if (sw <= 0f || sh <= 0f) return
+        // The width-fit is the default posture, so applying it hands the zoom back to the
+        // machinery — a later relayout may re-fit freely until the reader takes it by hand again.
+        zoomTakenByHand = false
         baseScale = minOf(sw / CANVAS_WIDTH.toFloat(), sh / CANVAS_HEIGHT.toFloat())
         zoomScale = (sw / (CANVAS_WIDTH.toFloat() * baseScale)).coerceIn(MIN_ZOOM, MAX_ZOOM)
         panX = 0f
@@ -1738,6 +1719,8 @@ abstract class SurfaceFragment : ScreenFragment() {
         val sw = surfaceSize.width().toFloat()
         val sh = surfaceSize.height().toFloat()
         if (sw <= 0f || sh <= 0f || rect.width() <= 0f || rect.height() <= 0f) return
+        // A deliberate landing on a mark — the relayout churn must not width-refit it away.
+        zoomTakenByHand = true
 
         baseScale = minOf(sw / CANVAS_WIDTH.toFloat(), sh / CANVAS_HEIGHT.toFloat())
         // Fill the height with the zone (a quarter-page band → ~4×), but cap so we neither exceed
@@ -1815,6 +1798,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                     val oldZoom = zoomScale
                     zoomScale = (zoomScale * detector.scaleFactor).coerceIn(MIN_ZOOM, MAX_ZOOM)
                     if (zoomScale != oldZoom) {
+                        // A pinch is the reader taking the zoom by hand — theirs until the next
+                        // page change (see surfaceChanged's width-fit default).
+                        zoomTakenByHand = true
                         val focusX = detector.focusX
                         val focusY = detector.focusY
 
@@ -1859,6 +1845,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                 }
 
                 override fun onDoubleTap(e: MotionEvent): Boolean {
+                    // Either direction is a chosen posture — zooming in on a spot, or deliberately
+                    // stepping out to the plain page — so both take the zoom by hand.
+                    zoomTakenByHand = true
                     if (isZoomed()) {
                         resetZoom()
                     } else {
@@ -5053,13 +5042,27 @@ abstract class SurfaceFragment : ScreenFragment() {
                         // back). Preserves the user's collapsed/expanded choice — that's in prefs.
                         applyToolbarCollapsedState(sharedPreferences.getBoolean("toolbarCollapsed", false))
                     } else {
-                        // Take up the zoom the last page was left at. Paging the day surface NAVIGATES,
-                        // so the fragment is rebuilt and an instance field can't survive it — the zoom
-                        // was lost on every page turn no matter what the pan state did. Owner-gated:
-                        // only the same surface class adopts, so a day-page zoom stays on day pages.
-                        if (carriedZoomOwner == javaClass.name && carriedZoom > 1.01f && zoomScale <= 1.01f) zoomScale = carriedZoom
-                        updateTransformMatrix()
-                        if (zoomScale > 1.01f) refitZoomForPage()
+                        // EVERY PAGINATION LANDS AT FULL WIDTH (Michael: "All of the paginations
+                        // should autozoom full width"). Every pagination path — the ‹N› pager, the
+                        // ritual stepper and its swipes, prev/next, sub-page jumps — NAVIGATES, so
+                        // arriving on a page means a rebuilt fragment, and the fresh instance's
+                        // surfaceChanged is the one seam they all flow through. Refit here and the
+                        // page arrives filling the width at its own top — the same fit a rotation
+                        // computes — instead of inheriting the last page's zoom and pan, which
+                        // rarely pointed at anything on THIS page. In portrait the width fit IS
+                        // the plain page, so nothing changes where nothing needed to.
+                        //
+                        // A pinch or double-tap takes the zoom by hand, and a taken zoom is the
+                        // reader's until the NEXT page change: the flag is an instance field, so
+                        // navigation resets it, while the open-time relayout churn (this callback
+                        // fires more than once as toolbars settle) keeps re-fitting to each new
+                        // honest size only for as long as the posture is still the default one.
+                        if (zoomTakenByHand) {
+                            updateTransformMatrix()
+                            if (zoomScale > 1.01f) refitZoomForPage()
+                        } else {
+                            refitZoomToWidth()
+                        }
                     }
                     // Activate Viwoods T1000 AutoDraw for this surface. The hardware then
                     // renders pen strokes live; we draw nothing during the stroke. Uses
