@@ -1137,12 +1137,20 @@ abstract class ScreenFragment : Fragment() {
      * folders; with [items] alone it's a collapsible folder. BOTH together make a door with a
      * caret: tapping the label fires [action] (the row's primary destination), and only the
      * caret at the row's end unfolds [items] — the Search·Ask·Directory row is why this exists.
+     *
+     * [subFolds] hangs a SECOND-level fold off a row, keyed by that row's exact label
+     * ("📧  Mail" holds the per-account rows). A map beside [items] rather than a recursive row
+     * type because the ~25 call sites that build items as plain label→action pairs get to stay
+     * exactly as they are — a folder opts a row in by naming it, and the sub-rows ride wherever
+     * the caller ordered the parent. An empty list is the same as no entry (mail's account rows
+     * already vanish below two accounts), so builders never need to conditionally assemble the map.
      */
     data class Folder(
         val emoji: String, val title: String,
         val items: List<Pair<String, () -> Unit>> = emptyList(),
         val expanded: Boolean = false,
-        val action: (() -> Unit)? = null
+        val action: (() -> Unit)? = null,
+        val subFolds: Map<String, List<Pair<String, () -> Unit>>> = emptyMap()
     )
 
     /** One row in a [showGoModal] section/tools modal. */
@@ -1425,7 +1433,9 @@ abstract class ScreenFragment : Fragment() {
         // so the drawer never becomes a wall of every submenu at once. Enforced at EXPANSION time
         // only: the initial expanded flags stay the caller's to choose (ledgerDirectoryFolders
         // opens at most one — the surface's home folder; showDirectory flattens its groups open).
-        // Nothing persists — the fold state lives and dies with this one opening of the drawer.
+        // Nothing persists at THIS level — a folder's fold state lives and dies with this one
+        // opening of the drawer. (Second-level folds inside a folder are the opposite on both
+        // counts: multi-open and remembered — see the subFolds block below.)
         val openFolds = mutableListOf<Pair<LinearLayout, () -> Unit>>()
         fun foldOthers(except: LinearLayout) {
             for ((view, fold) in openFolds) {
@@ -1444,7 +1454,8 @@ abstract class ScreenFragment : Fragment() {
         // Same threshold as the document directory's field: on a drawer of six rows or fewer
         // (small showDirectory popovers ride this renderer too) a search box would be asking you
         // to type what you can already see. The hub is always far past it.
-        val rowCount = folders.size + folders.sumOf { it.items.size }
+        val rowCount = folders.size +
+            folders.sumOf { f -> f.items.size + f.subFolds.values.sumOf { it.size } }
         val field = if (rowCount <= 6) null else android.widget.EditText(requireContext()).apply {
             hint = "Find anything"; isSingleLine = true; textSize = 15f * textScale
             setPadding(dp(14), dp(8), dp(14), dp(8))
@@ -1470,7 +1481,10 @@ abstract class ScreenFragment : Fragment() {
         // Matching a FOLDER's name surfaces all of its rows — "incoming" lays the whole Incoming
         // folder flat — and a door row (action set) is findable by its own name, which is the only
         // name a leaf like Today has. Folder headers that merely toggle are not rows here: a match
-        // list is a list of places to go, and a header goes nowhere.
+        // list is a list of places to go, and a header goes nowhere. Rows tucked into a second-
+        // level fold stay findable — captioned with the whole path ("Incoming · 📧 Mail · @ …")
+        // and riding directly under their parent row, so moving a row a level deeper never costs
+        // it its place in the one flat list.
         fun buildMatches(q: String) {
             var any = false
             for (folder in folders) {
@@ -1480,8 +1494,18 @@ abstract class ScreenFragment : Fragment() {
                 }
                 for ((label, action) in folder.items) {
                     val clean = label.trim()
-                    if (!folderHit && !clean.lowercase().contains(q)) continue
-                    matchRow(folder.emoji, "${folder.title}  ·  $clean", action); any = true
+                    val rowHit = folderHit || clean.lowercase().contains(q)
+                    if (rowHit) {
+                        matchRow(folder.emoji, "${folder.title}  ·  $clean", action); any = true
+                    }
+                    // A parent hit surfaces its sub-rows the way a folder hit surfaces its rows —
+                    // "mail" lays every account flat; a sub-row also answers for its own name.
+                    for ((subLabel, subAction) in folder.subFolds[label].orEmpty()) {
+                        val subClean = subLabel.trim()
+                        if (!rowHit && !subClean.lowercase().contains(q)) continue
+                        matchRow(folder.emoji,
+                            "${folder.title}  ·  $clean  ·  $subClean", subAction); any = true
+                    }
                 }
             }
             if (!any) body.addView(TextView(requireContext()).apply {
@@ -1582,6 +1606,58 @@ abstract class ScreenFragment : Fragment() {
                     scaleRowPadding(r, textScale)
                     r.setOnClickListener { dialog.dismiss(); action() }
                     children.addView(r)
+
+                    // A row named in [Folder.subFolds] carries its own fold: the label stays the
+                    // door (one tap navigates, exactly as above) and a caret at the row's end —
+                    // the same ▸/▾ the folder headers wear — toggles the sub-rows inline beneath,
+                    // one indent step past the child rows'. These folds live OUTSIDE the strict
+                    // accordion: foldOthers never learns about them, because they sit inside the
+                    // parent folder's container and disappear with it when the accordion folds
+                    // that folder — closing for free beats bookkeeping. Among themselves they are
+                    // multi-open (Mail and Later List can both stand open, as on the iPad's
+                    // sidebar), and each remembers its state across drawer openings the way iOS's
+                    // sidebar_mail_open does — a fold you open every time you open the drawer is
+                    // a fold the drawer should have remembered.
+                    val subRows = folder.subFolds[label].orEmpty()
+                    if (subRows.isEmpty()) continue
+                    val prefs = requireContext().getSharedPreferences("MAIN", 0)
+                    val prefKey = com.toolsboox.ot.HubSubFold.prefKey(label)
+                    val subBox = LinearLayout(requireContext()).apply {
+                        orientation = LinearLayout.VERTICAL
+                        visibility = if (prefs.getBoolean(prefKey, false)) View.VISIBLE else View.GONE
+                    }
+                    for ((subLabel, subAction) in subRows) {
+                        val sr = layoutInflater.inflate(R.layout.item_go_to, subBox, false)
+                        val subText = applyRowIcon(sr, subLabel)
+                        sr.findViewById<TextView>(R.id.go_label).apply {
+                            this.text = subText; textSize = ROW_SP * textScale
+                            setPadding(dp(48), paddingTop, paddingRight, paddingBottom)
+                        }
+                        scaleRowIcon(sr, textScale)
+                        scaleRowPadding(sr, textScale)
+                        sr.setOnClickListener { dialog.dismiss(); subAction() }
+                        subBox.addView(sr)
+                    }
+                    fun subCaret() = if (subBox.visibility == View.VISIBLE) "▾" else "▸"
+                    val subCaretBtn = TextView(requireContext()).apply {
+                        // Qualified: the enclosing loop's `text` (the parent row's cleaned label)
+                        // shadows this TextView's property inside the lambda.
+                        this.text = subCaret()
+                        textSize = ROW_SP * textScale
+                        setTextColor(Color.BLACK)
+                        setPadding(dp(16), dp(6), dp(16), dp(6))
+                        setOnClickListener {
+                            // Same repaint discipline as the folder fold above: flip visibility
+                            // and the caret glyph, nothing else — one relayout per toggle is the
+                            // whole e-ink budget.
+                            val show = subBox.visibility != View.VISIBLE
+                            subBox.visibility = if (show) View.VISIBLE else View.GONE
+                            prefs.edit().putBoolean(prefKey, show).apply()
+                            this.text = subCaret()
+                        }
+                    }
+                    (r as? LinearLayout)?.addView(subCaretBtn)
+                    children.addView(subBox)
                 }
                 val childLp = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT

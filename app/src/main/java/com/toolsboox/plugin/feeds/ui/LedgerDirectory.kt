@@ -186,7 +186,6 @@ fun ledgerDirectoryFolders(
         // intake) are DIFFERENT stores — both here, as on iPad, not one standing in for the other.
         ScreenFragment.Folder("📰", "Incoming", listOf(
             "📧  Mail" to { openMail(null) },
-        ) + mailAccountRows(fragment, ::openMail) + listOf(
             "📰  All" to { openFeed("feed", null) },
             "📖  The Read" to { openFeed("feed", "read") },
             "📺  The Watch" to { openFeed("feed", "watch") },
@@ -195,13 +194,7 @@ fun ledgerDirectoryFolders(
             // appear in feeds like a feed instead of this, instead under '🎧 The Listen' like
             // '🔖 Later List'." It's the end of the media block, above Starred and the rest,
             // because it's the one list here you KEEP rather than a lens over what arrived.
-            // Its four lanes ride under it, indented like the mail accounts under Mail: this hub is
-            // a flat list of doors, so an accordion isn't available, and a door per lane costs one
-            // row each and saves a navigation plus a fold on the other side.
             "🔖  Later List" to { openFeed("later", null) },
-        ) + com.toolsboox.plugin.feeds.nw.LaterFeed.LANES.map { (lane, label, _) ->
-            "    $label" to { openFeed("later", null, lane) }
-        } + listOf(
             "⭐  Starred" to { openFeed("stars", null) },
             // The rest of the feed drawer's views, here too so the hub and the drawer agree
             // (they're sidebar rows on iPad). "pickings" and "local" ride the same one-shot
@@ -215,7 +208,21 @@ fun ledgerDirectoryFolders(
                 nav.navigate(R.id.action_to_feeds)
             },
             "📡  Local Feeds" to { openFeed("local", null) }
-        ), expanded = home == "Incoming"),
+        ), expanded = home == "Incoming",
+            // The two rows with a family of destinations behind them fold for real — a caret on
+            // the row, sub-rows beneath — instead of the old leading-space fake-indent, which cost
+            // this folder up to six always-visible rows and read as clutter, not depth ("the
+            // submenu got rid of the submenus"). Mail keeps navigating to the unified inbox and
+            // its fold holds the per-account doors (built only past one account, as before);
+            // Later List keeps navigating to the whole list and its fold holds the four lanes.
+            // Just these two: this hub is a launcher, and the Feeds page's own directory pane
+            // already carries the deep tree.
+            subFolds = mapOf(
+                "📧  Mail" to mailAccountRows(fragment, ::openMail),
+                "🔖  Later List" to com.toolsboox.plugin.feeds.nw.LaterFeed.LANES.map { (lane, label, _) ->
+                    label to { openFeed("later", null, lane) }
+                },
+            )),
         // Flow — the daily catch→make spine, right under Feed. Intake is the day's catch
         // (Email/Read/Watch/Listen grams, one per starred item); moving a gram into its Pickings
         // is where it becomes something; Synthesize works the gathered pieces and Write closes it
@@ -1877,10 +1884,11 @@ fun showWritePicker(
     fragment, com.toolsboox.plugin.calendar.ot.LedgerDocuments.WRITE, date, currentKey)
 
 /**
- * The configured mailboxes, as directory rows under Mail — the Boox half of the iPad's accounts
+ * The configured mailboxes, as the Mail row's sub-fold — the Boox half of the iPad's accounts
  * rail, where each account is listed beside the feeds rather than hidden behind a chip inside the
  * inbox. Reaching one mailbox should cost the same as reaching one feed; it was costing a
- * navigation plus a chip plus an accordion.
+ * navigation plus a chip plus an accordion. (These were leading-space fake-indented rows once;
+ * now the fold is real, they carry plain labels and the renderer owns the depth.)
  *
  * Nothing is listed when there is only one account: a lone row under "Mail" says nothing "Mail"
  * didn't already say, and a directory earns its length by every row being a real choice.
@@ -1891,5 +1899,5 @@ private fun mailAccountRows(
 ): List<Pair<String, () -> Unit>> {
     val accounts = com.toolsboox.plugin.mail.MailAccountStore.all(fragment.requireContext())
     if (accounts.size < 2) return emptyList()
-    return accounts.map { a -> "    @  ${a.display}" to { open(a.id) } }
+    return accounts.map { a -> "@  ${a.display}" to { open(a.id) } }
 }
