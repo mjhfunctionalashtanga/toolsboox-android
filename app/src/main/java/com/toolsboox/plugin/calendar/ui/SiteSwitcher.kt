@@ -18,14 +18,15 @@ import timber.log.Timber
 import java.util.concurrent.TimeUnit
 
 /**
- * The site switcher, keyed on SITE the way Mail's inbox is keyed on account (see
- * [com.toolsboox.plugin.mail.ui.MailInboxFragment]): a "🌐 All sites ▸/▾" accordion header that
+ * The site switcher, keyed on SITE the way Mail's inbox was keyed on account (the retired
+ * standalone Mail screen's idiom, alive today in the feeds pane's 📧 The Mail mailbox fold): a
+ * "🌐 All sites ▸/▾" accordion header that
  * unfolds to one row per configured WordPress site. `null` filter = every site (the surfaces
  * aggregate); picking a site narrows. One shared builder so Posts, Publish and Site-boards wear
  * the exact same chrome — black-on-white "selected", no animation, single redraws, e-ink-plain.
  *
  * The switcher only draws the rows; the owning fragment holds the (persisted) filter + open state
- * and re-renders on the callbacks — identical to how MailInboxFragment keeps `accountFilter` /
+ * and re-renders on the callbacks — identical to how the Mail screen kept `accountFilter` /
  * `accountsOpen` in its own prefs.
  */
 /**
@@ -38,7 +39,7 @@ import java.util.concurrent.TimeUnit
  * the kind of pattern that drifts one fragment at a time. Each surface keeps its OWN pref file
  * ([prefsName] — the file the fragment already owns for its other keys), so nothing moves on disk
  * and narrowing Posts never narrows Boards; the keys (`site_filter`, `sites_open`) are the shared
- * part, MailInboxFragment's account_filter / accounts_open shape.
+ * part, the Mail screen's account_filter / accounts_open shape.
  */
 class SiteFilterState(private val prefsName: String) {
 

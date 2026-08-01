@@ -28,16 +28,17 @@ import java.util.Locale
 import java.util.UUID
 
 /**
- * The mail verbs that more than one surface performs — star-to-todo (with its All Stars gram),
- * un-star, the reply dialog, and the accounts editor — lifted out of [MailInboxFragment] when
- * The Mail became a lens in the feeds pane. Two screens now speak these verbs, and a second
- * private copy of "what starring an email means" is exactly how the standalone inbox and the
- * lens would have drifted apart about it. The standalone screen delegates here; the feeds lens
- * calls here; neither owns the ceremony.
+ * The letter ceremonies — star-to-todo (with its All Stars gram), un-star, the reply dialog, the
+ * accounts editor, and the knowledge-graph moves (tag, rhizome, assign-to-synthesis) — lifted out
+ * of the standalone Mail screen when The Mail became a lens in the feeds pane, and the whole of
+ * what survived it when Michael retired that screen. They stay gathered here rather than folding
+ * into the lens because they are what a LETTER can do, not what a screen does: the feeds lens
+ * speaks them today, and any surface that ever holds a letter calls here rather than growing a
+ * second private copy of what starring an email means.
  *
  * Everything takes the calling fragment (for its context, scope and guarded modals) and reports
  * back through a callback rather than repainting anything itself — which list to redraw, and
- * how, is the one thing the two callers legitimately disagree about.
+ * how, is the one thing callers legitimately disagree about.
  */
 object MailVerbs {
 
@@ -46,7 +47,8 @@ object MailVerbs {
     /**
      * Star → to-do: create a task on today's page (like Kanban's add-card), mark the mail starred
      * (which persists its whole body to the keep pile), and mint its link-face gram onto today's
-     * Intake — the same three moves MailInboxFragment.starToTodo has always made, verbatim.
+     * Intake — the same three moves the Mail screen's star always made, verbatim, kept whole
+     * through that screen's retirement.
      *
      * [onDone] receives the gram placement: true = placed, false = the dedupe declined it (already
      * on All Stars), null = the placement itself failed. The caller toasts accordingly — a re-star
@@ -132,7 +134,7 @@ object MailVerbs {
 
     /**
      * A plain reply, sent out the account the message arrived on (via SMTP) — the guarded dialog
-     * MailInboxFragment always showed, now reachable from any surface holding a letter. The toasts
+     * the Mail screen always showed, reachable from any surface holding a letter. The toasts
      * live here with the send; [onSent] fires only on success so the caller can refold its list
      * around the new keep-forever row.
      */
@@ -179,8 +181,99 @@ object MailVerbs {
             .create())
     }
 
+    // The knowledge-graph moves — how an email joins the Ledger like any other object. All three
+    // rode the standalone screen's letter dialog; they moved here when that screen retired so the
+    // verbs outlive the door they were first hung on.
+
+    /** File the letter under #tags. The uri keeps the `email://` spelling the screen's Tag row
+     *  always wrote — tags already stuck to letters under that name, and renaming the address
+     *  would orphan every one of them. */
+    fun tag(fragment: ScreenFragment, m: InboxMessage) {
+        com.toolsboox.ot.TagPicker.show(
+            fragment.requireContext(), "email://${m.id}", m.subject,
+            showModal = { fragment.showModal(it) })
+    }
+
+    /**
+     * Join the message into the connection graph and open its rhizome — the same move every other
+     * Ledger object makes (mirrors QuickWinsFragment.openRhizome / DailyPileFragment.rhizome). The
+     * message rides a stable `mail://<id>` URI, so any edge drawn on the rhizome surface sticks.
+     */
+    fun openRhizome(fragment: ScreenFragment, m: InboxMessage) {
+        androidx.navigation.fragment.NavHostFragment.findNavController(fragment).navigate(
+            com.toolsboox.R.id.action_to_ledger_rhizome,
+            androidx.core.os.bundleOf(
+                com.toolsboox.plugin.calendar.ui.LedgerRhizomeFragment.ARG_URI to "mail://${m.id}",
+                com.toolsboox.plugin.calendar.ui.LedgerRhizomeFragment.ARG_LABEL
+                    to m.subject.ifBlank { m.fromName }.take(60)
+            )
+        )
+    }
+
+    /**
+     * File the message onto today's synthesis pile (its subject + a body snippet), drop a
+     * provenance edge from its `mail://<id>` URI to today's Synthesize page, AND place a card on
+     * the page itself. Filing used to write only the bank, which is a list behind a control you
+     * have to know to open — so "Assign to synthesis" reported success and the Synthesize page
+     * stayed blank. Michael: "Send to Synthesis from email is the correct move — but when used,
+     * nothing appears in Synthesis." It didn't, because nothing was ever put there. A card on the
+     * grid is what "in Synthesis" means; the bank is the reservoir, not the destination.
+     *
+     * [onDone] reports whether anything was filed (false = the letter had no words to file); the
+     * caller says so its own way. IO runs off the main thread, and the card placement takes the
+     * per-day lock — a background whole-file load→mutate→save that races the open day page's
+     * per-pen-up save.
+     */
+    fun assignToSynthesis(
+        fragment: ScreenFragment, dayService: CalendarDayService, root: File,
+        m: InboxMessage, onDone: (filed: Boolean) -> Unit
+    ) {
+        val ctx = fragment.requireContext()
+        val uri = "mail://${m.id}"
+        val label = m.subject.ifBlank { m.fromName.ifBlank { m.fromEmail } }.take(60)
+        val snippet = m.body.trim().replace(Regex("\\s+"), " ").take(280)
+        val line = listOf(m.subject.trim(), snippet).filter { it.isNotBlank() }.joinToString(" — ")
+        if (line.isBlank()) { onDone(false); return }
+        fragment.lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                val today = LocalDate.now()
+                // The idea BANK — syncs across devices, and feeds the "Ideas → grid" picker.
+                com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.add(ctx, today, listOf(line), "note", label)
+                com.toolsboox.plugin.calendar.ot.ConnectionStore.connect(
+                    ctx, uri, com.toolsboox.ot.LedgerUri.page(today.toString(), "synthesize"),
+                    kind = com.toolsboox.plugin.calendar.da.v2.Connection.PLACED,
+                    fromLabel = label, toLabel = "Synthesize · $today"
+                )
+                // Same card + same staggered placement as CalendarDayFragment.addIdeaCards, so a
+                // filed message is indistinguishable from one dropped via the Ideas picker.
+                runCatching {
+                    com.toolsboox.plugin.calendar.ot.DayLocks.withDay(today) {
+                        val day = dayService.load(root, today, null, Locale.getDefault())
+                        val pageKey = "synthesize"
+                        val bmp = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer
+                            .render(line, "— $label", null, 1080, 0)
+                        val baos = java.io.ByteArrayOutputStream()
+                        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
+                        val base64 = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+                        val w = 1404f * 0.42f
+                        val h = w * bmp.height / bmp.width
+                        val count = day.imageElements.count { it.page == pageKey }
+                        val x = (60f + (count % 3) * (w + 30f)).coerceIn(0f, (1404f - w).coerceAtLeast(0f))
+                        val y = (120f + (count / 3) * (h + 30f)).coerceIn(0f, (1872f - h).coerceAtLeast(0f))
+                        day.imageElements.add(com.toolsboox.da.ImageElement(
+                            x = x, y = y, width = w, height = h, data = base64, page = pageKey,
+                            sourceLabel = "— $label", cardText = line
+                        ))
+                        dayService.save(root, today, day)
+                    }
+                }.onFailure { timber.log.Timber.w(it, "failed to place the synthesis card") }
+            }
+            onDone(true)
+        }
+    }
+
     // Mail settings — the accounts list + per-account editor, unchanged in shape from the
-    // standalone screen's. [onChanged] fires after a save (a first/renamed account changes
+    // retired screen's. [onChanged] fires after a save (a first/renamed account changes
     // whatever chrome names accounts); [onDeleted] carries the removed id so the caller can
     // un-narrow a list that was scoped to it.
 

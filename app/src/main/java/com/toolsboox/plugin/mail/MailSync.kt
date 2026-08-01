@@ -29,7 +29,7 @@ object MailSync {
             // forget every message on the device because the account list is momentarily empty
             // (mid-edit, or a password re-entry). [InboxStore.messages] already shows the seeded
             // samples while no account is configured, so nothing is on screen that shouldn't be.
-            return "No mail accounts yet -- add one with the gear in the Mail screen."
+            return "No mail accounts yet -- add one with the gear on The Mail's rail."
         }
         val all = ArrayList<InboxMessage>()
         val errors = ArrayList<String>()
@@ -145,7 +145,7 @@ object MailSync {
         val subject = if (m.subject.lowercase().startsWith("re:")) m.subject else "Re: ${m.subject}"
         // `record = false`: the reply flow writes its own, richer sent row (with the original in
         // hand, so it can carry who it went to and the Re: thread it belongs to) once this returns
-        // — see MailInboxFragment.showReply. Letting sendNew record as well would file the same
+        // — see MailVerbs.reply. Letting sendNew record as well would file the same
         // reply twice, once with a recipient and once without.
         sendNew(context, aid, m.fromEmail, subject, body, record = false)
     }

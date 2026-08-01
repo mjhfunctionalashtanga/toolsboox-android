@@ -1417,8 +1417,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     /** Take a win where its doing lives — and bring what's needed to do it right there.
      *  EMAIL → the compose screen, already addressed, when the win's contact carries an email
      *  address (the task words seed the subject, so the letter opens knowing what it's about);
-     *  a win with no addressable person still lands in the inbox, where the mail it's probably
-     *  about is waiting with its Reply.
+     *  a win with no addressable person still lands in the mail — The Mail lens on Unread,
+     *  where the message it's probably about is waiting with its Reply.
      *  CALL → the rolodex, opened straight onto the win's contact when it carries one, so the
      *  number is on screen. HOME → the day the task lives on — UNLESS that day is the one we're
      *  already on (a today-sourced win), in which case a tap would be a silent no-op ("nothing
@@ -1444,7 +1444,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                                 com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_SUBJECT to win.text.take(120)
                             )
                         )
-                    else findNavController().navigate(R.id.action_to_mail_inbox)
+                    else {
+                        // No addressable person: land in The Mail lens filtered to Unread — the
+                        // mail the win is probably about is waiting there with its Reply. (The
+                        // standalone inbox this used to open is retired; the feeds pane's lens
+                        // is mail's one home, and "feed" is its Unread view.)
+                        com.toolsboox.plugin.feeds.ui.FeedSelection.mode = "feed"
+                        com.toolsboox.plugin.feeds.ui.FeedSelection.kind = "mail"
+                        com.toolsboox.plugin.feeds.ui.FeedSelection.mailMailbox = null
+                        findNavController().navigate(R.id.action_to_feeds)
+                    }
                 }
                 com.toolsboox.plugin.calendar.ot.QuickWinsEngine.Go.CALL ->
                     findNavController().navigate(
@@ -3753,23 +3762,30 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     /**
      * Jump back to a gram's origin from its long-press menu. Routes the stored source link:
      * ledger://<date>/<pageKey> → that ledger page; book://<path> → the reader; mail://<id> → that
-     * letter in the inbox; http(s) → the browser.
+     * letter open in The Mail lens's article pane; http(s) → the browser.
      */
     override fun onImageSource(element: com.toolsboox.da.ImageElement) {
         val link = element.sourceLink
         when {
             link.startsWith("mail://") || link.startsWith("acct:") -> {
-                // A starred email's gram files its address as mail://<id> (MailInboxFragment writes
-                // it so rhizome edges and grams share one name for the letter). Without this arm the
+                // A starred email's gram files its address as mail://<id> (the mail star writes it
+                // so rhizome edges and grams share one name for the letter). Without this arm the
                 // router fell through in silence — "Open the source" on a mail gram, and the All
-                // Stars tap that funnels here, did nothing at all. The handoff rides a pending
-                // static, the same shape FeedSelection.pendingInPaneEntry uses for the feeds pane.
-                // The bare "acct:<accountId>:uid:<n>" spelling is iOS archaeology: the iPad wrote
-                // raw ids before build 42 adopted the mail:// convention, and those grams are
-                // already on synced boards. Route them too — the pending id simply won't match a
-                // letter this device's accounts don't hold, and the inbox is still the right room.
-                com.toolsboox.plugin.mail.ui.MailInboxFragment.pendingOpenId = link.removePrefix("mail://")
-                findNavController().navigate(R.id.action_to_mail_inbox)
+                // Stars tap that funnels here, did nothing at all. The letter's home is the feeds
+                // pane's Mail lens now (the standalone inbox retired), so the handoff rides
+                // FeedSelection: a pending id the lens consumes after its warm load by opening
+                // that letter in the article pane — one-shot, cleared even when the store no
+                // longer holds it. The list behind the pane rides the All view, so the letter's
+                // own row is on screen whatever its read or star state. The bare
+                // "acct:<accountId>:uid:<n>" spelling is iOS archaeology: the iPad wrote raw ids
+                // before build 42 adopted the mail:// convention, and those grams are already on
+                // synced boards. Route them too — the pending id simply won't match a letter this
+                // device's accounts don't hold, and the lens is still the right room.
+                com.toolsboox.plugin.feeds.ui.FeedSelection.mode = "both"
+                com.toolsboox.plugin.feeds.ui.FeedSelection.kind = "mail"
+                com.toolsboox.plugin.feeds.ui.FeedSelection.mailMailbox = null
+                com.toolsboox.plugin.feeds.ui.FeedSelection.pendingMailOpenId = link.removePrefix("mail://")
+                findNavController().navigate(R.id.action_to_feeds)
             }
             link.startsWith("ledger://") -> {
                 val rest = link.removePrefix("ledger://")

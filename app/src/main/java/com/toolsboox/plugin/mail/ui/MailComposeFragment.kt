@@ -63,11 +63,12 @@ class MailComposeFragment @Inject constructor() : ScreenFragment() {
         binding.mailComposeSend.setOnClickListener { send() }
         binding.mailComposeDiscard.setOnClickListener { discard() }
 
-        // From: the inbox's account filter if one is set (a narrowed inbox and its compose should
-        // agree on which door mail goes out), else the first configured account. That key also
-        // carries MailInboxFragment's reserved Sent token, which is a MAILBOX and not an account —
-        // it matches nothing here and falls through to the first account, which is the right answer
-        // for "compose, from the Sent view".
+        // From: the Mail lens's account narrowing if one is set (a narrowed inbox and its compose
+        // should agree on which door mail goes out), else the first configured account. The lens
+        // echoes its mailbox into this preference on every change — the seat the retired
+        // standalone screen used to hold. The key also carries the reserved Sent token ("__sent"),
+        // which is a MAILBOX and not an account — it matches nothing here and falls through to
+        // the first account, which is the right answer for "compose, from the Sent view".
         accounts = MailAccountStore.all(ctx)
         val filtered = ctx.getSharedPreferences("ledger_mail_inbox", 0)
             .getString("account_filter", "")!!.ifBlank { null }
@@ -110,7 +111,7 @@ class MailComposeFragment @Inject constructor() : ScreenFragment() {
     private fun renderFrom() {
         val a = accounts.firstOrNull { it.id == accountId }
         binding.mailComposeFrom.text = when {
-            accounts.isEmpty() -> "No mail accounts yet — add one with the ⚙ in the Mail screen."
+            accounts.isEmpty() -> "No mail accounts yet — add one with the ⚙ on The Mail's rail."
             accounts.size == 1 -> "From: ${a?.display ?: accounts.first().display}"
             else -> "From: ${a?.display ?: "choose an account"}  ▾"
         }
@@ -142,7 +143,7 @@ class MailComposeFragment @Inject constructor() : ScreenFragment() {
         if (sending) return
         val ctx = context ?: return
         val aid = accountId
-        if (aid == null) { toast("No mail account to send from — add one with the ⚙ in the Mail screen."); return }
+        if (aid == null) { toast("No mail account to send from — add one with the ⚙ on The Mail's rail."); return }
         val to = recipientAddress(binding.mailComposeTo.text.toString())
         if (to.isBlank()) { toast("No recipient address."); return }
         val subject = binding.mailComposeSubject.text.toString().trim()

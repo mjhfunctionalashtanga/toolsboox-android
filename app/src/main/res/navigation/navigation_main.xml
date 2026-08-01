@@ -135,10 +135,6 @@
             app:destination="@id/PostsBrowserFragment"/>
 
     <action
-            android:id="@+id/action_to_mail_inbox"
-            app:destination="@id/MailInboxFragment"/>
-
-    <action
             android:id="@+id/action_to_mail_compose"
             app:destination="@id/MailComposeFragment"/>
 
@@ -345,14 +341,10 @@
             android:label="PostsBrowserFragment"
             tools:layout="@layout/fragment_posts_browser"/>
 
-    <fragment
-            android:id="@+id/MailInboxFragment"
-            android:name="com.toolsboox.plugin.mail.ui.MailInboxFragment"
-            android:label="MailInboxFragment"
-            tools:layout="@layout/fragment_mail_inbox"/>
-
-    <!-- Standalone compose — mail that isn't a reply. Arrives blank (the inbox's ✎ chip) or
-         prefilled (a "write that email" quick win, a contact page) via the three arguments. -->
+    <!-- Standalone compose — mail that isn't a reply. Arrives blank (The Mail lens's ✎ rail
+         action) or prefilled (a "write that email" quick win, a contact page) via the three
+         arguments. The inbox itself has no fragment here any more: mail's one home is the feeds
+         pane's 📧 The Mail lens, reached through action_to_feeds with FeedSelection saying mail. -->
     <fragment
             android:id="@+id/MailComposeFragment"
             android:name="com.toolsboox.plugin.mail.ui.MailComposeFragment"

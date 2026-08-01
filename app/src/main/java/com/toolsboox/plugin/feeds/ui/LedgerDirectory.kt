@@ -35,7 +35,6 @@ fun ledgerDirectoryFolders(
     // build pass, so there is no post-open toggle to flash the e-ink.
     val home: String? = if (expandFeedLedger) "Incoming" else when (fragment) {
         is FeedsFragment, is FeedArticleFragment,
-        is com.toolsboox.plugin.mail.ui.MailInboxFragment,
         is com.toolsboox.plugin.mail.ui.MailComposeFragment -> "Incoming"
         is com.toolsboox.plugin.calendar.ui.QuickWinsFragment,
         is com.toolsboox.plugin.calendar.ui.RolodexFragment,
@@ -107,17 +106,18 @@ fun ledgerDirectoryFolders(
         nav.navigate(R.id.action_to_feeds)
     }
     /**
-     * Open the inbox, unified or narrowed to one account.
+     * Open the Feed Ledger wearing 📧 The Mail lens, unified or narrowed to one account.
      *
-     * The narrowing travels through the same `account_filter` preference the inbox already reads on
-     * arrival, rather than a nav argument: the inbox persists that choice so it reopens the way it
-     * was left, and a second channel saying the same thing would be one more way for the two to
-     * disagree about which mailbox you asked for.
+     * Mail's one home is the lens now — the standalone inbox screen retired once Michael had
+     * lived with The Mail ("Retire") — so this door rides the same one-shot FeedSelection
+     * channel as every other feed view: the kind picks the lens, the mailbox rides beside it,
+     * and the mode lands on Unread, which is the lens's own cold-entry view. (The narrowing
+     * used to travel through the `account_filter` preference the screen read on arrival; the
+     * lens maintains that preference itself now, for compose's sake.)
      */
     fun openMail(accountId: String?) {
-        fragment.requireContext().getSharedPreferences("ledger_mail_inbox", 0).edit()
-            .putString("account_filter", accountId ?: "").apply()
-        nav.navigate(R.id.action_to_mail_inbox)
+        FeedSelection.mailMailbox = accountId
+        openFeed("feed", "mail")
     }
 
     fun openHistory(origin: LogOrigin?) {
@@ -215,8 +215,9 @@ fun ledgerDirectoryFolders(
             // The two rows with a family of destinations behind them fold for real — a caret on
             // the row, sub-rows beneath — instead of the old leading-space fake-indent, which cost
             // this folder up to six always-visible rows and read as clutter, not depth ("the
-            // submenu got rid of the submenus"). Mail keeps navigating to the unified inbox and
-            // its fold holds the per-account doors (built only past one account, as before);
+            // submenu got rid of the submenus"). Mail keeps navigating to the unified inbox —
+            // The Mail lens, since the standalone screen retired — and its fold holds the
+            // per-account doors (built only past one account, as before);
             // Later List keeps navigating to the whole list and its fold holds the four lanes.
             // Just these two: this hub is a launcher, and the Feeds page's own directory pane
             // already carries the deep tree.

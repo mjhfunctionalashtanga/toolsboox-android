@@ -1222,7 +1222,16 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             val nav = binding.fragmentContent.findNavController()
             runCatching {
                 when (dest) {
-                    "mail" -> nav.navigate(R.id.action_to_mail_inbox)
+                    // The Mail widget's face is the kept pile, so its tap lands in the feeds
+                    // pane wearing The Mail lens on ⭐ Starred — the standalone inbox screen it
+                    // used to open is retired (its own default view was Starred too, so the
+                    // widget's tap keeps landing where it always did).
+                    "mail" -> {
+                        com.toolsboox.plugin.feeds.ui.FeedSelection.mode = "stars"
+                        com.toolsboox.plugin.feeds.ui.FeedSelection.kind = "mail"
+                        com.toolsboox.plugin.feeds.ui.FeedSelection.mailMailbox = null
+                        nav.navigate(R.id.action_to_feeds)
+                    }
                     "feeds" -> nav.navigate(R.id.action_to_feeds)
                     "allstars" -> {
                         val d = java.time.LocalDate.now()

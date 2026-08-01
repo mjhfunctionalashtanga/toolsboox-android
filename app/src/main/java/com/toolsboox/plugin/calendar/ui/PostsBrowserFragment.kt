@@ -24,7 +24,7 @@ import javax.inject.Inject
 
 /**
  * Browse posts (any type) by status — drafts, scheduled, published, private, trash — across EVERY
- * configured WordPress site at once, or narrowed to one. Mirrors how [MailInboxFragment] treats the
+ * configured WordPress site at once, or narrowed to one. Mirrors how the Mail surfaces treat the
  * inbox: a "🌐 All sites" accordion at the top aggregates the per-site lists (each row tagged with
  * its site), and picking a site narrows; the choice survives the trip away. Opening a post or
  * composing hands off to [PublishFragment]; trashing and editing operate on the row's OWN site.
