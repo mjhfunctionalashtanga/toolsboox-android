@@ -209,6 +209,18 @@ object NowPlayingCard {
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = dp(context, 4) })
             addView(chipRow(speedBtn, foldBtn, stopBtn))
+            // ★ / 📝 for the playing EPISODE, when the track carries a capturable identity
+            // (podcasts do; TTS read-aloud doesn't): star it onto All Stars, or open the
+            // timestamp-seeded note composer — capture without leaving the drawer, because
+            // listening from a lesson never opens the pane where the reader's own star lives.
+            // A row of their own, not squeezed into the transport rows: the pane is 24% wide
+            // and these are the two chips he taps while the episode keeps playing.
+            if (player.capture != null) {
+                addView(chipRow(
+                    chip("★") { com.toolsboox.ui.plugin.LedgerPlayerCapture.starNow(context) },
+                    chip("📝") { com.toolsboox.ui.plugin.LedgerPlayerCapture.annotateNow(context) }
+                ))
+            }
         }
 
         // The folded face: one button, no information beyond "something is playing" and whether it

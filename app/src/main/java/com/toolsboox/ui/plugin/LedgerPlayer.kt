@@ -28,6 +28,25 @@ object LedgerPlayer {
     var subtitle: String? = null; private set
     var image: Bitmap? = null; private set
 
+    /**
+     * What the playing episode IS, for capture — the provenance the article star already carries
+     * (title, feed, the entry's own URL, art, blurb), handed in by whoever started playback.
+     * Without it the transport knew only what to DISPLAY (title/subtitle/art bitmap), so a
+     * playing podcast could not be starred or annotated from the player at all: the Listen flow
+     * never opens the article pane where those buttons live, which is exactly the gap Michael
+     * hit. Null for tracks with no capturable source (TTS read-aloud, audiobook files) — the
+     * ★/📝 affordances only appear when this is set.
+     */
+    data class Capture(
+        val title: String,
+        val feedTitle: String,
+        val url: String,
+        val imageUrl: String?,
+        val excerpt: String = ""
+    )
+
+    var capture: Capture? = null; private set
+
     /** Monotonic playback-session token: bumped on every start/stop so background lookups
      *  (chapter/transcript resolves racing the network) can tell "still my track" from
      *  "the listener moved on" and lose quietly. */
@@ -137,10 +156,16 @@ object LedgerPlayer {
         notifyChange()
     }
 
-    /** Play a real audio file/stream (podcast enclosure, voice memo) through the same transport. */
-    fun startAudio(context: Context, title: String?, subtitle: String?, imageUrl: String?, source: String) {
+    /** Play a real audio file/stream (podcast enclosure, voice memo) through the same transport.
+     *  [capture] is the episode's capturable identity — pass it and the transport grows its ★ and
+     *  📝 buttons; leave it null (voice memos, audiobook files) and the transport stays plain. */
+    fun startAudio(
+        context: Context, title: String?, subtitle: String?, imageUrl: String?, source: String,
+        capture: Capture? = null
+    ) {
         tts?.stop(); stopMedia()
         newSession()
+        this.capture = capture
         this.title = title?.takeIf { it.isNotBlank() }
         this.subtitle = subtitle?.takeIf { it.isNotBlank() }
         this.image = null
@@ -227,6 +252,7 @@ object LedgerPlayer {
         session++
         chapters = emptyList()
         transcriptProvider = null
+        capture = null
     }
 
     private fun stopMedia() {
@@ -286,13 +312,24 @@ object LedgerPlayer {
             addView(playPause, LinearLayout.LayoutParams(lp))
             addView(fwd10, LinearLayout.LayoutParams(lp)); addView(fwd30, LinearLayout.LayoutParams(lp))
         }
-        // Row 2: speed · stop
+        // Row 2: speed · ★ · 📝 · stop. The ★ and 📝 live ON the player because for a playing
+        // podcast the player IS the surface — the Listen flow never opens the article pane where
+        // the reader's star/note buttons sit, so capture has to be reachable from the transport
+        // itself: listening → one tap → captured → keep listening. They only appear when the
+        // track carries a capturable identity ([capture]); TTS read-aloud stays speed·stop.
         val speedBtn = controlButton("${speed}×")
+        val starBtn = controlButton("★")
+        val noteBtn = controlButton("📝")
         val stopBtn = controlButton("⏹ Stop")
         val controls2 = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
             val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            addView(speedBtn, lp); addView(stopBtn, LinearLayout.LayoutParams(lp))
+            addView(speedBtn, lp)
+            if (capture != null) {
+                addView(starBtn, LinearLayout.LayoutParams(lp))
+                addView(noteBtn, LinearLayout.LayoutParams(lp))
+            }
+            addView(stopBtn, LinearLayout.LayoutParams(lp))
         }
 
         val container = LinearLayout(context).apply {
@@ -326,6 +363,8 @@ object LedgerPlayer {
         fwd10.setOnClickListener { skipForward(10); refresh() }
         fwd30.setOnClickListener { skipForward(30); refresh() }
         speedBtn.setOnClickListener { cycleSpeed(); refresh() }
+        starBtn.setOnClickListener { LedgerPlayerCapture.starNow(context) }
+        noteBtn.setOnClickListener { LedgerPlayerCapture.annotateNow(context) }
         stopBtn.setOnClickListener { stop(); dialog.dismiss() }
 
         val listener = { main.post { refresh() }; Unit }

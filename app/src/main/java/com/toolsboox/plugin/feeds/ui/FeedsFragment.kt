@@ -1236,8 +1236,17 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     private fun playEntryAudio(e: FeedEntry) {
         val url = e.audioUrl ?: return
         val src = com.toolsboox.plugin.feeds.nw.LaterMedia.playableSource(requireContext(), url)
+        // The capture identity rides in with the play call: it is what grows the ★ and 📝 on the
+        // transport (modal and drawer card both), so a playing podcast can be starred/annotated
+        // from the player itself — the Listen flow never opens the article pane where the
+        // reader's own star lives. The entry URL is the episode page; a synthetic row (downloaded
+        // audio aged off the server) may have none, so the enclosure URL stands in.
         com.toolsboox.ui.plugin.LedgerPlayer.startAudio(
-            requireContext(), e.title, e.feedTitle.ifBlank { null }, e.imageUrl, src
+            requireContext(), e.title, e.feedTitle.ifBlank { null }, e.imageUrl, src,
+            capture = com.toolsboox.ui.plugin.LedgerPlayer.Capture(
+                title = e.title, feedTitle = e.feedTitle,
+                url = e.url.ifBlank { url }, imageUrl = e.imageUrl, excerpt = e.blurb
+            )
         )
         // The Podcasting 2.0 layer rides in after the transport starts: chapters (2.0 tag or
         // description timestamps) + the transcript hook resolve in the background and attach
