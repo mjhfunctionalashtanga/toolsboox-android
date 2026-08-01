@@ -360,16 +360,25 @@ object FeedNoteGram {
             if (sel.isNotBlank()) logEvent(sel, null)
             Thread {
                 val blob = File(com.toolsboox.ot.LedgerPaths.attachmentsDir(ctx), att.filename)
+                // The remembered destination routes A/V grams too — except an All Stars band,
+                // which places by intakeKind through PickingsPlacement rather than AvGrams; a
+                // clip can't ride that path, so the star register's memory falls back to the
+                // Gram Picks inbox instead of landing a poster unbanded on the register.
+                val last = com.toolsboox.plugin.calendar.ot.GramDestinations.last(ctx)
+                val dest = if (last.kind.isNotBlank())
+                    com.toolsboox.plugin.calendar.ot.GramDestinations.Destination(
+                        "◈", "Gram Picks", com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS)
+                else last
                 val placed = runCatching {
                     AvGrams.file(
                         service, root, blob, att,
                         title = label(articleTitle, feedTitle),
-                        pageKey = NOTES_PAGE,
+                        pageKey = dest.key,
                         sourceLink = articleUrl,
                         sourceLabel = label(articleTitle, feedTitle)
                     )
                 }.getOrDefault(false)
-                if (placed) offerTrip(fragment)
+                if (placed) offerTrip(fragment, dest.key, dest.name)
             }.apply { isDaemon = true }.start()
         }
     }
@@ -378,31 +387,16 @@ object FeedNoteGram {
 
     /**
      * Where the last gram went — the remembered default, so "Save as photo gram" is one tap and
-     * lands where you've been working (today's Notes page vs a pickings board). Every placement
-     * through this object records itself here.
+     * lands where you've been working. The memory itself moved to
+     * [com.toolsboox.plugin.calendar.ot.GramDestinations] (same preference keys, so nothing is
+     * forgotten on upgrade): one vocabulary, one memory, shared with every other capture path.
      */
-    private const val PREFS = "ledger_gram_prefs"
-    private const val KEY_LAST_DEST = "last_gram_destination"
-
-    private fun lastDestination(ctx: android.content.Context): String =
-        ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
-            .getString(KEY_LAST_DEST, NOTES_PAGE) ?: NOTES_PAGE
-
-    private fun rememberDestination(ctx: android.content.Context, key: String) {
-        ctx.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
-            .edit().putString(KEY_LAST_DEST, key).apply()
-    }
-
-    /** The destination named plainly, for menu items and the placed snackbar. */
-    private fun destinationName(key: String): String = when {
-        key == NOTES_PAGE -> "today's notes"
-        com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(key) -> "today's Pickings"
-        else -> "today's notes"
-    }
+    private fun lastDestination(ctx: android.content.Context) =
+        com.toolsboox.plugin.calendar.ot.GramDestinations.last(ctx)
 
     /** The one-tap menu label, naming where the gram will land: "⁂  Save as photo gram → …". */
     fun photoGramLabel(ctx: android.content.Context): String =
-        "⁂  Save as photo gram → ${destinationName(lastDestination(ctx))}"
+        "⁂  Save as photo gram → ${lastDestination(ctx).name}"
 
     /** Menu for a bare image held in the reader (SRC_IMAGE_TYPE — no link under it). */
     fun showImageMenu(
@@ -422,20 +416,18 @@ object FeedNoteGram {
             .show()
     }
 
-    /** Choose the destination explicitly — and it becomes the remembered one-tap default. */
+    /** Choose the destination explicitly — the one funnel, and it becomes the remembered
+     *  one-tap default (the chooser itself teaches the memory). */
     fun photoGramTo(
         fragment: ScreenFragment, service: CalendarDayService, root: File,
         imageUrl: String, articleTitle: String, feedTitle: String, articleUrl: String
     ) {
         val ctx = fragment.requireContext()
-        AlertDialog.Builder(ModalScale.wrap(ctx))
-            .setTitle("Photo gram to…")
-            .setItems(arrayOf("📝  Today's notes", "❝  Today's Pickings")) { _, which ->
-                val dest = if (which == 0) NOTES_PAGE else com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY
-                savePhotoGram(fragment, service, root, imageUrl, articleTitle, feedTitle, articleUrl, dest)
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+        com.toolsboox.plugin.calendar.ot.GramDestinations.choose(
+            ctx, title = "Photo gram to…", fragment = fragment
+        ) { dest ->
+            savePhotoGram(fragment, service, root, imageUrl, articleTitle, feedTitle, articleUrl, dest)
+        }
     }
 
     /**
@@ -447,7 +439,7 @@ object FeedNoteGram {
     fun savePhotoGram(
         fragment: ScreenFragment, service: CalendarDayService, root: File,
         imageUrl: String, articleTitle: String, feedTitle: String, articleUrl: String,
-        destination: String? = null
+        destination: com.toolsboox.plugin.calendar.ot.GramDestinations.Destination? = null
     ) {
         val ctx = fragment.requireContext()
         val dest = destination ?: lastDestination(ctx)
@@ -468,12 +460,13 @@ object FeedNoteGram {
             }
             val ok = runCatching {
                 PickingsPlacement.place(
-                    service, root, photoCard(photo, foot), LocalDate.now(), dest,
+                    service, root, photoCard(photo, foot), LocalDate.now(), dest.key,
                     sourceLink = articleUrl.takeIf { it.startsWith("http", ignoreCase = true) } ?: imageUrl,
-                    sourceLabel = label(articleTitle, feedTitle), sourceFeed = feedTitle
+                    sourceLabel = label(articleTitle, feedTitle), sourceFeed = feedTitle,
+                    intakeKind = dest.kind
                 )
             }.isSuccess
-            if (ok) { rememberDestination(ctx.applicationContext, dest); offerTrip(fragment, dest) }
+            if (ok) offerTrip(fragment, dest.key, dest.name)
         }.apply { isDaemon = true }.start()
     }
 
@@ -547,7 +540,21 @@ object FeedNoteGram {
         // and re-stars route through this same path, so a stale read can't stack twins in practice.
         if (url.isNotBlank()) {
             val day = service.load(root, today, null, Locale.getDefault())
-            if (day.imageElements.any { it.page == INTAKE_PAGE && it.sourceLink == url }) return false
+            if (day.imageElements.any { it.page == INTAKE_PAGE && it.sourceLink == url }) {
+                // Say so — a silent no-op reads as a dead star. The gram is already on the
+                // register (arranged, annotated), which is exactly why nothing new is placed.
+                runCatching {
+                    fragment.requireActivity().runOnUiThread {
+                        runCatching {
+                            android.widget.Toast.makeText(
+                                fragment.requireContext(), "★ already on All Stars",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                }
+                return false
+            }
         }
         val photo = thumb ?: imageUrl?.let { fetchImage(it) }
         val host = runCatching { java.net.URI(url).host?.removePrefix("www.") }.getOrNull().orEmpty()
@@ -584,44 +591,46 @@ object FeedNoteGram {
     // --- Placement ----------------------------------------------------------------------------
 
     /** Render the face off the main thread, place it (CardTreatment baked, edgeBaked, provenance
-     *  carried — [PickingsPlacement]'s conventions), then offer the trip. */
+     *  carried — [PickingsPlacement]'s conventions), then offer the trip. The destination is the
+     *  REMEMBERED one — capture stays one tap and the memory does the routing, with Gram Picks
+     *  standing in whenever the remembered place no longer exists today. */
     private fun placeAsync(
         fragment: ScreenFragment, service: CalendarDayService, root: File,
         articleUrl: String, articleTitle: String, feedTitle: String,
-        cardText: String = "", pageKey: String = NOTES_PAGE, face: () -> Bitmap
+        cardText: String = "", face: () -> Bitmap
     ) {
         val src = articleUrl.takeIf { it.startsWith("http", ignoreCase = true) } ?: ""
         val appCtx = fragment.requireContext().applicationContext
         Thread {
+            val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.last(appCtx)
             val ok = runCatching {
                 PickingsPlacement.place(
-                    service, root, face(), LocalDate.now(), pageKey,
+                    service, root, face(), LocalDate.now(), dest.key,
                     sourceLink = src, sourceLabel = label(articleTitle, feedTitle),
-                    cardText = cardText, sourceFeed = feedTitle
+                    cardText = cardText, sourceFeed = feedTitle, intakeKind = dest.kind
                 )
             }.isSuccess
             if (ok) {
-                rememberDestination(appCtx, pageKey)
                 // Tell the surface underneath, BEFORE offering the trip: if the reader is a pane on
                 // the day page, that page is holding a day without this card in it.
                 runCatching {
                     fragment.requireActivity().runOnUiThread {
-                        runCatching { fragment.onExternalGramPlaced(pageKey) }
+                        runCatching { fragment.onExternalGramPlaced(dest.key) }
                     }
                 }
-                offerTrip(fragment, pageKey)
+                offerTrip(fragment, dest.key, dest.name)
             }
         }.apply { isDaemon = true }.start()
     }
 
     /** Offer the trip rather than taking it — you were mid-article, so staying is the default
      *  and the page the gram landed on is one tap away. */
-    private fun offerTrip(fragment: ScreenFragment, pageKey: String = NOTES_PAGE) {
+    private fun offerTrip(fragment: ScreenFragment, pageKey: String, name: String) {
         runCatching {
             fragment.requireActivity().runOnUiThread {
                 runCatching {
                     com.google.android.material.snackbar.Snackbar.make(
-                        fragment.requireView(), "Gram on ${destinationName(pageKey)}.",
+                        fragment.requireView(), "Gram on $name.",
                         com.google.android.material.snackbar.Snackbar.LENGTH_LONG
                     ).setAction("Go to it") {
                         CalendarNavigator.toDayNote(fragment, LocalDate.now(), pageKey)

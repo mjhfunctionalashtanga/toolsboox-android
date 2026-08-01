@@ -137,11 +137,13 @@ class CalendarDayPageIntake : Creator {
         @Volatile
         private var grams: List<IntakeGram> = emptyList()
 
-        /** The gram under a canvas-space point, or null. */
-        fun gramAt(x: Float, y: Float): IntakeGram? = grams.firstOrNull { it.rect.contains(x, y) }
+        /** The gram under a canvas-space point, or null. LAST match wins: the list is built in
+         *  draw order, so where cards overlap (a full band stacks its overflow) the one on top —
+         *  drawn last — is the one a tap visibly lands on. */
+        fun gramAt(x: Float, y: Float): IntakeGram? = grams.lastOrNull { it.rect.contains(x, y) }
 
         /** The gram whose ✓-corner a canvas-space point falls in, or null (checked before [gramAt]). */
-        fun cornerAt(x: Float, y: Float): IntakeGram? = grams.firstOrNull { it.corner.contains(x, y) }
+        fun cornerAt(x: Float, y: Float): IntakeGram? = grams.lastOrNull { it.corner.contains(x, y) }
 
         /** The panel a canvas-space point falls in, or null (used to file a fresh gram by quarter). */
         fun panelAt(x: Float, y: Float): IntakePanel? = panels.firstOrNull { it.rect.contains(x, y) }
@@ -270,8 +272,41 @@ class CalendarDayPageIntake : Creator {
                         val cell = RectF(cl, ct, cl + cellW, ct + cellH)
                         drawGramInCell(canvas, img, cell, context)
                         canvas.drawRect(cell, cellBorder)
+                        // Recorded where it was DRAWN — the PickingsCover/DayEventHits discipline.
+                        // A printed past star still answers a hold ("Bring in a picking" keeps its
+                        // quarter) and a graduated one wears its ✓ in the record.
+                        recorded.add(IntakeGram(
+                            elementId = img.elementId.toString().lowercase(),
+                            page = img.page, kindKey = panel.kindKey,
+                            sourceLink = img.sourceLink, rect = RectF(cell),
+                            corner = RectF(cell.right - cornerSize, cell.top, cell.right, cell.top + cornerSize),
+                            graduatedTo = img.graduatedTo
+                        ))
+                        if (img.graduatedTo.isNotBlank()) {
+                            drawCorner(canvas, recorded.last().corner, checked = true)
+                        }
                     }
                 }
+            }
+            // TODAY'S LIVE STARS are drawn by the element layer, never by this template — but the
+            // hit-test list is this template's to keep, and shipping it empty is why the All Stars
+            // tap-to-open (1.06.14) and the hold menu's gram half never fired: [gramAt] answered
+            // null for every tap that visibly landed on a card. Each live element's own x/y/w/h is
+            // its rect (the same numbers the element layer draws it at, re-recorded on every
+            // [redrawIntakePage] so a drag re-teaches the map on the next repaint). No ✓ box is
+            // painted for a live card — template ink under an opaque element is invisible — and
+            // none is needed: a graduated gram routes its whole face to its board on tap.
+            calendarDay?.imageElements?.forEach { img ->
+                if (img.page != INTAKE_PAGE || img.decorative) return@forEach
+                if (img.data.isBlank() && img.dataRef.isBlank()) return@forEach
+                val rect = RectF(img.x, img.y, img.x + img.width, img.y + img.height)
+                recorded.add(IntakeGram(
+                    elementId = img.elementId.toString().lowercase(),
+                    page = img.page, kindKey = img.intakeKind,
+                    sourceLink = img.sourceLink, rect = rect,
+                    corner = RectF(rect.right - cornerSize, rect.top, rect.right, rect.top + cornerSize),
+                    graduatedTo = img.graduatedTo
+                ))
             }
             grams = recorded
         }

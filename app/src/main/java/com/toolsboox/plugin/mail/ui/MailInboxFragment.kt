@@ -1195,10 +1195,19 @@ class MailInboxFragment @Inject constructor() : ScreenFragment() {
                     calendarDayService.save(root, today, day)
                 }
                 runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(ctx, item) }
-                runCatching { placeMailStarGram(root, m, today) }.getOrDefault(false)
+                // null = the placement itself failed; false = the dedupe declined it. The two must
+                // toast differently — a re-star that answers "Starred" reads as a star that did
+                // nothing, when what actually happened is the gram is already on the register.
+                runCatching { placeMailStarGram(root, m, today) }.getOrNull()
             }
             if (!isAdded) return@launch
-            toast(if (placedGram) "★ → All Stars" else "Starred")
+            toast(
+                when (placedGram) {
+                    true -> "★ → All Stars"
+                    false -> "★ already on All Stars"
+                    null -> "Starred"
+                }
+            )
             messages = InboxStore.messages(ctx)
             render()
         }

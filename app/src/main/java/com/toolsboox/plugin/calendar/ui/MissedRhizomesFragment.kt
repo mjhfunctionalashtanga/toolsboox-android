@@ -257,21 +257,25 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         val today = LocalDate.now()
         picked.add(f.id)
         render()
+        // One-tap verb on a list row — no chooser, the shared gram memory routes the card (Gram
+        // Picks when the remembered place no longer exists today) and the message names the landing.
+        val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.last(ctx, today)
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
                 val card = QuoteCardRenderer.render(
                     f.quote.take(600), f.entryTitle.take(80), "✧ rhymes with your ${f.rootTag}".take(80),
                     1080, 0)
                 PickingsPlacement.place(
-                    calendarDayService, documentsRoot(), card, today, PickingsStore.DEFAULT_KEY,
-                    sourceLink = f.entryUrl, sourceLabel = f.entryTitle.take(60), cardText = f.quote.take(600))
-                // Provenance: the skipped source now belongs to today's pickings basket.
+                    calendarDayService, documentsRoot(), card, today, dest.key,
+                    sourceLink = f.entryUrl, sourceLabel = f.entryTitle.take(60), cardText = f.quote.take(600),
+                    intakeKind = dest.kind)
+                // Provenance: the skipped source now belongs to the page the card landed on.
                 if (f.entryUrl.isNotBlank()) ConnectionStore.connect(
-                    ctx, f.entryUrl, LedgerUri.page(today.toString(), PickingsStore.DEFAULT_KEY),
-                    kind = Connection.SOURCE, fromLabel = f.entryTitle.take(60), toLabel = "Pickings · $today")
+                    ctx, f.entryUrl, LedgerUri.page(today.toString(), dest.key),
+                    kind = Connection.SOURCE, fromLabel = f.entryTitle.take(60), toLabel = "${dest.name} · $today")
             }
         }
-        showMessage("Picking added to today's board", requireView())
+        showMessage("Picking added to ${dest.name}", requireView())
     }
 
     // MARK: - Discovery

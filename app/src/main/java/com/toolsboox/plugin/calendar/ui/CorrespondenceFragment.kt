@@ -1334,13 +1334,18 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                         else if (png != null) LedgerCorrespondence.postInkReply(ctx, feedId, png, parentId, cap)
                         else LedgerCorrespondence.postTextReply(ctx, feedId, cap, parentId)
                     }
-                    // Rhizome: the reply also becomes a Pickings gram whose provenance points back here.
+                    // Rhizome: the reply also becomes a gram whose provenance points back here.
+                    // It lands where the last gram went — a background mirror of a posted reply
+                    // must not raise a chooser, so the shared memory routes it, Gram Picks
+                    // standing in when the remembered place no longer exists today.
                     if (status == "Reply posted" && saveBmp != null) withContext(Dispatchers.IO) {
                         runCatching {
+                            val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.last(ctx)
                             com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
                                 calendarDayService, documentsRoot(), saveBmp, java.time.LocalDate.now(),
-                                com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY,
-                                sourceLink = provUrl ?: "", sourceLabel = "↩ Reply · ${deHtml(thread).take(40)}"
+                                dest.key,
+                                sourceLink = provUrl ?: "", sourceLabel = "↩ Reply · ${deHtml(thread).take(40)}",
+                                intakeKind = dest.kind
                             )
                         }
                         saveBmp.recycle()

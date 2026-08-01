@@ -274,15 +274,20 @@ class SproutsFragment @Inject constructor() : ScreenFragment() {
         val ctx = context ?: return
         val today = LocalDate.now()
         retire(ctx, s)
+        // "Pick" is a one-tap verb on a list row, so no chooser interrupts it — the shared gram
+        // memory routes the card (Gram Picks when the remembered place no longer exists today),
+        // and the message names where it went so a pick never lands in silence.
+        val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.last(ctx, today)
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
                 val card = QuoteCardRenderer.render(s.line.take(600), "✧ a crossing", null, 1080, 0)
                 PickingsPlacement.place(
-                    calendarDayService, documentsRoot(), card, today, PickingsStore.DEFAULT_KEY,
-                    sourceLabel = "✧ ${s.aTag} ⇄ ${s.bTag}".take(80), cardText = s.line.take(600))
+                    calendarDayService, documentsRoot(), card, today, dest.key,
+                    sourceLabel = "✧ ${s.aTag} ⇄ ${s.bTag}".take(80), cardText = s.line.take(600),
+                    intakeKind = dest.kind)
             }
         }
-        showMessage("Picked into today's pickings", requireView())
+        showMessage("Picked to ${dest.name}", requireView())
     }
 
     private fun retire(ctx: Context, s: Sprout) {

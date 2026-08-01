@@ -1794,10 +1794,22 @@ abstract class ScreenFragment : Fragment() {
             // Synthesize/Grid/Jot document) you are standing in. The old fixed 64dp was tuned for
             // the phone's 50dp strip; the strip is 60dp on sw600 and 76dp on sw900, so on a Boox
             // the drawer's top edge landed inside the chip's band (strip bottom + ~30dp) on every
-            // bucket and opening the ▦ hub covered the page's own label. Measured off the strip's
-            // dimen plus the chip band's height, so the label stays readable while the drawer is up.
+            // bucket and opening the ▦ hub covered the page's own label. MEASURED now, not summed
+            // from constants: the chip anchors itself under the template's own header rect (see
+            // CalendarDayFragment.bindDirectoryChip), so its band is no longer at a knowable fixed
+            // offset — the drawer asks the chip where it actually is and opens beneath it, falling
+            // back to the strip-plus-band arithmetic on surfaces that have no chip on screen.
             lp.x = 0
-            lp.y = resources.getDimensionPixelSize(R.dimen.ledger_navigator_height) + dp(36)
+            lp.y = run {
+                val chip = activity?.findViewById<android.view.View>(R.id.directoryChip)
+                if (chip != null && chip.visibility == View.VISIBLE && chip.height > 0) {
+                    val loc = IntArray(2)
+                    chip.getLocationInWindow(loc)
+                    loc[1] + chip.height + dp(6)
+                } else {
+                    resources.getDimensionPixelSize(R.dimen.ledger_navigator_height) + dp(36)
+                }
+            }
             // Grows with the text, like the other two menus. Pinned, the labels simply clipped:
             // item_go_to rows are single-line and ellipsized, so raising the size made the words
             // shorter rather than bigger and the setting looked like it did nothing at all.

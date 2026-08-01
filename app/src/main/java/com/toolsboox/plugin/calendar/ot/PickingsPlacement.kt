@@ -12,6 +12,134 @@ import java.time.LocalDate
 import java.util.Locale
 
 /**
+ * THE ONE DESTINATION VOCABULARY — iOS's `GramDestinations`, on Android.
+ *
+ * Every place a gram can be sent, in reading order: Gram Picks (the inbox, first, because a picked
+ * gram's home is the page you sort from — Michael: "when I pick a gram, I do want to eventually
+ * place it, so it should go on Gram Picks"), today's notes, the day's Pickings boards, the All
+ * Stars bands, Synthesize. One list feeds every chooser, and one memory — the same
+ * `last_gram_destination` preference [FeedNoteGram's photo default] has written since it landed,
+ * with the band riding alongside in its own key so a value that was a bare page key for a year
+ * stays readable as a bare page key (the iOS side keeps these exact names for the same reason).
+ *
+ * The remembered destination is honoured only while it still EXISTS on the day being placed onto:
+ * a named board from another day is not in today's list, and offering it would place a gram onto a
+ * page nothing can reach. When the memory can't be honoured, the fallback is Gram Picks — the
+ * inbox, which is always there and always right to sort from later.
+ */
+object GramDestinations {
+
+    /** One place a gram can go: a page key, and — for the All Stars bands — which band. */
+    data class Destination(val glyph: String, val name: String, val key: String, val kind: String = "")
+
+    /** Today's handwritten Notes page — page "0", where feed notes have always landed. */
+    const val NOTES_PAGE = "0"
+
+    // The preference names are load-bearing: FeedNoteGram's photo-gram default has been writing
+    // "last_gram_destination" into "ledger_gram_prefs" since it landed, and iOS reads/writes the
+    // same pair — renaming either would silently forget where the last gram went on every device
+    // that upgrades.
+    private const val PREFS = "ledger_gram_prefs"
+    private const val KEY_LAST = "last_gram_destination"
+    private const val KEY_LAST_KIND = "last_gram_destination_kind"
+
+    /** Every making surface a gram can be sent to, on [date], in reading order. */
+    fun all(context: android.content.Context, date: LocalDate = LocalDate.now()): List<Destination> {
+        val out = mutableListOf(
+            Destination("◈", "Gram Picks", CalendarDayPageNotes.GRAM_PICKS),
+            Destination("📝", "Today's notes", NOTES_PAGE),
+        )
+        for (b in PickingsStore.list(context, date)) {
+            val name = if (b.key == PickingsStore.DEFAULT_KEY) "Today's Pickings"
+            else b.name.ifBlank { "Pickings" }
+            out.add(Destination("❝", name, b.key))
+        }
+        for (p in CalendarDayPageIntake.panels) {
+            out.add(Destination("★", "All Stars · ${p.title}", CalendarDayPageIntake.INTAKE_PAGE, p.kindKey))
+        }
+        out.add(Destination("🔬", "Synthesize", "synthesize"))
+        return out
+    }
+
+    /** Where the last gram went, if that place still exists on [date]; Gram Picks otherwise. */
+    fun last(context: android.content.Context, date: LocalDate = LocalDate.now()): Destination {
+        val prefs = context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+        val key = prefs.getString(KEY_LAST, NOTES_PAGE) ?: NOTES_PAGE
+        val kind = prefs.getString(KEY_LAST_KIND, "") ?: ""
+        val list = all(context, date)
+        return list.firstOrNull { it.key == key && it.kind == kind } ?: list[0]
+    }
+
+    /** Record a choice — called by the chooser, so the next capture learns from the last one. */
+    fun remember(context: android.content.Context, d: Destination) {
+        context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+            .edit().putString(KEY_LAST, d.key).putString(KEY_LAST_KIND, d.kind).apply()
+    }
+
+    /** The chooser's order: the remembered destination first, then everything else in reading order. */
+    fun ordered(context: android.content.Context, date: LocalDate = LocalDate.now()): List<Destination> {
+        val first = last(context, date)
+        return listOf(first) + all(context, date).filter { it.key != first.key || it.kind != first.kind }
+    }
+
+    /** A destination named plainly, for a toast or a menu label. Falls back through the board
+     *  registry so a gram placed on a board named on another day still says where it landed. */
+    fun name(
+        context: android.content.Context, key: String, kind: String = "",
+        date: LocalDate = LocalDate.now()
+    ): String {
+        all(context, date).firstOrNull { it.key == key && it.kind == kind }?.let { return it.name }
+        if (PickingsStore.isPickings(key)) return PickingsStore.nameOf(context, date, key)
+        return "today's notes"
+    }
+
+    /**
+     * The one chooser every "send this gram to…" runs through: the remembered destination first,
+     * then the whole vocabulary, then "＋ New pickings…". Choosing is what teaches the memory —
+     * the destination is already remembered by the time [onPick] runs.
+     *
+     * [fragment] is optional so MainActivity-hosted flows could reuse the list; when present, the
+     * new-board name dialog is guarded (a name being typed is work — a stray touch outside must
+     * not throw it away).
+     */
+    fun choose(
+        context: android.content.Context,
+        date: LocalDate = LocalDate.now(),
+        title: String = "Send this gram to",
+        fragment: ScreenFragment? = null,
+        onPick: (Destination) -> Unit
+    ) {
+        val choices = ordered(context, date)
+        val labels = (choices.map { "${it.glyph}  ${it.name}" } + "＋  New pickings…").toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
+            .setTitle(title)
+            .setItems(labels) { _, which ->
+                if (which < choices.size) {
+                    val d = choices[which]
+                    remember(context, d)
+                    onPick(d)
+                } else {
+                    val input = android.widget.EditText(context).apply { hint = "Pickings name"; setSingleLine() }
+                    val pad = (16 * context.resources.displayMetrics.density).toInt()
+                    val box = android.widget.LinearLayout(context).apply {
+                        orientation = android.widget.LinearLayout.VERTICAL
+                        setPadding(pad, pad / 2, pad, 0); addView(input)
+                    }
+                    val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
+                        .setTitle("New pickings").setView(box)
+                        .setPositiveButton("Create") { _, _ ->
+                            val page = PickingsStore.add(context, date, input.text.toString().trim())
+                            val d = Destination("❝", page.name, page.key)
+                            remember(context, d)
+                            onPick(d)
+                        }.setNegativeButton(android.R.string.cancel, null).create()
+                    if (fragment != null) fragment.showGuardedModal(dialog) else dialog.show()
+                }
+            }.setNegativeButton(android.R.string.cancel, null).show()
+    }
+}
+
+/**
  * Drops a rendered gram (bitmap) onto a pickings board — the cross-surface "Add to Pickings" path.
  * Writes an [ImageElement] (inline base64 PNG, same shape as on-canvas image inserts) onto the
  * chosen board's page key in the day JSON, so the card is there when the board is opened.
@@ -108,71 +236,41 @@ object PickingsPlacement {
         }
     }
 
-    /** Chooser: today's board · new board · a saved board — then place [bitmap] off the main thread. */
+    /** Chooser: the full destination vocabulary — then place [bitmap] off the main thread. */
     fun chooseAndPlace(
         fragment: ScreenFragment, service: CalendarDayService, root: File, bitmap: Bitmap,
         date: LocalDate = LocalDate.now(), sourceLink: String = "", sourceLabel: String = "",
         media: MediaRef? = null, cardText: String = "", sourceFeed: String = ""
     ) = chooseAndPlace(fragment, service, root, listOf(bitmap), date, sourceLink, sourceLabel, media, cardText, sourceFeed)
 
-    /** Same chooser for SEVERAL cards (a gram series) — one board pick, all placed. */
+    /** Same chooser for SEVERAL cards (a gram series) — one destination pick, all placed. */
     fun chooseAndPlace(
         fragment: ScreenFragment, service: CalendarDayService, root: File, bitmaps: List<Bitmap>,
         date: LocalDate = LocalDate.now(), sourceLink: String = "", sourceLabel: String = "",
         media: MediaRef? = null, cardText: String = "", sourceFeed: String = ""
     ) {
-        val bitmap = bitmaps.firstOrNull() ?: return
+        if (bitmaps.isEmpty()) return
         val ctx = fragment.requireContext()
-        val saved = PickingsStore.list(ctx, date).filter { it.key != PickingsStore.DEFAULT_KEY }
-        // GRAM PICKS FIRST — the inbox, and the answer to "a gram gets sent to too many places".
-        //
-        // Every capture route funnels through this chooser, so putting the inbox at the top of it is
-        // the whole change: you no longer have to decide what a gram is FOR at the moment you grab
-        // it, which is the moment you know least. Send it here, sort it later from one page with the
-        // gram in front of you. The boards stay right below for when you already know.
-        val labels = (listOf("◈  Gram Picks", "❝  Today's Pickings", "＋  New pickings…") +
-            saved.map { "❝  ${it.name}" }).toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle("Send this gram to")
-            .setItems(labels) { _, which ->
-                when (which) {
-                    0 -> placeAsync(
-                        fragment, service, root, bitmaps, date,
-                        CalendarDayPageNotes.GRAM_PICKS, "Gram Picks",
-                        sourceLink, sourceLabel, media, cardText, sourceFeed
-                    )
-                    1 -> placeAsync(fragment, service, root, bitmaps, date, PickingsStore.DEFAULT_KEY, "today's Pickings", sourceLink, sourceLabel, media, cardText, sourceFeed)
-                    2 -> {
-                        val input = android.widget.EditText(ctx).apply { hint = "Pickings name"; setSingleLine() }
-                        val pad = (16 * ctx.resources.displayMetrics.density).toInt()
-                        val box = android.widget.LinearLayout(ctx).apply {
-                            orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input)
-                        }
-                        // Guarded: a name being typed is work — a stray touch outside must
-                        // not throw it away.
-                        fragment.showGuardedModal(
-                            androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle("New pickings").setView(box)
-                                .setPositiveButton("Create") { _, _ ->
-                                    val page = PickingsStore.add(ctx, date, input.text.toString().trim())
-                                    placeAsync(fragment, service, root, bitmaps, date, page.key, page.name, sourceLink, sourceLabel, media, cardText, sourceFeed)
-                                }.setNegativeButton(android.R.string.cancel, null).create())
-                    }
-                    else -> {
-                        // Offset 3, not 2: Gram Picks now leads the list.
-                        val board = saved[which - 3]
-                        placeAsync(fragment, service, root, bitmaps, date, board.key, board.name, sourceLink, sourceLabel, media, cardText, sourceFeed)
-                    }
-                }
-            }.setNegativeButton(android.R.string.cancel, null).show()
+        // The whole vocabulary, remembered-last-first, through the one funnel — iOS's
+        // GramDestinations, so a gram can go anywhere a gram can live and the chooser teaches the
+        // memory every quick-capture path reads. Gram Picks leads whenever there is no memory to
+        // honour: you no longer have to decide what a gram is FOR at the moment you grab it, which
+        // is the moment you know least.
+        GramDestinations.choose(ctx, date, "Send this gram to", fragment) { d ->
+            placeAsync(
+                fragment, service, root, bitmaps, date, d.key, d.name,
+                sourceLink, sourceLabel, media, cardText, sourceFeed, intakeKind = d.kind
+            )
+        }
     }
 
     private fun placeAsync(
         fragment: ScreenFragment, service: CalendarDayService, root: File, bitmaps: List<Bitmap>,
         date: LocalDate, key: String, name: String, sourceLink: String = "", sourceLabel: String = "",
-        media: MediaRef? = null, cardText: String = "", sourceFeed: String = ""
+        media: MediaRef? = null, cardText: String = "", sourceFeed: String = "", intakeKind: String = ""
     ) {
         Thread {
-            for (b in bitmaps) runCatching { place(service, root, b, date, key, sourceLink, sourceLabel, media, cardText = cardText, sourceFeed = sourceFeed) }
+            for (b in bitmaps) runCatching { place(service, root, b, date, key, sourceLink, sourceLabel, media, cardText = cardText, sourceFeed = sourceFeed, intakeKind = intakeKind) }
             val what = if (bitmaps.size > 1) "${bitmaps.size} grams" else "Placed"
             // Offer the trip rather than taking it. You were mid-something on the page you
             // circled from, and the usual next move is to put another thing on the same board —

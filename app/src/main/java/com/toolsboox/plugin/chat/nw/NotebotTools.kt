@@ -255,8 +255,8 @@ object NotebotRegistry {
         // sentence names where the gram landed, so the answer you read says where to look.
         AskTool(
             name = "save_gram",
-            description = "Render text as a quote-card gram and place it on the reader's Pickings " +
-                "page — a movable, connectable object, not just a line of chat.",
+            description = "Render text as a quote-card gram and place it on the reader's making " +
+                "surfaces — a movable, connectable object, not just a line of chat.",
             params = listOf(
                 AskToolParam("text", "string", "The words the card carries."),
                 AskToolParam("title", "string", "Card title / source line (optional).", required = false),
@@ -267,15 +267,19 @@ object NotebotRegistry {
             if (text.isEmpty()) "save_gram needs text — nothing was placed."
             else {
                 val title = str(args, "title")
+                // A tool call inside a model turn cannot raise a chooser, so the shared gram
+                // memory routes it — Gram Picks when the remembered place no longer exists today
+                // — and the answer sentence names the landing, as it always has.
+                val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.last(context)
                 val placed = runCatching {
                     val face = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
                         text.take(600), title.ifBlank { "Ask my Ledger" }, null, 1080, 0)
                     com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
-                        calendarDayService, root, face, LocalDate.now(),
-                        com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY,
-                        sourceLabel = title.ifBlank { "Ask my Ledger" }, cardText = text)
+                        calendarDayService, root, face, LocalDate.now(), dest.key,
+                        sourceLabel = title.ifBlank { "Ask my Ledger" }, cardText = text,
+                        intakeKind = dest.kind)
                 }.isSuccess
-                if (placed) "Saved gram" + (if (title.isBlank()) "" else " \"$title\"") + " onto Pickings."
+                if (placed) "Saved gram" + (if (title.isBlank()) "" else " \"$title\"") + " onto ${dest.name}."
                 else "Couldn't place the gram — nothing was saved."
             }
         },

@@ -1752,61 +1752,8 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         toolbar.toolbarPager.visibility = View.GONE
 
-        // The stepper walks the day's sections in RITUAL order, matching iOS (PlannerModel.cycle):
-        // Day → Intake → Pickings → Gratitude → Self Executive → Synthesize → Write → the numeric
-        // Notes tail. Named pickings boards and topic syntheses fold onto their base station so the
-        // step never strands you on an unlisted key. Up from Day still exits to the Week almanac —
-        // the Boox convention, and where the iOS ring goes too.
-        fun stepStation(): String? = when {
-            com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(notePage) -> "pickings"
-            com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage) -> "synthesize"
-            // A named Write document folds onto the Write station the same way a named board folds
-            // onto Pickings — otherwise ↑/↓ from an essay would strand you on an unlisted key.
-            com.toolsboox.plugin.calendar.ot.WritePageStore.isWrite(notePage) -> "write"
-            // A named sub-page (write#2) folds onto its base for the ritual step — write#2's ↑/↓
-            // walk write's neighbours (synthesize ↔ write ↔ "0"), same as the base page.
-            else -> baseNotePage(notePage)
-        }
-        binding.toolbarDrawing.toolbarSwipeUp.setOnClickListener {
-            if (notePage != null) {
-                when (stepStation()) {
-                    "intake" -> CalendarNavigator.toDayPage(this, currentDate, CalendarDay.DEFAULT_STYLE)
-                    "pickings" -> CalendarNavigator.toDayNote(this, currentDate, "intake")
-                    "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "pickings")
-                    "selfexec" -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
-                    "synthesize" -> CalendarNavigator.toDayNote(this, currentDate, "selfexec")
-                    "write" -> CalendarNavigator.toDayNote(this, currentDate, "synthesize")
-                    else -> {
-                        val page = baseNotePage(notePage)?.toIntOrNull() ?: 0
-                        if (page == 0) {
-                            CalendarNavigator.toDayNote(this, currentDate, "write")
-                        } else {
-                            CalendarNavigator.toDayNote(this, currentDate, "${page - 1}")
-                        }
-                    }
-                }
-            } else {
-                CalendarNavigator.toWeekPage(this, currentDate, locale)
-            }
-        }
-        binding.toolbarDrawing.toolbarSwipeDown.setOnClickListener {
-            if (notePage != null) {
-                when (stepStation()) {
-                    "intake" -> CalendarNavigator.toDayNote(this, currentDate, "pickings")
-                    "pickings" -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
-                    "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "selfexec")
-                    "selfexec" -> CalendarNavigator.toDayNote(this, currentDate, "synthesize")
-                    "synthesize" -> CalendarNavigator.toDayNote(this, currentDate, "write")
-                    "write" -> CalendarNavigator.toDayNote(this, currentDate, "0")
-                    else -> {
-                        val page = baseNotePage(notePage)?.toIntOrNull() ?: 0
-                        CalendarNavigator.toDayNote(this, currentDate, "${page + 1}")
-                    }
-                }
-            } else {
-                CalendarNavigator.toDayNote(this, currentDate, "intake")
-            }
-        }
+        binding.toolbarDrawing.toolbarSwipeUp.setOnClickListener { ritualStepBack() }
+        binding.toolbarDrawing.toolbarSwipeDown.setOnClickListener { ritualStepForward() }
         // Calendar button (hidden with the upstream toolbar group; kept wired for performClick).
         binding.toolbarDrawing.toolbarCalendarView.setOnClickListener { showLedgerHub() }
         // The header's top-left ☰ retired with the rail: its one job on this page was
@@ -2854,6 +2801,26 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         chip.text = if (siblings.size > 1) "${docs.glyph(surface)}  $title  ·  ${siblings.size}  ▾"
         else "${docs.glyph(surface)}  $title  ▾"
         chip.visibility = View.VISIBLE
+        // BELOW the template's own kind label, measured — not a per-bucket constant. The chip is
+        // constrained under the date strip, which is exactly where the templates draw their header
+        // ("WRITE", "GRID NOTES", the board's NOTES/QUOTES) into the page's top margin: design-space
+        // y 0..~61 of the 1872-tall canvas, mapped through the template view's fitXY scale. On the
+        // Go 6 the mapping happened to clear it; on taller buckets the chip sat on the label. The
+        // margin's bottom rule (y=61, CalendarDayPageNotes' `to`; the Pickings panels start at 60)
+        // is the one line every chip-bearing template agrees on, so the chip's top edge is pinned
+        // just under it — over blank paper, never over the words. Measured on layout because the
+        // view's height is 0 when this binds, and re-measured whenever the surface is re-laid-out.
+        val template = binding.templateImageView
+        val marginPx = 2f * resources.displayMetrics.density   // the chip's own layout_marginTop
+        fun anchorChip() {
+            if (template.height <= 0) return
+            val headerBottom = 61f * template.height / 1872f
+            chip.translationY = (headerBottom - marginPx).coerceAtLeast(0f)
+        }
+        anchorChip()
+        template.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            if (bottom - top != oldBottom - oldTop) anchorChip()
+        }
         chip.setOnClickListener {
             // The day you're ON and the document you're IN — the two things the old hub route could
             // not pass, which is what made its picker describe someone else's day.
@@ -2885,6 +2852,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 }
                 add(GoItem("☀︎", "Day") { CalendarNavigator.toDayPage(this@CalendarDayFragment, LocalDate.now(), CalendarDay.DEFAULT_STYLE) })
                 add(GoItem("★", "All Stars") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
+                // Gram Picks sits between All Stars and Pickings — the iPhone's Flow order (All
+                // Stars → Gram Picks → Pickings → Synthesize → Write): a star lands on the
+                // register, a pick lands on the inbox, and the boards are where sorted things go.
+                add(GoItem("◈", "Gram Picks") {
+                    CalendarNavigator.toDayNote(
+                        this@CalendarDayFragment, LocalDate.now(),
+                        com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
+                    )
+                })
                 add(GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "pickings") })
                 add(GoItem("🔬", "Synthesize") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "synthesize") })
                 add(GoItem("✍", "Write") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "write") })
@@ -2910,8 +2886,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /** The next station of the daily ritual after the page we're on, or null off-flow. */
-    private fun ritualNextStep(): Triple<String, String, String>? = when (currentNotePage()) {
-        "intake" -> Triple("pickings", "❝", "Pickings")
+    private fun ritualNextStep(): Triple<String, String, String>? = when (currentNotePage()?.substringBefore('#')) {
+        // Gram Picks sits between the register and the boards — iOS's PlannerPage.cycle, and the
+        // iPhone's Flow order: a star lands on All Stars, a pick lands on the Gram Picks inbox,
+        // and sorting it onto a board is the next station of the same walk.
+        "intake" -> Triple(com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS, "◈", "Gram Picks")
+        com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> Triple("pickings", "❝", "Pickings")
         "pickings" -> Triple("gratitude", "🙏", "Gratitude")
         // Self Executive sits between Gratitude and Synthesize — same chain the stepper walks
         // and the same one iOS runs (PlannerModel.ritualNext); skipping it here made the ⚡
@@ -2920,6 +2900,74 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         "selfexec" -> Triple("synthesize", "🔬", "Synthesize")
         "synthesize" -> Triple("write", "✍", "Write")
         else -> null
+    }
+
+    // ─── The ritual chain, stepped — ONE walk for the stepper, the pager arrows, and the
+    // finger swipes (vertical and horizontal), so no two controls can disagree about what "next"
+    // means. The order matches iOS (PlannerPage.cycle) and the iPhone's Flow: Day → All Stars →
+    // Gram Picks → Pickings → Gratitude → Self Executive → Synthesize → Write → the numeric Notes
+    // tail. Named pickings boards, topic syntheses and Write documents fold onto their base
+    // station so the step never strands you on an unlisted key; up from Day still exits to the
+    // Week almanac — the Boox convention, and where the iOS ring goes too.
+
+    /** The ritual station this page folds onto, or the numeric key itself. */
+    private fun stepStation(): String? = when {
+        com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(notePage) -> "pickings"
+        com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage) -> "synthesize"
+        // A named Write document folds onto the Write station the same way a named board folds
+        // onto Pickings — otherwise ↑/↓ from an essay would strand you on an unlisted key.
+        com.toolsboox.plugin.calendar.ot.WritePageStore.isWrite(notePage) -> "write"
+        // A sub-page (write#2, grampicks#1) folds onto its base for the ritual step — its ↑/↓
+        // walk the base page's neighbours, same as the base page.
+        else -> baseNotePage(notePage)
+    }
+
+    /** Step to the PREVIOUS station (the stepper's ↑, a downward or rightward finger swipe). */
+    fun ritualStepBack() {
+        if (notePage == null) {
+            CalendarNavigator.toWeekPage(this, currentDate, locale)
+            return
+        }
+        val gramPicks = com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
+        when (stepStation()) {
+            "intake" -> CalendarNavigator.toDayPage(this, currentDate, CalendarDay.DEFAULT_STYLE)
+            gramPicks -> CalendarNavigator.toDayNote(this, currentDate, "intake")
+            "pickings" -> CalendarNavigator.toDayNote(this, currentDate, gramPicks)
+            "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "pickings")
+            "selfexec" -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
+            "synthesize" -> CalendarNavigator.toDayNote(this, currentDate, "selfexec")
+            "write" -> CalendarNavigator.toDayNote(this, currentDate, "synthesize")
+            else -> {
+                val page = baseNotePage(notePage)?.toIntOrNull() ?: 0
+                if (page == 0) {
+                    CalendarNavigator.toDayNote(this, currentDate, "write")
+                } else {
+                    CalendarNavigator.toDayNote(this, currentDate, "${page - 1}")
+                }
+            }
+        }
+    }
+
+    /** Step to the NEXT station (the stepper's ↓, an upward or leftward finger swipe). */
+    fun ritualStepForward() {
+        if (notePage == null) {
+            CalendarNavigator.toDayNote(this, currentDate, "intake")
+            return
+        }
+        val gramPicks = com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
+        when (stepStation()) {
+            "intake" -> CalendarNavigator.toDayNote(this, currentDate, gramPicks)
+            gramPicks -> CalendarNavigator.toDayNote(this, currentDate, "pickings")
+            "pickings" -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
+            "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "selfexec")
+            "selfexec" -> CalendarNavigator.toDayNote(this, currentDate, "synthesize")
+            "synthesize" -> CalendarNavigator.toDayNote(this, currentDate, "write")
+            "write" -> CalendarNavigator.toDayNote(this, currentDate, "0")
+            else -> {
+                val page = baseNotePage(notePage)?.toIntOrNull() ?: 0
+                CalendarNavigator.toDayNote(this, currentDate, "${page + 1}")
+            }
+        }
     }
 
     /**
@@ -3771,31 +3819,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         showModal(dialog)
     }
 
-    /** Choose a pickings board and drop this gram card onto it (current day). */
+    /** Choose where this gram card goes (current day) — the one destination funnel, so the gram
+     *  studio and the All Stars hold menu speak the same vocabulary as every other chooser: Gram
+     *  Picks and the bands included, remembered-last-first, and the pick teaches the memory. The
+     *  board list this chooser always carried is preserved inside that vocabulary; placement stays
+     *  in-memory ([addGramToPickingPage]) because this fragment holds the open day, and a
+     *  disk-level write behind its back is how a pen-up save loses a card. */
     private fun placeGramToPickings(bmp: android.graphics.Bitmap) {
         if (!::calendarDay.isInitialized) return
         val ctx = requireContext()
-        val boards = com.toolsboox.plugin.calendar.ot.PickingsStore.list(ctx, currentDate)
-        val saved = boards.filter { it.key != com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY }
-        val labels = (listOf("❝  Today's Pickings", "＋  New pickings…") + saved.map { "❝  ${it.name}" }).toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle("Add gram to Pickings")
-            .setItems(labels) { _, which ->
-                when (which) {
-                    0 -> addGramToPickingPage(bmp, com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY)
-                    1 -> {
-                        val input = android.widget.EditText(ctx).apply { hint = "Pickings name"; setSingleLine() }
-                        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setTitle("New pickings").setView(input)
-                            .setPositiveButton("Create") { _, _ ->
-                                val page = com.toolsboox.plugin.calendar.ot.PickingsStore.add(ctx, currentDate, input.text.toString().trim())
-                                addGramToPickingPage(bmp, page.key)
-                            }.setNegativeButton(android.R.string.cancel, null).show()
-                    }
-                    else -> addGramToPickingPage(bmp, saved[which - 2].key)
-                }
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+        com.toolsboox.plugin.calendar.ot.GramDestinations.choose(
+            ctx, currentDate, "Send this gram to", this
+        ) { dest -> addGramToPickingPage(bmp, dest.key, dest.kind) }
     }
 
     /**
@@ -3839,8 +3874,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .show()
     }
 
-    /** Encode the gram card and add it as an image element on [pageKey] of the current day. */
-    private fun addGramToPickingPage(bmp: android.graphics.Bitmap, pageKey: String) {
+    /** Encode the gram card and add it as an image element on [pageKey] of the current day.
+     *  [intakeKind] only means anything when the destination is the All Stars register — there
+     *  the card lands inside its kind's band at half width, exactly as [PickingsPlacement.place]
+     *  sizes an intake arrival, so the two placement paths agree about what the register looks
+     *  like. */
+    private fun addGramToPickingPage(bmp: android.graphics.Bitmap, pageKey: String, intakeKind: String = "") {
         if (!::calendarDay.isInitialized) return
         val max = 1200
         val longest = maxOf(bmp.width, bmp.height)
@@ -3848,10 +3887,17 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             android.graphics.Bitmap.createScaledBitmap(bmp, bmp.width * max / longest, bmp.height * max / longest, true) else bmp
         val baos = java.io.ByteArrayOutputStream(); scaled.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
         val base64 = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
-        val w = (1404f * 0.42f).coerceAtMost(scaled.width.toFloat()); val h = w * scaled.height / scaled.width
+        val isIntakeArrival = pageKey == CalendarDayPageIntake.INTAKE_PAGE && intakeKind.isNotBlank()
+        val naturalW = (1404f * 0.42f).coerceAtMost(scaled.width.toFloat())
+        val w = if (isIntakeArrival) naturalW / 2f else naturalW
+        val h = w * scaled.height / scaled.width
         val count = calendarDay.imageElements.count { it.page == pageKey }
-        val x = (60f + (count % 3) * (w + 30f)).coerceIn(0f, (1404f - w).coerceAtLeast(0f))
-        val y = (120f + (count / 3) * (h + 30f)).coerceIn(0f, (1872f - h).coerceAtLeast(0f))
+        val bandSlot = if (isIntakeArrival) {
+            val taken = calendarDay.imageElements.count { it.page == pageKey && it.intakeKind == intakeKind }
+            CalendarDayPageIntake.bandSlotFor(intakeKind, taken, w, h)
+        } else null
+        val x = bandSlot?.first ?: (60f + (count % 3) * (w + 30f)).coerceIn(0f, (1404f - w).coerceAtLeast(0f))
+        val y = bandSlot?.second ?: (120f + (count / 3) * (h + 30f)).coerceIn(0f, (1872f - h).coerceAtLeast(0f))
         // Remember the ledger page this card was grammed from so the placed gram can jump back to it.
         val srcPage = notePage ?: "day"
         val srcLabel =
@@ -3860,10 +3906,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             else notePage?.replaceFirstChar { it.uppercase() } ?: "Day"
         calendarDay.imageElements.add(com.toolsboox.da.ImageElement(
             x = x, y = y, width = w, height = h, data = base64, page = pageKey,
-            sourceLink = "ledger://$currentDate/$srcPage", sourceLabel = srcLabel))
+            sourceLink = "ledger://$currentDate/$srcPage", sourceLabel = srcLabel,
+            intakeKind = intakeKind))
         calendarPattern.updateDay(calendarDay)
         presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
-        showMessage("Added to pickings.", binding.root)
+        if (notePage == CalendarDayPageIntake.INTAKE_PAGE && isIntakeArrival) redrawIntakePage()
+        showMessage(
+            "Added to ${com.toolsboox.plugin.calendar.ot.GramDestinations.name(requireContext(), pageKey, intakeKind, currentDate)}.",
+            binding.root
+        )
     }
 
     override fun onSharePage() {
@@ -5206,7 +5257,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 context = context
             )
             binding.templateImageView.invalidate()
-            showMessage("Picked into its own board — tap ✓ to open it", binding.root)
+            showMessage("Picked into its own board — tap the gram to open it", binding.root)
         }
     }
 
@@ -5247,8 +5298,16 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      */
     private data class PickingGram(
         val date: LocalDate, val page: String, val id: String,
-        val boardName: String, val label: String, val glyph: String
-    )
+        val boardName: String, val label: String, val glyph: String,
+        // "❝" for a board's card, "◈" for one still in the Gram Picks inbox — the picker's rows
+        // say which kind of place a card is coming from, since the two mean different things
+        // (a board keeps its card; the inbox gives its card up — see [fromGramPicks]).
+        val boardGlyph: String = "❝"
+    ) {
+        /** Whether this card lives on the Gram Picks inbox — sub-pages included. */
+        val fromGramPicks: Boolean
+            get() = page.substringBefore('#') == com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
+    }
 
     /**
      * What one pass over the ledger found: the cards, and the days it could not answer for yet.
@@ -5543,8 +5602,47 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 sourceLink = pair.first.sourceLink, sourceLabel = p.label,
                 cardText = pair.first.cardText, sourceFeed = pair.first.sourceFeed
             )
+            // Out of the inbox is a MOVE: a real board keeps its card (material being carried
+            // around), but Gram Picks is the pile you sort out of, and a sort that copies never
+            // empties the pile. Same-day originals leave through the in-memory day (this
+            // fragment holds it, and a disk write behind its back would be resurrected by the
+            // next pen-up save); other days' leave on disk, under their own day lock.
+            if (ok && p.fromGramPicks) {
+                if (!removeInboxOriginalInMemory(p)) {
+                    withContext(Dispatchers.IO) { removeInboxOriginalOnDisk(appCtx, p) }
+                }
+            }
             showMessage(if (ok) "Brought in ${p.label}" else "Couldn't bring that picking in", binding.root)
         }
+    }
+
+    /**
+     * Take a moved gram's ORIGINAL off the Gram Picks inbox, for a source day this fragment holds
+     * in memory. Tombstoned as well as removed, or the sync union hands it back. Returns false
+     * when the day isn't the one in hand — the disk path below owns that case.
+     */
+    private fun removeInboxOriginalInMemory(p: PickingGram): Boolean {
+        if (!::calendarDay.isInitialized || p.date != currentDate) return false
+        if (!calendarDay.imageElements.removeAll { it.elementId.toString() == p.id }) return false
+        if (p.id !in calendarDay.deletedElementIds) calendarDay.deletedElementIds.add(p.id)
+        calendarPattern.updateDay(calendarDay)
+        presenter.save(this, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
+        return true
+    }
+
+    /** The disk half of the move: another day's inbox gives its card up under that day's lock.
+     *  MUST be called off the main thread — it loads and saves a whole day file. */
+    private fun removeInboxOriginalOnDisk(ctx: android.content.Context, p: PickingGram) {
+        runCatching {
+            val root = com.toolsboox.ot.LedgerPaths.documentsRoot(ctx)
+            com.toolsboox.plugin.calendar.ot.DayLocks.withDay(p.date) {
+                val day = calendarDayService.load(root, p.date, null, Locale.getDefault())
+                if (day.imageElements.removeAll { it.elementId.toString() == p.id }) {
+                    if (p.id !in day.deletedElementIds) day.deletedElementIds.add(p.id)
+                    calendarDayService.save(root, p.date, day)
+                }
+            }
+        }.onFailure { Timber.w(it, "couldn't take the moved gram off Gram Picks (${p.date})") }
     }
 
     /**
@@ -5654,7 +5752,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     ).apply { marginEnd = px(10) }
                 })
                 row.addView(android.widget.TextView(ctx).apply {
-                    text = "${p.label}\n❝ ${p.boardName} · ${p.date}"
+                    text = "${p.label}\n${p.boardGlyph} ${p.boardName} · ${p.date}"
                     textSize = 14f; setTextColor(0xFF000000.toInt())
                 })
                 row.setOnClickListener { dialog.dismiss(); onPick(p) }
@@ -5813,20 +5911,29 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 continue
             }
 
-            val boards = cards.filter { PickingsStore.isPickings(it.page) }
+            // The inbox counts too: Gram Picks is where a picked gram waits, so "❝ Bring in a
+            // picking…" — on Pickings, on Synthesize, on the All Stars bands — must be able to
+            // draw from it, or the inbox would be a room the rest of the flow can't reach into.
+            val gramPicks = com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
+            val boards = cards.filter {
+                PickingsStore.isPickings(it.page) || it.page.substringBefore('#') == gramPicks
+            }
             if (boards.isEmpty()) continue
             val byKey = names.getOrPut(date) {
                 runCatching { PickingsStore.list(ctx, date).associate { it.key to it.name } }
                     .getOrNull().orEmpty()
             }
             for (c in boards) {
+                val fromInbox = c.page.substringBefore('#') == gramPicks
                 out.add(PickingGram(
                     date = date,
                     page = c.page,
                     id = c.id,
-                    boardName = byKey[c.page.substringBefore('#')] ?: byKey[c.page] ?: "Pickings",
+                    boardName = if (fromInbox) "Gram Picks"
+                    else byKey[c.page.substringBefore('#')] ?: byKey[c.page] ?: "Pickings",
                     label = PickingsCards.labelFor(c),
-                    glyph = PickingsCards.glyphFor(c)
+                    glyph = PickingsCards.glyphFor(c),
+                    boardGlyph = if (fromInbox) "◈" else "❝"
                 ))
             }
         }
@@ -5882,6 +5989,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                         treatment = false, cardText = element.cardText, sourceFeed = element.sourceFeed,
                         intakeKind = kindKey
                     )
+                    // Out of the inbox is a MOVE (a board keeps its card; the pile you sort out
+                    // of gives it up). Disk-level here even for today: the reload below replaces
+                    // the in-memory day, so the disk is the copy that has to be right.
+                    if (pick.fromGramPicks) removeInboxOriginalOnDisk(appCtx, pick)
                     true
                 }.getOrDefault(false)
             }

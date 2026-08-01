@@ -344,9 +344,14 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     // Hold it to choose what it does; it then WEARS that choice, so going back to the same thing
     // is a tap. The four faces are the four ways of getting something down in a hurry.
 
+    // Seven faces for seven labels — the array runs parallel to QUICK_NOTE_LABELS, and a face
+    // short of the labels meant Gram Picks fell through getOrElse to the pencil: the button
+    // remembered the choice but wore the wrong coat. ◈ borrows the ❝ quote face the gram rows
+    // already wear ("To Pickings", the share sheet) — the closest thing the drawable set has to
+    // a gram, and better than a second surface wearing the pencil.
     private val quickNoteFaces = intArrayOf(
         R.drawable.ic_pencil, R.drawable.ic_reader_view, R.drawable.ic_edit,
-        R.drawable.ic_toolbar_text, R.drawable.ic_camera, R.drawable.ic_mic
+        R.drawable.ic_toolbar_text, R.drawable.ic_camera, R.drawable.ic_mic, R.drawable.ic_quote
     )
     /** The glyph for each style, shown in the hold-out picker. Same order as the labels/faces. */
     private val quickNoteGlyphs = arrayOf("✒", "📈", "⌱", "Ⓣ", "📷", "🎤", "◈")
@@ -647,24 +652,27 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         return contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) }
     }
 
-    /** Place the photo as a Ledger object (today's Pickings gram) and offer OCR. */
+    /** Place the photo as a Ledger object and offer OCR. The destination is the REMEMBERED one —
+     *  the shutter must stay one tap, so the memory does the routing (Gram Picks whenever the
+     *  remembered place no longer exists today). */
     private fun ingestBitmap(bmp: android.graphics.Bitmap?) {
         if (bmp == null) { toast("Couldn't read that image"); return }
         lifecycleScope.launch {
-            val key = com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY
+            val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.last(this@MainActivity)
             val placed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching {
                     com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
                         calendarDayService, documentsRoot(), bmp, java.time.LocalDate.now(),
-                        key, sourceLabel = "📷 Photo · ${java.time.LocalDate.now()}"
+                        dest.key, sourceLabel = "📷 Photo · ${java.time.LocalDate.now()}",
+                        intakeKind = dest.kind
                     )
                 }.isSuccess
             }
             // Same telling as the OCR path below, and needed a step earlier: the photo gram itself
             // goes into today's day file from up here, so a day page on screen is stale from the
             // moment the shutter closes — before the OCR dialog has even been offered.
-            if (placed) tellSurfaceGramPlaced(key)
-            toast("Added to today's Pickings")
+            if (placed) tellSurfaceGramPlaced(dest.key)
+            toast("Added to ${dest.name}")
             offerOcr(bmp)   // recycles bmp when done
         }
     }
@@ -951,15 +959,19 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     private fun offerShareDestinations(
         url: String?, title: String?, leftoverText: String?, sharedText: String?, imageUri: android.net.Uri?
     ) {
-        val pickings = com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY
+        // The gram row goes where the LAST gram went (Gram Picks when the remembered place no
+        // longer exists today) — the share sheet is already one modal deep, so a second chooser
+        // here would interrupt the capture; the row names its destination instead and the shared
+        // memory does the routing. Every explicit chooser in the app teaches that memory.
+        val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.last(this)
         val preview = (title ?: url ?: leftoverText ?: sharedText)?.trim().orEmpty()
         val items = mutableListOf<Triple<Int, String, () -> Unit>>()
 
         if (imageUri != null) {
             items += Triple(R.drawable.ic_image, "On this page") { openSharedImageOnDay(imageUri) }
-            items += Triple(R.drawable.ic_quote, "To Pickings") {
+            items += Triple(R.drawable.ic_quote, "To ${dest.name}") {
                 val bmp = decodeSharedImage(imageUri)
-                if (bmp != null) placeGram(bmp, pickings, "", "Shared image", openDay = false)
+                if (bmp != null) placeGram(bmp, dest, "", "Shared image", openDay = false)
                 else android.widget.Toast.makeText(this, "Couldn't read that image", android.widget.Toast.LENGTH_SHORT).show()
             }
         } else if (url != null) {
@@ -968,8 +980,8 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             // that's the excerpt band on the card. (ShareTextParser already pulled the url and
             // title out of the shared text; what's left is the description the app offered.)
             val blurb = leftoverText?.trim().orEmpty()
-            items += Triple(R.drawable.ic_reader_view, "On this page") { renderAndPlaceLink(url, t, blurb, "default", openDay = true) }
-            items += Triple(R.drawable.ic_quote, "To Pickings") { renderAndPlaceLink(url, t, blurb, pickings, openDay = false) }
+            items += Triple(R.drawable.ic_reader_view, "On this page") { renderAndPlaceLink(url, t, blurb, null, openDay = true) }
+            items += Triple(R.drawable.ic_quote, "To ${dest.name}") { renderAndPlaceLink(url, t, blurb, dest, openDay = false) }
             items += Triple(R.drawable.ic_bookmark, "Later — read / watch / listen") { offerToFileLink(url, title, sharedText) }
             items += Triple(R.drawable.ic_edit, "As text") {
                 val boxText = wrapForTextBox(listOfNotNull(title, url).joinToString("\n").ifBlank { sharedText?.trim().orEmpty() })
@@ -979,12 +991,12 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             val text = wrapForTextBox(listOfNotNull(title, leftoverText).joinToString("\n").ifBlank { sharedText?.trim().orEmpty() })
             if (text.isBlank()) return
             items += Triple(R.drawable.ic_edit, "On this page (text)") { dropTextOnDay(text, null) }
-            items += Triple(R.drawable.ic_quote, "To Pickings") {
+            items += Triple(R.drawable.ic_quote, "To ${dest.name}") {
                 lifecycleScope.launch {
                     val card = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                         runCatching { com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(text.take(600), "", "", 1080, 0) }.getOrNull()
                     }
-                    if (card != null) placeGram(card, pickings, "", "Shared note", openDay = false)
+                    if (card != null) placeGram(card, dest, "", "Shared note", openDay = false)
                 }
             }
         }
@@ -1015,8 +1027,12 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         }
     }
 
-    /** Render a shared link into a card and place it as a gram (with provenance) on [pageKey]. */
-    private fun renderAndPlaceLink(url: String, title: String, excerpt: String, pageKey: String, openDay: Boolean) {
+    /** Render a shared link into a card and place it as a gram (with provenance) on [destination]
+     *  — null means the day page itself (the "On this page" row). */
+    private fun renderAndPlaceLink(
+        url: String, title: String, excerpt: String,
+        destination: com.toolsboox.plugin.calendar.ot.GramDestinations.Destination?, openDay: Boolean
+    ) {
         lifecycleScope.launch {
             val card = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 // The kind was hard-coded "read", so a shared YouTube link wore 🔖 READ and landed
@@ -1029,19 +1045,26 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                         url, title, kind, excerpt = excerpt)
                 }.getOrNull()
             }
-            if (card != null) placeGram(card, pageKey, url, title, openDay)
+            if (card != null) placeGram(card, destination, url, title, openDay)
             else android.widget.Toast.makeText(this@MainActivity, "Couldn't make a card", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
-    /** Place [bitmap] as a gram (with provenance) on [pageKey]; reload the day when it landed there. */
-    private fun placeGram(bitmap: android.graphics.Bitmap, pageKey: String, sourceLink: String, sourceLabel: String, openDay: Boolean) {
+    /** Place [bitmap] as a gram (with provenance) on [destination] (null = the day page itself);
+     *  reload the day when it landed there. */
+    private fun placeGram(
+        bitmap: android.graphics.Bitmap,
+        destination: com.toolsboox.plugin.calendar.ot.GramDestinations.Destination?,
+        sourceLink: String, sourceLabel: String, openDay: Boolean
+    ) {
+        val pageKey = destination?.key ?: "default"
         lifecycleScope.launch {
             val placed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching {
                     com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
                         calendarDayService, documentsRoot(), bitmap, java.time.LocalDate.now(), pageKey,
-                        sourceLink = sourceLink, sourceLabel = sourceLabel
+                        sourceLink = sourceLink, sourceLabel = sourceLabel,
+                        intakeKind = destination?.kind ?: ""
                     )
                 }.isSuccess
             }
@@ -1053,7 +1076,10 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                 val navOptions = androidx.navigation.navOptions { popUpTo(R.id.CalendarDayFragment) { inclusive = true } }
                 runCatching { binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, null, navOptions) }
             } else {
-                android.widget.Toast.makeText(this@MainActivity, "Added to Pickings", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(
+                    this@MainActivity, "Added to ${destination?.name ?: "the page"}",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
             }
         }
     }

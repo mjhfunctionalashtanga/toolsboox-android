@@ -72,10 +72,13 @@ fun ledgerDirectoryFolders(
             // as its base page — the sub-page tail only matters to the pager, never to the hub.
             when (val page = fragment.currentNotePage()?.substringBefore('#')) {
                 null, "default", com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE -> null
-                "intake", "write" -> "Flow"
+                // Gram Picks calls Flow home now — it joined the folder when it joined the ritual
+                // chain (All Stars → Gram Picks → Pickings, the iPhone's order): picks are the
+                // day's catch waiting to be sorted, not a note surface.
+                "intake", "write",
+                com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> "Flow"
                 "gratitude", "selfexec" -> "Garden"
-                "grid", "sketch",
-                com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> "Notes"
+                "grid", "sketch" -> "Notes"
                 // A NAMED document ("pickings-…", "synthesize-…", "write-…") calls the same folder
                 // home as the surface it belongs to — the "-<millis>" tail is storage, never a
                 // different kind of page. Which is exactly why a named GRID or JOT has to be asked
@@ -230,6 +233,16 @@ fun ledgerDirectoryFolders(
         // Executive moved to the Garden.)
         ScreenFragment.Folder("⤳", "Flow", listOf(
             "★  All Stars" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
+            // Gram Picks between All Stars and Pickings — the iPhone's Flow order. It moved here
+            // from the Notes folder: where every grabbed gram lands, so sorting happens once,
+            // later, in one place — the inbox the rest of the flow draws from, which makes it a
+            // station of the flow rather than a kind of note.
+            "◈  Gram Picks" to {
+                CalendarNavigator.toDayNote(
+                    fragment, today,
+                    com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
+                )
+            },
             "❝  Pickings" to { showPickingsPicker(fragment) },
             "🔬  Synthesize" to { showSynthPicker(fragment) },
             // Write opens its directory rather than jumping straight at today's page, now that it
@@ -275,15 +288,8 @@ fun ledgerDirectoryFolders(
             "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
             "📈  Grid Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "grid") },
             "⌱  Jot Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "sketch") },
-            // Gram Picks: where every grabbed gram lands, so sorting happens once, later, in one
-            // place — instead of choosing between a Pickings board, Star Sort, Synthesize and a
-            // board of its own at the moment you grab the thing.
-            "◈  Gram Picks" to {
-                CalendarNavigator.toDayNote(
-                    fragment, LocalDate.now(),
-                    com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
-                )
-            },
+            // Gram Picks left this folder for Flow, between All Stars and Pickings — see the Flow
+            // folder above. It is a station of the day's catch→make walk, not a kind of note.
             "Ⓣ  Text Notes" to { nav.navigate(R.id.action_to_text_notes) },
             // #hashtags harvested off note pages → jump to any page a tag appears on. No naming.
             "#  Tags" to { showTagIndex(fragment) },
@@ -374,6 +380,16 @@ private const val KIND_NOTES = "notes"
 private const val KIND_TAGS = "tags"
 
 /**
+ * Gram Picks is the THIRD kind that lives here and only here. [LedgerDocuments] deliberately
+ * declines it a surface (one implicit page run per day — a chip over it would promise siblings
+ * that cannot exist, see `surfaceOf`), so like Notes it has no store to list documents from. What
+ * it does have is cards, and the card index already knows which days hold them: the directory
+ * lists THOSE days, off [com.toolsboox.plugin.calendar.ot.PickingsCards.counts] — one small
+ * memoized file, no day decoded — each row opening that day's inbox.
+ */
+private const val KIND_GRAMPICKS = com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
+
+/**
  * Michael's order, and the order every view here uses: what you catch, what you work it into,
  * what you write from it, then the note surfaces, then the two indexes over the whole thing.
  *
@@ -383,6 +399,9 @@ private const val KIND_TAGS = "tags"
  * would be a second taxonomy pretending to be the same one.
  */
 private val DIRECTORY_KINDS = listOf(
+    // Gram Picks leads, before Pickings, because that is its place in the flow the order mirrors
+    // (All Stars → Gram Picks → Pickings): the inbox first, then what it is sorted into.
+    KIND_GRAMPICKS,
     com.toolsboox.plugin.calendar.ot.LedgerDocuments.PICKINGS,
     com.toolsboox.plugin.calendar.ot.LedgerDocuments.SYNTHESIZE,
     com.toolsboox.plugin.calendar.ot.LedgerDocuments.WRITE,
@@ -403,12 +422,14 @@ private val DIRECTORY_KINDS = listOf(
 private fun kindGlyph(kind: String): String = when (kind) {
     KIND_NOTES -> "✒"
     KIND_TAGS -> "#"
+    KIND_GRAMPICKS -> "◈"
     else -> com.toolsboox.plugin.calendar.ot.LedgerDocuments.glyph(kind)
 }
 
 private fun kindLabel(kind: String): String = when (kind) {
     KIND_NOTES -> "Notes"
     KIND_TAGS -> "Tags"
+    KIND_GRAMPICKS -> "Gram Picks"
     else -> com.toolsboox.plugin.calendar.ot.LedgerDocuments.label(kind)
 }
 
@@ -427,6 +448,8 @@ private fun kindCountLabel(kind: String, n: Int): String {
     val noun = when (kind) {
         KIND_NOTES -> if (n == 1) "day" else "days"
         KIND_TAGS -> if (n == 1) "tag" else "tags"
+        // Gram Picks rows ARE days, like Notes' — the inbox is one page run per day.
+        KIND_GRAMPICKS -> if (n == 1) "day" else "days"
         docs.PICKINGS -> if (n == 1) "board" else "boards"
         docs.SYNTHESIZE -> if (n == 1) "synthesis" else "syntheses"
         docs.WRITE -> if (n == 1) "writing" else "writings"
@@ -578,6 +601,17 @@ private fun directoryItems(context: android.content.Context, kind: String): List
         // A day, titled by its date, opening on note page "0" — the page the Notes door lands on.
         KIND_NOTES -> docs.dayDates(context).map { DirItem(KIND_NOTES, "0", it.toString(), it) }
 
+        // The days that hold picked grams, read off the card tally — one small memoized file,
+        // keyed "date|basePage", so no day file is opened to build this list. Today is always
+        // offered: the inbox exists in principle before anything lands on it.
+        KIND_GRAMPICKS -> (
+            com.toolsboox.plugin.calendar.ot.PickingsCards.counts(context).keys
+                .filter { it.substringAfter('|', "") == KIND_GRAMPICKS }
+                .mapNotNull { k -> runCatching { LocalDate.parse(k.substringBefore('|')) }.getOrNull() }
+                + today
+            ).distinct().sortedDescending()
+            .map { DirItem(KIND_GRAMPICKS, KIND_GRAMPICKS, it.toString(), it) }
+
         // A tag's "date" is the last day it was written on, so sorting by date puts the vocabulary
         // you are currently using at the top rather than the vocabulary you started with.
         KIND_TAGS -> com.toolsboox.plugin.calendar.ot.LedgerTags.list(context).map { t ->
@@ -613,6 +647,13 @@ private fun dayDocuments(context: android.content.Context, date: LocalDate): Lis
         docs.forSurface(context, surface, date)
             .filter { it.date == date }
             .forEach { out.add(DirItem(surface, it.key, it.title, date)) }
+    }
+    // The day's inbox, offered only when the card tally says it holds something — unlike the Notes
+    // row (whose blank page is that surface's normal answer), an empty Gram Picks row on every day
+    // of history would be four hundred doors to the same nothing. The tally is the memoized
+    // one-file read the badges already paid for.
+    if ((com.toolsboox.plugin.calendar.ot.PickingsCards.counts(context)["$date|$KIND_GRAMPICKS"] ?: 0) > 0) {
+        out.add(DirItem(KIND_GRAMPICKS, KIND_GRAMPICKS, "Gram Picks", date))
     }
     out.add(DirItem(KIND_NOTES, "0", "Notes", date))
     return out
@@ -813,7 +854,9 @@ private fun openDirectoryItem(fragment: ScreenFragment, item: DirItem) {
             .firstOrNull { it.tag == item.key }
             ?.let { showTagPages(fragment, it) }
 
-        KIND_NOTES -> CalendarNavigator.toDayNote(fragment, item.date, item.key)
+        // Both are day rows opening a day page — Gram Picks' key IS its page key ("grampicks"),
+        // so the one navigation serves the two kinds.
+        KIND_NOTES, KIND_GRAMPICKS -> CalendarNavigator.toDayNote(fragment, item.date, item.key)
 
         // Text Notes lives in its own fragment rather than on a day-page surface, so it is reached
         // through its own door rather than through CalendarNavigator.
@@ -836,6 +879,10 @@ private fun kindDoorRow(fragment: ScreenFragment, kind: String, date: LocalDate)
         KIND_TAGS -> DirRow("↳", "Open the Tags index…", null, 1) { showTagIndex(fragment) }
         KIND_NOTES -> DirRow("↳", "Open Notes & Tags…", null, 1) {
             com.toolsboox.plugin.calendar.ui.NotesTagsFragment.open(fragment, date, "week")
+        }
+        // The kind's own door is the page itself — today's inbox; the day rows below reach the past.
+        KIND_GRAMPICKS -> DirRow("↳", "Open Gram Picks…", null, 1) {
+            CalendarNavigator.toDayNote(fragment, LocalDate.now(), KIND_GRAMPICKS)
         }
         docs.TEXT_NOTES -> DirRow("↳", "Open Text Notes…", null, 1) {
             com.toolsboox.plugin.textnotes.ui.TextNotesFragment.open(fragment, date, null)

@@ -11,7 +11,6 @@ import android.view.MotionEvent
 import android.view.View
 import com.toolsboox.ot.Creator
 import com.toolsboox.ot.OnGestureListener
-import com.toolsboox.plugin.calendar.CalendarNavigator
 import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import com.toolsboox.plugin.calendar.ui.CalendarDayFragment
 import java.time.LocalDate
@@ -65,44 +64,26 @@ class CalendarDayPageNotes : Creator {
         ): Boolean {
             if (motionEvent.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER) return true
 
-            val year = calendarDay.year
-            val month = calendarDay.month
-            val day = calendarDay.day
-            val locale = calendarDay.locale
-
-            val localDate = LocalDate.of(year, month, day)
-
-            // Any pickings board (default or a named "pickings-…") navigates like the classic one.
-            val np = if (PickingsStore.isPickings(notePage)) "pickings" else notePage
-
+            // ALL FOUR finger swipes step the ONE ritual chain, through the fragment's own
+            // stepper. This handler used to carry a private copy of the walk — the OLD order
+            // (day → pickings → gratitude → intake → notes), pre-dating Self Executive, Write and
+            // now Gram Picks — so a finger swipe and the ↑/↓ stepper disagreed about what "next"
+            // meant on the very same page. One walk now (iOS's PlannerPage.cycle, Gram Picks
+            // between All Stars and Pickings), and this handler only says which way.
+            //
+            // The horizontal pair mirrors the vertical semantics so the axes agree: DTU (finger
+            // sweeps up — pushing the page away) advances, so RTL (finger sweeps left) advances
+            // too; UTD and LTR step back. Finger-only is already guarded above, the gesture
+            // detector reports a swipe only after several deliberate segments (never mid-lasso),
+            // and two-finger pan/zoom is consumed by handleZoomPanTouch before this runs.
             when (gestureResult) {
-                OnGestureListener.UTD -> {
-                    when (np) {
-                        "pickings" -> CalendarNavigator.toDayPage(fragment, localDate)
-                        "gratitude" -> CalendarNavigator.toDayNote(fragment, localDate, "pickings")
-                        "intake" -> CalendarNavigator.toDayNote(fragment, localDate, "gratitude")
-                        else -> {
-                            val page = notePage.toIntOrNull() ?: 0
-                            if (page == 0) {
-                                CalendarNavigator.toDayNote(fragment, localDate, "intake")
-                            } else {
-                                CalendarNavigator.toDayNote(fragment, localDate, "${page - 1}")
-                            }
-                        }
-                    }
+                OnGestureListener.UTD, OnGestureListener.LTR -> {
+                    fragment.ritualStepBack()
                     return true
                 }
 
-                OnGestureListener.DTU -> {
-                    when (np) {
-                        "pickings" -> CalendarNavigator.toDayNote(fragment, localDate, "gratitude")
-                        "gratitude" -> CalendarNavigator.toDayNote(fragment, localDate, "intake")
-                        "intake" -> CalendarNavigator.toDayNote(fragment, localDate, "0")
-                        else -> {
-                            val page = notePage.toIntOrNull() ?: 0
-                            CalendarNavigator.toDayNote(fragment, localDate, "${page + 1}")
-                        }
-                    }
+                OnGestureListener.DTU, OnGestureListener.RTL -> {
+                    fragment.ritualStepForward()
                     return true
                 }
             }
