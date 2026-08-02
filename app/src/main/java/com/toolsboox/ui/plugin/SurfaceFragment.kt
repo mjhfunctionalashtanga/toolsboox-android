@@ -1674,32 +1674,45 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     /**
-     * Rotation re-fit: zoom so the page fills the new surface WIDTH.
+     * The default posture of a page, by the shape of the surface it landed on: LANDSCAPE fills the
+     * width and starts at the top; PORTRAIT shows the whole canvas.
      *
      * [updateTransformMatrix]'s baseScale is fit-to-PAGE (the min of the width and height fits),
      * so a portrait 1404×1872 page rotated to landscape shrank to the height and sat letterboxed
      * in the middle — the old zoom pointed at the old shape. Michael: "the rotation should zoom
-     * to match the new rotation width zoom." So on a flip the zoom is recomputed to the width-fit
-     * for the new dimensions and the pan reset to the top of the page — full width, page start,
-     * whatever the zoom was before. Rotating back to portrait computes a width-fit of 1.0, i.e.
-     * the plain unzoomed page, so the flip is reversible.
+     * to match the new rotation width zoom." Landscape therefore magnifies to the width-fit and
+     * pans to the page start: a wide short window has no business showing a whole tall page at
+     * thumbnail size, and reading down it is what scrolling is for.
      *
-     * Pagination arrives at this same fit (see surfaceChanged): the width-fit is the default
-     * posture of every page, and the fit is derived, not user-chosen, so overwriting whatever
-     * zoom the reader had before the flip is the point, not a loss.
+     * Portrait wants the opposite and says so plainly — "portrait should be fit full canvas": the
+     * window is already page-shaped, so the honest fit is the WHOLE sheet, edge to edge, nothing
+     * below the fold. That is baseScale exactly, i.e. zoom 1.0 — computing a width-fill here
+     * instead would push the foot of the page off-screen on any surface proportionally taller than
+     * the canvas (a rail takes width; the strip does not take height), which is the very
+     * cut-off-bottom this now cannot produce. Deriving it from the posture rather than from which
+     * side happens to win the min() also means no device's aspect ratio can flip the answer.
+     *
+     * Rotation and pagination both arrive here (see surfaceChanged), so a flip is reversible and
+     * every page turn starts from the same honest posture. The fit is derived, never chosen, which
+     * is why it may overwrite whatever zoom went before — until a hand takes the zoom, and
+     * [zoomTakenByHand] keeps it until the next page.
      */
     fun refitZoomToWidth() {
         val sw = surfaceSize.width().toFloat()
         val sh = surfaceSize.height().toFloat()
         if (sw <= 0f || sh <= 0f) return
-        // The width-fit is the default posture, so applying it hands the zoom back to the
-        // machinery — a later relayout may re-fit freely until the reader takes it by hand again.
+        // The fit is the default posture, so applying it hands the zoom back to the machinery —
+        // a later relayout may re-fit freely until the reader takes it by hand again.
         zoomTakenByHand = false
         baseScale = minOf(sw / CANVAS_WIDTH.toFloat(), sh / CANVAS_HEIGHT.toFloat())
-        zoomScale = (sw / (CANVAS_WIDTH.toFloat() * baseScale)).coerceIn(MIN_ZOOM, MAX_ZOOM)
+        zoomScale = if (sw > sh) {
+            (sw / (CANVAS_WIDTH.toFloat() * baseScale)).coerceIn(MIN_ZOOM, MAX_ZOOM)
+        } else {
+            1f   // baseScale alone IS the whole canvas; magnifying past it would crop the page
+        }
         panX = 0f
         // Top of the page; the clamp in updateTransformMatrix trims the deliberate overshoot
-        // to the exact edge (and to 0 when the page fits, i.e. back in portrait).
+        // to the exact edge (and to 0 in portrait, where the whole sheet already fits).
         panY = Float.MAX_VALUE / 4f
         updateTransformMatrix()
         applyStrokes(strokes, true)
