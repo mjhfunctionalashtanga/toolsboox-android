@@ -58,12 +58,13 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
      * @param fragment the fragment
      * @param binding the data binding
      * @param currentDate the current date
-     * @param defaultStartHour the default start hour
+     * @param seedStartHour the start hour to stamp onto this day IF it does not exist yet. It is
+     *   never applied to a day that loaded — see [CalendarDayService.loadOrNull].
      * @param locale the default locale
      */
     fun load(
         fragment: CalendarDayFragment, binding: FragmentCalendarBinding,
-        currentDate: LocalDate, defaultStartHour: Int, locale: Locale
+        currentDate: LocalDate, seedStartHour: Int, locale: Locale
     ) {
         if (!checkPermissions(fragment, binding.root)) return
 
@@ -85,17 +86,18 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                     // and still wouldn't load, mark the day read-only: render the blank, say so,
                     // and refuse every save until a load succeeds. The flag is set on every load,
                     // so navigating to another day (or a repaired file) clears it.
-                    val loadedCalendarDay = calendarDayService.loadOrNull(rootPath, currentDate, defaultStartHour, locale)
+                    val loadedCalendarDay = calendarDayService.loadOrNull(rootPath, currentDate, locale)
                     val dayReadOnly = loadedCalendarDay == null && calendarDayService.exists(rootPath, currentDate)
+                    // [seedStartHour] is spent only here, on a day that has no file yet.
+                    // A loaded day keeps its own hour untouched — the re-stamp that used to sit
+                    // below this line is what cost Michael 116 days of his chosen 7am; see
+                    // CalendarDayService.loadOrNull for the full account.
                     val calendarDay = loadedCalendarDay ?: CalendarDay(
                         currentDate.year, currentDate.monthValue, currentDate.dayOfMonth, locale,
-                        mutableListOf(), mutableListOf(), true, defaultStartHour
+                        mutableListOf(), mutableListOf(), true, seedStartHour
                     )
                     val calendarPattern = calendarPatternService.load(rootPath, currentDate, locale)
                     var calendarEvents = calendarEventsService.loadEvents(fragment, currentDate)
-                    // The setting is authoritative when it names an hour; see CalendarDayService.
-                    calendarDay.startHour =
-                        if (defaultStartHour >= 0) defaultStartHour else calendarDay.startHour ?: defaultStartHour
 
                     // The measuring context for the Tasks rows: the page face has to be the one the
                     // surface actually draws with, or a row's height is measured against the wrong
@@ -108,7 +110,7 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                     // read-only day skips it (and the reflow rewrite) entirely.
                     if (currentDate.isEqual(LocalDate.now()) && !dayReadOnly) {
                         val yesterday = currentDate.minusDays(1)
-                        val yesterdayCalendarDay = calendarDayService.load(rootPath, yesterday, defaultStartHour, locale)
+                        val yesterdayCalendarDay = calendarDayService.load(rootPath, yesterday, seedStartHour, locale)
 
                         if (LedgerTaskCarryOver.carryOver(yesterdayCalendarDay, calendarDay, measureCtx)) {
                             CalendarPatternService.mutex.withLock {

@@ -45,7 +45,10 @@ object WidgetRenderer {
     fun render(context: Context, date: LocalDate, widthDp: Int, heightDp: Int, mode: Mode): Bitmap {
         val calendarDay = loadCalendarDay(context, date)
         val events = loadCalendarEvents(context, date)
-        val startHour = calendarDay?.startHour ?: 5
+        // THE DAY, THEN THE SETTING, NEVER A LITERAL. This was `?: 5`, which meant a widget could
+        // print a grid at 5am beside a day page printing the same handwriting at 7 — and the two
+        // pictures disagreeing about where 9am is, on the same screen.
+        val startHour = com.toolsboox.plugin.calendar.ot.PagePrefs.startHourOf(context, calendarDay)
 
         val fullBitmap = Bitmap.createBitmap(CW.toInt(), CH.toInt(), Bitmap.Config.ARGB_8888)
         val fullCanvas = Canvas(fullBitmap)

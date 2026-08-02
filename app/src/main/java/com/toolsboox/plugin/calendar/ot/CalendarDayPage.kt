@@ -156,7 +156,12 @@ class CalendarDayPage {
             val laneFull = mutableListOf<CalendarEvent>()
             val outside = mutableListOf<CalendarEvent>()
 
-            val startHour = calendarDay.startHour!!
+            // THE DAY, THEN THE SETTING, NEVER A LITERAL — and never `!!`. The non-null assertion
+            // was only ever safe because the loader stamped a value onto every day on the way past;
+            // that stamp is gone (it cost Michael 116 days of his chosen 7am), so a day may honestly
+            // arrive with no opinion and [PagePrefs] answers for it. Resolved identically in
+            // [DayEventHits], so the tap targets can never disagree with the pixels.
+            val startHour = PagePrefs.startHourOf(context, calendarDay)
             if (startHour < 0) {
                 outside.addAll(calendarEvents)
             } else if (!calendarDay.hasLanes) {

@@ -1,5 +1,6 @@
 package com.toolsboox.plugin.calendar.ot
 
+import android.content.Context
 import android.graphics.RectF
 import com.toolsboox.plugin.calendar.da.v1.CalendarEvent
 import com.toolsboox.plugin.calendar.da.v2.CalendarDay
@@ -36,8 +37,12 @@ object DayEventHits {
      * busy at that time. The Whitman-Walker case is the second of those: an appointment running
      * 00:00–23:59 is not flagged all-day, but a grid that begins at 5am has no row to put it in.
      */
-    fun layout(day: CalendarDay, events: List<CalendarEvent>): List<Hit> {
-        val startHour = day.startHour ?: 5
+    fun layout(context: Context, day: CalendarDay, events: List<CalendarEvent>): List<Hit> {
+        // Resolved the SAME way [CalendarDayPage.drawPage] resolves it — through [PagePrefs], off
+        // the same day and the same setting. It was `?: 5` here and a hardcoded read there, which is
+        // the drift this file exists to prevent: a grid drawn from 7 and hit-tested from 5 puts
+        // every tap two rows off, with nothing on screen to explain why.
+        val startHour = PagePrefs.startHourOf(context, day)
         val laneOne = mutableListOf<CalendarEvent>()
         val laneTwo = mutableListOf<CalendarEvent>()
         val outside = mutableListOf<CalendarEvent>()
@@ -86,8 +91,8 @@ object DayEventHits {
     }
 
     /** The event drawn at this point in page design space, if any. Topmost/last wins. */
-    fun at(day: CalendarDay, events: List<CalendarEvent>, x: Float, y: Float): CalendarEvent? =
-        layout(day, events).lastOrNull { it.rect.contains(x, y) }?.event
+    fun at(context: Context, day: CalendarDay, events: List<CalendarEvent>, x: Float, y: Float): CalendarEvent? =
+        layout(context, day, events).lastOrNull { it.rect.contains(x, y) }?.event
 
     private fun overlaps(event: CalendarEvent, lane: List<CalendarEvent>): Boolean =
         lane.any { event.startDate < it.endDate && it.startDate < event.endDate }

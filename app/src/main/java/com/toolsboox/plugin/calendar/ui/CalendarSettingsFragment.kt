@@ -25,6 +25,7 @@ import com.google.api.services.drive.DriveScopes
 import com.google.firebase.analytics.FirebaseAnalytics
 import com.toolsboox.R
 import com.toolsboox.plugin.calendar.nw.LedgerEventSync
+import com.toolsboox.plugin.calendar.ot.PagePrefs
 import com.toolsboox.da.LocaleItem
 import com.toolsboox.databinding.FragmentCalendarSettingsBinding
 import com.toolsboox.ot.LocaleItemAdapter
@@ -483,7 +484,10 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         selectedLocaleLanguageTag = savedLocaleLanguageTag ?: Locale.getDefault().toLanguageTag()
 
         selectedStartView = sharedPreferences.getInt("calendarStartView", 0)
-        selectedStartHour = sharedPreferences.getInt("calendarStartHour", 5)
+        // Through PagePrefs so the spinner shows whatever the last sync landed — the setting is
+        // shared with the iPad, and a screen that opened on a stale local copy would offer to save
+        // the value it just failed to notice had changed.
+        selectedStartHour = PagePrefs.settingHour(requireContext())
         selectedNoteTemplate = sharedPreferences.getInt("calendarNoteTemplate", 0)
 
         // Start view settings
@@ -529,14 +533,13 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         val listOfStartHours = mutableListOf<String>()
         listOfStartHours.add(getString(R.string.calendar_settings_select_start_hour_empty))
         val hourPattern = if (DateFormat.is24HourFormat(context)) "HH" else "ha"
-        listOfStartHours.add(LocalTime.of(0, 0, 0).format(DateTimeFormatter.ofPattern(hourPattern)))
-        listOfStartHours.add(LocalTime.of(1, 0, 0).format(DateTimeFormatter.ofPattern(hourPattern)))
-        listOfStartHours.add(LocalTime.of(2, 0, 0).format(DateTimeFormatter.ofPattern(hourPattern)))
-        listOfStartHours.add(LocalTime.of(3, 0, 0).format(DateTimeFormatter.ofPattern(hourPattern)))
-        listOfStartHours.add(LocalTime.of(4, 0, 0).format(DateTimeFormatter.ofPattern(hourPattern)))
-        listOfStartHours.add(LocalTime.of(5, 0, 0).format(DateTimeFormatter.ofPattern(hourPattern)))
-        listOfStartHours.add(LocalTime.of(6, 0, 0).format(DateTimeFormatter.ofPattern(hourPattern)))
-        listOfStartHours.add(LocalTime.of(7, 0, 0).format(DateTimeFormatter.ofPattern(hourPattern)))
+        // 0..23, not the old 0..7. The start hour is now a SYNCED setting (PagePrefs), and the
+        // wire it rides is 0..23 — a spinner that stopped at 7 could be handed a 13 chosen on the
+        // iPad and would index one past the end of its own list while trying to show it. The
+        // shorter list was also a quiet ceiling on a preference nothing else limits.
+        for (hour in 0..23) {
+            listOfStartHours.add(LocalTime.of(hour, 0, 0).format(DateTimeFormatter.ofPattern(hourPattern)))
+        }
 
         val startHourAdapter = NoFilterAdapter(this.requireContext(), R.layout.list_item_locale, listOfStartHours)
         binding.startHourSpinner.setAdapter(startHourAdapter)
@@ -822,7 +825,11 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.buttonSave.setOnClickListener {
             sharedPreferences.edit().putString("calendarLocale", selectedLocaleLanguageTag).apply()
             sharedPreferences.edit().putInt("calendarStartView", selectedStartView).apply()
-            sharedPreferences.edit().putInt("calendarStartHour", selectedStartHour).apply()
+            // Through PagePrefs, not straight into the pref box: the start hour is the one page
+            // setting that has to reach every device, because it is what SEEDS a new day and a day
+            // owns its hour for good afterwards. This stamps `updatedAt` and pushes
+            // `page-prefs/prefs.json`, so choosing 7 here is choosing 7 on the iPad too.
+            PagePrefs.setStartHour(requireContext(), selectedStartHour)
             sharedPreferences.edit().putInt("calendarNoteTemplate", selectedNoteTemplate).apply()
 
             // Persist rotation orientation mask
@@ -967,7 +974,11 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         }
 
         binding.startViewSpinner.setText(listOfStartViews[selectedStartView])
-        binding.startHourSpinner.setText(listOfStartHours[selectedStartHour + 1])
+        // Defensive even now the list is full-length: a preference arriving from another device
+        // is data from outside this screen, and a settings page must not be the thing that crashes
+        // on it. Out of range reads as "leave empty", the list's own first entry.
+        binding.startHourSpinner.setText(
+            listOfStartHours.getOrElse(selectedStartHour + 1) { listOfStartHours[0] })
         binding.noteTemplateSpinner.setText(listOfNoteTemplates[selectedNoteTemplate])
     }
 

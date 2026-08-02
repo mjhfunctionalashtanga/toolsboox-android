@@ -952,7 +952,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             if (!isAdded) return@launch
             showMessage(if (ok) "Placed." else "Couldn't place that.", binding.root)
             if (ok) presenter.load(this@CalendarDayFragment, binding, currentDate,
-                sharedPreferences.getInt("calendarStartHour", 5), locale)
+                PagePrefs.settingHour(requireContext()), locale)
         }
     }
 
@@ -1571,9 +1571,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     DayLocks.withDay(today) {
                         // The presenter's read-only rule holds for this load→mutate→save too: a
                         // day file that exists but wouldn't load must not be saved over.
-                        val day = calendarDayService.loadOrNull(root, today, null, java.util.Locale.getDefault())
+                        // A day being minted here is a day that does not exist yet, which is the
+                        // one moment a device gets to supply a start hour — so it seeds from the
+                        // synced setting rather than writing a null the renderers then have to
+                        // guess at.
+                        val day = calendarDayService.loadOrNull(root, today, java.util.Locale.getDefault())
                             ?: if (calendarDayService.exists(root, today)) return@withDay
-                            else calendarDayService.load(root, today, null, java.util.Locale.getDefault())
+                            else calendarDayService.load(
+                                root, today, PagePrefs.settingHour(ctx), java.util.Locale.getDefault())
                         day.ledgerItems.add(item)
                         calendarDayService.save(root, today, day)
                     }
@@ -1763,10 +1768,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             }
         }
 
-        val defaultStartHour = sharedPreferences.getInt("calendarStartHour", 5)
+        // The placeholder day the surface holds until the presenter's load lands. It does not
+        // exist on disk yet, which is the one moment a device gets to supply a start hour.
         calendarDay = CalendarDay(
             currentDate.year, currentDate.monthValue, currentDate.dayOfMonth, locale,
-            mutableListOf(), mutableListOf(), true, defaultStartHour
+            mutableListOf(), mutableListOf(), true, PagePrefs.settingHour(requireContext())
         )
 
         binding.navigatorImageView.setOnTouchListener { view, motionEvent ->
@@ -4834,14 +4840,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             }
         }
 
-        val defaultStartHour = sharedPreferences.getInt("calendarStartHour", 5)
+        val seedStartHour = PagePrefs.settingHour(requireContext())
         val appCtx = requireContext().applicationContext
+        // The one synced page setting, pulled on the way in: a start hour chosen on the iPad has to
+        // be in hand BEFORE the first day page of the session is minted, because a day is stamped
+        // with it exactly once, at creation, and owns it from then on.
+        PagePrefs.sync(appCtx)
         timer = GlobalScope.launch(Dispatchers.Main) {
-            presenter.load(this@CalendarDayFragment, binding, currentDate, defaultStartHour, locale)
+            presenter.load(this@CalendarDayFragment, binding, currentDate, seedStartHour, locale)
             syncPresenter.backgroundSync(this@CalendarDayFragment, UUID.randomUUID())
             // Weather is IP-based + cached ~1h; if it just refreshed, redraw so the header badge shows.
             if (com.toolsboox.plugin.calendar.ot.WeatherMoon.refresh(appCtx) && isAdded && isResumed) {
-                presenter.load(this@CalendarDayFragment, binding, currentDate, defaultStartHour, locale)
+                presenter.load(this@CalendarDayFragment, binding, currentDate, seedStartHour, locale)
             }
         }
         maybeShowReturnChip()
@@ -5168,7 +5178,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 if (gestureResult != OnGestureListener.NONE || dx >= 30f || dy >= 30f || dt !in 1..600) return false
                 val p = screenToCanvas(motionEvent.x, motionEvent.y)
                 val event = com.toolsboox.plugin.calendar.ot.DayEventHits
-                    .at(calendarDay, calendarDay.events, p[0], p[1]) ?: return false
+                    .at(requireContext(), calendarDay, calendarDay.events, p[0], p[1]) ?: return false
                 showEventDetail(event)
                 return true
             }
@@ -5305,7 +5315,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .setPositiveButton("Hide") { _, _ ->
                 com.toolsboox.plugin.calendar.ot.PickingsCover.hideTile(requireContext(), tile)
                 presenter.load(this@CalendarDayFragment, binding, currentDate,
-                    sharedPreferences.getInt("calendarStartHour", 5), locale)
+                    PagePrefs.settingHour(requireContext()), locale)
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
@@ -5343,9 +5353,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     DayLocks.withDay(currentDate) {
                         // The presenter's read-only rule holds for this load→mutate→save too: a
                         // day file that exists but wouldn't load must not be saved over.
-                        val day = calendarDayService.loadOrNull(root, currentDate, null, java.util.Locale.getDefault())
+                        val day = calendarDayService.loadOrNull(root, currentDate, java.util.Locale.getDefault())
                             ?: if (calendarDayService.exists(root, currentDate)) return@withDay
-                            else calendarDayService.load(root, currentDate, null, java.util.Locale.getDefault())
+                            else calendarDayService.load(
+                                root, currentDate, PagePrefs.settingHour(ctx), java.util.Locale.getDefault())
                         day.imageElements.firstOrNull { it.elementId == element.elementId }
                             ?.graduatedTo = board.key
                         calendarDayService.save(root, currentDate, day)
@@ -5512,7 +5523,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         if (!isAdded || !isResumed) return
         presenter.load(
             this, binding, currentDate,
-            sharedPreferences.getInt("calendarStartHour", 5), locale
+            PagePrefs.settingHour(requireContext()), locale
         )
     }
 
@@ -6112,7 +6123,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             showMessage("Brought into $kindTitle", binding.root)
             // Reload so the page draws from the day file the placement just wrote.
             presenter.load(this@CalendarDayFragment, binding, currentDate,
-                sharedPreferences.getInt("calendarStartHour", 5), locale)
+                PagePrefs.settingHour(requireContext()), locale)
         }
     }
 

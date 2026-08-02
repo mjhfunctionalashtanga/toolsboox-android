@@ -79,15 +79,31 @@ class CalendarDayService @Inject constructor() {
      *
      * @param rootPath the root path
      * @param currentDate the current date
-     * @param defaultStartHour the default start hour
+     * @param seedStartHour the start hour to stamp onto a day that does not exist yet — and ONLY
+     *   onto such a day. A loaded day keeps whatever hour it was written with; see [loadOrNull].
+     *   NULL means "I have no opinion", and the synced setting answers instead: two dozen callers
+     *   here (starring an article, filing a letter, a Notebot task) mint today's file as a side
+     *   effect of doing something else and have no business naming an hour, but the day they leave
+     *   behind is still a real day that the day page will later open. Before this they wrote a null
+     *   and the page drew off whatever the reader happened to default to.
      * @param locale the current locale
      */
-    fun load(rootPath: File, currentDate: LocalDate, defaultStartHour: Int?, locale: Locale): CalendarDay {
-        return loadOrNull(rootPath, currentDate, defaultStartHour, locale) ?: CalendarDay(
+    fun load(rootPath: File, currentDate: LocalDate, seedStartHour: Int?, locale: Locale): CalendarDay {
+        return loadOrNull(rootPath, currentDate, locale) ?: CalendarDay(
             currentDate.year, currentDate.monthValue, currentDate.dayOfMonth, locale,
-            mutableListOf(), mutableListOf(), true, defaultStartHour
+            mutableListOf(), mutableListOf(), true, seedStartHour ?: settingStartHour()
         )
     }
+
+    /**
+     * The synced start-hour setting, or null on a bench with no context (the JVM unit tests
+     * construct this service by hand). Null there is the honest answer — a test has no device
+     * setting — and the day it mints simply keeps the null it was asked for.
+     */
+    private fun settingStartHour(): Int? =
+        if (::appContext.isInitialized)
+            runCatching { com.toolsboox.plugin.calendar.ot.PagePrefs.settingHour(appContext) }.getOrNull()
+        else null
 
     /**
      * Load the data class from JSON file on the specified path, or null when nothing loadable.
@@ -96,27 +112,33 @@ class CalendarDayService @Inject constructor() {
      * distinction the read-only guard in CalendarDayPresenter lives on — pair this with [exists],
      * instead of taking [load]'s fresh-day fallback and losing the difference.
      *
+     * THE DAY OWNS ITS OWN START HOUR, and this method is where that stopped being true. It used to
+     * overwrite [CalendarDay.startHour] with the device's setting on every load, on the theory that
+     * changing the spinner should retake days already opened at the old default. The theory is
+     * wrong, and the cost was Michael's archive: the schedule grid is laid out FROM the start hour
+     * while ink is stored in absolute page coordinates, so re-stamping a written day slides the
+     * printed rows out from under unchanged handwriting — and because the value was rewritten on the
+     * way IN, the next ordinary save (a pen stroke, a carried task) wrote the device's opinion back
+     * to the file. Opening a day was enough to lose its hour. Of 124 synced days, only six still
+     * carried the 7 he had chosen.
+     *
+     * So nothing is stamped here now. A day keeps what it was written with, forever; a day written
+     * without an opinion keeps the null, and the renderers resolve it against the synced setting via
+     * [com.toolsboox.plugin.calendar.ot.PagePrefs.startHourOf]. The setting seeds NEW days only —
+     * see [load]'s `seedStartHour`.
+     *
      * @param rootPath the root path
      * @param currentDate the current date
-     * @param defaultStartHour the default start hour
-     * @param locale the current locale
+     * @param locale the current locale (unused for the start hour, kept for the call shape)
      * @return the data class, or null when no readable day file exists
      */
-    fun loadOrNull(rootPath: File, currentDate: LocalDate, defaultStartHour: Int?, locale: Locale): CalendarDay? {
+    @Suppress("UNUSED_PARAMETER")
+    fun loadOrNull(rootPath: File, currentDate: LocalDate, locale: Locale): CalendarDay? {
         val year = currentDate.format(DateTimeFormatter.ofPattern("yyyy"))
         val month = currentDate.format(DateTimeFormatter.ofPattern("MM"))
         val day = currentDate.format(DateTimeFormatter.ofPattern("dd"))
 
-        val loadedCalendarDay = load(rootPath, "$year/$month/", "day-$year-$month-$day") ?: return null
-        // A concrete start-hour SETTING wins over whatever the day cached. It used to be the other
-        // way — the day's saved value took precedence — so once a day had been opened at the old
-        // 5am default, changing the setting to 7am never took on that day. When the caller passes
-        // no setting (null), or "no fixed start" (< 0), the day keeps its own value.
-        loadedCalendarDay.startHour =
-            if (defaultStartHour != null && defaultStartHour >= 0) defaultStartHour
-            else loadedCalendarDay.startHour ?: defaultStartHour
-
-        return loadedCalendarDay
+        return load(rootPath, "$year/$month/", "day-$year-$month-$day")
     }
 
     /**
