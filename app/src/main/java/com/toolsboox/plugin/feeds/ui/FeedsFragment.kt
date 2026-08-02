@@ -207,6 +207,9 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // Shrunk article-drawer: ⏫ last article · ‹ page up · › page down · ⏬ next article.
         binding.feedsDwPrev.setOnClickListener { openAdjacentArticle(-1) }
         binding.feedsDwNext.setOnClickListener { openAdjacentArticle(1) }
+        // Find within the open piece — one bar over the one pane, so an article and a letter get
+        // the same find. See the block at setupArticleFind.
+        setupArticleFind()
 
         // BOTH floating pills retire — the tucked action rail carries the paging trio, the
         // occasional controls AND the article actions, adapting its dress to the mode the way
@@ -221,9 +224,14 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             hub = { showLedgerDirectory() }
         )
 
-        // System Back closes an open in-pane article (returns to the list) before leaving.
+        // System Back closes an open in-pane article (returns to the list) before leaving — but an
+        // open find bar is the innermost thing on screen, so Back puts the plain page back first.
+        // Losing the whole piece because you were done searching it would be the wrong size of undo.
         articleBackCallback = object : androidx.activity.OnBackPressedCallback(false) {
-            override fun handleOnBackPressed() { closeArticlePane(restoreDrawer = false) }
+            override fun handleOnBackPressed() {
+                if (articleFindOpen()) { hideArticleFind(); return }
+                closeArticlePane(restoreDrawer = false)
+            }
         }
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, articleBackCallback!!)
 
@@ -1557,6 +1565,14 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         items += com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_pencil, "Note") {
             binding.feedsNote.performClick()
         }
+        // 🔎 sits third among the reading verbs, straight after ★ and ✎ — the same slot it takes
+        // on the articles' dress, so the hand finds it in one place whichever the pane is holding.
+        // High up on purpose: "where does he say that" is a question you ask early in a letter,
+        // long before you'd reach past Reader view and read-aloud for it. The ⏫⏬ at the bottom
+        // still cross letter-to-letter; the find's own ‹ › step matches.
+        items += com.toolsboox.ot.TuckPanel.Item(0, getString(R.string.feeds_find), glyph = "🔎") {
+            showArticleFind()
+        }
         items += com.toolsboox.ot.TuckPanel.Item(0, "Tag", glyph = "🏷") {
             openLetter()?.let { com.toolsboox.plugin.mail.ui.MailVerbs.tag(this, it) }
         }
@@ -1781,6 +1797,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     /** Render the open article as parsed (reader view) or unparsed (original). */
     private fun renderArticle() {
         val entry = currentArticle ?: return
+        // Every render replaces the document under the pane — a new piece, the Reader-view flip,
+        // the load-images door. The renderer's find state does not survive that, so the bar must
+        // not either: a count left standing over fresh markup is a lie about a document that was
+        // never searched. Find is per-piece, deliberately (see setupArticleFind).
+        hideArticleFind()
         // A letter renders through the mail reader's own shaping (MailReaderHtml — the one
         // renderer letters have, so message rendering stays one thing), with
         // the parsed toggle meaning Reader vs As-sent instead of parsed vs raw RSS.
@@ -1895,6 +1916,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_pencil, "Note") {
                 binding.feedsNote.performClick()
             },
+            // Find in this piece — third reading verb, the same slot The Mail's dress gives it.
+            // The ⏫⏬ below keep meaning article-to-article; matches step on the bar's own ‹ ›.
+            com.toolsboox.ot.TuckPanel.Item(0, getString(R.string.feeds_find), glyph = "🔎") {
+                showArticleFind()
+            },
             com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_reader_view, "Reader view") {
                 binding.feedsParsed.performClick()
             },
@@ -1992,6 +2018,7 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     }
 
     private fun closeArticlePane(restoreDrawer: Boolean = true) {
+        hideArticleFind()
         binding.articlePane.visibility = View.GONE
         binding.articleWeb.loadUrl("about:blank")
         openMail = null
@@ -2004,6 +2031,143 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         applyArticlePill()
         // Intentionally do NOT stop the player — read-aloud keeps going after you leave the article;
         // control it from the "▶ Now Playing" modal.
+    }
+
+    // --- Find within the open piece ------------------------------------------------------------
+    //
+    // The book reader has had this since it shipped, and Michael asked for the same reach in the
+    // article pane and the mail reader: "it might also be good to be able to search/find within
+    // the current RSS article or email reader — and of course a find is in each book."
+    //
+    // A VOLUME GETS A HIT LIST; A PAGE GETS A FIND BAR. Say that plainly, because the next reader
+    // will notice the two searches don't look alike and should know it was chosen, not drifted
+    // into. The book's find (ReaderFragment.showBookSearch, entered from the book ☰ as "🔎 Search
+    // this book / all Ledger…") is a RESULTS LIST: foliate's `window.searchBook` answers
+    // asynchronously with CFI + excerpt pairs that fill a dialog you tap to jump, and it carries a
+    // second scope — the whole Ledger corpus, OCR'd handwriting included. That is right for a
+    // volume: three hundred pages you cannot see, so the hits have to be brought to you, and while
+    // you are asking a book a question you may well have meant to ask the whole ledger.
+    //
+    // A piece is one article or one letter, mostly on screen already and never more than a few
+    // screens deep. Bringing you a list of excerpts from it would be showing you a copy of what
+    // you are looking at. What's wanted is the words lit where they sit and a way to walk them —
+    // so: a bar, live count, ‹ ›, and no scope switch, because the only scope a piece has is
+    // itself (the whole-ledger question already has its home on the book's search and the Log).
+    //
+    // What IS borrowed is the vocabulary, so the two read as one house habit: the same 🔎, the
+    // same "Find in this piece" phrasing beside "Search this book", a single-line field with the
+    // search IME action, and one dismissal that puts the plain page back.
+    //
+    // ONE IMPLEMENTATION FOR BOTH. An article and a letter are the same pane's WebView dressed two
+    // ways, so the find is Android's own native find-in-page — findAllAsync / findNext /
+    // clearMatches — which lives in the renderer, NOT in injected JavaScript. That matters here:
+    // mail is rendered with javaScriptEnabled = false on purpose (see showMailInPane), and a
+    // JS-based highlighter would have had to be a second, mail-only implementation, or worse, a
+    // reason to turn scripts back on for a letter. The native find works with scripts off.
+    //
+    // THE RAIL'S ⏫⏬ ARE NOT TOUCHED. They mean "previous / next piece" — article-to-article in
+    // the feeds dress, email-to-email in The Mail dress — and they keep meaning exactly that while
+    // a find is open. Stepping matches is the find bar's own ‹ › pair. Overloading the crossing
+    // jumps would have cost the reader the one move they most want after finding something on
+    // page four: carrying on to the next piece.
+
+    /** Debounce for find-as-you-type — the Reading Log's 250ms, for the same reason: a full
+     *  find-and-highlight pass per keystroke is wasted work, and on e-ink it is wasted repaint. */
+    private val findDebounce = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** How many matches the renderer last reported, so ‹ › can decline politely at zero. */
+    private var findMatchCount = 0
+
+    /** Wire the find bar once, at view creation — the bar itself stays hidden until asked for. */
+    private fun setupArticleFind() {
+        // The renderer answers asynchronously (it has to walk the document), which is why the
+        // count is painted from here rather than returned by findAllAsync. Partial tallies are
+        // ignored: a count that ticks 1…4…9 while you type is three extra e-ink repaints saying
+        // nothing the final number doesn't.
+        binding.articleWeb.setFindListener { activeOrdinal, matches, doneCounting ->
+            if (!doneCounting) return@setFindListener
+            findMatchCount = matches
+            binding.articleFindCount.text = when {
+                binding.articleFindField.text.isNullOrBlank() -> ""
+                matches == 0 -> getString(R.string.feeds_find_none)
+                // activeMatchOrdinal is 0-based; a reader counts from one.
+                else -> getString(R.string.feeds_find_count, activeOrdinal + 1, matches)
+            }
+        }
+        binding.articleFindField.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) {
+                findDebounce.removeCallbacksAndMessages(null)
+                findDebounce.postDelayed({ if (isAdded) runArticleFind() }, 250)
+            }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        // Enter on the keyboard means "the next one" — the same key that submits the reader's
+        // search field, doing the only thing left to do once a query is already running.
+        binding.articleFindField.setOnEditorActionListener { _, _, _ -> stepArticleFind(forward = true); true }
+        binding.articleFindPrev.setOnClickListener { stepArticleFind(forward = false) }
+        binding.articleFindNext.setOnClickListener { stepArticleFind(forward = true) }
+        binding.articleFindClose.setOnClickListener { hideArticleFind() }
+    }
+
+    /** The rail's 🔎 — open the bar over the piece and hand it the keyboard, because nobody asks
+     *  to find without something to type. */
+    private fun showArticleFind() {
+        if (currentArticle == null) { showMessage(R.string.feeds_find_nothing_open, binding.root); return }
+        binding.articleFindBar.visibility = View.VISIBLE
+        binding.articleFindField.requestFocus()
+        binding.articleFindField.post {
+            (requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                as? android.view.inputmethod.InputMethodManager)
+                ?.showSoftInput(binding.articleFindField, 0)
+        }
+        // Asking again with a query still in the field re-finds it: the highlights were cleared
+        // on the way out, so the bar would otherwise come back showing a count of nothing.
+        if (!binding.articleFindField.text.isNullOrBlank()) runArticleFind()
+    }
+
+    /**
+     * Put the plain page back: highlights off, bar away, keyboard down. Called by ✕, by Back, and
+     * by every path that changes what the pane is showing — a find belongs to the piece it was run
+     * against, and carrying a stale query and a stale count across into the next article or letter
+     * would be claiming matches in a document that was never searched.
+     */
+    private fun hideArticleFind() {
+        findDebounce.removeCallbacksAndMessages(null)
+        binding.articleWeb.clearMatches()
+        findMatchCount = 0
+        binding.articleFindCount.text = ""
+        binding.articleFindField.setText("")
+        binding.articleFindBar.visibility = View.GONE
+        // Only when the field is really attached — this also runs from renderArticle, which fires
+        // once before the pane has ever been shown, and a null window token is not a keyboard.
+        binding.articleFindField.windowToken?.let { token ->
+            (requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                as? android.view.inputmethod.InputMethodManager)
+                ?.hideSoftInputFromWindow(token, 0)
+        }
+    }
+
+    private fun articleFindOpen() = binding.articleFindBar.visibility == View.VISIBLE
+
+    /** Run (or re-run) the query. An emptied field is a cleared find, not a search for nothing. */
+    private fun runArticleFind() {
+        val q = binding.articleFindField.text?.toString().orEmpty()
+        if (q.isBlank()) {
+            binding.articleWeb.clearMatches()
+            findMatchCount = 0
+            binding.articleFindCount.text = ""
+            return
+        }
+        binding.articleWeb.findAllAsync(q)
+    }
+
+    /** ‹ › — the find's OWN stepping, over matches. See the note above about the rail's ⏫⏬. */
+    private fun stepArticleFind(forward: Boolean) {
+        if (findMatchCount == 0) return
+        // findNext wraps at either end by itself, which is what a reader expects of a find: the
+        // last match's "next" is the first one again, not a dead button.
+        binding.articleWeb.findNext(forward)
     }
 
     /** Star the open article. `toggleStar` is the single place that logs the star to the Ledger

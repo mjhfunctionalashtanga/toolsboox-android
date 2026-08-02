@@ -432,6 +432,18 @@
     <string name="feeds_no_prev">No previous article.</string>
     <string name="feeds_next_article">Next article</string>
     <string name="feeds_prev_article">Last article</string>
+    <!-- Find within the open piece (article or letter) — see FeedsFragment.showArticleFind. -->
+    <string name="feeds_find">Find in this piece</string>
+    <string name="feeds_find_hint">Find in this piece</string>
+    <string name="feeds_find_prev">‹</string>
+    <string name="feeds_find_next">›</string>
+    <string name="feeds_find_close">✕</string>
+    <string name="feeds_find_prev_desc">Previous match</string>
+    <string name="feeds_find_next_desc">Next match</string>
+    <string name="feeds_find_close_desc">Close find</string>
+    <string name="feeds_find_count">%1$d of %2$d</string>
+    <string name="feeds_find_none">No matches</string>
+    <string name="feeds_find_nothing_open">Open a piece first.</string>
     <string name="feeds_starred">Starred and saved to your Ledger.</string>
     <string name="feeds_unstarred">Unstarred.</string>
     <string name="feeds_view_starred">★ Saved</string>

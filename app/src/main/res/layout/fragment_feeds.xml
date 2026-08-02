@@ -225,6 +225,57 @@
                 android:visibility="gone"
                 android:layout_width="40dp" android:layout_height="40dp"/>
         </LinearLayout>
+        <!-- Find within the open piece. Hidden until the rail's 🔍 asks for it, and it sits UNDER
+             the title rather than over the bottom of the page for two reasons: the piece's first
+             line stays put (a bar that grows from the bottom shoves the text you were reading),
+             and the soft keyboard comes up from the bottom — a find bar down there would spend
+             most of its life behind the keys. Same top-of-the-panel rule the handwriting pad
+             follows. The ‹ › here step MATCHES; the rail's ⏫⏬ still step pieces. -->
+        <LinearLayout
+            android:id="@+id/article_find_bar"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:visibility="gone"
+            android:paddingHorizontal="6dp"
+            android:layout_width="match_parent" android:layout_height="wrap_content">
+            <EditText
+                android:id="@+id/article_find_field"
+                android:hint="@string/feeds_find_hint"
+                android:inputType="text"
+                android:imeOptions="actionSearch"
+                android:maxLines="1"
+                android:textSize="15sp"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="6dp"
+                android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
+            <TextView
+                android:id="@+id/article_find_count"
+                android:textSize="14sp" android:textColor="#000000"
+                android:gravity="center" android:minWidth="72dp"
+                android:paddingHorizontal="4dp"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            <Button
+                android:id="@+id/article_find_prev"
+                style="?android:attr/borderlessButtonStyle"
+                android:text="@string/feeds_find_prev"
+                android:contentDescription="@string/feeds_find_prev_desc"
+                android:textSize="18sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            <Button
+                android:id="@+id/article_find_next"
+                style="?android:attr/borderlessButtonStyle"
+                android:text="@string/feeds_find_next"
+                android:contentDescription="@string/feeds_find_next_desc"
+                android:textSize="18sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+            <Button
+                android:id="@+id/article_find_close"
+                style="?android:attr/borderlessButtonStyle"
+                android:text="@string/feeds_find_close"
+                android:contentDescription="@string/feeds_find_close_desc"
+                android:textSize="16sp" android:minWidth="0dp" android:paddingHorizontal="10dp"
+                android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+        </LinearLayout>
         <FrameLayout
             android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
             <WebView android:id="@+id/article_web"
