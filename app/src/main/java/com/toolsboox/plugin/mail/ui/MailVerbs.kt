@@ -133,6 +133,102 @@ object MailVerbs {
     }
 
     /**
+     * The ↩ on a letter is TWO doors now, and this is the fork. "⚡ Quick reply" is the guarded
+     * dialog below, unchanged — right for the two-sentence answer typed on the spot. "✍ Draft the
+     * reply…" is for the answer that deserves composing: it mints the letter's reply gram onto a
+     * board through the one destination funnel, so the answer can be gathered on Pickings,
+     * sketched on Synthesize, and written in Write before anything is sent. Michael: "Reply
+     * popping up a quicky reply is OK, but it would be better to have a real writing or typing
+     * opportunity there."
+     */
+    fun replyDoors(
+        fragment: ScreenFragment, dayService: CalendarDayService, root: File,
+        m: InboxMessage, onSent: () -> Unit
+    ) {
+        val labels = arrayOf("⚡  Quick reply", "✍  Draft the reply…")
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(fragment.requireContext()))
+            .setTitle("Reply to ${m.fromName.ifBlank { m.fromEmail }}")
+            .setItems(labels) { _, which ->
+                when (which) {
+                    0 -> reply(fragment, m, onSent)
+                    1 -> draftReplyGram(fragment, dayService, root, m)
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * Mint the REPLY GRAM — the letter's link-card face wearing the reply mark (↩ REPLY chip,
+     * "Re: <subject>" title, "to <sender>" on the source line, the letter's opening words as the
+     * excerpt, since they are what the answer answers) — and send it through [GramDestinations]'
+     * chooser, so it can land on Gram Picks, a Pickings board, All Stars or Synthesize, wherever
+     * the gathering happens. The placement snackbar names the landing and offers the trip.
+     *
+     * The card itself stays an ordinary mail gram on the wire — `sourceLink = mail://<id>`, no new
+     * day-JSON fields, so the iPad reads it as a letter card and loses nothing. The reply INTENT
+     * (and later the Write piece answering it) rides the [MailReplyDrafts] sidecar keyed by that
+     * same address; it is what makes the gram's hold menu grow "✍ Write the reply" wherever the
+     * card travels.
+     */
+    fun draftReplyGram(
+        fragment: ScreenFragment, dayService: CalendarDayService, root: File, m: InboxMessage
+    ) {
+        val ctx = fragment.requireContext()
+        val sender = m.fromName.ifBlank { m.fromEmail }.ifBlank { "Unknown sender" }
+        val subject = m.subject.trim().ifBlank { "(no subject)" }
+        val reSubject = if (subject.lowercase().startsWith("re:")) subject else "Re: $subject"
+        // Recorded before the destination is even chosen: the intent is "I owe this letter an
+        // answer", and that became true the moment he picked the door. A small local write plus a
+        // backgrounded sync — the same bargain the tag picker's contacts read makes on a tap.
+        com.toolsboox.plugin.mail.MailReplyDrafts.note(ctx, m)
+        val face = com.toolsboox.plugin.calendar.ot.LinkCardRenderer.render(
+            url = "", title = reSubject, kind = "reply", sourceName = "to $sender",
+            excerpt = m.snippet.ifBlank { m.body }.trim().take(400)
+        )
+        com.toolsboox.plugin.calendar.ot.PickingsPlacement.chooseAndPlace(
+            fragment, dayService, root, face,
+            sourceLink = "mail://${m.id}", sourceLabel = sender, cardText = reSubject
+        )
+    }
+
+    /**
+     * The reply gram's own verb, offered by the hold menus wherever the card sits: null for every
+     * ordinary gram, an item for a card whose `mail://` address has a recorded reply intent. One
+     * lookup against an in-memory cache — a hold menu must stay cheap to open.
+     */
+    fun writeReplyItem(fragment: ScreenFragment, sourceLink: String): com.toolsboox.ot.LedgerContextMenu.Item? {
+        if (!sourceLink.startsWith("mail://")) return null
+        val intent = com.toolsboox.plugin.mail.MailReplyDrafts
+            .forMail(fragment.requireContext(), sourceLink) ?: return null
+        return com.toolsboox.ot.LedgerContextMenu.Item("✍  Write the reply") {
+            openReplyWrite(fragment, intent)
+        }
+    }
+
+    /**
+     * Open the Write piece FOR this letter — minting it on first use, reopening it ever after.
+     *
+     * The piece is a named Write document through [WritePageStore] (the same machinery every named
+     * document rides — registry entry, cross-device name sync, renameable, deletable), titled
+     * "Re: <subject>" so the hub row says what it answers. The link back to the letter is the
+     * intent's [MailReplyDrafts.linkWrite] — recorded BEFORE navigating, so the send door is
+     * already on the piece when it opens. A piece deleted from the hub simply stops being found
+     * here, and the next "Write the reply" mints a fresh one: the registry is the truth about
+     * what exists, this store only remembers which existing piece answers which letter.
+     */
+    fun openReplyWrite(fragment: ScreenFragment, intent: com.toolsboox.plugin.mail.MailReplyDrafts.Intent) {
+        val ctx = fragment.requireContext()
+        val existing = intent.writeKey.takeIf { it.isNotBlank() }?.let { key ->
+            com.toolsboox.plugin.calendar.ot.WritePageStore.list(ctx).firstOrNull { it.key == key }
+        }
+        val page = existing ?: com.toolsboox.plugin.calendar.ot.WritePageStore
+            .add(ctx, intent.reSubject)
+            .also { com.toolsboox.plugin.mail.MailReplyDrafts.linkWrite(ctx, intent.mailId, it.key, it.date) }
+        com.toolsboox.plugin.calendar.CalendarNavigator.toDayNote(fragment, page.date, page.key)
+    }
+
+    /**
      * A plain reply, sent out the account the message arrived on (via SMTP) — the guarded dialog
      * the Mail screen always showed, reachable from any surface holding a letter. The toasts
      * live here with the send; [onSent] fires only on success so the caller can refold its list
@@ -161,24 +257,35 @@ object MailVerbs {
             .setPositiveButton("Send") { _, _ ->
                 val text = input.text.toString().trim()
                 if (text.isBlank()) { toast("Nothing to send"); return@setPositiveButton }
-                fragment.lifecycleScope.launch {
-                    val err = try { withContext(Dispatchers.IO) { MailSync.sendReply(ctx, text, m) }; null }
-                    catch (e: Exception) { e.message ?: "Send failed" }
-                    // A sent reply is a keep-forever event: the mail you answered persists its body and
-                    // never prunes, exactly like a star. Recorded off the main thread (it writes a file).
-                    // The reply text you wrote also persists to its own sent pile, so your outgoing
-                    // words are kept forever and searchable alongside the mail you received.
-                    if (err == null) withContext(Dispatchers.IO) {
-                        InboxStore.markReplied(ctx.applicationContext, m.id)
-                        InboxStore.recordSent(ctx.applicationContext, m, text)
-                    }
-                    if (!fragment.isAdded) return@launch   // send outlives the fragment; toast needs it attached
-                    toast(if (err == null) "Reply sent" else "Send failed: $err")
-                    if (err == null) onSent()
-                }
+                sendReplyText(fragment, m, text, onSent)
             }
             .setNegativeButton("Cancel", null)
             .create())
+    }
+
+    /**
+     * The one reply SEND — the dialog above and the Write piece's "Send as reply" door both come
+     * through here, so a reply means the same thing however it was written: out the account the
+     * letter arrived on ([MailSync.sendReply], which threads the `Re:` subject), then the
+     * keep-forever bookkeeping, then the toast. [onSent] fires only on success.
+     */
+    fun sendReplyText(fragment: ScreenFragment, m: InboxMessage, text: String, onSent: () -> Unit = {}) {
+        val ctx = fragment.requireContext()
+        fragment.lifecycleScope.launch {
+            val err = try { withContext(Dispatchers.IO) { MailSync.sendReply(ctx, text, m) }; null }
+            catch (e: Exception) { e.message ?: "Send failed" }
+            // A sent reply is a keep-forever event: the mail you answered persists its body and
+            // never prunes, exactly like a star. Recorded off the main thread (it writes a file).
+            // The reply text you wrote also persists to its own sent pile, so your outgoing
+            // words are kept forever and searchable alongside the mail you received.
+            if (err == null) withContext(Dispatchers.IO) {
+                InboxStore.markReplied(ctx.applicationContext, m.id)
+                InboxStore.recordSent(ctx.applicationContext, m, text)
+            }
+            if (!fragment.isAdded) return@launch   // send outlives the fragment; toast needs it attached
+            Toast.makeText(ctx, if (err == null) "Reply sent" else "Send failed: $err", Toast.LENGTH_SHORT).show()
+            if (err == null) onSent()
+        }
     }
 
     // The knowledge-graph moves — how an email joins the Ledger like any other object. All three

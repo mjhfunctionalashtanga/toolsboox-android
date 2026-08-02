@@ -1468,11 +1468,13 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         }
     }
 
-    /** Reply to the open letter — [MailVerbs.reply] is the one reply dialog; a sent reply refolds
-     *  the list (the answered mail became keep-forever). */
+    /** Reply to the open letter — [MailVerbs.replyDoors] forks it: the quick-reply dialog for the
+     *  answer typed on the spot, or "Draft the reply…", which mints the letter's reply gram onto a
+     *  board so the answer can be gathered, sketched and written before it's sent. A sent reply
+     *  refolds the list (the answered mail became keep-forever). */
     private fun replyToOpenMail() {
         val m = currentArticle?.let { mailById[it.id] } ?: return
-        com.toolsboox.plugin.mail.ui.MailVerbs.reply(this, m) {
+        com.toolsboox.plugin.mail.ui.MailVerbs.replyDoors(this, calendarDayService, documentsRoot(), m) {
             if (kindFilter == KIND_MAIL && binding.articlePane.visibility != View.VISIBLE) submitMailRows()
         }
     }

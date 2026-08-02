@@ -74,12 +74,19 @@ object LedgerSendExport {
         val pageKey: String? = null,
     )
 
-    fun show(fragment: ScreenFragment, payload: Payload) {
+    /**
+     * [lead] rows sit ABOVE everything, Ask included — they exist for the page that has an errand
+     * of its own before the general destinations make sense. Today's one caller is a Write piece
+     * carrying reply provenance, whose whole reason to exist is "↩ Send as reply to <sender>";
+     * offering seven destinations first would bury the door the piece was minted for.
+     */
+    fun show(fragment: ScreenFragment, payload: Payload, lead: List<Pair<String, () -> Unit>> = emptyList()) {
         val ctx = fragment.requireContext()
         val boards = LedgerWebBridge.config(ctx)
         val community = LedgerCommunityBridge.config(ctx)
 
         val rows = mutableListOf<Pair<String, () -> Unit>>()
+        rows.addAll(lead)
         // Ask sits FIRST, above every row that puts the page somewhere, because it is the only
         // destination here that sends the page nowhere: nothing leaves the device, nothing is
         // posted, and you can come back. Michael, on how far the send-to-Ask bridge should reach:

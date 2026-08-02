@@ -2943,7 +2943,14 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
         if (element.sourceLink.isNotBlank()) {
             val jumpLabel = "↩ Go to source" + (if (element.sourceLabel.isNotBlank()) " · ${element.sourceLabel}" else "")
-            groups.add(listOf(LedgerContextMenu.Item(jumpLabel) { onImageSource(element) }))
+            val provenance = mutableListOf(LedgerContextMenu.Item(jumpLabel) { onImageSource(element) })
+            // A reply gram — a letter's card minted from ↩ "Draft the reply" — leads with its
+            // errand: open (minting on first use) the Write piece that answers the letter. The
+            // card is an ordinary mail gram on the wire; the intent lives in the MailReplyDrafts
+            // sidecar, so this is null for every card that isn't owed an answer.
+            com.toolsboox.plugin.mail.ui.MailVerbs.writeReplyItem(this, element.sourceLink)
+                ?.let { provenance.add(0, it) }
+            groups.add(provenance)
         }
         // The everyday things, up top: move, size, connect, where it goes.
         groups.add(listOf(

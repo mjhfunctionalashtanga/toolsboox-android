@@ -30,11 +30,14 @@ object LinkCardRenderer {
         "watch" -> "▶"
         "listen" -> "🎧"
         "mail" -> "✉"
+        // The reply gram — a letter being ANSWERED, not merely kept. The chip is the visible
+        // reply mark: on a board of ✉ MAIL cards, ↩ REPLY is the one that owes somebody words.
+        "reply" -> "↩"
         else -> "🔖"
     }
 
     private fun kindWord(kind: String): String = when (kind) {
-        "watch" -> "Watch"; "listen" -> "Listen"; "mail" -> "Mail"; else -> "Read"
+        "watch" -> "Watch"; "listen" -> "Listen"; "mail" -> "Mail"; "reply" -> "Reply"; else -> "Read"
     }
 
     /**

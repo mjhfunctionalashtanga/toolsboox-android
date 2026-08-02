@@ -1176,9 +1176,17 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             .documentFor(ctx, notePage, currentDate)
         val title = document?.title?.takeIf { it.isNotBlank() }
             ?: "$currentDate · ${notePage ?: "day"}"
+        // A Write piece minted to answer a letter leads with its reply door — the errand the
+        // piece exists for, above even Ask. Null for every ordinary page ([MailReplyDrafts]
+        // only knows pieces that "Write the reply" married to a letter).
+        val replyIntent = com.toolsboox.plugin.mail.MailReplyDrafts.forWrite(ctx, notePage, currentDate)
+        val lead = if (replyIntent == null) emptyList() else listOf(
+            "↩  Send as reply to ${replyIntent.sender}" to { sendWriteReply(replyIntent) }
+        )
         com.toolsboox.plugin.calendar.ot.LedgerSendExport.show(
             this,
-            com.toolsboox.plugin.calendar.ot.LedgerSendExport.Payload(
+            lead = lead,
+            payload = com.toolsboox.plugin.calendar.ot.LedgerSendExport.Payload(
                 title = title,
                 text = {
                     val draft = com.toolsboox.plugin.calendar.ot.WriteDraftStore.draft(ctx, currentDate, pageKey)
@@ -1198,6 +1206,65 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 pageKey = notePage
             )
         )
+    }
+
+    /**
+     * The reply door on a Write piece that answers a letter: gather the piece's words, hold one
+     * breath with the recipient named, then send through the ONE reply seam
+     * ([com.toolsboox.plugin.mail.ui.MailVerbs.sendReplyText] — same threading, same keep-forever
+     * bookkeeping as the quick-reply dialog, no second SMTP path).
+     *
+     * The words are the piece's TEXT: its typed markdown draft when there is one, else the ink
+     * read by the vision model, else the page's text boxes — exactly what the Send / Export
+     * sheet's own text lambda produces, so "what would this send" has one answer per page. A
+     * piece that yields no words (ink only, no AI key) is told so and pointed at the sheet's
+     * ✉ Email row, which sends the page as a picture — that path already exists and a reply
+     * seam that silently sent an empty body would be worse than none.
+     *
+     * The letter itself is looked up fresh from [InboxStore] so the send gets the real message
+     * where it still exists; a letter the window has scrolled past is rebuilt from the intent's
+     * remembered address and subject — enough for [MailSync.sendReply], which needs only the
+     * account-bearing id, the reply address and the subject to thread under.
+     */
+    private fun sendWriteReply(intent: com.toolsboox.plugin.mail.MailReplyDrafts.Intent) {
+        val ctx = requireContext()
+        val pageKey = notePage ?: "default"
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) {
+                val draft = com.toolsboox.plugin.calendar.ot.WriteDraftStore.draft(ctx, currentDate, pageKey)
+                if (draft != null && draft.markdown.isNotBlank()) draft.markdown
+                else aiCreds()?.let { pageOcrText(it) }
+                    ?: currentTextElements().filter { it.text.isNotBlank() }
+                        .joinToString("\n\n") { it.text.trim() }
+            }.orEmpty().trim()
+            if (!isAdded) return@launch
+            if (text.isBlank()) {
+                showMessage(
+                    "Nothing typed or recognised on this piece yet — ✉ Email can send the page as a picture.",
+                    binding.root
+                )
+                return@launch
+            }
+            val m = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.mail.InboxStore.messages(ctx).firstOrNull { it.id == intent.mailId }
+            } ?: com.toolsboox.plugin.mail.InboxMessage(
+                id = intent.mailId, account = "", fromName = intent.senderName,
+                fromEmail = intent.senderEmail, subject = intent.subject,
+                snippet = "", body = "", date = 0L
+            )
+            if (!isAdded) return@launch
+            // One held breath, with the recipient and the thread named — a reply leaves the
+            // device and lands in front of a person, so it is never one tap.
+            val who = intent.sender + (if (intent.senderEmail.isNotBlank()) " <${intent.senderEmail}>" else "")
+            AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                .setTitle("Send as reply?")
+                .setMessage("To $who\n${intent.reSubject}\n\n${text.take(400)}${if (text.length > 400) "…" else ""}")
+                .setPositiveButton("Send") { _, _ ->
+                    com.toolsboox.plugin.mail.ui.MailVerbs.sendReplyText(this@CalendarDayFragment, m, text)
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
     }
 
     /** Write → Share: the handwritten page leaves as a WP draft, an email, or a community post. */
@@ -5391,6 +5458,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
         if (element != null) {
             groups.add(listOfNotNull(
+                // A reply gram filed here (a letter being answered) leads with its errand — the
+                // Write piece that answers it. Null for every ordinary starred card.
+                com.toolsboox.plugin.mail.ui.MailVerbs.writeReplyItem(this, element.sourceLink),
                 if (element.graduatedTo.isBlank())
                     item("✓  Give it its own board") { graduateIntakeGram(element) }
                 else
