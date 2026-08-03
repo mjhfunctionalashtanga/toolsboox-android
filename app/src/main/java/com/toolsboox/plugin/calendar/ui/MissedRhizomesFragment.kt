@@ -30,8 +30,16 @@ import java.time.LocalDate
 import javax.inject.Inject
 
 /**
- * ✧ **Missed Rhizomes** — the Android mirror of the iPad's MissedRhizomesView; a serendipity engine
- * over the feed.
+ * ✧ **Missed Connections** — the Android mirror of the iPad's MissedRhizomesView; a serendipity
+ * engine over the feed.
+ *
+ * The name on screen is "Missed Connections"; the class, the file, the nav id and every stored key
+ * still say "rhizome", and that disagreement is deliberate. This surface is wired through the
+ * rhizome graph — [com.toolsboox.plugin.calendar.ot.ConnectionStore], the `tag://` and `ledger://`
+ * addresses, the corpus gather — and renaming that vocabulary to follow a label would be a wide
+ * change with a live wire running through it, for no gain a reader would ever see. So the label
+ * moves and the plumbing doesn't. Michael reads "Missed Connections"; the compiler reads
+ * MissedRhizomesFragment.
  *
  * It reads the items you walked past (cached, still unread, never starred) and, for each, asks the on-device
  * meaning model how deeply it rhymes with your ROOTS — the surfaced material you've actually engaged
@@ -71,7 +79,7 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        view.findViewById<TextView>(R.id.semantic_title).text = "✧ Missed Rhizomes"
+        view.findViewById<TextView>(R.id.semantic_title).text = "✧ Missed Connections"
         column = view.findViewById(R.id.semantic_column)
         scroll = view.findViewById(R.id.semantic_scroll)
         // The strip FILTERS the finds in place — a period tap scopes to what was published then,
@@ -116,10 +124,10 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
             // that hasn't rhymed with anything yet needs the longer explanation.
             column.addView(hint(
                 if (win != null)
-                    "No missed rhizomes for ${navBar?.periodLabel()}. The carets step to the next " +
+                    "No missed connections for ${navBar?.periodLabel()}. The carets step to the next " +
                     "period; tapping the period again brings back everything."
                 else
-                    "Nothing in the feed you skipped rhymes deeply with your roots yet. Let more feed " +
+                    "Nothing you skipped in the feed rhymes deeply with your own material yet. Let more feed " +
                     "collect, or add an embeddings key in Settings so the meaning model can compare them."))
             com.toolsboox.ot.ReadingSize.apply(scroll)
             return

@@ -64,18 +64,14 @@ class CalendarUtils @Inject constructor() {
             constraintSet.connect(R.id.surfaceView, ConstraintSet.END, ConstraintSet.PARENT_ID, ConstraintSet.END)
         }
 
-        // The spiral line is placed by translation from the surface transform (it has to sit on a
-        // specific patch of the drawn page), so it only needs pinning to the origin. It still has
-        // to be DESCRIBED here: a view this cloned set doesn't mention comes back 0×0 — laid out,
-        // visible, and invisible, which looks exactly like a feature that was never wired up.
-        constraintSet.connect(R.id.spiralLine, ConstraintSet.TOP, ConstraintSet.PARENT_ID, ConstraintSet.TOP)
-        constraintSet.connect(R.id.spiralLine, ConstraintSet.START, ConstraintSet.PARENT_ID, ConstraintSet.START)
-        constraintSet.constrainWidth(R.id.spiralLine, ConstraintSet.WRAP_CONTENT)
-        constraintSet.constrainHeight(R.id.spiralLine, ConstraintSet.WRAP_CONTENT)
+        // The Roots band's floating line used to be described here too — a view this cloned set
+        // doesn't mention comes back 0×0 (laid out, visible, and invisible, which looks exactly like
+        // a feature that was never wired up), so it had to be pinned to the origin even though its
+        // real position came from the surface's transform. The band is retired and the line with it.
 
         // The numbered-notes pager hugs the TOP-LEFT corner — centered at the top it sat over the
         // writing (and is excluded from ink capture, so you couldn't write there). The right edge is
-        // taken by the nav/tool pills, so left is the free corner. Same 0×0 rule as the spiral line.
+        // taken by the nav/tool pills, so left is the free corner. The same 0×0 rule applies to it.
         val pagerGap = (2 * binding.root.resources.displayMetrics.density).toInt()
         val pagerInset = (150 * binding.root.resources.displayMetrics.density).toInt()
         constraintSet.connect(R.id.notePager, ConstraintSet.TOP, R.id.navigatorImageView, ConstraintSet.BOTTOM, pagerGap)

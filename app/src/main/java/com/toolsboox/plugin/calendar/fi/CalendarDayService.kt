@@ -328,7 +328,8 @@ class CalendarDayService @Inject constructor() {
     }
 
     /**
-     * A slim decode for the CORPUS gather (Ask, Roots, Sprouts, Missed Rhizomes, the Map):
+     * A slim decode for the CORPUS gather (Ask, Missed Connections, the Map — Roots and Sprouts
+     * read through it too until they retired):
      * exactly what the corpus quotes — dates, reading events, typed text, A/V gram names,
      * tasks, device events — and none of what it doesn't. The stroke arrays and the base64
      * image payloads that dominate a day file's bytes are skipped by Moshi's reader instead

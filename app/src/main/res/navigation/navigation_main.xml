@@ -52,11 +52,12 @@
             android:id="@+id/action_to_notes_tags"
             app:destination="@id/NotesTagsFragment"/>
 
-    <!-- Scratch ink surface (same fragment as the day page, but a DISTINCT destination so Back
-         pops it and returns to the previous screen instead of collapsing to the start dest). -->
-    <action
-            android:id="@+id/action_to_scratch"
-            app:destination="@id/CalendarScratchFragment"/>
+    <!-- The Scratch destination is RETIRED. It was never a page of its own — it was an alias of the
+         day-note surface that existed so Back would pop it, and so the floating pen button could ask
+         "am I standing on my note right now?" by reading the destination id. Both jobs now go
+         through the ordinary day destination: the pen button asks the fragment itself
+         (CalendarDayFragment.currentNotePage()), which is the same LIVE question with one fewer
+         phantom surface in the vocabulary. -->
 
     <action
             android:id="@+id/action_to_settings"
@@ -67,10 +68,6 @@
             app:destination="@id/LedgerItemsFragment"/>
 
     <action
-            android:id="@+id/action_to_ledger_roots"
-            app:destination="@id/LedgerRootsFragment"/>
-
-    <action
             android:id="@+id/action_to_ledger_map"
             app:destination="@id/LedgerMapFragment"/>
 
@@ -78,18 +75,19 @@
             android:id="@+id/action_to_ledger_rhizome"
             app:destination="@id/LedgerRhizomeFragment"/>
 
+    <!-- Roots · Seeds · Sprouts are RETIRED destinations (2026-08). All three were DERIVED views
+         over material that lives elsewhere — they owned no data of their own — and the measured
+         record said so: Michael called Roots and Seeds "pretty useless". Quick Wins and Missed
+         Connections ("pretty good") both stay. -->
+
     <action
             android:id="@+id/action_to_quick_wins"
             app:destination="@id/QuickWinsFragment"/>
 
-    <action
-            android:id="@+id/action_to_sprouts"
-            app:destination="@id/SproutsFragment"/>
-
-    <action
-            android:id="@+id/action_to_seeds"
-            app:destination="@id/SeedsFragment"/>
-
+    <!-- "Missed Connections" to the reader; MissedRhizomes to the compiler. The internal vocabulary
+         stays "rhizome" on purpose: the class, the file, the nav ids and the stored keys are wired
+         through the rhizome graph, and renaming them would be churn with no benefit and a real risk
+         of cutting a live wire. Only what he SEES changes. -->
     <action
             android:id="@+id/action_to_missed_rhizomes"
             app:destination="@id/MissedRhizomesFragment"/>
@@ -155,13 +153,6 @@
             android:label="TextNotesFragment"
             tools:layout="@layout/fragment_text_notes">
     </fragment>
-
-    <!-- Pull-up scratch surface: reuses CalendarDayFragment but as its own destination. -->
-    <fragment
-            android:id="@+id/CalendarScratchFragment"
-            android:name="com.toolsboox.plugin.calendar.ui.CalendarDayFragment"
-            android:label="Scratch"
-            tools:layout="@layout/fragment_calendar"/>
 
     <fragment
             android:id="@+id/LedgerChatFragment"
@@ -239,27 +230,9 @@
     </fragment>
 
     <fragment
-            android:id="@+id/LedgerRootsFragment"
-            android:name="com.toolsboox.plugin.calendar.ui.LedgerRootsFragment"
-            android:label="LedgerRootsFragment"
-            tools:layout="@layout/fragment_ledger_roots"/>
-
-    <fragment
             android:id="@+id/QuickWinsFragment"
             android:name="com.toolsboox.plugin.calendar.ui.QuickWinsFragment"
             android:label="QuickWinsFragment"
-            tools:layout="@layout/fragment_semantic_surface"/>
-
-    <fragment
-            android:id="@+id/SproutsFragment"
-            android:name="com.toolsboox.plugin.calendar.ui.SproutsFragment"
-            android:label="SproutsFragment"
-            tools:layout="@layout/fragment_semantic_surface"/>
-
-    <fragment
-            android:id="@+id/SeedsFragment"
-            android:name="com.toolsboox.plugin.calendar.ui.SeedsFragment"
-            android:label="SeedsFragment"
             tools:layout="@layout/fragment_semantic_surface"/>
 
     <fragment

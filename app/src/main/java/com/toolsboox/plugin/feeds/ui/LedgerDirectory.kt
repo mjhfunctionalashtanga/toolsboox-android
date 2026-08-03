@@ -36,59 +36,62 @@ fun ledgerDirectoryFolders(
     val home: String? = if (expandFeedLedger) "Incoming" else when (fragment) {
         is FeedsFragment, is FeedArticleFragment,
         is com.toolsboox.plugin.mail.ui.MailComposeFragment -> "Incoming"
-        is com.toolsboox.plugin.calendar.ui.QuickWinsFragment,
         is com.toolsboox.plugin.calendar.ui.RolodexFragment,
         is com.toolsboox.plugin.calendar.ui.LedgerItemsFragment,
-        is com.toolsboox.plugin.calendar.ui.KanbanFragment,
-        is com.toolsboox.plugin.calendar.ui.PublishFragment,
-        is com.toolsboox.plugin.calendar.ui.PostsBrowserFragment -> "Desk"
-        is com.toolsboox.plugin.calendar.ui.LedgerRootsFragment,
+        is com.toolsboox.plugin.calendar.ui.KanbanFragment -> "Desk"
+        // Quick Wins and Missed Connections are the two reflective surfaces that survived the
+        // garden; they call Daily home beside Gratitude and Self Executive.
+        is com.toolsboox.plugin.calendar.ui.QuickWinsFragment,
+        is com.toolsboox.plugin.calendar.ui.MissedRhizomesFragment -> "Daily"
+        // The map and the rhizome view it opens are ways of SEEING connections, which is thinking —
+        // so they call the Ask group home now rather than the retired Garden.
         is com.toolsboox.plugin.calendar.ui.LedgerMapFragment,
-        is com.toolsboox.plugin.calendar.ui.SproutsFragment,
-        is com.toolsboox.plugin.calendar.ui.SeedsFragment,
-        is com.toolsboox.plugin.calendar.ui.MissedRhizomesFragment,
-        is com.toolsboox.plugin.calendar.ui.LedgerRhizomeFragment -> "Garden"
+        is com.toolsboox.plugin.calendar.ui.LedgerRhizomeFragment -> "Ask"
         is com.toolsboox.plugin.textnotes.ui.TextNotesFragment,
         is com.toolsboox.plugin.calendar.ui.NotesTagsFragment -> "Notes"
         is com.toolsboox.plugin.reader.ui.ReaderFragment -> "Bookshelf"
         // ReadingLogFragment serves both Search and History; either way its folder home is Log.
         is com.toolsboox.plugin.calendar.ui.ReadingLogFragment -> "Log"
-        // Ask lives in the Search group now (Michael: Search, Ask and Directory in one dropdown),
-        // so the chat surface calls that group home.
-        is com.toolsboox.plugin.chat.ui.LedgerChatFragment -> "Search"
+        // The chat surface IS the Ask group's centre — Chat, and the two thinking rows that open it
+        // with a question already drafted.
+        is com.toolsboox.plugin.chat.ui.LedgerChatFragment -> "Ask"
+        // The site-facing native surfaces moved out of the retired Community folder into Sites,
+        // beside Publish and Posts — they are all the same act: your sites, worked from here.
         is com.toolsboox.plugin.calendar.ui.SiteBoardsFragment,
         is com.toolsboox.plugin.calendar.ui.CorrespondenceFragment,
         is com.toolsboox.plugin.calendar.ui.MessagesFragment,
-        is com.toolsboox.plugin.calendar.ui.RosterFragment -> "Community"
-        is com.toolsboox.plugin.calendar.ui.SiteWebFragment -> "Sites"
+        is com.toolsboox.plugin.calendar.ui.BlueskyFragment,
+        is com.toolsboox.plugin.calendar.ui.RosterFragment,
+        is com.toolsboox.plugin.calendar.ui.PublishFragment,
+        is com.toolsboox.plugin.calendar.ui.PostsBrowserFragment -> "Sites"
+        // The Fluent portals are the member-facing WEB face of the same sites, so they get their
+        // own folder and their own home.
+        is com.toolsboox.plugin.calendar.ui.SiteWebFragment -> "Fluent"
         is com.toolsboox.plugin.calendar.ui.CalendarSettingsFragment,
         is com.toolsboox.plugin.cloud.ui.CloudFragment -> "Settings"
         // The day surface hosts many pages: the day grid itself is "Today" (no folder), the
-        // ritual pages live under Daily, and the freeform note pages under Notes. Same key
-        // vocabulary as the fragment's own sectionEmoji()/sectionIcon().
+        // catch-and-sort pages live under Filter, the reflective ones under Daily, and the freeform
+        // note pages under Notes. Same key vocabulary as the fragment's own sectionEmoji().
         is com.toolsboox.plugin.calendar.ui.CalendarDayFragment ->
             // Fold a "#n" sub-page (write#1, grid#2) onto its base so it calls the same folder home
             // as its base page — the sub-page tail only matters to the pager, never to the hub.
             when (val page = fragment.currentNotePage()?.substringBefore('#')) {
                 null, "default", com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE -> null
-                // Gram Picks calls Flow home now — it joined the folder when it joined the ritual
-                // chain (All Stars → Gram Picks → Pickings, the iPhone's order): picks are the
-                // day's catch waiting to be sorted, not a note surface.
-                "intake", "write",
-                com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> "Flow"
-                "gratitude", "selfexec" -> "Garden"
-                "grid", "sketch" -> "Notes"
-                // A NAMED document ("pickings-…", "synthesize-…", "write-…") calls the same folder
-                // home as the surface it belongs to — the "-<millis>" tail is storage, never a
-                // different kind of page. Which is exactly why a named GRID or JOT has to be asked
-                // about by surface rather than swept into Flow with the rest: they became documents
-                // without leaving the Notes folder their daily pages sit in, and "grid-1753…" would
-                // otherwise open the hub with Flow expanded around a page that isn't in it.
+                // Filter is what Flow became — Michael: "no more flow". The three stations that
+                // actually catch and sort the day's material, and nothing else.
+                "intake",
+                com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> "Filter"
+                "gratitude", "selfexec" -> "Daily"
+                "grid", "sketch", "write" -> "Notes"
+                // A NAMED document ("pickings-…", "write-…") calls the same folder home as the
+                // surface it belongs to — the "-<millis>" tail is storage, never a different kind of
+                // page. Synthesize documents are the exception worth naming: their surface retired,
+                // so a "synthesize-…" page still OPENS (from the Directory, or from any link that
+                // addresses it) but belongs to no folder, and the hub honestly expands nothing.
                 else -> when (com.toolsboox.plugin.calendar.ot.LedgerDocuments.surfaceOf(page)) {
-                    null -> "Notes"   // lined pages ("0", "1", …) and named notebooks
-                    com.toolsboox.plugin.calendar.ot.LedgerDocuments.GRID,
-                    com.toolsboox.plugin.calendar.ot.LedgerDocuments.JOT -> "Notes"
-                    else -> "Flow"
+                    com.toolsboox.plugin.calendar.ot.LedgerDocuments.PICKINGS -> "Filter"
+                    com.toolsboox.plugin.calendar.ot.LedgerDocuments.SYNTHESIZE -> null
+                    else -> "Notes"   // lined pages ("0", "1", …), named grids, jots and writings
                 }
             }
         else -> null   // almanac pages (week/month/…), dashboard — no folder to call home
@@ -161,24 +164,35 @@ fun ledgerDirectoryFolders(
         openHistory(null)
     }
 
-    // Order per Michael: Search (one dropdown holding Ask and the Directory) · Today (straight to
-    // the page, no submenu) · Feed · Flow · Desk · Garden · Notes · Bookshelf · Ledger Log ·
-    // Community · Sites · Settings. Flow sits directly under Feed: the world comes in through
-    // Feed, then Flow is where you catch and make from it (Intake → Pickings → Synthesize → Write).
+    // Michael's order, 2026-08: Ask · Today · Incoming · Filter · Daily · Desk · Notes · Bookshelf ·
+    // Sites · Fluent · Log · Settings.
+    //
+    // The shape of it is worth saying plainly, because it is the thing the iOS twin has to copy.
+    // The hub used to be arranged by WHERE a thing lived (a Flow of surfaces, a Garden of surfaces);
+    // it is arranged by WHAT YOU ARE DOING now. Ask leads because a question is the commonest way
+    // in. Filter is what Flow became — his words were "no more flow" — and it holds only the three
+    // stations that catch and sort what arrived. Daily holds what you do with yourself rather than
+    // with the world's material. Sites is your sites worked from here; Fluent is the same sites
+    // seen as a member sees them.
     return listOfNotNull(
         nowPlaying,
-        // Search · Ask · Directory — ONE row above Today (Michael: "put Search, Ask and Directory
-        // in a single dropdown above Today"). The three are one question asked three ways: Search
-        // reads what you wrote, Ask asks the same corpus in prose, the Directory shows what you
-        // have. Tapping the label goes straight to Search (the row's primary act, so the common
-        // case stays one tap); the caret unfolds the three as sub-rows. Ask moved here from the
-        // Log folder; the destinations themselves are untouched — this is regrouping, not
-        // rerouting.
-        ScreenFragment.Folder("🔍", "Search", listOf(
+        // ASK — one dropdown above Today: Search, Chat, and the Directory.
+        //
+        // Search reads what you already wrote; Chat asks the same corpus in prose. That is the whole
+        // group, and its smallness is the point. Synthesize, Brainstorm, a writing prompt, an essay
+        // outline, the map — Michael's ruling is that these are all Ask OUTPUTS, things a
+        // conversation hands back, not places you travel to. A menu row for an output would be a
+        // door onto a thing that only exists once you've asked for it. So they get no rows: the
+        // retiring Synthesize surface leaves a capability behind in Chat rather than a shortcut in
+        // the menu, and the group ends up smaller than the one it replaced.
+        //
+        // The Directory left this group to stand on its own above Settings (Michael's words), which
+        // is the right shape for it: Search and Chat are questions, and the Directory is the
+        // opposite move — not asking, but going and looking.
+        ScreenFragment.Folder("🔎", "Ask", listOf(
             "🔍  Search" to openSearch,
-            "🔎  Ask" to { nav.navigate(R.id.action_to_ledger_chat) },
-            "🗂  Directory" to { showLedgerRootDirectory(fragment) },
-        ), expanded = home == "Search", action = openSearch),
+            "💬  Chat" to { nav.navigate(R.id.action_to_ledger_chat) },
+        ), expanded = home == "Ask", action = { nav.navigate(R.id.action_to_ledger_chat) }),
         // One-tap jump to today's Day page — no submenu. If we're leaving an open article/book,
         // drop a return anchor so the Day page can jump straight back.
         ScreenFragment.Folder("☀️", "Today", action = {
@@ -227,61 +241,84 @@ fun ledgerDirectoryFolders(
                     label to { openFeed("later", null, lane) }
                 },
             )),
-        // Flow — the daily catch→make spine, right under Feed. Intake is the day's catch
-        // (Email/Read/Watch/Listen grams, one per starred item); moving a gram into its Pickings
-        // is where it becomes something; Synthesize works the gathered pieces and Write closes it
-        // out. (Was "Daily"; Daily Pile is retired — Intake takes its place. Gratitude and Self
-        // Executive moved to the Garden.)
-        ScreenFragment.Folder("⤳", "Flow", listOf(
+        // FILTER — what arrived, being sorted. Directly under Incoming, because that is the order it
+        // happens in: the world comes in through Incoming, and this is the sieve.
+        //
+        // It was called Flow and held five rows. Michael's words were "no more flow": the name
+        // promised a current carrying you from catching to making, and the measured record says the
+        // current stops at the third station. All Stars is where a star lands (8 days of ink), Gram
+        // Picks is the inbox every grabbed gram falls into, and Pickings is where a gram becomes
+        // something — 33 days and 158 grams, his second-most-used surface in the whole ledger.
+        //
+        // Synthesize left with its surface; its idea is an Ask output now. Write left this group
+        // because Filter names a job Write isn't doing — it keeps the door it already had.
+        //
+        // Pickings stays exactly here even though it is heading for a different life as a Notes
+        // template in the next slice: moving a surface twice is how you strand it once.
+        // ▽ rather than an emoji: the hub draws an unmapped glyph as TEXT, so a rare codepoint
+        // renders as tofu on a Boox. ▽ is the universal filter mark and is in every font here.
+        ScreenFragment.Folder("▽", "Filter", listOf(
             "★  All Stars" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
-            // Gram Picks between All Stars and Pickings — the iPhone's Flow order. It moved here
-            // from the Notes folder: where every grabbed gram lands, so sorting happens once,
-            // later, in one place — the inbox the rest of the flow draws from, which makes it a
-            // station of the flow rather than a kind of note.
+            // Gram Picks between All Stars and Pickings — the iPhone's order. Where every grabbed
+            // gram lands, so sorting happens once, later, in one place.
             "◈  Gram Picks" to {
                 CalendarNavigator.toDayNote(
                     fragment, today,
                     com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
                 )
             },
-            "❝  Pickings" to { showPickingsPicker(fragment) },
-            "🔬  Synthesize" to { showSynthPicker(fragment) },
-            // Write opens its directory rather than jumping straight at today's page, now that it
-            // HAS documents to choose between. Its two neighbours in Flow already worked this way;
-            // the odd one out was Write, the surface with the most reason to ask which piece.
-            "✍  Write" to { showWritePicker(fragment) }
-        ), expanded = home == "Flow"),
-        // Desk Ledger — the working surfaces: mail, people, tasks, boards, publishing, notes.
-        ScreenFragment.Folder("🗒", "Desk", listOf(
-            // Desk order (Michael, 07-24): Quick Wins leads — the quickest action-surface at the
-            // top — then the internet-backed working surfaces. The note surfaces moved to their
-            // own Notes folder below.
-            "⚡  Quick Wins" to { nav.navigate(R.id.action_to_quick_wins) },
-            "👤  Contacts" to { nav.navigate(R.id.action_to_rolodex) },
-            // Boards = one system, two sources (Local on-device tasks · Site FluentBoards),
-            // framed like the RSS Local/Site split. Tasks & Events is the list view of Local.
-            "☑  Tasks & Events" to { nav.navigate(R.id.action_to_ledger_items) },
-            "📋  Boards · Local" to { nav.navigate(R.id.action_to_kanban) },
-            // WordPress publishing on the active site — compose (post/schedule/draft, CPTs, grams as
-            // the featured image) and browse/edit/trash posts.
-            "🖋  Publish" to { nav.navigate(R.id.action_to_publish) },
-            "🗎  Posts" to { nav.navigate(R.id.action_to_posts_browser) }
-        ), expanded = home == "Desk"),
-        // The Garden: the surfaces about what you've already written rather than capturing more of
-        // it. Gratitude and Self Executive settle here — reflective, not capture — moved out of Flow.
-        // Roots is what keeps coming back, Map is the same material as a picture, and Sprouts and
-        // Missed Rhizomes are what sprouted or what you skipped that speaks to it.
-        ScreenFragment.Folder("🪴", "Garden", listOf(
+            "❝  Pickings" to { showPickingsPicker(fragment) }
+        ), expanded = home == "Filter"),
+        // DAILY — what you do with yourself, as against what you do with the world's material.
+        //
+        // This is the Garden, renamed and cut to what earns its place. Gratitude is the single
+        // most-written page in the ledger (44 days) and Self Executive is his own keep. Quick Wins
+        // moves in from the Desk: it is a daily reckoning, not a working surface. Missed
+        // Connections — "pretty good" — is the one discovery surface that survived.
+        //
+        // Roots, Seeds and Sprouts are gone. All three were DERIVED views over the tag index and the
+        // connection graph, holding no data of their own, and Michael's reading of Roots and Seeds
+        // was "pretty useless". Nothing they showed has been lost: it is all still in the graph, and
+        // Missed Connections still reads it.
+        ScreenFragment.Folder("🪴", "Daily", listOf(
             "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") },
             "🐘  Self Executive" to { CalendarNavigator.toDayNote(fragment, today, "selfexec") },
-            "🌿  Roots" to { nav.navigate(R.id.action_to_ledger_roots) },
-            // Seeds sits just before Sprouts — the lifecycle is Seed → (roots form) → Sprout: a
-            // #tag still finding its roots network lives here until it recurs enough to sprout.
-            "🌰  Seeds" to { nav.navigate(R.id.action_to_seeds) },
-            "🌱  Sprouts" to { nav.navigate(R.id.action_to_sprouts) },
-            "✧  Missed Rhizomes" to { nav.navigate(R.id.action_to_missed_rhizomes) },
+            "⚡  Quick Wins" to { nav.navigate(R.id.action_to_quick_wins) },
+            // "Missed Connections" is a LABEL change only. The class, the file, the nav id and every
+            // stored key still say "rhizome", deliberately: the surface is wired through the rhizome
+            // graph, and renaming that vocabulary would be churn with a live wire in it. He reads
+            // "Missed Connections"; the compiler reads MissedRhizomesFragment.
+            "✧  Missed Connections" to { nav.navigate(R.id.action_to_missed_rhizomes) },
+            // Map keeps the door it has always had, in the folder it has always been in. Its future
+            // is as a rendering of an Ask output rather than a place you visit — that is a later
+            // slice, and until then taking its only top-level door away would strand a working
+            // viewer to make a menu tidier.
             "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) }
-        ), expanded = home == "Garden"),
+        ), expanded = home == "Daily"),
+        // DESK — two rows. People, and the work.
+        //
+        // "Boards & Tasks" is ONE row because a board is not a thing beside a task, it is a LENS
+        // over tasks — Michael's own reasoning, and the measurement behind it is stark: 263 tasks,
+        // 260 of them belonging to no board at all and 239 sitting in stage "todo". A separate
+        // Boards door was a second front on a drawer that is almost entirely one pile. So the kanban
+        // is a DISPLAY MODE of Tasks now (list <-> by stage) rather than its own hub row, and this
+        // row opens whichever mode you last used. Nothing of the kanban's rendering was deleted —
+        // it was re-homed. See [openBoardsAndTasks].
+        //
+        // Quick Wins moved to Daily; Publish and Posts moved to Sites, where the rest of the work on
+        // his sites now lives.
+        ScreenFragment.Folder("🗒", "Desk", listOf(
+            "👤  Contacts" to { nav.navigate(R.id.action_to_rolodex) },
+            "☑  Boards & Tasks" to { openBoardsAndTasks(fragment.requireContext(), nav) }
+        ), expanded = home == "Desk",
+            // The day's booking roster folds under Contacts: it is the same act — a person, and what
+            // you owe them — narrowed to today's bookings, so it belongs behind the people door
+            // rather than beside it as a third top-level row.
+            subFolds = mapOf(
+                "👤  Contacts" to listOf(
+                    "🎟  Roster" to { nav.navigate(R.id.action_to_roster) }
+                )
+            )),
         // Notes as their own door (Michael, 07-24): the four note surfaces out of the Desk into a
         // folder of their own — the named-notes work will grow from here. Notes reopens where you
         // last were.
@@ -289,8 +326,12 @@ fun ledgerDirectoryFolders(
             "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
             "📈  Grid Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "grid") },
             "⌱  Jot Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "sketch") },
-            // Gram Picks left this folder for Flow, between All Stars and Pickings — see the Flow
-            // folder above. It is a station of the day's catch→make walk, not a kind of note.
+            // Write comes in from the retired Flow folder, which held its only hub door. It is not a
+            // retired surface — five days of ink and a shelf of named pieces — and Filter is a name
+            // for sorting what arrived, which is not what Write does. So it sits with the other
+            // making surfaces until Michael says where it belongs; the row is one line to move.
+            // It opens its directory rather than today's page, because it HAS pieces to choose from.
+            "✍  Write" to { showWritePicker(fragment) },
             "Ⓣ  Text Notes" to { nav.navigate(R.id.action_to_text_notes) },
             // #hashtags harvested off note pages → jump to any page a tag appears on. No naming.
             "#  Tags" to { showTagIndex(fragment) },
@@ -301,55 +342,116 @@ fun ledgerDirectoryFolders(
             }
         ), expanded = home == "Notes"),
         bookshelf,
+        // SITES — YOUR sites, worked from here.
+        //
+        // This folder and the Fluent one below split what used to be "Community" and "Sites" along a
+        // clearer line than native-versus-WebView: this is the OPERATOR's side (write a post, answer
+        // a comment, move a card), Fluent is the same sites as a MEMBER sees them. Publish and Posts
+        // came in from the Desk on that reasoning — publishing to a site is site work, not desk work.
+        //
+        // "Site Boards", not "Boards". Three different things in this app were once one bare word in
+        // the menu — the local kanban, the Pickings boards, and FluentBoards on his sites — and a
+        // menu where the same word means three things is a menu you have to remember rather than
+        // read. The local kanban is a mode of Tasks now, Pickings is called Pickings, and this one
+        // says whose boards it means.
+        ScreenFragment.Folder("🌐", "Sites", listOf(
+            // WordPress publishing on the active site — compose (post/schedule/draft, CPTs, grams as
+            // the featured image) and browse/edit/trash posts.
+            "🖋  Publish" to { nav.navigate(R.id.action_to_publish) },
+            "🗎  Posts" to { nav.navigate(R.id.action_to_posts_browser) },
+            "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
+            "💬  Messages" to { nav.navigate(R.id.action_to_messages) },
+            "🗃  Site Boards" to { nav.navigate(R.id.action_to_site_boards) },
+            // Site accounts is configuration OF THESE SITES, so it sits with them rather than in the
+            // gear where it was buried. Same manager the settings screen opens; one source of truth.
+            "🖥  Site Settings" to { com.toolsboox.plugin.calendar.ui.SitesSettingsDialog.show(fragment.requireContext()) }
+        ), expanded = home == "Sites",
+            // Bluesky folds under Correspondence. Both are the exchange with people about what you
+            // made; the difference is only that one happens on his own ground and the other on a
+            // public timeline, on a different secret and a queue on the VPS. That is a fold, not a
+            // seventh row. (Michael's IA named no home for it — this keeps the door alive at the
+            // nearest true place until he says otherwise.)
+            subFolds = mapOf(
+                "@  Correspondence" to listOf(
+                    "🦋  Bluesky" to { nav.navigate(R.id.action_to_bluesky) }
+                )
+            )),
+        // FLUENT — the same sites as a member sees them: the four Fluent front ends in a
+        // persistent-session WebView (sign in once, cookies stick).
+        //
+        // It was called "Sites" and that name now belongs to the operator's folder above, which is
+        // the honest way round: these pages are not his sites, they are his sites' front doors, and
+        // the plugin family is the thing they actually have in common.
+        //
+        // Michael's IA listed "Support" in BOTH this group and Sites. There is exactly one support
+        // destination in the app — the FluentSupport portal — so it is here, with its family, and
+        // not duplicated above under a second name. Flagged rather than guessed at.
+        ScreenFragment.Folder("🚪", "Fluent", listOf(
+            "🏛  Portal" to { openSiteWeb(nav, "community") },
+            "🎓  Courses" to { openSiteWeb(nav, "courses") },
+            "🛟  Support" to { openSiteWeb(nav, "support") },
+            "🛍  Shop" to { openSiteWeb(nav, "shop") }
+        ), expanded = home == "Fluent"),
         // Log — the zettelkasten: one screen with range/origin/search inside. Ask lived here
-        // (asking IS querying the log) until Michael grouped it with Search and the Directory at
-        // the top; the door up there reaches the same chat surface.
+        // (asking IS querying the log) before it went to the top of the hub; the door up there
+        // reaches the same chat surface.
         ScreenFragment.Folder("🕘", "Log", listOf(
             // "History", not "Log" — the child shares the folder's name and Search's destination,
             // and a distinct name + glyph is what tells you it's the browse-the-past door.
             "🕰  History" to { openHistory(null) }
         ), expanded = home == "Log"),
-        // Community: the NATIVE people-facing surfaces — your desk's connection to others. The active
-        // site's member-facing WEB portals live in their own "Sites" folder below, so it's clear at a
-        // glance which rows are native tools and which are the website rendered in a WebView.
-        ScreenFragment.Folder("👥", "Community", listOf(
-            // 🗃 (not 📋) so the two Boards doors don't wear the same icon when the Desk and
-            // Community folders are open together — Local keeps the card, Site gets the file box.
-            "🗃  Boards · Site" to { nav.navigate(R.id.action_to_site_boards) },
-            "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
-            "💬  Messages" to { nav.navigate(R.id.action_to_messages) },
-            // Bluesky sits beside Correspondence rather than inside it: Correspondence is the
-            // community/boards exchange on his OWN sites, where the bridge creds get him in;
-            // this is the POSSE loop back out to a public timeline, on the syndication secret and
-            // a queue on the VPS. Same act, different ground and different auth — one door each.
-            "🦋  Bluesky" to { nav.navigate(R.id.action_to_bluesky) },
-            // The day's booking roster (tap a person → their CRM, scribble a note that OCRs onto their
-            // CRM timeline). Mail moved to the Desk — email is a working surface, not a person-surface.
-            "🎟  Roster" to { nav.navigate(R.id.action_to_roster) }
-        ), expanded = home == "Community"),
-        // Sites — the active site's own forward-facing Vue apps in a persistent-session WebView (sign in
-        // once, cookies stick). This is the WEBSITE as members/customers see it, kept apart from the
-        // native tools above. Portals that ARE a native surface's web face live inside that surface
-        // instead of here: the FluentBoards front → "Boards · Site", the booking page → Roster's
-        // "Booking page", the FluentCRM admin → Contacts' "CRM". Only genuinely portal-only pages remain.
-        ScreenFragment.Folder("🌐", "Sites", listOf(
-            "🏛  Community portal" to { openSiteWeb(nav, "community") },
-            "🎓  Courses" to { openSiteWeb(nav, "courses") },
-            "🛟  Support" to { openSiteWeb(nav, "support") },
-            "🛍  Shop" to { openSiteWeb(nav, "shop") }
-        ), expanded = home == "Sites"),
+        // DIRECTORY — standing alone above Settings, exactly as Michael put it.
+        //
+        // No submenu and no folder: it is one door onto one place, the way Today is. It used to be
+        // the third row of the Search/Ask dropdown, which read as a third KIND of question; down
+        // here it reads as what it is — the opposite of asking. You go and look.
+        ScreenFragment.Folder("🗂", "Directory", action = { showLedgerRootDirectory(fragment) }),
         ScreenFragment.Folder("⚙", "Settings", listOf(
             // "All settings", not "⚙ Settings" — the folder is already called Settings and wears
             // the gear; a child repeating both read as the same door twice.
             "⚙  All settings" to { nav.navigate(R.id.action_to_settings) },
-            // Site accounts is configuration, so it belongs here — not buried behind a button deep
-            // inside the calendar-settings scroll. Same manager the settings screen opens; one source
-            // of truth. ("Site accounts", not "Sites" — that label is the web-portals folder above.)
-            "🖥  Site accounts" to { com.toolsboox.plugin.calendar.ui.SitesSettingsDialog.show(fragment.requireContext()) },
+            // Site accounts left this folder for Sites, as "Site Settings" — it is configuration OF
+            // those sites, and it now sits with them instead of two folders away from everything it
+            // configures. Same dialog, one door.
             "🔤  OCR model" to { com.toolsboox.ui.plugin.OcrModel.showPicker(fragment.requireContext()) },
             "☁  Cloud sync" to { nav.navigate(R.id.action_to_cloud) }
         ), expanded = home == "Settings")
     )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Boards & Tasks — ONE door, two ways of looking
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Where "Boards & Tasks" goes: the list, or the by-stage board, whichever you were last looking at.
+ *
+ * Michael's reasoning is the whole design: *a note is a place, a board is a lens*. A board is not a
+ * sibling of the task list, it is the task list seen through stage — so it cannot honestly be a
+ * second door, and the hub no longer offers one. What used to be two rows ("Tasks & Events" and
+ * "Boards · Local") is one row whose destination is a REMEMBERED VIEW.
+ *
+ * The two renderings still live in two fragments, because merging six hundred lines of swimlane
+ * drawing into six hundred lines of list drawing is a refactor and not an information-architecture
+ * change. That is a seam, not a door: from the hub there is one Boards & Tasks, and inside it the
+ * ▤/☰ button in the rail flips the view and records the choice here. Whoever finally merges them
+ * deletes this function and nothing else changes.
+ */
+const val TASKS_MODE_PREFS = "ledger_tasks_view"
+const val TASKS_MODE_KEY = "mode"
+const val TASKS_MODE_STAGE = "stage"
+
+fun tasksModeIsStage(context: android.content.Context): Boolean =
+    context.getSharedPreferences(TASKS_MODE_PREFS, 0).getString(TASKS_MODE_KEY, null) == TASKS_MODE_STAGE
+
+fun setTasksModeStage(context: android.content.Context, stage: Boolean) {
+    context.getSharedPreferences(TASKS_MODE_PREFS, 0).edit()
+        .putString(TASKS_MODE_KEY, if (stage) TASKS_MODE_STAGE else "list").apply()
+}
+
+fun openBoardsAndTasks(context: android.content.Context, nav: androidx.navigation.NavController) {
+    if (tasksModeIsStage(context)) nav.navigate(R.id.action_to_kanban)
+    else nav.navigate(R.id.action_to_ledger_items)
 }
 
 /** Open one of the active site's forward-facing Vue apps in the persistent-session WebView. */
@@ -1909,19 +2011,11 @@ private fun showTagPages(fragment: ScreenFragment, tag: com.toolsboox.plugin.cal
     }
 }
 
-/**
- * Synthesize's door into the shared directory: the day's own synthesis, plus the named TOPIC pages
- * that persist over time, each expandable into its sub-pages.
- *
- * The topic pages are the coarse boundary — one per subject, each holding only what you carried
- * onto it — so a surrogacy synthesis and an Android one never bleed into each other's outlines.
- */
-fun showSynthPicker(
-    fragment: ScreenFragment,
-    date: LocalDate = LocalDate.now(),
-    currentKey: String? = null,
-) = showDocumentDirectory(
-    fragment, com.toolsboox.plugin.calendar.ot.LedgerDocuments.SYNTHESIZE, date, currentKey)
+// Synthesize's "New synthesis…" picker is GONE with its surface — it was the door that created a
+// synthesis you would then go and stand on, and there is nowhere to stand now. What it wrapped is
+// not gone: [showDocumentDirectory] over LedgerDocuments.SYNTHESIZE is exactly what the day chip
+// opens when you ARE on a synthesis page, and the root Directory still lists the kind, so every
+// synthesis Michael has ever written is two taps away and opens, pages and renames as it always did.
 
 /** Write's door into the shared directory: the day's writing plus the named pieces you return to. */
 fun showWritePicker(

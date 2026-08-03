@@ -330,50 +330,20 @@ object WidgetRenderer {
         canvas.drawText(context.getString(R.string.calendar_day_tasks), lo + cew + 60f, to + ceh - 10f, textDefaultWhite)
 
         canvas.drawLine(lo + cew + 50f, to + ceh, lo + 2 * cew + 50f, to + ceh, lineBlack)
-        for (i in 1..12) {   // four rows given to the Roots band; see CalendarDayPage
+        // Seventeen rows, mirroring the page (see CalendarDayPage). The widget used to stop at
+        // twelve and hand rows 13–18 to a Roots band: the spiral's pick, rotating on read, because
+        // it was "the one thing on this surface that changes on its own". That band is retired on
+        // the page and it goes here with it — a home screen showing a line the page no longer shows,
+        // fed by a ring nothing fills any more, would have gone stale in silence.
+        for (i in 1..17) {
             canvas.drawLine(lo + cew + 50f, to + i * ceh, lo + 2 * cew + 50f, to + i * ceh, lineGrey50)
             if (i % 2 == 0) {
                 canvas.drawRect(lo + cew + 50f, to + i * ceh, lo + 2 * cew + 50f, to + i * ceh + ceh, fillGrey20)
             }
             canvas.drawRect(lo + cew + 60f, to + i * ceh + 10f, lo + cew + 90f, to + i * ceh + 40f, lineGrey50)
         }
-        canvas.drawLine(lo + cew + 50f, to + 13 * ceh, lo + 2 * cew + 50f, to + 13 * ceh, lineBlack)
-        canvas.drawLine(lo + cew + 100f, to + ceh, lo + cew + 100f, to + 13 * ceh, lineBlack)
-
-        // --- Right column: Roots ---
-        //
-        // The page keeps two rows here for writing a task into; the widget can't be written on,
-        // so on the home screen that space is just a dashed empty box. It gets given to the
-        // spiral instead — the one thing on this surface that changes on its own, and the reason
-        // to look at the widget twice.
-        //
-        // Rotating on READ, so each return to the home screen brings the next one round. Same
-        // sentence twenty times a day is wallpaper; it stops being seen.
-        canvas.drawRect(lo + cew + 50f, to + 13 * ceh, lo + 2 * cew + 50f, to + 14 * ceh, fillGrey80)
-        canvas.drawText(context.getString(R.string.calendar_day_roots),
-            lo + cew + 60f, to + 14 * ceh - 10f, textDefaultWhite)
         canvas.drawLine(lo + cew + 50f, to + 18 * ceh, lo + 2 * cew + 50f, to + 18 * ceh, lineBlack)
-
-        com.toolsboox.plugin.calendar.ot.SpiralRing.next(context)?.let { entry ->
-            val body = TextPaint(textSmall)
-            val grey = TextPaint(textSmall).apply { color = 0x99000000.toInt() }
-            val left = lo + cew + 60f
-            val width = (cew - 30f).toInt()
-            // Four lines of the page's own small text, then the provenance under it. Wrapped by a
-            // StaticLayout rather than clipped, so a long passage ends at a word.
-            val layout = android.text.StaticLayout.Builder
-                .obtain(entry.text, 0, entry.text.length, body, width)
-                .setMaxLines(4).setEllipsize(android.text.TextUtils.TruncateAt.END).build()
-            canvas.save()
-            canvas.translate(left, to + 14 * ceh + 8f)
-            layout.draw(canvas)
-            canvas.restore()
-            if (entry.citation.isNotBlank()) {
-                canvas.drawText(
-                    TextUtils.ellipsize(entry.citation, grey, cew - 30f, TextUtils.TruncateAt.END).toString(),
-                    left, to + 18 * ceh - 12f, grey)
-            }
-        }
+        canvas.drawLine(lo + cew + 100f, to + ceh, lo + cew + 100f, to + 18 * ceh, lineBlack)
 
         // --- Right column: Notes ---
         val readingProgress = calendarDay?.readingProgress ?: emptyList()

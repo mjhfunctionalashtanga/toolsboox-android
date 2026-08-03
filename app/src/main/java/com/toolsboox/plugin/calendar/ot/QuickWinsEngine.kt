@@ -18,7 +18,7 @@ import java.time.LocalDate
  * to finish" would drift the moment one of them learned something. So the walk, the lineage
  * collapse, the scoring and the companions all live here, and both surfaces ask the same object.
  *
- * The day page reads through [cachedFor] — microseconds, never a file walk — the GardenDoors
+ * The day page reads through [cachedFor] — microseconds, never a file walk — the parked-answer
  * pattern: the render path shows the parked answer, and [fresh] (IO, maybe network for the
  * rhymes) re-earns it in the background, keyed by day + a hash of the day files, so a checked-off
  * task or a new carry-over refreshes the panel on the next render without ever making it wait.
@@ -49,7 +49,7 @@ object QuickWinsEngine {
         else -> Go.HOME
     }
 
-    // ---- the parked answer (the GardenDoors pattern, in memory) ---------------------------------
+    // ---- the parked answer (in memory) ---------------------------------------------------------
 
     @Volatile private var cachedDay: LocalDate? = null
     @Volatile private var cachedHash: Long = 0L

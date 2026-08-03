@@ -348,7 +348,7 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
             .setTitle("✧  Path to victory")
             .setView(scrollView)
             .setPositiveButton(confirmLabel) { _, _ -> executePlan(w, plan) }
-            .setNegativeButton(getString(R.string.roots_close), null)
+            .setNegativeButton(getString(R.string.ledger_close), null)
             .create()
         com.toolsboox.ot.ReadingSize.apply(scrollView)
         dialog.show()

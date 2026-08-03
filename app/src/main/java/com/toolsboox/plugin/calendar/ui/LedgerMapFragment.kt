@@ -784,7 +784,7 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("🌿  " + thread.term)
             .setView(scroll)
-            .setNegativeButton(getString(R.string.roots_close), null)
+            .setNegativeButton(getString(R.string.ledger_close), null)
             .show()
     }
 

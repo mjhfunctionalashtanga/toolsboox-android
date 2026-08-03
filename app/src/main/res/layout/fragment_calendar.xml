@@ -209,37 +209,6 @@
                 app:layout_constraintStart_toEndOf="@id/toolbarDrawing"
                 app:layout_constraintEnd_toEndOf="parent"/>
 
-        <!-- The spiral, one line, sitting IN the page.
-
-             It lands in the Roots band the day-page template leaves between Tasks and Stars &
-             Events — two rows the Tasks grid gives up for it. At the foot of the page it was out
-             of the way in the sense of being ignorable; here it is where you already look when
-             you are deciding what to do, between what you have to do and what you have been
-             reading. Tapping opens the Roots, where the whole breakdown lives.
-
-             Positioned from the surface's own transform (see `positionSpiralLine`) rather than by
-             constraints, so it sits over the right patch of paper at any zoom or toolbar side.
-             Size and translation are set in code; the constraints only pin it to the origin.
-
-             DECLARED LAST, after the template and the surface, because a ConstraintLayout draws
-             its children in declaration order — placed earlier it was laid out, made visible, and
-             then painted over by the page template every time.
-
-             Gone by default: it appears only once there is something worth handing back. -->
-        <TextView
-                android:id="@+id/spiralLine"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:visibility="gone"
-                android:maxLines="4"
-                android:ellipsize="end"
-                android:textColor="#000000"
-                android:fontFamily="@font/atkinson_hyperlegible"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="4dp"
-                app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintStart_toStartOf="parent"/>
-
         <!-- Numbered-notes pager: ‹  page N  › at the top of the paper (numeric notePage
              only). Swipes are two-finger-gated over ink, so the numbered pages were stepped
              blind; the arrows reuse the section stepper's actions and tapping the number

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- A read-and-wander page shared by the three semantic action-surfaces — Quick Wins, Sprouts and
-     Missed Rhizomes. Same shape as fragment_ledger_roots: the Almanac strip on top, a title line
+     Missed Connections. The Almanac strip on top, a title line
      with a Close, then a column of cards that scrolls on e-ink. Each fragment fills the column
      differently; the frame is one. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -24,12 +24,12 @@
     android:background="#FFFFFF">
 
     <!-- The real Almanac strip (same 1404×140 navigator the day page draws), FIRST — every other
-         dated surface (Roots, Feed, Tasks & Events) leads with the strip, and these pages stacking
+         dated surface (Feed, Boards &amp; Tasks) leads with the strip, and these pages stacking
          a big bold title over it read as a second, stale headline. Wired by
-         [com.toolsboox.plugin.calendar.ui.SemanticNavBar]: on Sprouts and Missed Rhizomes it
+         [com.toolsboox.plugin.calendar.ui.SemanticNavBar]: on Missed Connections it
          FILTERS the surface in place; on Quick Wins it stays a place to leave from.
-         The ▦ hub sits top-left of it — the same house key feeds and the day page carry, so the
-         garden isn't a room you can only leave through Back. -->
+         The ▦ hub sits top-left of it — the same house key feeds and the day page carry, so these
+         aren't rooms you can only leave through Back. -->
     <LinearLayout
         android:orientation="horizontal"
         android:gravity="center_vertical"
@@ -82,7 +82,7 @@
 
         <TextView
             android:id="@+id/semantic_close"
-            android:text="@string/roots_close"
+            android:text="@string/ledger_close"
             android:textSize="15sp"
             android:textColor="#000000"
             android:paddingHorizontal="10dp"

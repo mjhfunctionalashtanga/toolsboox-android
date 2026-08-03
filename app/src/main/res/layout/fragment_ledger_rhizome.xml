@@ -42,7 +42,7 @@
 
             <TextView
                 android:id="@+id/rhizome_close"
-                android:text="@string/roots_close"
+                android:text="@string/ledger_close"
                 android:textSize="15sp"
                 android:textColor="#000000"
                 android:paddingHorizontal="8dp"

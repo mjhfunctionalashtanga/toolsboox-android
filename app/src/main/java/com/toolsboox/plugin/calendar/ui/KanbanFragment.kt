@@ -72,9 +72,19 @@ class KanbanFragment @Inject constructor() : ScreenFragment() {
                 },
                 com.toolsboox.ot.TuckPanel.Item(0, "Boards", glyph = "▤") {
                     binding.kanbanBoard.performClick()
+                },
+                // Back to the flat list — the other half of the display-mode flip that the hub's
+                // single "Boards & Tasks" row now stands in front of. Recording the choice on the
+                // way out is what makes that row land where you left off.
+                com.toolsboox.ot.TuckPanel.Item(0, "List", glyph = "☰") {
+                    com.toolsboox.plugin.feeds.ui.setTasksModeStage(requireContext(), false)
+                    NavHostFragment.findNavController(this).navigate(R.id.action_to_ledger_items)
                 }
             ) }
         )
+        // Arriving here IS choosing the by-stage lens, however you got here — so the hub's one door
+        // brings you back to it next time without a second thought.
+        com.toolsboox.plugin.feeds.ui.setTasksModeStage(requireContext(), true)
         load()
     }
 

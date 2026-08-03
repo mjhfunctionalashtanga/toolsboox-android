@@ -504,9 +504,16 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     private fun openLastNotePage() {
         val p = getSharedPreferences("ledger_notes", 0)
         val nav = binding.fragmentContent.findNavController()
-        // Live check — are we ACTUALLY on the note surface right now? (The scratch note is its own
-        // nav destination.) A persisted flag went stale and flipped to the schedule unexpectedly.
-        if (nav.currentDestination?.id == R.id.CalendarScratchFragment) {
+        // Live check — are we ACTUALLY standing on a note page right now? A persisted flag went
+        // stale once and flipped this button to the schedule unexpectedly, so the question is asked
+        // of the surface itself rather than of anything remembered.
+        //
+        // It used to be asked of the NAV DESTINATION, because the pen button had a destination of
+        // its own (the "Scratch" alias of the day fragment). That alias is retired with the rest of
+        // the Scratch vocabulary and the button lands on the ordinary day destination now — so the
+        // live question moves one step closer to the truth: the fragment on screen knows which page
+        // it is showing, and a note page is exactly one whose key is not null.
+        if (currentDayNotePage() != null) {
             // Second tap — you're on your note → open that day's day page.
             val d = runCatching { java.time.LocalDate.parse(p.getString("current_view_date", "") ?: "") }
                 .getOrNull() ?: java.time.LocalDate.now()
@@ -522,10 +529,19 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             val remembered = runCatching { java.time.LocalDate.parse(p.getString("last_note_date", "") ?: "") }
                 .getOrNull()
             val page = if (remembered == today) (p.getString("last_note_page", "0") ?: "0") else "0"
-            nav.navigate(R.id.action_to_scratch, bundleOf(
+            nav.navigate(R.id.action_to_calendar_day, bundleOf(
                 "year" to "${today.year}", "month" to "${today.monthValue}", "day" to "${today.dayOfMonth}",
                 "notePage" to page))
         }
+    }
+
+    /** The note-page key of the day surface on screen, or null when we're not on one (another
+     *  screen entirely, or the day page itself). Read straight off the fragment, so it cannot go
+     *  stale the way a remembered flag could. */
+    private fun currentDayNotePage(): String? {
+        val host = supportFragmentManager.findFragmentById(R.id.fragmentContent)
+        val current = host?.childFragmentManager?.primaryNavigationFragment
+        return (current as? com.toolsboox.plugin.calendar.ui.CalendarDayFragment)?.currentNotePage()
     }
 
     private fun toast(m: String) = android.widget.Toast.makeText(this, m, android.widget.Toast.LENGTH_SHORT).show()

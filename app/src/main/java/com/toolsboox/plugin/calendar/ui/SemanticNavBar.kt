@@ -17,8 +17,9 @@ import java.time.temporal.WeekFields
 import java.util.Locale
 
 /**
- * Wires the shared Almanac strip into a read-and-wander surface (Quick Wins, Sprouts, Missed
- * Rhizomes).
+ * Wires the shared Almanac strip into a read-and-wander surface (Quick Wins, Missed Connections).
+ *
+ * It served three of these until the garden was cut back; the third, Sprouts, is retired.
  *
  * Two modes, chosen by whether the surface passes [onFilter]:
  *

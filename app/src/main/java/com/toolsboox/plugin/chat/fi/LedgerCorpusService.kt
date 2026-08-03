@@ -35,7 +35,9 @@ class LedgerCorpusService @Inject constructor(
      * The corpus, remembered.
      *
      * gather() used to re-read EVERY day file — base64 media, stroke arrays and all — plus every
-     * cached feed article, on every open of Roots, Sprouts, Missed Rhizomes, the Map and Ask.
+     * cached feed article, on every open of Missed Connections, the Map and Ask. (Roots and
+     * Sprouts were two more callers of this walk; retiring them took two whole-corpus reads with
+     * them, which is most of what this debloat bought at runtime.)
      * The ledger changes a file or two a day; the walk re-paid for all of them every time. So:
      * one process-wide cache of extracted snippets keyed by source file + mtime, mirrored to a
      * small on-disk index, so even the first open after a restart re-parses only what actually

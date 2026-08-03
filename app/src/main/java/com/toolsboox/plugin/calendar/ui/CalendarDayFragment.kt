@@ -206,17 +206,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private var pickingsTapDownAt: Long = 0L
 
     // Quick Wins panel state: today's parked wins (drawn into the template) and the single-compute
-    // flag — the GardenDoors shape. The panel never computes on the render path; it shows what's
-    // parked and lets the background walk re-earn it when the ledger's hash has moved.
+    // flag. The panel never computes on the render path; it shows what's parked and lets the
+    // background walk re-earn it when the ledger's hash has moved.
+    //
+    // There was a SECOND copy of this pair for the compact ⚡ glimpse that used to sit in the Roots
+    // band's bottom slice. The glimpse had already been drawn down to nothing and the band itself is
+    // retired, so the second parked answer — and the background corpus walk that kept it warm — went
+    // with it. One wins system, one walk, one place it shows.
     private var quickWinsShown: List<QuickWinsEngine.Win> = emptyList()
     private var quickWinsCooking = false
-
-    // The ⚡ Quick Wins glimpse in the Roots band's bottom slice — the same parked-answer shape as
-    // above, keyed to its own prefs by QuickWinsGlimpse. null = still cooking (the template draws a
-    // quiet "…"); empty = nothing qualifies. The render path never computes it; the background walk
-    // re-earns it and the page re-renders only when the top wins would actually change.
-    private var quickWinsGlimpseShown: List<QuickWinsGlimpse.Line>? = emptyList()
-    private var quickWinsGlimpseCooking = false
 
     // Finger long-press tracking ("pen writes, finger manages" element menu).
     private val longPressHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -733,7 +731,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     /** What the Quick Wins panel may draw RIGHT NOW: the engine's parked answer, today only.
      *  Yesterday's panel keeps its books and events but offers no wins — a win is a "do this
-     *  next", and next only exists today (the GardenDoors rule, for the GardenDoors reason). */
+     *  next", and next only exists today. */
     private fun quickWinsForPanel(): List<QuickWinsEngine.Win> =
         if (currentDate == LocalDate.now()) QuickWinsEngine.cachedFor(currentDate).orEmpty()
         else emptyList()
@@ -758,39 +756,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             // Redraw only when the rows would actually change — a same-answer walk must not
             // cost an e-ink flash.
             if (day == currentDate && notePage == null && wins != quickWinsShown) {
-                runCatching { renderPage(calendarDay, calendarPattern, events) }
-            }
-        }
-    }
-
-    /** What the Quick Wins glimpse may draw RIGHT NOW: QuickWinsGlimpse's parked lines, today only.
-     *  null while still cooking (the template shows a quiet "…"); empty on other days and when the
-     *  ledger yields no wins. Today-only for the GardenDoors reason — a "do this next" is only ever
-     *  today's, and paging back must not re-earn it. */
-    private fun quickWinsGlimpseForPanel(): List<QuickWinsGlimpse.Line>? =
-        if (currentDate == LocalDate.now())
-            QuickWinsGlimpse.cachedFor(requireContext(), currentDate)
-        else emptyList()
-
-    /** Re-earn the parked glimpse in the background — QuickWinsGlimpse.compute reads through
-     *  [QuickWinsEngine.fresh], which memoises by day + ledger-hash, so the glimpse rides the SAME
-     *  walk the panel already pays for (whoever asks first pays; the other reads) — no parallel
-     *  wins system. Re-renders only when the top lines would actually change, sparing an e-ink flash. */
-    private fun warmQuickWinsGlimpse(events: List<CalendarEvent>) {
-        if (currentDate != LocalDate.now() || quickWinsGlimpseCooking) return
-        quickWinsGlimpseCooking = true
-        val ctx = requireContext().applicationContext
-        val root = documentsRoot()
-        val day = currentDate
-        lifecycleScope.launch {
-            val lines = withContext(Dispatchers.IO) {
-                runCatching {
-                    QuickWinsGlimpse.compute(ctx, corpusService, calendarDayService, root, day)
-                }.onFailure { Timber.w(it, "quick wins glimpse: compute failed") }.getOrNull()
-            }
-            quickWinsGlimpseCooking = false
-            if (!isAdded || lines == null) return@launch
-            if (day == currentDate && notePage == null && lines != quickWinsGlimpseShown) {
                 runCatching { renderPage(calendarDay, calendarPattern, events) }
             }
         }
@@ -1467,13 +1432,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             return true
         }
         if (notePage != null) return false
-        // The Roots-band glimpse sits in its own slice above the panel; a tap there opens the ⚡
-        // Quick Wins surface — where each win carries its ✧ Path to victory — matching how
-        // openGardenDoor routes a band door to the surface that owns it.
-        if (com.toolsboox.plugin.calendar.ot.CalendarDayPage.glimpseAt(cx, cy) != null) {
-            findNavController().navigate(R.id.action_to_quick_wins)
-            return true
-        }
         val win = com.toolsboox.plugin.calendar.ot.CalendarDayPage.winAt(cx, cy)
         Timber.i("quick-win tap: cx=%.0f cy=%.0f hit=%s", cx, cy, win?.text ?: "∅")
         if (win == null) return false
@@ -2340,489 +2298,25 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     /** Flip the floating pills between a horizontal and vertical layout. Defaults to
      *  vertical on narrow (phone-size) screens so the two pills don't collide; the gear's
      *  "Flip layout" overrides and persists the choice. */
-    /**
-     * The spiral, as one line at the foot of the page.
-     *
-     * Something you made once, come back around — and, when it can say so, what you have been
-     * circling that brought it back. One line rather than a card because the day page is a
-     * writing surface first: the full-card version crowded it so badly the page stopped reading
-     * as a page. The whole breakdown lives on the Roots screen; this is only the door to it.
-     *
-     * It stays hidden when nothing qualifies, so a thin ledger shows an empty page rather than an
-     * apology.
-     */
-    private fun showSpiralLine() {
-        binding.spiralLine.visibility = View.GONE
-        // Once a day is enough. Choosing a pick walks EVERY day file — a hundred megabytes here —
-        // and this ran on every resume of the day page, which is every page turn, since paging
-        // navigates and builds a new fragment. The answer only changes when the ledger does, and
-        // the ring below keeps the last few, so re-deriving it on each turn was pure cost.
-        val ctxForCache = context ?: return
-        val cachePrefs = ctxForCache.getSharedPreferences("ledger_spiral_ring", 0)
-        // The stamp keys to TODAY, not the viewed date: keyed to the page, flipping back
-        // through history re-ran the choose per page turn and pushed stale picks into the
-        // widget's ring.
-        val stamp = LocalDate.now().toString()
-        val fresh = cachePrefs.getString("picked_on", "") != stamp
-        // The day page only. The band it sits in is drawn by CalendarDayPage between Tasks and
-        // Stars & Events; a note page is bare paper, so the line landed in the middle of nothing
-        // and looked like a stray caption. Same fragment draws both, which is how it got there.
-        if (currentNotePage() != null) return
-        val ctx = context ?: return
-        // Already chosen for this day: show what the ring is holding rather than walking the ledger
-        // again. Same entry the widget shows, which is a feature — the page and the home screen
-        // agreeing is less confusing than each having its own idea.
-        //
-        // Falls THROUGH when the ring is empty. The stamp and the ring live in the same prefs but
-        // are not the same fact: a stamp saying "picked today" with nothing behind it drew an
-        // empty band all day, with no way out of it.
-        // A past page shows what was already picked — the ring's holding — and never
-        // recomputes or pushes; the choose walk and the widget ring belong to today only.
-        val today = currentDate == LocalDate.now()
-        val cached = if (fresh && today) null else com.toolsboox.plugin.calendar.ot.SpiralRing.next(ctxForCache)
-        if (cached != null) {
-            spiralPick = RootsLine(cached.text, emptyList(), cached.citation)
-        } else if (today) {
-            lifecycleScope.launch {
-                val chosen = withContext(Dispatchers.IO) {
-                    runCatching {
-                        val all = corpusService.gather(
-                            documentsRoot(), com.toolsboox.plugin.calendar.ot.Spiral.SCOPE)
-                            .filter { com.toolsboox.plugin.calendar.ot.Spiral.isSubstantial(it.text) }
-                            .let { com.toolsboox.plugin.calendar.ot.Spiral.dedupe(it) { s -> s.text } }
-                        com.toolsboox.plugin.calendar.ot.Spiral.choose(
-                            ctx, all,
-                            textOf = { it.text + " " + it.title },
-                            dateOf = { it.date.time },
-                            keyOf = { com.toolsboox.plugin.calendar.ot.Spiral.keyOf(it.citation, it.text) },
-                            ownOf = { it.own }
-                        )
-                    }.onFailure { Timber.w(it, "spiral: choose failed") }.getOrNull()
-                }
-                if (!isAdded || chosen == null) return@launch
-                cachePrefs.edit().putString("picked_on", stamp).apply()
-                val snippet = chosen.item.text.replace(Regex("\\s+"), " ").trim()
-                if (snippet.isEmpty()) return@launch
-                // Held, because how much of it can be SHOWN depends on the band's size on screen,
-                // which changes with zoom — so the text has to be rebuilt, not merely re-clipped.
-                spiralPick = RootsLine(snippet, chosen.shared, chosen.item.citation)
-                // Feed the widget's ring. It can't choose a pick itself — that means walking every day
-                // file — so the app hands over what it chose and the home screen rotates through them.
-                com.toolsboox.plugin.calendar.ot.SpiralRing.push(
-                    requireContext().applicationContext, snippet, chosen.item.citation)
-                refreshBandVisibility()
-            }
-        }
-        wireBandTouch()
-        showGardenDoors(ctx)
-        refreshBandVisibility()
-    }
+    // ── The Roots band is RETIRED ────────────────────────────────────────────────────────────────
+    //
+    // It ran the width of the day page's right column, between Tasks and Quick Wins, and it held
+    // five computed "garden doors": the spiral's root pick, a hot #tag, a sprout, a missed rhizome,
+    // and the rising "#tag just rooted" nudge. All five led to Roots, Seeds or Sprouts — the three
+    // surfaces retired with it — and all five were DERIVED: not one of them held anything that
+    // isn't still sitting in the day files, the tag index and the connection graph.
+    //
+    // What went with it, and why it is worth naming: the band was the most expensive thing on this
+    // page. Choosing a root pick walked EVERY day file; the sprout and missed doors ran embeddings
+    // over the whole corpus. Both were parked in prefs precisely because they could not be afforded
+    // on the render path — which is a lot of machinery to keep warm for a line Michael read past.
+    // The five rows it occupied have gone back to the Tasks grid, which had twelve for 240 open
+    // tasks (see CalendarDayPage).
+    //
+    // Nothing addressed by a URI has moved. The tags still index, the connection graph still joins,
+    // Missed Connections still finds what you skipped, and every page any door ever pointed at
+    // opens from the Directory exactly as it did.
 
-    /**
-     * The other two garden doors — 🌱 the day's sprout and ⁂ its missed rhizome — read from
-     * [com.toolsboox.plugin.calendar.ot.GardenDoors]' parked answer, never computed here: the
-     * choosing means embeddings, and the day page's render path must not wait on a network.
-     * Cold cache kicks the choice off in the background and the band shows its quiet "…" until
-     * the answer lands. TODAY only — flipping back through old days must not re-run embeddings
-     * per page turn, and yesterday's doors were yesterday's.
-     */
-    private fun showGardenDoors(ctx: android.content.Context) {
-        if (currentDate != java.time.LocalDate.now()) { gardenDoors = null; return }
-        gardenDoors = com.toolsboox.plugin.calendar.ot.GardenDoors.cachedFor(ctx, currentDate)
-        if (gardenDoors != null || gardenDoorsCooking) return
-        gardenDoorsCooking = true
-        val appCtx = ctx.applicationContext
-        val root = documentsRoot()
-        val day = currentDate
-        lifecycleScope.launch {
-            val doors = withContext(Dispatchers.IO) {
-                runCatching {
-                    com.toolsboox.plugin.calendar.ot.GardenDoors.compute(appCtx, corpusService, root, day)
-                }.onFailure { Timber.w(it, "garden doors: compute failed") }.getOrNull()
-            }
-            gardenDoorsCooking = false
-            if (!isAdded) return@launch
-            if (day == currentDate) gardenDoors = doors
-            refreshBandVisibility()
-        }
-    }
-
-    /** The band shows when it has ANY door (or is still cooking one); a thin ledger keeps its
-     *  empty page rather than an apology. One place decides, so the pick paths can't disagree. */
-    private fun refreshBandVisibility() {
-        if (!isAdded || currentNotePage() != null) return
-        val any = spiralPick != null || gardenDoors?.rooted != null || gardenDoors?.tag != null ||
-            gardenDoors?.sprout != null || gardenDoors?.missed != null || gardenDoorsCooking
-        binding.spiralLine.visibility = if (any) View.VISIBLE else View.GONE
-        if (any) positionSpiralLine()
-    }
-
-    /**
-     * The band's finger discipline, the pickings-cover way: a stylus touch is consumed without
-     * a click (the band is page furniture, not paper — pen marks here would be strays), a finger
-     * tap resolves to the DOOR under it via the laid-out text, and the hold gets the same Pick
-     * menu the garden surfaces carry. The down-point is recorded because click/long-click fire
-     * with no coordinates of their own.
-     */
-    @Suppress("ClickableViewAccessibility")
-    private fun wireBandTouch() {
-        val v = binding.spiralLine
-        v.setOnTouchListener { _, ev ->
-            val tool = ev.getToolType(0)
-            if (tool != MotionEvent.TOOL_TYPE_FINGER && tool != MotionEvent.TOOL_TYPE_UNKNOWN)
-                return@setOnTouchListener true
-            if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
-                bandTouchX = ev.x; bandTouchY = ev.y
-            }
-            false
-        }
-        v.setOnClickListener { openGardenDoor(bandDoorAt(bandTouchX, bandTouchY)) }
-        v.setOnLongClickListener {
-            val door = bandDoorAt(bandTouchX, bandTouchY) ?: return@setOnLongClickListener false
-            gardenDoorHoldMenu(door)
-            true
-        }
-    }
-
-    /** Which door the finger landed on — resolved through the TextView's own layout, so the hit
-     *  zones are exactly the characters each door occupies, at any zoom. Null between doors. */
-    private fun bandDoorAt(x: Float, y: Float): Any? {
-        val v = binding.spiralLine
-        val layout = v.layout ?: return null
-        val line = layout.getLineForVertical((y - v.totalPaddingTop).toInt().coerceAtLeast(0))
-        val off = layout.getOffsetForHorizontal(line, (x - v.totalPaddingLeft).coerceAtLeast(0f))
-        return doorRanges.firstOrNull { off in it.first }?.second
-    }
-
-    /** Walk through a door: each entry opens the surface that owns it; the band's dead space
-     *  keeps the old contract and opens Roots, where the whole breakdown lives. */
-    private fun openGardenDoor(door: Any?) {
-        val gd = door as? com.toolsboox.plugin.calendar.ot.GardenDoors.Door
-        when (gd?.kind) {
-            // The rising door names a move — "weave a synthesis?" — so its tap STARTS that move:
-            // a fresh named Synthesis page for the tag, pre-seeded with the pages it took root on.
-            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_ROOTED -> weaveRootedSynthesis(gd)
-            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_SPROUT ->
-                findNavController().navigate(R.id.action_to_sprouts)
-            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_MISSED ->
-                findNavController().navigate(R.id.action_to_missed_rhizomes)
-            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_TAG,
-            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_TAG2 ->
-                findNavController().navigate(R.id.action_to_seeds)
-            else -> findNavController().navigate(R.id.action_to_ledger_roots)
-        }
-    }
-
-    /**
-     * Tap the rising door → begin the synthesis it invites. The rooted `#tag` is exactly ripe to
-     * weave, so this opens a fresh named [SynthPageStore] page titled with the tag and pre-seeds it
-     * with the tag's rhyme and the pages it took root on — the material to pull together — then
-     * lands you on it to work. Reuses the existing synthesis seam ([SynthPageStore.add] +
-     * [placeTextBoxes] + the day-note surface), never a parallel one. Off-render, cheap: the
-     * occurrences and rhyme are graph reads already in prefs.
-     */
-    private fun weaveRootedSynthesis(gd: com.toolsboox.plugin.calendar.ot.GardenDoors.Door) {
-        val ctx = context ?: return
-        val tag = gd.key.removePrefix("tag://").ifBlank { return }
-        lifecycleScope.launch {
-            val seed = withContext(Dispatchers.IO) {
-                val page = com.toolsboox.plugin.calendar.ot.SynthPageStore.add(ctx, "#$tag", currentDate)
-                val occ = com.toolsboox.plugin.calendar.ot.LedgerTags.pagesFor(ctx, tag)
-                val rhyme = com.toolsboox.plugin.calendar.ot.LedgerTags
-                    .relatedTags(ctx, tag).firstOrNull()?.first
-                val lines = buildList {
-                    add("Synthesize #$tag — it just took root.")
-                    if (rhyme != null) add("Rhymes with #$rhyme — what's the through-line?")
-                    for ((date, pageKey, _) in occ.take(8)) add("• $date · $pageKey")
-                }
-                page.key to lines
-            }
-            if (!isAdded) return@launch
-            placeTextBoxes(seed.second, seed.first, refresh = false)
-            showMessage("Started a synthesis for #$tag — the pages it rooted on are on the page.", binding.root)
-            CalendarNavigator.toDayNote(this@CalendarDayFragment, currentDate, seed.first)
-        }
-    }
-
-    /** Hold on a door: the same Pick the garden surfaces carry — the medium chooser with the
-     *  item's text as the quote in hand — plus its surface and the hard removal. */
-    private fun gardenDoorHoldMenu(door: Any) {
-        val gd = door as? com.toolsboox.plugin.calendar.ot.GardenDoors.Door
-        val root = door as? RootsLine
-        val text = gd?.text ?: root?.snippet ?: return
-        val origin = gd?.origin?.ifBlank { null }
-            ?: root?.citation?.substringAfter("· ", "")?.trim().orEmpty()
-        // The surface a door leads to. For the rising door, tap already STARTS the synthesis, so the
-        // hold-menu's surface is the tag's own bed (Seeds) rather than re-running the weave.
-        val surfaceLabel = when (gd?.kind) {
-            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_ROOTED -> "🌰  Open Seeds"
-            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_SPROUT -> "🌱  Open Sprouts"
-            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_MISSED -> "✧  Open Missed Rhizomes"
-            com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_TAG -> "🌰  Open Seeds"
-            else -> "🌿  Open Roots"
-        }
-        val surfaceAction: () -> Unit =
-            if (gd?.kind == com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_ROOTED)
-                { { findNavController().navigate(R.id.action_to_seeds) } }
-            else { { openGardenDoor(door) } }
-        showIconMenu(text.take(80), listOf(
-            "⁂  Pick — make it a gram" to {
-                com.toolsboox.plugin.feeds.ot.FeedNoteGram.showForItem(
-                    this, calendarDayService, documentsRoot(),
-                    itemText = text.take(600),
-                    originLabel = origin.ifBlank { "from your roots" }.take(80),
-                    sourceUrl = gd?.url.orEmpty()
-                ) { kind, sink -> captureAvGramDirect(kind, sink) }
-            },
-            surfaceLabel to surfaceAction,
-            "🗑  Remove from corpus" to { removeGardenDoor(door) }
-        ))
-    }
-
-    /** Tombstone the thing behind a door and close the door now — the root re-picks fresh (the
-     *  gather refuses tombstones), the computed doors simply stand empty for the day. */
-    private fun removeGardenDoor(door: Any) {
-        val ctx = context ?: return
-        val appCtx = ctx.applicationContext
-        val gd = door as? com.toolsboox.plugin.calendar.ot.GardenDoors.Door
-        val key = gd?.key ?: (door as? RootsLine)?.citation ?: return
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                runCatching { corpusService.exclude(key) }
-                if (gd != null) com.toolsboox.plugin.calendar.ot.GardenDoors.drop(appCtx, gd.kind)
-            }
-            if (!isAdded) return@launch
-            if (gd != null) {
-                gardenDoors = when (gd.kind) {
-                    com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_ROOTED -> gardenDoors?.copy(rooted = null)
-                    com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_SPROUT -> gardenDoors?.copy(sprout = null)
-                    com.toolsboox.plugin.calendar.ot.GardenDoors.KIND_TAG -> gardenDoors?.copy(tag = null)
-                    else -> gardenDoors?.copy(missed = null)
-                }
-            } else {
-                // A fresh choice, now that the gather refuses this one.
-                ctx.getSharedPreferences("ledger_spiral_ring", 0).edit().putString("picked_on", "").apply()
-                spiralPick = null
-                showSpiralLine()
-            }
-            refreshBandVisibility()
-            showMessage("Removed from the corpus — it won't be offered again", binding.root)
-        }
-    }
-
-    /**
-     * What the Roots band says: up to three garden doors, one line each.
-     *
-     * 🌿 the root (what keeps coming back — the spiral's pick), 🌱 the sprout (an emergent
-     * crossing), ⁂ the missed rhizome (a connection through something unpicked). The glyph
-     * leads, the passage carries the line at full size and black — the doors are for reading,
-     * not decoration — and the provenance rides small and grey at the end, first overboard when
-     * the line is tight. Spare lines go to the root's passage, because the passage is the point.
-     *
-     * Bodies are trimmed at a sentence end where there is one and at a word boundary otherwise —
-     * never mid-word. A fragment cut at "the patchwork of cross-bor…" reads as something broken;
-     * the same passage ended at a full stop reads as a quotation, and each line is one tap from
-     * the surface that holds all of it anyway.
-     *
-     * Side effect: rebuilds [doorRanges], the char-span → door map the band's taps resolve
-     * against — recorded at build time, hit-tested on tap, exactly the pickings-cover pattern.
-     */
-    private fun bandText(lines: Int, charsPerLine: Int): CharSequence {
-        val doors = ArrayList<Pair<String, Any>>()
-        // The rising door LEADS — a `#tag` that just took root is the one thing that MOVED today, so
-        // it takes the top slot when a fresh promotion exists. It is the sharp form of the tag door
-        // (same rising-tag family, same 🌰), so when it shows, the perennial tag door steps down —
-        // one 🌰 line, not two — and the band varies day to day instead of repeating the steady best.
-        val rooted = gardenDoors?.rooted
-        rooted?.let { doors += "🌰" to it }
-        spiralPick?.let { doors += "🌿" to it }
-        // The hot tag rides behind the root — the graph-grounded door that stands even without
-        // embeddings — but only when no fresher rooted door has already spoken for that family.
-        if (rooted == null) gardenDoors?.tag?.let { doors += "🌰" to it }
-        gardenDoors?.sprout?.let { doors += "🌱" to it }
-        gardenDoors?.missed?.let { doors += "⁂" to it }
-        // Thin day: fill an open slot with the runner-up hot tag (take(lines) below caps it) so the
-        // band reads full instead of leaving a gap.
-        gardenDoors?.tag2?.let { doors += "🌰" to it }
-
-        val text = android.text.SpannableStringBuilder()
-        if (doors.isEmpty()) {
-            // Still cooking (refreshBandVisibility only shows the band when something is, or
-            // will be, here) — a quiet ellipsis, not an apology.
-            doorRanges = emptyList()
-            text.append("…")
-            text.setSpan(android.text.style.ForegroundColorSpan(0xFF888888.toInt()), 0, text.length, 0)
-            return text
-        }
-
-        val shown = doors.take(lines.coerceAtLeast(1))
-        val spare = (lines - shown.size).coerceAtLeast(0)
-        val ranges = ArrayList<Pair<IntRange, Any>>()
-        for ((i, pair) in shown.withIndex()) {
-            val (glyph, door) = pair
-            val isRoot = door is RootsLine
-            val rowLines = 1 + if (isRoot) spare else 0
-            val (rawBody, rawTail) = when (door) {
-                is RootsLine -> door.snippet to door.citation.substringAfter("· ", "").trim()
-                is com.toolsboox.plugin.calendar.ot.GardenDoors.Door -> door.text to door.origin
-                else -> "" to ""
-            }
-            val tail = if (rawTail.isBlank()) "" else "  — $rawTail"
-            // When there genuinely isn't room for both, the TAIL goes — not the passage.
-            val room = rowLines * charsPerLine - 3                 // the glyph and its gap
-            val shownTail = if (room - tail.length >= 24) tail else ""
-            val body = trimToWhole(
-                rawBody.replace(Regex("\\s+"), " ").trim(),
-                (room - shownTail.length).coerceAtLeast(12))
-
-            if (i > 0) text.append("\n")
-            val start = text.length
-            text.append(glyph).append("  ").append(body)
-            val tailStart = text.length
-            text.append(shownTail)
-            if (shownTail.isNotEmpty()) {
-                text.setSpan(android.text.style.RelativeSizeSpan(0.82f), tailStart, text.length, 0)
-                text.setSpan(android.text.style.ForegroundColorSpan(0xFF888888.toInt()), tailStart, text.length, 0)
-            }
-            ranges += (start until text.length) to door
-        }
-        doorRanges = ranges
-        return text
-    }
-
-    /**
-     * [text] cut to at most [limit] characters, ending somewhere a reader would stop.
-     *
-     * Prefers the last sentence end past halfway — so the result is a whole thought — and falls
-     * back to the last word boundary with an ellipsis. Returns the text untouched when it already
-     * fits, so a short note never acquires a "…" it doesn't need.
-     */
-    private fun trimToWhole(text: String, limit: Int): String {
-        if (text.length <= limit) return text
-        val window = text.take(limit)
-        val sentence = window.indexOfLast { it == '.' || it == '!' || it == '?' }
-        if (sentence > limit / 2) return window.take(sentence + 1)
-        val space = window.lastIndexOf(' ')
-        return (if (space > limit / 2) window.take(space) else window).trimEnd(',', ';', ':', ' ') + "…"
-    }
-
-    /**
-     * What the Roots band is showing.
-     *
-     * Deliberately NOT the Spiral's own Pick: the band is filled from two places — a fresh choice,
-     * and the cached ring — and when they carried different shapes the cached one bypassed the
-     * whole fitting pass, so its text kept the XML's line limit and was sliced by the panel below.
-     * One shape means one path through the measuring.
-     */
-    private data class RootsLine(val snippet: String, val shared: List<String>, val citation: String)
-    private var spiralPick: RootsLine? = null
-
-    /** Today's computed doors (🌱/⁂), null while cold; the flag keeps a slow compute single. */
-    private var gardenDoors: com.toolsboox.plugin.calendar.ot.GardenDoors.Doors? = null
-    private var gardenDoorsCooking = false
-
-    /** Char-span → door, rebuilt by [bandText] — the band's tap zones, in text space. */
-    private var doorRanges: List<Pair<IntRange, Any>> = emptyList()
-    private var bandTouchX = 0f
-    private var bandTouchY = 0f
-
-    /**
-     * The Roots band's paper, in design space (1404×1872).
-     *
-     * Between the Tasks grid — which now ends at row 14 — and the Stars & Events title at
-     * `to + 18*ceh`. The template paints the band's title bar and its closing rule; this is the
-     * space left between them for the line itself. Kept next to those numbers on purpose: if
-     * `CalendarDayPage` moves the band, this has to move with it or the text lands on a rule.
-     */
-    private val rootsBand = android.graphics.RectF(
-        20f + 645f + 60f,                       // lo + cew + 60 — the text inset the panels use
-        (1872f - 35 * 50f) / 2f + 14 * 50f,     // to + 14*ceh, under the title bar
-        20f + 2 * 645f + 50f - 10f,             // lo + 2*cew + 50, less a hair of right margin
-        // to + 18*ceh — the doors now own the WHOLE Roots band (rows 14→18). The ⚡ Quick Wins
-        // glimpse moved OUT to its own section below the row-18 title bar (it was splitting the band).
-        (1872f - 35 * 50f) / 2f + 18f * 50f
-    )
-
-    /**
-     * Put the spiral line on its patch of paper.
-     *
-     * The line is a view over a drawn surface, so it can't be positioned by constraints — it has
-     * to follow the same transform the ink does, or it drifts off the band the moment the page is
-     * zoomed or the toolbar changes sides. Mapping the band through the surface's own matrix is
-     * the only thing that stays right in every case, since that matrix IS what "where the page is
-     * on screen" means here.
-     */
-    private fun positionSpiralLine() {
-        if (!isAdded) return
-        if (currentNotePage() != null) {
-            binding.spiralLine.visibility = View.GONE
-            return
-        }
-        val v = binding.spiralLine
-        if (v.visibility != View.VISIBLE) return
-        val mapped = android.graphics.RectF(rootsBand)
-        surfaceTransform().mapRect(mapped)
-        if (mapped.width() < 1f || mapped.height() < 1f) return
-        // The matrix maps into the SURFACE's coordinates; the overlay is a sibling in the parent,
-        // so it needs the surface's own offset added or it lands a toolbar's width to the left.
-        mapped.offset(binding.surfaceView.left.toFloat(), binding.surfaceView.top.toFloat())
-        // Bound by maxWidth rather than by layoutParams: the ConstraintSet in CalendarUtils is
-        // re-applied on load and would overwrite an explicit width/height straight back to
-        // WRAP_CONTENT, leaving the line laid out at nothing. maxWidth survives that.
-        v.maxWidth = mapped.width().toInt()
-        v.translationX = mapped.left
-        v.translationY = mapped.top
-        // Sized in PAGE space, like everything else drawn on this page.
-        //
-        // 25 design units is `Creator.textSmallBlack` — the weather-and-moon line under Stars &
-        // Events. Matching it is the whole point: the spiral line is page furniture, so it should
-        // be the size the page's own small text is, and grow and shrink with the paper rather
-        // than to some independent rule. Scaled by ReadingSize on top, so "make text bigger"
-        // still means something here.
-        //
-        // Because the size scales with the band, the same amount of text fits at every zoom —
-        // which is duller than it sounds and much better: what you see doesn't depend on how far
-        // you happen to be zoomed in.
-        val pageScale = mapped.height() / rootsBand.height()
-        val size = 25f * pageScale * com.toolsboox.ot.ReadingSize.scale(requireContext())
-        v.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, size)
-
-        val padding = (v.paddingTop + v.paddingBottom).toFloat()
-        val available = mapped.height() - padding
-        val innerWidth = (mapped.width() - v.paddingStart - v.paddingEnd).toInt().coerceAtLeast(1)
-
-        // MEASURE, don't estimate.
-        //
-        // Two guesses at this were both wrong — size × 1.25, then the font's own `fontSpacing` —
-        // and both left the last line sliced by the Stars & Events bar. The honest answer is to
-        // lay the text out and ask where each line actually ends: `getLineBottom` is the real
-        // number, and no arithmetic on font metrics reproduces it reliably once wrapping and
-        // spans are involved.
-        //
-        // Two passes, because the text depends on how many lines there are and the lines depend
-        // on the text: build it generously, measure what fits, then build it again for that.
-        fun linesThatFit(text: CharSequence): Int {
-            val layout = android.text.StaticLayout.Builder
-                .obtain(text, 0, text.length, v.paint, innerWidth).build()
-            var n = layout.lineCount
-            while (n > 1 && layout.getLineBottom(n - 1) > available) n--
-            return n
-        }
-        v.maxHeight = mapped.height().toInt()                // the band, and not a pixel more
-
-        // Characters per line from the font's own average width, not a magic 0.52 multiplier.
-        val perLine = (innerWidth / v.paint.measureText("n").coerceAtLeast(1f))
-            .toInt().coerceIn(8, 200)
-
-        // Pass one: as much as could plausibly fit, so the measurement sees real wrapping.
-        val fits = linesThatFit(bandText(6, perLine))
-        // Pass two: built for the room there actually is, so a door's body shortens rather than
-        // the door below it falling off the bottom. This second build is also the one whose
-        // doorRanges the taps resolve against — built for exactly the text on screen.
-        v.text = bandText(fits, perLine)
-        v.maxLines = fits
-        v.requestLayout()
-    }
 
     /**
      * The rail's Today tap: when you're not on today, jump to TODAY's version of the section
@@ -2923,30 +2417,30 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     private fun showSectionSwitcher() {
-        val onGarden = currentNotePage() in listOf("gratitude", "selfexec")
-        val currentFolder = if (onGarden) "Garden" else "Flow"
+        // Which folder the page you're standing on belongs to — the same two-way split the hub
+        // makes. Daily is what you do with yourself; Filter is what you do with what arrived.
+        val onDaily = currentNotePage() in listOf("gratitude", "selfexec")
+        val currentFolder = if (onDaily) "Daily" else "Filter"
 
-        val sections: Pair<String, List<GoItem>> = if (onGarden) {
-            "Garden" to buildList {
+        val sections: Pair<String, List<GoItem>> = if (onDaily) {
+            "Daily" to buildList {
                 add(GoItem("🙏", "Gratitude") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "gratitude") })
                 add(GoItem("🐘", "Self Executive") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "selfexec") })
-                add(GoItem("🌿", "Roots") { findNavController().navigate(R.id.action_to_ledger_roots) })
-                add(GoItem("🌱", "Sprouts") { findNavController().navigate(R.id.action_to_sprouts) })
-                add(GoItem("✧", "Missed Rhizomes") { findNavController().navigate(R.id.action_to_missed_rhizomes) })
+                add(GoItem("⚡", "Quick Wins") { findNavController().navigate(R.id.action_to_quick_wins) })
+                // "Missed Connections" to read; MissedRhizomes to the compiler — see the hub.
+                add(GoItem("✧", "Missed Connections") { findNavController().navigate(R.id.action_to_missed_rhizomes) })
                 add(GoItem("🗺", "Map") { findNavController().navigate(R.id.action_to_ledger_map) })
             }
         } else {
             getString(R.string.go_group_day) to buildList {
-                // The Flow flow in ritual order: Intake → Pickings → Synthesize → Write. Mid-flow,
-                // a ⚡ fast-lane to the next step rides on top.
+                // Filter, in walk order: All Stars → Gram Picks → Pickings. Mid-walk, a ⚡ fast-lane
+                // to the next station rides on top — the SAME chain the stepper and the finger
+                // swipes read (ritualNextStep), so no two controls can disagree about "next".
                 ritualNextStep()?.let { (page, _, label) ->
                     add(GoItem("⚡", "Next · $label") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), page) })
                 }
                 add(GoItem("☀︎", "Day") { CalendarNavigator.toDayPage(this@CalendarDayFragment, LocalDate.now(), CalendarDay.DEFAULT_STYLE) })
                 add(GoItem("★", "All Stars") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
-                // Gram Picks sits between All Stars and Pickings — the iPhone's Flow order (All
-                // Stars → Gram Picks → Pickings → Synthesize → Write): a star lands on the
-                // register, a pick lands on the inbox, and the boards are where sorted things go.
                 add(GoItem("◈", "Gram Picks") {
                     CalendarNavigator.toDayNote(
                         this@CalendarDayFragment, LocalDate.now(),
@@ -2954,17 +2448,17 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                     )
                 })
                 add(GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "pickings") })
-                add(GoItem("🔬", "Synthesize") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "synthesize") })
-                add(GoItem("✍", "Write") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "write") })
             }
         }
 
         // Sibling folders: the other top-level doors (current one dropped), each opening its head.
         val siblings = buildList {
-            add(GoItem("⤳", "Flow") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
-            add(GoItem("📰", "Feed") { findNavController().navigate(R.id.action_to_feeds) })
-            add(GoItem("🗒", "Desk") { findNavController().navigate(R.id.action_to_quick_wins) })
-            add(GoItem("🪴", "Garden") { findNavController().navigate(R.id.action_to_ledger_roots) })
+            add(GoItem("▽", "Filter") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
+            add(GoItem("📰", "Incoming") { findNavController().navigate(R.id.action_to_feeds) })
+            add(GoItem("🪴", "Daily") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "gratitude") })
+            add(GoItem("🗒", "Desk") {
+                com.toolsboox.plugin.feeds.ui.openBoardsAndTasks(requireContext(), findNavController())
+            })
             add(GoItem("📚", "Bookshelf") { findNavController().navigate(R.id.action_to_reader) })
             add(GoItem("💬", "Ask") { findNavController().navigate(R.id.action_to_ledger_chat) })
             add(GoItem("🕘", "Log") {
@@ -2977,89 +2471,112 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         showGoModal(listOf(sections, "Go to" to siblings), anchorTop = false, anchorEnd = railOnRight())
     }
 
-    /** The next station of the daily ritual after the page we're on, or null off-flow. */
-    private fun ritualNextStep(): Triple<String, String, String>? = when (currentNotePage()?.substringBefore('#')) {
-        // Gram Picks sits between the register and the boards — iOS's PlannerPage.cycle, and the
-        // iPhone's Flow order: a star lands on All Stars, a pick lands on the Gram Picks inbox,
-        // and sorting it onto a board is the next station of the same walk.
-        "intake" -> Triple(com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS, "◈", "Gram Picks")
-        com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> Triple("pickings", "❝", "Pickings")
-        "pickings" -> Triple("gratitude", "🙏", "Gratitude")
-        // Self Executive sits between Gratitude and Synthesize — same chain the stepper walks
-        // and the same one iOS runs (PlannerModel.ritualNext); skipping it here made the ⚡
-        // fast-lane and the stepper disagree about what "next" means.
-        "gratitude" -> Triple("selfexec", "🐘", "Self Executive")
-        "selfexec" -> Triple("synthesize", "🔬", "Synthesize")
-        "synthesize" -> Triple("write", "✍", "Write")
-        else -> null
+    // ─── THE RITUAL WALK ────────────────────────────────────────────────────────────────────────
+    //
+    // ONE list, read by everything: the ⚡ fast-lane, the stepper's ↑/↓, the pager arrows and the
+    // finger swipes (vertical and horizontal). It used to be three hand-written `when` blocks that
+    // had to be kept saying the same thing, which is how the fast-lane and the stepper once came to
+    // disagree about what "next" meant.
+    //
+    //     Day → All Stars → Gram Picks → Pickings → Gratitude → the numbered Notes tail
+    //
+    // It walked nine stations. Five of them were nearly unwritten — the measured record over 124
+    // real days: selfexec 4, synthesize 2, grid 2, grampicks 1, scratch 1 — so most of the walk was
+    // spent stepping past pages to reach the four that carry the ledger (gratitude 44, pickings 33,
+    // notes 40 across pages 0 and 1, intake 8). A walk you step THROUGH rather than stop on isn't a
+    // ritual, it's a corridor.
+    //
+    // Gram Picks stays on the walk despite its single ink day, and that is not an inconsistency:
+    // 158 grams have landed in it. It is a place you SORT, not a place you write, and its worth is
+    // measured in what passes through it.
+    //
+    // What left the walk is still reachable, deliberately by another route: Self Executive from
+    // Daily, Grid and Jot from Notes, Write from its own door, and every one of them plus every
+    // Synthesize page from the Directory and from any `ledger://<date>/<page>` link. Leaving the
+    // walk is not leaving the ledger.
+
+    /** The walk, in order. Everything else is off-walk and folds onto the numbered tail. */
+    private val ritualWalk: List<String>
+        get() = listOf(
+            "intake",
+            com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS,
+            "pickings",
+            "gratitude",
+        )
+
+    /** The walk station this page stands on, or null when it is off the walk. Named boards fold
+     *  onto Pickings — otherwise ↑/↓ from a board would strand you on an unlisted key — and a
+     *  sub-page (grampicks#1) folds onto its base, whose neighbours it shares. */
+    private fun walkStation(): String? {
+        if (com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(notePage)) return "pickings"
+        return baseNotePage(notePage)?.takeIf { it in ritualWalk }
     }
 
-    // ─── The ritual chain, stepped — ONE walk for the stepper, the pager arrows, and the
-    // finger swipes (vertical and horizontal), so no two controls can disagree about what "next"
-    // means. The order matches iOS (PlannerPage.cycle) and the iPhone's Flow: Day → All Stars →
-    // Gram Picks → Pickings → Gratitude → Self Executive → Synthesize → Write → the numeric Notes
-    // tail. Named pickings boards, topic syntheses and Write documents fold onto their base
-    // station so the step never strands you on an unlisted key; up from Day still exits to the
-    // Week almanac — the Boox convention, and where the iOS ring goes too.
-
-    /** The ritual station this page folds onto, or the numeric key itself. */
-    private fun stepStation(): String? = when {
-        com.toolsboox.plugin.calendar.ot.PickingsStore.isPickings(notePage) -> "pickings"
-        com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage) -> "synthesize"
-        // A named Write document folds onto the Write station the same way a named board folds
-        // onto Pickings — otherwise ↑/↓ from an essay would strand you on an unlisted key.
-        com.toolsboox.plugin.calendar.ot.WritePageStore.isWrite(notePage) -> "write"
-        // A sub-page (write#2, grampicks#1) folds onto its base for the ritual step — its ↑/↓
-        // walk the base page's neighbours, same as the base page.
-        else -> baseNotePage(notePage)
+    /** The next station of the walk after the page we're on, or null off-walk — what the ⚡
+     *  fast-lane offers. Past the last station the walk ends: the numbered notes are a tail you
+     *  page through, not a destination to be hurried towards. */
+    private fun ritualNextStep(): Triple<String, String, String>? {
+        val here = walkStation() ?: return null
+        val next = ritualWalk.getOrNull(ritualWalk.indexOf(here) + 1) ?: return null
+        return Triple(next, walkGlyph(next), walkLabel(next))
     }
 
-    /** Step to the PREVIOUS station (the stepper's ↑, a downward or rightward finger swipe). */
+    /** The glyph and the name a walk station wears in the fast-lane. Kept beside the walk so a
+     *  station added there cannot arrive nameless. (Named apart from the page-wide [sectionEmoji]
+     *  on purpose: that one answers "what am I looking at" for every page in the app, this one
+     *  answers "what is the next step called" for the four on the walk.) */
+    private fun walkGlyph(page: String): String = when (page) {
+        "intake" -> "★"
+        com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> "◈"
+        "pickings" -> "❝"
+        else -> "🙏"
+    }
+
+    private fun walkLabel(page: String): String = when (page) {
+        "intake" -> "All Stars"
+        com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> "Gram Picks"
+        "pickings" -> "Pickings"
+        else -> "Gratitude"
+    }
+
+    /** Step to the PREVIOUS station (the stepper's ↑, a downward or rightward finger swipe).
+     *  Up from the Day still exits to the Week almanac — the Boox convention, and where the iOS
+     *  ring goes too. */
     fun ritualStepBack() {
         if (notePage == null) {
             CalendarNavigator.toWeekPage(this, currentDate, locale)
             return
         }
-        val gramPicks = com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
-        when (stepStation()) {
-            "intake" -> CalendarNavigator.toDayPage(this, currentDate, CalendarDay.DEFAULT_STYLE)
-            gramPicks -> CalendarNavigator.toDayNote(this, currentDate, "intake")
-            "pickings" -> CalendarNavigator.toDayNote(this, currentDate, gramPicks)
-            "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "pickings")
-            "selfexec" -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
-            "synthesize" -> CalendarNavigator.toDayNote(this, currentDate, "selfexec")
-            "write" -> CalendarNavigator.toDayNote(this, currentDate, "synthesize")
-            else -> {
-                val page = baseNotePage(notePage)?.toIntOrNull() ?: 0
-                if (page == 0) {
-                    CalendarNavigator.toDayNote(this, currentDate, "write")
-                } else {
-                    CalendarNavigator.toDayNote(this, currentDate, "${page - 1}")
-                }
-            }
+        val here = walkStation()
+        if (here != null) {
+            val i = ritualWalk.indexOf(here)
+            if (i == 0) CalendarNavigator.toDayPage(this, currentDate, CalendarDay.DEFAULT_STYLE)
+            else CalendarNavigator.toDayNote(this, currentDate, ritualWalk[i - 1])
+            return
         }
+        // Off the walk — the numbered notes and every named surface that left it. Page 0 steps back
+        // onto the walk's last station, which is what makes the tail feel joined to it rather than
+        // marooned; anything else steps to the previous number.
+        val page = baseNotePage(notePage)?.toIntOrNull() ?: 0
+        if (page == 0) CalendarNavigator.toDayNote(this, currentDate, ritualWalk.last())
+        else CalendarNavigator.toDayNote(this, currentDate, "${page - 1}")
     }
 
     /** Step to the NEXT station (the stepper's ↓, an upward or leftward finger swipe). */
     fun ritualStepForward() {
         if (notePage == null) {
-            CalendarNavigator.toDayNote(this, currentDate, "intake")
+            CalendarNavigator.toDayNote(this, currentDate, ritualWalk.first())
             return
         }
-        val gramPicks = com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
-        when (stepStation()) {
-            "intake" -> CalendarNavigator.toDayNote(this, currentDate, gramPicks)
-            gramPicks -> CalendarNavigator.toDayNote(this, currentDate, "pickings")
-            "pickings" -> CalendarNavigator.toDayNote(this, currentDate, "gratitude")
-            "gratitude" -> CalendarNavigator.toDayNote(this, currentDate, "selfexec")
-            "selfexec" -> CalendarNavigator.toDayNote(this, currentDate, "synthesize")
-            "synthesize" -> CalendarNavigator.toDayNote(this, currentDate, "write")
-            "write" -> CalendarNavigator.toDayNote(this, currentDate, "0")
-            else -> {
-                val page = baseNotePage(notePage)?.toIntOrNull() ?: 0
-                CalendarNavigator.toDayNote(this, currentDate, "${page + 1}")
-            }
+        val here = walkStation()
+        if (here != null) {
+            val i = ritualWalk.indexOf(here)
+            val next = ritualWalk.getOrNull(i + 1) ?: "0"   // past the last station: into the notes
+            CalendarNavigator.toDayNote(this, currentDate, next)
+            return
         }
+        val page = baseNotePage(notePage)?.toIntOrNull() ?: 0
+        CalendarNavigator.toDayNote(this, currentDate, "${page + 1}")
     }
 
     /**
@@ -4855,7 +4372,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             }
         }
         maybeShowReturnChip()
-        showSpiralLine()
 
         // Pre-session appointment nudge: an opted-in class about to start prompts to record
         // and pull up its roster/notes (self-throttled, once-a-day-dismissable). Roster port.
@@ -4927,8 +4443,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     override fun onTransformChanged(matrix: Matrix) {
-        // The spiral line sits on a patch of the drawn page, so it has to move with the page.
-        if (::binding.isInitialized) positionSpiralLine()
+        // The Roots band's one live TextView used to be re-positioned here on every transform —
+        // it was a view floating over drawn paper, so it had to follow the page's own matrix or it
+        // drifted off its patch at any zoom. The band is retired; the page is drawn ink again.
         if (::binding.isInitialized) {
             binding.templateImageView.scaleType = ImageView.ScaleType.MATRIX
             binding.templateImageView.imageMatrix = matrix
@@ -5000,7 +4517,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             // A notes page shows no Quick Wins rows — drop the recorded rectangles so a stale
             // one can't send a tap on this page off to a task (the PickingsCover.clear rule).
             CalendarDayPage.clearWinRows()
-            CalendarDayPage.clearGlimpseRows()
             if (notePage == "intake") {
                 // All Stars: five labeled bands (The Read / The Watch / The Listen / The Books /
                 // The Mail), each a shelf of just its own grams. No typing — the grams are the
@@ -5017,13 +4533,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             binding.toolbarDrawing.toolbarProcrastinator.visibility = View.VISIBLE
             val calendarStrokes = calendarDay.calendarStrokes[calendarStyle] ?: listOf()
             quickWinsShown = quickWinsForPanel()
-            quickWinsGlimpseShown = quickWinsGlimpseForPanel()
             CalendarDayPage.drawPage(
-                this.requireContext(), templateCanvas, calendarDay, calendarEvents,
-                quickWinsShown, quickWinsGlimpseShown
+                this.requireContext(), templateCanvas, calendarDay, calendarEvents, quickWinsShown
             )
             warmQuickWins(calendarEvents)
-            warmQuickWinsGlimpse(calendarEvents)
             applyStrokes(Stroke.listDeepCopy(live(calendarStrokes)), true)
         }
         // The template was just drawn into templateBitmap; force the ImageView to repaint so
@@ -5546,7 +5059,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         for (b in boards) targets.add(Triple("❝  ${b.name}", b.key, ""))
         for (p in CalendarDayPageIntake.kinds)
             targets.add(Triple("★  All Stars · ${p.title}", CalendarDayPageIntake.INTAKE_PAGE, p.kindKey))
-        targets.add(Triple("🔬  Synthesize", "synthesize", ""))
+        // No "→ Synthesize" target any more: the surface retired, so offering to move a gram onto
+        // it would be building new content on a page with no door of its own. Grams already sitting
+        // on a synthesis stay exactly where they are and open with it.
 
         // Don't offer where it already is.
         val here = targets.filterNot { it.second == element.page && it.third == element.intakeKind }

@@ -11,7 +11,7 @@ import java.util.Date
  * isn't a planner page — a roster note about a person, a margin scribble on an article — its OCR'd
  * text is kept here with provenance (what it's about, where it came from). [LedgerCorpusService] folds
  * these into the corpus under [Section.ANNOTATIONS], so what you scribbled threads with everything
- * else in Roots, Sprouts and Missed Rhizomes. Your own words, woven. Mirrors iOS `AnnotationCorpus`.
+ * else in Missed Connections and the Map. Your own words, woven. Mirrors iOS `AnnotationCorpus`.
  *
  * Unlike iOS — which OCRs the ink here at save time — the Android callers already have the text (they
  * OCR with ML Kit / [com.toolsboox.plugin.calendar.ot.PanelOcr] before calling), so [record] takes the

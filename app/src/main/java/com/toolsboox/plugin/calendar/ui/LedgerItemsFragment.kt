@@ -123,6 +123,14 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 },
                 com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_down, "Page down") {
                     binding.itemsPageDown.performClick()
+                },
+                // The display-mode flip. This screen and the swimlane board are the SAME drawer
+                // seen two ways — "a note is a place, a board is a lens" — so the hub has one
+                // Boards & Tasks door and the choice of lens lives in here, remembered, rather than
+                // being a second row in the menu that made a view look like a place.
+                com.toolsboox.ot.TuckPanel.Item(0, "By stage", glyph = "▤") {
+                    com.toolsboox.plugin.feeds.ui.setTasksModeStage(requireContext(), true)
+                    findNavController().navigate(R.id.action_to_kanban)
                 }
             ) }
         )
@@ -646,12 +654,14 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 setColor(0xFFFFFFFF.toInt()); setStroke(px(2), 0xFF111111.toInt()); cornerRadius = px(12).toFloat()
             }
             // The header says WHY this one, which is the whole difference between a spiral and a
-            // queue. "Come back around" alone is just a slow list. Tapping it opens the roots.
+            // queue. "Come back around" alone is just a slow list. It used to be tappable, opening
+            // Roots — the screen that held the whole breakdown. Roots is retired, and rather than
+            // repoint the tap at some other surface that never promised to explain this card, the
+            // header is a caption again: it still says why, and it no longer offers a door.
             card.addView(TextView(ctx).apply {
-                text = (if (chosen.shared.isEmpty()) "🌀  come back around"
-                    else "🌀  you've been circling " + chosen.shared.joinToString(" · ")) + "   ›"
+                text = if (chosen.shared.isEmpty()) "🌀  come back around"
+                    else "🌀  you've been circling " + chosen.shared.joinToString(" · ")
                 textSize = 12f; setTextColor(0xFF666666.toInt())
-                setOnClickListener { findNavController().navigate(R.id.action_to_ledger_roots) }
             })
             card.addView(TextView(ctx).apply {
                 text = pick.text.take(320).trim() + if (pick.text.length > 320) "…" else ""

@@ -105,22 +105,12 @@ class CalendarDayPage {
             winRows = emptyList()
         }
 
-        /** A drawn quick-wins GLIMPSE line and where it landed. Same record-at-draw discipline as
-         *  [WinRow]: the glimpse sits in the bottom slice of the Roots band (its own pixels), so a
-         *  tap resolves against the rectangle recorded when it was drawn, never a second guess. */
-        data class GlimpseRow(val line: QuickWinsGlimpse.Line, val rect: android.graphics.RectF)
-
-        @Volatile
-        private var glimpseRows: List<GlimpseRow> = emptyList()
-
-        /** The glimpse line under a canvas-space point, or null. */
-        fun glimpseAt(x: Float, y: Float): QuickWinsGlimpse.Line? =
-            glimpseRows.firstOrNull { it.rect.contains(x, y) }?.line
-
-        /** Forget the recorded glimpse rows — the [clearWinRows] rule, for the same reason. */
-        fun clearGlimpseRows() {
-            glimpseRows = emptyList()
-        }
+        // The compact ⚡ GLIMPSE and its hit-testing are gone. It lived in the bottom slice of the
+        // Roots band and had already been drawn down to nothing there — the wins render as the panel
+        // rows below, which is the honest place for them — so when the Roots band retired, the
+        // glimpse's last pixels went with it. QuickWinsEngine is untouched: the panel rows and the
+        // home-screen widget still read it, and only the second, silent way of showing the same
+        // answer has been taken out.
 
         /**
          * Draw the daily template of calendar plugin.
@@ -130,17 +120,13 @@ class CalendarDayPage {
          * @param calendarDay data class
          * @param calendarEvents the list of calendar events
          * @param quickWins the parked quick wins (today only; empty when cold or on other days)
-         * @param quickWinsGlimpse the parked glimpse lines: null = still cooking (draw a quiet "…"),
-         *   empty = nothing qualifies (draw nothing), the lines otherwise. Today only.
          */
         fun drawPage(
             context: Context, canvas: Canvas, calendarDay: CalendarDay, calendarEvents: List<CalendarEvent>,
-            quickWins: List<QuickWinsEngine.Win> = emptyList(),
-            quickWinsGlimpse: List<QuickWinsGlimpse.Line>? = emptyList()
+            quickWins: List<QuickWinsEngine.Win> = emptyList()
         ) {
             val schedulesText = context.getString(R.string.calendar_day_schedules)
             val tasksText = context.getString(R.string.calendar_day_tasks)
-            val rootsText = context.getString(R.string.calendar_day_roots)
             val allDayText = context.getString(R.string.calendar_day_all_day)
             val locale = calendarDay.locale
 
@@ -307,14 +293,14 @@ class CalendarDayPage {
 
             // Tasks grid.
             //
-            // Twelve rows, not sixteen: four go to the Roots band below. There was briefly a
-            // write-in strip taking two more — lassoing a written task and tapping "→ item" does
-            // the same job without deleting your ink, so the rows came back. — the
-            // spiral's one line sits where you already look when you're deciding what to do,
-            // between what you have to do and what you've been reading. At the foot of the page
-            // it was out of the way in the sense of being ignorable.
+            // SEVENTEEN rows, and it took the Roots band's five to get there. Tasks gave those rows
+            // up so the spiral and the garden doors could sit where you already look when you're
+            // deciding what to do; with the Roots band retired they come home to the thing that
+            // needed them — 240 open tasks against twelve ruled lines was the page arguing with its
+            // own contents. The band's closing rule at row 18 stays where it was, so the Quick Wins
+            // title below has not moved a pixel.
             canvas.drawLine(lo + cew + 50.0f, to + ceh, lo + 2 * cew + 50.0f, to + ceh, Creator.lineDefaultBlack)
-            for (i in 1..12) {
+            for (i in 1..17) {
                 canvas.drawLine(
                     lo + cew + 50.0f, to + i * ceh, lo + 2 * cew + 50.0f, to + i * ceh,
                     Creator.lineDefaultGrey50
@@ -331,29 +317,13 @@ class CalendarDayPage {
                 )
             }
             canvas.drawLine(
-                lo + cew + 50.0f, to + 13 * ceh, lo + 2 * cew + 50.0f, to + 13 * ceh,
-                Creator.lineDefaultBlack
-            )
-            canvas.drawLine(
-                lo + cew + 100.0f, to + ceh, lo + cew + 100.0f, to + 13 * ceh,
-                Creator.lineDefaultBlack
-            )
-
-            // Roots band: title bar, then empty paper the live line is drawn over. The text
-            // itself is a view, not template ink, because it changes with the ledger and the
-            // template is baked per day.
-            canvas.drawRect(lo + cew + 50.0f, to + 13 * ceh, lo + 2 * cew + 50.0f, to + 14 * ceh, Creator.fillGrey80)
-            canvas.drawText(rootsText, lo + cew + 60.0f, to + 14 * ceh - 10.0f, Creator.textDefaultWhite)
-            canvas.drawLine(
                 lo + cew + 50.0f, to + 18 * ceh, lo + 2 * cew + 50.0f, to + 18 * ceh,
                 Creator.lineDefaultBlack
             )
-
-            // The compact ⚡ glimpse was REMOVED. On Android the Quick Wins already render as the
-            // panel rows below (reading · outside · wins), and the weather/temp line sits directly
-            // under the Quick Wins title — leaving no clear space for a separate peek without running
-            // over it. The doors now own the WHOLE Roots band above; the wins live in the panel rows.
-            glimpseRows = emptyList()
+            canvas.drawLine(
+                lo + cew + 100.0f, to + ceh, lo + cew + 100.0f, to + 18 * ceh,
+                Creator.lineDefaultBlack
+            )
 
             // Quick Wins title (carries the outside-event count when there are any — those
             // events still live in these rows; only the stars moved out).
