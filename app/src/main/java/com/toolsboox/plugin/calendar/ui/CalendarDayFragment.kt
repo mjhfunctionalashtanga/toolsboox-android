@@ -2159,6 +2159,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val doc = docs0.documentFor(ctx, base, currentDate, knownNotePageKeys())
 
         if (surface != null) {
+            // ▤ THE TEMPLATE, SAID ON THE PAGE IT GOVERNS.
+            //
+            // Michael's model: "Notes have template options: Pickings, Jots, Lines, Grid, Text."
+            // A template is a property of the note, so the note's own menu is where it belongs —
+            // beside its name, its pages and its verbs, not in a settings screen in another room.
+            // Only the five: a synthesis resolves to a surface but is not a template you can start
+            // a note as, and [LedgerDocuments.templateOf] is what draws that line once.
+            docs0.templateOf(base)?.let { template ->
+                rows += "▤  Template · ${docs0.label(template)}" to {
+                    showNoteTemplateSheet(base, template, doc)
+                }
+            }
             rows += "＋  New ${docs0.noun(surface)}…" to {
                 com.toolsboox.plugin.feeds.ui.promptNewDocument(this, surface, currentDate)
             }
@@ -2271,6 +2283,183 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private fun knownNotePageKeys(): Set<String> =
         if (!::calendarDay.isInitialized) emptySet()
         else calendarDay.noteStrokes.keys + calendarDay.imageElements.map { it.page }
+
+    // ── ▤ TEMPLATE ────────────────────────────────────────────────────────────────────────────
+    //
+    // WHY A TEMPLATE CANNOT SIMPLY BE SWITCHED, WRITTEN DOWN ONCE SO NOBODY HAS TO REDERIVE IT.
+    //
+    // A template is not a skin over one store. It IS the store: Lines is WritePageStore and the
+    // "write" key family, Jots is JotPageStore and "sketch", Grid is GridPageStore and "grid",
+    // Pickings is PickingsStore and "pickings", Text is TextNotesStore and a note id. Changing a
+    // note's template therefore means MOVING IT BETWEEN STORES — a new key in a new family, and the
+    // ink, images and text under the old key carried across. Three things make that unsafe:
+    //
+    //  • THE INK WOULD NOT SURVIVE HONESTLY. Strokes are absolute coordinates on a 1404×1872 sheet.
+    //    They would land unchanged on the new template, which is fine drawing-wise and a lie
+    //    layout-wise: writing that sat on ruled lines lands between grid squares, and a Pickings
+    //    board's cards land in the middle of a lined page. Michael's rule for this change was "do
+    //    NOT let a template switch silently reflow or lose ink", and the only two options for
+    //    already-written ink are reflow it or leave it misaligned.
+    //  • THE STORES HOLD DIFFERENT THINGS. A Text note is typed prose with no page and no strokes;
+    //    a Pickings board is cards in baskets. There is no content-preserving map between those and
+    //    a sheet of ink, so "the same note, another template" is not a thing that exists for them.
+    //  • TWO OF THE FIVE CANNOT FORGET. PickingsStore and TextNotesStore have no headstone
+    //    ([LedgerDocumentTombstones] is the other three's), and their syncs are unions — so an
+    //    entry removed locally comes back on the next round trip. A switch away from those would
+    //    leave a ghost on the shelf you left, permanently.
+    //
+    // So the template is CHOSEN ONCE, at the moment you make the note, and SHOWN for ever after.
+    // The one exception is the case Michael named explicitly — "a blank new page certainly" — where
+    // there is no ink to reflow and nothing to carry: on an EMPTY minted note of the three
+    // headstoned templates, "start again as…" makes the note afresh on the chosen template, carries
+    // its name and its handwritten title across, and drops the empty one properly. Everywhere else
+    // the sheet says what it is and why it stops there, which is the whole of what "don't offer it
+    // and say so" asks for.
+
+    /**
+     * The ▤ Template sheet: what this note is written on, and what can honestly be done about it.
+     *
+     * Three shapes, and which one you get is decided by the note rather than by a mode:
+     *
+     *  • THE DAY'S OWN PAGE ("write", "grid", "sketch", "pickings"). There is no switch to make —
+     *    the day HAS one page of each template and they all exist already, so "change this page's
+     *    template" can only mean "go and look at the day's other one". Offered as exactly that, in
+     *    those words, because a row that said "switch" and then left the ink behind would be lying.
+     *  • AN EMPTY MINTED NOTE on Lines / Grid / Jots. Start again as another template.
+     *  • ANYTHING ELSE. The template, and one sentence saying why it stays.
+     */
+    private fun showNoteTemplateSheet(
+        base: String,
+        template: String,
+        doc: com.toolsboox.plugin.calendar.ot.LedgerDocument?,
+    ) {
+        val ctx = context ?: return
+        val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+        val title = "Template  ·  ${docs0.label(template)}"
+        val others = docs0.TEMPLATES.filterNot { it == template }
+
+        // The day's own page of each template. Text has none — a text note is not a page of the day
+        // — so its row opens the day's text notes, which is the nearest true destination.
+        if (base == docs0.defaultKey(template)) {
+            showIconMenu(title, others.map { t ->
+                (docs0.glyph(t) + "  This day's ${docs0.label(t)} page") to {
+                    if (t == docs0.TEXT_NOTES)
+                        com.toolsboox.plugin.textnotes.ui.TextNotesFragment.open(this, currentDate, null)
+                    else CalendarNavigator.toDayNote(this, currentDate, docs0.defaultKey(t))
+                }
+            })
+            return
+        }
+
+        // Only the three headstoned templates can drop the note you leave (see the note above), and
+        // only a note with nothing on it can be left at all.
+        if (!docs0.canDelete(template)) {
+            showMessage(
+                "This is a ${docs0.label(template)} note. Its shelf has no discard, so starting it " +
+                    "again as another template would leave an empty one behind — make a new note instead."
+            )
+            return
+        }
+        if (documentHasContentHere(base)) {
+            showMessage(
+                "This ${docs0.label(template)} note already has something on it. A template change " +
+                    "would move the ink to a different sheet without reflowing it — so it stays as it is."
+            )
+            return
+        }
+
+        // Empty HERE is not empty EVERYWHERE: the ‹ N › menu's "Go to a date…" and the centre pill
+        // both carry a document key onto other days, so a note can hold ink on a day this screen
+        // has never loaded. [LedgerDocumentPages.locate] is the same bounded scan the delete
+        // confirmation runs, and it is run for the same reason — off the main thread, because it
+        // stats every day file.
+        val app = ctx.applicationContext
+        val homeDate = doc?.date ?: currentDate
+        showMessage("Checking…")
+        Thread {
+            val elsewhere = runCatching {
+                com.toolsboox.plugin.calendar.ot.LedgerDocumentPages
+                    .locate(app, base, homeDate).byDate.keys.any { it != currentDate }
+            }.getOrDefault(true)
+            runCatching {
+                requireActivity().runOnUiThread {
+                    if (!isAdded) return@runOnUiThread
+                    if (elsewhere) {
+                        showMessage(
+                            "This note has pages on other days, so it stays as a " +
+                                "${docs0.label(template)} note."
+                        )
+                        return@runOnUiThread
+                    }
+                    showIconMenu("Start again as…", others.map { t ->
+                        (docs0.glyph(t) + "  " + docs0.label(t)) to {
+                            switchNoteTemplate(base, template, t, doc, homeDate)
+                        }
+                    })
+                }
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
+    /**
+     * Whether this document has anything on it on the day currently loaded.
+     *
+     * Reads the day IN MEMORY rather than the file, which is both cheaper and more truthful: the
+     * page you are standing on may have ink that has not been saved yet, and a check that missed it
+     * would let a note be discarded out from under a stroke.
+     *
+     * MERELY VISITING A PAGE IS NOT CONTENT. [LedgerDocumentPages] deliberately counts an empty
+     * stroke list as a page, because the ‹ N › pager does — but "does this note have anything on
+     * it" is a different question from "how many pages does it have", and an empty list is the
+     * honest answer to the first one. So strokes are counted only when non-empty.
+     *
+     * Answers TRUE when the day has not loaded. Not knowing must never read as "nothing there".
+     */
+    private fun documentHasContentHere(base: String): Boolean {
+        if (!::calendarDay.isInitialized) return true
+        if (calendarDay.noteStrokes.any { baseNotePage(it.key) == base && it.value.isNotEmpty() }) return true
+        if (calendarDay.imageElements.any { baseNotePage(it.page) == base }) return true
+        if (calendarDay.textElements.any { baseNotePage(it.pageKey) == base }) return true
+        return false
+    }
+
+    /**
+     * Make this note again on [target] and go there, dropping the empty one it replaces.
+     *
+     * Order matters and is the safety: the new note is created FIRST and only then is the old entry
+     * forgotten, so a failure at any point leaves you with a spare empty note rather than with
+     * nothing — the never-strand rule, in the small.
+     *
+     * The handwritten title comes across. [LedgerTitleInk] files a face against a document's key,
+     * so a new key would otherwise mean he had to write the title again — and he wrote it once for
+     * a note that is, as far as he is concerned, the same note.
+     */
+    private fun switchNoteTemplate(
+        base: String,
+        from: String,
+        target: String,
+        doc: com.toolsboox.plugin.calendar.ot.LedgerDocument?,
+        homeDate: java.time.LocalDate,
+    ) {
+        val ctx = context ?: return
+        val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+        val ink = com.toolsboox.plugin.calendar.ot.LedgerTitleInk
+        val name = if (doc?.named == true) doc.title else ""
+        val face = runCatching { ink.face(ctx, from, base, homeDate) }.getOrNull()
+
+        // Through the same seam the picker uses ([LedgerDocuments.startNote]), which is also the one
+        // Ask will use — so there is exactly one way a note comes into existence, whoever asked.
+        val made = docs0.startNote(ctx, target, name, homeDate)
+        if (made == null) {
+            showMessage("Couldn't start a ${docs0.label(target)} note.")
+            return
+        }
+        // A text note has no page to carry a face; the other four file it against the new key.
+        if (!made.isTextNote) face?.let { runCatching { ink.put(ctx, target, made.key, made.date, it) } }
+        docs0.forget(ctx, from, base, homeDate)
+        com.toolsboox.plugin.feeds.ui.setLastNoteTemplate(ctx, target)
+        com.toolsboox.plugin.feeds.ui.openNewNote(this, made)
+    }
 
     /**
      * Repaint the note page's TEMPLATE in place.
@@ -2631,9 +2820,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             add(GoItem("📄", "Whole page → text") { wholePageToText() })
             add(GoItem("🗂", "Capture sections") { captureSections() })   // auto-capture toggle now lives in Settings
             if (onSynth) add(GoItem("🔬", "Synthesize · 3 questions") { synthesizeQuestions() })
-            if (onSynth || onWrite) add(GoItem("✍", "Writing prompt → Write") { writingPrompts() })
+            if (onSynth || onWrite) add(GoItem("✍", "Writing prompt → Lines") { writingPrompts() })
             if (onSynth) add(GoItem("🗺", "Map this page") { mapThisPage() })
-            if (onSynth) add(GoItem("🗒", "Essay outline → Write") { essayOutline() })
+            if (onSynth) add(GoItem("🗒", "Essay outline → Lines") { essayOutline() })
             if (onSynth) add(GoItem("🃏", "Ideas → grid") { showSynthesisIdeas() })
             add(GoItem("👆", "Finger / hand") { binding.toolbarDrawing.toolbarHandTouch.performClick() })
             add(GoItem("🔄", "Rotate screen") { binding.toolbarDrawing.toolbarRotate.performClick() })
@@ -3910,7 +4099,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             val destSynth = notePage?.takeIf { com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(it) } ?: "synthesize"
             placeSourcedQuestions(lines, destSynth, "ledger://$currentDate/$srcPage", srcLabel,
                 refresh = com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage))
-            showMessage("Placed 3 questions on your Synthesize page — answer them, then head to Write.", binding.root)
+            showMessage("Placed 3 questions on your Synthesize page — answer them, then head to a Lines note.", binding.root)
             if (!com.toolsboox.plugin.calendar.ot.SynthPageStore.isSynth(notePage)) CalendarNavigator.toDayNote(this@CalendarDayFragment, currentDate, "synthesize")
         }
     }

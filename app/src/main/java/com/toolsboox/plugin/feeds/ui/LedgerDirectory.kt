@@ -189,10 +189,21 @@ fun ledgerDirectoryFolders(
         // The Directory left this group to stand on its own above Settings (Michael's words), which
         // is the right shape for it: Search and Chat are questions, and the Directory is the
         // opposite move — not asking, but going and looking.
+        //
+        // Michael: "Leave a search field on top for a quick search of Ledgable." So the group opens
+        // with a place to TYPE rather than with a row that promises somewhere to type. Press the
+        // keyboard's search key and you land in the Search surface with the query already run; the
+        // 🔍 Search row below is the same door with nothing typed yet. Nothing runs while you type —
+        // see [ScreenFragment.FolderField] for why a live corpus query behind the keyboard is the
+        // one thing a drawer on e-ink must not do.
         ScreenFragment.Folder("🔎", "Ask", listOf(
             "🔍  Search" to openSearch,
             "💬  Chat" to { nav.navigate(R.id.action_to_ledger_chat) },
-        ), expanded = home == "Ask", action = { nav.navigate(R.id.action_to_ledger_chat) }),
+        ), expanded = home == "Ask", action = { nav.navigate(R.id.action_to_ledger_chat) },
+            field = ScreenFragment.FolderField("Search the Ledger") { q ->
+                com.toolsboox.plugin.calendar.ui.ReadingLogSelection.seedQuery = q.ifBlank { null }
+                if (q.isBlank()) openSearch() else openHistory(null)
+            }),
         // One-tap jump to today's Day page — no submenu. If we're leaving an open article/book,
         // drop a return anchor so the Day page can jump straight back.
         ScreenFragment.Folder("☀️", "Today", action = {
@@ -203,6 +214,16 @@ fun ledgerDirectoryFolders(
         // intake) are DIFFERENT stores — both here, as on iPad, not one standing in for the other.
         ScreenFragment.Folder("📰", "Incoming", listOf(
             "📧  Mail" to { openMail(null) },
+            // Bluesky, in from Sites (Michael: "Bluesky either feeds or elsewhere in Incoming").
+            //
+            // A PLAIN ROW, not a lens. The Read / The Watch / The Listen are all one call —
+            // openFeed("feed", kind) — because they are three filters over the ONE Miniflux store
+            // this folder is built on. Bluesky is a different service on a different secret with its
+            // own fragment and its own reply queue on the VPS; making it wear the lens grammar would
+            // mean inventing a feed that doesn't exist, and the row would then be the only "lens"
+            // that opened a different screen. It sits directly under Mail because those two are the
+            // arrivals that are PEOPLE talking; the block below them is publications.
+            "🦋  Bluesky" to { nav.navigate(R.id.action_to_bluesky) },
             "📰  All" to { openFeed("feed", null) },
             "📖  The Read" to { openFeed("feed", "read") },
             "📺  The Watch" to { openFeed("feed", "watch") },
@@ -251,10 +272,16 @@ fun ledgerDirectoryFolders(
         // something — 33 days and 158 grams, his second-most-used surface in the whole ledger.
         //
         // Synthesize left with its surface; its idea is an Ask output now. Write left this group
-        // because Filter names a job Write isn't doing — it keeps the door it already had.
+        // because Filter names a job Write isn't doing — and it has since left the hub altogether:
+        // it is the Lines template, reached through the Notes door.
         //
-        // Pickings stays exactly here even though it is heading for a different life as a Notes
-        // template in the next slice: moving a surface twice is how you strand it once.
+        // PICKINGS STAYS EXACTLY HERE, and now it is a Notes template as well. That is not a
+        // contradiction, it is the point: ONE SURFACE REACHED TWO WAYS. The funnel takes you to
+        // TODAY'S board, because that is what sorting what arrived means — All Stars, then the
+        // inbox, then the board you put things on. The Notes door lets you MAKE A NAMED ONE,
+        // because a board you keep is a note you arranged. Same PickingsStore, same keys, same
+        // shelf; two questions, two doors, and the day's board is one tap from the sieve where it
+        // has always been.
         // ▽ rather than an emoji: the hub draws an unmapped glyph as TEXT, so a rare codepoint
         // renders as tofu on a Boox. ▽ is the universal filter mark and is in every font here.
         ScreenFragment.Folder("▽", "Filter", listOf(
@@ -295,7 +322,7 @@ fun ledgerDirectoryFolders(
             // viewer to make a menu tidier.
             "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) }
         ), expanded = home == "Daily"),
-        // DESK — two rows. People, and the work.
+        // DESK — people, and the work. Four rows now (Michael: "Roster/Booking goes in Desk").
         //
         // "Boards & Tasks" is ONE row because a board is not a thing beside a task, it is a LENS
         // over tasks — Michael's own reasoning, and the measurement behind it is stark: 263 tasks,
@@ -305,34 +332,52 @@ fun ledgerDirectoryFolders(
         // row opens whichever mode you last used. Nothing of the kanban's rendering was deleted —
         // it was re-homed. See [openBoardsAndTasks].
         //
+        // ROSTER comes up out of the Contacts fold. It was tucked in there because the IA named no
+        // home for it and a sub-fold kept the door alive at the nearest true place; it has a home
+        // now, and a row you have to open a fold to reach is a row you forget you have.
+        //
+        // BOOKING is the other half of the same day and is NEW as a door. FluentBooking has been in
+        // the app for a while with no top-level way in: a booking could only be reached by finding
+        // the card it happens to sit on in Boards & Tasks, or the attendee it belongs to on the
+        // Roster. Roster answers "who is coming today"; Booking answers "what is booked" — the same
+        // material, the two questions you actually have, so they are two rows rather than one.
+        // See [showBookingPicker] for why the door is a picker and not a new screen.
+        //
         // Quick Wins moved to Daily; Publish and Posts moved to Sites, where the rest of the work on
         // his sites now lives.
         ScreenFragment.Folder("🗒", "Desk", listOf(
             "👤  Contacts" to { nav.navigate(R.id.action_to_rolodex) },
-            "☑  Boards & Tasks" to { openBoardsAndTasks(fragment.requireContext(), nav) }
-        ), expanded = home == "Desk",
-            // The day's booking roster folds under Contacts: it is the same act — a person, and what
-            // you owe them — narrowed to today's bookings, so it belongs behind the people door
-            // rather than beside it as a third top-level row.
-            subFolds = mapOf(
-                "👤  Contacts" to listOf(
-                    "🎟  Roster" to { nav.navigate(R.id.action_to_roster) }
-                )
-            )),
-        // Notes as their own door (Michael, 07-24): the four note surfaces out of the Desk into a
-        // folder of their own — the named-notes work will grow from here. Notes reopens where you
-        // last were.
+            "☑  Boards & Tasks" to { openBoardsAndTasks(fragment.requireContext(), nav) },
+            "🎟  Roster" to { nav.navigate(R.id.action_to_roster) },
+            "🕘  Booking" to { showBookingPicker(fragment) }
+        ), expanded = home == "Desk"),
+        // NOTES — ONE DOOR, FIVE TEMPLATES.
+        //
+        // Michael: "Notes have template options: Pickings, Jots, Lines, Grid, Text. Each can be
+        // saved etc hence the directory." And on Write: "write was really just another surface that
+        // was exactly just like lined notes."
+        //
+        // This folder used to be the five surfaces as five rows — Notes, Grid Notes, Jot Notes,
+        // Write, Text Notes — which is the shape that sentence retires. A template is not a door,
+        // it is a PROPERTY OF THE PAGE, so the door is Notes and the template is chosen at the
+        // moment you make one. The stores, the indexes and every key underneath are untouched:
+        // see [com.toolsboox.plugin.calendar.ot.LedgerDocuments.TEMPLATES] for the whole mapping.
+        //
+        // ✍ WRITE RETIRES AS A ROW HERE, in the same change that makes Lines real — never before.
+        // Its data is not retired and cannot be: "write" and every "write-<millis>" still resolve,
+        // still list, still open from the Directory, from the day chip and from any
+        // `ledger://<date>/write-<millis>` a gram or link already carries. Pinned in
+        // RetiredSurfaceReachabilityTest so a later tidy-up cannot quietly break it.
+        //
+        // WHY THE FIRST ROW STILL ASKS NOTHING. Capture must stay fast: "✒ Notes" reopens the note
+        // you were last on, one tap, no dialog, exactly as before. The chooser only ever appears
+        // behind "＋ New note…", where you have already said you are making a new thing and the one
+        // question left is which kind. The floating pen's quick-note menu (MainActivity) keeps its
+        // own one-tap rows too, so nothing on the capture path grew a step.
         ScreenFragment.Folder("✒", "Notes", listOf(
             "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
-            "📈  Grid Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "grid") },
-            "⌱  Jot Notes" to { CalendarNavigator.toDayNote(fragment, LocalDate.now(), "sketch") },
-            // Write comes in from the retired Flow folder, which held its only hub door. It is not a
-            // retired surface — five days of ink and a shelf of named pieces — and Filter is a name
-            // for sorting what arrived, which is not what Write does. So it sits with the other
-            // making surfaces until Michael says where it belongs; the row is one line to move.
-            // It opens its directory rather than today's page, because it HAS pieces to choose from.
-            "✍  Write" to { showWritePicker(fragment) },
-            "Ⓣ  Text Notes" to { nav.navigate(R.id.action_to_text_notes) },
+            "＋  New note…" to { showNewNotePicker(fragment, today) },
+            "🗂  All notes…" to { showNotesTemplatePicker(fragment, today) },
             // #hashtags harvested off note pages → jump to any page a tag appears on. No naming.
             "#  Tags" to { showTagIndex(fragment) },
             // Notes & Tags — a period-filtered list ("it's like Feeds") of the days that hold note
@@ -340,7 +385,20 @@ fun ledgerDirectoryFolders(
             "🗓  Notes & Tags" to {
                 com.toolsboox.plugin.calendar.ui.NotesTagsFragment.open(fragment, today, "week")
             }
-        ), expanded = home == "Notes"),
+        ), expanded = home == "Notes",
+            // The five templates ride under the two doors that take one, as a real fold rather than
+            // as five more top-level rows: the folder says Notes, and opening the fold says which
+            // kinds of note there are. It is also what keeps the old one-tap habits alive — "today's
+            // grid" is now Notes › All notes › Grid, and the fold makes that two taps rather than a
+            // dialog. Built from LedgerDocuments.TEMPLATES so the order is his, in one place.
+            subFolds = mapOf(
+                "＋  New note…" to noteTemplateRows(fragment) { surface ->
+                    createNoteOfTemplate(fragment, surface, today)
+                },
+                "🗂  All notes…" to noteTemplateRows(fragment) { surface ->
+                    openNoteTemplateDirectory(fragment, surface, today)
+                }
+            )),
         bookshelf,
         // SITES — YOUR sites, worked from here.
         //
@@ -365,17 +423,12 @@ fun ledgerDirectoryFolders(
             // Site accounts is configuration OF THESE SITES, so it sits with them rather than in the
             // gear where it was buried. Same manager the settings screen opens; one source of truth.
             "🖥  Site Settings" to { com.toolsboox.plugin.calendar.ui.SitesSettingsDialog.show(fragment.requireContext()) }
-        ), expanded = home == "Sites",
-            // Bluesky folds under Correspondence. Both are the exchange with people about what you
-            // made; the difference is only that one happens on his own ground and the other on a
-            // public timeline, on a different secret and a queue on the VPS. That is a fold, not a
-            // seventh row. (Michael's IA named no home for it — this keeps the door alive at the
-            // nearest true place until he says otherwise.)
-            subFolds = mapOf(
-                "@  Correspondence" to listOf(
-                    "🦋  Bluesky" to { nav.navigate(R.id.action_to_bluesky) }
-                )
-            )),
+        ), expanded = home == "Sites"),
+        // Bluesky LEFT this folder for Incoming (Michael: "Bluesky either feeds or elsewhere in
+        // Incoming"). It was folded under Correspondence on the reasoning that both are the exchange
+        // with people about what you made — true, but it put the one PUBLIC TIMELINE in the app
+        // behind a fold in the operator's folder, two taps from the things it actually resembles.
+        // A timeline is something that arrives; Incoming is where the things that arrive live.
         // FLUENT — the same sites as a member sees them: the four Fluent front ends in a
         // persistent-session WebView (sign in once, cookies stick).
         //
@@ -417,6 +470,238 @@ fun ledgerDirectoryFolders(
             "☁  Cloud sync" to { nav.navigate(R.id.action_to_cloud) }
         ), expanded = home == "Settings")
     )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  NOTES — one door, five templates
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Michael: "Notes have template options: Pickings, Jots, Lines, Grid, Text. Each can be saved etc
+// hence the directory."
+//
+// Everything below is PRESENTATION over storage that already exists. A template is a surface id,
+// which is a page-key family, which is a store — the table is in
+// [com.toolsboox.plugin.calendar.ot.LedgerDocuments.TEMPLATES] and nothing here mints a key, moves
+// a key or writes a byte the old five doors didn't already write. What is new is that the five are
+// enumerated from ONE list in ONE order, so the chooser, the directory door and the Directory's own
+// kind ordering cannot drift into three orders.
+
+/**
+ * The five templates as menu rows, in Michael's order, each carrying its own glyph and name.
+ *
+ * Built from [LedgerDocuments.TEMPLATES] rather than written out, because the moment they are
+ * written out twice the second copy is where a sixth template fails to appear. [onPick] is what the
+ * caller means by choosing one — making a note, or opening that template's shelf.
+ */
+private fun noteTemplateRows(
+    fragment: ScreenFragment,
+    onPick: (String) -> Unit,
+): List<Pair<String, () -> Unit>> {
+    val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    return docs.TEMPLATES.map { surface ->
+        (docs.glyph(surface) + "  " + docs.label(surface)) to { onPick(surface) }
+    }
+}
+
+/**
+ * Make a new note on [surface] and go and stand on it.
+ *
+ * NO NAME IS ASKED FOR, and that is the capture-stays-fast rule doing its job. Every store already
+ * mints a usable title ("Jot 3", "Pickings 2", the date for a daily page) and the page you land on
+ * carries "✎ Name this note…" in its own ‹ N › menu, so the name can be given once there is
+ * something to name it after. Typing a title into a dialog before a blank page is the friction the
+ * whole Notes door exists to remove — and [promptNewDocument] is still there, on the per-template
+ * directory, for the times you are deliberately starting a piece and know what it is.
+ *
+ * THE MINTING IS NOT DONE HERE. It goes through [LedgerDocuments.startNote], the ot-layer seam that
+ * knows all five stores — because Ask is about to make notes too ("text output in text notes …
+ * those can bring in grams and outside links, so would go on a grid"), and a picker that owned the
+ * only way to mint one would have to be driven headless by whatever wanted a note. This function is
+ * the picker's half: ask for the note, then go and stand on it.
+ */
+private fun createNoteOfTemplate(fragment: ScreenFragment, surface: String, date: LocalDate) {
+    val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    val made = docs.startNote(fragment.requireContext(), surface, "", date)
+    if (made == null) {
+        fragment.showMessage("Couldn't start a new ${docs.label(surface)} note.")
+        return
+    }
+    openNewNote(fragment, made)
+}
+
+/**
+ * Go and stand on a note that was just made — the ONE place the Text branch is taken.
+ *
+ * [LedgerDocuments.NewNote.isTextNote] says which kind of address the key is; everything that mints
+ * a note routes its navigation through here rather than re-deciding, so a caller that forgets can
+ * only forget in one place. Public because the Ask slice will mint notes from outside this file and
+ * will want to open the one it just wrote.
+ */
+fun openNewNote(fragment: ScreenFragment, note: com.toolsboox.plugin.calendar.ot.LedgerDocuments.NewNote) {
+    if (note.isTextNote)
+        com.toolsboox.plugin.textnotes.ui.TextNotesFragment.open(fragment, note.date, note.key)
+    else CalendarNavigator.toDayNote(fragment, note.date, note.key)
+}
+
+/** One template's shelf — every note ever made on it. Text again goes to its own fragment, which
+ *  IS its directory; the other four share [showDocumentDirectory]. */
+private fun openNoteTemplateDirectory(fragment: ScreenFragment, surface: String, date: LocalDate) {
+    val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    if (surface == docs.TEXT_NOTES)
+        com.toolsboox.plugin.textnotes.ui.TextNotesFragment.open(fragment, date, null)
+    else showDocumentDirectory(fragment, surface, date)
+}
+
+/**
+ * "＋ New note…" — which template?
+ *
+ * The row has a fold carrying the same five, so this dialog is the answer for the tap rather than
+ * the caret. It exists because a fold is a thing you have to notice: the row must do something
+ * honest when pressed, and "ask which kind" is the only honest thing a row called "New note…" can
+ * do. The template you used last leads the list and is marked, so the commonest answer is the first
+ * one under your thumb — but it is never taken silently, because which template a note is cannot be
+ * changed afterwards once there is ink on it (see the page's own Template row), and a decision that
+ * permanent should not be made by a default you didn't see.
+ */
+fun showNewNotePicker(fragment: ScreenFragment, date: LocalDate = LocalDate.now()) =
+    showTemplateChooser(fragment, "New note") { surface ->
+        setLastNoteTemplate(fragment.requireContext(), surface)
+        createNoteOfTemplate(fragment, surface, date)
+    }
+
+/** "🗂 All notes…" — which template's shelf? Same five, same order, no last-used mark: you are
+ *  looking for something, and where you last MADE a note says nothing about where it is. */
+fun showNotesTemplatePicker(fragment: ScreenFragment, date: LocalDate = LocalDate.now()) =
+    showTemplateChooser(fragment, "All notes", markLastUsed = false) { surface ->
+        openNoteTemplateDirectory(fragment, surface, date)
+    }
+
+/** The shared five-row chooser. One renderer so the two doors can never offer different fives. */
+private fun showTemplateChooser(
+    fragment: ScreenFragment,
+    title: String,
+    markLastUsed: Boolean = true,
+    onPick: (String) -> Unit,
+) {
+    val ctx = fragment.requireContext()
+    val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    val last = if (markLastUsed) lastNoteTemplate(ctx) else null
+    // His order, with the last-used lifted to the front when there is one — the order is still his
+    // for everything below it, so the list never reshuffles into an order he has to re-read.
+    val ordered = if (last != null && last in docs.TEMPLATES)
+        listOf(last) + docs.TEMPLATES.filterNot { it == last } else docs.TEMPLATES
+    val labels = ordered.map { surface ->
+        docs.glyph(surface) + "  " + docs.label(surface) +
+            if (surface == last) "  ·  last" else ""
+    }
+    val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle(title)
+        .setItems(labels.toTypedArray()) { _, which -> onPick(ordered[which]) }
+        .setNegativeButton(android.R.string.cancel, null)
+        .create()
+    fragment.showModal(dialog)
+    dialog.window?.decorView?.let { root -> root.post { com.toolsboox.ot.LedgerFonts.applyTree(root) } }
+}
+
+private const val NOTE_TEMPLATE_PREFS = "ledger_notes"
+private const val NOTE_TEMPLATE_KEY = "last_template"
+
+/** The template you last STARTED a note on — a hint for the chooser, never a decision it makes.
+ *  Shares the `ledger_notes` prefs file with last_note_date/last_note_page, which is the same
+ *  question about the same door. */
+fun lastNoteTemplate(context: android.content.Context): String? =
+    context.getSharedPreferences(NOTE_TEMPLATE_PREFS, 0).getString(NOTE_TEMPLATE_KEY, null)
+
+fun setLastNoteTemplate(context: android.content.Context, surface: String) {
+    context.getSharedPreferences(NOTE_TEMPLATE_PREFS, 0).edit()
+        .putString(NOTE_TEMPLATE_KEY, surface).apply()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Booking — the Desk's other half of the day
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * "🕘 Booking" — the upcoming bookings, one tap from the sheet that acts on them.
+ *
+ * A PICKER, NOT A SCREEN, and deliberately so. [BookingSheet]'s own note says why the app refuses
+ * to become a booking admin console: the four things you would do to a booking with a pen in your
+ * hand are keep it, cancel it, move it and write on it, and all four already live in that sheet.
+ * What was missing was never a screen — it was a way to REACH a booking without first finding the
+ * card it sits on. So this is the list and nothing else: the fetch the kanban already makes, the
+ * sheet that already exists, and no third rendering of a booking to keep in step with the other two.
+ *
+ * Network on a background thread, failures land as a line rather than a crash, and no creds means an
+ * honest empty — the same read-only-safe contract the Roster keeps.
+ */
+fun showBookingPicker(fragment: ScreenFragment) {
+    val ctx = fragment.requireContext()
+    fragment.showMessage("Loading bookings…")
+    Thread {
+        val bookings = runCatching {
+            if (!com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).ready) emptyList()
+            else com.toolsboox.plugin.calendar.nw.LedgerBooking.bookings(ctx, limit = 60)
+        }.getOrDefault(emptyList())
+        runCatching {
+            fragment.requireActivity().runOnUiThread {
+                if (!fragment.isAdded) return@runOnUiThread
+                if (bookings.isEmpty()) {
+                    fragment.showMessage("No upcoming bookings.")
+                    return@runOnUiThread
+                }
+                showDirectoryList(
+                    fragment,
+                    title = "Booking",
+                    // Same threshold as everywhere else: below a handful, a filter field asks you
+                    // to type what you can already see.
+                    searchHint = if (bookings.size > 6) "Find a booking" else null,
+                    empty = "No upcoming bookings.",
+                ) { query, _ ->
+                    val q = query.lowercase()
+                    val rows = mutableListOf<DirRow>()
+                    val shown = bookings.filter {
+                        q.isEmpty() || it.title.lowercase().contains(q) ||
+                            it.person.lowercase().contains(q) ||
+                            (it.startTime ?: "").contains(q)
+                    }
+                    if (shown.isEmpty())
+                        rows += DirRow("", "Nothing matches “$query”.", null, 1, closes = false) {}
+                    for (b in shown) {
+                        rows += DirRow("🕘", b.title, bookingDetail(b)) {
+                            com.toolsboox.plugin.calendar.ui.BookingSheet.open(fragment, b.id)
+                        }
+                    }
+                    rows += DirRow("🎟", "Today's roster…") {
+                        NavHostFragment.findNavController(fragment).navigate(R.id.action_to_roster)
+                    }
+                    rows
+                }
+            }
+        }
+    }.apply { isDaemon = true }.start()
+}
+
+/** "Tue 5 Aug  14:00  ·  Jane  ·  ● soon" — when, who, and whether it is imminent. The same three
+ *  facts the kanban's booking card shows, formatted the same way, so a booking reads identically
+ *  wherever you meet it. */
+private fun bookingDetail(b: com.toolsboox.plugin.calendar.nw.SiteBooking): String {
+    val at = runCatching {
+        java.time.LocalDateTime
+            .parse((b.startTime ?: "").trim(), java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+            .atOffset(java.time.ZoneOffset.UTC)
+            .atZoneSameInstant(java.time.ZoneId.systemDefault())
+            .toLocalDateTime()
+    }.getOrNull()
+    return listOfNotNull(
+        at?.let { java.time.format.DateTimeFormatter.ofPattern("EEE d MMM  HH:mm").format(it) },
+        b.person.ifBlank { null },
+        when (b.ongoing) {
+            "happening_now" -> "● now"
+            "starting_soon" -> "● soon"
+            else -> null
+        },
+        if (b.status == "cancelled" || b.status == "rejected") "cancelled" else null,
+    ).joinToString("   ·   ")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -493,25 +778,26 @@ private const val KIND_TAGS = "tags"
 private const val KIND_GRAMPICKS = com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
 
 /**
- * Michael's order, and the order every view here uses: what you catch, what you work it into,
- * what you write from it, then the note surfaces, then the two indexes over the whole thing.
+ * Michael's order: the inbox first, then THE FIVE TEMPLATES AS ONE BLOCK in his order, then the
+ * plain day pages, the retired surface, and the two indexes over the whole thing.
  *
- * Grid and Jot sit between the days and the text notes, in the order the hub's own Notes folder
- * lists them (Notes · Grid Notes · Jot Notes · … · Text Notes). They are folders here rather than
- * rows because they are folders THERE, and a directory that reordered the doors he navigates by
- * would be a second taxonomy pretending to be the same one.
+ * The five come straight off [LedgerDocuments.TEMPLATES] rather than being spelled out again. That
+ * list is the one place their order is decided (Pickings · Jots · Lines · Grid · Text), and the
+ * whole point of the Notes door is that the chooser and the Directory agree about what the five are
+ * and what order they come in — two hand-written copies is exactly how they would stop agreeing.
+ *
+ * Synthesize has moved BELOW the days. It used to sit third, among the making surfaces, which was
+ * right while it was one; it is a retired surface now, listed so its pages still open, and a
+ * retired kind above the live ones would be the directory disagreeing with the hub about what the
+ * app is for.
  */
 private val DIRECTORY_KINDS = listOf(
     // Gram Picks leads, before Pickings, because that is its place in the flow the order mirrors
     // (All Stars → Gram Picks → Pickings): the inbox first, then what it is sorted into.
     KIND_GRAMPICKS,
-    com.toolsboox.plugin.calendar.ot.LedgerDocuments.PICKINGS,
-    com.toolsboox.plugin.calendar.ot.LedgerDocuments.SYNTHESIZE,
-    com.toolsboox.plugin.calendar.ot.LedgerDocuments.WRITE,
+) + com.toolsboox.plugin.calendar.ot.LedgerDocuments.TEMPLATES + listOf(
     KIND_NOTES,
-    com.toolsboox.plugin.calendar.ot.LedgerDocuments.GRID,
-    com.toolsboox.plugin.calendar.ot.LedgerDocuments.JOT,
-    com.toolsboox.plugin.calendar.ot.LedgerDocuments.TEXT_NOTES,
+    com.toolsboox.plugin.calendar.ot.LedgerDocuments.SYNTHESIZE,
     KIND_TAGS,
 )
 
@@ -537,14 +823,21 @@ private fun kindLabel(kind: String): String = when (kind) {
 }
 
 /**
- * What a kind's count is counting. "412" alone is a number; "412 days" is an answer — and
- * "3 boards" is a shelf where "3 documents" is a database. The nouns are iOS's
- * `LedgerDocKind.noun`, to the word, so the two roots count in one vocabulary. Two deliberate
- * departures from [com.toolsboox.plugin.calendar.ot.LedgerDocuments.noun]: Pickings COUNT in
- * boards ("3 boards", the thing on the shelf) even though the action rows keep "pickings"
- * ("New pickings…", the surface's own word); and Notes counts DAYS, not iOS's "notebooks" —
- * Android's Notes rows ARE days ([directoryItems] lists dayDates), and the by-date spine reuses
- * this same label for its year/month counts, where only "days" is true.
+ * What a kind's count is counting. "412" alone is a number; "412 days" is an answer.
+ *
+ * THE FIVE TEMPLATES ALL COUNT IN NOTES, because that is what they are: the header already says
+ * which template ("Jots · 14 notes"), so a second word for the same thing on the same row would be
+ * the row saying "Jots · 14 jots". The old per-surface count nouns — boards, writings, grids, jots
+ * — were right while they were five separate kinds of thing; under one Notes door they are one kind
+ * of thing made five ways, and this follows
+ * [com.toolsboox.plugin.calendar.ot.LedgerDocuments.noun] rather than keeping a private list to
+ * drift from it. Pickings loses "boards" here, which is the one real casualty and worth naming: a
+ * board IS a note you arrange on, and calling it a note in the count is the model, not a loss.
+ *
+ * The three that are NOT templates keep their own nouns, because none of them counts documents:
+ * Notes and Gram Picks count DAYS (their rows ARE days — [directoryItems] lists dayDates — and the
+ * by-date spine reuses this same label for its year/month counts, where only "days" is true), and
+ * Tags counts tags.
  */
 private fun kindCountLabel(kind: String, n: Int): String {
     val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
@@ -553,12 +846,9 @@ private fun kindCountLabel(kind: String, n: Int): String {
         KIND_TAGS -> if (n == 1) "tag" else "tags"
         // Gram Picks rows ARE days, like Notes' — the inbox is one page run per day.
         KIND_GRAMPICKS -> if (n == 1) "day" else "days"
-        docs.PICKINGS -> if (n == 1) "board" else "boards"
         docs.SYNTHESIZE -> if (n == 1) "synthesis" else "syntheses"
-        docs.WRITE -> if (n == 1) "writing" else "writings"
-        docs.GRID -> if (n == 1) "grid" else "grids"
-        docs.JOT -> if (n == 1) "jot" else "jots"
-        docs.TEXT_NOTES -> if (n == 1) "note" else "notes"
+        docs.PICKINGS, docs.JOT, docs.WRITE, docs.GRID, docs.TEXT_NOTES ->
+            if (n == 1) "note" else "notes"
         else -> if (n == 1) "document" else "documents"
     }
     return "$n $noun"
@@ -2017,13 +2307,22 @@ private fun showTagPages(fragment: ScreenFragment, tag: com.toolsboox.plugin.cal
 // opens when you ARE on a synthesis page, and the root Directory still lists the kind, so every
 // synthesis Michael has ever written is two taps away and opens, pages and renames as it always did.
 
-/** Write's door into the shared directory: the day's writing plus the named pieces you return to. */
-fun showWritePicker(
-    fragment: ScreenFragment,
-    date: LocalDate = LocalDate.now(),
-    currentKey: String? = null,
-) = showDocumentDirectory(
-    fragment, com.toolsboox.plugin.calendar.ot.LedgerDocuments.WRITE, date, currentKey)
+// `showWritePicker` is GONE, and this is the only thing about Write that went.
+//
+// It was a one-line wrapper — showDocumentDirectory over LedgerDocuments.WRITE — whose only caller
+// was the hub's "✍ Write" row. Write is the LINES TEMPLATE now, and a template's shelf is reached
+// the way every other template's is: Notes › All notes › Lines, the day chip on any Lines page, or
+// the root Directory's Lines folder. A private door to one of five identical shelves is the
+// five-separate-surfaces shape the Notes door exists to remove.
+//
+// NOT ONE BYTE OF WRITE'S DATA IS AFFECTED. "write", "write#1", "write-<millis>" and their
+// sub-pages resolve, list, page, name and open exactly as before, from the Directory, from the day
+// chip, and from any `ledger://<date>/write-<millis>` a gram or a link already carries — the
+// routing has no allowlist and never had one. RetiredSurfaceReachabilityTest pins all of it.
+//
+// [showPickingsPicker] survives the same cut on purpose: Pickings keeps a door of its own at the
+// end of the Filter funnel (All Stars → Gram Picks → Pickings), which is a different question from
+// "which template is this note" and reaches the same surface a different way.
 
 /**
  * The configured mailboxes, as the Mail row's sub-fold — the Boox half of the iPad's accounts

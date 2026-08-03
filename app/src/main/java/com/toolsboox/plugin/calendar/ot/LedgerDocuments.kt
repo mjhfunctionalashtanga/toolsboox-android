@@ -71,6 +71,56 @@ object LedgerDocuments {
     const val GRID = "grid"
     const val JOT = "sketch"
 
+    // ── THE FIVE TEMPLATES ────────────────────────────────────────────────────────────────────
+    //
+    // Michael: "Notes have template options: Pickings, Jots, Lines, Grid, Text. Each can be saved
+    // etc hence the directory." And on Write: "write was really just another surface that was
+    // exactly just like lined notes" — so Write IS the Lines template, not a sixth thing.
+    //
+    // THE WHOLE OF THIS IS PRESENTATION OVER STORAGE THAT ALREADY EXISTS. Each of the five already
+    // had a store, an index directory and a Directory entry; what they did not have was one word
+    // for what they are to each other. A template is not a new concept sitting beside the surfaces
+    // — it IS a surface, seen as a property of the page rather than as a door of its own:
+    //
+    //   Pickings → PickingsStore   · pickings-index · keys "pickings" / "pickings-<millis>"
+    //   Jots     → JotPageStore    · sketch-index   · keys "sketch"   / "sketch-<millis>"
+    //   Lines    → WritePageStore  · write-index    · keys "write"    / "write-<millis>"
+    //   Grid     → GridPageStore   · grid-index     · keys "grid"     / "grid-<millis>"
+    //   Text     → TextNotesStore  · text-notes     · note ids "tn-<millis>-<rand>"
+    //
+    // So NOTHING here changes storage: no wire change, no day-JSON key change, no migration, no
+    // iOS coordination. The ids in this file are the PAGE KEY FAMILIES they have always been —
+    // which is why the Jots template's id is still "sketch". [label] is where the template's NAME
+    // lives, and that is the only layer this vocabulary moved.
+    //
+    // Synthesize is deliberately NOT a template. It is a retired surface whose pages must still
+    // open ([RetiredSurfaceReachabilityTest]); it is not something you make a new note as.
+
+    /**
+     * The five, in Michael's order — Pickings · Jots · Lines · Grid · Text.
+     *
+     * ONE list, read by the chooser, the Directory's kind ordering and everything else that
+     * enumerates them, so a second copy can never put them in a second order.
+     */
+    val TEMPLATES = listOf(PICKINGS, JOT, WRITE, GRID, TEXT_NOTES)
+
+    /** Whether a surface id is one of the five note templates (as against Synthesize, or null). */
+    fun isTemplate(surface: String?): Boolean = surface != null && surface in TEMPLATES
+
+    /**
+     * Which TEMPLATE a note-page key is written on, or null when the key belongs to no template.
+     *
+     * [surfaceOf] with the retired surface filtered out: a synthesis page resolves to a document
+     * surface (so it still lists, names and opens) but it is not a template you can start a note
+     * as, and a "Template · Synthesize" row would offer a door that isn't there.
+     *
+     * Text is absent from [surfaceOf] by nature — a text note's key is a note id its own fragment
+     * owns, not a day-page key — so it can never be answered here either. That is correct: the
+     * question this asks is "what template is the PAGE I am standing on", and Text notes are not
+     * pages you stand on.
+     */
+    fun templateOf(key: String?): String? = surfaceOf(key)?.takeIf { isTemplate(it) }
+
     /** The date a never-renamed document is titled by. ISO, matching every other date the app shows. */
     fun dateTitle(date: LocalDate): String = date.toString()
 
@@ -113,28 +163,49 @@ object LedgerDocuments {
         else -> "Ⓣ"
     }
 
-    /** The SURFACE's name — what the hub row and the folder call it. "Grid Notes" / "Jot Notes", to
-     *  the letter, because that is what the hub rows they came from say. */
+    /**
+     * The surface's name — which, for the five, is now its TEMPLATE NAME.
+     *
+     * Michael's five words exactly: Pickings, Jots, Lines, Grid, Text. The old names were the names
+     * of five separate doors ("Write", "Grid Notes", "Jot Notes", "Text Notes"), and keeping them
+     * beside a chooser that offers Lines and Jots would leave the app speaking two vocabularies for
+     * one thing — precisely the drift this trio of functions exists to prevent. So the rename lands
+     * HERE, once, and the hub, the day chip, the ‹ N › menu, the Directory's kind rows and every
+     * "All …" door follow it for free.
+     *
+     * "Lines" is Write's new name and nothing else about Write moved: its store is still
+     * [WritePageStore], its keys are still "write" / "write-<millis>", and every piece he has ever
+     * written opens exactly where it did. Retire the surface, never the data — and here not even
+     * the surface, only the word.
+     *
+     * Synthesize keeps its own name because it is not a template: it is a retired surface whose
+     * pages must still list and open.
+     */
     fun label(surface: String): String = when (surface) {
-        WRITE -> "Write"
+        WRITE -> "Lines"
         SYNTHESIZE -> "Synthesize"
         PICKINGS -> "Pickings"
-        GRID -> "Grid Notes"
-        JOT -> "Jot Notes"
-        else -> "Text Notes"
+        GRID -> "Grid"
+        JOT -> "Jots"
+        else -> "Text"
     }
 
-    /** What ONE of this surface's documents is called. "New Write…" is a door; "New writing…" is
-     *  a thing you are about to make, which is what the button actually does. Grid and Jot take
-     *  Michael's own words for them — "grid and jot" — so "New grid…" and "Delete a jot…" read as
-     *  the things he asked to be able to save. */
+    /**
+     * What ONE document of this surface is called — and for the five templates it is "note",
+     * because that is what Michael's sentence says they are: "NOTES have template options".
+     *
+     * It used to be five different words ("writing", "grid", "jot", "pickings", "text note"), one
+     * per surface, which was right while they were five surfaces: you made a writing, or a jot.
+     * Under one Notes door they are one kind of thing made five ways, so the menus read "＋ New
+     * note…", "✎ Name this note…", "🗑 Delete this note…" whichever template you are standing on,
+     * and the template's own name is said by [label] where it matters. A row that said "New jot…"
+     * on a page the chooser calls Jots would be the two vocabularies again, one line apart.
+     *
+     * Synthesize keeps "synthesis" — it is not one of the five, and its documents are not notes.
+     */
     fun noun(surface: String): String = when (surface) {
-        WRITE -> "writing"
         SYNTHESIZE -> "synthesis"
-        PICKINGS -> "pickings"
-        GRID -> "grid"
-        JOT -> "jot"
-        else -> "text note"
+        else -> "note"
     }
 
     /**
@@ -403,7 +474,15 @@ object LedgerDocuments {
         else -> false
     }
 
-    /** Create a document on [surface], named [name] (blank = let the store choose), homed on [date]. */
+    /**
+     * Create a document on [surface], named [name] (blank = let the store choose), homed on [date].
+     *
+     * TEXT IS NOT HERE, and deliberately. Every caller of this follows it with a navigation to
+     * `doc.key` as a DAY-PAGE key; a text note's key is a note id that only TextNotesFragment can
+     * act on, so returning one would hand the caller an address that resolves to a blank page named
+     * "tn-1785…". The Notes chooser routes Text to its own fragment instead — one branch, in the
+     * one place that offers the five, rather than a lie in the shared return type.
+     */
     fun create(context: Context, surface: String, name: String, date: LocalDate): LedgerDocument? = when (surface) {
         WRITE -> WritePageStore.add(context, name, date)
             .let { LedgerDocument(it.key, it.name, it.date, true) { 1 } }
@@ -414,6 +493,75 @@ object LedgerDocuments {
         PICKINGS -> PickingsStore.add(context, date, name)
             .let { LedgerDocument(it.key, it.name, date, true) { 1 } }
         else -> null
+    }
+
+    // ── THE SEAM: MAKING A NOTE WITHOUT A HUMAN ───────────────────────────────────────────────
+    //
+    // Michael's next slice puts Ask's OUTPUTS into these templates: "text output in text notes …
+    // those can bring in grams and outside links, so would go on a grid … Pick Harvest could have
+    // the ai grab three notes and up to three quotes and two images filling up the picking
+    // template from user given link."
+    //
+    // So a template cannot be a thing only a finger can choose. [startNote] is the one call that
+    // says "make me a note of THIS template and tell me where it went", and it is deliberately in
+    // the ot layer with the stores rather than in the picker that currently calls it — a chooser
+    // that owned the only way to mint a note would have to be re-entered, headless, by whatever
+    // wanted one, and that is the rewrite this exists to avoid.
+    //
+    // [create] stays exactly as it was for the four day-page templates, because two dozen callers
+    // navigate its result as a page key; [startNote] is the wider door that also knows Text.
+
+    /**
+     * A note that has just been made: which template it is on, the [key] its content rides under,
+     * the [date] it is filed on, and the [name] the store settled on.
+     *
+     * [key] IS THE ADDRESS, and what it addresses depends on the template — which is why
+     * [isTextNote] is on the data rather than left for each caller to rediscover. For the four
+     * day-page templates it is a note-page key: content rides the day JSON under it, and
+     * `CalendarNavigator.toDayNote(date, key)` opens it. For Text it is a note id inside
+     * `text-notes/notes-<date>.json`, which only TextNotesFragment can open. One branch, stated
+     * once, rather than a shared type that quietly means two different things.
+     */
+    data class NewNote(
+        val template: String,
+        val key: String,
+        val date: LocalDate,
+        val name: String,
+    ) {
+        val isTextNote: Boolean get() = template == TEXT_NOTES
+    }
+
+    /**
+     * Make a note on [template] and hand back where it went. The programmatic half of the Notes
+     * door — the picker calls this, and so will anything else that needs a note to exist.
+     *
+     * [name] blank lets the store choose ("Jot 3", "Pickings 2"), which is what the picker passes:
+     * a title is worth asking for when you know what the thing is, and inventing one before there
+     * is anything on the page is the friction the Notes door removes. A generator that DOES know —
+     * Ask naming a synthesis after the question — passes it here.
+     *
+     * [body] is TEXT ONLY, and null for everything else on purpose. A text note is its own content,
+     * so it can be made complete in one call; the four page templates have no text field to fill —
+     * their content is strokes, images and cards written into the day file under the returned
+     * [NewNote.key], which is exactly what the gram placement and card paths already do. Passing a
+     * body for one of those is a caller error and is ignored rather than silently half-honoured.
+     *
+     * Returns null only when [template] is not one of the five.
+     */
+    fun startNote(
+        context: Context,
+        template: String,
+        name: String = "",
+        date: LocalDate = LocalDate.now(),
+        body: String = "",
+    ): NewNote? {
+        if (!isTemplate(template)) return null
+        if (template == TEXT_NOTES) {
+            val note = com.toolsboox.plugin.textnotes.TextNotesStore.addNote(context, date, name, body)
+            return NewNote(template, note.id, date, note.title)
+        }
+        val doc = create(context, template, name, date) ?: return null
+        return NewNote(template, doc.key, doc.date, doc.title)
     }
 
     /** Rename a document. [date] is the document's own date — it disambiguates Write's daily pages. */

@@ -358,11 +358,20 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
     companion object {
         /** Hold-picker entries; the index is stored as the remembered tap action, so keep order stable. */
+        // The three surface rows now wear their TEMPLATE names — Grid / Jots / Text, the words
+        // Michael named and the words [LedgerDocuments.label] prints everywhere else. Only the
+        // labels changed: the indexes, the remembered tap action and the keys they navigate to
+        // ("grid", "sketch") are untouched, which is also why this list still cannot be reordered.
+        //
+        // THIS IS THE FAST DOOR AND IT KEEPS ITS ONE-TAP ROWS. The hub's Notes folder folded its
+        // five surface rows into one door with a chooser; that is right for a menu you go to
+        // deliberately and wrong for a button that floats over every screen so a thought can be got
+        // down in a hurry. Capture stays fast: hold once to pick, tap for ever after.
         val QUICK_NOTE_LABELS = arrayOf(
             "Notes — where you left off",
-            "Grid Notes",
-            "Jot Notes",
-            "Text Notes",
+            "Grid",
+            "Jots",
+            "Text",
             "Capture a photo",
             "Record a voice gram",
             // APPENDED, never inserted: the index IS the remembered tap action, so putting Gram Picks

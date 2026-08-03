@@ -52,10 +52,13 @@ object LedgerProvenance {
     /**
      * One page's provenance, as the stamp and the PDF's metadata see it.
      *
-     * [surface] is the making surface's own name ("Write", "Synthesize", "Pickings", "Text Notes",
-     * or "Day" for the day page itself) — [LedgerDocuments.label] is where four of the five come
-     * from. [sourceLinks] is in page order and may be empty; [canonicalUrl] is null until the page
-     * has been published from this device.
+     * [surface] is the making surface's own name — which for the five note templates is now the
+     * TEMPLATE name ("Pickings", "Jots", "Lines", "Grid", "Text"), plus "Synthesize" for the
+     * retired surface and "Day" for the day page itself. It comes from [LedgerDocuments.label] at
+     * the call sites rather than from a list here, so a renamed template renames its stamp too and
+     * a page published yesterday and one published today do not disagree about what they are.
+     * [sourceLinks] is in page order and may be empty; [canonicalUrl] is null until the page has
+     * been published from this device.
      */
     data class Stamp(
         val surface: String,

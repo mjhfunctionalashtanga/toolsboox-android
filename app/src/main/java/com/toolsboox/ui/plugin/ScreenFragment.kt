@@ -1246,8 +1246,36 @@ abstract class ScreenFragment : Fragment() {
         val items: List<Pair<String, () -> Unit>> = emptyList(),
         val expanded: Boolean = false,
         val action: (() -> Unit)? = null,
-        val subFolds: Map<String, List<Pair<String, () -> Unit>>> = emptyMap()
+        val subFolds: Map<String, List<Pair<String, () -> Unit>>> = emptyMap(),
+        val field: FolderField? = null,
     )
+
+    /**
+     * A TYPING FIELD the drawer carries on behalf of a folder — Ask's quick search of the Ledger.
+     *
+     * Michael: "Leave a search field on top for a quick search of Ledgable."
+     *
+     * DECLARED by the folder that owns it, RENDERED at the head of the drawer (see [showAccordion]):
+     * the accordion opens at most one folder at a time and Ask is usually not the open one, so a
+     * field living inside its children would be a quick search you had to unfold a group to reach.
+     *
+     * NOT the same thing as the drawer's own "Find anything" box, and the distinction is the whole
+     * reason this exists as a second mechanism rather than a reuse of that one. That box FILTERS
+     * MENU ROWS — it answers "where is the door called Starred". This field searches HIS LEDGER —
+     * the corpus behind the Search surface, which knows nothing about menus. One field doing both
+     * would have to guess which you meant on every keystroke, and would be wrong about half the
+     * time in the most annoying possible way.
+     *
+     * IT SUBMITS, IT DOES NOT LIVE-QUERY, and that is deliberate rather than provisional. A live
+     * result list under the field would mean running the corpus search behind the keyboard on a
+     * Palma, and the corpus search is the one query in this app that reads day files; the drawer
+     * would stutter, and opening the hub would start paying for a search nobody asked for. So
+     * nothing happens until you press the keyboard's search key: [onSubmit] takes the typed text,
+     * the drawer closes, and you land in the Search surface with the query already run — the same
+     * destination the "🔍 Search" row opens, one step further along. An empty submit is the Search
+     * row exactly.
+     */
+    data class FolderField(val hint: String, val onSubmit: (String) -> Unit)
 
     /** One row in a [showGoModal] section/tools modal. */
     data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
@@ -1603,6 +1631,42 @@ abstract class ScreenFragment : Fragment() {
         // to type what you can already see. The hub is always far past it.
         val rowCount = folders.size +
             folders.sumOf { f -> f.items.size + f.subFolds.values.sumOf { it.size } }
+
+        // ── THE LEDGER SEARCH FIELD, AT THE HEAD OF THE DRAWER ────────────────────────────────
+        //
+        // Michael: "Leave a search field on top for a quick search of Ledgable."
+        //
+        // ON TOP, LITERALLY. A [FolderField] is DECLARED by the folder it belongs to — Ask owns
+        // this one, and the hub's folder list is where you go to see that — but it is RENDERED
+        // here, above everything, rather than inside that folder's children. The accordion opens at
+        // most one folder and Ask is usually not the one, so a field inside it would have been a
+        // quick search you first had to unfold a group to find, which is not a quick search.
+        //
+        // ABOVE the row filter, and never merged with it: two fields with two hints, doing two
+        // things you can tell apart without being told. This one SEARCHES HIS LEDGER and only on
+        // submit; the one below FILTERS THESE MENU ROWS and does it as you type. One box doing both
+        // would have to guess which you meant on every keystroke.
+        for (spec in folders.mapNotNull { it.field }) {
+            list.addView(android.widget.EditText(requireContext()).apply {
+                hint = spec.hint
+                isSingleLine = true
+                textSize = 15f * textScale
+                setPadding(dp(14), dp(8), dp(14), dp(8))
+                imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+                inputType = android.text.InputType.TYPE_CLASS_TEXT
+                // No text watcher, deliberately — see [FolderField]. Nothing runs until the
+                // keyboard's search key, which is the one moment the corpus is worth touching.
+                setOnEditorActionListener { v, actionId, _ ->
+                    if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH) {
+                        val q = v.text?.toString()?.trim().orEmpty()
+                        dialog.dismiss()
+                        spec.onSubmit(q)
+                        true
+                    } else false
+                }
+            })
+        }
+
         val field = if (rowCount <= 6) null else android.widget.EditText(requireContext()).apply {
             hint = "Find anything"; isSingleLine = true; textSize = 15f * textScale
             setPadding(dp(14), dp(8), dp(14), dp(8))

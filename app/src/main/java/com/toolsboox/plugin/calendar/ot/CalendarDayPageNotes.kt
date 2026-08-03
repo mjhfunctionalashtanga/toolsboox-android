@@ -317,9 +317,16 @@ class CalendarDayPageNotes : Creator {
             // below each carry a note about, on the two halves of the same pair.
             if (GridPageStore.isMine(base)) {
                 // The header was a hard-coded "GRID NOTES" inside the template until the surface
-                // could hold a name. It is passed in now for the reason WRITE passes one: a titled
-                // document whose page still says GRID NOTES is a filing system, not a title.
-                drawGridNotesPage(canvas, headerFor(context, base, calendarDay, "GRID NOTES"))
+                // could hold a name. It is passed in now for the reason LINES passes one: a titled
+                // document whose page still says GRID is a filing system, not a title.
+                //
+                // The fallback is the TEMPLATE's name, upper-cased into the header's register and
+                // taken from [LedgerDocuments.label] rather than spelled out — so the word on the
+                // page and the word in the chooser are the same word by construction. (The name a
+                // document actually has is drawn in HIS casing; see [headerFor]. Only the fallback
+                // shouts, because "GRID" is a label for a kind of page and shouting it is fine.)
+                drawGridNotesPage(canvas, headerFor(
+                    context, base, calendarDay, LedgerDocuments.label(LedgerDocuments.GRID).uppercase()))
                 if (subIndex == 0) drawTitleInk(context, canvas, base, calendarDay)
                 return
             }
@@ -372,12 +379,23 @@ class CalendarDayPageNotes : Creator {
 
             canvas.drawRect(0.0f, 0.0f, 1404.0f, 1872.0f, Creator.fillWhite)
 
-            // Title in the top margin so this freeform surface reads as "NOTES" — distinct from the
-            // "WRITE" page (post-Synthesize), which shares this same ruled template.
-            // Just "NOTES" / "WRITE" — the page number rides the inline ‹ N › pager next to it, so
+            // Title in the top margin so this freeform surface reads as "NOTES" — distinct from a
+            // LINES note, which shares this same ruled template.
+            //
+            // "LINES", not "WRITE". Write is the Lines template now (Michael: "write was really
+            // just another surface that was exactly just like lined notes"), and the header is the
+            // one place the old name was still shouted at him on every untitled page. Nothing under
+            // it moved: the key is still "write", the store is still WritePageStore, and a page he
+            // titled draws its title here as it always did — this is only what an UNTITLED one
+            // falls back to, read off [LedgerDocuments.label] so it can never drift from the
+            // chooser's word for the same thing.
+            //
+            // Just "NOTES" / "LINES" — the page number rides the inline ‹ N › pager next to it, so
             // "· Page N" here would double up.
             canvas.drawText(
-                if (isWrite) headerFor(context, base, calendarDay, "WRITE") else "NOTES",
+                if (isWrite)
+                    headerFor(context, base, calendarDay, LedgerDocuments.label(LedgerDocuments.WRITE).uppercase())
+                else "NOTES",
                 lo, to - 16.0f, Creator.textDefaultBlack)
 
             canvas.drawText("${page + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)

@@ -227,6 +227,16 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         }
         buildScopeChips()
 
+        // The hub's Ask field lands here having ALREADY typed. Setting the text is enough to run
+        // the search — the watcher above debounces and loads — so this deliberately does nothing
+        // else, and in particular does not raise the keyboard over the results you asked for.
+        // Applied before the focusSearch block so a seeded arrival wins the keyboard question.
+        ReadingLogSelection.seedQuery?.let { seed ->
+            ReadingLogSelection.seedQuery = null
+            ReadingLogSelection.focusSearch = false
+            if (seed.isNotBlank()) binding.searchField.setText(seed)
+        }
+
         // The hub's 🔍 Search row lands here wanting to TYPE — hand it the keyboard.
         if (ReadingLogSelection.focusSearch) {
             ReadingLogSelection.focusSearch = false
@@ -1268,4 +1278,14 @@ object ReadingLogSelection {
 
     /** Set by the hub's 🔍 Search row: land with the search field focused, keyboard up. */
     var focusSearch = false
+
+    /**
+     * Set by the hub's Ask field: land with this already typed and already searching.
+     *
+     * The quick-search field in the drawer is a way IN to this screen, not a second search engine —
+     * it collects the words and hands them over, and this is the handover. Consumed once (cleared
+     * on read) for the same reason [focusSearch] is: a sticky value would re-seed the screen every
+     * time you came back to it, overwriting whatever you had since typed.
+     */
+    var seedQuery: String? = null
 }

@@ -250,7 +250,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             ),
             "Synthesize" to listOf(
                 "🔬  3 questions → Synthesize" to { readerSynthesize() },
-                "✍  Writing prompt → Write" to { readerWritingPrompt() },
+                "✍  Writing prompt → Lines" to { readerWritingPrompt() },
                 "🗒  Essay outline → Write" to { readerOutline() }
             )
         )
