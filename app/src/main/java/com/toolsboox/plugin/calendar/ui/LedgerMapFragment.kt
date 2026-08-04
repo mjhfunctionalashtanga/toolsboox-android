@@ -16,6 +16,8 @@ import com.toolsboox.ot.MindMapView
 import com.toolsboox.plugin.calendar.CalendarNavigator
 import com.toolsboox.plugin.calendar.da.v2.Connection
 import com.toolsboox.plugin.calendar.ot.ConnectionStore
+import com.toolsboox.plugin.calendar.ot.GramComposer
+import com.toolsboox.plugin.calendar.ot.LedgerDocuments
 import com.toolsboox.plugin.calendar.ot.ContactStore
 import com.toolsboox.plugin.calendar.ot.LedgerTags
 import timber.log.Timber
@@ -545,8 +547,58 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             // The way OUT sits in the same menu as the ways in: this menu is the Map's one
             // actions door (the header has no toolbar of its own), and 📤 is the share glyph
             // the day surface's panel menu already wears.
+            // Saving it INTO the ledger sits above sharing it out of one, because Michael's
+            // complaint about the Map was that a picture of your thinking is the one form of it
+            // the ledger cannot then use. This lands the same graph as objects on a Grid note:
+            // grams that still know where they came from, connectors, and labels you can edit.
+            "▦  Save to Grid Notes" to { saveAsNote() },
             "📤  Share as image" to { exportMap() }
         ))
+    }
+
+    /**
+     * The map as a PAGE — the provenance written down as grams, connectors and text boxes.
+     *
+     * Every node keeps its uri as the gram's `sourceLink`, so the saved map is walkable rather
+     * than decorative: a node on the page is still a door to the thing it stands for. The graph
+     * comes from the same [MindMap.layout] the on-screen map is drawn from, so what lands is what
+     * you were looking at, and [MindMap.Placed.parent] gives the edges for free.
+     */
+    private fun saveAsNote() {
+        if (adjacency.isEmpty() || focus.isBlank()) {
+            showMessage(getString(R.string.map_nothing_to_map), binding.root)
+            return
+        }
+        val placed = MindMap.layout(focus, adjacency) { labels[it] ?: LedgerUri.describe(it) }
+        val nodes = placed.map {
+            GramComposer.Node(
+                ref = it.uri,
+                label = it.label,
+                // Only real addresses become doors. Outline and persona maps have synthetic node
+                // ids, and a gram whose tap resolves to nothing is worse than a gram with no tap.
+                link = it.uri.takeIf { u -> u.startsWith("ledger://") || u.startsWith("http") }.orEmpty(),
+                // The focus wears a different mark: it is the thing the map is ABOUT, not another
+                // neighbour, and on a saved page that distinction is otherwise lost.
+                kind = if (it.depth == 0) "◎" else "",
+            )
+        }
+        val edges = placed.filter { it.depth > 0 && it.parent != it.uri }
+            .map { GramComposer.Edge(it.parent, it.uri) }
+        val title = "Map · " + (labels[focus] ?: LedgerUri.describe(focus))
+        Thread {
+            val note = runCatching {
+                GramComposer.compose(
+                    requireContext(), calendarDayService, documentsRoot(),
+                    LedgerDocuments.GRID, title, nodes, edges, GramComposer.Layout.GRID,
+                )
+            }.getOrNull()
+            runCatching {
+                requireActivity().runOnUiThread {
+                    if (note == null) showMessage("Could not save the map", binding.root)
+                    else showMessage("Saved to Grid Notes · ${note.name}", binding.root)
+                }
+            }
+        }.start()
     }
 
     /**

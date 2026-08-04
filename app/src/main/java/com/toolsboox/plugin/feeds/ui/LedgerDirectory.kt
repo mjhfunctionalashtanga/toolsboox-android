@@ -199,6 +199,12 @@ fun ledgerDirectoryFolders(
         ScreenFragment.Folder("🔎", "Ask", listOf(
             "🔍  Search" to openSearch,
             "💬  Chat" to { nav.navigate(R.id.action_to_ledger_chat) },
+            // The one Ask output that goes OUTSIDE the ledger for material and brings it back as
+            // a working page rather than an answer.
+            "🔗  Research a topic…" to { showResearch(fragment) },
+            // The Map is a way of SEEING what connects — thinking, not a daily station. It sits
+            // with Search and Chat because all three answer a question you came with.
+            "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
         ), expanded = home == "Ask", action = { nav.navigate(R.id.action_to_ledger_chat) },
             field = ScreenFragment.FolderField("Search the Ledger") { q ->
                 com.toolsboox.plugin.calendar.ui.ReadingLogSelection.seedQuery = q.ifBlank { null }
@@ -310,7 +316,6 @@ fun ledgerDirectoryFolders(
                 )
             },
             "❝  Pickings" to { showPickingsPicker(fragment) },
-            "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") },
             "🐘  Self Executive" to { CalendarNavigator.toDayNote(fragment, today, "selfexec") },
             "⚡  Quick Wins" to { nav.navigate(R.id.action_to_quick_wins) },
             // "Missed Connections" is a LABEL change only. The class, the file, the nav id and every
@@ -322,7 +327,9 @@ fun ledgerDirectoryFolders(
             // is as a rendering of an Ask output rather than a place you visit — that is a later
             // slice, and until then taking its only top-level door away would strand a working
             // viewer to make a menu tidier.
-            "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) }
+            // Gratitude last, on Michael's ordering: the day's material is caught, sorted and
+            // worked through above, and this is what you write when that is done.
+            "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") }
         ), expanded = home == "Daily"),
         // DESK — people, and the work. Four rows now (Michael: "Roster/Booking goes in Desk").
         //
@@ -2204,6 +2211,66 @@ fun showPickingsPicker(
     currentKey: String? = null,
 ) = showDocumentDirectory(
     fragment, com.toolsboox.plugin.calendar.ot.LedgerDocuments.PICKINGS, date, currentKey)
+
+/**
+ * Ask the research assistant for a topic, and land what comes back as a Jots page.
+ *
+ * The waiting is the whole design problem here: this is a network round-trip on a device that
+ * repaints in full, so there is no spinner worth drawing. Instead the dialog closes immediately,
+ * a line says it has gone, and the finished note announces itself — you are free to go do
+ * something else in the ledger while it works, which is the honest shape of a slow thing.
+ */
+fun showResearch(fragment: ScreenFragment) {
+    val ctx = fragment.requireContext()
+    val dp = fragment.resources.displayMetrics.density
+    val input = android.widget.EditText(ctx).apply {
+        hint = "A topic, or a question you want the material for."
+        setLines(3)
+        gravity = android.view.Gravity.TOP
+    }
+    val box = android.widget.LinearLayout(ctx).apply {
+        orientation = android.widget.LinearLayout.VERTICAL
+        setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0)
+        addView(android.widget.TextView(ctx).apply {
+            text = "Curated sources, clustered and cited, as a jots page of connected grams."
+            textSize = 13f; setTextColor(0xFF666666.toInt())
+            setPadding(0, 0, 0, (10 * dp).toInt())
+        })
+        addView(input)
+    }
+    // Guarded: a typed topic is work — a stray touch outside must not throw it away.
+    fragment.showGuardedModal(
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Research a topic")
+            .setView(box)
+            .setPositiveButton("Go and find it") { _, _ ->
+                val topic = input.text.toString().trim()
+                if (topic.isBlank()) return@setPositiveButton
+                fragment.showMessage("Researching \u201C$topic\u201D\u2026", fragment.requireView())
+                Thread {
+                    val note = runCatching {
+                        com.toolsboox.plugin.calendar.ot.ResearchAssistant.run(
+                            ctx,
+                            com.toolsboox.plugin.calendar.fi.CalendarDayService(),
+                            com.toolsboox.ot.LedgerPaths.documentsRoot(ctx),
+                            topic,
+                        )
+                    }.getOrNull()
+                    runCatching {
+                        fragment.requireActivity().runOnUiThread {
+                            fragment.showMessage(
+                                if (note == null) "Nothing solid came back \u2014 no page made."
+                                else "Jots \u00B7 ${note.name}",
+                                fragment.requireView(),
+                            )
+                        }
+                    }
+                }.start()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+    )
+}
 
 /** The tag index: every #tag harvested off note pages → the pages it appears on, for jump-nav. */
 fun showTagIndex(fragment: ScreenFragment) {
