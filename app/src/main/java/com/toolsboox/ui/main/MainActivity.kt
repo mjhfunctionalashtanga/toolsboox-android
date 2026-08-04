@@ -683,7 +683,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     private fun ingestBitmap(bmp: android.graphics.Bitmap?) {
         if (bmp == null) { toast("Couldn't read that image"); return }
         lifecycleScope.launch {
-            val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.last(this@MainActivity)
+            val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.inbox(this@MainActivity)
             val placed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching {
                     com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
@@ -1020,7 +1020,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         // longer exists today) — the share sheet is already one modal deep, so a second chooser
         // here would interrupt the capture; the row names its destination instead and the shared
         // memory does the routing. Every explicit chooser in the app teaches that memory.
-        val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.last(this)
+        val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.inbox(this)
         val preview = (title ?: url ?: leftoverText ?: sharedText)?.trim().orEmpty()
         val items = mutableListOf<Triple<Int, String, () -> Unit>>()
 

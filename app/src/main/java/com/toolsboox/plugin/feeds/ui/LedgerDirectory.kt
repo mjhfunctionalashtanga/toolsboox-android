@@ -77,10 +77,10 @@ fun ledgerDirectoryFolders(
             // as its base page — the sub-page tail only matters to the pager, never to the hub.
             when (val page = fragment.currentNotePage()?.substringBefore('#')) {
                 null, "default", com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE -> null
-                // Filter is what Flow became — Michael: "no more flow". The three stations that
-                // actually catch and sort the day's material, and nothing else.
+                // One folder for the whole daily practice — the catching-and-sorting stations and
+                // the pages he keeps for himself. Filter was folded into Daily ("yah, daily").
                 "intake",
-                com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> "Filter"
+                com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS,
                 "gratitude", "selfexec" -> "Daily"
                 "grid", "sketch", "write" -> "Notes"
                 // A NAMED document ("pickings-…", "write-…") calls the same folder home as the
@@ -89,7 +89,7 @@ fun ledgerDirectoryFolders(
                 // so a "synthesize-…" page still OPENS (from the Directory, or from any link that
                 // addresses it) but belongs to no folder, and the hub honestly expands nothing.
                 else -> when (com.toolsboox.plugin.calendar.ot.LedgerDocuments.surfaceOf(page)) {
-                    com.toolsboox.plugin.calendar.ot.LedgerDocuments.PICKINGS -> "Filter"
+                    com.toolsboox.plugin.calendar.ot.LedgerDocuments.PICKINGS -> "Daily"
                     com.toolsboox.plugin.calendar.ot.LedgerDocuments.SYNTHESIZE -> null
                     else -> "Notes"   // lined pages ("0", "1", …), named grids, jots and writings
                 }
@@ -282,23 +282,15 @@ fun ledgerDirectoryFolders(
         // because a board you keep is a note you arranged. Same PickingsStore, same keys, same
         // shelf; two questions, two doors, and the day's board is one tap from the sieve where it
         // has always been.
-        // ▽ rather than an emoji: the hub draws an unmapped glyph as TEXT, so a rare codepoint
-        // renders as tofu on a Boox. ▽ is the universal filter mark and is in every font here.
-        ScreenFragment.Folder("▽", "Filter", listOf(
-            "★  All Stars" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
-            // Gram Picks between All Stars and Pickings — the iPhone's order. Where every grabbed
-            // gram lands, so sorting happens once, later, in one place.
-            "◈  Gram Picks" to {
-                CalendarNavigator.toDayNote(
-                    fragment, today,
-                    com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
-                )
-            },
-            "❝  Pickings" to { showPickingsPicker(fragment) }
-        ), expanded = home == "Filter"),
-        // DAILY — what you do with yourself, as against what you do with the world's material.
+        // DAILY — the whole daily practice, in the order the ritual walks it.
         //
-        // This is the Garden, renamed and cut to what earns its place. Gratitude is the single
+        // Filter used to hold the first three of these as a group of its own. Michael collapsed it
+        // in: "yah, daily". He is right twice over. They ARE daily — All Stars and Gram Picks are
+        // touched every day, not visited as a category — and once they leave, Filter is a folder
+        // with one row in it, which is not a folder. So the funnel keeps its ORDER, which is where
+        // the meaning actually lived (arrive → pick → arrange), and loses the box around it.
+        //
+        // This is also the Garden, renamed and cut to what earns its place. Gratitude is the single
         // most-written page in the ledger (44 days) and Self Executive is his own keep. Quick Wins
         // moves in from the Desk: it is a daily reckoning, not a working surface. Missed
         // Connections — "pretty good" — is the one discovery surface that survived.
@@ -308,6 +300,16 @@ fun ledgerDirectoryFolders(
         // was "pretty useless". Nothing they showed has been lost: it is all still in the graph, and
         // Missed Connections still reads it.
         ScreenFragment.Folder("🪴", "Daily", listOf(
+            "★  All Stars" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
+            // Gram Picks between All Stars and Pickings — the iPhone's order. Where every grabbed
+            // gram lands, so sorting happens once, later, in one place.
+            "◈  Gram Picks" to {
+                CalendarNavigator.toDayNote(
+                    fragment, today,
+                    com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
+                )
+            },
+            "❝  Pickings" to { showPickingsPicker(fragment) },
             "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") },
             "🐘  Self Executive" to { CalendarNavigator.toDayNote(fragment, today, "selfexec") },
             "⚡  Quick Wins" to { nav.navigate(R.id.action_to_quick_wins) },

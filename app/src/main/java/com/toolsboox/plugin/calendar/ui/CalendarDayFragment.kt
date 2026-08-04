@@ -2606,43 +2606,39 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     private fun showSectionSwitcher() {
-        // Which folder the page you're standing on belongs to — the same two-way split the hub
-        // makes. Daily is what you do with yourself; Filter is what you do with what arrived.
-        val onDaily = currentNotePage() in listOf("gratitude", "selfexec")
-        val currentFolder = if (onDaily) "Daily" else "Filter"
+        // Every day page belongs to ONE folder now. Filter and Daily used to split this list —
+        // what arrived versus what you do with yourself — and Michael collapsed the two ("yah,
+        // daily"), because All Stars and Gram Picks are things touched daily, not a category
+        // visited. The funnel keeps its ORDER, where the meaning actually lived (arrive → pick →
+        // arrange); it just no longer has a box drawn round it.
+        val currentFolder = "Daily"
 
-        val sections: Pair<String, List<GoItem>> = if (onDaily) {
-            "Daily" to buildList {
-                add(GoItem("🙏", "Gratitude") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "gratitude") })
-                add(GoItem("🐘", "Self Executive") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "selfexec") })
-                add(GoItem("⚡", "Quick Wins") { findNavController().navigate(R.id.action_to_quick_wins) })
-                // "Missed Connections" to read; MissedRhizomes to the compiler — see the hub.
-                add(GoItem("✧", "Missed Connections") { findNavController().navigate(R.id.action_to_missed_rhizomes) })
-                add(GoItem("🗺", "Map") { findNavController().navigate(R.id.action_to_ledger_map) })
+        val sections: Pair<String, List<GoItem>> = "Daily" to buildList {
+            // Mid-walk, a ⚡ fast-lane to the next station rides on top — the SAME chain the
+            // stepper and the finger swipes read (ritualNextStep), so no two controls can
+            // disagree about "next".
+            ritualNextStep()?.let { (page, _, label) ->
+                add(GoItem("⚡", "Next · $label") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), page) })
             }
-        } else {
-            getString(R.string.go_group_day) to buildList {
-                // Filter, in walk order: All Stars → Gram Picks → Pickings. Mid-walk, a ⚡ fast-lane
-                // to the next station rides on top — the SAME chain the stepper and the finger
-                // swipes read (ritualNextStep), so no two controls can disagree about "next".
-                ritualNextStep()?.let { (page, _, label) ->
-                    add(GoItem("⚡", "Next · $label") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), page) })
-                }
-                add(GoItem("☀︎", "Day") { CalendarNavigator.toDayPage(this@CalendarDayFragment, LocalDate.now(), CalendarDay.DEFAULT_STYLE) })
-                add(GoItem("★", "All Stars") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
-                add(GoItem("◈", "Gram Picks") {
-                    CalendarNavigator.toDayNote(
-                        this@CalendarDayFragment, LocalDate.now(),
-                        com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
-                    )
-                })
-                add(GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "pickings") })
-            }
+            add(GoItem("☀︎", "Day") { CalendarNavigator.toDayPage(this@CalendarDayFragment, LocalDate.now(), CalendarDay.DEFAULT_STYLE) })
+            add(GoItem("★", "All Stars") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
+            add(GoItem("◈", "Gram Picks") {
+                CalendarNavigator.toDayNote(
+                    this@CalendarDayFragment, LocalDate.now(),
+                    com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
+                )
+            })
+            add(GoItem("❝", "Pickings") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "pickings") })
+            add(GoItem("🙏", "Gratitude") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "gratitude") })
+            add(GoItem("🐘", "Self Executive") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "selfexec") })
+            add(GoItem("⚡", "Quick Wins") { findNavController().navigate(R.id.action_to_quick_wins) })
+            // "Missed Connections" to read; MissedRhizomes to the compiler — see the hub.
+            add(GoItem("✧", "Missed Connections") { findNavController().navigate(R.id.action_to_missed_rhizomes) })
+            add(GoItem("🗺", "Map") { findNavController().navigate(R.id.action_to_ledger_map) })
         }
 
         // Sibling folders: the other top-level doors (current one dropped), each opening its head.
         val siblings = buildList {
-            add(GoItem("▽", "Filter") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "intake") })
             add(GoItem("📰", "Incoming") { findNavController().navigate(R.id.action_to_feeds) })
             add(GoItem("🪴", "Daily") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "gratitude") })
             add(GoItem("🗒", "Desk") {

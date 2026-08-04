@@ -122,7 +122,7 @@ object LedgerPlayerCapture {
      * Each save is its OWN gram — the star's dedupe deliberately does not apply here, so the
      * third note on an episode lands beside the first two ([PickingsPlacement.place] never
      * dedupes; only the star path checks for twins). The note rides the remembered-destination
-     * funnel like every other quick capture: [GramDestinations.last], Gram Picks standing in
+     * funnel like every other quick capture: [GramDestinations.inbox], the Gram Picks pile
      * whenever the memory can't be honoured today.
      */
     fun annotateNow(context: Context) {
@@ -163,7 +163,7 @@ object LedgerPlayerCapture {
         Thread {
             val service = dayService(appCtx)
             val root = LedgerPaths.documentsRoot(appCtx)
-            val dest = GramDestinations.last(appCtx)
+            val dest = GramDestinations.inbox(appCtx)
             val face = QuoteCardRenderer.render(note, footer(cap), null, CARD_W, 0)
             runCatching {
                 PickingsPlacement.place(

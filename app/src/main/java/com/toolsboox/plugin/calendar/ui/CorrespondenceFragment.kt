@@ -1355,7 +1355,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     // standing in when the remembered place no longer exists today.
                     if (status == "Reply posted" && saveBmp != null) withContext(Dispatchers.IO) {
                         runCatching {
-                            val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.last(ctx)
+                            val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.inbox(ctx)
                             com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
                                 calendarDayService, documentsRoot(), saveBmp, java.time.LocalDate.now(),
                                 dest.key,

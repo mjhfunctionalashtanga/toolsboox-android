@@ -360,15 +360,11 @@ object FeedNoteGram {
             if (sel.isNotBlank()) logEvent(sel, null)
             Thread {
                 val blob = File(com.toolsboox.ot.LedgerPaths.attachmentsDir(ctx), att.filename)
-                // The remembered destination routes A/V grams too — except an All Stars band,
-                // which places by intakeKind through PickingsPlacement rather than AvGrams; a
-                // clip can't ride that path, so the star register's memory falls back to the
-                // Gram Picks inbox instead of landing a poster unbanded on the register.
-                val last = com.toolsboox.plugin.calendar.ot.GramDestinations.last(ctx)
-                val dest = if (last.kind.isNotBlank())
-                    com.toolsboox.plugin.calendar.ot.GramDestinations.Destination(
-                        "◈", "Gram Picks", com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS)
-                else last
+                // A/V grams land in the inbox like every other quick capture. The band-kind
+                // dance this used to do is gone with the remembered routing: an All Stars band
+                // places by intakeKind through PickingsPlacement rather than AvGrams, which a
+                // clip cannot ride — and now nothing tries to send it there in the first place.
+                val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.inbox(ctx)
                 val placed = runCatching {
                     AvGrams.file(
                         service, root, blob, att,
@@ -392,7 +388,7 @@ object FeedNoteGram {
      * forgotten on upgrade): one vocabulary, one memory, shared with every other capture path.
      */
     private fun lastDestination(ctx: android.content.Context) =
-        com.toolsboox.plugin.calendar.ot.GramDestinations.last(ctx)
+        com.toolsboox.plugin.calendar.ot.GramDestinations.inbox(ctx)
 
     /** The one-tap menu label, naming where the gram will land: "⁂  Save as photo gram → …". */
     fun photoGramLabel(ctx: android.content.Context): String =
@@ -602,7 +598,7 @@ object FeedNoteGram {
         val src = articleUrl.takeIf { it.startsWith("http", ignoreCase = true) } ?: ""
         val appCtx = fragment.requireContext().applicationContext
         Thread {
-            val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.last(appCtx)
+            val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.inbox(appCtx)
             val ok = runCatching {
                 PickingsPlacement.place(
                     service, root, face(), LocalDate.now(), dest.key,

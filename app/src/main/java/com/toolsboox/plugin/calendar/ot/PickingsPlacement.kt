@@ -61,13 +61,35 @@ object GramDestinations {
         return out
     }
 
-    /** Where the last gram went, if that place still exists on [date]; Gram Picks otherwise. */
+    /**
+     * WHERE A CAPTURED GRAM LANDS. Always the Gram Picks inbox, and deliberately not negotiable.
+     *
+     * Michael: "the real trick is making sure that grams get added to Gram Picks instead of being
+     * put on today's note or today's picking first." He is describing two ways this used to go
+     * wrong, and both were real. The remembered default fell back to today's NOTES page when
+     * nothing had been chosen yet, so a fresh capture landed on the writing page; and once the
+     * chooser recorded a Pickings board, every quiet capture afterwards drifted there too. Either
+     * way the inbox stayed empty and the sorting he built it for happened at capture time, one
+     * gram at a time, which is exactly the cost the inbox exists to avoid.
+     *
+     * So memory ORDERS THE CHOOSER and never ROUTES A CAPTURE. Placing something deliberately is a
+     * decision about that gram; it is not a standing instruction about every gram to come.
+     */
+    fun inbox(context: android.content.Context, date: LocalDate = LocalDate.now()): Destination =
+        all(context, date).firstOrNull { it.key == CalendarDayPageNotes.GRAM_PICKS }
+            ?: Destination("◈", "Gram Picks", CalendarDayPageNotes.GRAM_PICKS)
+
+    /**
+     * Where the last gram was deliberately placed, if that place still exists on [date] — used to
+     * ORDER the chooser, never to route a capture (see [inbox]). Falls back to the inbox rather
+     * than to today's notes: with nothing remembered, the honest first offer is the pile you sort.
+     */
     fun last(context: android.content.Context, date: LocalDate = LocalDate.now()): Destination {
         val prefs = context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
-        val key = prefs.getString(KEY_LAST, NOTES_PAGE) ?: NOTES_PAGE
+        val key = prefs.getString(KEY_LAST, CalendarDayPageNotes.GRAM_PICKS) ?: CalendarDayPageNotes.GRAM_PICKS
         val kind = prefs.getString(KEY_LAST_KIND, "") ?: ""
         val list = all(context, date)
-        return list.firstOrNull { it.key == key && it.kind == kind } ?: list[0]
+        return list.firstOrNull { it.key == key && it.kind == kind } ?: inbox(context, date)
     }
 
     /** Record a choice — called by the chooser, so the next capture learns from the last one. */

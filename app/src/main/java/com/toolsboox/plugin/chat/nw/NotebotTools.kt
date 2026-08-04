@@ -270,7 +270,7 @@ object NotebotRegistry {
                 // A tool call inside a model turn cannot raise a chooser, so the shared gram
                 // memory routes it — Gram Picks when the remembered place no longer exists today
                 // — and the answer sentence names the landing, as it always has.
-                val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.last(context)
+                val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.inbox(context)
                 val placed = runCatching {
                     val face = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
                         text.take(600), title.ifBlank { "Ask my Ledger" }, null, 1080, 0)

@@ -267,7 +267,7 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         render()
         // One-tap verb on a list row — no chooser, the shared gram memory routes the card (Gram
         // Picks when the remembered place no longer exists today) and the message names the landing.
-        val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.last(ctx, today)
+        val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.inbox(ctx, today)
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
                 val card = QuoteCardRenderer.render(
