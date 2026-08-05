@@ -197,7 +197,12 @@ fun ledgerDirectoryFolders(
         // see [ScreenFragment.FolderField] for why a live corpus query behind the keyboard is the
         // one thing a drawer on e-ink must not do.
         ScreenFragment.Folder("🔎", "Ask", listOf(
-            "🔍  Search" to openSearch,
+            // Named for WHERE IT GOES, not for what it does. Michael, 2026-08-04: "Hamburger menu
+            // 'search' the ledger and find anything… what's the difference?" — a fair question,
+            // because the field above and this row were both called searching and landed on two
+            // different surfaces. The field runs the query against your written history; this row
+            // opens the full search, across everything, with its filters.
+            "🔍  Search everything" to openSearch,
             "💬  Chat" to { nav.navigate(R.id.action_to_ledger_chat) },
             // The one Ask output that goes OUTSIDE the ledger for material and brings it back as
             // a working page rather than an answer.
@@ -206,7 +211,7 @@ fun ledgerDirectoryFolders(
             // with Search and Chat because all three answer a question you came with.
             "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
         ), expanded = home == "Ask", action = { nav.navigate(R.id.action_to_ledger_chat) },
-            field = ScreenFragment.FolderField("Search the Ledger") { q ->
+            field = ScreenFragment.FolderField("Quick find in your writing") { q ->
                 com.toolsboox.plugin.calendar.ui.ReadingLogSelection.seedQuery = q.ifBlank { null }
                 if (q.isBlank()) openSearch() else openHistory(null)
             }),

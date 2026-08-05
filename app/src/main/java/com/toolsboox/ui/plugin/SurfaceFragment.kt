@@ -5565,9 +5565,25 @@ abstract class SurfaceFragment : ScreenFragment() {
             val actionHoverMove = motionEvent.action == MotionEvent.ACTION_HOVER_MOVE
             val actionHoverExit = motionEvent.action == MotionEvent.ACTION_HOVER_EXIT
 
-            if (actionHoverEnter) {
-                return true
-            } else if (actionHoverMove) {
+            if (actionHoverEnter || actionHoverMove) {
+                // THE PEN ANNOUNCES ITSELF BEFORE IT LANDS — so wake the hardware ink now, not
+                // 250 ms after the last menu closed.
+                //
+                // Michael, 2026-08-04: "Pen sensitivity seems to have gone down, so starting
+                // strokes don't always register." Dismissing a modal parks the pen and hands the
+                // whole surface back to ordinary touch, then re-arms on a 250 ms delay so the
+                // dismissing tap cannot paint a stray dot. That delay is correct, but it is timed
+                // from the DISMISS rather than from the pen, so anyone who closes a menu and
+                // writes straight away loses the beginning of the stroke. Since the rail arrived
+                // and menus became the way around the app, that window is crossed constantly.
+                //
+                // Hover costs nothing and means the pen is inbound but not yet touching: the one
+                // moment when re-arming is both safe (no contact to mistake for a tap) and early
+                // enough to matter. The deferred resume is cancelled so it cannot re-park us.
+                if (rawInkPausedForMenu && !modalShowing) {
+                    provideSurfaceView().removeCallbacks(forcedResumeRunnable)
+                    forcedResumeRunnable.run()
+                }
                 return true
             } else if (actionHoverExit) {
                 Handler(Looper.getMainLooper()).postDelayed({
