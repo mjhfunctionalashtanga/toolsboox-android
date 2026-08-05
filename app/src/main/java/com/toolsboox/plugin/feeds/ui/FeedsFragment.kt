@@ -101,6 +101,19 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         }
     }
 
+    /** Held as a field so the exact instance can be removed again — a lambda written inline at
+     *  both ends is two different objects, and `removeListener` on the second one is a no-op that
+     *  leaks the first for the life of the process. */
+    private val playerRailListener: () -> Unit = {
+        binding.root.post { if (isAdded) rebuildActionRail("feeds") }
+        Unit
+    }
+
+    override fun onDestroyView() {
+        com.toolsboox.ui.plugin.LedgerPlayer.removeListener(playerRailListener)
+        super.onDestroyView()
+    }
+
     override fun onPause() {
         super.onPause()
         (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = null
@@ -223,6 +236,11 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             actions = { feedsRailActions() },
             hub = { showLedgerDirectory() }
         )
+        // The transport changes on its own — a track ends, a chapter rolls over, the system pauses
+        // for a call — and a rail that only re-dresses when YOU press something would go on showing
+        // ▶ over a finished episode. Posted to the main thread because the player's callbacks come
+        // off whichever thread the media session used.
+        com.toolsboox.ui.plugin.LedgerPlayer.addListener(playerRailListener)
 
         // System Back closes an open in-pane article (returns to the list) before leaving — but an
         // open find bar is the innermost thing on screen, so Back puts the plain page back first.
@@ -1676,7 +1694,19 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             }
             return
         }
-        if (entry.kind == "listen" && entry.audioUrl != null) { playEntryAudio(entry); return }
+        // A podcast PLAYS AND OPENS. Michael, 2026-08-05: "the listen does not pull up the single
+        // entry in the feed reader, tho it does begin playing the podcast."
+        //
+        // It used to return here, on the reasoning that a podcast is something you listen to
+        // rather than something you read. But the episode page is where the show notes, the
+        // chapter links and the things the host mentioned live — the reason you went looking for
+        // the episode in the first place is often on it. Starting playback and then showing you
+        // nothing leaves you on a list with audio coming out of it, and no way into what you
+        // just opened without going back and finding it again.
+        //
+        // Falling through also earns the entry everything else the pane gives: the reader's own
+        // star, marked-read, and prev/next within the list.
+        if (entry.kind == "listen" && entry.audioUrl != null) playEntryAudio(entry)
         if (markReadMode() != "off") markEntryRead(entry)   // per the user's "mark as read" setting
         FeedSelection.entry = entry
         FeedSelection.list = adapter.current()
@@ -1886,7 +1916,15 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         // The Mail re-dresses the whole rail — same provider, different verbs (the spread's
         // rebuildActionRail pattern). See mailRailActions.
         if (kindFilter == KIND_MAIL) return mailRailActions()
-        val base = listOf(
+        // THE TRANSPORT LEADS, whenever something is playing. Michael, 2026-08-05: "instead of a
+        // pop-up for the player, building the player into the sub menu makes sense." First,
+        // because while a podcast is running it is the thing you most often reach for — and now
+        // that a Listen row opens its episode page as well as playing, the page underneath is
+        // exactly what a modal would have covered.
+        val transport = com.toolsboox.ui.plugin.LedgerPlayerRail.items(requireContext()) {
+            rebuildActionRail("feeds")
+        }
+        val base = transport + listOf(
             com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_feed, "Feeds drawer") {
                 binding.ledgerButton.performClick()
             },
