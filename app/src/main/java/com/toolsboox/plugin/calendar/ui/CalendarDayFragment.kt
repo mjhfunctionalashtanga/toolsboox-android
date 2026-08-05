@@ -956,6 +956,12 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             // tag index as openable rows rather than only as graph edges.
             com.toolsboox.plugin.calendar.ot.LedgerTags.record(
                 ctx, currentDate, pageKey, title + "\n" + md)
+            // …and the same text through the link harvester. [[Wiki links]] ride the tag pass
+            // because they are the same act — a token written into the page that means "this
+            // belongs with that" — and they join the same rhizome, so a link written here is an
+            // edge on the Map without anything else being told about it.
+            com.toolsboox.plugin.calendar.ot.LedgerLinks.record(
+                ctx, currentDate, pageKey, title + "\n" + md)
         }
 
         val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
@@ -3989,6 +3995,15 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         renderRect: android.graphics.RectF, zoneRect: android.graphics.RectF,
         creds: Triple<String, String, String>
     ) {
+        // [[WIKI LINKS]] COME OFF THE SAME PASS. This is the whole reason interlinking is cheap:
+        // the expensive part — getting handwriting into text at all — has already been paid for
+        // here, and a link is just a second token shape to look for in the result.
+        //
+        // Before the tag early-return, deliberately: a page can carry links and no tags, and
+        // returning first would have made [[links]] work everywhere EXCEPT on handwriting, which
+        // is the one place they most need to.
+        com.toolsboox.plugin.calendar.ot.LedgerLinks.record(ctx, date, pageKey, text)
+
         val tags = com.toolsboox.plugin.calendar.ot.LedgerTags.extract(text)
         if (tags.isEmpty()) return
         val boxes = com.toolsboox.plugin.calendar.nw.VisionOcr
