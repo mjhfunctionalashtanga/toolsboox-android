@@ -157,6 +157,41 @@ object BookshelfSource {
     }
 
     /**
+     * Write a new book ONTO THE SHELF, wherever the shelf currently is.
+     *
+     * This has to follow the declaration or the feature is a lie: download a book while a Syncthing
+     * folder is declared, write it into app storage, and it does not appear on the shelf you are
+     * looking at. The book would exist and be invisible, which is the worst of the three possible
+     * outcomes.
+     *
+     * Returns whether it landed. Streams rather than buffering — a book is tens of megabytes and
+     * this runs on a device with little to spare.
+     */
+    fun writeInto(context: Context, filename: String, body: (java.io.OutputStream) -> Unit): Boolean {
+        val tree = declaredTree(context)
+        if (tree == null) {
+            val dest = File(defaultDir(context), filename)
+            // Temp-then-rename: an interrupted write must not leave a truncated book on the shelf
+            // looking like a whole one, because the shelf lists by extension and would show it.
+            val tmp = File(dest.parentFile, ".${dest.name}.part")
+            return runCatching {
+                tmp.outputStream().use(body)
+                tmp.renameTo(dest)
+            }.getOrDefault(false)
+        }
+        val root = DocumentFile.fromTreeUri(context, tree) ?: return false
+        // A declared tree may be read-only (a shared folder, a mounted card). Say so by failing
+        // rather than by appearing to succeed.
+        if (!root.canWrite()) return false
+        val existing = root.findFile(filename)
+        val doc = existing ?: root.createFile("application/octet-stream", filename) ?: return false
+        return runCatching {
+            context.contentResolver.openOutputStream(doc.uri, "wt")!!.use(body)
+            true
+        }.getOrDefault(false)
+    }
+
+    /**
      * A [File] the reader can open, materialising a tree entry into the cache if it must.
      *
      * Copy-on-open rather than copy-on-declare: a declared library can be thousands of books and

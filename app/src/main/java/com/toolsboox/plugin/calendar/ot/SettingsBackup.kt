@@ -544,6 +544,25 @@ object SettingsBackup {
         return ImportResult(applied, hadSecrets, unlocked, wrong)
     }
 
+    /**
+     * Read one carried section by name — the door out of passthrough.
+     *
+     * Passthrough was built as a courtesy: hold iOS-only settings verbatim so an Android re-export
+     * cannot destroy them. But "Android has no home for this" is a statement about a moment, not
+     * forever — the OPDS catalog was carried across for months while nothing here could open it,
+     * and the day Android grew a client the config was already on the device. This lets a new
+     * feature claim what the sync was keeping for it, so Michael configures a thing once.
+     */
+    fun carriedSection(context: Context, name: String): JSONObject? =
+        readPassthrough(context).optJSONObject(name)
+
+    /** Write a carried section back, so a value set on Android survives the next export to iOS. */
+    fun putCarriedSection(context: Context, name: String, section: JSONObject) {
+        val root = readPassthrough(context)
+        root.put(name, section)
+        writePassthrough(context, root)
+    }
+
     private fun readPassthrough(context: Context): JSONObject =
         try {
             JSONObject(enc(context, PASSTHROUGH_STORE).getString("json", "{}") ?: "{}")

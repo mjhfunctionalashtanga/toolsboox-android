@@ -114,6 +114,113 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         )
     }
 
+    /**
+     * Browse the OPDS catalog. [href] null is the root; a sub-catalog passes its own.
+     *
+     * One list, two kinds of row, distinguished by the glyph: 🗂 drills further in, 📖 pulls the
+     * book down onto the shelf. That is the whole of OPDS as far as a reader is concerned, and
+     * modelling it as anything richer would be modelling the format rather than the task.
+     */
+    private fun showOpdsBrowser(href: String?) {
+        val ctx = requireContext()
+        if (OpdsCatalog.config(ctx) == null) { showOpdsSettings(); return }
+        showMessage("Fetching the catalog…")
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { OpdsCatalog.feed(ctx, href) }
+            }
+            if (!isAdded) return@launch
+            val feed = result.getOrElse { e ->
+                // The message is the point: a catalog failure is almost always a sign-in, and
+                // "Sign in to the catalog" is a fixable instruction where "HTTP 401" is not.
+                showMessage(e.message ?: "The catalog didn't answer.")
+                return@launch
+            }
+            if (feed.entries.isEmpty()) { showMessage("Nothing in “${feed.title}”."); return@launch }
+            val rows = feed.entries.map { e ->
+                val glyph = if (e.isBook) "📖" else "🗂"
+                val line = buildString {
+                    append(glyph).append("  ").append(e.title)
+                    if (e.author.isNotBlank()) append(" · ").append(e.author)
+                }
+                line to {
+                    if (e.isBook) downloadFromCatalog(e)
+                    else e.navHref?.let { showOpdsBrowser(it) } ?: showMessage("Nothing to open there.")
+                }
+            }
+            showIconMenu(
+                feed.title.ifBlank { "Catalog" },
+                rows + listOf("⚙  Catalog settings…" to { showOpdsSettings() })
+            )
+        }
+    }
+
+    /** Pull one entry down onto the shelf — wherever the shelf currently is — and offer to read it. */
+    private fun downloadFromCatalog(entry: OpdsCatalog.Entry) {
+        val ctx = requireContext()
+        val name = entry.filename()
+        showMessage("Fetching ${entry.title}…")
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val cfg = OpdsCatalog.config(ctx) ?: return@runCatching false
+                    val link = entry.download ?: return@runCatching false
+                    val url = OpdsCatalog.resolve(cfg.url, link.href)
+                    var wrote = false
+                    OpdsCatalog.stream(ctx, url) { input ->
+                        wrote = BookshelfSource.writeInto(ctx, name) { out -> input.copyTo(out) }
+                    }
+                    wrote
+                }.getOrDefault(false)
+            }
+            if (!isAdded) return@launch
+            if (!ok) { showMessage("Couldn't fetch ${entry.title}."); return@launch }
+            showMessage("On the shelf · ${entry.title}")
+            // Offer the read rather than taking it: you may be filling the shelf, not starting a
+            // book, and being yanked out of the catalog mid-browse is the wrong default.
+            showIconMenu(entry.title, listOf(
+                "📖  Read it now" to {
+                    shelfEntries().firstOrNull { it.name == name }?.let { openShelfEntry(it) }
+                    Unit
+                },
+                "🗂  Back to the catalog" to { showOpdsBrowser(null) },
+            ))
+        }
+    }
+
+    /** Where the catalog is, and who you are to it. */
+    private fun showOpdsSettings() {
+        val ctx = requireContext()
+        val cfg = OpdsCatalog.config(ctx)
+        val dp = resources.displayMetrics.density
+        val urlIn = android.widget.EditText(ctx).apply {
+            hint = "Catalog URL (…/opds)"; setSingleLine(); setText(cfg?.url.orEmpty())
+        }
+        val userIn = android.widget.EditText(ctx).apply {
+            hint = "Username"; setSingleLine(); setText(cfg?.user.orEmpty())
+        }
+        val passIn = android.widget.EditText(ctx).apply {
+            hint = "Password"; setSingleLine()
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setText(cfg?.pass.orEmpty())
+        }
+        val box = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0)
+            addView(urlIn); addView(userIn); addView(passIn)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Book catalog")
+            .setView(android.widget.ScrollView(ctx).apply { addView(box) })
+            .setPositiveButton("Save") { _, _ ->
+                OpdsCatalog.save(ctx, urlIn.text.toString(), userIn.text.toString(), passIn.text.toString())
+                showOpdsBrowser(null)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
     /** The shelf, wherever it has been declared to be. */
     private fun shelfEntries(): List<BookshelfSource.Entry> =
         runCatching { BookshelfSource.list(requireContext()) }.getOrDefault(emptyList())
@@ -326,6 +433,10 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             ("＋  Import a book…" to {
                 openBook.launch(arrayOf("application/epub+zip", "application/pdf", "application/x-mobipocket-ebook", "*/*"))
             }) +
+            // The catalog — his punchlist's "Bookshelf still missing OPDS in import". Sits with
+            // Import rather than in Settings, because browsing a catalog IS importing: it is the
+            // same act with the shelf on someone else's machine.
+            ("🌐  Catalog…" to { showOpdsBrowser(null) }) +
             // A note ABOUT the book belongs with the shelf, not with the page you happen to be on.
             ("🖍  Note on this book…" to { composeBookNote() })
         val player = com.toolsboox.ui.plugin.LedgerPlayer
