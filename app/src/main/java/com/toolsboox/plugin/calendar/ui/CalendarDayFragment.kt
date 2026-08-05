@@ -605,6 +605,57 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     }
 
     /**
+     * A link gram that points at one of your own notes.
+     *
+     * Deliberately the same OBJECT as a web link — a card with `sourceLink`, movable, connectable,
+     * tappable — because the difference between "a thing I read" and "a thing I wrote" is a fact
+     * about the address, not about the kind of thing it is. Making internal links a separate
+     * species would mean two of everything downstream: two cards, two tap behaviours, two ways to
+     * appear on the Map.
+     */
+    private fun placeNoteLink(
+        link: com.toolsboox.plugin.calendar.ot.LedgerLinks.Link, title: String, cx: Float, cy: Float
+    ) {
+        val ctx = requireContext()
+        val uri = com.toolsboox.plugin.calendar.ot.LedgerLinks.linkUri(link.target)
+        val label = title.ifBlank { link.shown }
+        lifecycleScope.launch {
+            val fresh = withContext(Dispatchers.IO) {
+                val bmp = com.toolsboox.plugin.calendar.ot.LinkCardRenderer.render(
+                    uri, label, "note")
+                val reloaded = DayLocks.withDay(currentDate) {
+                    runCatching {
+                        com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                            calendarDayService, documentsRoot(), bmp, currentDate, notePage ?: "default",
+                            sourceLink = uri, sourceLabel = label, cardText = title)
+                    }
+                    runCatching {
+                        calendarDayService.load(documentsRoot(), currentDate, null, java.util.Locale.getDefault())
+                    }.getOrNull()
+                }
+                // The join, so a pasted link and a handwritten one land in the same graph.
+                runCatching {
+                    com.toolsboox.plugin.calendar.ot.LedgerLinks.record(
+                        ctx, currentDate, notePage ?: "default", "[[${link.target}]]")
+                }
+                reloaded
+            }
+            if (!isAdded) return@launch
+            // Additive refresh, exactly as the web-link path does it: a pen-up save racing the
+            // placement writes the fragment's older imageElements to disk, so the in-memory list
+            // is the surviving truth — fold the placed card in and let the next save persist it.
+            if (::calendarDay.isInitialized && fresh != null) {
+                val have = calendarDay.imageElements.map { it.elementId.toString() }.toSet()
+                fresh.imageElements
+                    .filter { it.elementId.toString() !in have && it.elementId.toString() !in calendarDay.deletedElementIds }
+                    .forEach { calendarDay.imageElements.add(it) }
+                setImageElements(calendarDay.imageElements.filter { it.page == (notePage ?: "default") }.toMutableList())
+            }
+            showMessage("Linked · ${link.shown}", binding.root)
+        }
+    }
+
+    /**
      * Intake a link as an object.
      *
      * A website, a video, a podcast — all the same thing: paste the address, and it lands on the
@@ -615,7 +666,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     override fun onIntakeLink(cx: Float, cy: Float) {
         val ctx = requireContext()
         val dp = resources.displayMetrics.density
-        val urlIn = android.widget.EditText(ctx).apply { hint = "Paste a link — website, video, podcast"; setSingleLine() }
+        val urlIn = android.widget.EditText(ctx).apply {
+            hint = "A link, or [[a note]]"; setSingleLine()
+        }
         val titleIn = android.widget.EditText(ctx).apply { hint = "Title (optional)"; setSingleLine() }
         val box = android.widget.LinearLayout(ctx).apply {
             orientation = android.widget.LinearLayout.VERTICAL
@@ -636,6 +689,18 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     private fun placeLinkObject(rawUrl: String, title: String, cx: Float, cy: Float, alsoFile: Boolean) {
         var url = rawUrl.trim()
         if (url.isBlank()) return
+        // AN ADDRESS INSIDE THE LEDGER IS STILL AN ADDRESS. `[[Some note]]` makes a link gram
+        // pointing at one of your own notes instead of at the web — the same card, the same tap-
+        // to-open, and the same join into the rhizome that a handwritten [[link]] makes, so a note
+        // you linked to by pasting and a note you linked to with the pen are the same edge.
+        //
+        // Only the bracket form is treated this way. Guessing that an un-bracketed word was meant
+        // as a note rather than a bare domain would be wrong about "obsidian.md" forever.
+        val asNote = com.toolsboox.plugin.calendar.ot.LedgerLinks.extract(url).firstOrNull()
+        if (asNote != null) {
+            placeNoteLink(asNote, title, cx, cy)
+            return
+        }
         if (!url.startsWith("http", ignoreCase = true)) url = "https://$url"
         val kind = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.inferKind(url)
         val label = title.ifBlank { url }
@@ -3600,6 +3665,20 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 val date = runCatching { java.time.LocalDate.parse(dateStr) }.getOrNull() ?: currentDate
                 if (pageKey.isBlank() || pageKey == "day") CalendarNavigator.toDayPage(this, date)
                 else CalendarNavigator.toDayNote(this, date, pageKey)
+            }
+            // A LINK TO ONE OF YOUR OWN NOTES — from a pasted [[note]] gram, or written by hand.
+            //
+            // Where it lands depends on whether the target exists yet, and BOTH outcomes are
+            // ordinary. Linking forward to something unwritten is how you tell yourself a note
+            // should exist; arriving at "nothing named that yet" and being offered the making of
+            // it is the honest end of that gesture, and much better than an error about a broken
+            // link — the link is not broken, the note is merely still owed.
+            link.startsWith("note://") -> {
+                val target = link.removePrefix("note://")
+                val pages = com.toolsboox.plugin.calendar.ot.LedgerLinks.backlinks(requireContext(), target)
+                    .firstOrNull { !(it.date == currentDate && it.pageKey == (notePage ?: "default")) }
+                if (pages != null) CalendarNavigator.toDayNote(this, pages.date, pages.pageKey)
+                else showMessage("Nothing named “$target” yet — write it and the link lands.", binding.root)
             }
             link.startsWith("book://") -> {
                 requireContext().getSharedPreferences("ledger_reader_prefs", 0).edit()

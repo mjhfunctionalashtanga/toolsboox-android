@@ -3481,6 +3481,12 @@ abstract class SurfaceFragment : ScreenFragment() {
             },
             getString(R.string.reader_capture_voice) to { onRecordAvGram(com.toolsboox.da.Attachment.Kind.AUDIO) },
             getString(R.string.gram_capture_video) to { onRecordAvGram(com.toolsboox.da.Attachment.Kind.VIDEO) },
+            // A LINK IS A THING YOU ATTACH, so it belongs on the same door as the photo and the
+            // voice memo rather than behind its own. Michael, 2026-08-05: "we can also include add
+            // link in the doorway that we use for adding media of other kinds… we make link grams
+            // anyway." Quite right — the destination was always a gram; only the way in was
+            // separate, which meant knowing in advance that a link was a different sort of act.
+            "🔗  Link — a page or a note…" to { onIntakeLink(cx, cy) },
             "🎨  Generate image…" to { showImageGenDialog(cx, cy) }
         ))
     }
