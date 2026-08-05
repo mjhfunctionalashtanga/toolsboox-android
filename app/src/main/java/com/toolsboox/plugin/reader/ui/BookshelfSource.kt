@@ -1,0 +1,181 @@
+package com.toolsboox.plugin.reader.ui
+
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
+import java.io.File
+
+/**
+ * WHERE THE BOOKS ARE.
+ *
+ * Michael, 2026-08-05: "We can declare a folder to use in app as the books folder." That is the
+ * right instinct and it replaces a much worse plan of mine — building a book model and importing
+ * copies into the app's own store. His library already exists, in folders, on the device: Calibre
+ * pushes to it, Syncthing keeps it level across machines, BooxDrop sideloads into it. Copying books
+ * into a private directory would fork that library and leave two of everything to keep in step.
+ *
+ * So the shelf is a POINTER, not a container. Declare a folder and Ledger reads it — including its
+ * subfolders, which answers the other half of the punchlist ("the books in folders as they too get
+ * sorted") for free: the folders are the ones already on disk, so the sorting he has done in
+ * Calibre or on the Boox is the sorting the shelf shows. Nothing to file twice.
+ *
+ * Two kinds of source, because Android has two kinds of readable place:
+ *
+ *  • The DEFAULT — `filesDir/reader/books`, the app's own directory, plain [File] access. What
+ *    every existing sideload already went into, so an undeclared shelf behaves exactly as before.
+ *  • A DECLARED tree — any folder, chosen through the system picker, held by a persisted URI
+ *    permission. This is the only way to reach shared storage under scoped storage, and it is what
+ *    lets the shelf point at a Syncthing folder.
+ *
+ * Opening is deliberately unchanged: the reader still loads a [File]. An entry that lives behind a
+ * tree URI is copied into the cache on open, reusing the import path that already existed for
+ * share-sheet books. That keeps every reader/annotation/position path working on real files, and
+ * confines the SAF-ness to this object.
+ */
+object BookshelfSource {
+
+    private const val PREFS = "ledger_reader_prefs"
+    private const val KEY_TREE = "books_tree_uri"
+
+    /** One thing on the shelf. [folder] is its subfolder path, "" for the shelf's own root. */
+    data class Entry(
+        val name: String,
+        val folder: String,
+        val sizeBytes: Long,
+        val lastModified: Long,
+        /** Set when the entry is a plain file — the reader can open it directly. */
+        val file: File?,
+        /** Set when the entry lives behind a declared tree — resolved on open. */
+        val uri: Uri?,
+    ) {
+        val title: String get() = name.substringBeforeLast('.', name)
+        val extension: String get() = name.substringAfterLast('.', "").lowercase()
+    }
+
+    /** The app's own directory — the shelf when nothing has been declared. */
+    fun defaultDir(context: Context): File =
+        File(context.filesDir, "reader/books").apply { mkdirs() }
+
+    /** The declared folder, or null when the shelf is still the app's own directory. */
+    fun declaredTree(context: Context): Uri? =
+        context.getSharedPreferences(PREFS, 0).getString(KEY_TREE, null)
+            ?.let(Uri::parse)
+            // A persisted permission can be revoked by the system (app data cleared, SD card
+            // pulled, the folder deleted). Checking here rather than at read time means a stale
+            // declaration degrades to the default shelf instead of an empty one with no
+            // explanation.
+            ?.takeIf { uri ->
+                context.contentResolver.persistedUriPermissions.any {
+                    it.uri == uri && it.isReadPermission
+                }
+            }
+
+    /** A human name for the declared folder, for the settings row. */
+    fun declaredName(context: Context): String? =
+        declaredTree(context)?.let { DocumentFile.fromTreeUri(context, it)?.name }
+
+    /** The intent that asks for a folder. Callers persist the result through [declare]. */
+    fun pickIntent(): Intent =
+        Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+        )
+
+    /**
+     * Remember a picked folder, taking the permission that outlives this process.
+     *
+     * Without `takePersistableUriPermission` the grant dies with the activity and the shelf is
+     * empty on next launch with nothing on screen to say why — the failure mode looks exactly like
+     * "the app lost my books".
+     */
+    fun declare(context: Context, treeUri: Uri) {
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+        context.getSharedPreferences(PREFS, 0).edit().putString(KEY_TREE, treeUri.toString()).apply()
+    }
+
+    /** Go back to the app's own directory. */
+    fun clearDeclaration(context: Context) {
+        context.getSharedPreferences(PREFS, 0).edit().remove(KEY_TREE).apply()
+    }
+
+    /** File types the shelf shows. Anything else in the folder is somebody else's business. */
+    private val READABLE = setOf(
+        "epub", "pdf", "cbz", "cbr", "txt", "fb2", "mobi", "azw3",
+        "mp3", "m4a", "m4b", "aac", "ogg", "opus", "wav", "flac",   // audiobooks
+    )
+
+    private fun isBook(name: String): Boolean =
+        name.substringAfterLast('.', "").lowercase() in READABLE
+
+    /**
+     * Everything on the shelf, newest first.
+     *
+     * [maxDepth] bounds the walk. A declared folder can be anything — pointed at the storage root
+     * it would be an unbounded recursive scan behind the UI thread of an e-ink device — and three
+     * levels is deep enough for the way a library is actually arranged (Author/Series/Book).
+     */
+    fun list(context: Context, maxDepth: Int = 3): List<Entry> {
+        val tree = declaredTree(context)
+        val out = mutableListOf<Entry>()
+        if (tree == null) {
+            walkFiles(defaultDir(context), "", maxDepth, out)
+        } else {
+            val root = DocumentFile.fromTreeUri(context, tree)
+            if (root != null) walkTree(root, "", maxDepth, out)
+        }
+        return out.sortedByDescending { it.lastModified }
+    }
+
+    /** The subfolders that hold books, for the shelf's folder rows. */
+    fun folders(entries: List<Entry>): List<String> =
+        entries.map { it.folder }.filter { it.isNotEmpty() }.distinct().sorted()
+
+    private fun walkFiles(dir: File, prefix: String, depth: Int, out: MutableList<Entry>) {
+        val kids = dir.listFiles() ?: return
+        for (f in kids) {
+            if (f.isDirectory) {
+                if (depth > 0) walkFiles(f, if (prefix.isEmpty()) f.name else "$prefix/${f.name}", depth - 1, out)
+            } else if (isBook(f.name)) {
+                out += Entry(f.name, prefix, f.length(), f.lastModified(), f, null)
+            }
+        }
+    }
+
+    private fun walkTree(dir: DocumentFile, prefix: String, depth: Int, out: MutableList<Entry>) {
+        for (d in dir.listFiles()) {
+            val name = d.name ?: continue
+            if (d.isDirectory) {
+                if (depth > 0) walkTree(d, if (prefix.isEmpty()) name else "$prefix/$name", depth - 1, out)
+            } else if (isBook(name)) {
+                out += Entry(name, prefix, d.length(), d.lastModified(), null, d.uri)
+            }
+        }
+    }
+
+    /**
+     * A [File] the reader can open, materialising a tree entry into the cache if it must.
+     *
+     * Copy-on-open rather than copy-on-declare: a declared library can be thousands of books and
+     * gigabytes, and importing it wholesale would be the very duplication this design exists to
+     * avoid. The cache copy is keyed by name and size, so re-opening a book you have already read
+     * costs nothing and a book REPLACED in the folder (a better scan, a fixed EPUB) is re-copied
+     * rather than silently serving the stale one.
+     */
+    fun materialise(context: Context, entry: Entry): File? {
+        entry.file?.let { return it }
+        val uri = entry.uri ?: return null
+        val cache = File(context.cacheDir, "shelf").apply { mkdirs() }
+        val dest = File(cache, "${entry.sizeBytes}-${entry.name}")
+        if (dest.exists() && dest.length() == entry.sizeBytes) return dest
+        return runCatching {
+            context.contentResolver.openInputStream(uri)!!.use { input ->
+                dest.outputStream().use { input.copyTo(it) }
+            }
+            dest
+        }.getOrNull()
+    }
+}

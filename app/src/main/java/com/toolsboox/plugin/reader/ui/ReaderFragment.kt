@@ -97,6 +97,40 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         uri?.let { importAndOpen(it) }
     }
 
+    /**
+     * Declaring the books folder. Michael, 2026-08-05: "We can declare a folder to use in app as
+     * the books folder" — so the shelf points at the library he already keeps rather than becoming
+     * a second copy of it.
+     */
+    private val pickBooksFolder = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val uri = result.data?.data ?: return@registerForActivityResult
+        BookshelfSource.declare(requireContext(), uri)
+        val n = BookshelfSource.list(requireContext()).size
+        showMessage(
+            "Shelf: ${BookshelfSource.declaredName(requireContext()) ?: "folder"} · $n book" +
+                (if (n == 1) "" else "s")
+        )
+    }
+
+    /** The shelf, wherever it has been declared to be. */
+    private fun shelfEntries(): List<BookshelfSource.Entry> =
+        runCatching { BookshelfSource.list(requireContext()) }.getOrDefault(emptyList())
+
+    /**
+     * Open a shelf entry. A book behind a declared tree is materialised into the cache first, so
+     * every reader, annotation and position path downstream still works on a real file.
+     */
+    private fun openShelfEntry(entry: BookshelfSource.Entry) {
+        val f = BookshelfSource.materialise(requireContext(), entry)
+        if (f == null) {
+            showMessage("Couldn't open ${entry.title}")
+            return
+        }
+        loadBookFile(f)
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -276,9 +310,19 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
      * the shelf + import, read-aloud transport, screen rotate, and the finger/tap page-turn toggles.
      */
     private fun showReaderControls() {
-        val books = booksDir().listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() } ?: emptyList()
+        val books = shelfEntries().take(12)
+        val shelfName = BookshelfSource.declaredName(requireContext())
         val bookRows: List<Pair<String, () -> Unit>> =
-            books.map { f -> ("📖  " + f.nameWithoutExtension) to { loadBookFile(f) } } +
+            books.map { e ->
+                // The subfolder rides in the row, because in a declared library the folder IS the
+                // organisation — "Ashtanga/Iyengar · Light on Yoga" says more than the title alone.
+                ("📖  " + (if (e.folder.isEmpty()) e.title else "${e.folder} · ${e.title}")) to
+                    { openShelfEntry(e) }
+            } +
+            ("🗂  Books folder · ${shelfName ?: "app storage"}" to {
+                runCatching { pickBooksFolder.launch(BookshelfSource.pickIntent()) }
+                Unit
+            }) +
             ("＋  Import a book…" to {
                 openBook.launch(arrayOf("application/epub+zip", "application/pdf", "application/x-mobipocket-ebook", "*/*"))
             }) +
@@ -579,7 +623,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
 
     private fun openShelf() {
         val ctx = requireContext()
-        val all = booksDir().listFiles()?.filter { it.isFile }?.sortedBy { it.name.lowercase() } ?: emptyList()
+        val all = shelfEntries().sortedBy { (it.folder + "/" + it.name).lowercase() }
         val dp = resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
 
@@ -599,15 +643,28 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         fun render(query: String) {
             rows.removeAllViews()
             val q = query.trim().lowercase()
+            // The folder is searchable too: in a declared library it is how you remember where a
+            // book was, and often the only thing you remember.
             val shown = if (q.isEmpty()) all
-                        else all.filter { it.nameWithoutExtension.lowercase().contains(q) }
+                        else all.filter {
+                            it.title.lowercase().contains(q) || it.folder.lowercase().contains(q)
+                        }
+            var lastFolder: String? = null
             for (f in shown) {
+                if (f.folder != lastFolder) {
+                    lastFolder = f.folder
+                    if (f.folder.isNotEmpty()) rows.addView(android.widget.TextView(ctx).apply {
+                        text = "🗂  ${f.folder}"
+                        textSize = 13f; setTextColor(0xFF888888.toInt())
+                        setPadding(px(4), px(12), px(4), px(2))
+                    })
+                }
                 rows.addView(android.widget.TextView(ctx).apply {
-                    text = f.nameWithoutExtension
+                    text = f.title
                     textSize = 16f; setTextColor(0xFF000000.toInt())
                     setPadding(px(4), px(10), px(4), px(10))
                     setBackgroundResource(android.R.drawable.list_selector_background)
-                    setOnClickListener { dialog.dismiss(); loadBookFile(f) }
+                    setOnClickListener { dialog.dismiss(); openShelfEntry(f) }
                 })
             }
             if (shown.isEmpty()) {
