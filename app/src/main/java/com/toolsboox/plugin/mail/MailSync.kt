@@ -138,7 +138,10 @@ object MailSync {
     }
 
     /** Reply to a message out the account it arrived on. */
-    suspend fun sendReply(context: Context, body: String, m: InboxMessage) {
+    suspend fun sendReply(
+        context: Context, body: String, m: InboxMessage,
+        attachments: List<SmtpClient.Attachment> = emptyList(),
+    ) {
         val aid = accountId(m.id)
             ?: throw MailException("This message isn't tied to a configured account, so there's nowhere to send from.")
         if (m.fromEmail.isBlank()) throw MailException("This message has no reply address.")
@@ -147,7 +150,7 @@ object MailSync {
         // hand, so it can carry who it went to and the Re: thread it belongs to) once this returns
         // — see MailVerbs.reply. Letting sendNew record as well would file the same
         // reply twice, once with a recipient and once without.
-        sendNew(context, aid, m.fromEmail, subject, body, record = false)
+        sendNew(context, aid, m.fromEmail, subject, body, record = false, attachments = attachments)
     }
 
     /**
@@ -162,7 +165,7 @@ object MailSync {
      */
     suspend fun sendNew(
         context: Context, accountId: String, to: String, subject: String, body: String,
-        record: Boolean = true
+        record: Boolean = true, attachments: List<SmtpClient.Attachment> = emptyList(),
     ) {
         val a = MailAccountStore.all(context).firstOrNull { it.id == accountId }
             ?: throw MailException("No such account.")
@@ -174,7 +177,8 @@ object MailSync {
             a.loginName, pass,
             SmtpClient.Outgoing(
                 fromEmail = a.email, fromName = a.displayName, toEmail = to,
-                subject = subject.ifBlank { "(no subject)" }, body = body
+                subject = subject.ifBlank { "(no subject)" }, body = body,
+                attachments = attachments
             )
         )
         // Past the throwing send: it went. Only NOW is there anything to keep — a failed send must

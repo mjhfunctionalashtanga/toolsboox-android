@@ -91,7 +91,13 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         // repeated the system back gesture. No other chrome here: Hub · ⇄ · ✕.
         view.findViewById<android.widget.ImageButton>(R.id.semantic_hub_button).visibility = View.GONE
         view.findViewById<TextView>(R.id.semantic_close).visibility = View.GONE
-        setupActionRail(view.findViewById(R.id.semantic_rail), "missed_rhizomes", actions = { emptyList() })
+        // The walk runs through here — Quick Wins behind, Gratitude ahead — and this rail was
+        // empty, which is precisely why the Day Skipper appeared to skip it.
+        setupActionRail(
+            view.findViewById(R.id.semantic_rail), "missed_rhizomes",
+            actions = { com.toolsboox.plugin.calendar.ot.RitualWalk.stepItems(
+                this, com.toolsboox.plugin.calendar.ot.RitualWalk.MISSED) }
+        )
         load()
     }
 

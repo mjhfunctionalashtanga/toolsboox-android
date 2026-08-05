@@ -1210,6 +1210,29 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
                 )
                 return@launch
             }
+            // THE HANDWRITING ITSELF, alongside the recognised words.
+            //
+            // Michael, 2026-08-04: "Reply to Rebecca from gram worked great, but I'm not sure it
+            // included the handwriting as an image. I would like it to." It did not — this path
+            // OCR'd the page and sent the transcription, so a letter written by hand arrived as
+            // typed text. The point of writing by hand is that the reader sees the hand.
+            //
+            // The text still leads the message: it is what threads, quotes and searches, and some
+            // readers will never open an attachment. The picture rides with it rather than
+            // replacing it.
+            val ink = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bmp = renderPageBitmap()
+                    val baos = java.io.ByteArrayOutputStream()
+                    bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
+                    listOf(com.toolsboox.plugin.mail.SmtpClient.Attachment(
+                        filename = "handwritten-${currentDate}.png",
+                        mimeType = "image/png",
+                        bytes = baos.toByteArray(),
+                    ))
+                }.getOrDefault(emptyList())
+            }
+            if (!isAdded) return@launch
             val m = withContext(Dispatchers.IO) {
                 com.toolsboox.plugin.mail.InboxStore.messages(ctx).firstOrNull { it.id == intent.mailId }
             } ?: com.toolsboox.plugin.mail.InboxMessage(
@@ -1223,9 +1246,14 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             val who = intent.sender + (if (intent.senderEmail.isNotBlank()) " <${intent.senderEmail}>" else "")
             AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                 .setTitle("Send as reply?")
-                .setMessage("To $who\n${intent.reSubject}\n\n${text.take(400)}${if (text.length > 400) "…" else ""}")
+                .setMessage(
+                    "To $who\n${intent.reSubject}" +
+                        (if (ink.isEmpty()) "" else "\n✍ with your handwriting attached") +
+                        "\n\n${text.take(400)}${if (text.length > 400) "…" else ""}"
+                )
                 .setPositiveButton("Send") { _, _ ->
-                    com.toolsboox.plugin.mail.ui.MailVerbs.sendReplyText(this@CalendarDayFragment, m, text)
+                    com.toolsboox.plugin.mail.ui.MailVerbs.sendReplyText(
+                        this@CalendarDayFragment, m, text, attachments = ink)
                 }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
@@ -2663,13 +2691,20 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     // had to be kept saying the same thing, which is how the fast-lane and the stepper once came to
     // disagree about what "next" meant.
     //
-    //     Day → All Stars → Gram Picks → Pickings → Gratitude → the numbered Notes tail
+    //     Day → All Stars → Gram Picks → Pickings → Self Executive → Quick Wins →
+    //           Missed Connections → Gratitude → the numbered Notes tail
     //
-    // It walked nine stations. Five of them were nearly unwritten — the measured record over 124
-    // real days: selfexec 4, synthesize 2, grid 2, grampicks 1, scratch 1 — so most of the walk was
-    // spent stepping past pages to reach the four that carry the ledger (gratitude 44, pickings 33,
-    // notes 40 across pages 0 and 1, intake 8). A walk you step THROUGH rather than stop on isn't a
-    // ritual, it's a corridor.
+    // The list itself now lives in [RitualWalk], because two of those stations are not pages in the
+    // day file — Quick Wins and Missed Connections are surfaces of their own, and a walk that could
+    // only name pages could not contain them. It is the Daily folder, in Daily's order, on purpose:
+    // Daily IS the walk, and two ways of stating one order eventually disagree. They already had,
+    // which is exactly what put "Day Skipper doesn't include Self Executive, Quick Wins, Missed
+    // Connections, then Gratitude" on Michael's punchlist.
+    //
+    // A previous pass cut this to four stations on measured usage — selfexec 4 written days in 124,
+    // against gratitude 44 and pickings 33 — and Michael has now put Self Executive back. Worth
+    // recording why that is not a reversal: the measurement could see how often a page was WRITTEN
+    // and could not see what it was FOR. Self Executive is a page he keeps deliberately.
     //
     // Gram Picks stays on the walk despite its single ink day, and that is not an inconsistency:
     // 158 grams have landed in it. It is a place you SORT, not a place you write, and its worth is
@@ -2680,14 +2715,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     // Synthesize page from the Directory and from any `ledger://<date>/<page>` link. Leaving the
     // walk is not leaving the ledger.
 
-    /** The walk, in order. Everything else is off-walk and folds onto the numbered tail. */
+    /** The walk's DAY PAGES, in order — the subset of [com.toolsboox.plugin.calendar.ot.RitualWalk] this fragment can host.
+     *  The walk itself is longer than this: Quick Wins and Missed Connections are stations too,
+     *  and they are surfaces of their own, so stepping onto one leaves this fragment entirely. */
     private val ritualWalk: List<String>
-        get() = listOf(
-            "intake",
-            com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS,
-            "pickings",
-            "gratitude",
-        )
+        get() = com.toolsboox.plugin.calendar.ot.RitualWalk.pageKeys
 
     /** The walk station this page stands on, or null when it is off the walk. Named boards fold
      *  onto Pickings — otherwise ↑/↓ from a board would strand you on an unlisted key — and a
@@ -2702,27 +2734,17 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
      *  page through, not a destination to be hurried towards. */
     private fun ritualNextStep(): Triple<String, String, String>? {
         val here = walkStation() ?: return null
-        val next = ritualWalk.getOrNull(ritualWalk.indexOf(here) + 1) ?: return null
-        return Triple(next, walkGlyph(next), walkLabel(next))
+        val next = com.toolsboox.plugin.calendar.ot.RitualWalk.next(here) ?: return null
+        return Triple(next.key, next.glyph, next.label)
     }
 
     /** The glyph and the name a walk station wears in the fast-lane. Kept beside the walk so a
      *  station added there cannot arrive nameless. (Named apart from the page-wide [sectionEmoji]
      *  on purpose: that one answers "what am I looking at" for every page in the app, this one
      *  answers "what is the next step called" for the four on the walk.) */
-    private fun walkGlyph(page: String): String = when (page) {
-        "intake" -> "★"
-        com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> "◈"
-        "pickings" -> "❝"
-        else -> "🙏"
-    }
+    private fun walkGlyph(page: String): String = com.toolsboox.plugin.calendar.ot.RitualWalk.station(page)?.glyph ?: "🙏"
 
-    private fun walkLabel(page: String): String = when (page) {
-        "intake" -> "All Stars"
-        com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS -> "Gram Picks"
-        "pickings" -> "Pickings"
-        else -> "Gratitude"
-    }
+    private fun walkLabel(page: String): String = com.toolsboox.plugin.calendar.ot.RitualWalk.station(page)?.label ?: "Gratitude"
 
     /** Step to the PREVIOUS station (the stepper's ↑, a downward or rightward finger swipe).
      *  Up from the Day still exits to the Week almanac — the Boox convention, and where the iOS
@@ -2734,30 +2756,32 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
         val here = walkStation()
         if (here != null) {
-            val i = ritualWalk.indexOf(here)
-            if (i == 0) CalendarNavigator.toDayPage(this, currentDate, CalendarDay.DEFAULT_STYLE)
-            else CalendarNavigator.toDayNote(this, currentDate, ritualWalk[i - 1])
+            val prev = com.toolsboox.plugin.calendar.ot.RitualWalk.prev(here)
+            if (prev == null) CalendarNavigator.toDayPage(this, currentDate, CalendarDay.DEFAULT_STYLE)
+            else prev.open(this, currentDate)
             return
         }
         // Off the walk — the numbered notes and every named surface that left it. Page 0 steps back
         // onto the walk's last station, which is what makes the tail feel joined to it rather than
         // marooned; anything else steps to the previous number.
         val page = baseNotePage(notePage)?.toIntOrNull() ?: 0
-        if (page == 0) CalendarNavigator.toDayNote(this, currentDate, ritualWalk.last())
+        if (page == 0) com.toolsboox.plugin.calendar.ot.RitualWalk.last.open(this, currentDate)
         else CalendarNavigator.toDayNote(this, currentDate, "${page - 1}")
     }
 
     /** Step to the NEXT station (the stepper's ↓, an upward or leftward finger swipe). */
     fun ritualStepForward() {
         if (notePage == null) {
-            CalendarNavigator.toDayNote(this, currentDate, ritualWalk.first())
+            com.toolsboox.plugin.calendar.ot.RitualWalk.first.open(this, currentDate)
             return
         }
         val here = walkStation()
         if (here != null) {
-            val i = ritualWalk.indexOf(here)
-            val next = ritualWalk.getOrNull(i + 1) ?: "0"   // past the last station: into the notes
-            CalendarNavigator.toDayNote(this, currentDate, next)
+            val next = com.toolsboox.plugin.calendar.ot.RitualWalk.next(here)
+            // Past the last station the walk ends: the numbered notes are a tail you page through,
+            // not a destination to be hurried towards.
+            if (next == null) CalendarNavigator.toDayNote(this, currentDate, "0")
+            else next.open(this, currentDate)
             return
         }
         val page = baseNotePage(notePage)?.toIntOrNull() ?: 0

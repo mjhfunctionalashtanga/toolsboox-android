@@ -90,7 +90,11 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
         view.findViewById<TextView>(R.id.semantic_close).visibility = View.GONE
         setupActionRail(
             view.findViewById(R.id.semantic_rail), "quick_wins",
-            actions = { listOf(
+            // The walk's ↑/↓ lead, so this surface is a STATION you pass through rather than a
+            // room you have to back out of — it sits between Self Executive and Missed Connections
+            // on the Daily walk. Its own Sequence action follows them.
+            actions = { com.toolsboox.plugin.calendar.ot.RitualWalk.stepItems(
+                this, com.toolsboox.plugin.calendar.ot.RitualWalk.QUICK_WINS) + listOf(
                 com.toolsboox.ot.TuckPanel.Item(0, "Sequence", glyph = "⇅") { narratePath() }
             ) }
         )

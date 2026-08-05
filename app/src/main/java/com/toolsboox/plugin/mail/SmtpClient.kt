@@ -28,7 +28,36 @@ class SmtpClient(host: String, port: Int, useTLS: Boolean) {
         val subject: String,
         val body: String,
         val inReplyTo: String? = null,
+        /**
+         * Files to send alongside the text — in practice, the handwriting.
+         *
+         * Michael, 2026-08-04: "Reply to Rebecca from gram worked great, but I'm not sure it
+         * included the handwriting as an image. I would like it to." A reply written by hand and
+         * delivered as a transcription is a different object from the one he wrote; the point of
+         * writing it by hand is that the recipient sees the hand.
+         */
+        val attachments: List<Attachment> = emptyList(),
     )
+
+    /** One attached file. [bytes] is the raw content — base64 happens on the way onto the wire. */
+    data class Attachment(
+        val filename: String,
+        val mimeType: String,
+        val bytes: ByteArray,
+    ) {
+        // ByteArray in a data class gives reference equality from equals/hashCode, which is a
+        // correctness trap rather than a style one — two identical attachments would compare
+        // unequal. Content equality, since that is what "the same attachment" means.
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is Attachment) return false
+            return filename == other.filename && mimeType == other.mimeType &&
+                bytes.contentEquals(other.bytes)
+        }
+
+        override fun hashCode(): Int =
+            31 * (31 * filename.hashCode() + mimeType.hashCode()) + bytes.contentHashCode()
+    }
 
     suspend fun send(login: String, password: String, message: Outgoing) =
         withContext(Dispatchers.IO) { run(login, password, message) }
@@ -64,7 +93,7 @@ class SmtpClient(host: String, port: Int, useTLS: Boolean) {
 
     // Message
 
-    private fun buildMessage(m: Outgoing): String {
+    internal fun buildMessage(m: Outgoing): String {
         val date = smtpDate(Date())
         val fromField = if (m.fromName.isEmpty()) m.fromEmail else "${mimeName(m.fromName)} <${m.fromEmail}>"
         val headers = arrayListOf(
@@ -74,13 +103,49 @@ class SmtpClient(host: String, port: Int, useTLS: Boolean) {
             "Date: $date",
             "Message-ID: <${UUID.randomUUID()}@ledger.local>",
             "MIME-Version: 1.0",
-            "Content-Type: text/plain; charset=UTF-8",
-            "Content-Transfer-Encoding: 8bit"
         )
         val irt = m.inReplyTo
         if (!irt.isNullOrEmpty()) { headers.add("In-Reply-To: $irt"); headers.add("References: $irt") }
-        return headers.joinToString("\r\n") + "\r\n\r\n" + dotStuff(m.body)
+
+        // No attachments → the plain single-part message this client has always sent. Kept as its
+        // own shape rather than a one-part multipart: every mail client on earth renders it, and a
+        // message with nothing attached should not pay a MIME boundary to say so.
+        if (m.attachments.isEmpty()) {
+            headers.add("Content-Type: text/plain; charset=UTF-8")
+            headers.add("Content-Transfer-Encoding: 8bit")
+            return headers.joinToString("\r\n") + "\r\n\r\n" + dotStuff(m.body)
+        }
+
+        // multipart/mixed: the text first, then the files. `mixed` rather than `related` because
+        // these are attachments to be seen and saved, not resources a text/html part refers to.
+        val boundary = "----ledger-${UUID.randomUUID()}"
+        headers.add("Content-Type: multipart/mixed; boundary=\"$boundary\"")
+        val sb = StringBuilder(headers.joinToString("\r\n")).append("\r\n\r\n")
+        // Preamble for the handful of clients that show nothing at all when they cannot render
+        // multipart. Ignored by everything modern.
+        sb.append("This is a multi-part message in MIME format.\r\n\r\n")
+        sb.append("--").append(boundary).append("\r\n")
+        sb.append("Content-Type: text/plain; charset=UTF-8\r\n")
+        sb.append("Content-Transfer-Encoding: 8bit\r\n\r\n")
+        sb.append(dotStuff(m.body)).append("\r\n")
+        for (att in m.attachments) {
+            sb.append("--").append(boundary).append("\r\n")
+            sb.append("Content-Type: ").append(att.mimeType)
+                .append("; name=\"").append(att.filename).append("\"\r\n")
+            sb.append("Content-Transfer-Encoding: base64\r\n")
+            sb.append("Content-Disposition: attachment; filename=\"")
+                .append(att.filename).append("\"\r\n\r\n")
+            // Base64 wrapped at 76 columns per RFC 2045. Unwrapped base64 is a single enormous
+            // line, which some SMTP servers refuse outright (RFC 5321 caps a line at 1000 octets).
+            sb.append(base64Lines(att.bytes)).append("\r\n")
+        }
+        sb.append("--").append(boundary).append("--\r\n")
+        return sb.toString()
     }
+
+    /** Base64, hard-wrapped at 76 characters, CRLF-joined — the line limit is a wire rule, not taste. */
+    internal fun base64Lines(bytes: ByteArray): String =
+        Base64.getEncoder().encodeToString(bytes).chunked(76).joinToString("\r\n")
 
     /** Dot-stuffing: a line that is just "." would end DATA, so lines starting with "." get doubled. */
     private fun dotStuff(body: String): String =

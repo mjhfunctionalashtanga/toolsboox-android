@@ -269,10 +269,14 @@ object MailVerbs {
      * letter arrived on ([MailSync.sendReply], which threads the `Re:` subject), then the
      * keep-forever bookkeeping, then the toast. [onSent] fires only on success.
      */
-    fun sendReplyText(fragment: ScreenFragment, m: InboxMessage, text: String, onSent: () -> Unit = {}) {
+    fun sendReplyText(
+        fragment: ScreenFragment, m: InboxMessage, text: String, onSent: () -> Unit = {},
+        /** The handwriting, when the reply was written by hand — sent alongside the recognised text. */
+        attachments: List<com.toolsboox.plugin.mail.SmtpClient.Attachment> = emptyList(),
+    ) {
         val ctx = fragment.requireContext()
         fragment.lifecycleScope.launch {
-            val err = try { withContext(Dispatchers.IO) { MailSync.sendReply(ctx, text, m) }; null }
+            val err = try { withContext(Dispatchers.IO) { MailSync.sendReply(ctx, text, m, attachments) }; null }
             catch (e: Exception) { e.message ?: "Send failed" }
             // A sent reply is a keep-forever event: the mail you answered persists its body and
             // never prunes, exactly like a star. Recorded off the main thread (it writes a file).
