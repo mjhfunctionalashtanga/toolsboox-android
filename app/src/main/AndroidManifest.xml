@@ -50,10 +50,24 @@
                     android:resource="@xml/file_paths"/>
         </provider>
 
+        <!--
+            THE GYRO FOLLOWS THE DEVICE. Michael, 2026-08-04: "gyro is unreliable" — and on
+            2026-08-05, that it "doesn't follow". It could not: `sensorPortrait` (inherited from
+            upstream toolsbooX, along with the lint suppression that acknowledged it) rotates only
+            between portrait and upside-down. Landscape was never on offer, so turning the tablet
+            sideways did nothing and read as a flaky sensor rather than a locked window.
+
+            `fullUser` follows the sensor through all four orientations AND obeys the device's own
+            rotation lock — so this gives the rotation back without taking away the ability to pin
+            it, which on a device you write on lying down is not a small thing.
+
+            The activity already declares `orientation|screenSize|screenLayout` in configChanges,
+            so it re-lays out in place rather than being recreated: a rotation mid-stroke does not
+            restart the fragment or drop the page.
+        -->
         <activity
-                tools:ignore="LockedOrientationActivity"
                 android:name=".ui.main.MainActivity"
-                android:screenOrientation="sensorPortrait"
+                android:screenOrientation="fullUser"
                 android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
                 android:enableOnBackInvokedCallback="true"
         android:exported="true">

@@ -389,9 +389,14 @@ fun ledgerDirectoryFolders(
         // question left is which kind. The floating pen's quick-note menu (MainActivity) keeps its
         // own one-tap rows too, so nothing on the capture path grew a step.
         ScreenFragment.Folder("✒", "Notes", listOf(
+            // THE FOLDERS LEAD. Michael, 2026-08-04: "The Folder Glyph/directory is meant to be
+            // top of the Notes directory." The filing system is the first thing you should see
+            // when you open Notes — going to the last page you wrote is what you do when you
+            // already know where you were going, and that is the shorter journey, not the
+            // primary one.
+            "🗂  All notes…" to { showNotesTemplatePicker(fragment, today) },
             "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
             "＋  New note…" to { showNewNotePicker(fragment, today) },
-            "🗂  All notes…" to { showNotesTemplatePicker(fragment, today) },
             // #hashtags harvested off note pages → jump to any page a tag appears on. No naming.
             "#  Tags" to { showTagIndex(fragment) },
             // Notes & Tags — a period-filtered list ("it's like Feeds") of the days that hold note
