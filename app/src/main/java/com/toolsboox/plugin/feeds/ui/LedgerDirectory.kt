@@ -209,6 +209,9 @@ fun ledgerDirectoryFolders(
             // The one Ask output that goes OUTSIDE the ledger for material and brings it back as
             // a working page rather than an answer.
             "🔗  Research a topic…" to { showResearch(fragment) },
+            // Pick Harvest: one link, broken into cards you can arrange. Beside Research because
+            // both go OUTSIDE and come back with a page rather than an answer.
+            "❝  Harvest a link…" to { showPickHarvest(fragment) },
             // The Map is a way of SEEING what connects — thinking, not a daily station. It sits
             // with Search and Chat because all three answer a question you came with.
             "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
@@ -2259,6 +2262,67 @@ fun showPickingsPicker(
     currentKey: String? = null,
 ) = showDocumentDirectory(
     fragment, com.toolsboox.plugin.calendar.ot.LedgerDocuments.PICKINGS, date, currentKey)
+
+/**
+ * Pick Harvest — a link in, a Pickings board out.
+ *
+ * Michael: "the ai grab three notes and up to three quotes and two images filling up the picking
+ * template from user given link." The board is the point: a summary is read once, but cards can be
+ * arranged, connected, quoted from and replied to like anything he gathered by hand.
+ */
+fun showPickHarvest(fragment: ScreenFragment) {
+    val ctx = fragment.requireContext()
+    val dp = fragment.resources.displayMetrics.density
+    val urlIn = android.widget.EditText(ctx).apply {
+        hint = "Paste a link to harvest"; setSingleLine()
+    }
+    val titleIn = android.widget.EditText(ctx).apply {
+        hint = "Name the board (optional)"; setSingleLine()
+    }
+    val box = android.widget.LinearLayout(ctx).apply {
+        orientation = android.widget.LinearLayout.VERTICAL
+        setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0)
+        addView(android.widget.TextView(ctx).apply {
+            text = "Three notes and up to three quotes — verbatim — as cards on a Pickings board."
+            textSize = 13f; setTextColor(0xFF666666.toInt())
+            setPadding(0, 0, 0, (10 * dp).toInt())
+        })
+        addView(urlIn); addView(titleIn)
+    }
+    fragment.showGuardedModal(
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Harvest a link")
+            .setView(box)
+            .setPositiveButton("Harvest") { _, _ ->
+                val url = urlIn.text.toString().trim()
+                if (url.isBlank()) return@setPositiveButton
+                val title = titleIn.text.toString().trim()
+                fragment.showMessage("Harvesting\u2026", fragment.requireView())
+                Thread {
+                    val note = runCatching {
+                        com.toolsboox.plugin.calendar.ot.PickHarvest.run(
+                            ctx,
+                            com.toolsboox.plugin.calendar.fi.CalendarDayService(),
+                            com.toolsboox.ot.LedgerPaths.documentsRoot(ctx),
+                            if (url.startsWith("http")) url else "https://$url",
+                            title,
+                        )
+                    }.getOrNull()
+                    runCatching {
+                        fragment.requireActivity().runOnUiThread {
+                            fragment.showMessage(
+                                if (note == null) "Nothing worth keeping came back."
+                                else "Pickings \u00B7 ${note.name}",
+                                fragment.requireView(),
+                            )
+                        }
+                    }
+                }.start()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+    )
+}
 
 /**
  * Ask the research assistant for a topic, and land what comes back as a Jots page.

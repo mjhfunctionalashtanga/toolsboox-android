@@ -151,6 +151,44 @@ object NotebotRegistry {
             }
         },
 
+        // MISSED CONNECTIONS — the things off his feeds he set down without using.
+        //
+        // This tool exists because the Synthesize and Brainstorm prompts instruct the model to
+        // "draw on his Missed Connections as well as what he hands you". A prompt that names
+        // material the model cannot reach does not produce restraint; it produces invention, which
+        // is the one thing every prompt in this house forbids. So the instruction gets a door.
+        //
+        // It reads the SAME function the ✧ surface draws from, so what Ask can reach is exactly
+        // what Michael can see — two implementations of "what did I skip" would eventually
+        // disagree, and the model's version would be the one nobody could check.
+        AskTool(
+            name = "missed_connections",
+            description = "Things from the reader's feeds that he SKIPPED — never read, never " +
+                "starred — but which rhyme with material he has kept. Each returns the skipped " +
+                "piece, a quote from it, and which of his own roots it echoes. Use these when " +
+                "asked to synthesise or brainstorm: they are the pieces most likely to make " +
+                "something new, precisely because he set them down without using them.",
+            params = listOf(AskToolParam(
+                "limit", "string", "How many to return. Defaults to 8; more than 20 is rarely useful.")),
+        ) { args ->
+            val limit = str(args, "limit").toIntOrNull()?.coerceIn(1, 20) ?: 8
+            val finds = runCatching {
+                com.toolsboox.plugin.calendar.ot.MissedRhizomes.discover(
+                    context, corpusService, root, topN = limit)
+            }.getOrDefault(emptyList())
+            if (finds.isEmpty())
+                "Nothing missed yet — either the feeds have not rhymed with his roots, or he read everything."
+            else finds.joinToString("\n\n") { f ->
+                buildString {
+                    append("[missed · ").append(f.feedName).append("] ").append(f.entryTitle).append('\n')
+                    if (f.quote.isNotBlank()) append("\"").append(f.quote).append("\"\n")
+                    append("echoes his: ").append(f.rootTag)
+                    if (f.rootText.isNotBlank()) append(" — ").append(f.rootText)
+                    append('\n').append(f.entryUrl)
+                }
+            }
+        },
+
         // Today — tasks off the day JSON (with done state) plus today's events, the same
         // gathering the iOS watch snapshot does.
         AskTool(

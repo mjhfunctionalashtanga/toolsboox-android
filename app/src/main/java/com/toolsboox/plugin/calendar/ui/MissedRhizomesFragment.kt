@@ -20,6 +20,8 @@ import com.toolsboox.plugin.calendar.ot.SemanticRoots
 import com.toolsboox.plugin.calendar.ot.Spiral
 import com.toolsboox.plugin.chat.da.CorpusSnippet
 import com.toolsboox.plugin.feeds.nw.FeedCache
+import com.toolsboox.plugin.calendar.ot.MissedRhizomes
+import com.toolsboox.plugin.calendar.ot.MissedRhizomes.Find as MissedFind
 import com.toolsboox.ui.plugin.ScreenFragment
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
@@ -70,12 +72,7 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    private data class MissedFind(
-        val id: String, val entryTitle: String, val entryUrl: String, val feedName: String,
-        val quote: String, val rootTag: String, val rootText: String, val score: Double,
-        // The day the skipped thing was published — what a date filter on this surface means.
-        val published: LocalDate?
-    )
+
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -108,7 +105,10 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         // The view's scope: the discovery exists only to fill this column, so back-navigation
         // cancels it instead of ghost-rendering into a dead view.
         viewLifecycleOwner.lifecycleScope.launch {
-            val found = withContext(Dispatchers.IO) { runCatching { discover(ctx) }.getOrNull() ?: emptyList() }
+            val found = withContext(Dispatchers.IO) {
+                runCatching { MissedRhizomes.discover(ctx, corpusService, documentsRoot()) }
+                    .getOrNull() ?: emptyList()
+            }
             if (!isAdded) return@launch
             finds = found
             render()
@@ -296,85 +296,6 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
 
     private fun tag(s: CorpusSnippet): String = s.title.ifBlank { s.citation }
 
-    private fun discover(ctx: Context, minScore: Double = 0.60, topN: Int = 30): List<MissedFind> {
-        // What you genuinely walked past: cached, still UNREAD, never starred — deduped across views.
-        // The Miniflux read flag now rides along in the offline cache ([FeedCache] persists `read`), so
-        // "skipped" is true unread here, not merely "unstarred"; the session read-tracker
-        // ([FeedReadState]) folds in anything opened this run. Read or starred = you engaged with it.
-        val cacheDir = File(ctx.filesDir, "feed-cache")
-        val lists = cacheDir.listFiles { f -> f.isFile && f.name.startsWith("list-") && f.name.endsWith(".json") }
-            ?: return emptyList()
-        val seen = HashSet<String>()
-        data class Entry(
-            val title: String, val url: String, val feed: String, val body: String,
-            val published: LocalDate?
-        )
-        // The cache stamps entries with whatever the feed said: Miniflux hands over RFC 3339,
-        // Later rows a bare date — but a LOCAL subscription passes the raw RSS pubDate through
-        // untouched, which is usually RFC 1123 ("Wed, 23 Jul 2026 …"). That last shape parsed to
-        // null here, and a null date vanished under every filter — the whole of "no missed
-        // rhizomes in 2026". So: try each shape the cache actually holds, then the first ten
-        // characters as a date of last resort.
-        fun published(raw: String): LocalDate? =
-            runCatching {
-                java.time.OffsetDateTime.parse(raw)
-                    .atZoneSameInstant(java.time.ZoneId.systemDefault()).toLocalDate()
-            }.getOrNull()
-                ?: runCatching {
-                    java.time.ZonedDateTime.parse(raw, java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME)
-                        .withZoneSameInstant(java.time.ZoneId.systemDefault()).toLocalDate()
-                }.getOrNull()
-                ?: runCatching { LocalDate.parse(raw) }.getOrNull()
-                ?: runCatching { LocalDate.parse(raw.take(10)) }.getOrNull()
-        val unsurfaced = ArrayList<Entry>()
-        for (lf in lists) {
-            val key = lf.name.removePrefix("list-").removeSuffix(".json")
-            for (e in FeedCache.loadEntries(ctx, key)) {
-                val engaged = e.starred || e.read ||
-                    com.toolsboox.plugin.feeds.ui.FeedReadState.isRead(e.id)
-                if (engaged || e.url.isBlank() || !seen.add(e.url)) continue
-                // Thrown out by hand ("Remove from corpus") — tombstoned, never re-offered.
-                if (corpusService.isExcluded(e.url)) continue
-                val body = strip(e.content)
-                unsurfaced.add(Entry(e.title, e.url, e.feedTitle, body, published(e.publishedAt)))
-            }
-        }
-        if (unsurfaced.isEmpty()) return emptyList()
-        val entries = unsurfaced.take(150)
-
-        // Everything you've kept: the roots corpus (books/feeds/planner/annotations engaged with).
-        val roots = corpusService.gather(documentsRoot(), Spiral.SCOPE)
-            .filter { Spiral.isSubstantial(it.text) }
-            .let { Spiral.dedupe(it) { s -> s.text } }
-            .takeLast(300)
-        if (roots.isEmpty()) return emptyList()
-
-        // One round of embedding for both sides, then compare in memory.
-        fun entryText(e: Entry) = (e.title + ". " + e.body).trim()
-        val vecMap = SemanticRoots.vectorsFor(ctx, entries.map { entryText(it) } + roots.map { it.text })
-        if (vecMap.isEmpty()) return emptyList()
-        val rootVecs = roots.mapNotNull { s -> vecMap[s.text]?.let { s to it } }
-        if (rootVecs.isEmpty()) return emptyList()
-
-        val out = ArrayList<MissedFind>()
-        for (e in entries) {
-            if (e.body.length <= 40) continue
-            val ev = vecMap[entryText(e)] ?: continue
-            var best: Pair<CorpusSnippet, Double>? = null
-            for ((s, sv) in rootVecs) {
-                val c = SemanticRoots.cosine(ev, sv)
-                if (c > (best?.second ?: -1.0)) best = s to c
-            }
-            val b = best ?: continue
-            if (b.second < minScore || b.second >= 0.97) continue
-            out.add(MissedFind(
-                id = e.url, entryTitle = e.title, entryUrl = e.url, feedName = e.feed,
-                quote = bestSentence(e.body, b.first.text) ?: e.body.take(220),
-                rootTag = tag(b.first), rootText = b.first.text.take(200), score = b.second,
-                published = e.published))
-        }
-        return out.sortedByDescending { it.score }.take(topN)
-    }
 
     /** The entry sentence that shares the most vocabulary with the matched root — the line to quote.
      *  (The iPad picks this by embedding each sentence; word-overlap is the bounded stand-in here.) */
