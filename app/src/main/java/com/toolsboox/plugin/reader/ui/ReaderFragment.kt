@@ -230,6 +230,11 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
      * every reader, annotation and position path downstream still works on a real file.
      */
     private fun openShelfEntry(entry: BookshelfSource.Entry) {
+        // The read history the shelf's period filter reads. Recorded here rather than by stamping
+        // the file: you cannot touch a book inside a declared tree, and touching Michael's own
+        // Calibre library to note that Ledger looked at something would make every book appear
+        // freshly changed to Syncthing and push a library across the mesh for a read.
+        BookOpens.record(requireContext(), entry.name)
         val f = BookshelfSource.materialise(requireContext(), entry)
         if (f == null) {
             showMessage("Couldn't open ${entry.title}")

@@ -40,6 +40,13 @@
             android:id="@+id/action_to_reader"
             app:destination="@id/ReaderFragment"/>
 
+    <!-- The shelf: every book as covers, with the almanac as its filter. Distinct from
+         action_to_reader, which opens whatever book was last read — "All books" used to go
+         there, which is why it never went where the words said. -->
+    <action
+            android:id="@+id/action_to_bookshelf"
+            app:destination="@id/BookshelfFragment"/>
+
     <action
             android:id="@+id/action_to_feeds"
             app:destination="@id/FeedsFragment"/>
@@ -166,6 +173,12 @@
                 app:popUpTo="@id/DashboardFragment"
                 app:popUpToInclusive="true"/>
     </fragment>
+
+    <fragment
+            android:id="@+id/BookshelfFragment"
+            android:name="com.toolsboox.plugin.reader.ui.BookshelfFragment"
+            android:label="BookshelfFragment"
+            tools:layout="@layout/fragment_bookshelf"/>
 
     <fragment
             android:id="@+id/ReaderFragment"

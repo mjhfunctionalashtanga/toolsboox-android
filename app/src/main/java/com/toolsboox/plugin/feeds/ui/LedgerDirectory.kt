@@ -148,7 +148,9 @@ fun ledgerDirectoryFolders(
         .listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() }?.take(6) ?: emptyList()
     val bookRows: List<Pair<String, () -> Unit>> =
         recentBooks.ifEmpty { shelf.map { f -> ("📖  " + f.nameWithoutExtension) to { openBook(f) } } } +
-        ("📚  All books" to { nav.navigate(R.id.action_to_reader) })
+        // Michael's punchlist №6: "All Books in Bookshelf does not go to [the books]". It went to
+        // the reader holding whatever was last open — a book, not a shelf. Now it goes to the shelf.
+        ("📚  All books" to { nav.navigate(R.id.action_to_bookshelf) })
     val bookshelf = ScreenFragment.Folder("📚", "Bookshelf", bookRows, expanded = home == "Bookshelf")
 
     // Read-aloud transport, only while something is playing — reachable from every surface.
