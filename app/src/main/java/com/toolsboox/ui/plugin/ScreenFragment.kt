@@ -1475,6 +1475,52 @@ abstract class ScreenFragment : Fragment() {
      * pop-up menus read high-contrast on e-ink instead of colour emoji. Rows whose leading glyph
      * isn't mapped (e.g. ☑/☐ toggles) keep their text.
      */
+    /**
+     * A folder picker any surface can use, with the callback supplied at call time.
+     *
+     * `registerForActivityResult` has to happen before the fragment starts, so a launcher cannot be
+     * created inside the handler that needs it. The slot holds the "what to do with it" until the
+     * system comes back — which is what lets a directory ROW ask for a folder, when a row has no
+     * lifecycle of its own to register anything against.
+     */
+    private var treePickHandler: ((android.net.Uri) -> Unit)? = null
+
+    private val treePicker = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val uri = result.data?.data
+        val handler = treePickHandler
+        treePickHandler = null
+        if (uri != null) handler?.invoke(uri)
+    }
+
+    fun pickTree(intent: android.content.Intent, onPicked: (android.net.Uri) -> Unit) {
+        treePickHandler = onPicked
+        runCatching { treePicker.launch(intent) }
+    }
+
+    /** [showIconMenu] with an explanatory line above the rows — for a menu whose RULE matters more
+     *  than its options (the Markdown mirror: text comes back, ink does not). */
+    fun showIconMenuWithNote(
+        title: CharSequence?, note: CharSequence, items: List<Pair<String, () -> Unit>>,
+    ) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        val head = android.widget.TextView(ctx).apply {
+            text = note
+            textSize = 13f
+            setTextColor(0xFF666666.toInt())
+            setPadding((20 * dp).toInt(), (12 * dp).toInt(), (20 * dp).toInt(), 0)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle(title)
+            .setCustomTitle(null)
+            .setView(head)
+            .setItems(items.map { it.first }.toTypedArray()) { _, i -> items[i].second() }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
     protected fun showIconMenu(title: CharSequence?, items: List<Pair<String, () -> Unit>>) {
         val ctx = requireContext()
         fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()

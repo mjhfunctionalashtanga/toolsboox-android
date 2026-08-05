@@ -57,6 +57,26 @@ object TextNotesStore {
     fun save(context: Context, date: LocalDate, notes: List<TextNote>) {
         runCatching { jsonFile(context, date).writeText(serialize(notes)) }
             .onFailure { Timber.w(it, "text notes save failed for $date") }
+        mirrorLater(context, date)
+    }
+
+    /**
+     * Push this day to the Markdown mirror, if one is declared.
+     *
+     * OFF THE WRITE PATH, on a plain thread. The write above is what makes typing feel instant —
+     * "no network in the write path (Simplenote feel)" is this store's whole design — and a mirror
+     * pass touches a SAF tree, which can be a network mount. A save that waited for it would put
+     * cloud latency behind every keystroke-flush.
+     *
+     * Failures are silent by design: the mirror is a copy, and a copy that could not be written is
+     * not a reason to interrupt someone writing. It will be caught by the next save, or by the
+     * mirror's own pass when the folder comes back.
+     */
+    private fun mirrorLater(context: Context, date: LocalDate) {
+        val app = context.applicationContext
+        Thread {
+            runCatching { com.toolsboox.plugin.calendar.ot.NotesMirror.mirror(app, date) }
+        }.start()
     }
 
     /** Append a new titled note (used by Ask-my-Ledger create). Returns the created note. */

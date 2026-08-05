@@ -500,6 +500,10 @@ fun ledgerDirectoryFolders(
             // those sites, and it now sits with them instead of two folders away from everything it
             // configures. Same dialog, one door.
             "🔤  OCR model" to { com.toolsboox.ui.plugin.OcrModel.showPicker(fragment.requireContext()) },
+            // The mirror: notes as real Markdown in a folder you declare. Under Settings rather
+            // than Notes because it is a property of where the ledger LIVES, not a thing you do
+            // to a note — the same shelf of decisions as cloud sync, which it sits beside.
+            "🪞  Notes → Markdown folder" to { showNotesMirrorSettings(fragment) },
             "☁  Cloud sync" to { nav.navigate(R.id.action_to_cloud) }
         ), expanded = home == "Settings")
     )
@@ -2262,6 +2266,37 @@ fun showPickingsPicker(
     currentKey: String? = null,
 ) = showDocumentDirectory(
     fragment, com.toolsboox.plugin.calendar.ot.LedgerDocuments.PICKINGS, date, currentKey)
+
+/**
+ * Declare (or stop) the Markdown mirror.
+ *
+ * The dialog says the RULE, not the mechanism, because the rule is the thing that will save him
+ * an hour of confusion: text comes back, ink does not. Everything else about this feature is
+ * discoverable by looking in the folder.
+ */
+fun showNotesMirrorSettings(fragment: ScreenFragment) {
+    val ctx = fragment.requireContext()
+    val mirror = com.toolsboox.plugin.calendar.ot.NotesMirror
+    val here = mirror.declaredName(ctx)
+    val rows = mutableListOf<Pair<String, () -> Unit>>()
+    rows += ("🗂  " + (here?.let { "Folder · $it" } ?: "Choose a folder…")) to {
+        fragment.pickTree(mirror.pickIntent()) { uri ->
+            mirror.declare(ctx, uri)
+            fragment.showMessage("Mirroring to ${mirror.declaredName(ctx) ?: "the folder"}.")
+        }
+    }
+    if (here != null) rows += ("✕  Stop mirroring" to {
+        mirror.stop(ctx)
+        fragment.showMessage("Mirror off. The files already written stay where they are.")
+    })
+    fragment.showIconMenuWithNote(
+        "Notes → Markdown",
+        "Typed notes become .md files here and read back when you edit them elsewhere. " +
+            "Handwritten pages are copied out as a picture plus their recognised text — " +
+            "those are one-way.",
+        rows
+    )
+}
 
 /**
  * Pick Harvest — a link in, a Pickings board out.
