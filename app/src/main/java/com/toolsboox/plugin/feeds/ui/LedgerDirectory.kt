@@ -398,9 +398,14 @@ fun ledgerDirectoryFolders(
             // primary one.
             "🗂  All notes…" to { showNotesTemplatePicker(fragment, today) },
             "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
-            "＋  New note…" to { showNewNotePicker(fragment, today) },
+            // Named for what it makes. The ellipsis went when the tap stopped asking — a label
+            // that promises a question and then acts is the small lie that makes a hub feel
+            // untrustworthy. The fold beside it still holds all five.
+            newNoteLabel(fragment) to { showNewNotePicker(fragment, today) },
             // #hashtags harvested off note pages → jump to any page a tag appears on. No naming.
             "#  Tags" to { showTagIndex(fragment) },
+            // Its sibling: tags are what you MARKED, links are what you CONNECTED.
+            "🔗  Links" to { showLinkIndex(fragment) },
             // Notes & Tags — a period-filtered list ("it's like Feeds") of the days that hold note
             // content and/or #tags, the Almanac nav as its filter. Opens at this week around today.
             "🗓  Notes & Tags" to {
@@ -413,7 +418,11 @@ fun ledgerDirectoryFolders(
             // grid" is now Notes › All notes › Grid, and the fold makes that two taps rather than a
             // dialog. Built from LedgerDocuments.TEMPLATES so the order is his, in one place.
             subFolds = mapOf(
-                "＋  New note…" to noteTemplateRows(fragment) { surface ->
+                newNoteLabel(fragment) to noteTemplateRows(fragment) { surface ->
+                    // Picking from the fold also SETS the default, so the row you tap next time
+                    // makes the kind you last chose — which is the only reading of "last template"
+                    // that matches what you did.
+                    setLastNoteTemplate(fragment.requireContext(), surface)
                     createNoteOfTemplate(fragment, surface, today)
                 },
                 "🗂  All notes…" to noteTemplateRows(fragment) { surface ->
@@ -584,11 +593,31 @@ private fun openNoteTemplateDirectory(fragment: ScreenFragment, surface: String,
  * changed afterwards once there is ink on it (see the page's own Template row), and a decision that
  * permanent should not be made by a default you didn't see.
  */
-fun showNewNotePicker(fragment: ScreenFragment, date: LocalDate = LocalDate.now()) =
+/**
+ * "＋ New note…" — TAKES YOUR LAST TEMPLATE. It does not ask.
+ *
+ * Michael left this one open ("whether ＋ New note… should ask or take last template") and the row
+ * itself settles it: it already carries a FOLD holding the same five templates, so the choice is
+ * one gesture away whether or not the tap asks. A dialog on tap is therefore a second way to answer
+ * a question that is already answerable — the "eliminate decisions" rule, applied to a decision the
+ * interface was asking twice.
+ *
+ * So tap makes the note you most recently made. Open the fold when you want a different kind.
+ * First ever tap has no last template and falls back to the chooser, which is the one moment the
+ * question is genuinely unanswered.
+ */
+fun showNewNotePicker(fragment: ScreenFragment, date: LocalDate = LocalDate.now()) {
+    val last = lastNoteTemplate(fragment.requireContext())
+        ?.takeIf { com.toolsboox.plugin.calendar.ot.LedgerDocuments.isTemplate(it) }
+    if (last != null) {
+        createNoteOfTemplate(fragment, last, date)
+        return
+    }
     showTemplateChooser(fragment, "New note") { surface ->
         setLastNoteTemplate(fragment.requireContext(), surface)
         createNoteOfTemplate(fragment, surface, date)
     }
+}
 
 /** "🗂 All notes…" — which template's shelf? Same five, same order, no last-used mark: you are
  *  looking for something, and where you last MADE a note says nothing about where it is. */
@@ -630,6 +659,13 @@ private const val NOTE_TEMPLATE_KEY = "last_template"
 /** The template you last STARTED a note on — a hint for the chooser, never a decision it makes.
  *  Shares the `ledger_notes` prefs file with last_note_date/last_note_page, which is the same
  *  question about the same door. */
+/** "＋ New Jots note", or plain "＋ New note…" until there is a last one to name. */
+private fun newNoteLabel(fragment: ScreenFragment): String {
+    val last = lastNoteTemplate(fragment.requireContext())
+        ?.takeIf { com.toolsboox.plugin.calendar.ot.LedgerDocuments.isTemplate(it) } ?: return "＋  New note…"
+    return "＋  New ${com.toolsboox.plugin.calendar.ot.LedgerDocuments.label(last)} note"
+}
+
 fun lastNoteTemplate(context: android.content.Context): String? =
     context.getSharedPreferences(NOTE_TEMPLATE_PREFS, 0).getString(NOTE_TEMPLATE_KEY, null)
 
@@ -2282,6 +2318,110 @@ fun showResearch(fragment: ScreenFragment) {
             .setNegativeButton(android.R.string.cancel, null)
             .create()
     )
+}
+
+/**
+ * THE LINK INDEX — every `[[link]]` you have written, and what points at what.
+ *
+ * The twin of the tag index, and the difference between them is the whole reason both exist. A tag
+ * is a LABEL: many pages wear it, it names no page, and its index answers "what did I mark this
+ * way". A link has a TARGET, so its index answers a different and better question — "what have I
+ * connected, and what points AT this?"
+ *
+ * Backlinks are the payoff. You handwrite [[Collider]] on four pages across three weeks; this is
+ * where those four pages show up together, without you having filed anything.
+ *
+ * A target that nothing in the ledger is named after is shown as OWED (◇) rather than broken (⚠).
+ * In a handwritten ledger, linking forward to something unwritten is an ordinary act — it is a note
+ * to yourself that the thing should exist — and an index that scolded you for it would be
+ * misreading the gesture. Tapping one offers to write it.
+ */
+fun showLinkIndex(fragment: ScreenFragment) {
+    val ctx = fragment.requireContext()
+    val links = com.toolsboox.plugin.calendar.ot.LedgerLinks
+    val targets = links.all(ctx)
+    if (targets.isEmpty()) {
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Links")
+            .setMessage(
+                "No [[links]] yet.\n\nWrite [[the name of a note]] on a page — by hand is fine, " +
+                    "it's read off the same pass that finds #tags — and it becomes a link here " +
+                    "and an edge on the Map."
+            )
+            .setPositiveButton("Close", null)
+            .show()
+        return
+    }
+    // The names anything is actually called, so a target can be told from an owed one. Read once,
+    // outside the redraw: it is a directory scan, and doing it per keystroke would put a disk walk
+    // behind the keyboard.
+    val known = com.toolsboox.plugin.calendar.ot.LedgerDocuments.TEMPLATES.flatMap { t ->
+        runCatching {
+            com.toolsboox.plugin.calendar.ot.LedgerDocuments
+                .forSurface(ctx, t, LocalDate.now()).map { it.title }
+        }.getOrDefault(emptyList())
+    }
+
+    showDirectoryList(
+        fragment,
+        title = "Links",
+        searchHint = "Find a link",
+        empty = "No links yet.",
+    ) { query, redraw ->
+        val rows = mutableListOf<DirRow>()
+        val q = query.trim().lowercase()
+        val shown = targets.filter { q.isEmpty() || it.lowercase().contains(q) }
+        if (shown.isEmpty()) rows += DirRow("", "Nothing matches “$query”.", null, 1, closes = false) {}
+        for (target in shown) {
+            val from = links.backlinks(ctx, target)
+            val lands = links.resolves(target, known)
+            rows += DirRow(
+                if (lands) "🔗" else "◇",
+                target,
+                // The count is the useful fact about a link — one mention is a thought, six is a
+                // theme — and "owed" says the other thing worth knowing in one word.
+                (if (lands) "" else "owed · ") + "${from.size} page" + (if (from.size == 1) "" else "s"),
+                closes = false,
+            ) {
+                // An owed link is a note you told yourself to write. Tapping it offers to write
+                // it — the gesture completed rather than merely reported. A link that already
+                // lands has nothing to offer here; its backlinks are the point, and they are
+                // already listed underneath.
+                if (!lands) offerToWrite(fragment, target)
+            }
+            // The pages that point here, indented under it. This IS the backlink list; a separate
+            // screen for it would be a second tap to see the only thing the row is about.
+            for (occ in from.take(12)) {
+                rows += DirRow("↳", occ.pageKey, occ.date.toString(), 1) {
+                    com.toolsboox.plugin.calendar.CalendarNavigator.toDayNote(
+                        fragment, occ.date, occ.pageKey)
+                }
+            }
+            if (from.size > 12) {
+                rows += DirRow("", "…and ${from.size - 12} more", null, 1, closes = false) {}
+            }
+        }
+        rows
+    }
+}
+
+/**
+ * Offer to write the note an owed `[[link]]` is asking for.
+ *
+ * Picks the template, then mints the note ALREADY NAMED for the link — which is what makes the
+ * link land: resolution is by name, so naming it is the whole act. Landing on the new page rather
+ * than returning to the index, because you tapped this to write something.
+ */
+private fun offerToWrite(fragment: ScreenFragment, target: String) {
+    val ctx = fragment.requireContext()
+    val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    // The same picker "＋ New note…" uses, and the same landing — one way to start a note, so a
+    // note begun from a link is indistinguishable from any other.
+    showTemplateChooser(fragment, "Write “$target”?") { t ->
+        val note = docs.startNote(ctx, t, target)
+        if (note == null) fragment.showMessage("Couldn't start a new ${docs.label(t)} note.")
+        else openNewNote(fragment, note)
+    }
 }
 
 /** The tag index: every #tag harvested off note pages → the pages it appears on, for jump-nav. */
