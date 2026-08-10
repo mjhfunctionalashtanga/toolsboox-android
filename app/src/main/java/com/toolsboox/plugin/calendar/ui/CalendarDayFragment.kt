@@ -213,8 +213,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
     // band's bottom slice. The glimpse had already been drawn down to nothing and the band itself is
     // retired, so the second parked answer — and the background corpus walk that kept it warm — went
     // with it. One wins system, one walk, one place it shows.
-    private var quickWinsShown: List<QuickWinsEngine.Win> = emptyList()
-    private var quickWinsCooking = false
+    private var openTasksShown: List<com.toolsboox.plugin.calendar.ot.OpenTasks.Open> = emptyList()
+    private var openTasksCooking = false
+    /** The events the page was last drawn with — so an off-render repaint (a ghost row marked
+     *  done) redraws the schedule it actually had, not an empty one. */
+    private var lastRenderedEvents: List<CalendarEvent> = emptyList()
 
     // Finger long-press tracking ("pen writes, finger manages" element menu).
     private val longPressHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -794,35 +797,73 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
     }
 
-    /** What the Quick Wins panel may draw RIGHT NOW: the engine's parked answer, today only.
-     *  Yesterday's panel keeps its books and events but offers no wins — a win is a "do this
-     *  next", and next only exists today. */
-    private fun quickWinsForPanel(): List<QuickWinsEngine.Win> =
-        if (currentDate == LocalDate.now()) QuickWinsEngine.cachedFor(currentDate).orEmpty()
+    /** What the ghost rows may draw RIGHT NOW: the parked still-open answer, today only.
+     *  Yesterday's page is history — nothing ghosts onto it. */
+    private fun openTasksForPanel(): List<com.toolsboox.plugin.calendar.ot.OpenTasks.Open> =
+        if (currentDate == LocalDate.now())
+            com.toolsboox.plugin.calendar.ot.OpenTasks.cachedFor(currentDate).orEmpty()
         else emptyList()
 
-    /** Re-earn the parked wins in the background — once per render, keyed by day + ledger-hash
-     *  inside [QuickWinsEngine.fresh], so an unchanged ledger costs one directory walk and no
-     *  compute. When the answer moves, the page re-renders with the new rows. */
-    private fun warmQuickWins(events: List<CalendarEvent>) {
-        if (currentDate != LocalDate.now() || quickWinsCooking) return
-        quickWinsCooking = true
-        val ctx = requireContext().applicationContext
+    /** Re-earn the still-open answer in the background — the render path never walks the disk.
+     *  When the answer moves, the page re-renders with the new ghost rows. */
+    private fun warmOpenTasks(events: List<CalendarEvent>) {
+        if (currentDate != LocalDate.now() || openTasksCooking) return
+        openTasksCooking = true
         val root = documentsRoot()
         val day = currentDate
+        val todayItems = if (::calendarDay.isInitialized) calendarDay.ledgerItems.toList() else emptyList()
         lifecycleScope.launch {
-            val wins = withContext(Dispatchers.IO) {
+            val open = withContext(Dispatchers.IO) {
                 runCatching {
-                    QuickWinsEngine.fresh(ctx, corpusService, calendarDayService, root, day)
-                }.onFailure { Timber.w(it, "quick wins: compute failed") }.getOrNull()
+                    com.toolsboox.plugin.calendar.ot.OpenTasks.fresh(calendarDayService, root, day, todayItems)
+                }.onFailure { Timber.w(it, "open tasks: gather failed") }.getOrNull()
             }
-            quickWinsCooking = false
-            if (!isAdded || wins == null) return@launch
+            openTasksCooking = false
+            if (!isAdded || open == null) return@launch
             // Redraw only when the rows would actually change — a same-answer walk must not
             // cost an e-ink flash.
-            if (day == currentDate && notePage == null && wins != quickWinsShown) {
+            if (day == currentDate && notePage == null && open != openTasksShown) {
                 runCatching { renderPage(calendarDay, calendarPattern, events) }
             }
+        }
+    }
+
+    /** A tapped ghost row: the two verbs a still-open task needs from here. */
+    private fun ghostMenu(open: com.toolsboox.plugin.calendar.ot.OpenTasks.Open) {
+        showIconMenu(open.item.text.take(80), listOf(
+            "✓  Done" to { markGhostDone(open) },
+            "↗  Open its day" to {
+                CalendarNavigator.toDayPage(this, open.sourceDay, CalendarDay.DEFAULT_STYLE)
+            }
+        ))
+    }
+
+    /** Mark a still-open task done ON ITS OWN DAY — the file the task actually lives in. */
+    private fun markGhostDone(open: com.toolsboox.plugin.calendar.ot.OpenTasks.Open) {
+        val root = documentsRoot()
+        val appCtx = requireContext().applicationContext
+        val events = lastRenderedEvents
+        lifecycleScope.launch {
+            val done = withContext(Dispatchers.IO) {
+                runCatching {
+                    val d = open.sourceDay
+                    val loc = java.util.Locale.getDefault()
+                    val cd = calendarDayService.load(root, d, null, loc)
+                    val item = cd.ledgerItems.firstOrNull { it.id == open.item.id } ?: return@runCatching false
+                    item.done = true
+                    // The same cross-day save the Tasks list's checkbox makes — no pattern
+                    // rewrite; done is monotonic through the merge either way.
+                    calendarDayService.save(root, d, cd)
+                    runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(appCtx, item) }
+                    true
+                }.getOrDefault(false)
+            }
+            if (!isAdded) return@launch
+            if (done) {
+                com.toolsboox.plugin.calendar.ot.OpenTasks.invalidate()
+                showMessage("✓ ${open.item.text.take(60)}", binding.root)
+                warmOpenTasks(events)
+            } else showMessage("Couldn't reach that task — open its day instead.", binding.root)
         }
     }
 
@@ -1531,70 +1572,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             return true
         }
         if (notePage != null) return false
-        val win = com.toolsboox.plugin.calendar.ot.CalendarDayPage.winAt(cx, cy)
-        Timber.i("quick-win tap: cx=%.0f cy=%.0f hit=%s", cx, cy, win?.text ?: "∅")
-        if (win == null) return false
-        goToWin(win)
+        val ghost = com.toolsboox.plugin.calendar.ot.CalendarDayPage.ghostAt(cx, cy)
+        Timber.i("ghost-row tap: cx=%.0f cy=%.0f hit=%s", cx, cy, ghost?.item?.text ?: "∅")
+        if (ghost == null) return false
+        ghostMenu(ghost)
         return true
-    }
-
-    /** Take a win where its doing lives — and bring what's needed to do it right there.
-     *  EMAIL → the compose screen, already addressed, when the win's contact carries an email
-     *  address (the task words seed the subject, so the letter opens knowing what it's about);
-     *  a win with no addressable person still lands in the mail — The Mail lens on Unread,
-     *  where the message it's probably about is waiting with its Reply.
-     *  CALL → the rolodex, opened straight onto the win's contact when it carries one, so the
-     *  number is on screen. HOME → the day the task lives on — UNLESS that day is the one we're
-     *  already on (a today-sourced win), in which case a tap would be a silent no-op ("nothing
-     *  happens, it flashes"); those open the ⚡ Quick Wins surface instead, where the win carries
-     *  its ✧ Path to victory. Every navigate is guarded so a stale/absent action can't dead-end. */
-    private fun goToWin(win: com.toolsboox.plugin.calendar.ot.QuickWinsEngine.Win) {
-        val go = com.toolsboox.plugin.calendar.ot.QuickWinsEngine.goKind(win)
-        Timber.i("goToWin: kind=%s sourceDay=%s current=%s", go, win.sourceDay, currentDate)
-        runCatching {
-            when (go) {
-                com.toolsboox.plugin.calendar.ot.QuickWinsEngine.Go.EMAIL -> {
-                    // contacts.json is one small local file — a synchronous read on a tap is the
-                    // same bargain the rolodex list itself makes.
-                    val contact = win.contactId?.let {
-                        com.toolsboox.plugin.calendar.ot.ContactStore.get(requireContext(), it)
-                    }
-                    if (contact != null && contact.email.isNotBlank())
-                        findNavController().navigate(
-                            R.id.action_to_mail_compose,
-                            androidx.core.os.bundleOf(
-                                com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_TO_EMAIL to contact.email,
-                                com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_TO_NAME to contact.name,
-                                com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_SUBJECT to win.text.take(120)
-                            )
-                        )
-                    else {
-                        // No addressable person: land in The Mail lens filtered to Unread — the
-                        // mail the win is probably about is waiting there with its Reply. (The
-                        // standalone inbox this used to open is retired; the feeds pane's lens
-                        // is mail's one home, and "feed" is its Unread view.)
-                        com.toolsboox.plugin.feeds.ui.FeedSelection.mode = "feed"
-                        com.toolsboox.plugin.feeds.ui.FeedSelection.kind = "mail"
-                        com.toolsboox.plugin.feeds.ui.FeedSelection.mailMailbox = null
-                        findNavController().navigate(R.id.action_to_feeds)
-                    }
-                }
-                com.toolsboox.plugin.calendar.ot.QuickWinsEngine.Go.CALL ->
-                    findNavController().navigate(
-                        R.id.action_to_rolodex,
-                        androidx.core.os.bundleOf(RolodexFragment.ARG_CONTACT_ID to win.contactId)
-                    )
-                com.toolsboox.plugin.calendar.ot.QuickWinsEngine.Go.HOME ->
-                    if (win.sourceDay == currentDate)
-                        findNavController().navigate(R.id.action_to_quick_wins)
-                    else
-                        CalendarNavigator.toDayPage(this, win.sourceDay)
-            }
-        }.onFailure {
-            // A dead nav action must never be a silent flash — fall back to the ⚡ surface.
-            Timber.w(it, "goToWin: navigation failed; opening Quick Wins surface")
-            runCatching { findNavController().navigate(R.id.action_to_quick_wins) }
-        }
     }
 
     /** "Pin to Board…": file this gram onto a kanban board as a card that shows the picture.
@@ -2905,9 +2887,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             add(GoItem("🔷", "Simple shapes…") { openShapesPicker() })
             if (onSynth) add(GoItem("🃏", "Card…") { showCardMenu() })
             add(GoItem("❝", "Pickings…") { managePickings() })
-            // Redundant with the VPS server OCR — off by default, re-enable in Settings.
-            if (sharedPreferences.getBoolean(com.toolsboox.plugin.calendar.ot.LedgerExtractor.AUTO_EXTRACT_ENABLED_KEY, false))
-                add(GoItem("🗒", "Extract tasks & events") { extractStructured() })
             add(GoItem("📄", "Whole page → text") { wholePageToText() })
             add(GoItem("🗂", "Capture sections") { captureSections() })   // auto-capture toggle now lives in Settings
             if (onSynth) add(GoItem("🔬", "Synthesize · 3 questions") { synthesizeQuestions() })
@@ -2951,36 +2930,6 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val choices = cardChoices()
         showIconMenu(getString(R.string.card_pick_panel),
             choices.map { panel -> panel.title to { chooseCardAction(panel) } })
-    }
-
-    /**
-     * Auto-extract structured tasks (Tasks section) + calendar events (Schedule section) from the
-     * day's handwriting via on-device ink OCR, grouped by row. Re-running refreshes the auto items
-     * (source="auto") and leaves any lasso/manual ones. Only meaningful on the default day page.
-     */
-    private fun extractStructured() {
-        if (!::calendarDay.isInitialized) return
-        if (notePage != null) { showMessage(R.string.ledger_extract_day_only); return }
-        val strokes = currentPageStrokes()
-        val panels = com.toolsboox.plugin.calendar.ot.LedgerPanel.forPage(null)
-        val tasksRect = panels.firstOrNull { it.id == "tasks" }?.rect ?: return
-        val schedRect = panels.firstOrNull { it.id == "schedule" }?.rect ?: return
-        lifecycleScope.launch {
-            val tasks = com.toolsboox.plugin.calendar.ot.LedgerExtractor
-                .extractPanel(strokes, tasksRect, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK, "auto", dueDate())
-            val events = com.toolsboox.plugin.calendar.ot.LedgerExtractor
-                .extractPanel(strokes, schedRect, com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT, "auto", dueDate())
-            // Deliberately NOT tombstoned: this removal is a refresh, not a deletion — the same
-            // rows come straight back under fresh ids, and tombstoning the old ids would retire
-            // their Quick Wins lineage (same words, tombstone day == the new copies' day) the
-            // moment the user re-extracts. Deleting an auto item for real (erasing its ink, the
-            // list/pile/kanban deletes) goes through tombstoneLedgerItem like any other item.
-            calendarDay.ledgerItems.removeAll { it.source == "auto" }
-            calendarDay.ledgerItems.addAll(tasks + events)
-            calendarPattern.updateDay(calendarDay)
-            presenter.save(this@CalendarDayFragment, binding, calendarDay, calendarPattern, currentDate, showProgress = false)
-            showMessage(getString(R.string.ledger_extract_done, tasks.size, events.size), binding.root)
-        }
     }
 
     /**
@@ -4771,6 +4720,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         if (!isAdded || !isResumed) return
         this.calendarDay = calendarDay
         this.calendarPattern = calendarPattern
+        this.lastRenderedEvents = calendarEvents
         updateNavigator()
 
         // Load this page's text elements and images from the calendar data.
@@ -4817,9 +4767,9 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
             binding.toolbarDrawing.toolbarProcrastinator.visibility = View.GONE
             val noteTemplate = sharedPreferences.getInt("calendarNoteTemplate", 0)
             val noteStrokes = calendarDay.noteStrokes[notePage] ?: listOf()
-            // A notes page shows no Quick Wins rows — drop the recorded rectangles so a stale
+            // A notes page shows no ghost rows — drop the recorded rectangles so a stale
             // one can't send a tap on this page off to a task (the PickingsCover.clear rule).
-            CalendarDayPage.clearWinRows()
+            CalendarDayPage.clearGhostRows()
             if (notePage == "intake") {
                 // All Stars: five labeled bands (The Read / The Watch / The Listen / The Books /
                 // The Mail), each a shelf of just its own grams. No typing — the grams are the
@@ -4835,11 +4785,11 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         } else {
             binding.toolbarDrawing.toolbarProcrastinator.visibility = View.VISIBLE
             val calendarStrokes = calendarDay.calendarStrokes[calendarStyle] ?: listOf()
-            quickWinsShown = quickWinsForPanel()
+            openTasksShown = openTasksForPanel()
             CalendarDayPage.drawPage(
-                this.requireContext(), templateCanvas, calendarDay, calendarEvents, quickWinsShown
+                this.requireContext(), templateCanvas, calendarDay, calendarEvents, openTasksShown
             )
-            warmQuickWins(calendarEvents)
+            warmOpenTasks(calendarEvents)
             applyStrokes(Stroke.listDeepCopy(live(calendarStrokes)), true)
         }
         // The template was just drawn into templateBitmap; force the ImageView to repaint so

@@ -94,53 +94,7 @@ class LedgerTaskDedupeTest {
         assertEquals(3, LedgerTaskDedupe.dedupe(items).size)
     }
 
-    // --- carry-over -----------------------------------------------------------------------------
-
-    private fun day(d: Int, items: List<LedgerItem>) =
-        CalendarDay(2026, 7, d, startHour = null).apply { ledgerItems.addAll(items) }
-
-    @Test
-    fun `carry-over brings one copy forward, not both`() {
-        val yesterday = day(20, listOf(
-            task("li-6de7f34c-e45f-44f4-a9e3-9a8fba0c4c19", "get bent", source = "manual"),
-            task("log-db63b34c-3a7f-48e8-aaf3-229a61f41c93", "get bent", source = "log")
-        ))
-        val today = day(21, emptyList())
-
-        assertTrue(LedgerTaskCarryOver.carryOver(yesterday, today))
-
-        assertEquals(1, today.ledgerItems.size)
-        assertEquals("li-6de7f34c-e45f-44f4-a9e3-9a8fba0c4c19", today.ledgerItems[0].id)
-        // …and one text box on the page, not the two that were sitting a row apart on July 21.
-        assertEquals(1, today.textElements.count { it.text == "get bent" })
-    }
-
-    @Test
-    fun `a task already written by hand today is not carried in again under another id`() {
-        val yesterday = day(20, listOf(task("log-1", "get bent", source = "log")))
-        val today = day(21, listOf(task("li-2", "Get bent", source = "manual")))
-
-        assertFalse(LedgerTaskCarryOver.carryOver(yesterday, today))
-        assertEquals(1, today.ledgerItems.size)
-    }
-
-    @Test
-    fun `genuinely different open tasks all still carry`() {
-        val yesterday = day(20, listOf(
-            task("a", "get bent"), task("b", "call Dad"), task("c", "email Bob")
-        ))
-        val today = day(21, emptyList())
-
-        assertTrue(LedgerTaskCarryOver.carryOver(yesterday, today))
-        assertEquals(3, today.ledgerItems.size)
-    }
-
-    @Test
-    fun `a finished task is still left behind`() {
-        val yesterday = day(20, listOf(task("a", "get bent", done = true)))
-        val today = day(21, emptyList())
-
-        assertFalse(LedgerTaskCarryOver.carryOver(yesterday, today))
-        assertEquals(0, today.ledgerItems.size)
-    }
+    // Carry-over retired 2026-08-10 (Michael: "they aren't making the workflow better") — an
+    // undone task stays on its own day and the page DRAWS what is still open instead of copying
+    // it forward. Its dedupe contract lives on in OpenTasksTest.
 }

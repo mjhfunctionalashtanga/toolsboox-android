@@ -661,9 +661,10 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.gcalIdInput.setText(sharedPreferences.getString(LedgerEventSync.CALENDAR_ID_KEY, "primary"))
         updateGcalFieldsVisibility(gcalEnabled)
 
-        // On-device extract (redundant with the server OCR) — off by default.
-        binding.autoExtractSwitch.isChecked = sharedPreferences.getBoolean(
-            com.toolsboox.plugin.calendar.ot.LedgerExtractor.AUTO_EXTRACT_ENABLED_KEY, false)
+        // The on-device extract retired with its menu row (2026-08-10) — the lasso flow is the
+        // one blessed reader. The row hides rather than lies about controlling something.
+        binding.autoExtractSwitch.visibility = android.view.View.GONE
+        binding.autoExtractHint.visibility = android.view.View.GONE
 
         // Community bridge (FluentCommunity) creds — one home for connection settings, instead
         // of being buried under Boards → Web bridge.
@@ -706,10 +707,6 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.gcalEnableSwitch.setOnCheckedChangeListener { _, isChecked ->
             sharedPreferences.edit().putBoolean(LedgerEventSync.ENABLED_KEY, isChecked).apply()
             updateGcalFieldsVisibility(isChecked)
-        }
-        binding.autoExtractSwitch.setOnCheckedChangeListener { _, isChecked ->
-            sharedPreferences.edit().putBoolean(
-                com.toolsboox.plugin.calendar.ot.LedgerExtractor.AUTO_EXTRACT_ENABLED_KEY, isChecked).apply()
         }
         binding.gcalConnectButton.setOnClickListener {
             // Incremental consent for the Calendar-events scope (alongside Drive), so the signed-in
@@ -853,7 +850,6 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             sharedPreferences.edit()
                 .putBoolean(LedgerEventSync.ENABLED_KEY, binding.gcalEnableSwitch.isChecked)
                 .putString(LedgerEventSync.CALENDAR_ID_KEY, gcalIdEarly)
-                .putBoolean(com.toolsboox.plugin.calendar.ot.LedgerExtractor.AUTO_EXTRACT_ENABLED_KEY, binding.autoExtractSwitch.isChecked)
                 .apply()
 
             // Enqueue or cancel periodic sync work

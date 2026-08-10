@@ -87,22 +87,31 @@ class CalendarDayPage {
             return true
         }
 
-        /** A drawn quick-win row and where it landed, so a tap can go straight to the doing —
+        /** A drawn still-open ghost row and where it landed, so a tap can act on the task —
          *  recorded at draw time, hit-tested on tap, exactly the PickingsCover/DayEventHits
          *  discipline: the panel is pixels, and a second guess at its layout would drift. */
-        data class WinRow(val win: QuickWinsEngine.Win, val rect: android.graphics.RectF)
+        data class GhostRow(val open: OpenTasks.Open, val rect: android.graphics.RectF)
 
         @Volatile
-        private var winRows: List<WinRow> = emptyList()
+        private var ghostRows: List<GhostRow> = emptyList()
 
-        /** The quick win under a canvas-space point, or null. */
-        fun winAt(x: Float, y: Float): QuickWinsEngine.Win? =
-            winRows.firstOrNull { it.rect.contains(x, y) }?.win
+        /** The still-open task under a canvas-space point, or null. */
+        fun ghostAt(x: Float, y: Float): OpenTasks.Open? =
+            ghostRows.firstOrNull { it.rect.contains(x, y) }?.open
 
         /** Forget the recorded rows — called when a page without the panel is drawn, so a stale
          *  rectangle can't send a tap on some other page off to a task. */
-        fun clearWinRows() {
-            winRows = emptyList()
+        fun clearGhostRows() {
+            ghostRows = emptyList()
+        }
+
+        /** Grey for what is drawn, never written — the ghost rows must read as the page's own
+         *  murmur, not as ink pretending to be the hand's. */
+        private val ghostText = android.text.TextPaint(Creator.textSmallBlack).apply {
+            color = android.graphics.Color.rgb(110, 110, 110)
+        }
+        private val ghostSince = android.text.TextPaint(Creator.textSmallBlackRight).apply {
+            color = android.graphics.Color.rgb(150, 150, 150)
         }
 
         // The compact ⚡ GLIMPSE and its hit-testing are gone. It lived in the bottom slice of the
@@ -119,11 +128,12 @@ class CalendarDayPage {
          * @param canvas the canvas
          * @param calendarDay data class
          * @param calendarEvents the list of calendar events
-         * @param quickWins the parked quick wins (today only; empty when cold or on other days)
+         * @param openTasks what earlier days left undone (today only; empty when cold or on
+         *   other days) — drawn as ghost rows in the Tasks section's free rows, never persisted
          */
         fun drawPage(
             context: Context, canvas: Canvas, calendarDay: CalendarDay, calendarEvents: List<CalendarEvent>,
-            quickWins: List<QuickWinsEngine.Win> = emptyList()
+            openTasks: List<OpenTasks.Open> = emptyList()
         ) {
             val schedulesText = context.getString(R.string.calendar_day_schedules)
             val tasksText = context.getString(R.string.calendar_day_tasks)
@@ -224,30 +234,15 @@ class CalendarDayPage {
                 }
             }
 
-            // Quick Wins: the stars that used to fill these rows already surface in the feeds,
-            // so the rows go to the system's shortest paths to victory instead — the same wins
-            // the ⚡ surface computes, read from QuickWinsEngine's parked answer (never computed
-            // here; the render path must not wait on a file walk or the network). "⚡" marks the
-            // row; a tap goes straight to the doing — mail, rolodex, or the task's home day.
-            // Book reading-progress rows and outside events keep their places above.
-            val winStart = notesTitle.size
-            val rowWins = mutableListOf<QuickWinsEngine.Win>()
-            if (notesTitle.size < 7) {
-                quickWins.take(minOf(6, 7 - notesTitle.size)).forEach { w ->
-                    // Row 1: ⚡ + the task. Row 2: why it's a win (its day rides on the right).
-                    notesTitle.add("⚡  ${w.text}")
-                    notesLeft.add(w.reasons.joinToString("  ·  "))
-                    notesRight.add(
-                        w.sourceDay.format(DateTimeFormatter.ofPattern("MMM d"))
-                    )
-                    rowWins.add(w)
-                }
-            }
-
+            // These rows hold the day's FACTS — reading progress and outside events — and nothing
+            // else. The Quick Wins fill retired on Michael's ruling (2026-08-10): a standing
+            // guess about what matters had no place on the page ("surfaces that guess are the
+            // dead ones"); the wins' machinery survives for the ⚡ surface, the widget, and the
+            // schedule-occasioned prep it will feed instead.
             val notesCalsText = if (outside.isEmpty()) {
-                context.getString(R.string.calendar_day_quick_wins)
+                context.getString(R.string.calendar_day_reading_events)
             } else {
-                context.getString(R.string.calendar_day_quick_wins_events).format(outside.size)
+                context.getString(R.string.calendar_day_reading_events_count).format(outside.size)
             }
 
             // Schedules grid
@@ -386,9 +381,7 @@ class CalendarDayPage {
             }
 
             // Panel rows (shifted one slot down to sit under the weather/moon line): reading
-            // progress, then outside events, then the quick wins. Each win's row rectangle is
-            // recorded as it is drawn, so the fragment's tap can never disagree with a pixel.
-            val recorded = mutableListOf<WinRow>()
+            // progress, then outside events.
             for (i in 0..6) {
                 if (i < notesTitle.size) {
                     val textX = lo + cew + 60.0f
@@ -404,17 +397,36 @@ class CalendarDayPage {
                         notesRight[i], lo + cew + 40.0f + cew, to + (23 + i * 2) * ceh - 10.0f,
                         Creator.textSmallBlackRight
                     )
-                    if (i >= winStart) {
-                        rowWins.getOrNull(i - winStart)?.let { w ->
-                            recorded.add(WinRow(w, android.graphics.RectF(
-                                lo + cew + 50.0f, to + (21 + i * 2) * ceh,
-                                lo + 2 * cew + 50.0f, to + (23 + i * 2) * ceh
-                            )))
-                        }
-                    }
                 }
             }
-            winRows = recorded
+
+            // Still-open ghosts: what earlier days left undone, DRAWN into the Tasks section's
+            // free rows — never written. Carry-over used to stamp these into the day file as
+            // typed text boxes every morning (linked back to their items by matching words);
+            // now the page is paper again and "still open" is a question the render answers.
+            // Grey so it reads as the page's murmur, not the hand's ink; the rect of each row
+            // is recorded so a tap can mark it done or open its own day.
+            val recorded = mutableListOf<GhostRow>()
+            if (openTasks.isNotEmpty()) {
+                val free = LedgerTaskCarryOver.freeRows(context, calendarDay)
+                val sinceFmt = DateTimeFormatter.ofPattern("MMM d")
+                for ((slot, open) in openTasks.withIndex()) {
+                    val row = free.getOrNull(slot) ?: break
+                    val topY = to + (row + 1) * ceh
+                    Creator.drawEllipsizedText(
+                        canvas, "· ${open.item.text}", ghostText,
+                        lo + cew + 110.0f, topY + ceh - 15.0f, cew - 260.0f
+                    )
+                    canvas.drawText(
+                        "since ${open.sourceDay.format(sinceFmt)}",
+                        lo + 2 * cew + 40.0f, topY + ceh - 15.0f, ghostSince
+                    )
+                    recorded.add(GhostRow(open, android.graphics.RectF(
+                        lo + cew + 50.0f, topY, lo + 2 * cew + 50.0f, topY + ceh
+                    )))
+                }
+            }
+            ghostRows = recorded
         }
 
         private fun drawEventLane(canvas: Canvas, startHour: Int, lane: MutableList<CalendarEvent>, llo: Float, lw: Float) {

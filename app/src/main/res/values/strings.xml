@@ -296,8 +296,8 @@
     <string name="calendar_day_notes">Notes</string>
     <string name="calendar_day_notes_events">Stars &amp; Events (%d)</string>
     <string name="calendar_day_notes_events_ex">Stars &amp; Events (%d+)</string>
-    <string name="calendar_day_quick_wins">⚡ Quick Wins</string>
-    <string name="calendar_day_quick_wins_events">⚡ Quick Wins · Events (%d)</string>
+    <string name="calendar_day_reading_events">📖 Reading · Events</string>
+    <string name="calendar_day_reading_events_count">📖 Reading · Events (%d)</string>
     <string name="calendar_day_all_day">All day event</string>
 
     <string name="calendar_health_day_start_it">Start it!</string>

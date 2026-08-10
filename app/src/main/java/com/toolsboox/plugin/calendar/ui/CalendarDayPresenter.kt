@@ -99,42 +99,12 @@ class CalendarDayPresenter @Inject constructor() : FragmentPresenter() {
                     val calendarPattern = calendarPatternService.load(rootPath, currentDate, locale)
                     var calendarEvents = calendarEventsService.loadEvents(fragment, currentDate)
 
-                    // The measuring context for the Tasks rows: the page face has to be the one the
-                    // surface actually draws with, or a row's height is measured against the wrong
-                    // metrics and the packing is off by a line.
-                    val measureCtx = fragment.context?.applicationContext
-
-                    var dayDirty = false
-                    // Carry-over would prune yesterday's tasks after copying them into a blank
-                    // today that will never be saved — losing them from both days — so a
-                    // read-only day skips it (and the reflow rewrite) entirely.
-                    if (currentDate.isEqual(LocalDate.now()) && !dayReadOnly) {
-                        val yesterday = currentDate.minusDays(1)
-                        val yesterdayCalendarDay = calendarDayService.load(rootPath, yesterday, seedStartHour, locale)
-
-                        if (LedgerTaskCarryOver.carryOver(yesterdayCalendarDay, calendarDay, measureCtx)) {
-                            CalendarPatternService.mutex.withLock {
-                                val yesterdayPattern = calendarPatternService.load(rootPath, yesterday, locale)
-                                yesterdayPattern.updateDay(yesterdayCalendarDay)
-                                calendarDayService.save(rootPath, yesterday, yesterdayCalendarDay)
-                                calendarPatternService.save(rootPath, yesterday, yesterdayPattern)
-                            }
-                            dayDirty = true
-                        }
-                    }
-
-                    // Repair pass: days written by the old fixed-pitch placement hold task boxes
-                    // that draw straight through the row below them. Re-laying them on measured
-                    // heights is idempotent, so a day is rewritten once and then goes quiet.
-                    if (!dayReadOnly && LedgerTaskCarryOver.reflow(measureCtx, calendarDay)) dayDirty = true
-
-                    if (dayDirty) {
-                        CalendarPatternService.mutex.withLock {
-                            calendarPattern.updateDay(calendarDay)
-                            calendarDayService.save(rootPath, currentDate, calendarDay)
-                            calendarPatternService.save(rootPath, currentDate, calendarPattern)
-                        }
-                    }
+                    // Task carry-over retired here (Michael's ruling, 2026-08-10): opening today
+                    // no longer copies yesterday's undone tasks into the file or stamps typed
+                    // text boxes onto the page. A task stays on its own day; "still open" is
+                    // drawn render-only by the page (OpenTasks + the ghost rows) and answered by
+                    // the Boards/Tasks views. The reflow repair pass retired with it — nothing
+                    // machine-places task boxes anymore, so there is nothing to repair.
 
                     if (currentDate >= LocalDate.now()) {
                         calendarDay.readingProgress.clear()

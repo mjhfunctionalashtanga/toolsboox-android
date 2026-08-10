@@ -7,32 +7,27 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import androidx.core.content.res.ResourcesCompat
 import com.toolsboox.R
-import com.toolsboox.da.Stroke
 import com.toolsboox.da.TextElement
 import com.toolsboox.plugin.calendar.da.v2.CalendarDay
-import com.toolsboox.plugin.calendar.da.v2.LedgerItem
-import java.time.LocalDate
-import java.time.ZoneOffset
-import java.util.Date
-import java.util.UUID
 import kotlin.math.ceil
 
 /**
- * Granular task roll-over. Unfinished TASK [LedgerItem]s from the previous day repopulate onto the
- * next day, EACH as its own strokes (display=INK, the handwriting redrawn in a free Tasks row) or as
- * typed text (display=TEXT, a text box in the row) — per the item's own choice. This replaces the
- * blunt whole-section stroke reproducer ([CalendarTaskCarryOver]); the representation is now
- * controlled item by item.
+ * The Tasks section's row geometry, and the placement of a TYPED task onto the page.
  *
- * Idempotent: a carried copy keeps the source item's `id`, so re-loading the day finds it already
- * present and skips it. Yesterday is left intact (a copy, not a move) so it stays part of history.
+ * This object used to be the carry-over: every open of today it copied yesterday's undone tasks
+ * into the day file and stamped typed text boxes into the Tasks column (then a reflow pass
+ * re-arranged them), each box linked back to its item BY MATCHING WORDS. That retired on
+ * Michael's ruling (2026-08-10, "they aren't making the workflow better"): an undone task no
+ * longer gets re-inscribed — it stays on its own day, and the page DRAWS what is still open as
+ * render-only ghost rows ([OpenTasks] + [CalendarDayPage]). What remains here is the asked-for
+ * half: a task you type by hand gets a text box on the page ([placeTypedTask]), and the row
+ * arithmetic both that and the ghost renderer share.
  *
  * **Rows are measured, never assumed.** A task is a text box that word-wraps to its own width, so
  * "one task, one 50px row" was a guess — and a task whose words ran to two lines was drawn straight
- * through the row below it ("layers on top … it should not overwrite/stack that way"). Every
- * placement here measures the wrapped layout with [StaticLayout] and claims the rows it actually
- * needs; a task that cannot fit the free rows at full size has its FONT shrunk to fit rather than
- * its words cut, so the text a delete matches on stays intact.
+ * through the row below it. Every placement measures the wrapped layout with [StaticLayout] and
+ * claims the rows it actually needs; a task that cannot fit the free rows at full size has its
+ * FONT shrunk to fit rather than its words cut.
  */
 object LedgerTaskCarryOver {
 
@@ -45,9 +40,9 @@ object LedgerTaskCarryOver {
     private val TASKS_LEFT = LO + CEW + 50f
     private val TASKS_RIGHT = LO + 2 * CEW + 50f
     private val TASKS_TEXT_LEFT = LO + CEW + 110f   // right of the checkbox column
-    // Twelve: four rows go to the Roots band (see CalendarDayPage). Carrying a task into a
-    // row that is no longer drawn would put it under the Roots title.
-    private const val ROWS = 12
+    // Seventeen, matching the drawn grid — the Roots band that once took four of these rows is
+    // retired (see the grid comment in CalendarDayPage) and the rows came home.
+    private const val ROWS = 17
 
     /** Where a task box sits inside its row, and how wide it may run before wrapping. */
     private const val ROW_INSET = 6f
@@ -104,90 +99,12 @@ object LedgerTaskCarryOver {
     }
 
     /**
-     * Carry [yesterday]'s unfinished tasks onto [today] (mutated in place). Returns true if anything
-     * was added (so [today] needs persisting).
+     * The free rows of the Tasks section, in order — what the ghost renderer may draw into.
+     * A row is taken by the hand's ink or by a text box's measured span; ghosts get the rest.
      */
-    fun carryOver(yesterday: CalendarDay, today: CalendarDay, context: Context? = null): Boolean {
-        val open = yesterday.ledgerItems.filter {
-            it.kind == LedgerItem.Kind.TASK && !it.done && it.text.isNotBlank()
-        }
-        if (open.isEmpty()) return false
-        val existing = today.ledgerItems.map { it.id }.toSet()
-        // A task the user deleted on `today` is tombstoned by its id — in `deletedItemIds`
-        // (the dedicated list, shared wire name with iOS) and, for deletions recorded by
-        // pre-split builds, `deletedElementIds`. Carry-over MUST honour both or it silently
-        // re-adds the deleted task every time the day reloads — the "won't delete / keeps
-        // reappearing" bug, since a deleted id is no longer in `existing`.
-        val tombstoned = buildSet {
-            addAll(today.deletedItemIds)
-            addAll(today.deletedElementIds)
-        }
-        // …and by its WORDS, because the id is exactly what two copies of one task don't share.
-        // A task typed on the day page and the same task made from the reading log have different
-        // ids, so the id check above waves both through — then carries both forward every day and
-        // paints each its own text box. Matching the words stops the pair at the first carry.
-        val saidAlready = HashSet<String>()
-        today.ledgerItems.filter { it.kind == LedgerItem.Kind.TASK }
-            .forEach { saidAlready.add(LedgerTaskDedupe.key(it.text)) }
-        val toCarry = open
-            .filter { it.id !in existing && it.id !in tombstoned }
-            .filter { saidAlready.add(LedgerTaskDedupe.key(it.text)) }
-        if (toCarry.isEmpty()) return false
-
-        val used = occupiedRows(context, today).toMutableSet()
-        if (used.size >= ROWS) return false
-
-        val srcById = (yesterday.calendarStrokes[CalendarDay.DEFAULT_STYLE] ?: emptyList())
-            .associateBy { it.strokeId.toString() }
-        val dueDate = Date(
-            LocalDate.of(today.year, today.month, today.day).atTime(12, 0).toInstant(ZoneOffset.UTC).toEpochMilli()
-        )
-
-        val addStrokes = mutableListOf<Stroke>()
-        val addTexts = mutableListOf<TextElement>()
-        val carried = mutableListOf<LedgerItem>()
-
-        for (item in toCarry) {
-            val strokes = if (item.display == LedgerItem.Display.INK)
-                item.strokeIds.mapNotNull { srcById[it] } else emptyList()
-
-            if (strokes.isNotEmpty()) {
-                // INK: redraw the handwriting, shifted so its top sits in a free run of rows tall
-                // enough to hold the whole thing — tall handwriting used to be dropped into one
-                // row and run over whatever was under it, exactly as wrapped text did.
-                val minY = strokes.flatMap { it.strokePoints }.minOf { it.y }
-                val maxY = strokes.flatMap { it.strokePoints }.maxOf { it.y }
-                val span = ceil((maxY - minY + ROW_INSET) / CEH).toInt().coerceIn(1, ROWS)
-                val row = freeRun(used, span) ?: continue
-                claim(used, row, span)
-                val deltaY = TASKS_TOP + row * CEH + 8f - minY
-                val copied = strokes.map { s ->
-                    s.copy(
-                        strokeId = UUID.randomUUID(),
-                        strokePoints = s.strokePoints.map { it.copy(y = it.y + deltaY) }
-                    )
-                }
-                addStrokes.addAll(copied)
-                carried.add(item.copy(
-                    date = dueDate,
-                    display = LedgerItem.Display.INK,
-                    strokeIds = copied.map { it.strokeId.toString() }.toMutableList()
-                ))
-            } else {
-                // TEXT (or INK whose strokes are gone): a typed text box in as many rows as its
-                // wrapped words actually need.
-                val placed = placeBox(context, used, item.text) ?: continue
-                addTexts.add(placed)
-                carried.add(item.copy(date = dueDate, display = LedgerItem.Display.TEXT, strokeIds = mutableListOf()))
-            }
-        }
-        if (carried.isEmpty()) return false
-
-        val tgt = today.calendarStrokes[CalendarDay.DEFAULT_STYLE] ?: emptyList()
-        today.calendarStrokes[CalendarDay.DEFAULT_STYLE] = tgt + addStrokes
-        today.textElements.addAll(addTexts)
-        today.ledgerItems.addAll(carried)
-        return true
+    fun freeRows(context: Context?, day: CalendarDay): List<Int> {
+        val used = occupiedRows(context, day)
+        return (0 until ROWS).filter { it !in used }
     }
 
     /**
@@ -200,55 +117,6 @@ object LedgerTaskCarryOver {
         val box = placeBox(context, used, text) ?: return false
         day.textElements.add(box)
         return true
-    }
-
-    /**
-     * Re-lay the Tasks section so **no two rows are drawn on top of each other** — the repair pass
-     * for days whose boxes were placed by the old fixed-pitch rule (and for anything a sync merge
-     * lands mid-column). Ink is never moved: handwriting is where the hand put it, so its rows are
-     * claimed first and the typed boxes fill the gaps in their existing top-to-bottom order.
-     *
-     * Only y (and, when a task will not otherwise fit, font size) changes — never the words, which
-     * are what a delete matches a box to its item by. Returns true when something moved.
-     */
-    fun reflow(context: Context?, day: CalendarDay): Boolean {
-        val boxes = day.textElements
-            .filter { it.pageKey == "default" && inTasks(it.x, it.y) }
-            .sortedWith(compareBy({ it.y }, { it.x }))
-        if (boxes.isEmpty()) return false
-
-        val used = inkRows(day).toMutableSet()
-        var changed = false
-        for (box in boxes) {
-            val want = rowsNeeded(context, box.text, box.width, FONT_SIZE)
-            var size = FONT_SIZE
-            var row = freeRun(used, want)
-            var span = want
-            if (row == null) {
-                // No run that tall — shrink the type until the words fit whatever run is left.
-                val biggest = largestFreeRun(used)
-                val fitted = if (biggest > 0) fontThatFits(context, box.text, box.width, biggest) else null
-                if (fitted != null) {
-                    size = fitted
-                    span = rowsNeeded(context, box.text, box.width, size)
-                    row = freeRun(used, span)
-                }
-            }
-            if (row == null) {
-                // Genuinely nowhere to go: leave it exactly where it is and claim its rows so the
-                // next box still routes around it. Losing a task is worse than a crowded section.
-                claim(used, rowOf(box.x, box.y) ?: 0, want)
-                continue
-            }
-            claim(used, row, span)
-            val y = TASKS_TOP + row * CEH + ROW_INSET
-            if (box.y != y || box.fontSize != size) {
-                box.y = y
-                box.fontSize = size
-                changed = true
-            }
-        }
-        return changed
     }
 
     /** A text box for [text] in the first free run of rows, claiming them. Null when none fits. */

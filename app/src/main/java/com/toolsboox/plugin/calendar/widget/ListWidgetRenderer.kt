@@ -152,6 +152,42 @@ object ListWidgetRenderer {
             rows.add(Row(primary = "+${undone.size - MAX_TASK_ROWS} more", muted = true))
         }
 
+        // Still open from the days before — carry-over no longer copies these into today's
+        // file (2026-08-10), so the widget asks the question itself: undone tasks off the
+        // lookback window's day files, slim-decoded, word-deduped against today's. Muted, with
+        // the day they were written, the same reading as the page's ghost rows.
+        if (undone.size < MAX_TASK_ROWS) {
+            val said = HashSet<String>()
+            tasks.forEach { said.add(com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe.key(it.text)) }
+            // The service's Moshi is normally field-injected; a widget process wires it by hand
+            // (the same adapters WidgetRenderer's own loader builds).
+            val svc = com.toolsboox.plugin.calendar.fi.CalendarDayService().apply {
+                moshi = com.squareup.moshi.Moshi.Builder()
+                    .add(com.toolsboox.ot.LocaleJsonAdapter())
+                    .add(com.toolsboox.ot.DateJsonAdapter())
+                    .add(com.toolsboox.ot.UUIDJsonAdapter())
+                    .build()
+            }
+            val root = com.toolsboox.ot.LedgerPaths.documentsRoot(context)
+            val sinceFmt = DateTimeFormatter.ofPattern("MMM d")
+            var d = date.minusDays(1)
+            val floor = date.minusDays(30)
+            var slots = MAX_TASK_ROWS - undone.size
+            while (!d.isBefore(floor) && slots > 0) {
+                val y = "%04d".format(d.year); val m = "%02d".format(d.monthValue); val dd = "%02d".format(d.dayOfMonth)
+                val f = File(File(root, "calendar/$y/$m"), "day-$y-$m-$dd-v2.json")
+                if (f.exists()) {
+                    for (it in runCatching { svc.loadLedgerItems(f) }.getOrNull().orEmpty()) {
+                        if (it.kind != LedgerItem.Kind.TASK || it.done || it.stage == "done" || it.text.isBlank()) continue
+                        if (!said.add(com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe.key(it.text))) continue
+                        rows.add(Row(primary = it.text, secondary = "since ${d.format(sinceFmt)}", marker = "·", muted = true))
+                        if (--slots <= 0) break
+                    }
+                }
+                d = d.minusDays(1)
+            }
+        }
+
         val dateLabel = date.format(DateTimeFormatter.ofPattern("EEE · MMM d"))
         val doneCount = tasks.size - undone.size
         val empty = if (doneCount > 0) "All $doneCount done" else "No open tasks"

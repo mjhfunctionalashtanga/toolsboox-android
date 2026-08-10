@@ -21,12 +21,9 @@ import java.util.UUID
  */
 object LedgerExtractor {
 
-    /** Settings flag (MAIN prefs) for the on-device auto-extract of the Tasks/Schedule sections.
-     *  Default OFF: the VPS Sonnet OCR already transcribes the page far better, so this weaker
-     *  on-device ink OCR is redundant. Gated behind a toggle rather than removed. The lasso
-     *  "Create task/event" path is unaffected — it's the curated, vision-OCR route that feeds
-     *  CalDAV / Google Calendar. */
-    const val AUTO_EXTRACT_ENABLED_KEY = "ledgerAutoExtractEnabled"
+    // The panel auto-extract (whole Tasks/Schedule sections clustered by row and OCR'd into
+    // items, source="auto") retired 2026-08-10 with its settings toggle: it guessed, the lasso
+    // flow asks — and the lasso "Create task/event" path below is the one blessed reader.
 
     /** Vertical gap (1872-tall template space) beyond which a new item starts. */
     private const val ROW_GAP = 46f
@@ -92,15 +89,9 @@ object LedgerExtractor {
     }
 
     /**
-     * Auto: extract one item per row-cluster inside [rect]. [date] is the DUE date — the page's
-     * own day, so a task written on a future page is due that day, not today.
+     * Lasso: the given strokes are one item (the selection defines the boundary). [date] is the
+     * DUE date — the page's own day, so a task written on a future page is due that day.
      */
-    suspend fun extractPanel(
-        strokes: List<Stroke>, rect: RectF, kind: LedgerItem.Kind, source: String, date: Date
-    ): List<LedgerItem> =
-        clusterByRow(strokesInRect(strokes, rect)).mapNotNull { group -> itemFrom(group, kind, source, date) }
-
-    /** Lasso: the given strokes are one item (the selection defines the boundary). [date] = due date. */
     suspend fun extractStrokes(
         strokes: List<Stroke>, kind: LedgerItem.Kind, source: String, date: Date
     ): LedgerItem? = itemFrom(writingOnly(strokes), kind, source, date)
