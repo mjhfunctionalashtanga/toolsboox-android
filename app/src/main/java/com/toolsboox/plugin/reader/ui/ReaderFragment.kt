@@ -846,27 +846,98 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         openWhenReady()
     }
 
-    /** Font size + theme for the reader, applied via foliate's applyReaderSettings. */
+    /**
+     * Font size, spread and theme — A PANEL THAT STAYS OPEN.
+     *
+     * Michael, 2026-08-10: adjusting text size "drops you out of text size adjustment after one
+     * button push."
+     *
+     * It was an `setItems` list, and a list dismisses when you pick from it. That is right for a
+     * menu of destinations and wrong for a DIAL: finding a comfortable size takes three or four
+     * presses, and this made each one cost a re-open — tap the wrench, find the row, press once,
+     * watch it close. The size is also the setting most likely to want several nudges in a row,
+     * so it was the worst possible candidate for a one-shot list.
+     *
+     * So the steppers live in a view, they repeat, and the current size is on screen between them
+     * — you are adjusting toward something, and you can only tell you have arrived if you can see
+     * where you are. Theme and spread join them because they have the same "try it and look"
+     * character. Only the star closes, because starring is done when it is done.
+     */
     private fun openSettings() {
-        val prefs = requireContext().getSharedPreferences(PREFS, 0)
-        val builder = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext())).setTitle(R.string.reader_settings_title)
-        val current = prefs.getString(KEY_THEME, "default") ?: "default"
-        val items = arrayOf(
-            getString(R.string.reader_font_smaller),
-            getString(R.string.reader_font_larger),
-            getString(R.string.reader_theme, current),
-            "★  Star this book"
-        )
-        builder.setItems(items) { _, which ->
-            when (which) {
-                0 -> changeFont(-10)
-                1 -> changeFont(10)
-                2 -> cycleTheme()
-                3 -> starThisBook()
+        val ctx = requireContext()
+        val prefs = ctx.getSharedPreferences(PREFS, 0)
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        lateinit var sizeLabel: android.widget.TextView
+        fun sizeText() = "${prefs.getInt(KEY_FONT, 100)}%"
+
+        fun stepper(glyph: String, delta: Int) = android.widget.TextView(ctx).apply {
+            text = glyph
+            textSize = 26f
+            setPadding(px(22), px(6), px(22), px(6))
+            setBackgroundResource(android.R.drawable.list_selector_background)
+            setOnClickListener {
+                changeFont(delta)
+                sizeLabel.text = sizeText()
             }
         }
-        builder.show()
+
+        sizeLabel = android.widget.TextView(ctx).apply {
+            text = sizeText()
+            textSize = 18f
+            setPadding(px(16), 0, px(16), 0)
+        }
+
+        val sizeRow = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            addView(stepper("A−", -10))
+            addView(sizeLabel)
+            addView(stepper("A+", 10))
+        }
+
+        fun row(label: String, onTap: (android.widget.TextView) -> Unit) = android.widget.TextView(ctx).apply {
+            text = label
+            textSize = 16f
+            setPadding(px(20), px(14), px(20), px(14))
+            setBackgroundResource(android.R.drawable.list_selector_background)
+            setOnClickListener { onTap(this) }
+        }
+
+        val body = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(px(8), px(12), px(8), 0)
+            addView(sizeRow)
+            addView(row(themeLabel()) { v ->
+                cycleTheme()
+                v.text = themeLabel()
+            })
+            addView(row(spreadLabel()) { v ->
+                toggleSpread()
+                v.text = spreadLabel()
+            })
+        }
+
+        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle(R.string.reader_settings_title)
+            .setView(android.widget.ScrollView(ctx).apply { addView(body) })
+            .setNegativeButton("Done", null)
+            .create()
+        // The star is the one thing here that FINISHES, so it is the one thing that closes.
+        body.addView(row("★  Star this book") { dialog.dismiss(); starThisBook() })
+        dialog.show()
     }
+
+    private fun themeLabel(): String =
+        getString(
+            R.string.reader_theme,
+            requireContext().getSharedPreferences(PREFS, 0).getString(KEY_THEME, "default") ?: "default"
+        )
+
+    private fun spreadLabel(): String =
+        if (requireContext().getSharedPreferences(PREFS, 0).getBoolean(KEY_SPREAD, false))
+            "📖  Two pages" else "📄  One page"
 
     /**
      * Star the whole book onto today's Stars register, into THE BOOKS band.
