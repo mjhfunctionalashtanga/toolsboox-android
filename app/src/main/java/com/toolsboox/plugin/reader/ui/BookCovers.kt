@@ -74,7 +74,53 @@ object BookCovers {
             val p = path.lowercase()
             p.endsWith(".jpg") || p.endsWith(".jpeg") || p.endsWith(".png")
         }
+        "pdf" -> firstPdfPage(context, entry)
         else -> null
+    }
+
+    /**
+     * A PDF's first page, rendered. Michael, 2026-08-08: "PDFs need covers — they're not loading."
+     *
+     * They were not loading because nothing tried: the extractor knew about zips and a PDF is not
+     * one, so every PDF fell through to a drawn card. Which was honest but wrong — a PDF HAS a
+     * cover, it is just page one, and a scanned book whose cover is its first page is exactly the
+     * case where a title card helps least.
+     *
+     * PdfRenderer needs a seekable file descriptor, so an entry behind a declared tree has to be
+     * materialised first. That is a copy of a possibly-large file for a thumbnail, which is why the
+     * result is cached like every other cover and why this runs only when the cover is first asked
+     * for rather than on a shelf scan.
+     */
+    private fun firstPdfPage(context: Context, entry: BookshelfSource.Entry): Bitmap? {
+        val file = BookshelfSource.materialise(context, entry) ?: return null
+        return runCatching {
+            android.os.ParcelFileDescriptor.open(
+                file, android.os.ParcelFileDescriptor.MODE_READ_ONLY
+            ).use { pfd ->
+                android.graphics.pdf.PdfRenderer(pfd).use { renderer ->
+                    if (renderer.pageCount < 1) return@use null
+                    renderer.openPage(0).use { page ->
+                        // Rendered at the tile's own aspect, then fitted — asking the renderer for
+                        // the shelf size directly would squash a landscape page.
+                        val scale = minOf(
+                            W.toFloat() / page.width.coerceAtLeast(1),
+                            H.toFloat() / page.height.coerceAtLeast(1)
+                        )
+                        val bmp = Bitmap.createBitmap(
+                            (page.width * scale).toInt().coerceAtLeast(1),
+                            (page.height * scale).toInt().coerceAtLeast(1),
+                            Bitmap.Config.ARGB_8888
+                        )
+                        // White first: a PDF page renders with transparency where it has no ink,
+                        // and a transparent thumbnail reads as black in most viewers.
+                        bmp.eraseColor(Color.WHITE)
+                        page.render(bmp, null, null,
+                            android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        fit(bmp)
+                    }
+                }
+            }
+        }.getOrNull()
     }
 
     /**

@@ -367,7 +367,7 @@ fun ledgerDirectoryFolders(
         ScreenFragment.Folder("🗒", "Desk", listOf(
             "👤  Contacts" to { nav.navigate(R.id.action_to_rolodex) },
             "☑  Boards & Tasks" to { openBoardsAndTasks(fragment.requireContext(), nav) },
-            "🎟  Roster" to { nav.navigate(R.id.action_to_roster) },
+            "🎟  Event Attendees" to { nav.navigate(R.id.action_to_roster) },
             "🕘  Booking" to { showBookingPicker(fragment) }
         ), expanded = home == "Desk"),
         // NOTES — ONE DOOR, FIVE TEMPLATES.

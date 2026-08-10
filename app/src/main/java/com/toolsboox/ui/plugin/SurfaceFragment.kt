@@ -706,12 +706,18 @@ abstract class SurfaceFragment : ScreenFragment() {
      * ink tools the day rail carries. Bottom cluster: the nav pill's three actions unpacked
      * (↑ ↓ and the jump-to-present centre), then the toolbar's own ⇄ edge-hop.
      */
+    /** The surface key the drawing rail was built with; see [penDescription]. */
+    private var drawingRailKey: String = "drawing"
+
     protected fun setupAlmanacRail(
         surfaceKey: String,
         isAtPresent: () -> Boolean,
         onHome: () -> Unit
     ): com.toolsboox.ot.TuckPanel {
         val tb = provideToolbarDrawing()
+        // Held so the pen row can be re-dressed when the pen changes — the label names the current
+        // nib, and rebuildActionRail needs the key this rail was built with.
+        drawingRailKey = surfaceKey
         val rail = com.toolsboox.ot.TuckPanel(
             host = this,
             toolbar = tb,
@@ -729,8 +735,12 @@ abstract class SurfaceFragment : ScreenFragment() {
                         anchorEnd = railOnRightSide()
                     )
                 },
+                // THE PEN NAMES ITSELF. Michael, 2026-08-11: "pen selection should be MORE
+                // OBVIOUS." The row said "Pen" and the button carried a colour tint — which tells
+                // you the pen is selected, not WHICH pen, and the nib and width were invisible
+                // until you opened the dialog that changes them.
                 com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_pen,
-                    getString(R.string.calendar_drawing_toolbar_pen), activeId = "pen") {
+                    penDescription(), activeId = "pen") {
                     tb.toolbarPen.performClick(); rail.markActive("pen")
                 },
                 com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_eraser,
@@ -4218,6 +4228,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             setOnClickListener {
                 pad.penColor = color
                 pad.eraserMode = false
+                com.toolsboox.ot.AnnotationPen.setColor(ctx, color)
                 refreshActive()
             }
         }
@@ -4229,12 +4240,30 @@ abstract class SurfaceFragment : ScreenFragment() {
             layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
         })
 
-        // Fine ↔ medium ↔ bold cycle, same ladder as the reply pads.
+        // Fine ↔ medium ↔ bold cycle, same ladder as the reply pads — REMEMBERED, and NAMED.
+        //
+        // Michael, 2026-08-08 and 08-11: "persistent pen selection in handwritten annotation",
+        // "pen selection in notes won't save line thickness", "pen selection should be MORE
+        // OBVIOUS". Three complaints, one cause: this bar was built fresh every time with
+        // widthIdx hard-started at 1, so every annotation began at medium black no matter what
+        // you were using a minute ago — and the button said "width", which is the NAME OF THE
+        // SETTING rather than its value, so you had to press it to find out where you were and
+        // pressing it changed the answer.
         val widths = floatArrayOf(2.5f, 4f, 7f)
-        var widthIdx = 1
+        val widthNames = arrayOf("fine", "medium", "bold")
+        var widthIdx = com.toolsboox.ot.AnnotationPen.widthIndex(ctx).coerceIn(0, widths.size - 1)
+        pad.penWidth = widths[widthIdx]
+        pad.penColor = com.toolsboox.ot.AnnotationPen.color(ctx)
         bar.addView(TextView(ctx).apply {
-            text = "✒ width"; textSize = 14f; setTextColor(accent); setPadding(px(8), 0, px(8), 0)
-            setOnClickListener { widthIdx = (widthIdx + 1) % widths.size; pad.penWidth = widths[widthIdx] }
+            fun dress() { text = "✒ ${widthNames[widthIdx]}" }
+            dress()
+            textSize = 14f; setTextColor(accent); setPadding(px(8), 0, px(8), 0)
+            setOnClickListener {
+                widthIdx = (widthIdx + 1) % widths.size
+                pad.penWidth = widths[widthIdx]
+                com.toolsboox.ot.AnnotationPen.setWidthIndex(ctx, widthIdx)
+                dress()
+            }
         })
 
         eraserBtn = TextView(ctx).apply {
@@ -4808,7 +4837,17 @@ abstract class SurfaceFragment : ScreenFragment() {
         applyLivePrefs = {
             paint.color = colorValues[selColor]
             paint.strokeWidth = widthValues[selWidth]
+            // …and REMEMBER them, the way setPenStyle already remembered the nib. Written on the
+            // tap rather than on dismiss, because dismissal is not the moment a choice is made —
+            // and a pen chosen just before turning a page must survive the page.
+            sharedPreferences.edit()
+                .putInt("penColor", paint.color)
+                .putFloat("penStrokeWidth", paint.strokeWidth)
+                .apply()
             setPenStyle(styleValues[selStyle])
+            // The rail's pen row names the pen — re-ask it, or the label describes the pen you
+            // were holding before you changed it.
+            runCatching { rebuildActionRail(drawingRailKey) }
             val opaqueColor = Color.rgb(Color.red(paint.color), Color.green(paint.color), Color.blue(paint.color))
             provideToolbarDrawing().toolbarPen.background.setTint(
                 if (opaqueColor == Color.BLACK) Color.GRAY else opaqueColor
@@ -5009,8 +5048,15 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         paint.isAntiAlias = true
         paint.style = Paint.Style.STROKE
-        paint.color = Color.BLACK
-        paint.strokeWidth = 3.0f
+        // THE PEN IS A HABIT, NOT A SETTING. Michael, 2026-08-08: "pen thickness in notes won't
+        // change when a different thickness is selected."
+        //
+        // It did change — and then this line changed it back. `penStyle` was persisted, but width
+        // and colour never were, so every new surface reset them to 3.0 and black. Picking bold red
+        // worked exactly until you turned the page, which reads as the setting not TAKING rather
+        // than as the setting not LASTING; from the writer's side those are indistinguishable.
+        paint.color = sharedPreferences.getInt("penColor", Color.BLACK)
+        paint.strokeWidth = sharedPreferences.getFloat("penStrokeWidth", 3.0f)
 
         if (surfaceCallback == null) {
             surfaceCallback = object : SurfaceHolder.Callback {
@@ -5280,6 +5326,30 @@ abstract class SurfaceFragment : ScreenFragment() {
      * The pen's effective base stroke width: the shared preset, narrowed for
      * calligraphy (see CALLIGRAPHY_WIDTH_SCALE).
      */
+    /**
+     * What pen you are holding, in words — "Pen · fine" or "Pen · bold calligraphy".
+     *
+     * Named from the live paint rather than from the dialog's selection indices, so it stays true
+     * however the pen was changed (the dialog, a restored preference, a surface that set it
+     * directly). A label derived from the dialog would be right only while the dialog was open,
+     * which is the one time you can already see the answer.
+     */
+    protected fun penDescription(): String {
+        val w = paint.strokeWidth
+        val weight = when {
+            w <= 2.6f -> "fine"
+            w <= 4.5f -> "medium"
+            else -> "bold"
+        }
+        val nib = when (penStyle) {
+            Stroke.STYLE_CALLIGRAPHY -> " calligraphy"
+            Stroke.STYLE_FOUNTAIN -> " fountain"
+            Stroke.STYLE_MARKER -> " marker"
+            else -> ""
+        }
+        return getString(R.string.calendar_drawing_toolbar_pen) + " · " + weight + nib
+    }
+
     protected fun effectivePenWidth(): Float =
         paint.strokeWidth * (if (calligraphyMode) CALLIGRAPHY_WIDTH_SCALE else 1f)
 

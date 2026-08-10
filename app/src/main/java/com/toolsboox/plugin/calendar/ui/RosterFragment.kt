@@ -241,7 +241,10 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
         if (!isAdded) return
         // The date left the title when the strip arrived. It was in there because nothing else on
         // the screen said which day you were looking at; the almanac says it now, with dots.
-        titleView.text = "Roster"
+        // Michael, 2026-08-07: "Change Roster to 'Event Attendees'". The old name described a
+        // document (a roster is a list you hold); the new one describes the PEOPLE, which is what
+        // you actually came to this screen for.
+        titleView.text = "Event Attendees"
         loading = true
         renderNav()
         renderLoading()
@@ -343,8 +346,13 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
                 setOnClickListener {
                     RecordPrefs.setEnabled(ctx, sample.eventId, !RecordPrefs.enabled(ctx, sample.eventId))
                     paint()
+                    // Michael, 2026-08-07: "What does 'Record Prompt' mean in Roster?" — a fair
+                    // question, because the label was the name of a PREFERENCE KEY rather than of
+                    // a behaviour. It means: before this class starts, ask whether to record it
+                    // and open its notes. So the toast says that.
                     toast(if (RecordPrefs.enabled(ctx, sample.eventId))
-                        "Record prompts on for this class" else "Record prompts off")
+                        "Before this class: I'll offer to record and open its notes"
+                    else "No reminder before this class")
                 }
             }
             row.addView(bell)

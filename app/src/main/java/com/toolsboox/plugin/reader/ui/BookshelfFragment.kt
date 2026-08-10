@@ -169,10 +169,25 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
         load()
     }
 
+    /**
+     * ＋ is a door to ALL the ways of adding, not just the file picker.
+     *
+     * Michael, 2026-08-08: "OPDS in bookshelf needs access thru settings, the '+' sign, and from
+     * other doors." He is right about the principle and it is worth stating: a person who wants a
+     * book does not know yet whether it is on this device, in the catalog, or in a folder they
+     * have not pointed at. Making them pick the METHOD before they can see the options is asking
+     * them to answer a question they came here to have answered.
+     */
     private fun addBook() {
-        importBook.launch(arrayOf(
-            "application/epub+zip", "application/pdf",
-            "application/x-mobipocket-ebook", "application/zip", "audio/*", "*/*"
+        showIconMenu("Add a book", listOf(
+            "📄  From this device…" to {
+                importBook.launch(arrayOf(
+                    "application/epub+zip", "application/pdf",
+                    "application/x-mobipocket-ebook", "application/zip", "audio/*", "*/*"
+                ))
+            },
+            "🌐  From the catalog…" to { openCatalog() },
+            "🗂  Point at a folder…" to { chooseFolder() },
         ))
     }
 
@@ -180,11 +195,17 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
         runCatching { pickFolder.launch(BookshelfSource.pickIntent()) }
     }
 
+    /**
+     * The catalog, opened from the shelf.
+     *
+     * It still LIVES in the reader — one implementation of "pull a book down" — but sending
+     * someone to another screen and telling them which menu to find was not a door, it was
+     * directions. The flag makes the reader open the browser on arrival.
+     */
     private fun openCatalog() {
-        // The catalog lives in the reader, which owns the download+open path. Going there rather
-        // than duplicating the browser keeps one implementation of "pull a book down".
+        requireContext().getSharedPreferences("ledger_reader_prefs", 0).edit()
+            .putBoolean("open_catalog_on_arrival", true).apply()
         runCatching { findNavController().navigate(R.id.action_to_reader) }
-        showMessage("Catalog is on the reader's 🔧 menu.")
     }
 
     private fun queryDisplayName(uri: android.net.Uri): String? = runCatching {

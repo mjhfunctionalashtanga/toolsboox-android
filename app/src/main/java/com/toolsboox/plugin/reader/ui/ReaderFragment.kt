@@ -114,6 +114,14 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         )
     }
 
+    /** Open the catalog if the shelf asked us to on the way in — see BookshelfFragment.openCatalog. */
+    private fun consumeCatalogRequest() {
+        val prefs = requireContext().getSharedPreferences("ledger_reader_prefs", 0)
+        if (!prefs.getBoolean("open_catalog_on_arrival", false)) return
+        prefs.edit().putBoolean("open_catalog_on_arrival", false).apply()
+        binding.root.post { if (isAdded) showOpdsBrowser(null) }
+    }
+
     /**
      * Browse the OPDS catalog. [href] null is the root; a sub-catalog passes its own.
      *
@@ -443,7 +451,9 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             // same act with the shelf on someone else's machine.
             ("🌐  Catalog…" to { showOpdsBrowser(null) }) +
             // A note ABOUT the book belongs with the shelf, not with the page you happen to be on.
-            ("🖍  Note on this book…" to { composeBookNote() })
+            ("🖍  Note on this book…" to { composeBookNote() }) +
+            ("📖  " + (if (requireContext().getSharedPreferences(PREFS, 0)
+                    .getBoolean(KEY_SPREAD, false)) "One page" else "Two pages") to { toggleSpread() })
         val player = com.toolsboox.ui.plugin.LedgerPlayer
         val readingRows: List<Pair<String, () -> Unit>> = when {
             player.isSpeaking -> listOf(
@@ -545,6 +555,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
 
     override fun onResume() {
         super.onResume()
+        consumeCatalogRequest()
         (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = handler@{ up ->
             if (!readerNavPrefs().getBoolean("volume_turn", true)) return@handler false
             pageTurn(next = !up)   // volume-up = back a page, volume-down = forward
@@ -918,9 +929,30 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         val prefs = requireContext().getSharedPreferences(PREFS, 0)
         val pct = prefs.getInt(KEY_FONT, 100)
         val theme = prefs.getString(KEY_THEME, "default") ?: "default"
+        val columns = if (prefs.getBoolean(KEY_SPREAD, false)) 2 else 1
         binding.readerWeb.evaluateJavascript(
-            "window.applyReaderSettings && window.applyReaderSettings({fontSize:$pct,theme:'$theme'})", null
+            "window.applyReaderSettings && window.applyReaderSettings(" +
+                "{fontSize:$pct,theme:'$theme',columns:$columns})", null
         )
+    }
+
+    /**
+     * Two pages side by side, like an open book. Michael, 2026-08-10.
+     *
+     * The engine could always do it — foliate takes a `max-column-count` and the paginator has the
+     * spread arithmetic — so this is a toggle rather than a feature: the setting simply had no way
+     * to be reached from Android.
+     *
+     * Not automatic on rotation, deliberately. A spread is the right shape for a wide screen most
+     * of the time, but "most of the time" is not a claim worth making on someone else's behalf
+     * about the thing they read in bed. It is a choice, it persists, and it is one tap.
+     */
+    private fun toggleSpread() {
+        val prefs = requireContext().getSharedPreferences(PREFS, 0)
+        val on = !prefs.getBoolean(KEY_SPREAD, false)
+        prefs.edit().putBoolean(KEY_SPREAD, on).apply()
+        applyReaderSettings()
+        showMessage(if (on) "Two pages" else "One page")
     }
 
     /** Serve foliate assets and the current book over the same-origin host. */
@@ -1542,6 +1574,9 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         private const val KEY_BOOK = "current_book_path"
         private const val KEY_FONT = "reader_font_pct"
         private const val KEY_THEME = "reader_theme"
+
+        /** Two pages side by side. Persisted, and independent of orientation — see [toggleSpread]. */
+        private const val KEY_SPREAD = "reader_spread"
         private val THEMES = listOf("default", "sepia", "gray", "black")
         private val SHIM_JS = """
             window.webkit = window.webkit || {};
