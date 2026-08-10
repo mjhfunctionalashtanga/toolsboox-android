@@ -334,9 +334,29 @@ class TuckPanel(
     }
 
     companion object {
-        /** The tucked strip's width in dp. Upstream's collapsed toolbar uses 16; a hair slimmer
-         *  still taps fine with the back-gesture exclusion, and reads more like a divider. */
-        const val STRIP_DP = 14
+        /**
+         * The tucked strip's width in dp.
+         *
+         * Michael, 2026-08-07 and 08-10: "[the] side of screen inaccessible by 20 pixels as the
+         * screen doesn't fill" — and, asked whether the strip was dead to touch or merely empty:
+         * "visually short — it doesn't show text there."
+         *
+         * That is this number. 14dp is ~22px on the Tab X, which is exactly the band he measured
+         * off the edge of the page. On the DAY surface the rail overlays the sheet, so nothing is
+         * lost there; on the list surfaces — RSS, Notes & Tags, the Bookshelf — the gutter is a
+         * real column in a LinearLayout, so every line of text stops short of the screen by this
+         * much.
+         *
+         * Halved. A tucked rail is meant to be OUT OF THE WAY, and a strip that is out of the way
+         * should not still be holding a column of the page; 7dp still reads as the divider it is
+         * drawn to look like, and still takes a tap with the back-gesture exclusion around it.
+         *
+         * This REDUCES the loss rather than removing it. Removing it entirely means letting the
+         * content run under the strip — an overlay rather than a column — which is a change to how
+         * every list surface is laid out, and not one to make at the end of a long day without
+         * walking it first.
+         */
+        const val STRIP_DP = 7
 
         /**
          * The open rail's width from its button side and its side air — pure arithmetic, kept
