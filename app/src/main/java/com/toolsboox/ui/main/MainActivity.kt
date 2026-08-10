@@ -845,18 +845,28 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // EDGE-TO-EDGE, APP-WIDE. The window draws behind the system bars and the insets come
-        // back SELECTIVELY, because fitsSystemWindows="true" on the DrawerLayout honoured all
-        // four sides — and in landscape the navigation bar reports as a HORIZONTAL inset, so
-        // every non-ink surface kept a dead white band past the rail (Palma, 824×1648: content
-        // ended at 1558; Michael: "extra space being used for no reason"). Ink pages never
-        // showed it only because they go immersive. The listener keeps:
-        //   • top    — headers must clear the status bar (the clock stays legible);
-        //   • bottom — Boox 3-button nav is a real bottom bar; content must not slide under it
-        //              (zero in the gesture-nav case, where nothing real sits there);
-        //   • sides  — DROPPED: the rail's strip belongs AT the physical edge — that is the
-        //              whole point of the rail — and its gesture-exclusion rects are set in
-        //              view coordinates (TuckPanel), so they ride along to the new edge.
+        // EDGE-TO-EDGE, APP-WIDE. The window draws behind the system bars and the insets pad
+        // the content frame back — ALL FOUR SIDES now.
+        //
+        // The sides were DROPPED here from 1.06.22 to 1.06.49, on the bet that a transparent
+        // navigationBarColor (below) made the landscape side bar a window: the Palma's 90px
+        // landscape inset read as "a dead white band past the rail" (Michael: "extra space
+        // being used for no reason"), so the listener consumed it and let content run to the
+        // physical edge. Michael's 2026-08-10 landscape screenshot of the feeds surface is the
+        // bet losing: the Boox panel paints the navigation bar OPAQUE WHITE no matter what
+        // color the window asks for, so the freed band is a wall, not a window — a blank
+        // ~40dp column down the LEFT edge with the tucked rail's 7dp strip invisible under it
+        // and the directory pane's first ~40dp swallowed ("This feed" reading "…is feed", the
+        // radio circles and chip left-halves gone). The day page never showed it because ink
+        // surfaces go immersive (SurfaceFragment.onResume hides the bars — zero insets, truly
+        // full-bleed); the list surfaces keep the bars, so they laid out under the wall.
+        //
+        // So: a side inset the system reports is a band the system OWNS and Onyx paints —
+        // content must stop at it, exactly as it stops at the top and bottom bars. The true
+        // edge survives everywhere it is real: portrait (the bar is a bottom bar, side insets
+        // zero) and every immersive ink page. The Palma's landscape band comes back — but as
+        // an honest system bar beside complete content, not a wall over the first two letters
+        // of every row.
         // The ink surfaces' immersive dance (SurfaceFragment.onResume/onPause) rides this same
         // listener: hiding the bars dispatches zero insets, showing them pads the drawer back.
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -873,7 +883,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         // set on it lands nowhere, verified live on the Palma.
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-            binding.mainContentFrame.setPadding(0, bars.top, 0, bars.bottom)
+            binding.mainContentFrame.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             androidx.core.view.WindowInsetsCompat.CONSUMED
         }
 

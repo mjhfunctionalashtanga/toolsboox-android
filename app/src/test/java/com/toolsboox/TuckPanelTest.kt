@@ -35,4 +35,32 @@ class TuckPanelTest {
             )
         }
     }
+
+    // The overlay rule, pinned as pure arithmetic: a TUCKED gutter-hosted strip hands its whole
+    // width back to the row through a negative margin on its PAGE side — so the content cell
+    // measures as if the strip were absent and rows run to the true edge — while an OPEN rail,
+    // and every toolbar-hosted (ink) rail in either state, owes nothing and stays a real column.
+
+    @Test
+    fun `tucked gutter strip gives its width back on the page side`() {
+        val strip = (TuckPanel.STRIP_DP * density).toInt()
+        // Docked left → the page is to the right: the give-back rides the right margin.
+        assertEquals(0 to -strip, TuckPanel.overlapMargins(false, true, strip, true))
+        // Docked right → the page is to the left.
+        assertEquals(-strip to 0, TuckPanel.overlapMargins(false, true, strip, false))
+    }
+
+    @Test
+    fun `open rails and ink rails hold an honest column`() {
+        for (side in dialSteps) {
+            val open = TuckPanel.railWidth(side, (6 * density).toInt())
+            // Open: a column of icons must not lie over row text, either dock.
+            assertEquals(0 to 0, TuckPanel.overlapMargins(true, true, open, true))
+            assertEquals(0 to 0, TuckPanel.overlapMargins(true, true, open, false))
+        }
+        // Toolbar-hosted (ink) rails never overlay — the pen must end where the rail begins.
+        val strip = (TuckPanel.STRIP_DP * density).toInt()
+        assertEquals(0 to 0, TuckPanel.overlapMargins(false, false, strip, true))
+        assertEquals(0 to 0, TuckPanel.overlapMargins(false, false, strip, false))
+    }
 }

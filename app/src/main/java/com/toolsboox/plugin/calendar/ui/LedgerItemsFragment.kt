@@ -60,7 +60,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     @Inject
     lateinit var calendarPatternService: com.toolsboox.plugin.calendar.fi.CalendarPatternService
 
-    /** Reads the whole ledger as citable snippets — what the learner card draws from. */
+    /** Reads the whole ledger as citable snippets — what Prep-from-schedule draws from. */
     @Inject
     lateinit var corpusService: com.toolsboox.plugin.chat.fi.LedgerCorpusService
 
@@ -367,7 +367,11 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             attachSwipeToDelete()
             binding.emptyText.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
             mergeSiteDueCards(items)
-            showLearnerCard()
+            // The Spiral learner card used to auto-render here — one guessed thing from the
+            // corpus, full article body and all, at the foot of the tasks. Retired on Michael's
+            // screenshot and ruling (2026-08-10): a surface that guesses has no seat on the
+            // task list. Spiral's machinery survives for the surfaces that ASK it.
+            binding.learnerCard.visibility = View.GONE
         }
     }
 
@@ -1245,150 +1249,9 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     }
 
     /** Open a contact picker and link (or clear) the item's rolodex contact, then persist. */
-    // --- Writing a task by hand, and the learner card -----------------------------------------
-
-
-    /**
-     * The learner card: one thing out of your own ledger, come back around.
-     *
-     * Spiral learning — a note, a highlight, a recording you made once returns later so it can
-     * layer rather than be filed and forgotten. It sits at the foot of the tasks because that is
-     * where you already look, and it asks for nothing: no score, no streak, no penalty for
-     * ignoring it. "Again" pulls it closer, "Later" pushes it out, "Make a task" turns it into
-     * something to do. Then it's gone until its turn comes round.
-     */
-    private fun showLearnerCard() {
-        val ctx = context ?: return
-        val card = binding.learnerCard
-        card.removeAllViews()
-        card.visibility = View.GONE
-
-        lifecycleScope.launch {
-            val chosen = withContext(Dispatchers.IO) {
-                runCatching {
-                    val all = corpusService.gather(documentsRoot(), com.toolsboox.plugin.calendar.ot.Spiral.SCOPE)
-                        .filter { com.toolsboox.plugin.calendar.ot.Spiral.isSubstantial(it.text) }
-                        .let { com.toolsboox.plugin.calendar.ot.Spiral.dedupe(it) { s -> s.text } }
-
-                    // The roots feed the spiral: an object that joins two threads — one you're in
-                    // now and one you aren't — beats another member of a thread you're already
-                    // inside. That's the difference between being reminded and being connected.
-                    val threads = com.toolsboox.plugin.calendar.ot.Rhizome.threads(
-                        all.map { it.text + " " + it.title }, all.map { it.date.time })
-                    val crossings = com.toolsboox.plugin.calendar.ot.Rhizome.crossings(threads)
-                    val warmCut = System.currentTimeMillis() -
-                        java.util.concurrent.TimeUnit.DAYS.toMillis(21)
-                    val warmTerms = threads
-                        .filter { t -> t.members.any { (all.getOrNull(it)?.date?.time ?: 0L) >= warmCut } }
-                        .map { it.term }.toSet()
-                    val bonusByIndex = crossings.mapValues { (_, terms) ->
-                        com.toolsboox.plugin.calendar.ot.Rhizome.bridgeScore(terms, warmTerms)
-                    }
-                    val indexOf = all.withIndex().associate { (i, v) -> v to i }
-
-                    com.toolsboox.plugin.calendar.ot.Spiral.choose(
-                        ctx, all,
-                        textOf = { it.text + " " + it.title },
-                        dateOf = { it.date.time },
-                        keyOf = { com.toolsboox.plugin.calendar.ot.Spiral.keyOf(it.citation, it.text) },
-                        ownOf = { it.own },
-                        bonusOf = { indexOf[it]?.let { i -> bonusByIndex[i] } ?: 0.0 }
-                    )
-                }.getOrNull()
-            }
-
-            if (!isAdded || chosen == null) return@launch
-            val pick = chosen.item
-            val key = com.toolsboox.plugin.calendar.ot.Spiral.keyOf(pick.citation, pick.text)
-            val dp = resources.displayMetrics.density
-            fun px(v: Int) = (v * dp).toInt()
-
-            card.background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(0xFFFFFFFF.toInt()); setStroke(px(2), 0xFF111111.toInt()); cornerRadius = px(12).toFloat()
-            }
-            // The header says WHY this one, which is the whole difference between a spiral and a
-            // queue. "Come back around" alone is just a slow list. It used to be tappable, opening
-            // Roots — the screen that held the whole breakdown. Roots is retired, and rather than
-            // repoint the tap at some other surface that never promised to explain this card, the
-            // header is a caption again: it still says why, and it no longer offers a door.
-            card.addView(TextView(ctx).apply {
-                text = if (chosen.shared.isEmpty()) "🌀  come back around"
-                    else "🌀  you've been circling " + chosen.shared.joinToString(" · ")
-                textSize = 12f; setTextColor(0xFF666666.toInt())
-            })
-            card.addView(TextView(ctx).apply {
-                text = pick.text.take(320).trim() + if (pick.text.length > 320) "…" else ""
-                textSize = 15f; setTextColor(0xFF000000.toInt()); setPadding(0, px(6), 0, px(6))
-                setLineSpacing(0f, 1.15f)
-            })
-            card.addView(TextView(ctx).apply {
-                text = pick.citation + (if (pick.title.isNotBlank()) "  ·  " + pick.title else "")
-                textSize = 11f; setTextColor(0xFF888888.toInt())
-            })
-
-            // The rhyme: the recent thing that pulled this one back up. Showing both halves is
-            // what lets a subject LAYER instead of just recurring.
-            chosen.echo?.let { echo ->
-                card.addView(TextView(ctx).apply {
-                    text = "↳ rhymes with: " + echo.text.take(120).trim() +
-                        (if (echo.text.length > 120) "…" else "")
-                    textSize = 12f; setTextColor(0xFF444444.toInt())
-                    setPadding(px(10), px(8), 0, 0)
-                })
-            }
-
-            val actions = LinearLayout(ctx).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(0, px(8), 0, 0)
-            }
-            fun act(label: String, onTap: () -> Unit) = TextView(ctx).apply {
-                text = label; textSize = 14f; setTextColor(0xFF2F6F96.toInt())
-                setPadding(0, px(4), px(18), px(4))
-                setOnClickListener { onTap() }
-            }
-            actions.addView(act("↺ Again") {
-                com.toolsboox.plugin.calendar.ot.Spiral.mark(ctx, key, closer = true); showLearnerCard()
-            })
-            actions.addView(act("→ Later") {
-                com.toolsboox.plugin.calendar.ot.Spiral.mark(ctx, key); showLearnerCard()
-            })
-            actions.addView(act("🗒 Make a task") {
-                com.toolsboox.plugin.calendar.ot.Spiral.mark(ctx, key)
-                makeTaskFromSnippet(pick)
-            })
-            actions.addView(act("✕") {
-                com.toolsboox.plugin.calendar.ot.Spiral.retire(ctx, key); showLearnerCard()
-            })
-            card.addView(actions)
-
-            com.toolsboox.ot.ReadingSize.apply(card)
-            card.visibility = View.VISIBLE
-        }
-    }
-
-
-    /** Turn what came back around into something to do, keeping the words and where they're from. */
-    private fun makeTaskFromSnippet(pick: com.toolsboox.plugin.chat.da.CorpusSnippet) {
-        val task = LedgerItem(
-            id = "spiral-" + java.util.UUID.randomUUID().toString().lowercase(),
-            kind = LedgerItem.Kind.TASK,
-            text = pick.text.take(140).trim(),
-            date = java.util.Date(),
-            source = "spiral",
-            stage = "todo"
-        )
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    val root = documentsRoot()
-                    val day = calendarDayService.load(root, anchor, null, Locale.getDefault())
-                    day.ledgerItems.add(task)
-                    calendarDayService.save(root, anchor, day)
-                }
-            }
-            load()
-        }
-    }
+    // --- The card behind a row -----------------------------------------------------------------
+    // (The Spiral learner card that lived here retired 2026-08-10 — it guessed, and Michael's
+    // screenshot showed it swallowing the surface: full article text, twice over.)
 
     /**
      * The card behind a row.

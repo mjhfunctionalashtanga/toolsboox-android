@@ -62,8 +62,9 @@ class TuckPanel(
     private val onStateApplied: (widthPx: Int, open: Boolean) -> Unit = { _, _ -> },
     /** The rail's slot on a surface WITHOUT an upstream drawing toolbar: an empty
      *  ConstraintLayout column the host layout keeps in its own flow (first or last in a
-     *  horizontal row), so the same in-flow argument holds — the page ends where the rail
-     *  begins. Ignored when [toolbar] is present, which brings its own root. */
+     *  horizontal row). OPEN, the in-flow argument holds — the page ends where the rail
+     *  begins; TUCKED, the strip overlays the page edge instead (see `overlaysWhenTucked`
+     *  below). Ignored when [toolbar] is present, which brings its own root. */
     gutter: ConstraintLayout? = null
 ) {
 
@@ -97,6 +98,20 @@ class TuckPanel(
 
     private val root: ConstraintLayout = toolbar?.root
         ?: requireNotNull(gutter) { "a rail needs either a toolbar slot or a gutter to live in" }
+
+    /**
+     * A GUTTER-HOSTED rail (the list surfaces) stops holding a column of the page when tucked:
+     * the strip overlays the content's edge instead. The in-flow argument at the top of this
+     * file is an INK argument — the drawing surface must end where the rail begins so the pen
+     * is honest without exclude rects — and the list surfaces have no pen, so their tucked
+     * strip was paying that argument's cost (every row stopped STRIP_DP short of the screen,
+     * Michael 08-07: "side of screen inaccessible… visually short") for none of its benefit.
+     * 1.06.45 halved the cost; this removes it, per Michael's ruling. The OPEN rail stays a
+     * real column even here: open, it holds icons that must not sit over row text, and
+     * narrowing the page while chrome is out is the deal every toolbar makes. Toolbar-hosted
+     * rails (the ink pages) keep the column in both states — the pen argument is theirs.
+     */
+    private val overlaysWhenTucked = toolbar == null
 
     private val activeById = HashMap<String, ImageButton>()
 
@@ -147,6 +162,18 @@ class TuckPanel(
             startToStart = ConstraintLayout.LayoutParams.PARENT_ID
             endToEnd = ConstraintLayout.LayoutParams.PARENT_ID
         })
+
+        if (overlaysWhenTucked) {
+            // The tucked strip must DRAW and TOUCH above the content it now overlaps. In the
+            // host row the gutter stands first when docked left, and a LinearLayout paints
+            // children in order — the content would paint over the strip. A whisper of Z
+            // re-sorts both the draw pass and the touch walk (ViewGroup orders by Z since 21)
+            // without touching the child order the dock() re-parenting relies on. The outline
+            // provider goes with it, or the elevation would grow a shadow — a gray smear on
+            // an e-ink panel that only does gray by dithering.
+            root.translationZ = 1f
+            root.outlineProvider = null
+        }
 
         assertTakeover()
 
@@ -262,13 +289,33 @@ class TuckPanel(
         stripMark.visibility = if (isOpen) View.GONE else View.VISIBLE
         val width = currentWidth()
         root.layoutParams = root.layoutParams.apply { this.width = width }
+        // THE OVERLAY, in one move: a tucked gutter-hosted strip keeps its width for drawing
+        // and tapping, but a negative margin on its PAGE side hands the same width straight
+        // back to the row — the weighted content cell measures as if the strip were not there,
+        // so every list row runs to the true edge and the strip (Z-lifted in init) draws over
+        // the row's own edge padding. Open, or on a toolbar-hosted ink rail, the margins are
+        // zero and the rail is the honest in-flow column it always was. Pure arithmetic in the
+        // companion so the test can pin it without a View in sight.
+        (root.layoutParams as? ViewGroup.MarginLayoutParams)?.let { lp ->
+            val (l, r) = overlapMargins(isOpen, overlaysWhenTucked, width, sideIsLeft())
+            lp.leftMargin = l
+            lp.rightMargin = r
+        }
         // One hairline on the PAGE side only — the house divider between the gutter and the
         // paper. Drawn as a stroked rect shoved off the other three edges (negative insets clip
         // them off-screen), because a border all round would read as a floating card, and a
         // borderless gray band is exactly what read as "stray" on the upstream collapse this
         // improves on.
+        //
+        // The fill: paper-white behind the OPEN rail's icons always, but a tucked OVERLAY strip
+        // goes CLEAR — an opaque tucked strip over full-bleed content would white out the first
+        // STRIP_DP of every row, which is the very clipping this overlay exists to end. The
+        // hairline and the grip dots still draw, so the strip still reads as the divider — now
+        // a divider ON the page edge rather than a column of it. (The list rows' own start
+        // padding is 8-10dp, past the 7dp strip, so the hairline lives in whitespace the rows
+        // already keep.)
         val edged = android.graphics.drawable.GradientDrawable().apply {
-            setColor(Color.WHITE)
+            setColor(if (overlaysWhenTucked && !isOpen) Color.TRANSPARENT else Color.WHITE)
             setStroke(dp(1), 0xFF333333.toInt())
         }
         val off = dp(2)
@@ -351,12 +398,27 @@ class TuckPanel(
          * should not still be holding a column of the page; 7dp still reads as the divider it is
          * drawn to look like, and still takes a tap with the back-gesture exclusion around it.
          *
-         * This REDUCES the loss rather than removing it. Removing it entirely means letting the
-         * content run under the strip — an overlay rather than a column — which is a change to how
-         * every list surface is laid out, and not one to make at the end of a long day without
-         * walking it first.
+         * The halving REDUCED the loss; the overlay (see [overlapMargins] and the
+         * `overlaysWhenTucked` note above) now removes it on the list surfaces: content runs
+         * under the tucked strip, so this width is the strip's DRAWN-AND-TAPPED size, no longer
+         * a band held out of any page. On the ink pages the strip still holds its column — the
+         * pen-honesty argument is theirs alone.
          */
         const val STRIP_DP = 7
+
+        /**
+         * The overlay's whole arithmetic: (leftMargin, rightMargin) for the gutter in its host
+         * row. A tucked gutter-hosted strip gives its width back to the row through a negative
+         * margin on its page side — docked left, the page is to the right; docked right, to the
+         * left — so the content cell measures full-width and the strip lies over its edge. Open
+         * rails and toolbar-hosted (ink) rails owe nothing: zero margins, honest column.
+         */
+        fun overlapMargins(
+            open: Boolean, overlaysWhenTucked: Boolean, widthPx: Int, dockedLeft: Boolean
+        ): Pair<Int, Int> {
+            if (open || !overlaysWhenTucked) return 0 to 0
+            return if (dockedLeft) 0 to -widthPx else -widthPx to 0
+        }
 
         /**
          * The open rail's width from its button side and its side air — pure arithmetic, kept
