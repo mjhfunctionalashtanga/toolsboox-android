@@ -50,8 +50,11 @@ data class LedgerItem(
     /** Optional rolodex cross-reference: the [Contact.id] this task/event is assigned to / about.
      *  New field with a default → backward-compatible; the id-union merge carries it in the value. */
     var contactId: String? = null,
-    /** Kanban stage for the Boards view: "todo" | "doing" | "done" ("" = todo). New field with a
-     *  default → backward-compatible. Wire-compatible with iOS `stage`. */
+    /** Kanban stage for the Boards view: "todo" | "doing" | "waiting" | "done" ("" = todo). A
+     *  stage is a VALUE on this existing key, never a new wire key — "waiting" (Aug 2026, the
+     *  lane for work sitting on someone else) rides the same string, and any reader that doesn't
+     *  know a value folds it into To do, which is honest degradation. New field with a default →
+     *  backward-compatible. Wire-compatible with iOS `stage`. */
     var stage: String = "",
     /** Which named board this card belongs to ([Board.id]; "" = unfiled / on "All"). Wire-compatible
      *  with iOS `board`. New field with a default → backward-compatible. */

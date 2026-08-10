@@ -47,6 +47,22 @@
             android:layout_height="50dp"
             android:scaleType="fitXY"
             android:contentDescription="@string/calendar_navigator_image"/>
+        <!-- Columns mode swaps the day navigator for the board name: the board view reads the
+             whole ledger, so a date strip would promise a scoping it doesn't do. The dropdown
+             names where you are, like a directory chip. Hidden in list mode. -->
+        <Button
+            android:id="@+id/items_board"
+            android:text="All boards  ▾"
+            android:textAllCaps="false"
+            android:textColor="#000000"
+            android:textStyle="bold"
+            android:textSize="18sp"
+            android:background="@android:color/transparent"
+            android:gravity="start|center_vertical"
+            android:visibility="gone"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="wrap_content"/>
     </LinearLayout>
 
     <!-- Finger / no-pen capture: type a task or event. -->
@@ -141,6 +157,48 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"/>
+
+    <!-- The OTHER rendering of the same drawer: the swimlane board. One of this and the recycler
+         is visible at a time — "a note is a place, a board is a lens", and the ▤/☰ rail button
+         flips the lens in place. Waiting sits between Doing and Done: the lane for work that is
+         out of your hands but not out of your ledger. -->
+    <LinearLayout
+        android:id="@+id/items_columns"
+        android:orientation="horizontal"
+        android:paddingHorizontal="8dp"
+        android:visibility="gone"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <LinearLayout android:orientation="vertical" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:layout_margin="4dp" android:background="#F2F2F2" android:padding="6dp">
+            <TextView android:id="@+id/col_todo_head" android:text="TO DO" android:textColor="#666666" android:textStyle="bold" android:textSize="12sp" android:paddingBottom="4dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+            <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+                <LinearLayout android:id="@+id/col_todo_cards" android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+            </ScrollView>
+        </LinearLayout>
+
+        <LinearLayout android:orientation="vertical" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:layout_margin="4dp" android:background="#F2F2F2" android:padding="6dp">
+            <TextView android:id="@+id/col_doing_head" android:text="DOING" android:textColor="#666666" android:textStyle="bold" android:textSize="12sp" android:paddingBottom="4dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+            <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+                <LinearLayout android:id="@+id/col_doing_cards" android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+            </ScrollView>
+        </LinearLayout>
+
+        <LinearLayout android:orientation="vertical" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:layout_margin="4dp" android:background="#F2F2F2" android:padding="6dp">
+            <TextView android:id="@+id/col_waiting_head" android:text="WAITING" android:textColor="#666666" android:textStyle="bold" android:textSize="12sp" android:paddingBottom="4dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+            <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+                <LinearLayout android:id="@+id/col_waiting_cards" android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+            </ScrollView>
+        </LinearLayout>
+
+        <LinearLayout android:orientation="vertical" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:layout_margin="4dp" android:background="#F2F2F2" android:padding="6dp">
+            <TextView android:id="@+id/col_done_head" android:text="DONE" android:textColor="#666666" android:textStyle="bold" android:textSize="12sp" android:paddingBottom="4dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+            <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+                <LinearLayout android:id="@+id/col_done_cards" android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content"/>
+            </ScrollView>
+        </LinearLayout>
+    </LinearLayout>
 
     <!-- The learner card: one thing from your own ledger, come back around. -->
     <LinearLayout

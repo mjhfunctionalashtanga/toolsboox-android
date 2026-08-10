@@ -38,9 +38,18 @@ import javax.inject.Inject
 private const val BOOKING_PREFIX = "booking-"
 
 /**
- * Tasks & Events — the structured items extracted from a day's handwriting, listed per day.
- * Each row shows text or ink per the item's own toggle; tasks check off, events show their time.
- * Edits (done / display) persist back into the day JSON so they sync.
+ * Boards & Tasks — the structured items extracted from the days' handwriting, seen two ways.
+ *
+ * ONE fragment, two renderings of the same drawer: the LIST (per day, or filtered across a
+ * period; rows show text or ink per the item's own toggle, tasks check off, events show their
+ * time) and the COLUMNS (the whole ledger's tasks arranged into To do / Doing / Waiting / Done
+ * swimlanes, ‹ › moving a card between stages). The ▤/☰ rail button flips the lens IN PLACE and
+ * the choice is remembered, so the hub's one "Boards & Tasks" door lands where you left off.
+ * This used to be two fragments over one dataset routed by whichever you last used — the seam
+ * the old router's comment promised someone would close. Closed.
+ *
+ * Edits (done / stage / display) persist back into the item's own day JSON so they sync, from
+ * either lens, through the same [persist] / [deleteItems] plumbing.
  */
 @AndroidEntryPoint
 class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
@@ -68,6 +77,26 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
 
     private var anchor: LocalDate = LocalDate.now()
     private var day: CalendarDay? = null
+
+    // ── The columns lens ───────────────────────────────────────────────────────────────────────
+    // Stage order across the board. Waiting sits between Doing and Done — the lane for work that
+    // sits on someone else, which until now had nowhere to stand but "todo" (where it nagged) or
+    // "done" (where it lied). A stage VALUE, not a new wire key: an older reader that only knows
+    // todo/doing/done folds "waiting" into To do (see [colOf]), which is honest degradation.
+    private val stageOrder = listOf("todo", "doing", "waiting", "done")
+
+    /** Which lens is up: false = list, true = columns. Mirrors the remembered pref
+     *  (`ledger_tasks_view`) that used to route between two fragments and now just names a mode. */
+    private var columnsMode = false
+
+    private var selectedBoard: String? = null
+    private var boards: List<com.toolsboox.plugin.calendar.da.v2.Board> = emptyList()
+
+    // Opt-in: fold DUE-DATED Site board cards into both lenses (read-only), so Local reads as one
+    // board over both sources. Default off — zero change until turned on.
+    private var includeSite: Boolean = false
+    private fun kanbanPrefs() =
+        requireContext().getSharedPreferences("ledger_kanban", android.content.Context.MODE_PRIVATE)
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -112,9 +141,30 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         // (＋ Task / ＋ Event / ☑ Select) stays where it is — that is capture, not chrome.
         binding.itemsPill.visibility = View.GONE
         binding.ledgerButton.visibility = View.GONE
+        binding.itemsBoard.setOnClickListener { showBoardPicker() }
+        // The remembered lens has to be read BEFORE the rail dresses itself — the rail's action
+        // provider branches on it, and a rail dressed for the wrong lens offers verbs the screen
+        // doesn't have.
+        columnsMode = com.toolsboox.plugin.feeds.ui.tasksModeIsStage(requireContext())
+        // The display-mode flip. The list and the swimlane board are the SAME drawer seen two
+        // ways — "a note is a place, a board is a lens" — so the hub has one Boards & Tasks door
+        // and the choice of lens lives in here, remembered, rather than being a second row in the
+        // menu that made a view look like a place. Both lenses are this one fragment now, so the
+        // flip is a re-dress in place, not a navigation; the rail re-asks its actions and offers
+        // whichever verbs the visible lens actually has.
         setupActionRail(
             binding.itemsRail, "items",
-            actions = { listOf(
+            actions = { if (columnsMode) listOf(
+                com.toolsboox.ot.TuckPanel.Item(0, "New task", glyph = "＋") {
+                    binding.addTaskButton.performClick()
+                },
+                com.toolsboox.ot.TuckPanel.Item(0, "Boards", glyph = "▤") {
+                    showBoardPicker()
+                },
+                com.toolsboox.ot.TuckPanel.Item(0, "List", glyph = "☰") {
+                    setColumnsMode(false)
+                }
+            ) else listOf(
                 com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_up, "Page up") {
                     binding.itemsPageUp.performClick()
                 },
@@ -124,16 +174,12 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_down, "Page down") {
                     binding.itemsPageDown.performClick()
                 },
-                // The display-mode flip. This screen and the swimlane board are the SAME drawer
-                // seen two ways — "a note is a place, a board is a lens" — so the hub has one
-                // Boards & Tasks door and the choice of lens lives in here, remembered, rather than
-                // being a second row in the menu that made a view look like a place.
                 com.toolsboox.ot.TuckPanel.Item(0, "By stage", glyph = "▤") {
-                    com.toolsboox.plugin.feeds.ui.setTasksModeStage(requireContext(), true)
-                    findNavController().navigate(R.id.action_to_kanban)
+                    setColumnsMode(true)
                 }
             ) }
         )
+        applyMode()
 
         // Enter bulk-select without hunting for a long-press; the whole row then toggles.
         binding.selectButton.setOnClickListener { adapter.startEmptySelection() }
@@ -231,7 +277,13 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
 
     override fun onResume() { super.onResume(); load() }
 
+    /** Render whichever lens is up. Both stand on the [TaskWalkCache]-backed gathers, so neither
+     *  re-reads a day file that hasn't changed since the last look. */
     private fun load() {
+        if (columnsMode) loadColumns() else loadList()
+    }
+
+    private fun loadList() {
         lifecycleScope.launch {
             val root = documentsRoot()
             val period = navPeriod
@@ -316,6 +368,590 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             binding.emptyText.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
             mergeSiteDueCards(items)
             showLearnerCard()
+        }
+    }
+
+    // ── The columns lens ───────────────────────────────────────────────────────────────────────
+
+    /** Flip the lens in place: remember the choice, re-dress the chrome and the rail, re-render. */
+    private fun setColumnsMode(columns: Boolean) {
+        if (columnsMode == columns) return
+        columnsMode = columns
+        com.toolsboox.plugin.feeds.ui.setTasksModeStage(requireContext(), columns)
+        applyMode()
+        rebuildActionRail("items")
+        load()
+    }
+
+    /**
+     * Dress the chrome for the visible lens — only what differs is touched, so a flip repaints
+     * the content cell and the header, not the whole screen.
+     *
+     * The board view reads the whole ledger, so the day navigator would promise a scoping it does
+     * not do; the header shows the board name instead. Bulk-select and ＋Event are list verbs —
+     * selection lives in the recycler, and events have no lane on a board of tasks. ＋Task serves
+     * both lenses (a card born while a board is open joins that board, see [createManual]).
+     */
+    private fun applyMode() {
+        binding.itemsColumns.visibility = if (columnsMode) View.VISIBLE else View.GONE
+        binding.itemsRecycler.visibility = if (columnsMode) View.GONE else View.VISIBLE
+        binding.navigatorImageView.visibility = if (columnsMode) View.GONE else View.VISIBLE
+        binding.itemsBoard.visibility = if (columnsMode) View.VISIBLE else View.GONE
+        binding.selectButton.visibility = if (columnsMode) View.GONE else View.VISIBLE
+        binding.addEventButton.visibility = if (columnsMode) View.GONE else View.VISIBLE
+        if (columnsMode) {
+            adapter.clearSelection()
+            binding.emptyText.visibility = View.GONE
+            binding.birthdaysContainer.visibility = View.GONE
+            binding.learnerCard.visibility = View.GONE
+        }
+    }
+
+    /** The columns render: every task across the ledger, bucketed by stage, filtered by board. */
+    private fun loadColumns() {
+        includeSite = kanbanPrefs().getBoolean("include_site", false)
+        lifecycleScope.launch {
+            boards = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.ot.BoardsStore.list(requireContext())
+            }
+            updateBoardLabel()
+            val root = documentsRoot()
+            val all = withContext(Dispatchers.IO) { itemSourceDay.clear(); gatherAllTasks(root) }
+            val tasks = selectedBoard?.let { b -> all.filter { it.board == b } } ?: all
+            renderColumn(binding.colTodoCards, binding.colTodoHead, "TO DO", tasks.filter { colOf(it) == "todo" }, "todo")
+            renderColumn(binding.colDoingCards, binding.colDoingHead, "DOING", tasks.filter { colOf(it) == "doing" }, "doing")
+            renderColumn(binding.colWaitingCards, binding.colWaitingHead, "WAITING", tasks.filter { colOf(it) == "waiting" }, "waiting")
+            renderColumn(binding.colDoneCards, binding.colDoneHead, "DONE", tasks.filter { colOf(it) == "done" }.take(40), "done")
+            // Local is on screen; now fold in dated Site cards and site bookings
+            // (background, read-only, opt-in).
+            if (includeSite && selectedBoard == null) {
+                mergeSiteColumnCards()
+                mergeSiteColumnBookings()
+            }
+        }
+    }
+
+    /**
+     * Every task in the ledger — the walk the whole board stands on. Through [TaskWalkCache], so
+     * only the files that changed since the last walk are re-decoded; the decode itself stays the
+     * slim ledgerItems-only read (mirrors iOS DayLite). Each item is tagged with its source day,
+     * which is what lets every columns verb ride the list's own [persist] / [deleteItems]
+     * plumbing instead of carrying a second copy of it.
+     */
+    private fun gatherAllTasks(root: File): List<LedgerItem> {
+        val calendarRoot = File(root, "calendar")
+        if (!calendarRoot.exists()) return emptyList()
+        val out = mutableListOf<LedgerItem>()
+        calendarRoot.walkTopDown()
+            .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
+            .forEach { file ->
+                val d = fileDate(file.name) ?: return@forEach
+                val items = com.toolsboox.plugin.calendar.ot.TaskWalkCache.items(file) { f ->
+                    runCatching { calendarDayService.loadLedgerItems(f) }.getOrNull() ?: emptyList()
+                }
+                items.filter { it.kind == LedgerItem.Kind.TASK }
+                    .forEach { out.add(it); itemSourceDay[it.id] = d }
+            }
+        return out.sortedByDescending { it.date.time }
+    }
+
+    /** Which lane an item stands in. Unknown stages fold into To do — the same honest degradation
+     *  an older reader, which only knows todo/doing/done, gives a "waiting" written by this one. */
+    private fun colOf(i: LedgerItem): String = when {
+        i.done -> "done"
+        i.stage == "doing" -> "doing"
+        i.stage == "waiting" -> "waiting"
+        else -> "todo"
+    }
+
+    private fun nextStage(col: String) = stageOrder[(stageOrder.indexOf(col) + 1).coerceAtMost(stageOrder.size - 1)]
+    private fun prevStage(col: String) = stageOrder[(stageOrder.indexOf(col) - 1).coerceAtLeast(0)]
+
+    /** ‹ › — move a card one lane. Done stays the only stage that checks the box, so a card
+     *  walking through Waiting is still open everywhere the ledger asks "what is open". */
+    private fun setStage(item: LedgerItem, stage: String) {
+        item.stage = stage
+        item.done = (stage == "done")
+        persist(item)
+        load()
+    }
+
+    private fun updateBoardLabel() {
+        val name = selectedBoard?.let { id -> boards.firstOrNull { it.id == id }?.name } ?: "All boards"
+        binding.itemsBoard.text = "$name  ▾"
+    }
+
+    /**
+     * The board switcher — boards, and only boards, plus the two doors out.
+     *
+     * Its ancestor bundled eight unrelated things (source switch, a pref toggle, web push,
+     * credentials, delete) behind hand-computed base indices, so adding a row meant re-counting
+     * everyone else's. Now: "All", the boards, "＋ New board…", and "⚙ Board settings…" — the
+     * settings menu holds everything that is ABOUT the machinery rather than a place to stand.
+     * Both are (label, action) pairs the way every showIconMenu caller builds them, so no row can
+     * shift another's meaning.
+     */
+    private fun showBoardPicker() {
+        val rows = mutableListOf<Pair<String, () -> Unit>>()
+        rows += "▦  All boards" to { selectedBoard = null; load() }
+        for (b in boards) rows += "▤  ${b.name.ifBlank { "Untitled" }}" to { selectedBoard = b.id; load() }
+        rows += "🗓  Prep from schedule…" to { showSchedulePrep() }
+        rows += "＋  New board…" to { promptNewBoard() }
+        rows += "⚙  Board settings…" to { showBoardSettings() }
+        showIconMenu("Boards · Local", rows)
+    }
+
+    /**
+     * Schedule-occasioned prep — the first pass of the direction that retired the guessing
+     * surfaces: the occasion is the day, the trigger is the schedule, and the assembly is
+     * gathers over his own material ([com.toolsboox.plugin.calendar.ot.SchedulePrep]). Nothing
+     * lands without an accept: the machine PROPOSES cards with their pulled assets in view,
+     * in the same preview-then-commit grammar the lasso flow blessed.
+     */
+    private fun showSchedulePrep() {
+        showIconMenu("Prep from schedule", listOf(
+            "☀  Today" to { runSchedulePrep(java.time.LocalDate.now()) },
+            "→  Tomorrow" to { runSchedulePrep(java.time.LocalDate.now().plusDays(1)) },
+        ))
+    }
+
+    private fun runSchedulePrep(day: java.time.LocalDate) {
+        val appCtx = requireContext().applicationContext
+        val root = documentsRoot()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val proposals = withContext(Dispatchers.IO) {
+                runCatching {
+                    com.toolsboox.plugin.calendar.ot.SchedulePrep.assemble(
+                        appCtx, calendarDayService, corpusService, root, day)
+                }.getOrNull().orEmpty()
+            }
+            if (!isAdded) return@launch
+            if (proposals.isEmpty()) {
+                showMessage(
+                    "No appointment on ${day.format(java.time.format.DateTimeFormatter.ofPattern("MMM d"))} " +
+                        "names someone in your rolodex — nothing to prep.", binding.root)
+                return@launch
+            }
+            showPrepProposals(day, proposals)
+        }
+    }
+
+    /** The proposals, assets in view, each with its own checkbox — accept mints ONLY the checked. */
+    private fun showPrepProposals(
+        day: java.time.LocalDate,
+        proposals: List<com.toolsboox.plugin.calendar.ot.SchedulePrep.Proposal>
+    ) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val col = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(px(18), px(8), px(18), px(8))
+        }
+        val checks = mutableListOf<Pair<android.widget.CheckBox, com.toolsboox.plugin.calendar.ot.SchedulePrep.Proposal>>()
+        for (p in proposals) {
+            val cb = android.widget.CheckBox(ctx).apply {
+                isChecked = true
+                text = p.cardText
+                textSize = 15f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setPadding(0, px(10), 0, px(2))
+            }
+            col.addView(cb)
+            checks += cb to p
+            for (a in p.assets) {
+                col.addView(android.widget.TextView(ctx).apply {
+                    text = a
+                    textSize = 13f
+                    setTextColor(0xFF555555.toInt())
+                    setPadding(px(28), px(1), 0, px(1))
+                })
+            }
+        }
+        // Guarded: an unchecked-through stack of proposals is a decision half-made — a stray
+        // touch outside must not throw it away.
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("🗓  Prep for " + day.format(java.time.format.DateTimeFormatter.ofPattern("EEE · MMM d")))
+            .setView(android.widget.ScrollView(ctx).apply { addView(col) })
+            .setPositiveButton("Accept") { _, _ ->
+                acceptPrep(day, checks.filter { it.first.isChecked }.map { it.second })
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create())
+    }
+
+    /** Mint the accepted proposals as cards on the prep day — stage todo, the open board, the
+     *  contact attached, source="prep" so their lineage stays legible. */
+    private fun acceptPrep(
+        day: java.time.LocalDate,
+        accepted: List<com.toolsboox.plugin.calendar.ot.SchedulePrep.Proposal>
+    ) {
+        if (accepted.isEmpty()) return
+        val appCtx = requireContext().applicationContext
+        val root = documentsRoot()
+        val boardNow = if (columnsMode) selectedBoard ?: "" else ""
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val loc = java.util.Locale.getDefault()
+                    val cd = calendarDayService.load(root, day, null, loc)
+                    val due = java.util.Date(
+                        day.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli())
+                    val minted = accepted.map { p ->
+                        LedgerItem(
+                            id = "li-${java.util.UUID.randomUUID()}", kind = LedgerItem.Kind.TASK,
+                            text = p.cardText, date = due, source = "prep",
+                            stage = "todo", board = boardNow, contactId = p.contactId
+                        )
+                    }
+                    cd.ledgerItems.addAll(minted)
+                    calendarDayService.save(root, day, cd)
+                    minted.forEach {
+                        runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(appCtx, it) }
+                    }
+                }
+            }
+            if (!isAdded) return@launch
+            showMessage("${accepted.size} prep card${if (accepted.size == 1) "" else "s"} on the board.", binding.root)
+            load()
+        }
+    }
+
+    /** The machinery behind the boards: the Local ⇄ Site switch, the include-site fold, the web
+     *  bridge, and the one destructive verb — everything the switcher used to bury. */
+    private fun showBoardSettings() {
+        val ctx = requireContext()
+        val rows = mutableListOf<Pair<String, () -> Unit>>()
+        rows += "🌐  Switch to Site boards" to {
+            findNavController().navigate(R.id.action_to_site_boards)
+        }
+        rows += ((if (includeSite) "☑" else "☐") + "  Include dated Site cards") to {
+            includeSite = !includeSite
+            kanbanPrefs().edit().putBoolean("include_site", includeSite).apply()
+            load()
+        }
+        rows += "⬆  Send board to web" to { sendBoardToWeb() }
+        rows += "🌐  Web bridge…" to { promptBridgeSettings() }
+        if (selectedBoard != null) rows += "🗑  Delete this board" to {
+            selectedBoard?.let { com.toolsboox.plugin.calendar.ot.BoardsStore.delete(ctx, it) }
+            selectedBoard = null
+            load()
+        }
+        showIconMenu("Board settings", rows)
+    }
+
+    private fun promptNewBoard() {
+        val ctx = requireContext()
+        val input = android.widget.EditText(ctx).apply { hint = "Board name"; setSingleLine() }
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0); addView(input) }
+        // Guarded: a name being typed is work — a stray touch outside must not throw it away.
+        showGuardedModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("New board")
+            .setView(box)
+            .setPositiveButton("Create") { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isNotBlank()) {
+                    selectedBoard = com.toolsboox.plugin.calendar.ot.BoardsStore.add(ctx, name).id
+                    load()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .create())
+    }
+
+    /** Boards-site + Community-site credentials for the web bridge (mirrors iOS BridgeSettingsView). */
+    private fun promptBridgeSettings() {
+        val ctx = requireContext()
+        val c = com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx)
+        val cc = com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(ctx)
+        fun field(hint: String, value: String, password: Boolean = false) = android.widget.EditText(ctx).apply {
+            this.hint = hint; setText(value); setSingleLine()
+            if (password) inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        fun header(text: String) = TextView(ctx).apply {
+            this.text = text; textSize = 13f; setTextColor(0xFF666666.toInt())
+            setPadding(0, (12 * resources.displayMetrics.density).toInt(), 0, 0)
+        }
+        val site = field("https://theyoga.club", c.site)
+        val user = field("WP username", c.user)
+        val pass = field("Application password", c.pass, password = true)
+        val board = field("FluentBoards board id", if (c.boardId > 0) c.boardId.toString() else "")
+        val cSite = field("https://ashtanga.tech", cc.site)
+        val cUser = field("WP username", cc.user)
+        val cPass = field("Application password", cc.pass, password = true)
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0)
+            addView(header("BOARDS SITE (FluentBoards)"))
+            addView(site); addView(user); addView(pass); addView(board)
+            addView(header("COMMUNITY SITE (FluentCommunity)"))
+            addView(cSite); addView(cUser); addView(cPass)
+        }
+        val scroll = android.widget.ScrollView(ctx).apply { addView(box) }
+        // Guarded: typed credentials are work — a stray touch outside must not throw them away.
+        showGuardedModal(AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Web bridge")
+            .setView(scroll)
+            .setPositiveButton("Save") { _, _ ->
+                com.toolsboox.plugin.calendar.nw.LedgerWebBridge.saveConfig(
+                    ctx,
+                    com.toolsboox.plugin.calendar.nw.LedgerWebBridge.Config(
+                        site.text.toString(), user.text.toString(), pass.text.toString(),
+                        board.text.toString().trim().toIntOrNull() ?: 0
+                    )
+                )
+                com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.saveConfig(
+                    ctx,
+                    com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.Config(
+                        cSite.text.toString(), cUser.text.toString(), cPass.text.toString()
+                    )
+                )
+            }
+            .setNegativeButton("Cancel", null)
+            .create())
+    }
+
+    /** Push one card to the web board; toast the result. */
+    private fun sendToWeb(item: LedgerItem) {
+        lifecycleScope.launch {
+            val status = withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.nw.LedgerWebBridge.pushCard(requireContext(), item)
+            }
+            android.widget.Toast.makeText(requireContext(), status, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Push every open card on the visible board (selected board, or all). */
+    private fun sendBoardToWeb() {
+        val ctx = requireContext()
+        lifecycleScope.launch {
+            val all = withContext(Dispatchers.IO) { gatherAllTasks(documentsRoot()) }
+            val toSend = (selectedBoard?.let { b -> all.filter { it.board == b } } ?: all).filter { !it.done }
+            if (toSend.isEmpty()) {
+                android.widget.Toast.makeText(ctx, "Nothing to send", android.widget.Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val status = withContext(Dispatchers.IO) {
+                var sent = 0; var dup = 0; var failed = 0; var firstError = ""
+                for (item in toSend) {
+                    when (val s = com.toolsboox.plugin.calendar.nw.LedgerWebBridge.pushCard(ctx, item)) {
+                        "→ web board" -> sent++
+                        "Already on the web board" -> dup++
+                        else -> { failed++; if (firstError.isEmpty()) firstError = s }
+                    }
+                }
+                if (failed > 0) firstError else "$sent sent" + if (dup > 0) ", $dup already there" else ""
+            }
+            android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** A pinned gram's face when display == INK — through the shared crop resolution
+     *  ([com.toolsboox.ot.LedgerMedia.resolveCropBitmap]): `cropRef` first, then base64 in
+     *  `crop`, then `crop` as an OCR filename. Null when the item has no such face. */
+    private fun cropBitmap(item: LedgerItem): Bitmap? {
+        if (item.display != LedgerItem.Display.INK) return null
+        val ctx = context ?: return null
+        return com.toolsboox.ot.LedgerMedia.resolveCropBitmap(ctx, item.crop, item.cropRef)
+    }
+
+    private fun renderColumn(container: LinearLayout, head: TextView, title: String, items: List<LedgerItem>, col: String) {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        head.text = "$title · ${items.size}"
+        container.removeAllViews()
+        for (item in items) {
+            val card = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(px(8), px(8), px(8), px(8))
+                setBackgroundColor(0xFFFFFFFF.toInt())
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    .apply { setMargins(0, 0, 0, px(8)) }
+            }
+            // A gram pinned from Pickings rides its PNG as base64 in `crop` (display == INK). Show it.
+            cropBitmap(item)?.let { bmp ->
+                card.addView(android.widget.ImageView(ctx).apply {
+                    setImageBitmap(bmp)
+                    adjustViewBounds = true
+                    maxHeight = px(120)
+                    scaleType = android.widget.ImageView.ScaleType.FIT_START
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                        .apply { setMargins(0, 0, 0, px(6)) }
+                })
+            }
+            card.addView(TextView(ctx).apply {
+                text = item.text; textSize = 13f; setTextColor(0xFF000000.toInt())
+                if (item.done) paintFlags = paintFlags or android.graphics.Paint.STRIKE_THRU_TEXT_FLAG
+            })
+            // Contact + time chip (iOS parity): who it's for, when it's due.
+            val chipContact = item.contactId?.let { ContactStore.get(ctx, it) }
+            val chip = listOfNotNull(
+                chipContact?.name?.ifBlank { "Unnamed" }?.let { "👤 $it" },
+                item.time?.takeIf { it.isNotBlank() }?.let { "· $it" }
+            ).joinToString("  ")
+            if (chip.isNotBlank()) card.addView(TextView(ctx).apply {
+                text = chip; textSize = 11f; setTextColor(0xFF666666.toInt()); setPadding(0, px(3), 0, 0)
+            })
+            val row = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL; setPadding(0, px(6), 0, 0)
+            }
+            fun glyph(g: String, size: Float, onTap: () -> Unit) = TextView(ctx).apply {
+                text = g; textSize = size; setTextColor(0xFF2F6F96.toInt()); setPadding(px(8), 0, px(8), 0)
+                setOnClickListener { onTap() }
+            }
+            fun spacer() = android.widget.Space(ctx).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) }
+            if (col != "todo") row.addView(glyph("‹", 20f) { setStage(item, prevStage(col)) })
+            row.addView(spacer())
+            row.addView(glyph("↗", 15f) { openItemDay(item) })
+            row.addView(spacer())
+            if (col != "done") row.addView(glyph("›", 20f) { setStage(item, nextStage(col)) })
+            card.addView(row)
+            // Long-press a card for everything the list could do to it — the SAME verbs, through
+            // the same functions, which is the point of the merge: a board you cannot correct or
+            // delete from is a board that only fills up.
+            card.setOnLongClickListener {
+                showIconMenu(item.text.ifBlank { "Card" }.take(80), listOf(
+                    "✎  Edit the words…" to { editWords(item) },
+                    "⁂  Its rhizome" to { showRhizome(item) },
+                    "🔎  Ask about this" to { askAboutItem(item) },
+                    "🎓  Educate me" to { educateFromItem(item) },
+                    "⬆  Send to web board" to { sendToWeb(item) },
+                    "🗑  Delete" to { confirmDeleteCard(item) }
+                ))
+                true
+            }
+            container.addView(card)
+        }
+    }
+
+    /** Deleting a card is not undoable, so it asks — and says which one it means. The delete
+     *  itself is the list's own ([deleteItems]): tombstone + on-page face + remote, one path. */
+    private fun confirmDeleteCard(item: LedgerItem) {
+        AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+            .setTitle("Delete this card?")
+            .setMessage(item.text.ifBlank { "(handwritten)" })
+            .setPositiveButton("Delete") { _, _ -> deleteItems(listOf(item)) }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** ↗ — the card's own day page. */
+    private fun openItemDay(item: LedgerItem) {
+        val ld = itemSourceDay[item.id]
+            ?: item.date.toInstant().atZone(ZoneId.of("UTC")).toLocalDate()
+        com.toolsboox.plugin.calendar.CalendarNavigator.toDayPage(this, ld, CalendarDay.DEFAULT_STYLE)
+    }
+
+    /** Fetch DUE-DATED Site board cards and append them (read-only) into the same columns, so the
+     *  Local board reads as one board over both sources. Local always renders first; this never
+     *  blocks it and fails silently (empty) when the bridge is off or unreachable. */
+    private fun mergeSiteColumnCards() {
+        val ctx = requireContext()
+        lifecycleScope.launch {
+            val cards = withContext(Dispatchers.IO) {
+                if (!com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).ready) emptyList()
+                else com.toolsboox.plugin.calendar.nw.LedgerBoards.dueCards(ctx)   // server-filtered + bucketed
+            }
+            if (!isAdded || cards.isEmpty()) return@launch
+            fun place(bucket: String, container: LinearLayout, head: TextView, title: String) {
+                val mine = cards.filter { it.bucket == bucket }
+                if (mine.isEmpty()) return
+                for (c in mine) container.addView(siteCardView(c))
+                head.text = "$title · ${(head.text.toString().substringAfterLast("· ").trim().toIntOrNull() ?: 0) + mine.size}"
+            }
+            place("todo", binding.colTodoCards, binding.colTodoHead, "TO DO")
+            place("doing", binding.colDoingCards, binding.colDoingHead, "DOING")
+            place("done", binding.colDoneCards, binding.colDoneHead, "DONE")
+        }
+    }
+
+    /** Fetch upcoming site bookings and drop them into the same columns. A booking already
+     *  arrives bucketed (ahead of you → todo, under way → doing, settled → done), so it needs no
+     *  translation to sit beside a card: both are dated objects with a state. Read-only here —
+     *  the writes live in the booking sheet a tap away. */
+    private fun mergeSiteColumnBookings() {
+        val ctx = requireContext()
+        lifecycleScope.launch {
+            val bookings = withContext(Dispatchers.IO) {
+                if (!com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).ready) emptyList()
+                else com.toolsboox.plugin.calendar.nw.LedgerBooking.bookings(ctx, limit = 60)
+            }
+            if (!isAdded || bookings.isEmpty()) return@launch
+            fun place(bucket: String, container: LinearLayout, head: TextView, title: String) {
+                val mine = bookings.filter { it.bucket == bucket }
+                if (mine.isEmpty()) return
+                for (b in mine) container.addView(siteBookingView(b))
+                head.text = "$title · ${(head.text.toString().substringAfterLast("· ").trim().toIntOrNull() ?: 0) + mine.size}"
+            }
+            place("todo", binding.colTodoCards, binding.colTodoHead, "TO DO")
+            place("doing", binding.colDoingCards, binding.colDoingHead, "DOING")
+            place("done", binding.colDoneCards, binding.colDoneHead, "DONE")
+        }
+    }
+
+    /** A read-only booking in a Local column: 🕘 tag + when/who; tap opens the booking sheet. */
+    private fun siteBookingView(b: com.toolsboox.plugin.calendar.nw.SiteBooking): View {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val at = bookingLocalTime(b.startTime)
+        return LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(px(8), px(8), px(8), px(8))
+            setBackgroundColor(0xFFF3F0EA.toInt())   // faint warm tint = "a booking, read-only"
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .apply { setMargins(0, 0, 0, px(8)) }
+            addView(TextView(ctx).apply {
+                text = "🕘  ${b.title}"; textSize = 13f; setTextColor(0xFF000000.toInt())
+            })
+            addView(TextView(ctx).apply {
+                text = listOfNotNull(
+                    at?.let { (d, hm) ->
+                        java.time.format.DateTimeFormatter.ofPattern("EEE d MMM").format(d) + "  " + hm
+                    },
+                    b.person.ifBlank { null },
+                    when (b.ongoing) {
+                        "happening_now" -> "● now"
+                        "starting_soon" -> "● soon"
+                        else -> null
+                    },
+                    if (b.status == "cancelled" || b.status == "rejected") "cancelled" else null,
+                ).joinToString("   ·   ")
+                textSize = 11f; setTextColor(0xFF8A6D3B.toInt()); setPadding(0, px(3), 0, 0)
+            })
+            setOnClickListener { BookingSheet.open(this@LedgerItemsFragment, b.id) }
+        }
+    }
+
+    /** A read-only Site card in a Local column: 🌐 tag + due chip; tap opens Site Boards. */
+    private fun siteCardView(c: com.toolsboox.plugin.calendar.nw.DueCard): View {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        return LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(px(8), px(8), px(8), px(8))
+            setBackgroundColor(0xFFEFF4F7.toInt())   // faint blue tint = "from the site, read-only"
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .apply { setMargins(0, 0, 0, px(8)) }
+            addView(TextView(ctx).apply {
+                text = "🌐  ${c.title}"; textSize = 13f; setTextColor(0xFF000000.toInt())
+            })
+            addView(TextView(ctx).apply {
+                text = listOfNotNull(
+                    c.dueAt?.take(10)?.let { "📅 $it" },
+                    c.board.ifBlank { null },
+                    c.commentCount.takeIf { it > 0 }?.let { "💬 $it" }
+                ).joinToString("   ·   ")
+                textSize = 11f; setTextColor(0xFF2F6F96.toInt()); setPadding(0, px(3), 0, 0)
+            })
+            setOnClickListener {
+                findNavController().navigate(
+                    R.id.action_to_site_boards,
+                    androidx.core.os.bundleOf("site_board_id" to c.boardId)
+                )
+            }
         }
     }
 
@@ -414,7 +1050,9 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     /** Walk the day files in [start, end] and collect their ledger items (+ strokes), tagging sources.
      *  Two passes: a SLIM decode collects the items (skipping the heavy stroke arrays entirely),
      *  then only the days whose items actually reference ink get the full decode. This is what
-     *  keeps week/month/quarter scopes fast — most items are text-faced and never need strokes. */
+     *  keeps week/month/quarter scopes fast — most items are text-faced and never need strokes.
+     *  The slim pass rides [com.toolsboox.plugin.calendar.ot.TaskWalkCache] besides, so a file
+     *  unchanged since the last walk (this lens's or the board's) isn't even re-read. */
     private fun gatherRange(root: File, start: LocalDate, end: LocalDate, strokes: HashMap<String, Stroke>): List<LedgerItem> {
         val cal = File(root, "calendar")
         if (!cal.exists()) return emptyList()
@@ -425,7 +1063,10 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             .forEach { file ->
                 val d = fileDate(file.name) ?: return@forEach
                 if (d.isBefore(start) || d.isAfter(end)) return@forEach
-                val items = runCatching { calendarDayService.loadLedgerItems(file) }.getOrNull() ?: return@forEach
+                val items = com.toolsboox.plugin.calendar.ot.TaskWalkCache.items(file) { f ->
+                    runCatching { calendarDayService.loadLedgerItems(f) }.getOrNull() ?: emptyList()
+                }
+                if (items.isEmpty()) return@forEach
                 items.forEach { out.add(it); itemSourceDay[it.id] = d }
                 if (items.any { it.strokeIds.isNotEmpty() }) needInk.add(file)
             }
@@ -471,7 +1112,9 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 chosenTime = "%02d:%02d".format(h, m); timeButton.text = "🕓  $chosenTime"
             }, now.hour, now.minute, true).show()
         }
-        var due = anchor
+        // The list adds to the day it is looking at; the board has no day on screen, so it adds to
+        // today — the same promise its old ＋New made.
+        var due = if (columnsMode) LocalDate.now() else anchor
         val baseTitle = if (isEvent) "New event" else "New task"
         val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(baseTitle)
@@ -505,11 +1148,18 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     private fun createManual(kind: LedgerItem.Kind, text: String, due: LocalDate, time: String? = null) {
         val t = text.trim()
         if (t.isEmpty()) return
-        if (day == null) return   // nothing has been read yet; there is no page to add to
+        // In list mode, nothing read yet means there is no page to add to. The columns lens reads
+        // the whole ledger and never sets `day`, so it skips the guard and files by [due].
+        if (!columnsMode && day == null) return
         val dueDate = Date(due.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli())
         val item = LedgerItem(
             id = "li-${java.util.UUID.randomUUID()}", kind = kind, text = t, date = dueDate,
-            time = if (kind == LedgerItem.Kind.EVENT) time else null, source = "manual"
+            time = if (kind == LedgerItem.Kind.EVENT) time else null, source = "manual",
+            // A card born while a board is open belongs to that board — the columns lens's old
+            // ＋New made this promise and the one add door keeps it. The list has no board on
+            // screen, so a list add stays unfiled, as it always was.
+            stage = if (kind == LedgerItem.Kind.TASK) "todo" else "",
+            board = if (columnsMode) selectedBoard ?: "" else ""
         )
         val appCtx = requireContext().applicationContext
         lifecycleScope.launch {
@@ -522,15 +1172,18 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                     // the same family of defect as looking a row's file up from the anchor
                     // (see `persist` / `deleteItems`): once a window is on screen, "the day" the
                     // surface is showing and "the day file" a write belongs in are two things.
+                    // The columns lens has no anchor on screen at all, so it files by [due] —
+                    // today unless the Date button said otherwise.
                     val root = documentsRoot()
-                    val cd = calendarDayService.load(root, anchor, null, Locale.getDefault())
+                    val fileDay = if (columnsMode) due else anchor
+                    val cd = calendarDayService.load(root, fileDay, null, Locale.getDefault())
                     cd.ledgerItems.add(item)
                     // Tasks also land on the day page (a text box in a free Tasks row); the
                     // scrollable list holds every task regardless, so overflow past the 16 rows
                     // still shows there.
                     if (kind == LedgerItem.Kind.TASK)
                         com.toolsboox.plugin.calendar.ot.LedgerTaskCarryOver.placeTypedTask(cd, t, appCtx)
-                    calendarDayService.save(root, anchor, cd)
+                    calendarDayService.save(root, fileDay, cd)
                 }.onFailure { Timber.w(it, "ledger items: manual save failed") }
                 com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(appCtx, item)
                 com.toolsboox.plugin.calendar.nw.LedgerEventSync.pushEvent(appCtx, item)

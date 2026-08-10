@@ -197,7 +197,13 @@ class LedgerItemAdapter(
         holder.text.visibility = if (showText) View.VISIBLE else View.GONE
         holder.ink.visibility = if (showText) View.GONE else View.VISIBLE
         if (showText) {
-            holder.text.text = e.text
+            // A stage the row would otherwise hide gets said out loud. In the columns lens a
+            // stage is a lane you can see; here a waiting task would read exactly like one that
+            // is yours to do next, and the whole point of Waiting is that it is not. Only the
+            // stages that change the answer to "is this on me?" earn a chip — todo is the
+            // default and done already strikes through.
+            val chip = if (isTask && !e.done && e.stage == "waiting") "   ·   ⧖ waiting" else ""
+            holder.text.text = e.text + chip
             holder.text.paintFlags =
                 if (isTask && e.done) holder.text.paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
                 else holder.text.paintFlags and Paint.STRIKE_THRU_TEXT_FLAG.inv()

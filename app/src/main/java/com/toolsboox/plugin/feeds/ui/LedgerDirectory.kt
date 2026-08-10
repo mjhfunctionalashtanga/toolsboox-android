@@ -37,8 +37,7 @@ fun ledgerDirectoryFolders(
         is FeedsFragment, is FeedArticleFragment,
         is com.toolsboox.plugin.mail.ui.MailComposeFragment -> "Incoming"
         is com.toolsboox.plugin.calendar.ui.RolodexFragment,
-        is com.toolsboox.plugin.calendar.ui.LedgerItemsFragment,
-        is com.toolsboox.plugin.calendar.ui.KanbanFragment -> "Desk"
+        is com.toolsboox.plugin.calendar.ui.LedgerItemsFragment -> "Desk"
         // Quick Wins and Missed Connections are the two reflective surfaces that survived the
         // garden; they call Daily home beside Gratitude and Self Executive.
         is com.toolsboox.plugin.calendar.ui.QuickWinsFragment,
@@ -348,8 +347,9 @@ fun ledgerDirectoryFolders(
         // 260 of them belonging to no board at all and 239 sitting in stage "todo". A separate
         // Boards door was a second front on a drawer that is almost entirely one pile. So the kanban
         // is a DISPLAY MODE of Tasks now (list <-> by stage) rather than its own hub row, and this
-        // row opens whichever mode you last used. Nothing of the kanban's rendering was deleted —
-        // it was re-homed. See [openBoardsAndTasks].
+        // row opens whichever mode you last used — the surface itself reads the remembered lens on
+        // arrival (see [TASKS_MODE_PREFS]). Nothing of the kanban's rendering was deleted — it was
+        // re-homed into the one fragment.
         //
         // ROSTER comes up out of the Contacts fold. It was tucked in there because the IA named no
         // home for it and a sub-fold kept the door alive at the nearest true place; it has a home
@@ -366,7 +366,7 @@ fun ledgerDirectoryFolders(
         // his sites now lives.
         ScreenFragment.Folder("🗒", "Desk", listOf(
             "👤  Contacts" to { nav.navigate(R.id.action_to_rolodex) },
-            "☑  Boards & Tasks" to { openBoardsAndTasks(fragment.requireContext(), nav) },
+            "☑  Boards & Tasks" to { nav.navigate(R.id.action_to_ledger_items) },
             "🎟  Event Attendees" to { nav.navigate(R.id.action_to_roster) },
             "🕘  Booking" to { showBookingPicker(fragment) }
         ), expanded = home == "Desk"),
@@ -773,18 +773,20 @@ private fun bookingDetail(b: com.toolsboox.plugin.calendar.nw.SiteBooking): Stri
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Where "Boards & Tasks" goes: the list, or the by-stage board, whichever you were last looking at.
+ * Which lens "Boards & Tasks" opens on: the list, or the by-stage board, whichever you were last
+ * looking at.
  *
  * Michael's reasoning is the whole design: *a note is a place, a board is a lens*. A board is not a
  * sibling of the task list, it is the task list seen through stage — so it cannot honestly be a
  * second door, and the hub no longer offers one. What used to be two rows ("Tasks & Events" and
  * "Boards · Local") is one row whose destination is a REMEMBERED VIEW.
  *
- * The two renderings still live in two fragments, because merging six hundred lines of swimlane
- * drawing into six hundred lines of list drawing is a refactor and not an information-architecture
- * change. That is a seam, not a door: from the hub there is one Boards & Tasks, and inside it the
- * ▤/☰ button in the rail flips the view and records the choice here. Whoever finally merges them
- * deletes this function and nothing else changes.
+ * The two renderings used to live in two fragments, and a router here sent the hub's one row to
+ * whichever you'd used last — a seam, its comment said, that whoever finally merged them would
+ * delete. Merged: both lenses are [com.toolsboox.plugin.calendar.ui.LedgerItemsFragment] now, the
+ * router is gone, and the pref that used to pick a FRAGMENT names a RENDER MODE the surface reads
+ * on arrival and writes on every ▤/☰ flip. Same key, same values, so the choice a device
+ * remembered from before the merge still lands where it always did.
  */
 const val TASKS_MODE_PREFS = "ledger_tasks_view"
 const val TASKS_MODE_KEY = "mode"
@@ -796,11 +798,6 @@ fun tasksModeIsStage(context: android.content.Context): Boolean =
 fun setTasksModeStage(context: android.content.Context, stage: Boolean) {
     context.getSharedPreferences(TASKS_MODE_PREFS, 0).edit()
         .putString(TASKS_MODE_KEY, if (stage) TASKS_MODE_STAGE else "list").apply()
-}
-
-fun openBoardsAndTasks(context: android.content.Context, nav: androidx.navigation.NavController) {
-    if (tasksModeIsStage(context)) nav.navigate(R.id.action_to_kanban)
-    else nav.navigate(R.id.action_to_ledger_items)
 }
 
 /** Open one of the active site's forward-facing Vue apps in the persistent-session WebView. */

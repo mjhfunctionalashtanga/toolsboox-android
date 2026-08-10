@@ -145,9 +145,14 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             openBoard?.let { loadBoard(it) }
         }
         upButton.setOnClickListener { showList() }
-        // Tap the title at the board-list level to flip to the Local board (Local ⇄ Site).
+        // Tap the title at the board-list level to flip to the Local board (Local ⇄ Site). The
+        // Local board is the merged Boards & Tasks surface now; asking for its columns lens on
+        // the way over is what keeps this flip board-to-board rather than board-to-list.
         titleView.setOnClickListener {
-            if (openBoard == null) NavHostFragment.findNavController(this).navigate(com.toolsboox.R.id.action_to_kanban)
+            if (openBoard == null) {
+                com.toolsboox.plugin.feeds.ui.setTasksModeStage(requireContext(), true)
+                NavHostFragment.findNavController(this).navigate(com.toolsboox.R.id.action_to_ledger_items)
+            }
         }
         // The header's verb buttons retire into the rail: covers and refresh ride as icons,
         // Close goes entirely (it only popped the back stack, which the system back gesture

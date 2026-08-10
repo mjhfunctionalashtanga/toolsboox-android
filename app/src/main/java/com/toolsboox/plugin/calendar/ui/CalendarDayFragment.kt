@@ -2722,9 +2722,7 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         val siblings = buildList {
             add(GoItem("📰", "Incoming") { findNavController().navigate(R.id.action_to_feeds) })
             add(GoItem("🪴", "Daily") { CalendarNavigator.toDayNote(this@CalendarDayFragment, LocalDate.now(), "gratitude") })
-            add(GoItem("🗒", "Desk") {
-                com.toolsboox.plugin.feeds.ui.openBoardsAndTasks(requireContext(), findNavController())
-            })
+            add(GoItem("🗒", "Desk") { findNavController().navigate(R.id.action_to_ledger_items) })
             add(GoItem("📚", "Bookshelf") { findNavController().navigate(R.id.action_to_reader) })
             add(GoItem("💬", "Ask") { findNavController().navigate(R.id.action_to_ledger_chat) })
             add(GoItem("🕘", "Log") {
