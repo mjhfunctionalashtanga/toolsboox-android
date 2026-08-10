@@ -4249,10 +4249,12 @@ abstract class SurfaceFragment : ScreenFragment() {
         // you were using a minute ago — and the button said "width", which is the NAME OF THE
         // SETTING rather than its value, so you had to press it to find out where you were and
         // pressing it changed the answer.
+        // Design units → view px, the same density/2.5 the pads' other geometry wears —
+        // unscaled, "fine" was a sub-pixel hairline that anti-aliased to grey mush.
         val widths = floatArrayOf(2.5f, 4f, 7f)
         val widthNames = arrayOf("fine", "medium", "bold")
         var widthIdx = com.toolsboox.ot.AnnotationPen.widthIndex(ctx).coerceIn(0, widths.size - 1)
-        pad.penWidth = widths[widthIdx]
+        pad.penWidth = widths[widthIdx] * dp / 2.5f
         pad.penColor = com.toolsboox.ot.AnnotationPen.color(ctx)
         bar.addView(TextView(ctx).apply {
             fun dress() { text = "✒ ${widthNames[widthIdx]}" }
@@ -4260,7 +4262,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             textSize = 14f; setTextColor(accent); setPadding(px(8), 0, px(8), 0)
             setOnClickListener {
                 widthIdx = (widthIdx + 1) % widths.size
-                pad.penWidth = widths[widthIdx]
+                pad.penWidth = widths[widthIdx] * dp / 2.5f
                 com.toolsboox.ot.AnnotationPen.setWidthIndex(ctx, widthIdx)
                 dress()
             }
@@ -4353,9 +4355,11 @@ abstract class SurfaceFragment : ScreenFragment() {
                         mutableListOf(PointF(event.x, event.y)), penColor, penWidth
                     ).also { strokes.add(it) }
                 }
+                // Every batched sample, smoothed — one point per dispatched event with straight
+                // lineTo segments is the "sloppy pen": see [com.toolsboox.ot.InkSmoothing].
                 MotionEvent.ACTION_MOVE -> current?.let {
-                    it.path.lineTo(event.x, event.y)
-                    it.points.add(PointF(event.x, event.y))
+                    com.toolsboox.ot.InkSmoothing.appendMotionF(event, it.points)
+                    com.toolsboox.ot.InkSmoothing.rebuildF(it.points, it.path)
                 }
                 // CANCEL keeps the ink too — same rule as the page surface: what was
                 // laid down stays laid down; only the capture state resets.

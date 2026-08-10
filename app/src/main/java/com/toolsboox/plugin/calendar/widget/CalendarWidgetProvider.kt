@@ -31,6 +31,8 @@ open class CalendarWidgetProvider : AppWidgetProvider() {
             broadcastUpdate(context, DailyPileWidgetProvider::class.java)
             broadcastUpdate(context, TaskListWidgetProvider::class.java)
             broadcastUpdate(context, AllStarsWidgetProvider::class.java)
+            broadcastUpdate(context, BlogWidgetProvider::class.java)
+            broadcastUpdate(context, RosterWidgetProvider::class.java)
         }
 
         private fun broadcastUpdate(context: Context, cls: Class<*>) {

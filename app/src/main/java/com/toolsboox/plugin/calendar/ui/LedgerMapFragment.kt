@@ -13,7 +13,6 @@ import com.toolsboox.ot.MindMap
 import com.toolsboox.ot.MapPersona
 import com.toolsboox.ot.Markmap
 import com.toolsboox.ot.MindMapView
-import com.toolsboox.plugin.calendar.CalendarNavigator
 import com.toolsboox.plugin.calendar.da.v2.Connection
 import com.toolsboox.plugin.calendar.ot.ConnectionStore
 import com.toolsboox.plugin.calendar.ot.GramComposer
@@ -71,6 +70,9 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
 
         /** The immediate state while the ledger is read — the surface must never look dead. */
         private const val WEAVING = "Weaving the map…"
+
+        /** An ISO day wherever it appears in a ledger address. */
+        private val DATE_IN_URI = Regex("\\d{4}-\\d{2}-\\d{2}")
     }
 
     @Inject
@@ -86,8 +88,11 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
 
     private lateinit var binding: FragmentLedgerMapBinding
     private lateinit var map: MindMapView
-    private var navBar: CalendarNavBarHost? = null
-    private var anchor: java.time.LocalDate = java.time.LocalDate.now()
+    private var navBar: SemanticNavBar? = null
+
+    /** Which picture the surface is currently drawing — what a filter change has to re-run. */
+    private enum class Road { CONNECTIONS, WEAVE, SEEDS, PAGE, OUTLINE }
+    private var road = Road.CONNECTIONS
 
     private var edges: List<Connection> = emptyList()
     private var adjacency: Map<String, List<String>> = emptyMap()
@@ -109,13 +114,13 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this))
         }
 
-        // The almanac strip, as on Write and Synthesize. The map is the whole graph, not one day,
-        // so the date is a place to leave from: step to a day and open it, or tap a period to
-        // jump into the calendar. The picture itself does not change with the anchor.
-        navBar = CalendarNavBarHost(requireContext(), binding.navigatorImageView, this,
-            onStepDay = { d -> CalendarNavigator.toDayPage(
-                this, d, com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE) })
-        renderNav()
+        // The almanac strip FILTERS the picture in place, as on Missed Connections: a period tap
+        // scopes the map to what was connected/woven/planted then, the carets step the period, and
+        // tapping the focal period again brings the whole graph back. It used to be a place to
+        // LEAVE from (tap a week, land in the calendar), which read as a filter that did nothing.
+        navBar = SemanticNavBar(this, binding.navigatorImageView,
+            calendarDayService, calendarPatternService,
+            onFilter = { _, _ -> if (isAdded) refilter() }) { documentsRoot() }
         binding.mapClose.setOnClickListener {
             if (trail.isEmpty()) findNavController().popBackStack()
             else { focus = trail.removeLast(); render() }
@@ -171,10 +176,11 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
      * immediately, so the screen is never silently dead while a big ledger is read.
      */
     private fun openMap(wanted: String?) {
+        road = Road.CONNECTIONS
         binding.mapSubject.text = WEAVING
         val appCtx = requireContext().applicationContext
         lifecycleScope.launch {
-            val conn = withContext(Dispatchers.IO) { buildConnectionGraph(appCtx) }
+            val conn = withContext(Dispatchers.IO) { buildConnectionGraph(appCtx, navBar?.window()) }
             if (!isAdded) return@launch
             if (conn.adjacency.keys.size >= MIN_CONNECTION_NODES) {
                 applyConnections(conn)
@@ -182,6 +188,24 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
                 render()
             } else {
                 showWeave(initialFocus = wanted)
+            }
+        }
+    }
+
+    /**
+     * The filter changed — re-run whichever road is on screen with the new window. The two
+     * pictures that CARRY no dates (a typed/asked outline, one page's pieces) can't be filtered,
+     * and saying so beats a strip that goes focal over a picture that ignores it.
+     */
+    private fun refilter() {
+        when (road) {
+            Road.CONNECTIONS -> showConnections()
+            Road.WEAVE -> showWeave()
+            Road.SEEDS -> showSeeds()
+            Road.PAGE, Road.OUTLINE -> if (navBar?.window() != null) {
+                showMessage(
+                    "This picture isn't dated — the filter applies on the connections, " +
+                        "word-rhizome and seeds roads.", binding.root)
             }
         }
     }
@@ -206,6 +230,7 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
      * suddenly visible, and the odd one out is suddenly obvious.
      */
     private fun loadPageGraph(dateStr: String, pageKey: String) {
+        road = Road.PAGE
         val date = runCatching { java.time.LocalDate.parse(dateStr) }.getOrNull() ?: return
         val ctx = requireContext()
         val day = runCatching {
@@ -252,21 +277,6 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         focus = center
     }
 
-    /** Draw the strip for the anchor day. */
-    private fun renderNav() {
-        lifecycleScope.launch {
-            val root = documentsRoot()
-            val loc = java.util.Locale.getDefault()
-            val (day, pat) = withContext(Dispatchers.IO) {
-                val cd = runCatching { calendarDayService.load(root, anchor, null, loc) }.getOrNull()
-                    ?: com.toolsboox.plugin.calendar.da.v2.CalendarDay(
-                        anchor.year, anchor.monthValue, anchor.dayOfMonth, startHour = null)
-                cd to runCatching { calendarPatternService.load(root, anchor, loc) }.getOrNull()
-            }
-            if (isAdded) pat?.let { navBar?.render(day, it) }
-        }
-    }
-
     /** One built connection graph — pure data, so the build can run on any dispatcher. */
     private data class ConnGraph(
         val edges: List<Connection>,
@@ -274,8 +284,38 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         val labels: Map<String, String>
     )
 
-    private fun buildConnectionGraph(ctx: android.content.Context): ConnGraph {
+    /** The first ISO date an address carries, if any — `ledger://2026-08-10/...` names its day. */
+    private fun uriDay(uri: String): java.time.LocalDate? {
+        val m = DATE_IN_URI.find(uri) ?: return null
+        return runCatching { java.time.LocalDate.parse(m.value) }.getOrNull()
+    }
+
+    /**
+     * Does this edge belong to the [window]? By the day its page ends name when they name one —
+     * "July's material" means pages dated July, not edges OCR happened to re-mint in July — and
+     * by the edge's own stamps otherwise, so a contact↔task edge made in the window still shows.
+     */
+    private fun inWindow(e: Connection, window: Pair<java.time.LocalDate, java.time.LocalDate>): Boolean {
+        val (start, end) = window
+        val fromDay = uriDay(e.from)
+        val toDay = uriDay(e.to)
+        fun dayIn(d: java.time.LocalDate?) = d != null && !d.isBefore(start) && d.isBefore(end)
+        if (dayIn(fromDay) || dayIn(toDay)) return true
+        // Only fall back to the stamps when neither end is dated — a dated page OUTSIDE the
+        // window must not ride back in on the day its edge was recorded.
+        if (fromDay != null || toDay != null) return false
+        val zone = java.time.ZoneId.systemDefault()
+        val startMs = start.atStartOfDay(zone).toInstant().toEpochMilli()
+        val endMs = end.atStartOfDay(zone).toInstant().toEpochMilli()
+        return e.created in startMs until endMs || e.updated in startMs until endMs
+    }
+
+    private fun buildConnectionGraph(
+        ctx: android.content.Context,
+        window: Pair<java.time.LocalDate, java.time.LocalDate>? = null
+    ): ConnGraph {
         val edges = ConnectionStore.loadAll(ctx).filter { !it.isDeleted }
+            .let { all -> if (window == null) all else all.filter { inWindow(it, window) } }
 
         val adj = HashMap<String, MutableList<String>>()
         val names = HashMap<String, String>()
@@ -303,7 +343,7 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         // heft (its degree = the pages it tags). The ONE relation the connection store does not hold
         // is tag↔tag: two tags that share a page. We derive it cheaply and add it so the tag web is
         // visible — a light edge between #ashtanga and #backbends when they keep landing together.
-        val cooc = runCatching { LedgerTags.coOccurrences(ctx) }.getOrNull().orEmpty()
+        val cooc = runCatching { LedgerTags.coOccurrences(ctx, window) }.getOrNull().orEmpty()
         val shownCooc = cooc.take(MAX_TAG_COOCCURRENCE_EDGES)
         if (cooc.size > shownCooc.size) {
             Timber.i("Map: %d tag co-occurrence edges, drawing hottest %d", cooc.size, shownCooc.size)
@@ -335,11 +375,15 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
 
     /** The "My connections" road: load off-main, then draw from the busiest corner. */
     private fun showConnections() {
+        road = Road.CONNECTIONS
         binding.mapSubject.text = WEAVING
         val appCtx = requireContext().applicationContext
+        val win = navBar?.window()
         lifecycleScope.launch {
-            val g = withContext(Dispatchers.IO) { buildConnectionGraph(appCtx) }
+            val g = withContext(Dispatchers.IO) { buildConnectionGraph(appCtx, win) }
             if (!isAdded) return@launch
+            // Walked to another road, or stepped the filter again, while this built — stand down.
+            if (road != Road.CONNECTIONS || win != navBar?.window()) return@launch
             applyConnections(g)
             trail.clear()
             focus = openingFocus()
@@ -357,6 +401,26 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
      * only when the ledger actually changed, so reopening is instant and never re-scans decades.
      */
     private fun showWeave(initialFocus: String? = null) {
+        road = Road.WEAVE
+        // A windowed weave bypasses the session cache — the cache holds the WHOLE ledger's weave,
+        // and the corpus walk underneath is mtime-cached on disk, so a scoped re-weave is cheap.
+        val win = navBar?.window()
+        if (win != null) {
+            binding.mapSubject.text = WEAVING
+            val root = documentsRoot()
+            lifecycleScope.launch {
+                val woven = withContext(Dispatchers.IO) {
+                    runCatching {
+                        com.toolsboox.plugin.calendar.ot.LedgerMapWeave.build(corpusService, root, win)
+                    }.getOrNull()
+                } ?: com.toolsboox.plugin.calendar.ot.LedgerMapWeave.EMPTY
+                if (!isAdded) return@launch
+                if (road != Road.WEAVE || win != navBar?.window()) return@launch
+                applyWeave(woven, initialFocus)
+                render()
+            }
+            return
+        }
         val weaveCache = com.toolsboox.plugin.calendar.ot.LedgerMapWeave.Cache
         val today = java.time.LocalDate.now()
         val held = weaveCache.weave?.takeIf { weaveCache.day == today && !it.isEmpty }
@@ -377,7 +441,9 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             weaveCache.day = today
             weaveCache.weave = fresh
             // Only repaint if the surface is still showing (or waiting for) THIS weave — the
-            // person may have walked to My connections or an outline while the ledger was read.
+            // person may have walked to My connections or an outline while the ledger was read,
+            // or scoped the weave to a window (a windowed weave must not be stomped by the whole).
+            if (road != Road.WEAVE || navBar?.window() != null) return@launch
             val stillOnWeave = weave === held || (weave == null && adjacency.isEmpty())
             if (!stillOnWeave) return@launch
             // A cached paint the re-build agrees with stays put — no flash for nothing.
@@ -405,18 +471,24 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
      * but the bed itself, which is why it is the only thing [nodeHoldMenu] has to guard.
      */
     private fun showSeeds() {
+        road = Road.SEEDS
         binding.mapSubject.text = WEAVING
         val appCtx = requireContext().applicationContext
+        val win = navBar?.window()
         lifecycleScope.launch {
-            val bed = withContext(Dispatchers.IO) { buildSeedBed(appCtx) }
+            val bed = withContext(Dispatchers.IO) { buildSeedBed(appCtx, win) }
             if (!isAdded) return@launch
+            if (road != Road.SEEDS || win != navBar?.window()) return@launch
             if (bed.adjacency.isEmpty()) {
                 // The picture you had stays on screen; only the refusal is new information. A road
                 // asked for BY NAME is the only one that can come back empty and mean something —
                 // the ordinary empty-ledger case is already worded properly by render(), but asking
                 // for Seeds on a ledger with no hashtags deserves to be told why.
                 render()
-                showMessage("No seeds yet — write a #hashtag on a page and it plants here.", binding.root)
+                val period = navBar?.periodLabel()
+                showMessage(
+                    if (period != null) "No seeds planted in $period — tap the period again to see them all."
+                    else "No seeds yet — write a #hashtag on a page and it plants here.", binding.root)
                 return@launch
             }
             applyConnections(bed)
@@ -435,8 +507,17 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
      * the bed), so a tag written on nine pages draws heavier than one written on two — sized by
      * occurrence count, which is what the ring is supposed to say.
      */
-    private fun buildSeedBed(ctx: android.content.Context): ConnGraph {
+    private fun buildSeedBed(
+        ctx: android.content.Context,
+        window: Pair<java.time.LocalDate, java.time.LocalDate>? = null
+    ): ConnGraph {
+        // Under a filter a seed shows only where it landed IN the window, and a seed that never
+        // landed there drops out of the bed entirely — planted-elsewhere is not planted-here.
+        fun windowed(occs: List<Triple<java.time.LocalDate, String, android.graphics.RectF?>>) =
+            if (window == null) occs
+            else occs.filter { !it.first.isBefore(window.first) && it.first.isBefore(window.second) }
         val infos = runCatching { LedgerTags.list(ctx) }.getOrNull().orEmpty()
+            .map { it.copy(occurrences = windowed(it.occurrences)) }
             .filter { it.occurrences.isNotEmpty() }
         if (infos.isEmpty()) return ConnGraph(emptyList(), emptyMap(), emptyMap())
 
@@ -498,22 +579,33 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
 
     private fun render() {
         val w = weave
+        val period = navBar?.periodLabel()
         if (adjacency.isEmpty() || focus.isBlank()) {
             map.setGraph(emptyList())
             // "Nothing is connected yet" is only honest when there is genuinely nothing — no
-            // edges AND an empty corpus. A ledger with material but no recurring words yet gets
-            // the truthful version instead.
-            binding.mapSubject.text =
-                if (w != null && !w.corpusIsEmpty)
+            // edges AND an empty corpus. A filtered period that came up empty is a different,
+            // ordinary kind of nothing and has to say WHICH period; and a ledger with material
+            // but no recurring words yet gets the truthful version instead.
+            binding.mapSubject.text = when {
+                period != null -> "Nothing on the map for $period."
+                w != null && !w.corpusIsEmpty ->
                     "Nothing has come back often enough to weave yet — this fills in as the ledger does."
-                else getString(R.string.map_empty)
-            binding.mapHint.text = getString(R.string.map_hint)
+                else -> getString(R.string.map_empty)
+            }
+            binding.mapHint.text =
+                if (period != null)
+                    "The carets step to the next period; tapping the period again brings back everything."
+                else getString(R.string.map_hint)
             return
         }
         binding.mapSubject.text = labels[focus] ?: LedgerUri.describe(focus)
-        // The weave announces its window on the hint line — a capped map says what it was woven
-        // from rather than silently truncating 24 years to a picture.
-        binding.mapHint.text = w?.subtitle()?.takeIf { it.isNotBlank() } ?: getString(R.string.map_hint)
+        // The hint line is the provenance line: the active filter when there is one (the picture
+        // is no longer the whole ledger, and must say so), else the weave announces its window —
+        // a capped map says what it was woven from rather than silently truncating 24 years.
+        binding.mapHint.text = when {
+            period != null -> "Filtered to $period — tap the period again for everything."
+            else -> w?.subtitle()?.takeIf { it.isNotBlank() } ?: getString(R.string.map_hint)
+        }
         // Each node's weight rides along so the view can size boxes by it, the way the iOS Map
         // sizes its discs — connection count for drawn edges, thread heat for the weave. A busy
         // node should LOOK load-bearing.
@@ -723,6 +815,7 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
 
     /** Draw a markdown outline instead of the connection graph. */
     private fun showOutline(markdown: String) {
+        road = Road.OUTLINE
         val nodes = Markmap.parse(markdown)
         val root = Markmap.root(nodes)
         if (root == null) { showMessage(getString(R.string.map_nothing_to_map), binding.root); return }

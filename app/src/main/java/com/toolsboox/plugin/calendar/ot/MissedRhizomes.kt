@@ -43,6 +43,11 @@ object MissedRhizomes {
         root: File,
         minScore: Double = 0.60,
         topN: Int = 30,
+        // The almanac filter's `[start, end)`. Scoping DISCOVERY, not just the rendered list,
+        // is the point: the candidate cap below used to be cut before any date was consulted,
+        // so filtering to June could only ever sieve finds that happened to be picked already —
+        // June's actual material never made the pool.
+        window: Pair<LocalDate, LocalDate>? = null,
     ): List<Find> {
         fun strip(html: String): String = HtmlText.toPlain(html)
         // What you genuinely walked past: cached, still UNREAD, never starred — deduped across views.
@@ -88,7 +93,18 @@ object MissedRhizomes {
             }
         }
         if (unsurfaced.isEmpty()) return emptyList()
-        val entries = unsurfaced.take(150)
+        // Inside the window when there is one — an unknown date is not a date outside the period,
+        // so the undated ride along (the same rule the surface's own render applies). Then the
+        // newest of what qualifies, NOT the first 150 in cache-file order: the pool the scorer
+        // sees should be the most recent things you walked past, deterministically.
+        val entries = unsurfaced
+            .filter { e ->
+                window == null || e.published == null ||
+                    (!e.published.isBefore(window.first) && e.published.isBefore(window.second))
+            }
+            .sortedByDescending { it.published ?: LocalDate.MIN }
+            .take(150)
+        if (entries.isEmpty()) return emptyList()
 
         // Everything you've kept: the roots corpus (books/feeds/planner/annotations engaged with).
         val roots = corpusService.gather(root, Spiral.SCOPE)

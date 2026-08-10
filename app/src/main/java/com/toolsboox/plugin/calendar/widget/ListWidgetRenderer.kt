@@ -328,6 +328,22 @@ object ListWidgetRenderer {
         }
     }
 
+    /**
+     * ✍ Blog widget: a DOOR, not a window — posting is a live WordPress session and nothing about
+     * it is cached on disk, so the honest face is the labelled door itself rather than a stale
+     * list pretending to be fresh. Same header/empty-row grammar as the data widgets, so the door
+     * still looks like it belongs to the set.
+     */
+    fun renderPublish(context: Context, widthDp: Int, heightDp: Int): Bitmap =
+        draw(context, "✍ Blog · Schedule", null, emptyList(),
+            "Tap to write or schedule a post.", widthDp, heightDp)
+
+    /** 🎟 Event Attendees widget: the same door shape — the roster is live FluentBooking data a
+     *  widget process must never fetch, and there is no on-disk copy to show. */
+    fun renderRoster(context: Context, widthDp: Int, heightDp: Int): Bitmap =
+        draw(context, "🎟 Event Attendees", null, emptyList(),
+            "Tap to open today's attendees.", widthDp, heightDp)
+
     // ---- Drawing ----
 
     private fun draw(

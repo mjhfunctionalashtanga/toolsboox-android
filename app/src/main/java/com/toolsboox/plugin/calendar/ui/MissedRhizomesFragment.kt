@@ -80,10 +80,12 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         column = view.findViewById(R.id.semantic_column)
         scroll = view.findViewById(R.id.semantic_scroll)
         // The strip FILTERS the finds in place — a period tap scopes to what was published then,
-        // the carets step it, and nothing about a date ever navigates away from here.
+        // the carets step it, and nothing about a date ever navigates away from here. It re-runs
+        // DISCOVERY, not just the rendered list: discovery caps its candidate pool, so a window
+        // that only sieved the already-picked finds could never surface what June actually held.
         navBar = SemanticNavBar(this, view.findViewById(R.id.semantic_navigator),
             calendarDayService, calendarPatternService,
-            onFilter = { _, _ -> if (isAdded) render() }) { documentsRoot() }
+            onFilter = { _, _ -> if (isAdded) load() }) { documentsRoot() }
         // The header ☰ and Close retire into the rail — ☰ Hub is the same door, and Close only
         // repeated the system back gesture. No other chrome here: Hub · ⇄ · ✕.
         view.findViewById<android.widget.ImageButton>(R.id.semantic_hub_button).visibility = View.GONE
@@ -102,14 +104,18 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         val ctx = context ?: return
         column.removeAllViews()
         column.addView(hint("Listening for what you missed…"))
+        val win = navBar?.window()
         // The view's scope: the discovery exists only to fill this column, so back-navigation
         // cancels it instead of ghost-rendering into a dead view.
         viewLifecycleOwner.lifecycleScope.launch {
             val found = withContext(Dispatchers.IO) {
-                runCatching { MissedRhizomes.discover(ctx, corpusService, documentsRoot()) }
+                runCatching { MissedRhizomes.discover(ctx, corpusService, documentsRoot(), window = win) }
                     .getOrNull() ?: emptyList()
             }
             if (!isAdded) return@launch
+            // The filter moved again while this ran — a slower, staler discovery must not land
+            // over the one the newer window kicked off.
+            if (win != navBar?.window()) return@launch
             finds = found
             render()
         }

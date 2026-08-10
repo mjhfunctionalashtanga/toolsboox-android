@@ -162,6 +162,34 @@
         </receiver>
 
         <receiver
+                android:name=".plugin.calendar.widget.BlogWidgetProvider"
+                android:label="@string/widget_blog_label"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <action android:name="com.toolsboox.widget.ACTION_REFRESH"/>
+            </intent-filter>
+
+            <meta-data
+                    android:name="android.appwidget.provider"
+                    android:resource="@xml/blog_widget_info"/>
+        </receiver>
+
+        <receiver
+                android:name=".plugin.calendar.widget.RosterWidgetProvider"
+                android:label="@string/widget_roster_label"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <action android:name="com.toolsboox.widget.ACTION_REFRESH"/>
+            </intent-filter>
+
+            <meta-data
+                    android:name="android.appwidget.provider"
+                    android:resource="@xml/roster_widget_info"/>
+        </receiver>
+
+        <receiver
                 android:name=".plugin.calendar.widget.FeedWidgetProvider"
                 android:label="@string/widget_feed_label"
                 android:exported="true">

@@ -92,6 +92,10 @@ object FeedNoteGram {
             avNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl,
                 Attachment.Kind.VIDEO, captureAv, logEvent)
         })
+        items.add("🖼  Picture" to {
+            photoNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl,
+                captureAv, logEvent)
+        })
         items.add("🔎  Ask about this" to {
             // selection = null means "the whole article"; the bridge goes straight to the Ask
             // chat — this chooser stays THE menu, no layered dialogs behind its rows.
@@ -378,6 +382,75 @@ object FeedNoteGram {
             }.apply { isDaemon = true }.start()
         }
     }
+
+    // --- 🖼 Picture note (take or upload) ------------------------------------------------------
+
+    /**
+     * 🖼 Take or upload a picture, then place it as a photo card — the image sibling of [avNote].
+     *
+     * A photo cannot ride [AvGrams]: that path files the blob into `avGrams` and places its
+     * POSTER, and a photo's poster IS the photo ([AvPoster] deliberately has no PHOTO face). So
+     * the attachment the capture machinery saved becomes a [photoCard] and places exactly like
+     * the held-image photo gram — same paper face, same date·source footer, same inbox.
+     */
+    private fun photoNote(
+        fragment: ScreenFragment, service: CalendarDayService, root: File, sel: String,
+        articleTitle: String, feedTitle: String, articleUrl: String,
+        captureAv: (Attachment.Kind, (Attachment) -> Unit) -> Unit,
+        logEvent: (String?, String?) -> Unit
+    ) {
+        val ctx = fragment.requireContext().applicationContext
+        captureAv(Attachment.Kind.PHOTO) { att ->
+            // Only once the picture is real: an abandoned camera shouldn't leave a Log line.
+            if (sel.isNotBlank()) logEvent(sel, null)
+            val foot = footer(articleTitle, feedTitle)
+            Thread {
+                val blob = File(com.toolsboox.ot.LedgerPaths.attachmentsDir(ctx), att.filename)
+                val photo = decodeLocal(blob)
+                if (photo == null) {
+                    runCatching {
+                        fragment.requireActivity().runOnUiThread {
+                            runCatching {
+                                com.google.android.material.snackbar.Snackbar.make(
+                                    fragment.requireView(), "Couldn't read that picture.",
+                                    com.google.android.material.snackbar.Snackbar.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                    return@Thread
+                }
+                val dest = lastDestination(ctx)
+                val ok = runCatching {
+                    PickingsPlacement.place(
+                        service, root, photoCard(photo, foot), LocalDate.now(), dest.key,
+                        sourceLink = articleUrl,
+                        sourceLabel = label(articleTitle, feedTitle), sourceFeed = feedTitle,
+                        intakeKind = dest.kind
+                    )
+                }.isSuccess
+                if (ok) offerTrip(fragment, dest.key, dest.name)
+            }.apply { isDaemon = true }.start()
+        }
+    }
+
+    /** Decode a local capture, downsampled so the long edge is ≤1024 px — [fetchImage]'s twin for
+     *  a file the camera or gallery already landed in the attachments dir. */
+    private fun decodeLocal(file: File): Bitmap? = runCatching {
+        if (!file.exists()) return@runCatching null
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(file.path, bounds)
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 1024) sample *= 2
+        val bmp = android.graphics.BitmapFactory.decodeFile(file.path,
+            android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+            ?: return@runCatching null
+        val longest = maxOf(bmp.width, bmp.height)
+        if (longest <= 1024) bmp else {
+            val r = 1024f / longest
+            Bitmap.createScaledBitmap(bmp,
+                (bmp.width * r).toInt().coerceAtLeast(1), (bmp.height * r).toInt().coerceAtLeast(1), true)
+        }
+    }.getOrNull()
 
     // --- ⁂ Photo gram (hold on a picture) ------------------------------------------------------
 

@@ -44,7 +44,11 @@ class InkPadView(context: Context) : View(context) {
     private var current: Path? = null
 
     var penColor: Int = Color.BLACK
-    var penWidth: Float = 4f
+
+    /** View-px. The [WIDTHS] ladder is in design units (drawn at the Boox's ~2.5 density), so
+     *  the default scales like the rest of the pad's geometry — unscaled it was a hairline that
+     *  anti-aliased to grey mush on a dense screen. */
+    var penWidth: Float = 4f * resources.displayMetrics.density / 2.5f
 
     /** Calligraphy nib: strokes lay down a broad 45° edge instead of a round point — the same
      *  ballpoint-vs-calligraphy choice the page pen holds, emulated with offset passes because
@@ -126,9 +130,14 @@ class InkPadView(context: Context) : View(context) {
                     ops.add(Op.Ink(Stroke(it, penColor, penWidth, calligraphyMode)
                         .apply { points.add(event.x to event.y) }))
                 }
+            // Every batched sample, smoothed — one point per dispatched event with straight
+            // lineTo segments is the "sloppy pen": see [InkSmoothing].
             MotionEvent.ACTION_MOVE -> {
-                current?.lineTo(event.x, event.y)
-                (ops.lastOrNull() as? Op.Ink)?.stroke?.points?.add(event.x to event.y)
+                val s = if (current != null) (ops.lastOrNull() as? Op.Ink)?.stroke else null
+                if (s != null) {
+                    InkSmoothing.appendMotion(event, s.points)
+                    InkSmoothing.rebuild(s.points, s.path)
+                }
             }
             MotionEvent.ACTION_UP -> current = null
         }
@@ -348,7 +357,8 @@ class InkPadView(context: Context) : View(context) {
             var widthIdx = 1
             bar.addView(android.widget.TextView(context).apply {
                 text = "✒"; textSize = 16f; setTextColor(ACCENT); setPadding(px(6), 0, px(4), 0)
-                setOnClickListener { widthIdx = (widthIdx + 1) % WIDTHS.size; pad.penWidth = WIDTHS[widthIdx] }
+                // Design units → view px, the same density/2.5 the pad's other geometry wears.
+                setOnClickListener { widthIdx = (widthIdx + 1) % WIDTHS.size; pad.penWidth = WIDTHS[widthIdx] * dp / 2.5f }
             })
 
             // 🖋 the calligraphy nib — a mode, not a one-shot, so it stays down until tapped off.

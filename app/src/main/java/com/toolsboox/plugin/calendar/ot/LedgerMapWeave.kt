@@ -88,15 +88,31 @@ object LedgerMapWeave {
      * threads hottest-first (as [Rhizome.threads] returns them), crossings newest-first — so the
      * same ledger draws the same picture every time.
      */
-    fun build(corpusService: LedgerCorpusService, rootPath: File): Weave {
+    fun build(
+        corpusService: LedgerCorpusService,
+        rootPath: File,
+        window: Pair<java.time.LocalDate, java.time.LocalDate>? = null
+    ): Weave {
         val gathered = corpusService.gather(rootPath, Spiral.SCOPE)
             .filter { Spiral.isSubstantial(it.text) }
             .let { list -> Spiral.dedupe(list) { it.text } }
         if (gathered.isEmpty()) return EMPTY
 
+        // The almanac filter: weave only what was written in the window (`[start, end)`), while
+        // totalCorpus keeps counting the whole gather — corpusIsEmpty means the LEDGER is empty,
+        // and a scoped weave must not borrow that claim for one quiet month.
+        val scoped = if (window == null) gathered else {
+            val zone = java.time.ZoneId.systemDefault()
+            gathered.filter {
+                val d = it.date.toInstant().atZone(zone).toLocalDate()
+                !d.isBefore(window.first) && d.isBefore(window.second)
+            }
+        }
+        if (scoped.isEmpty()) return EMPTY.copy(totalCorpus = gathered.size)
+
         val all =
-            if (gathered.size > MAX_WOVEN) gathered.sortedByDescending { it.date.time }.take(MAX_WOVEN)
-            else gathered
+            if (scoped.size > MAX_WOVEN) scoped.sortedByDescending { it.date.time }.take(MAX_WOVEN)
+            else scoped
         val threads = Rhizome.threads(all.map { it.text + " " + it.title }, all.map { it.date.time })
         if (threads.isEmpty()) return EMPTY.copy(totalCorpus = gathered.size)
         val crossings = Rhizome.crossings(threads)

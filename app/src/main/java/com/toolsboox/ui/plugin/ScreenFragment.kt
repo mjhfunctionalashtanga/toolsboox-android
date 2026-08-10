@@ -878,7 +878,12 @@ abstract class ScreenFragment : Fragment() {
         when (kind) {
             Attachment.Kind.AUDIO -> requestVoiceRecording()
             Attachment.Kind.VIDEO -> launchAnnVideo()
-            Attachment.Kind.PHOTO -> launchAnnCamera()
+            // "Picture" is one medium with two doors, and the caller only chose the medium —
+            // take-or-upload is a question nobody has answered yet, not a repeat of one.
+            Attachment.Kind.PHOTO -> showIconMenu(getString(R.string.reader_capture_title), listOf(
+                getString(R.string.reader_capture_photo) to { launchAnnCamera() },
+                getString(R.string.reader_capture_upload) to { annGalleryLauncher.launch("image/*") }
+            ))
         }
     }
 

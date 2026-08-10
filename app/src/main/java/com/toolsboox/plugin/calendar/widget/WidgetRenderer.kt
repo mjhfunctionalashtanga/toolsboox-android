@@ -438,17 +438,20 @@ object WidgetRenderer {
             paint.color = stroke.color
             paint.strokeWidth = stroke.strokeWidth
 
+            // Quadratic Béziers through the segment midpoints, the page surface's construction.
+            // The old quadTo(pre, pt) put the control ON the segment start, which degenerates to
+            // a straight polyline — the documented source of the jagged look on sparse samples.
             val path = Path()
-            val pre = PointF(points[0].x, points[0].y)
+            path.moveTo(points[0].x, points[0].y)
             if (points.size == 1) {
-                path.moveTo(pre.x - 1f, pre.y - 1f)
+                path.lineTo(points[0].x + 0.01f, points[0].y)
             } else {
-                path.moveTo(pre.x, pre.y)
-            }
-            for (pt in points) {
-                path.quadTo(pre.x, pre.y, pt.x, pt.y)
-                pre.x = pt.x
-                pre.y = pt.y
+                for (i in 1 until points.size - 1) {
+                    val c = points[i]
+                    val n = points[i + 1]
+                    path.quadTo(c.x, c.y, (c.x + n.x) / 2f, (c.y + n.y) / 2f)
+                }
+                path.lineTo(points[points.size - 1].x, points[points.size - 1].y)
             }
             canvas.drawPath(path, paint)
         }

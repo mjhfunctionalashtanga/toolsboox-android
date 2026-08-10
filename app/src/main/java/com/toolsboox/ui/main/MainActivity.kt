@@ -1258,6 +1258,9 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                         nav.navigate(R.id.action_to_feeds)
                     }
                     "feeds" -> nav.navigate(R.id.action_to_feeds)
+                    // The door widgets: straight to the surface, no arguments to carry.
+                    "publish" -> nav.navigate(R.id.action_to_publish)
+                    "roster" -> nav.navigate(R.id.action_to_roster)
                     "allstars" -> {
                         val d = java.time.LocalDate.now()
                         nav.navigate(R.id.action_to_calendar_day, bundleOf(

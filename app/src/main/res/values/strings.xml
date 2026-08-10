@@ -12,6 +12,8 @@
     <string name="widget_daily_pile_description">Everything today gathered — tasks, events, birthdays, grams</string>
     <string name="widget_task_list_description">Today\'s open tasks as checkbox rows, plus the next event</string>
     <string name="widget_all_stars_description">Today\'s stars by band — Read, Watch, Listen, Books, Email</string>
+    <string name="widget_blog_description">One tap to write or schedule a blog post</string>
+    <string name="widget_roster_description">One tap to today\'s event attendees</string>
     <string name="calendar_settings_rotation_label">WHICH WAY UP  ·  the rotate button &amp; the gyro</string>
     <string name="calendar_settings_auto_rotate">Auto-rotate (let the gyro decide)</string>
     <!-- The tick-list feeds ScreenFragment.stepScreenOrientation — the cycle of the toolbar's
@@ -30,6 +32,8 @@
     <string name="widget_daily_pile_label">Ledger Daily Pile</string>
     <string name="widget_task_list_label">Ledger Task List</string>
     <string name="widget_all_stars_label">Ledger All Stars</string>
+    <string name="widget_blog_label">Ledger Blog</string>
+    <string name="widget_roster_label">Ledger Event Attendees</string>
 
     <string name="validation_field_required">This field is required</string>
     <plurals name="validation_field_too_long">

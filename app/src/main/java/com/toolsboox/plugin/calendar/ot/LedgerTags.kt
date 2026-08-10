@@ -360,12 +360,19 @@ object LedgerTags {
      * triples, heaviest first — the edges the Map draws so the tag web is visible. Cheap: one pass
      * over the occurrence store to bucket tags by page, then count the pairs each page contributes.
      * The caller caps + logs; the pair count is bounded by tags² and is small in practice.
+     *
+     * With a [window] (`[start, end)`), only occurrences on days inside it count — the Map's
+     * almanac filter scoped to a month should draw that month's tag web, not the ledger's.
      */
-    fun coOccurrences(context: Context): List<Triple<String, String, Int>> {
+    fun coOccurrences(
+        context: Context,
+        window: Pair<LocalDate, LocalDate>? = null
+    ): List<Triple<String, String, Int>> {
         val all = list(context)
         if (all.size < 2) return emptyList()
         val pageTags = HashMap<String, MutableSet<String>>()
         for (info in all) for (occ in info.occurrences) {
+            if (window != null && (occ.first.isBefore(window.first) || !occ.first.isBefore(window.second))) continue
             pageTags.getOrPut(occ.pageId()) { mutableSetOf() }.add(info.tag)
         }
         val pairCount = HashMap<Pair<String, String>, Int>()
