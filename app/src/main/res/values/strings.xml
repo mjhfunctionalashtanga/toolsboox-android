@@ -158,6 +158,7 @@
          this year and next year's day/week/month JSON and rewrites the pattern- files that decide
          which squares on a planner page are drawn as already-written-on. -->
     <string name="calendar_settings_button_pattern_sync">Rebuild the day marks (3 years)</string>
+    <string name="calendar_settings_button_notification_categories">🔔 Notification categories…</string>
     <string name="calendar_settings_pattern_sync_done">Calendar marks updated</string>
     <!-- "Export backup" / "Import backup" read as a pair and are not one. This button zips ONLY
          Documents/calendar into the Downloads folder; the restore button below unpacks a FULL

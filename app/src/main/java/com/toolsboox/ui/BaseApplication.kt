@@ -29,6 +29,12 @@ class BaseApplication : Application(), Configuration.Provider {
         // there is none). Handing it the application context here — once, ahead of any save — is
         // what lets the index ride every write without threading a Context through the file layer.
         com.toolsboox.plugin.calendar.ot.PickingsCards.attach(this)
+        // The notification categories exist from first launch, before any feature posts one:
+        // channels registered here appear on the system's per-app notification page immediately,
+        // so the per-category switches Michael asked for are settable ahead of the first nudge
+        // rather than materializing one by one as features happen to fire. Idempotent — see
+        // [LedgerNotifications] for why the registry precedes its posters.
+        com.toolsboox.ot.LedgerNotifications.ensureChannels(this)
     }
 
     override val workManagerConfiguration: Configuration

@@ -727,6 +727,13 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             presenter.createShortcut(this@CalendarSettingsFragment, binding)
         }
 
+        // Per-category notification control, one tap away. The switches themselves are the
+        // system's per-app notification page (one per LedgerNotifications channel) — see the
+        // layout comment for why we jump there instead of drawing our own toggle grid.
+        binding.buttonNotificationCategories.setOnClickListener {
+            com.toolsboox.ot.LedgerNotifications.openCategorySettings(requireContext())
+        }
+
         // Sync the patterns of the calendar
         binding.buttonPatternSync.setOnClickListener {
             val languageTag = sharedPreferences.getString("calendarLocale", null)

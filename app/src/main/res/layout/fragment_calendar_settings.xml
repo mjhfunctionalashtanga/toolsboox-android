@@ -829,6 +829,17 @@
                     android:id="@+id/button_pattern_sync"
                     android:text="@string/calendar_settings_button_pattern_sync"/>
 
+            <!-- One row, not a matrix: the per-category notification switches live on the
+                 system's own per-app page (one switch per LedgerNotifications channel —
+                 schedule, tasks, mail, feeds, sync), where the OS enforces them. This button
+                 only makes that page one tap from here instead of a safari through system
+                 Settings. Building our own toggle grid would be a second source of truth for
+                 the same position. -->
+            <Button
+                    style="@style/Settings.Button"
+                    android:id="@+id/button_notification_categories"
+                    android:text="@string/calendar_settings_button_notification_categories"/>
+
         </LinearLayout>
     </ScrollView>
 
