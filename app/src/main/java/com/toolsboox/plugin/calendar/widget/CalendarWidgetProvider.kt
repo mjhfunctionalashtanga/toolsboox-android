@@ -28,11 +28,41 @@ open class CalendarWidgetProvider : AppWidgetProvider() {
             broadcastUpdate(context, TasksNotesWidgetProvider::class.java)
             broadcastUpdate(context, MailWidgetProvider::class.java)
             broadcastUpdate(context, FeedWidgetProvider::class.java)
+            broadcastUpdate(context, FeedListWidgetProvider::class.java)
             broadcastUpdate(context, DailyPileWidgetProvider::class.java)
             broadcastUpdate(context, TaskListWidgetProvider::class.java)
             broadcastUpdate(context, AllStarsWidgetProvider::class.java)
             broadcastUpdate(context, BlogWidgetProvider::class.java)
             broadcastUpdate(context, RosterWidgetProvider::class.java)
+        }
+
+        /**
+         * How long the widgets wait after the LAST poke before redrawing. A stroke-heavy day
+         * page saves on every pen-up, and each save pokes the widgets (the one-throat rule in
+         * CalendarDayService.save) — undebounced, a writing session redraws up to ten full-page
+         * bitmaps per lifted pen, which is pure churn: nobody is looking at the home screen
+         * while the pen is down on the page that feeds it. Trailing-edge, so the LAST save in a
+         * burst always lands — a debounce that dropped the tail would be the staleness bug all
+         * over again, just rarer.
+         */
+        private const val REFRESH_DEBOUNCE_MS = 5_000L
+
+        private val refreshHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        private var pendingRefresh: Runnable? = null
+
+        /**
+         * [refreshAll], coalesced: any number of pokes inside the window become one redraw,
+         * fired [REFRESH_DEBOUNCE_MS] after the burst goes quiet. Synchronized because the day
+         * saves poke from IO coroutines; the handler itself only sequences the broadcast — each
+         * provider still renders on its own background thread ([onReceive]'s goAsync + Thread).
+         */
+        @Synchronized
+        fun refreshAllDebounced(context: Context) {
+            val appContext = context.applicationContext
+            pendingRefresh?.let { refreshHandler.removeCallbacks(it) }
+            val runnable = Runnable { refreshAll(appContext) }
+            pendingRefresh = runnable
+            refreshHandler.postDelayed(runnable, REFRESH_DEBOUNCE_MS)
         }
 
         private fun broadcastUpdate(context: Context, cls: Class<*>) {

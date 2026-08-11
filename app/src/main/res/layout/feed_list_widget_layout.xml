@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Feed List widget's frame: section-bar header (the day page's column-header grammar —
+     grey bar, white bold label), then a native ListView the launcher scrolls. Hardcoded white
+     ground + black text like every other Ledger widget face: the bitmap widgets paint white
+     bitmaps, and this one must not flip dark with the phone's theme while its siblings stay
+     paper-coloured. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/feed_list_widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#FFFFFF">
+
+    <TextView
+        android:id="@+id/feed_list_widget_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#CC808080"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="7dp"
+        android:paddingBottom="7dp"
+        android:text="@string/widget_feed_list_header"
+        android:textColor="#FFFFFF"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:singleLine="true" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <ListView
+            android:id="@+id/feed_list_widget_list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:divider="#33000000"
+            android:dividerHeight="1px" />
+
+        <TextView
+            android:id="@+id/feed_list_widget_empty"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:padding="12dp"
+            android:text="@string/widget_feed_list_empty"
+            android:textColor="#99000000"
+            android:textSize="13sp" />
+    </FrameLayout>
+</LinearLayout>

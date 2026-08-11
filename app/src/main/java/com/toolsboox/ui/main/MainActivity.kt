@@ -1267,7 +1267,25 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                         com.toolsboox.plugin.feeds.ui.FeedSelection.mailMailbox = null
                         nav.navigate(R.id.action_to_feeds)
                     }
-                    "feeds" -> nav.navigate(R.id.action_to_feeds)
+                    "feeds" -> {
+                        // A Feed List widget ROW names the entry it shows (feedEntryId, via the
+                        // collection's fill-in intent); the header — and the old bitmap Feed
+                        // widget — name none and land on the surface as before. The lookup runs
+                        // against the SAME freshest cached list the widget's factory rendered
+                        // from, so the row tapped is the row opened; an id that has since left
+                        // the cache falls through to the plain surface rather than erroring.
+                        // Consumed like widgetDest itself, so a re-resume doesn't re-open it.
+                        val entryId = intent?.getLongExtra("feedEntryId", 0L) ?: 0L
+                        intent?.removeExtra("feedEntryId")
+                        if (entryId != 0L) runCatching {
+                            val cached = com.toolsboox.plugin.feeds.nw.FeedCache.loadFreshestEntries(this)
+                            cached.firstOrNull { it.id == entryId }?.let { e ->
+                                com.toolsboox.plugin.feeds.ui.FeedSelection.pendingInPaneEntry = e
+                                com.toolsboox.plugin.feeds.ui.FeedSelection.list = cached
+                            }
+                        }
+                        nav.navigate(R.id.action_to_feeds)
+                    }
                     // The door widgets: straight to the surface, no arguments to carry.
                     "publish" -> nav.navigate(R.id.action_to_publish)
                     "roster" -> nav.navigate(R.id.action_to_roster)

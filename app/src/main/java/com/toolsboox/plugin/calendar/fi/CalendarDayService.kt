@@ -465,12 +465,15 @@ class CalendarDayService @Inject constructor() {
         // index rides is the right place to tell them it changed — pen saves, gram placements,
         // starred-mail drops and sync write-backs all pass through here, and instrumenting each
         // separately would eventually miss one. Guarded to today's file: a sync merge rewriting
-        // last March must not re-render eight widgets per historical day. A cheap broadcast —
-        // each provider re-renders off this same JSON on its own background thread.
+        // last March must not re-render eight widgets per historical day. DEBOUNCED, because the
+        // day page saves per pen-up: a writing session used to broadcast a full ten-widget
+        // redraw on every lifted pen. Trailing-edge, so the last save of the burst always
+        // reaches the home screen; each provider still renders off this same JSON on its own
+        // background thread.
         runCatching {
             com.toolsboox.plugin.calendar.ot.PickingsCards.dateOf(baseName)?.let {
                 if (it == LocalDate.now() && ::appContext.isInitialized) {
-                    com.toolsboox.plugin.calendar.widget.CalendarWidgetProvider.refreshAll(appContext)
+                    com.toolsboox.plugin.calendar.widget.CalendarWidgetProvider.refreshAllDebounced(appContext)
                 }
             }
         }.onFailure { Timber.w(it, "widget refresh failed for $baseName") }

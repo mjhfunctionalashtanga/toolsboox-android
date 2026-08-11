@@ -207,6 +207,28 @@
                     android:resource="@xml/feed_widget_info"/>
         </receiver>
 
+        <!-- The scrollable Feed List widget: a separate provider so the bitmap Feed widget
+             above keeps its identity and nothing already placed on a home screen changes. -->
+        <receiver
+                android:name=".plugin.calendar.widget.FeedListWidgetProvider"
+                android:label="@string/widget_feed_list_label"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <action android:name="com.toolsboox.widget.ACTION_REFRESH"/>
+            </intent-filter>
+
+            <meta-data
+                    android:name="android.appwidget.provider"
+                    android:resource="@xml/feed_list_widget_info"/>
+        </receiver>
+
+        <!-- The Feed List widget's row factory. BIND_REMOTEVIEWS keeps it launcher-only. -->
+        <service
+                android:name=".plugin.calendar.widget.FeedListWidgetService"
+                android:permission="android.permission.BIND_REMOTEVIEWS"
+                android:exported="false"/>
+
         <receiver
                 android:name=".plugin.calendar.widget.TaskListWidgetProvider"
                 android:label="@string/widget_task_list_label"

@@ -324,31 +324,29 @@ object ListWidgetRenderer {
 
     // ---- Feed cache read ----
 
-    /** Load the freshest cached feed list. The Feed screen writes list-<mode>_<kind>.json (default
-     *  "feed_all"); the widget can't know which view was last open, so it takes the most recently
-     *  written list file. Pure disk read — [com.toolsboox.plugin.feeds.nw.FeedCache] never fetches. */
-    private fun loadCachedFeed(context: Context): List<com.toolsboox.plugin.feeds.da.FeedEntry> {
-        val dir = File(context.filesDir, "feed-cache")
-        val lists = dir.listFiles { f -> f.name.startsWith("list-") && f.name.endsWith(".json") }
-            ?.sortedByDescending { it.lastModified() }.orEmpty()
-        val freshest = lists.firstOrNull() ?: return emptyList()
-        val key = freshest.name.removePrefix("list-").removeSuffix(".json")
-        return runCatching { com.toolsboox.plugin.feeds.nw.FeedCache.loadEntries(context, key) }.getOrDefault(emptyList())
-    }
+    /** Load the freshest cached feed list — the "freshest list-*.json wins" read now lives in
+     *  [com.toolsboox.plugin.feeds.nw.FeedCache.loadFreshestEntries], shared with the scrollable
+     *  Feed List widget's factory and the widget-tap router, so three readers can't drift on
+     *  which file is "the" list. Pure disk read; nothing fetches. */
+    private fun loadCachedFeed(context: Context): List<com.toolsboox.plugin.feeds.da.FeedEntry> =
+        runCatching { com.toolsboox.plugin.feeds.nw.FeedCache.loadFreshestEntries(context) }
+            .getOrDefault(emptyList())
 
     // ---- Relative age ----
+    // relativeAgeIso/parseEpoch are internal, not private: the Feed List widget's RemoteViews
+    // factory prints the same "source · age" line and must age entries with the same clock.
 
     private fun relativeAge(epochMs: Long): String {
         if (epochMs <= 0L) return ""
         return humanise(Duration.ofMillis(System.currentTimeMillis() - epochMs))
     }
 
-    private fun relativeAgeIso(iso: String): String {
+    internal fun relativeAgeIso(iso: String): String {
         val epoch = parseEpoch(iso)
         return if (epoch <= 0L) "" else relativeAge(epoch)
     }
 
-    private fun parseEpoch(iso: String): Long = runCatching {
+    internal fun parseEpoch(iso: String): Long = runCatching {
         OffsetDateTime.parse(iso).toInstant().toEpochMilli()
     }.recoverCatching {
         ZonedDateTime.parse(iso).toInstant().toEpochMilli()

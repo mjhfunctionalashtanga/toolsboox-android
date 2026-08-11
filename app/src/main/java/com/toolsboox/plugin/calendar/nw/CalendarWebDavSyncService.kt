@@ -45,11 +45,15 @@ import java.nio.file.attribute.BasicFileAttributes
  * @param webdav the shared WebDAV HTTP/auth client
  * @param rootDir the app's external documents directory (parent of the "calendar/" tree)
  * @param moshi a Moshi configured with the app's Date/Locale/UUID adapters
+ * @param appContext an application context for the home-screen widget poke after a pull that
+ *   changed TODAY's file — nullable, because the JVM tests build this service with no Android
+ *   at hand and a sync must never require a widget to exist
  */
 class CalendarWebDavSyncService(
     private val webdav: UltrabridgeWebDavService,
     private val rootDir: File,
-    private val moshi: Moshi
+    private val moshi: Moshi,
+    private val appContext: Context? = null
 ) {
     companion object {
         private const val TAG = "CalendarWebDavSync"
@@ -177,7 +181,8 @@ class CalendarWebDavSyncService(
             return CalendarWebDavSyncService(
                 UltrabridgeWebDavService(url, user, pass),
                 rootDir,
-                buildMoshi()
+                buildMoshi(),
+                context.applicationContext
             )
         }
     }
@@ -188,6 +193,21 @@ class CalendarWebDavSyncService(
     data class SyncStats(val pushed: Int, val pulled: Int, val skipped: Int, val failed: Int)
 
     private data class LocalEntry(val remotePath: String, val file: File, val updated: Long)
+
+    /**
+     * Whether THIS pass installed a new local copy of TODAY's day file ([writeLocal] sets it).
+     *
+     * This is the widget-staleness hole the local save path can't see: every local save funnels
+     * through CalendarDayService.save, which pokes the widgets — but a stroke drawn on the OTHER
+     * device arrives here as raw merged bytes through [writeLocal], deliberately outside that
+     * throat (the bytes must land byte-identical for the deterministic-merge convergence, and
+     * re-serialising through the service would also re-run externalization and restamp nothing
+     * useful). So the widgets learned about remote ink only when the 30-minute update alarm
+     * happened by — "widgets have outdated strokes" on whichever device wasn't holding the pen.
+     * One flag for the whole pass, checked once at the end: the poke is per-pass, not per-file,
+     * which is all the debounce a sync needs.
+     */
+    private var wroteTodayLocally = false
 
     /**
      * Run one full bidirectional sync pass of the calendar day JSON files.
@@ -203,6 +223,7 @@ class CalendarWebDavSyncService(
         var pulled = 0
         var skipped = 0
         var failed = 0
+        wroteTodayLocally = false
 
         val localByPath = inventoryLocal().associateBy { it.remotePath }
         // A failed listing is NOT an empty server: pushing "local-only" files against an
@@ -338,6 +359,17 @@ class CalendarWebDavSyncService(
 
         runCatching { syncAttachments() }.onFailure { Timber.w(it, "$TAG: attachment sync failed") }
         runCatching { pullMedia() }.onFailure { Timber.w(it, "$TAG: media pull failed") }
+
+        // The pull-side widget poke — see [wroteTodayLocally] for why the local save path's poke
+        // cannot cover this. AFTER the media pull, so a stroke arriving beside a new photo never
+        // renders a placeholder the home screen then holds for half an hour. Fired directly (not
+        // debounced): a pass is already rarer than any debounce window, and the person glancing
+        // at the widget is exactly the person waiting for the other device's ink.
+        if (wroteTodayLocally) {
+            runCatching {
+                appContext?.let { com.toolsboox.plugin.calendar.widget.CalendarWidgetProvider.refreshAll(it) }
+            }.onFailure { Timber.w(it, "$TAG: widget refresh after pull failed") }
+        }
 
         val stats = SyncStats(pushed, pulled, skipped, failed)
         Timber.i("$TAG: Day-JSON sync done: $stats")
@@ -622,6 +654,13 @@ class CalendarWebDavSyncService(
             } catch (e: Exception) {
                 Timber.w(e, "$TAG: Atomic move unavailable for ${target.name}; falling back to replace")
                 Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+            // Both the remote-only pull and the merged write land here — the one local-install
+            // throat of the sync — so this is the one place to notice that TODAY just changed
+            // under the widgets' feet. Same day-name guard as CalendarDayService.save: a pass
+            // converging last March must not light up the home screen per historical file.
+            if (com.toolsboox.plugin.calendar.ot.PickingsCards.dateOf(target.name) == java.time.LocalDate.now()) {
+                wroteTodayLocally = true
             }
             Timber.i("$TAG: Pulled $remotePath")
             true

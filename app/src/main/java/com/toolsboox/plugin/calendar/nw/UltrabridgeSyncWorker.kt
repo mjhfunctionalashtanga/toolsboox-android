@@ -262,7 +262,8 @@ class UltrabridgeSyncWorker(
                     val daySync = CalendarWebDavSyncService(
                         UltrabridgeWebDavService(webdavUrl, webdavUser, webdavPass),
                         rootDir,
-                        moshi
+                        moshi,
+                        applicationContext
                     )
                     val stats = daySync.sync()
                     mirrorFailed = stats.failed > 0

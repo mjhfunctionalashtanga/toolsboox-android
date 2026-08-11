@@ -60,7 +60,7 @@ object WidgetRenderer {
 
         val cropped = when (mode) {
             Mode.FULL -> fullBitmap
-            Mode.SCHEDULE -> compositeSchedule(fullBitmap)
+            Mode.SCHEDULE -> compositeSchedule(fullBitmap, startHour)
             Mode.TASKS_NOTES -> compositeTasksNotes(fullBitmap)
         }
 
@@ -92,11 +92,19 @@ object WidgetRenderer {
     }
 
     /**
-     * Schedule widget: morning (5am-1pm) on the left, afternoon (1pm-10pm) on the right.
-     * Splits the schedule column at cell 17 (1:00pm with startHour=5).
+     * Schedule widget: morning on the left, afternoon on the right — the column folded on the
+     * 1:00pm gridline OF THIS DAY'S GRID. The fold row used to be the literal 17 ("1:00pm"),
+     * which is only 1pm when startHour is 5; the day's startHour is dynamic now
+     * ([com.toolsboox.plugin.calendar.ot.PagePrefs.startHourOf]), so the row is computed
+     * ([ScheduleSplit.splitRow]) and falls back to the middle when 1pm isn't in the drawn range.
+     *
+     * Whatever row the fold lands on, the two crops tile the WHOLE column — top pane 0..splitY,
+     * bottom pane splitY..CH — so all 35 rows (header + 34 half-hour cells) are always shown;
+     * only the fold moves. The output height is the taller pane's, so an off-centre fold means
+     * one pane carries blank tail rather than the other losing hours.
      */
-    private fun compositeSchedule(fullBitmap: Bitmap): Bitmap {
-        val splitY = (to + 17 * ceh).toInt() // 911
+    private fun compositeSchedule(fullBitmap: Bitmap, startHour: Int): Bitmap {
+        val splitY = (to + ScheduleSplit.splitRow(startHour) * ceh).toInt()
         val xLeft = 0
         val xRight = (lo + cew + 20f).toInt() // 685
         val halfW = xRight - xLeft
@@ -109,7 +117,7 @@ object WidgetRenderer {
         val canvas = Canvas(out)
         canvas.drawColor(Color.WHITE)
 
-        // Left: morning (top half of schedule, includes header + 5am-1pm)
+        // Left: morning (header + everything before the fold)
         canvas.drawBitmap(
             fullBitmap,
             Rect(xLeft, 0, xRight, topH),
@@ -117,7 +125,7 @@ object WidgetRenderer {
             null
         )
 
-        // Right: afternoon (bottom half of schedule, 1pm onwards)
+        // Right: afternoon (the fold onwards, through the column's bottom border)
         canvas.drawBitmap(
             fullBitmap,
             Rect(xLeft, splitY, xRight, CH.toInt()),

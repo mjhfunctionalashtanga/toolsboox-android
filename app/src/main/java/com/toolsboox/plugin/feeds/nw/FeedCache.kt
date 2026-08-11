@@ -56,6 +56,38 @@ object FeedCache {
         }
     }.getOrDefault(emptyList())
 
+    // MARK: - Freshest list + disk thumbnails (what the home-screen list widget reads)
+
+    /**
+     * The most recently written entry list, whatever view wrote it. The Feed screen persists
+     * list-<mode>_<kind>.json per view; a widget (or the widget-tap router in MainActivity)
+     * can't know which view was last open, so "freshest file wins" is the honest answer — it is
+     * the list the person most recently looked at. Pure disk read; nothing here fetches.
+     */
+    fun loadFreshestEntries(context: Context): List<FeedEntry> {
+        val lists = dir(context).listFiles { f -> f.name.startsWith("list-") && f.name.endsWith(".json") }
+            ?.sortedByDescending { it.lastModified() }.orEmpty()
+        val freshest = lists.firstOrNull() ?: return emptyList()
+        val key = freshest.name.removePrefix("list-").removeSuffix(".json")
+        return loadEntries(context, key)
+    }
+
+    /**
+     * Where an entry's row thumbnail lives ON DISK, keyed by the image URL's hash. The feed
+     * screen's in-memory [com.toolsboox.plugin.feeds.ui.FeedThumbCache] spills every thumbnail
+     * it loads into this file, and the widget process reads ONLY these files — a widget never
+     * fetches (short-lived process, no session, a fetch would only ever fail), so an entry the
+     * screen hasn't shown yet simply has no picture on the home screen, which is the truthful
+     * state. SHA-1 of the URL, not the URL: image URLs carry query strings and slashes that
+     * have no business in a filename.
+     */
+    fun thumbFile(context: Context, url: String): File =
+        File(dir(context), "thumb-${sha1(url)}.jpg")
+
+    private fun sha1(s: String): String =
+        java.security.MessageDigest.getInstance("SHA-1").digest(s.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+
     // MARK: - Parsed (readability) article HTML
 
     fun saveContent(context: Context, id: Long, html: String) {
@@ -104,13 +136,16 @@ object FeedCache {
 
     /**
      * Prune old parsed-article HTML and podcast sidecars. Every refresh can add up to ~400
-     * content-<id>.html files (now plus pod-/transcript- sidecars) and nothing ever removed
-     * them (the `.versions` disk-fill lesson): cap by age AND count, oldest first. Cheap
-     * (one listFiles) — call opportunistically after a refresh, off the main thread.
+     * content-<id>.html files (now plus pod-/transcript- sidecars, plus the thumb- JPEGs the
+     * list widget reads — tiny, but URL-keyed, so nothing else would ever retire a dead one)
+     * and nothing ever removed them (the `.versions` disk-fill lesson): cap by age AND count,
+     * oldest first. Cheap (one listFiles) — call opportunistically after a refresh, off the
+     * main thread.
      */
     fun prune(context: Context) = runCatching {
         val files = dir(context).listFiles { f ->
-            f.name.startsWith("content-") || f.name.startsWith("pod-") || f.name.startsWith("transcript-")
+            f.name.startsWith("content-") || f.name.startsWith("pod-") ||
+                f.name.startsWith("transcript-") || f.name.startsWith("thumb-")
         } ?: return@runCatching
         val cutoff = System.currentTimeMillis() - MAX_AGE_DAYS * 24 * 3600 * 1000
         val sorted = files.sortedBy { it.lastModified() }

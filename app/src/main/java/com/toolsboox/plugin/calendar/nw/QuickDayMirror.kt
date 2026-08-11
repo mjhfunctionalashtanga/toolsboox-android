@@ -62,7 +62,7 @@ object QuickDayMirror {
                     .add(UUIDJsonAdapter())
                     .build()
                 val stats = kotlinx.coroutines.runBlocking {
-                    CalendarWebDavSyncService(svc, rootDir, moshi).sync()
+                    CalendarWebDavSyncService(svc, rootDir, moshi, app).sync()
                 }
                 Timber.i("QuickDayMirror($reason): $stats")
             } catch (e: Throwable) {

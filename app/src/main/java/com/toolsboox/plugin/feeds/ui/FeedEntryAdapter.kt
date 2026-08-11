@@ -221,7 +221,7 @@ class FeedEntryAdapter(
         val cached = FeedThumbCache.get(url)
         if (cached != null) { view.setImageBitmap(cached); view.visibility = View.VISIBLE; return }
         view.visibility = View.GONE
-        FeedThumbCache.load(url) { bmp ->
+        FeedThumbCache.load(view.context, url) { bmp ->
             if (bmp != null && view.tag == url) { view.setImageBitmap(bmp); view.visibility = View.VISIBLE }
         }
     }
@@ -240,7 +240,13 @@ object FeedReadState {
 
 /** Tiny async image loader for feed thumbnails — memory-cached, off-thread, no extra deps.
  *  Visible beyond the adapter so "grams for stars" can reuse the row's already-loaded
- *  thumbnail for the intake card face instead of re-downloading it ([LruCache] is thread-safe). */
+ *  thumbnail for the intake card face instead of re-downloading it ([LruCache] is thread-safe).
+ *
+ *  Every thumbnail the screen loads also SPILLS to disk (feed-cache/thumb-<hash>.jpg, named by
+ *  [com.toolsboox.plugin.feeds.nw.FeedCache.thumbFile]) — that file is the ONLY image source the
+ *  home-screen Feed List widget has, because a widget process must never fetch. The spill is why
+ *  the widget's pictures track exactly what the person has already seen: the screen shows a row,
+ *  the row's thumbnail lands on disk, the widget finds it there. */
 object FeedThumbCache {
     private val cache = object : LruCache<String, Bitmap>(6 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
@@ -248,9 +254,14 @@ object FeedThumbCache {
     private val pool = Executors.newFixedThreadPool(3)
     private val main = Handler(Looper.getMainLooper())
 
+    /** The widget rows are ~40dp; the reader rows top out at ~96dp. 256px covers every consumer
+     *  at retina-ish density while keeping each spilled JPEG a few KB. */
+    private const val DISK_MAX_SIDE = 256
+
     fun get(url: String): Bitmap? = cache.get(url)
 
-    fun load(url: String, onDone: (Bitmap?) -> Unit) {
+    fun load(context: android.content.Context, url: String, onDone: (Bitmap?) -> Unit) {
+        val app = context.applicationContext
         pool.execute {
             val bmp = runCatching {
                 URL(url).openStream().use { s ->
@@ -258,8 +269,41 @@ object FeedThumbCache {
                     BitmapFactory.decodeStream(s, null, BitmapFactory.Options().apply { inSampleSize = 2 })
                 }
             }.onFailure { Timber.d(it, "thumb load failed: %s", url) }.getOrNull()
-            if (bmp != null) cache.put(url, bmp)
+            if (bmp != null) {
+                cache.put(url, bmp)
+                // Guarded: a failed spill costs the widget a picture, never the row its bitmap.
+                runCatching { spillToDisk(app, url, bmp) }
+                    .onFailure { Timber.d(it, "thumb spill failed: %s", url) }
+            }
             main.post { onDone(bmp) }
         }
     }
+
+    /** A small JPEG beside the cached lists, written once per URL (immutable enough — a feed
+     *  image that changes under its URL gets the old face until the janitor retires it). Scaled
+     *  to [DISK_MAX_SIDE] before compressing so the on-disk copy stays a few KB whatever the
+     *  source served. Temp-then-rename, the house rule — a half-written JPEG under a name that
+     *  vouches for it would just decode as garbage on the home screen. */
+    private fun spillToDisk(context: android.content.Context, url: String, bmp: Bitmap) {
+        val target = com.toolsboox.plugin.feeds.nw.FeedCache.thumbFile(context, url)
+        if (target.exists()) return
+        val scale = DISK_MAX_SIDE.toFloat() / maxOf(bmp.width, bmp.height)
+        val small = if (scale < 1f) Bitmap.createScaledBitmap(
+            bmp, (bmp.width * scale).toInt().coerceAtLeast(1),
+            (bmp.height * scale).toInt().coerceAtLeast(1), true
+        ) else bmp
+        val temp = java.io.File(target.parentFile, target.name + ".tmp")
+        temp.outputStream().use { small.compress(Bitmap.CompressFormat.JPEG, 80, it) }
+        if (small !== bmp) small.recycle()
+        if (!temp.renameTo(target)) temp.delete()
+    }
+
+    /** Disk-only read for the widget process: the spilled JPEG or nothing. NEVER fetches —
+     *  that is the whole contract of the feed widgets ("read what's cached, never go and get
+     *  it"), and the spilled files are already sized for a widget row, so a plain decode is
+     *  bounded by construction. */
+    fun diskGet(context: android.content.Context, url: String): Bitmap? = runCatching {
+        val f = com.toolsboox.plugin.feeds.nw.FeedCache.thumbFile(context, url)
+        if (f.exists()) BitmapFactory.decodeFile(f.absolutePath) else null
+    }.getOrNull()
 }
