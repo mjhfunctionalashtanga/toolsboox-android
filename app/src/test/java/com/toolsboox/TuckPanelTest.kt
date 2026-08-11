@@ -50,6 +50,27 @@ class TuckPanelTest {
         assertEquals(-strip to 0, TuckPanel.overlapMargins(false, true, strip, false))
     }
 
+    // The tucked strip's touch target, pinned: the DRAWN strip stays 7dp (the divider Michael
+    // approved), while the finger gets a 24dp band — the a11y floor for a target that stops
+    // being a stab — and the band rides the exact same negative-margin give-back the strip
+    // does, so widening the touch never re-widens the layout.
+
+    @Test
+    fun `the touch band is finger-sized while the drawn strip stays a hairline`() {
+        assertTrue("the band must meet the 24dp a11y floor", TuckPanel.STRIP_HIT_DP >= 24)
+        assertEquals("the drawn strip must not widen with the touch band", 7, TuckPanel.STRIP_DP)
+        assertTrue(TuckPanel.STRIP_DP < TuckPanel.STRIP_HIT_DP)
+    }
+
+    @Test
+    fun `the touch band hands its width back to the row like the strip does`() {
+        val hit = (TuckPanel.STRIP_HIT_DP * density).toInt()
+        // Docked left → the page is to the right: the give-back rides the right margin.
+        assertEquals(0 to -hit, TuckPanel.overlapMargins(false, true, hit, true))
+        // Docked right → the page is to the left.
+        assertEquals(-hit to 0, TuckPanel.overlapMargins(false, true, hit, false))
+    }
+
     @Test
     fun `open rails and ink rails hold an honest column`() {
         for (side in dialSteps) {

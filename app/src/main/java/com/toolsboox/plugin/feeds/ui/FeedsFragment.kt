@@ -110,6 +110,10 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     }
 
     override fun onDestroyView() {
+        // The reading position, kept for the trip's return leg (see onViewCreated's stash): the
+        // view is dying but the instance is not, and where the eyes were is view state nothing
+        // else remembers. Captured only while a piece is open — a bare list has no position.
+        if (::binding.isInitialized && currentArticle != null) restoreScrollY = binding.articleWeb.scrollY
         com.toolsboox.ui.plugin.LedgerPlayer.removeListener(playerRailListener)
         super.onDestroyView()
     }
@@ -131,8 +135,22 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         super.onViewCreated(view, savedInstanceState)
         binding = FragmentFeedsBinding.bind(view)
 
+        // COMING BACK IS PART OF READING. The note doors — the FeedNoteGram trip, ✍ Write the
+        // reply, ⁂ rhizome, a gram placement's "Go to it" — navigate away, which destroys this
+        // VIEW but keeps the fragment instance on the back stack, fields intact. The old view's
+        // open article therefore survives in [currentArticle] — but the fresh view starts with
+        // the pane GONE, so without this stash the return landed on the bare list (Michael:
+        // "swiping back from a Note to a feed article should be persistent — not just back to
+        // the feed but the ARTICLE being read"), while the stale field quietly mis-dressed the
+        // rail. Stash it, zero it (a fresh view holds no pane until one is opened through the
+        // front door), and the arrival block at the bottom reopens it through openEntry — the
+        // same door the gram router's pending-open uses, so a letter re-resolves through
+        // [mailById] (also a surviving field) and the reading grammar comes back whole.
+        val cameBackTo = currentArticle
+        currentArticle = null
+
         adapter = FeedEntryAdapter(emptyList(), onOpen = ::openEntry, onStar = ::toggleStar,
-                                   onLongPress = ::markAboveAsRead)
+                                   onLongPress = ::showEntryHoldMenu)
         // Text-size tier lives in the shared a11y prefs (set from the wrench). Migrate the
         // short-lived boolean toggle if it was flipped on.
         val a11y = requireContext().getSharedPreferences("ledger_a11y", 0)
@@ -267,25 +285,36 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
         renderNav()
 
         // Honour the view/kind chosen from the hub (feed / stars / later, + read/watch/listen —
-        // and mail, whose hub rows land here now that the lens is mail's one home).
+        // and mail, whose hub rows land here now that the lens is mail's one home) — but ONLY
+        // when something was actually chosen. The one-shot channel is empty on the return leg
+        // of a trip (the note doors set nothing), and consume()'s "feed"/null defaults used to
+        // overwrite the surviving mode/kindFilter fields — so coming back from a note taken in
+        // The Mail landed on unread RSS. An arrival that asked for nothing keeps the view it
+        // left; a fresh instance's fields already ARE the defaults, so nothing changes there.
+        // (The one-shots are still consumed either way — a stale request must never fire on a
+        // later visit that didn't make it.)
+        val explicitArrival = FeedSelection.mode != null || FeedSelection.kind != null ||
+            FeedSelection.laterLane != null || FeedSelection.mailMailbox != null
         val (m, k) = FeedSelection.consume()
-        mode = m; kindFilter = k; laterLane = FeedSelection.consumeLaterLane()
-        // Arriving on a Later lane from the hub opens the folder it belongs to, so the drawer shows
-        // where you are instead of a folded row and a list you can't account for.
-        if (laterLane != null) a11y.edit().putBoolean("feeds_later_open", true).apply()
-        // Same truth for the media lenses: arriving on The Listen must fold whatever lens the
-        // drawer last remembered open (The Read stayed expanded beside a Listen list — "not
-        // correct ux"). The single-open rule the pane's own taps keep applies to arrivals too.
-        // The Mail's folder answers to "email" in the drawer's lens state rather than to its
-        // kindFilter token, so the arrival translates — writing "mail" through would leave the
-        // folder shut over a list of letters.
-        if (k != null) a11y.edit().putString("feeds_lens_open", if (k == KIND_MAIL) "email" else k).apply()
-        // A mail arrival names its mailbox too — the hub's per-account rows ride the same one-shot
-        // channel as the mode — and it lands through the one setter, so compose hears about it.
-        // A non-mail arrival still consumes, letting a stale narrowing go instead of keeping it
-        // warm for a later visit that never asked.
-        if (k == KIND_MAIL) setMailMailbox(FeedSelection.consumeMailMailbox())
-        else FeedSelection.consumeMailMailbox()
+        val lane = FeedSelection.consumeLaterLane()
+        val box = FeedSelection.consumeMailMailbox()
+        if (explicitArrival) {
+            mode = m; kindFilter = k; laterLane = lane
+            // Arriving on a Later lane from the hub opens the folder it belongs to, so the drawer
+            // shows where you are instead of a folded row and a list you can't account for.
+            if (laterLane != null) a11y.edit().putBoolean("feeds_later_open", true).apply()
+            // Same truth for the media lenses: arriving on The Listen must fold whatever lens the
+            // drawer last remembered open (The Read stayed expanded beside a Listen list — "not
+            // correct ux"). The single-open rule the pane's own taps keep applies to arrivals too.
+            // The Mail's folder answers to "email" in the drawer's lens state rather than to its
+            // kindFilter token, so the arrival translates — writing "mail" through would leave the
+            // folder shut over a list of letters.
+            if (k != null) a11y.edit().putString("feeds_lens_open", if (k == KIND_MAIL) "email" else k).apply()
+            // A mail arrival names its mailbox too — the hub's per-account rows ride the same
+            // one-shot channel as the mode — and it lands through the one setter, so compose
+            // hears about it.
+            if (k == KIND_MAIL) setMailMailbox(box)
+        }
         refresh()
 
         // The article's ☰ asks the list to pop the RSS directory open on return.
@@ -293,11 +322,51 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
             FeedSelection.openDirectory = false
             binding.root.post { showFeedDirectory() }
         }
-        // Open an article straight into the in-pane reader (from a gram's "Go to source").
-        FeedSelection.pendingInPaneEntry?.let { e ->
-            FeedSelection.pendingInPaneEntry = null
-            binding.root.post { openEntry(e) }
+        // Open an article straight into the in-pane reader (from a gram's "Go to source") — or
+        // REOPEN the one that was open when a trip left this surface (the stash at the top of
+        // this method). An explicit pending open wins: it was asked for, the stash was merely
+        // left behind. Posted, same as the pending path always was; refresh() has already run
+        // synchronously above, so its close-any-open-pane guard fired before the pane exists,
+        // and its async completion repaints the LIST without touching the pane.
+        val pending = FeedSelection.pendingInPaneEntry
+        FeedSelection.pendingInPaneEntry = null
+        // The captured reading position belongs to the article we left. A pending open of a
+        // DIFFERENT piece starts at the top like every fresh open. (The ☰ path's return anchor
+        // sets pending = the article that was open — same id, so the position survives there.)
+        if (pending != null && pending.id != cameBackTo?.id) restoreScrollY = 0
+        val reopen = pending ?: cameBackTo
+        if (reopen == null) restoreScrollY = 0
+        reopen?.let { e -> binding.root.post { openEntry(e); replayArticleScroll() } }
+    }
+
+    /**
+     * Where the reading had got to, across the trip: the article WebView's scrollY, captured in
+     * onDestroyView while a piece was open, replayed after the return reopens it. A field, not
+     * saved state — it rides the same fragment-instance survival the article itself does.
+     */
+    private var restoreScrollY = 0
+
+    /**
+     * Put the reopened article back where the eyes were. The render is asynchronous
+     * (loadDataWithBaseURL lays out on its own time; a letter arrives only after its off-thread
+     * hydrate), so this polls: scroll once the document is tall enough to hold the offset, give
+     * up gracefully after ~2.5s by scrolling to whatever fits (a shorter render — Reader view
+     * flipped, images off — clamps rather than lying). One-shot: the field zeroes on entry so a
+     * later open never inherits a dead offset.
+     */
+    private fun replayArticleScroll() {
+        val target = restoreScrollY
+        restoreScrollY = 0
+        if (target <= 0) return
+        var tries = 0
+        fun attempt() {
+            if (!isAdded || currentArticle == null) return
+            val web = binding.articleWeb
+            val max = (web.contentHeight * web.scale).toInt() - web.height
+            if (max >= target || tries >= 20) web.scrollTo(0, target.coerceAtMost(maxOf(0, max)))
+            else { tries++; web.postDelayed({ attempt() }, 120) }
         }
+        binding.articleWeb.postDelayed({ attempt() }, 120)
     }
 
     /** Current view: "feed" (unread RSS) · "stars" · "later" · "local" (no-server RSS). */
@@ -2876,10 +2945,122 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
      *  card is a permanent block above the views for whoever didn't ask for it. */
     private fun nowPlayingCardOn(): Boolean = prefs().getBoolean("feeds_now_playing_card", false)
 
-    /** Long-press a row → mark every article ABOVE it read (the common reader gesture; parity with
-     *  the iPad's "Mark above as read" context item). Confirmed first, because on e-ink a long-press
-     *  can be accidental and this is a bulk change. Marks the same "above" set the scroll-mode
-     *  handler does — everything before this row in the current list. */
+    /**
+     * A HOLD on a list row — the row's own verb menu. Michael's walkthrough page: "Long-hold on
+     * Email/Article list should offer Reply, Mark above as read, Star, Forward as options." The
+     * hold used to go STRAIGHT to mark-above; that verb keeps its seat (second, his order), and
+     * the row verbs that already existed elsewhere — the star glyph's toggle, the open letter's
+     * ↩ on the rail — join it here so triage never requires opening the thing first.
+     *
+     * The menu is the deliberate second step (the showLaterRowMenu reasoning): on e-ink a hold
+     * can be accidental, so the FIRST row must be harmless — Reply opens the two-door chooser a
+     * stray press backs out of losing nothing, and on article rows the leader is mark-above,
+     * which carries its own count-naming confirm. Reply and Forward are LETTER verbs; an article
+     * row swaps them for the one honest translation it has — forwarding the piece's link through
+     * the same compose door (see [forwardArticle]) — rather than wearing a ↩ that could only
+     * apologize: an RSS entry has no reply address, and a verb that cannot act should not be
+     * offered (the clearLaterAbove rule).
+     */
+    private fun showEntryHoldMenu(entry: FeedEntry) {
+        // A Later List row keeps its OWN hold menu — its verbs are the list's (star / select /
+        // clear-above / remove), and "mark above as read" is meaningless where nothing on disk
+        // records read. Unchanged routing from when the hold went straight to markAboveAsRead.
+        if (com.toolsboox.plugin.feeds.nw.LaterFeed.isLater(entry.id)) { showLaterRowMenu(entry); return }
+        val m = mailById[entry.id]
+        val list = adapter.current()
+        val idx = list.indexOfFirst { it.id == entry.id }
+        // The same "above" set markAboveAsRead sweeps, counted the same way, so the row's face
+        // and its confirm never name two different numbers.
+        val above = if (idx > 0) list.take(idx).count { !FeedReadState.isRead(it.id) } else 0
+        val items = mutableListOf<Pair<String, () -> Unit>>()
+        if (m != null) items.add("↩  Reply" to {
+            // The open letter's reply fork, verbatim (replyToOpenMail) — quick reply or the
+            // draft-gram door — with the same refold on send: the answered mail became
+            // keep-forever, and only a visible mail list needs repainting for it.
+            com.toolsboox.plugin.mail.ui.MailVerbs.replyDoors(this, calendarDayService, documentsRoot(), m) {
+                if (kindFilter == KIND_MAIL && binding.articlePane.visibility != View.VISIBLE) submitMailRows()
+            }
+        })
+        items.add(
+            (if (above > 0) "⇞  Mark $above above as read…" else "⇞  Mark above as read") to
+                { markAboveAsRead(entry) }
+        )
+        items.add((if (entry.starred) "☆  Unstar" else "★  Star") to { toggleStar(entry) })
+        when {
+            m != null -> items.add("⤳  Forward…" to { forwardMail(m) })
+            // A synthetic row with no http address (the 🔎 control row, ledger:// rows) has
+            // nothing to put in a letter — the verb hides rather than apologizing.
+            entry.url.startsWith("http", ignoreCase = true) ->
+                items.add("⤳  Forward by email…" to { forwardArticle(entry) })
+        }
+        showIconMenu(entry.title.take(80), items)
+    }
+
+    /**
+     * Forward a letter: the compose screen, prefilled. [MailComposeFragment] already takes a
+     * seeded subject and body (ARG_SUBJECT / ARG_BODY, built for the quick wins), so forwarding
+     * is not a new machine — it is the compose door arriving with "Fwd: <subject>" and the
+     * original under the classic forwarded-message header, To left blank for the rolodex
+     * autocomplete. Hydrated off disk first, exactly as opening the letter does: the row often
+     * carries only the envelope, and forwarding a snippet while the whole body sits in the keep
+     * pile would silently send a third of the letter. (A message ALSO truncated on the server
+     * forwards its bounded slice — the same slice reading it shows before "load the rest"; the
+     * body lands in an editable field, so what will be sent is on screen before Send.)
+     */
+    private fun forwardMail(m: InboxMessage) {
+        lifecycleScope.launch {
+            val full = withContext(Dispatchers.IO) {
+                runCatching { InboxStore.hydrate(requireContext().applicationContext, m) }.getOrDefault(m)
+            }
+            if (!isAdded) return@launch
+            val subject = full.subject.trim().ifBlank { "(no subject)" }
+            val fwdSubject = if (subject.lowercase().startsWith("fwd:")) subject else "Fwd: $subject"
+            val from = if (full.fromName.isBlank()) full.fromEmail
+            else "${full.fromName} <${full.fromEmail}>"
+            val dateLine = java.time.Instant.ofEpochMilli(full.date)
+                .atZone(java.time.ZoneId.systemDefault())
+                .format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy HH:mm", Locale.getDefault()))
+            val body = buildString {
+                // Leading blank lines: his words go ABOVE the forwarded block, so the cursor's
+                // natural landing is the writing spot.
+                append("\n\n---------- Forwarded message ----------\n")
+                append("From: ").append(from).append('\n')
+                append("Date: ").append(dateLine).append('\n')
+                append("Subject: ").append(subject).append("\n\n")
+                append(full.body.ifBlank { full.snippet })
+            }
+            runCatching {
+                findNavController().navigate(
+                    R.id.action_to_mail_compose,
+                    androidx.core.os.bundleOf(
+                        com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_SUBJECT to fwdSubject,
+                        com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_BODY to body
+                    )
+                )
+            }.onFailure { showMessage("Couldn't open compose", binding.root) }
+        }
+    }
+
+    /** Forward an article — the letter verb translated for a piece with no reply address: the
+     *  same compose door, subject = the piece's title, the link (and the excerpt when the row
+     *  has one) under two blank lines so the note-to-the-recipient writes above it. */
+    private fun forwardArticle(entry: FeedEntry) {
+        val body = "\n\n" + listOf(entry.url, entry.blurb).filter { it.isNotBlank() }.joinToString("\n\n")
+        runCatching {
+            findNavController().navigate(
+                R.id.action_to_mail_compose,
+                androidx.core.os.bundleOf(
+                    com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_SUBJECT to entry.title.ifBlank { "(untitled)" },
+                    com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_BODY to body
+                )
+            )
+        }.onFailure { showMessage("Couldn't open compose", binding.root) }
+    }
+
+    /** Mark every article ABOVE a row read (the common reader gesture; parity with the iPad's
+     *  "Mark above as read" context item) — offered from the row's hold menu ([showEntryHoldMenu]).
+     *  Confirmed first, because this is a bulk change reached through one hold. Marks the same
+     *  "above" set the scroll-mode handler does — everything before this row in the current list. */
     private fun markAboveAsRead(entry: FeedEntry) {
         // A hold on a Later List row means something else entirely. "Mark above as read" is
         // meaningless here — nothing on disk records whether a filed link has been read, so the

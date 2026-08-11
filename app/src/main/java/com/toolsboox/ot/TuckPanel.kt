@@ -145,6 +145,27 @@ class TuckPanel(
     var isOpen: Boolean = prefs.getBoolean(openKey, true)
         private set
 
+    /**
+     * The tucked strip's WIDENED touch target — a transparent hit band beside the gutter in its
+     * host row, [STRIP_HIT_DP] wide where the drawn strip stays [STRIP_DP].
+     *
+     * The 1.06.50 overlay made the strip honest to the page and dishonest to the finger: 7dp
+     * draws as the divider it is, but ~11px of glass is a target you stab at three times.
+     * Widening the DRAWN strip back would undo the overlay's whole point, so the drawing and
+     * the touching part company: this view lies over the overlay margin area (the band the
+     * tucked strip already hands back to the content, so covering it costs no layout), takes
+     * the tap, and forwards it to the root's own summon. It draws nothing — no background, no
+     * e-ink repaint debt — and exists only while a gutter-hosted rail is tucked.
+     *
+     * GUTTER-HOSTED RAILS ONLY, deliberately. On the ink pages the tucked strip holds a real
+     * column and the page ends where it begins — that is the pen-honesty argument at the top of
+     * this file — and a 24dp invisible band over the page edge would swallow finger input on
+     * ink the drawn chrome doesn't claim. The list surfaces have no pen and their content
+     * already runs under the strip; a band over their edge is the same bargain the overlay
+     * already struck.
+     */
+    private var stripHit: View? = null
+
     init {
         // Children of the toolbar's OWN root — one level below drawing_layout, so the
         // ConstraintSet that CalendarUtils clones over drawing_layout never sees them and the
@@ -325,7 +346,45 @@ class TuckPanel(
             else setLayerInset(0, 0, -off, -off, -off)
         }
         root.requestLayout()
+        updateStripHit()
         onStateApplied(width, isOpen)
+    }
+
+    /**
+     * Seat (or clear) the strip's hit band for the current state — called from [applyState], so
+     * every path that changes the rail (open, tuck, the ⇄ edge-hop's dock() + applyState) also
+     * re-seats it. Re-inserted from scratch each time rather than patched in place: the ⇄ hop
+     * re-parents the gutter by remove/add, and an index held across that is a lie.
+     *
+     * The band takes NO layout space — the same negative-margin give-back the tucked strip
+     * itself rides ([overlapMargins] with the band's width): docked left it sits after the
+     * gutter spanning x∈[0, hit); docked right, before it, spanning the last hit px. Z-lifted
+     * past the strip's own 1f so a tap anywhere in the band — including over the drawn strip —
+     * lands here and summons the rail; the content beneath loses its first ~24dp of edge to
+     * taps while tucked, which Michael accepted as the overlay's bargain ("overlaps content
+     * harmlessly" — the rows' own start padding keeps their text clear of it anyway).
+     */
+    private fun updateStripHit() {
+        val row = root.parent as? LinearLayout ?: return
+        stripHit?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        if (isOpen || !overlaysWhenTucked) return
+        val hit = stripHit ?: View(context).apply {
+            contentDescription = "Actions"
+            setOnClickListener { root.performClick() }
+            // The band hugs the same screen edge the strip does, where the system back gesture
+            // lives — excluded for the same reason the root excludes its own bounds in init.
+            addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ ->
+                v.systemGestureExclusionRects = listOf(Rect(0, 0, r - l, b - t))
+            }
+            translationZ = 2f
+        }.also { stripHit = it }
+        val dockedLeft = sideIsLeft()
+        val w = dp(STRIP_HIT_DP)
+        val lp = LinearLayout.LayoutParams(w, ViewGroup.LayoutParams.MATCH_PARENT)
+        val (l, r) = overlapMargins(open = false, overlaysWhenTucked = true, widthPx = w, dockedLeft = dockedLeft)
+        lp.leftMargin = l
+        lp.rightMargin = r
+        row.addView(hit, row.indexOfChild(root) + if (dockedLeft) 1 else 0, lp)
     }
 
     private fun makeButton(item: Item): ImageButton {
@@ -405,6 +464,17 @@ class TuckPanel(
          * pen-honesty argument is theirs alone.
          */
         const val STRIP_DP = 7
+
+        /**
+         * The tucked strip's TOUCH band in dp — what the finger gets while the eye keeps
+         * [STRIP_DP]. 24dp is the floor Android's own a11y guidance draws under any target
+         * (48dp is the comfortable number; 24 is the minimum that stops being a stab), and it
+         * stays under every list surface's content padding + first glyph, so the band never
+         * sits over a row's tap-worthy leading content — only its margin. Served by the
+         * transparent [stripHit] view on gutter-hosted rails; the drawn hairline + grip are
+         * untouched (see updateStripHit for why ink rails keep the bare strip).
+         */
+        const val STRIP_HIT_DP = 24
 
         /**
          * The overlay's whole arithmetic: (leftMargin, rightMargin) for the gutter in its host

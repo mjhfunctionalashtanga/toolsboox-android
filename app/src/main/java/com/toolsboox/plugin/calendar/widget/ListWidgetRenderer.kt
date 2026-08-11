@@ -37,8 +37,10 @@ import kotlin.math.roundToInt
  */
 object ListWidgetRenderer {
 
-    // Draw wide, scale down. 1000 across keeps a comfortable line length; the same MAX cap as the
-    // day-page renderer keeps the pushed bitmap inside the RemoteViews transaction limit.
+    // Draw wide, scale down. 1000 across keeps a comfortable line length; the shared
+    // [WidgetBitmapBudget] keeps the pushed bitmap inside the RemoteViews ceiling (the fixed
+    // 768px long-side cap it replaces is what made every list widget soft — see that object's
+    // comment for the arithmetic).
     private const val CW = 1000f
     private const val HEADER_H = 88f
     private const val ROW_H = 84f
@@ -46,7 +48,6 @@ object ListWidgetRenderer {
     private const val MAX_ROWS = 14
     // The task widget shows fewer, deliberately: ~6 undone is a glance; a scroll's worth is a page.
     private const val MAX_TASK_ROWS = 6
-    private const val MAX_BITMAP_PX = 768
 
     /** One row of a list widget: an optional marker (emoji kind-glyph or ★), a bold primary line,
      *  an optional small secondary line, and an optional tiny thumbnail (grams). */
@@ -438,7 +439,10 @@ object ListWidgetRenderer {
     }
 
     /** Same fit-then-cap scale the day-page renderer uses, so a list widget downsizes to the home
-     *  screen identically and never overshoots the RemoteViews bitmap ceiling. */
+     *  screen identically and never overshoots the RemoteViews bitmap ceiling. The fit is to the
+     *  widget's REAL pixel box (its dp bounds × density) and the cap is [WidgetBitmapBudget]'s
+     *  computed one — the widget ships at its native resolution and the launcher never has to
+     *  stretch it back up. */
     private fun scaleToWidget(context: Context, src: Bitmap, widthDp: Int, heightDp: Int): Bitmap {
         val density = context.resources.displayMetrics.density
         val widthPx = (widthDp * density).roundToInt().coerceAtLeast(1)
@@ -447,7 +451,7 @@ object ListWidgetRenderer {
         val fitScale = min(widthPx / src.width.toFloat(), heightPx / src.height.toFloat())
         val rawW = (src.width * fitScale).roundToInt()
         val rawH = (src.height * fitScale).roundToInt()
-        val capScale = min(1f, MAX_BITMAP_PX.toFloat() / maxOf(rawW, rawH))
+        val capScale = WidgetBitmapBudget.capScale(context, rawW, rawH)
         val outW = maxOf(1, (rawW * capScale).roundToInt())
         val outH = maxOf(1, (rawH * capScale).roundToInt())
 

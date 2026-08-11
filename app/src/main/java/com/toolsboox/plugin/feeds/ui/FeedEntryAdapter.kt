@@ -185,7 +185,7 @@ class FeedEntryAdapter(
         holder.itemView.setOnClickListener { if (selecting) toggleSelected(e) else onOpen(e) }   // fragment marks read per the user's setting
         holder.itemView.setOnLongClickListener {
             if (selecting) toggleSelected(e) else onLongPress(e); true
-        }   // → mark everything above read
+        }   // → the row's hold menu (Reply / Mark above as read / Star / Forward)
         holder.star.setOnClickListener { if (selecting) toggleSelected(e) else onStar(e) }
         // …while its TOUCH target grows to ≥44dp via a TouchDelegate on the row: taps in the
         // halo land on the star (toggle), taps anywhere else on the row still open the entry.

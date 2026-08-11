@@ -38,8 +38,6 @@ object WidgetRenderer {
     private const val lo = 20f
     private val to = (CH - 35 * ceh) / 2f
 
-    private const val MAX_BITMAP_PX = 768
-
     enum class Mode { FULL, SCHEDULE, TASKS_NOTES }
 
     fun render(context: Context, date: LocalDate, widthDp: Int, heightDp: Int, mode: Mode): Bitmap {
@@ -78,7 +76,10 @@ object WidgetRenderer {
         val fitScale = min(widthPx / cropW, heightPx / cropH)
         val rawW = (cropW * fitScale).roundToInt()
         val rawH = (cropH * fitScale).roundToInt()
-        val capScale = min(1f, MAX_BITMAP_PX.toFloat() / maxOf(rawW, rawH))
+        // The computed RemoteViews cap, not the old fixed 768 long side — the day-page widgets
+        // ship at the widget's true pixel size now too (see WidgetBitmapBudget for the ceiling
+        // arithmetic and why the fixed cap made every widget soft on a modern launcher).
+        val capScale = WidgetBitmapBudget.capScale(context, rawW, rawH)
         val outW = maxOf(1, (rawW * capScale).roundToInt())
         val outH = maxOf(1, (rawH * capScale).roundToInt())
 
