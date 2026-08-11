@@ -641,6 +641,50 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             updateAutoSyncIntervalVisibility()
         }
 
+        // Sync backend — WebDAV or Google Drive, one sync logic either way (design step D). The
+        // choice persists the INSTANT it is made, like the toggles below: a chooser that waited
+        // for Save would leave a person believing they switched when they hadn't. Deliberately NO
+        // migration on switch — the note under the spinner says so in as many words — because a
+        // silent bulk copy of a library between clouds is exactly the kind of guessing surface
+        // this app keeps refusing to build. Default WebDAV: the absence of a decision must mean
+        // what every device did yesterday, which is what keeps Michael's own fleet on dav.mjh.yoga
+        // untouched by this feature existing.
+        val backendOptions = listOf(
+            getString(R.string.calendar_settings_sync_backend_webdav),
+            getString(R.string.calendar_settings_sync_backend_drive)
+        )
+        val backendAdapter = NoFilterAdapter(this.requireContext(), R.layout.list_item_locale, backendOptions)
+        binding.syncBackendSpinner.setAdapter(backendAdapter)
+        binding.syncBackendSpinner.inputType = 0
+        val savedBackend = sharedPreferences.getString(
+            com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.BACKEND_KEY,
+            com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.BACKEND_WEBDAV
+        )
+        binding.syncBackendSpinner.setText(
+            backendOptions[if (savedBackend == com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.BACKEND_DRIVE) 1 else 0]
+        )
+        binding.syncBackendSpinner.setOnItemClickListener { _, _, position, _ ->
+            val value =
+                if (position == 1) com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.BACKEND_DRIVE
+                else com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.BACKEND_WEBDAV
+            sharedPreferences.edit()
+                .putString(com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.BACKEND_KEY, value)
+                .apply()
+            // Drive chosen with no Google account is a configured-looking dead end — the same
+            // silent emptiness the WebDAV side documents at length in LedgerSidecarSync. Guide
+            // to the sign-in that already exists (the GCal Connect button holds the Drive scopes)
+            // instead of inventing a second auth flow for the same account.
+            if (value == com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.BACKEND_DRIVE &&
+                GoogleSignIn.getLastSignedInAccount(requireContext()) == null
+            ) {
+                Toast.makeText(
+                    requireContext(),
+                    R.string.calendar_settings_sync_backend_drive_no_account,
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
         // Ultrabridge Backup settings
         val ultrabridgePrefs = getUltrabridgeEncryptedPrefs()
         val ultrabridgeEnabled = sharedPreferences.getBoolean("ultrabridgeEnabled", false)

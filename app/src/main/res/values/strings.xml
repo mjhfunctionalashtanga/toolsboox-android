@@ -207,6 +207,15 @@
     <string name="calendar_settings_ultrabridge_disabled_toast">WebDAV PDF upload disabled</string>
     <string name="calendar_settings_ultrabridge_missing_fields">Please fill in all WebDAV fields</string>
 
+    <!-- The backend seam (design step D): one sync logic, two transports. The note carries the
+         no-migration ruling in the user's own language — it is the sentence that stops a switch
+         from feeling like a move. -->
+    <string name="calendar_settings_sync_backend_label">Sync backend</string>
+    <string name="calendar_settings_sync_backend_webdav">WebDAV</string>
+    <string name="calendar_settings_sync_backend_drive">Google Drive</string>
+    <string name="calendar_settings_sync_backend_note">Your ledger stays where it is — switching backends doesn\'t move anything. New syncs go to the backend chosen here. Google Drive keeps everything in a visible "Ledger" folder of the connected Google account.</string>
+    <string name="calendar_settings_sync_backend_drive_no_account">Google Drive selected, but no Google account is connected yet — use Connect under GOOGLE CALENDAR below.</string>
+
     <string name="calendar_settings_gcal_title">GOOGLE CALENDAR  ·  events you make in Ledger</string>
     <string name="calendar_settings_gcal_enable">Add events to Google Calendar</string>
     <string name="calendar_settings_capture_label">HANDWRITING  ·  turning ink into text</string>

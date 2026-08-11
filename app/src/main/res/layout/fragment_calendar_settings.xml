@@ -489,6 +489,44 @@
                     android:id="@+id/ultrabridge_section_label"
                     android:text="@string/calendar_settings_ultrabridge_title"/>
 
+            <!-- The backend seam's one visible surface (design step D): WebDAV or Google Drive,
+                 one sync logic either way. It sits at the head of the cloud section because it
+                 decides what every field below it means — and the note under it says the one
+                 thing a person switching MUST know: nothing migrates; the ledger stays where it
+                 is and new syncs go to the chosen backend. -->
+            <TextView
+                    style="@style/Settings.FieldLabel"
+                    android:id="@+id/sync_backend_text"
+                    android:layout_marginTop="0dp"
+                    android:text="@string/calendar_settings_sync_backend_label"/>
+
+            <com.google.android.material.textfield.TextInputLayout
+                    android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+
+                    android:id="@+id/sync_backend_spinner_layout"
+                    android:spinnerMode="dropdown"
+
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp">
+
+                <com.toolsboox.ot.AutoCompleteTextView
+                        android:id="@+id/sync_backend_spinner"
+                        android:labelFor="@id/sync_backend_text"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:inputType="text"/>
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <TextView
+                    android:id="@+id/sync_backend_note"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="4dp"
+                    android:textSize="13sp"
+                    android:text="@string/calendar_settings_sync_backend_note"/>
+
             <androidx.appcompat.widget.SwitchCompat
                     style="@style/Settings.Toggle"
                     android:id="@+id/ultrabridge_enable_switch"

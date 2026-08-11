@@ -3,7 +3,6 @@ package com.toolsboox.plugin.calendar.ot
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import okhttp3.MediaType.Companion.toMediaType
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
@@ -286,17 +285,22 @@ object LedgerTitleInk {
         }
     }
 
+    // The faces ride [LedgerSidecarSync.transport] like the manifest above them — NOT the
+    // WebDAV-only service() they used before the backend seam. The manifest and its faces are one
+    // feature; a Drive-backend device whose manifest synced while its faces quietly didn't would
+    // show ghost rows for handwriting it could never fetch.
+
     private fun pushFace(context: Context, dir: String, id: String, file: File) {
-        val svc = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.service(context) ?: return
+        val t = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.transport(context) ?: return
         runCatching {
-            svc.uploadBytes(file.readBytes(), "$dir/$SUBDIR/${safe(id)}.png", PNG_MEDIA_TYPE)
+            t.putBytes("$dir/$SUBDIR/${safe(id)}.png", file.readBytes(), "image/png")
         }.onFailure { Timber.w(it, "title ink push failed for $id") }
     }
 
     private fun pullFace(context: Context, dir: String, id: String, file: File) {
-        val svc = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.service(context) ?: return
+        val t = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.transport(context) ?: return
         runCatching {
-            val bytes = svc.download("$dir/$SUBDIR/${safe(id)}.png") ?: return
+            val bytes = t.get("$dir/$SUBDIR/${safe(id)}.png") ?: return
             if (bytes.isEmpty()) return
             file.parentFile?.mkdirs()
             file.writeBytes(bytes)
@@ -366,10 +370,9 @@ object LedgerTitleInk {
 
     // ── Internals ─────────────────────────────────────────────────────────────────────────────
 
-    /** A face goes up as a PNG, not as JSON. [UltrabridgeWebDavService.uploadBytes] defaults to
-     *  application/json because every other sidecar is; a server or proxy that believes the header
-     *  would be entitled to mangle a binary body sent under it. */
-    private val PNG_MEDIA_TYPE = "image/png".toMediaType()
+    // (A face goes up declared image/png, not the transport's application/json default — a server
+    // or proxy that believes the header would be entitled to mangle a binary body sent under it.
+    // The literal rides in [pushFace]'s putBytes call since the backend seam took the MediaType.)
 
     private val lock = Any()
 

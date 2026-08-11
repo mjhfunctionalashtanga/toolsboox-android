@@ -4,9 +4,9 @@ import android.content.Context
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import com.toolsboox.plugin.calendar.da.v2.LibraryBook
+import com.toolsboox.plugin.calendar.nw.HubTransport
 import com.toolsboox.plugin.calendar.nw.LedgerSidecarSync
-import com.toolsboox.plugin.calendar.nw.UltrabridgeWebDavService
-import okhttp3.MediaType.Companion.toMediaType
+import com.toolsboox.plugin.calendar.nw.putFileCommitted
 import timber.log.Timber
 import java.io.File
 import java.io.IOException
@@ -16,8 +16,9 @@ import java.util.concurrent.Executors
 /**
  * THE LIBRARY HUB — the library as a fleet property, not a device property.
  *
- * Build B of the 2026-08-11 Listen/Library design. The hub (the same WebDAV root the day sync and
- * every sidecar already ride) grows two things:
+ * Build B of the 2026-08-11 Listen/Library design. The hub (the same remote root every sidecar
+ * already rides — WebDAV or, since step D, Google Drive, whichever [LedgerSidecarSync.transport]
+ * says the person chose) grows two things:
  *
  * ```
  * books/               the library files, folder structure preserved
@@ -68,8 +69,6 @@ object LibraryHub {
     private const val KEY_CEILING_MB = "library_size_ceiling_mb"
     private const val KEY_CARRY_PREFIX = "library_carry:"
     private const val KEY_ACKED_TOMBSTONES = "library_tombstones_acked"
-
-    private val OCTET = "application/octet-stream".toMediaType()
 
     private val adapter = Moshi.Builder().build()
         .adapter<List<LibraryBook>>(Types.newParameterizedType(List::class.java, LibraryBook::class.java))
@@ -193,7 +192,7 @@ object LibraryHub {
         val app = context.applicationContext
         executor.execute {
             runCatching {
-                val svc = LedgerSidecarSync.service(app) ?: return@execute
+                val svc = LedgerSidecarSync.transport(app) ?: return@execute
                 val entry = BookshelfSource.list(app)
                     .firstOrNull { it.folder == folder && it.name == name } ?: return@execute
                 if (!uploadBook(app, svc, entry)) return@execute
@@ -208,34 +207,30 @@ object LibraryHub {
     }
 
     /**
-     * The bytes, up — `.part` then MOVE, so the name a fetch asks for either doesn't exist yet or
-     * is whole. A server without MOVE (405/501) gets a direct PUT instead: same landing, briefly
-     * less atomic, and the orphaned `.part` is swept.
+     * The bytes, up — `.part` then rename, so the name a fetch asks for either doesn't exist yet
+     * or is whole. A remote without rename gets a direct put instead: same landing, briefly less
+     * atomic, and the orphaned `.part` is swept. The sequence itself lives on the seam
+     * ([putFileCommitted]) — written once, proven transport-blind by the fake-transport test —
+     * and this method keeps only what is the LIBRARY's to know: which folder ancestry to ensure.
      */
     private fun uploadBook(
-        context: Context, svc: UltrabridgeWebDavService, entry: BookshelfSource.Entry
+        context: Context, svc: HubTransport, entry: BookshelfSource.Entry
     ): Boolean {
         // Upload wants a File; a declared-tree entry materialises through the same read cache the
         // reader already uses (keyed name+size, so this costs nothing on a re-push).
         val file = BookshelfSource.materialise(context, entry) ?: return false
 
-        // MKCOL the ancestry every time — cheap (405 = exists), and the 409-on-missing-parent
-        // lesson from LedgerSidecarSync.push is not one to relearn per feature.
+        // Ensure the ancestry every time — cheap (MKCOL answers 405 for "exists"; Drive answers
+        // from a folder-id cache), and the 409-on-missing-parent lesson from
+        // LedgerSidecarSync.push is not one to relearn per feature.
         var prefix = "books"
-        svc.ensureDirectory(prefix)
+        svc.ensureFolder(prefix)
         for (segment in entry.folder.split('/').filter { it.isNotBlank() }) {
             prefix = "$prefix/$segment"
-            svc.ensureDirectory(prefix)
+            svc.ensureFolder(prefix)
         }
 
-        val finalPath = "$prefix/${entry.name}"
-        val partPath = "$prefix/.${entry.name}.part"
-        if (!svc.upload(file, partPath, OCTET)) return false
-        if (svc.move(partPath, finalPath)) return true
-        // No MOVE on this server: PUT the real name directly, sweep our temp.
-        val direct = svc.upload(file, finalPath, OCTET)
-        runCatching { svc.delete(partPath) }
-        return direct
+        return svc.putFileCommitted(prefix, entry.name, file)
     }
 
     // ── Deletes ───────────────────────────────────────────────────────────────────────────────
@@ -316,7 +311,7 @@ object LibraryHub {
     }
 
     private fun syncPass(context: Context) {
-        val svc = LedgerSidecarSync.service(context) ?: return
+        val svc = LedgerSidecarSync.transport(context) ?: return
         val shelf = runCatching { BookshelfSource.list(context) }.getOrDefault(emptyList())
         val localIds = shelf.mapTo(HashSet()) { idFor(it) }
 
@@ -383,7 +378,7 @@ object LibraryHub {
         val main = android.os.Handler(android.os.Looper.getMainLooper())
         executor.execute {
             val ok = runCatching {
-                val svc = LedgerSidecarSync.service(app) ?: return@runCatching false
+                val svc = LedgerSidecarSync.transport(app) ?: return@runCatching false
                 fetchBlocking(app, svc, book)
             }.getOrDefault(false)
             main.post { onDone(ok) }
@@ -397,8 +392,8 @@ object LibraryHub {
      * already told us what the file should be; that is a stronger check than any header.
      */
     private fun fetchBlocking(
-        context: Context, svc: UltrabridgeWebDavService, book: LibraryBook
-    ): Boolean = svc.downloadTo(book.remotePath) { input ->
+        context: Context, svc: HubTransport, book: LibraryBook
+    ): Boolean = svc.getStream(book.remotePath) { input ->
         val landed = BookshelfSource.writeInto(context, book.folder, book.name) { out ->
             val md = MessageDigest.getInstance("SHA-1")
             val buf = ByteArray(64 * 1024)

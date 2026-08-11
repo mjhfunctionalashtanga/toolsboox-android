@@ -7,10 +7,15 @@ import timber.log.Timber
 import java.util.concurrent.Executors
 
 /**
- * One shared WebDAV entry point for the small "sidecar" stores (Text Notes, Intake pages, Pickings
+ * One shared sync entry point for the small "sidecar" stores (Text Notes, Intake pages, Pickings
  * board names, Synthesis ideas, reader position) that live outside the main day JSON. Centralises the
- * Ultrabridge credential read + service construction so each store doesn't re-implement it, and gives
+ * credential read + transport construction so each store doesn't re-implement it, and gives
  * them a pull/push that round-trips instead of the old push-only-clobber pattern.
+ *
+ * Since design step D (2026-08-11) the remote underneath is a [HubTransport] — WebDAV or Google
+ * Drive, chosen in Settings — and every store that speaks through [pull]/[push] rides whichever
+ * backend the person chose without knowing it. The stores were never told which server they were
+ * talking to; now that ignorance is the architecture.
  *
  * Every call that touches the network blocks on it — invoke those off the main thread. The
  * "why is this list empty" reads at the foot of this file deliberately do not: they answer from a
@@ -18,7 +23,41 @@ import java.util.concurrent.Executors
  */
 object LedgerSidecarSync {
 
-    /** A configured WebDAV service, or null when Ultrabridge isn't set up (no URL). */
+    // ------------------------------------------------------------------
+    // THE BACKEND CHOICE (design step D, 2026-08-11)
+    // ------------------------------------------------------------------
+
+    /** Where the choice lives: the plain "MAIN" prefs, beside the other sync toggles. The value
+     *  is a backend NAME, not a secret, so it does not belong in the encrypted store. */
+    const val BACKEND_KEY = "syncBackend"
+    const val BACKEND_WEBDAV = "webdav"
+    const val BACKEND_DRIVE = "drive"
+
+    /** The chosen backend, defaulting to WebDAV — the default is the absence of a decision, and
+     *  the absence of a decision must mean "exactly what every device did yesterday". */
+    fun backend(context: Context): String =
+        runCatching {
+            context.getSharedPreferences("MAIN", Context.MODE_PRIVATE)
+                .getString(BACKEND_KEY, BACKEND_WEBDAV)
+        }.getOrNull() ?: BACKEND_WEBDAV
+
+    /**
+     * The chosen backend as a [HubTransport], or null when that backend isn't set up here — a
+     * blank WebDAV URL, or Drive chosen with no Google account signed in. This is the seam every
+     * sidecar store and the library hub ride: ONE sync logic, and the transport underneath is the
+     * only thing the Settings choice swaps. Switching backends does NOT migrate data — the ledger
+     * stays where it is; new syncs go to the chosen backend — and that is said in the Settings
+     * copy rather than enforced by cleverness here.
+     */
+    fun transport(context: Context): HubTransport? =
+        if (backend(context) == BACKEND_DRIVE) DriveHubTransport.create(context)
+        else service(context)?.let { WebDavHubTransport(it) }
+
+    /** A configured WebDAV service, or null when Ultrabridge isn't set up (no URL). Still public
+     *  and still WebDAV-typed on purpose: the callers that genuinely need WebDAV verbs the seam
+     *  doesn't carry (intake's PROPFIND listing, the day-file quick mirror — surfaces whose Drive
+     *  counterpart is the separate day-sync machinery) come here; everything backend-agnostic
+     *  goes through [transport]. */
     fun service(context: Context): UltrabridgeWebDavService? {
         return runCatching {
             // One prefs handle, not three: [prefs] builds a master key and opens the keystore, so
@@ -45,32 +84,26 @@ object LedgerSidecarSync {
 
     /** Download [remotePath] as UTF-8 text, or null if absent / no creds / offline. */
     fun pull(context: Context, remotePath: String): String? =
-        service(context)?.let { svc ->
-            runCatching { svc.download(remotePath)?.toString(Charsets.UTF_8) }
+        transport(context)?.let { t ->
+            runCatching { t.get(remotePath)?.toString(Charsets.UTF_8) }
                 .onFailure { Timber.w(it, "LedgerSidecarSync: pull failed for $remotePath") }.getOrNull()
                 // Bytes came back, so the server is there and the credentials are good. Null proves
                 // nothing either way — see [rememberReached].
                 ?.also { rememberReached() }
         }
 
-    /** Upload [text] to [remotePath] (overwrite). No-op if Ultrabridge isn't configured. */
+    /** Upload [text] to [remotePath] (overwrite). No-op if no sync backend is configured. */
     fun push(context: Context, remotePath: String, text: String) {
-        val svc = service(context) ?: return
+        val t = transport(context) ?: return
         runCatching {
             // Stock Apache dav (dav.mjh.yoga) 409s a PUT whose parent collection does not exist,
             // and this path never MKCOLed — which is why grid-index/, sketch-index/, synth-index/
             // and write-index/ silently never appeared at the remote root while the two calendar
             // sync services (which do ensure their dirs) landed fine. Upload first so the steady
-            // state stays one round trip; on failure, MKCOL each ancestor and retry once.
-            svc.uploadBytes(text.toByteArray(Charsets.UTF_8), remotePath) || run {
-                val segments = remotePath.trim('/').split("/").dropLast(1)
-                var prefix = ""
-                for (segment in segments) {
-                    prefix = if (prefix.isEmpty()) segment else "$prefix/$segment"
-                    svc.ensureDirectory(prefix)
-                }
-                segments.isNotEmpty() && svc.uploadBytes(text.toByteArray(Charsets.UTF_8), remotePath)
-            }
+            // state stays one round trip; on failure, ensure each ancestor and retry once. The
+            // sequence lives on the seam ([putBytesEnsuringFolders]) so the fake-transport test
+            // can prove it without a server, and so Drive inherits it unasked.
+            t.putBytesEnsuringFolders(remotePath, text.toByteArray(Charsets.UTF_8))
         }
             .onFailure { Timber.w(it, "LedgerSidecarSync: push failed for $remotePath") }
             .getOrNull()?.let { if (it) rememberReached() }
@@ -138,10 +171,19 @@ object LedgerSidecarSync {
         lastReachedAt = 0L
     }
 
-    /** True when a WebDAV URL has been entered on this device. Instant, local, main-thread-safe. */
+    /** True when the CHOSEN backend has what it needs on this device — a WebDAV URL, or (for
+     *  Drive) a signed-in Google account. Instant, local, main-thread-safe: both facts are read
+     *  from this device without a network. */
     fun isConfigured(context: Context): Boolean =
-        runCatching { prefs(context).getString("ultrabridge_webdav_url", "").orEmpty() }
-            .getOrDefault("").isNotBlank()
+        if (backend(context) == BACKEND_DRIVE) {
+            runCatching {
+                com.google.android.gms.auth.api.signin.GoogleSignIn
+                    .getLastSignedInAccount(context) != null
+            }.getOrDefault(false)
+        } else {
+            runCatching { prefs(context).getString("ultrabridge_webdav_url", "").orEmpty() }
+                .getOrDefault("").isNotBlank()
+        }
 
     /**
      * Ask the server whether it is there — ONE round trip, blocking, off the main thread.
@@ -153,8 +195,8 @@ object LedgerSidecarSync {
      * @return true when the server answered (an unconfigured device answers false without asking)
      */
     fun probe(context: Context): Boolean {
-        val svc = service(context) ?: return false
-        val ok = runCatching { svc.reachable() }
+        val t = transport(context) ?: return false
+        val ok = runCatching { t.reachable() }
             .onFailure { Timber.w(it, "LedgerSidecarSync: probe failed") }.getOrDefault(false)
         if (ok) rememberReached() else rememberUnreachable()
         return ok
@@ -172,13 +214,22 @@ object LedgerSidecarSync {
      * WEBDAV section's own last-mirror line, which is where a diagnosis belongs.
      */
     fun emptyStateNote(context: Context): String? {
+        val drive = backend(context) == BACKEND_DRIVE
         if (!isConfigured(context)) {
-            return "Cross-device sync isn't set up on this device, so anything filed elsewhere " +
-                "can't reach it. Settings → WEBDAV → WebDAV URL."
+            // Two backends, two remedies — and the sentence must name the right one, or it sends
+            // a Google-backend user hunting for a WebDAV URL they never had.
+            return if (drive) {
+                "Cross-device sync isn't set up on this device, so anything filed elsewhere " +
+                    "can't reach it. Settings → Google Calendar → Connect to sign in to Google."
+            } else {
+                "Cross-device sync isn't set up on this device, so anything filed elsewhere " +
+                    "can't reach it. Settings → WEBDAV → WebDAV URL."
+            }
         }
         val now = System.currentTimeMillis()
         if (lastUnreachableAt > 0L && now - lastUnreachableAt < OBSERVATION_TTL_MS) {
-            return "Couldn't reach your WebDAV server just now, so anything filed on another " +
+            val server = if (drive) "Google Drive" else "your WebDAV server"
+            return "Couldn't reach $server just now, so anything filed on another " +
                 "device isn't here yet."
         }
         // Reached, or nothing observed yet. Either way there is nothing honest to add.
