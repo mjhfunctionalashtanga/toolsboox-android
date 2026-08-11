@@ -29,8 +29,12 @@ listen-state.json               per episode (id/url): position·duration·done·
    a delete never reaches into a device's local files without its own confirmation.
 3. **Carry selection.** Per device, per folder: "carry" (auto-fetch) vs "visible" (fetch on open —
    the OPDS pattern against our own hub). A Palma does not want 20GB of PDFs.
-4. **Calibre feeds the hub.** Desktop library stays master; an rclone cron on the Mac pushes the
-   Calibre tree into books/. Michael's curation workflow does not change.
+4. **No master — the hub is the truth and the Mac is just another ledger.** (Ruled 2026-08-11,
+   replacing Calibre-as-master, which contradicted the product half: a Google-backend user has no
+   Calibre, so the hub had to stand alone anyway.) The Mac joins the fleet as a device with a
+   carry-everything selection — a mirror folder the hub keeps current. Calibre demotes to an
+   OPTIONAL tool that reads the mirror (cataloging, conversion); adds made through it ride up
+   like adds from any device. No one-way cron pretending not to be two-way sync.
 5. **Reading position.** Both forks read through foliate — locators are portable. newest-wins per
    book; BookOpens union in the same sidecar so the almanac band agrees fleet-wide.
 6. **Listen playback.** Subscriptions already sync (Miniflux IS the subscription store). The
