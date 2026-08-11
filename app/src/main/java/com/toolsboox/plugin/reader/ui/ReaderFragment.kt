@@ -193,6 +193,11 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             if (!isAdded) return@launch
             if (!ok) { showMessage("Couldn't fetch ${entry.title}."); return@launch }
             showMessage("On the shelf · ${entry.title}")
+            // Push on add: one OPDS pull feeds the whole fleet — the book rides up to the
+            // library hub so every other shelf sees it (and fetches or offers it by its own
+            // policy) without anyone pulling from the catalog twice. Quiet on failure; the
+            // sync pass retries.
+            LibraryHub.pushAdded(ctx.applicationContext, "", name)
             // Offer the read rather than taking it: you may be filling the shelf, not starting a
             // book, and being yanked out of the catalog mid-browse is the wrong default.
             showIconMenu(entry.title, listOf(
@@ -1095,6 +1100,9 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
                 }.onFailure { Timber.w(it, "book import failed") }.getOrNull()
             }
             if (file == null) { showMessage(R.string.reader_import_failed); return@launch }
+            // Push on add: a share-in / open-with import is an add like any other — it lands in
+            // the app's own books directory, so it belongs to the fleet from this moment.
+            LibraryHub.pushAdded(requireContext().applicationContext, "", file.name)
             loadBookFile(file)
         }
     }

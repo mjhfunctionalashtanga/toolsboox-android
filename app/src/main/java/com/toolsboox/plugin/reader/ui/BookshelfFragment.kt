@@ -135,6 +135,13 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
     override fun onResume() {
         super.onResume()
         load()
+        // Ask the hub what the fleet has while the shelf draws what this device has. The ghost
+        // cards render from the CACHED manifest (instant, offline-honest); this refresh is the
+        // cheap read-side pull, and re-renders only when the merge actually learned something —
+        // which is what stops refresh→load→refresh from becoming a loop.
+        com.toolsboox.plugin.reader.ui.LibraryHub.refreshManifest(
+            requireContext().applicationContext
+        ) { activity?.runOnUiThread { if (isAdded) load() } }
     }
 
     override fun showLoading() { binding.progress.visibility = View.VISIBLE }
@@ -157,6 +164,9 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
             }
             if (!isAdded) return@launch
             showMessage(if (name != null) "On the shelf · $name" else "Couldn't add that one.")
+            // Push on add: the moment the book is on THIS shelf it belongs to the fleet.
+            // Fire-and-forget off-main; a failed push is retried by the next sync pass.
+            name?.let { LibraryHub.pushAdded(requireContext(), "", it) }
             load()
         }
     }
@@ -275,6 +285,11 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
 
     // ── The shelf ─────────────────────────────────────────────────────────────────────────────
 
+    /** Manifest tombstones this device still holds a copy of, keyed by book id — refreshed by
+     *  [load], read by [showBookMenu] so the "keep your copy?" question is asked where the book
+     *  is, not in a settings screen nobody visits. */
+    private var removedButLocal: Map<String, com.toolsboox.plugin.calendar.da.v2.LibraryBook> = emptyMap()
+
     private fun load() {
         val ctx = requireContext()
         binding.shelfColumn.removeAllViews()
@@ -285,10 +300,18 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
             val read = withContext(Dispatchers.IO) {
                 BookOpens.openedBetween(ctx, all, windowStart(), windowEnd())
             }
+            // THE NUDGE — what the fleet has that this shelf doesn't, from the cached manifest
+            // only (no network on the render path, ever: the ghost row is the ghost-ROW grammar,
+            // draw first and fetch only when asked). Grouped by folder so a ghost stands on the
+            // same shelf row its book will land on.
+            val ghosts = withContext(Dispatchers.IO) {
+                LibraryHub.offered(ctx, all).groupBy { it.folder }
+            }
+            removedButLocal = withContext(Dispatchers.IO) { LibraryHub.removedButLocal(ctx, all) }
             if (!isAdded) return@launch
             binding.progress.visibility = View.GONE
 
-            if (all.isEmpty()) {
+            if (all.isEmpty() && ghosts.isEmpty()) {
                 binding.emptyText.visibility = View.VISIBLE
                 binding.emptyText.text =
                     "No books yet.\n\nAdd one with ＋, pull from the 🌐 catalog, " +
@@ -299,17 +322,22 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
 
             if (read.isNotEmpty()) {
                 binding.shelfColumn.addView(heading("Read this ${level.label.lowercase()} · ${read.size}"))
-                binding.shelfColumn.addView(grid(read))
+                binding.shelfColumn.addView(gridOf(read.map { tile(it) }))
             }
             // Everything, by the folders the library already keeps. `folder` is "" at the shelf
             // root, which sorts first and reads as the shelf itself rather than as a nameless group.
+            // Folder keys are the UNION of local and offered: a folder that exists only on other
+            // devices still shows here, ghosts and all — that IS the library being fleet property.
             val byFolder = all.groupBy { it.folder }
-            for (folder in byFolder.keys.sortedBy { it.lowercase() }) {
-                val books = byFolder.getValue(folder).sortedBy { it.title.lowercase() }
+            for (folder in (byFolder.keys + ghosts.keys).sortedBy { it.lowercase() }) {
+                val books = byFolder[folder].orEmpty().sortedBy { it.title.lowercase() }
+                val offered = ghosts[folder].orEmpty().sortedBy { it.name.lowercase() }
                 binding.shelfColumn.addView(
-                    heading(if (folder.isBlank()) "All books · ${books.size}" else "🗂  $folder · ${books.size}")
+                    folderHeading(folder, books.size + offered.size)
                 )
-                binding.shelfColumn.addView(grid(books))
+                binding.shelfColumn.addView(
+                    gridOf(books.map { tile(it) } + offered.map { ghostTile(it) })
+                )
             }
         }
     }
@@ -322,6 +350,37 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
     }
 
     /**
+     * A folder's heading, and its door: tapping it opens the carry menu, because the question
+     * "should new books in this folder download themselves here" belongs on the folder, at the
+     * moment you are looking at it — not in a settings tree three screens away. The current mode
+     * rides in the heading so the answer is visible without asking.
+     */
+    private fun folderHeading(folder: String, count: Int): TextView {
+        val carry = LibraryHub.carry(requireContext(), folder)
+        val label = if (folder.isBlank()) "All books" else "🗂  $folder"
+        val suffix = if (carry == LibraryPolicy.Carry.ON_OPEN) " · on-open" else ""
+        return heading("$label · $count$suffix").apply {
+            isClickable = true
+            setBackgroundResource(android.R.drawable.list_selector_background)
+            setOnClickListener { showCarryMenu(folder) }
+        }
+    }
+
+    /** Carry: auto / on-open, per folder — the device's own selection of what it hauls. */
+    private fun showCarryMenu(folder: String) {
+        val ctx = requireContext()
+        val cur = LibraryHub.carry(ctx, folder)
+        val rows = LibraryPolicy.Carry.entries.map { mode ->
+            val mark = if (mode == cur) "●" else "○"
+            "$mark  ${mode.label}" to {
+                LibraryHub.setCarry(ctx, folder, mode)
+                load()
+            }
+        }
+        showIconMenu(if (folder.isBlank()) "All books" else folder, rows)
+    }
+
+    /**
      * A row-wrapping grid of covers.
      *
      * Hand-laid rather than a RecyclerView with a GridLayoutManager: this is e-ink, the list is
@@ -329,21 +388,24 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
      * smoothly anyway. Covers fill in asynchronously — the shelf draws immediately with the drawn
      * fallback and swaps in real art as each is extracted, so a first visit to a large library is
      * never a blank screen behind a spinner.
+     *
+     * Takes tiles rather than entries so real books and ghost cards share one grid: a ghost is a
+     * different tile in the same row, not a different surface.
      */
-    private fun grid(books: List<BookshelfSource.Entry>): View {
+    private fun gridOf(tiles: List<View>): View {
         val ctx = requireContext()
         val columns = 4
         val outer = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         var row: LinearLayout? = null
-        for ((i, b) in books.withIndex()) {
+        for ((i, t) in tiles.withIndex()) {
             if (i % columns == 0) {
                 row = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
                 outer.addView(row)
             }
-            row!!.addView(tile(b), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            row!!.addView(t, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         }
         // Pad the last row so four books and five books have the same tile width.
-        val remainder = books.size % columns
+        val remainder = tiles.size % columns
         if (remainder != 0) repeat(columns - remainder) {
             row!!.addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
         }
@@ -399,12 +461,139 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
         runCatching { findNavController().navigate(R.id.action_to_reader) }
     }
 
+    /**
+     * A GHOST CARD — a book the library has that this shelf hasn't fetched.
+     *
+     * Render-only, the ghost-row grammar: the card is drawn from the cached manifest and moves no
+     * bytes until tapped. Tapping fetches — bypassing the carry/wifi/size policy on purpose,
+     * because a person asking IS the policy. The card names who added the book and what it weighs,
+     * which is exactly the information the tap decision needs on a metered morning.
+     *
+     * No fetch ever runs in a widget process; this tile and the sync worker are the only two
+     * callers of a download, both squarely in the app's own process.
+     */
+    private fun ghostTile(book: com.toolsboox.plugin.calendar.da.v2.LibraryBook): View {
+        val ctx = requireContext()
+        val title = book.name.substringBeforeLast('.', book.name)
+        val col = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            isClickable = true
+            alpha = 0.45f   // the ghost of it
+            setBackgroundResource(android.R.drawable.list_selector_background)
+        }
+        // An empty cover-shaped frame where the art will be once it is here.
+        col.addView(TextView(ctx).apply {
+            text = "⬇"
+            textSize = 28f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(0xFF666666.toInt())
+            setBackgroundResource(android.R.drawable.dialog_holo_light_frame)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(150))
+        })
+        col.addView(TextView(ctx).apply {
+            text = "$title — fetch?"
+            textSize = 12f
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setTextColor(0xFF444444.toInt())
+            setPadding(0, dp(4), 0, 0)
+        })
+        val mb = book.size / (1024.0 * 1024.0)
+        col.addView(TextView(ctx).apply {
+            text = String.format(Locale.getDefault(), "%.1f MB · %s", mb, book.addedBy.ifBlank { "the fleet" })
+            textSize = 10f
+            maxLines = 1
+            setTextColor(0xFF888888.toInt())
+        })
+        col.setOnClickListener {
+            showMessage("Fetching $title…")
+            LibraryHub.fetch(ctx.applicationContext, book) { ok ->
+                if (!isAdded) return@fetch
+                if (ok) {
+                    showMessage("On the shelf · $title")
+                    load()
+                } else {
+                    // Honest about the seam: a declared-tree book's bytes may not have reached
+                    // the hub yet (they ride Syncthing until step E), and that is not an error.
+                    showMessage("Couldn't fetch $title — it may not have reached the library yet.")
+                }
+            }
+        }
+        return col
+    }
+
     private fun showBookMenu(entry: BookshelfSource.Entry) {
-        val last = BookOpens.lastOpen(requireContext(), entry.name)
+        val ctx = requireContext()
+        val last = BookOpens.lastOpen(ctx, entry.name)
         val when_ = last?.let { "Last opened ${BookOpens.dayOf(it)}" } ?: "Not opened yet"
-        showIconMenu(entry.title, listOf(
+        val id = LibraryHub.idFor(entry)
+        val rows = mutableListOf(
             "📖  Read" to { open(entry) },
             "🕘  $when_" to { },
-        ))
+        )
+        val tombstone = removedButLocal[id]
+        if (tombstone != null) {
+            // Another device removed this book from the LIBRARY; this device still holds a copy.
+            // The tombstone is a question here, never an action — no merge result ever deletes a
+            // local file without this person's own answer.
+            rows += "🕊  Removed from the library — keep your copy?" to { showKeepOrDelete(entry, id) }
+        } else if (entry.file != null) {
+            // Only an app-directory book can be removed from here. A declared-tree book gets no
+            // delete row at all — the declared-tree refusal: that folder belongs to whatever put
+            // the books in it (Syncthing, Calibre, a person with a cable), and the app does not
+            // reach into it destructively, full stop.
+            rows += "🗑  Remove from the library…" to { confirmRemove(entry, id) }
+        }
+        showIconMenu(entry.title, rows)
+    }
+
+    /** The guarded delete: what it does fleet-wide is said BEFORE it happens, in its own words. */
+    private fun confirmRemove(entry: BookshelfSource.Entry, id: String) {
+        val ctx = requireContext()
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle(entry.title)
+            .setMessage(
+                "Remove this book from the library?\n\nIt is deleted from this device now. Other " +
+                    "devices keep their copies and are asked, not told — the library just stops " +
+                    "listing it."
+            )
+            .setPositiveButton("Remove") { d, _ ->
+                d.dismiss()
+                val gone = entry.file?.delete() ?: false
+                if (gone) {
+                    LibraryHub.recordDelete(ctx.applicationContext, id)
+                    showMessage("Removed · ${entry.title}")
+                } else showMessage("Couldn't remove ${entry.title}.")
+                load()
+            }
+            .setNegativeButton("Keep it") { d, _ -> d.dismiss() }
+            .show()
+    }
+
+    /** The other end of a tombstone: the fleet said "removed", this device's person decides. */
+    private fun showKeepOrDelete(entry: BookshelfSource.Entry, id: String) {
+        val ctx = requireContext()
+        val rows = mutableListOf(
+            "📚  Keep my copy" to {
+                LibraryHub.ackKeep(ctx.applicationContext, id)
+                showMessage("Kept · ${entry.title}")
+                load()
+            }
+        )
+        // Deleting the local copy is only offered where the app is allowed to delete at all —
+        // an app-directory file. For a declared-tree copy the only answer is "keep": the refusal
+        // again, and the honest one, because that file is Syncthing's to manage.
+        if (entry.file != null) {
+            rows += "🗑  Delete my copy too" to {
+                val gone = entry.file?.delete() ?: false
+                // Already tombstoned fleet-wide — nothing to record; ack so the question does
+                // not outlive the book.
+                LibraryHub.ackKeep(ctx.applicationContext, id)
+                showMessage(if (gone) "Deleted · ${entry.title}" else "Couldn't delete ${entry.title}.")
+                load()
+            }
+        }
+        showIconMenu("${entry.title} — removed from the library", rows)
     }
 }

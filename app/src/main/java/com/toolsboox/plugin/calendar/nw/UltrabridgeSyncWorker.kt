@@ -275,6 +275,22 @@ class UltrabridgeSyncWorker(
                     recordSyncOutcome(mainPrefs, "failed: ${e.javaClass.simpleName}")
                 }
 
+                // THE LIBRARY HUB rides the same cadence — this is the "sync tick" the
+                // Listen/Library design's pull-on-tick names. After the day mirror (pages
+                // before books when a pass gets truncated), before the PDF renders (a book a
+                // person is waiting on beats a backup nobody is). Quiet failure by design and
+                // deliberately NOT counted into failureCount/mirrorFailed: the pass is
+                // self-healing (an unpushed add or unfetched book is simply found again next
+                // hour), and a flaky 100MB book download must not put the whole worker — day
+                // mirror included — into retry backoff.
+                try {
+                    withContext(Dispatchers.IO) {
+                        com.toolsboox.plugin.reader.ui.LibraryHub.syncPassBlocking(applicationContext)
+                    }
+                } catch (e: Exception) {
+                    Timber.w(e, "$TAG: Library hub pass failed (non-fatal)")
+                }
+
                 for ((groupKey, files) in groupedFiles) {
                     // If the pen goes live mid-run, abandon and reschedule — a half-done sync is
                     // fine (it's idempotent), a frozen page is not.

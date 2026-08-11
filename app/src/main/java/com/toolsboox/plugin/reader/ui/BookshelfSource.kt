@@ -167,29 +167,85 @@ object BookshelfSource {
      * Returns whether it landed. Streams rather than buffering — a book is tens of megabytes and
      * this runs on a device with little to spare.
      */
-    fun writeInto(context: Context, filename: String, body: (java.io.OutputStream) -> Unit): Boolean {
+    fun writeInto(context: Context, filename: String, body: (java.io.OutputStream) -> Unit): Boolean =
+        writeInto(context, "", filename, body)
+
+    /**
+     * [writeInto], aimed at a subfolder — the library hub's landing path.
+     *
+     * The hub's manifest names every book by `folder/name#size`, so a fetch MUST land the file in
+     * the same folder it holds on the hub or the downloaded copy mints a different id than the one
+     * it was fetched under — and the ghost card that triggered the fetch would still be a ghost,
+     * forever, beside the very book it fetched. Folder structure is identity here, not decoration.
+     *
+     * [body] may THROW to abandon the landing (the hub does, on a hash/size mismatch): in the
+     * default-dir branch the temp file is deleted and the real name never exists; in the declared
+     * tree the write goes to a hidden `.part` document that is renamed into place only on success,
+     * so an interrupted or corrupt download never sits on the shelf looking like a book. (The SAF
+     * rename can fail on exotic providers; then — and only then — the landing falls back to a
+     * direct copy under the real name, the same exposure the pre-hub share-sheet path always had.)
+     */
+    fun writeInto(context: Context, folder: String, filename: String, body: (java.io.OutputStream) -> Unit): Boolean {
         val tree = declaredTree(context)
         if (tree == null) {
-            val dest = File(defaultDir(context), filename)
+            val dir = if (folder.isEmpty()) defaultDir(context)
+            else File(defaultDir(context), folder).apply { mkdirs() }
+            val dest = File(dir, filename)
             // Temp-then-rename: an interrupted write must not leave a truncated book on the shelf
             // looking like a whole one, because the shelf lists by extension and would show it.
             val tmp = File(dest.parentFile, ".${dest.name}.part")
             return runCatching {
                 tmp.outputStream().use(body)
                 tmp.renameTo(dest)
-            }.getOrDefault(false)
+            }.getOrDefault(false).also { ok -> if (!ok) runCatching { tmp.delete() } }
         }
         val root = DocumentFile.fromTreeUri(context, tree) ?: return false
         // A declared tree may be read-only (a shared folder, a mounted card). Say so by failing
         // rather than by appearing to succeed.
         if (!root.canWrite()) return false
-        val existing = root.findFile(filename)
-        val doc = existing ?: root.createFile("application/octet-stream", filename) ?: return false
+        // Walk-and-create the subfolder path. findFile per segment rather than createDirectory
+        // blindly: createDirectory on an existing name mints "folder (1)" on some providers.
+        var dir: DocumentFile = root
+        for (segment in folder.split('/').filter { it.isNotBlank() }) {
+            dir = dir.listFiles().firstOrNull { it.isDirectory && it.name == segment }
+                ?: dir.createDirectory(segment) ?: return false
+        }
+        val partName = ".$filename.part"
+        val part = dir.findFile(partName) ?: dir.createFile("application/octet-stream", partName)
+        if (part != null) {
+            val wrote = runCatching {
+                context.contentResolver.openOutputStream(part.uri, "wt")!!.use(body)
+                true
+            }.getOrDefault(false)
+            if (!wrote) { runCatching { part.delete() }; return false }
+            // Rename into place — the commit. renameDocument returns the (possibly new) uri or
+            // throws/nulls where the provider doesn't support it.
+            val renamed = runCatching {
+                dir.findFile(filename)?.delete()   // Overwrite semantics: replace a stale copy.
+                android.provider.DocumentsContract.renameDocument(
+                    context.contentResolver, part.uri, filename
+                ) != null
+            }.getOrDefault(false)
+            if (renamed) return true
+            runCatching { part.delete() }
+            // Fall through to the direct write below.
+        }
+        val existing = dir.findFile(filename)
+        val doc = existing ?: dir.createFile("application/octet-stream", filename) ?: return false
         return runCatching {
             context.contentResolver.openOutputStream(doc.uri, "wt")!!.use(body)
             true
         }.getOrDefault(false)
     }
+
+    /**
+     * The bytes of one entry, wherever it lives — a [File] stream or a resolver stream — WITHOUT
+     * materialising a cache copy. The hub hashes and uploads through this: sha1-ing a declared
+     * tree's audiobook via [materialise] would copy gigabytes into cache just to read them once.
+     */
+    fun openStream(context: Context, entry: Entry): java.io.InputStream? =
+        entry.file?.let { runCatching { it.inputStream() }.getOrNull() }
+            ?: entry.uri?.let { runCatching { context.contentResolver.openInputStream(it) }.getOrNull() }
 
     /**
      * A [File] the reader can open, materialising a tree entry into the cache if it must.

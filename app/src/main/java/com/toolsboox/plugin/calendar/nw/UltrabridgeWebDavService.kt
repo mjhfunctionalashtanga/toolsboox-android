@@ -58,9 +58,12 @@ class UltrabridgeWebDavService(
      *
      * @param file the local file to upload
      * @param remotePath the path relative to [baseUrl] (e.g. "ToolsForBoox/Day-2026-05.pdf")
+     * @param mediaType the content type. Defaults to application/pdf — the original caller here is
+     *   the PDF backup and every existing call site relies on the default; the library hub passes
+     *   octet-stream because a book is whatever it is and the server stores bytes either way.
      * @return true if the upload succeeded (HTTP 2xx), false otherwise
      */
-    fun upload(file: File, remotePath: String): Boolean {
+    fun upload(file: File, remotePath: String, mediaType: MediaType = PDF_MEDIA_TYPE): Boolean {
         val normalizedBase = baseUrl.trimEnd('/')
         val normalizedPath = remotePath.trimStart('/')
         val url = "$normalizedBase/$normalizedPath"
@@ -70,7 +73,7 @@ class UltrabridgeWebDavService(
             .url(url)
             .header("Authorization", credential)
             .header("Overwrite", "T")
-            .put(file.asRequestBody(PDF_MEDIA_TYPE))
+            .put(file.asRequestBody(mediaType))
             .build()
 
         return try {
@@ -200,6 +203,115 @@ class UltrabridgeWebDavService(
         } catch (e: IOException) {
             Timber.e(e, "$TAG: Network error downloading $remotePath")
             null
+        }
+    }
+
+    /**
+     * Download a file as a stream, handing the open body to [sink].
+     *
+     * [download] buffers the whole body — right for a day JSON, wrong for a book: the library hub
+     * moves files up to (and past) 100MB on devices with little memory to spare, so the bytes must
+     * go socket → disk without ever being whole in RAM. The short-read check that [download] does
+     * against Content-Length cannot be done here (the bytes are gone by the time we could count
+     * them cheaply), so callers verify what landed against the size/hash they already know from
+     * the manifest — a strictly stronger check than a length header anyway.
+     *
+     * @return true when the server answered 2xx and [sink] returned without throwing
+     */
+    fun downloadTo(remotePath: String, sink: (java.io.InputStream) -> Unit): Boolean {
+        val normalizedBase = baseUrl.trimEnd('/')
+        val normalizedPath = remotePath.trimStart('/')
+        val url = "$normalizedBase/$normalizedPath"
+
+        val credential = Credentials.basic(username, password)
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", credential)
+            .get()
+            .build()
+
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Timber.w("$TAG: Streaming download failed for $remotePath: ${response.code} ${response.message}")
+                    return false
+                }
+                val body = response.body ?: return false
+                body.byteStream().use(sink)
+                true
+            }
+        } catch (e: Exception) {
+            // Broader than IOException on purpose: the sink may throw its own verification
+            // failure (wrong hash, wrong size) to abort the landing, and that must read as
+            // "download failed", not crash the sync pass.
+            Timber.w(e, "$TAG: Error streaming $remotePath")
+            false
+        }
+    }
+
+    /**
+     * MOVE a file server-side — the WebDAV rename.
+     *
+     * This is what makes temp-then-rename possible on the REMOTE side: the library hub uploads a
+     * book to a `.part` name and MOVEs it into place, so a fetch that races an interrupted upload
+     * can never stream down half a book under the real name. Overwrite: T because the rename IS
+     * the commit — a stale earlier copy under the final name is exactly what it should replace.
+     *
+     * The Destination header must be an absolute URL on the same host (RFC 4918 §9.9). Stock
+     * Apache mod_dav (dav.mjh.yoga) supports MOVE out of the box; a server that doesn't answers
+     * 405/501 and the caller falls back to a plain direct PUT — same result, briefly less atomic.
+     */
+    fun move(fromPath: String, toPath: String): Boolean {
+        val normalizedBase = baseUrl.trimEnd('/')
+        val fromUrl = "$normalizedBase/${fromPath.trimStart('/')}"
+        val toUrl = "$normalizedBase/${toPath.trimStart('/')}"
+
+        val credential = Credentials.basic(username, password)
+        val request = Request.Builder()
+            .url(fromUrl)
+            .header("Authorization", credential)
+            .header("Destination", toUrl)
+            .header("Overwrite", "T")
+            .method("MOVE", null)
+            .build()
+
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Timber.w("$TAG: MOVE failed $fromPath → $toPath: ${response.code} ${response.message}")
+                }
+                response.isSuccessful
+            }
+        } catch (e: IOException) {
+            Timber.e(e, "$TAG: Network error moving $fromPath")
+            false
+        }
+    }
+
+    /**
+     * DELETE a remote file. The library hub uses it only to sweep its own orphaned `.part`
+     * uploads — never a book under its real name; tombstones, not DELETEs, are how a book leaves
+     * the library, and even a tombstone never deletes another device's file.
+     */
+    fun delete(remotePath: String): Boolean {
+        val normalizedBase = baseUrl.trimEnd('/')
+        val url = "$normalizedBase/${remotePath.trimStart('/')}"
+
+        val credential = Credentials.basic(username, password)
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", credential)
+            .delete()
+            .build()
+
+        return try {
+            client.newCall(request).execute().use { response ->
+                // 404 counts as done: the thing we wanted gone is gone.
+                response.isSuccessful || response.code == 404
+            }
+        } catch (e: IOException) {
+            Timber.e(e, "$TAG: Network error deleting $remotePath")
+            false
         }
     }
 
