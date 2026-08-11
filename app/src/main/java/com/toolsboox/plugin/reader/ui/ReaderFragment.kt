@@ -75,6 +75,15 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
     @Volatile
     private var currentBookFile: File? = null
 
+    /**
+     * The open book's fleet-wide name in `reading-state.json` — [ReadingState.keyFor]'s
+     * folder-qualified name + size, NOT the device-local path (which differs per device) and NOT
+     * the bare filename (which collides across folders and survives a replaced file it shouldn't).
+     * Set by whoever opens the book: the shelf hands the exact key from its [BookshelfSource.Entry];
+     * imports and the last-book restore derive/recall it — see [loadBookFile]/[restoreLastBook].
+     */
+    private var currentReadingId: String? = null
+
     private var bookReady = false
     private var pendingOpen = false
     /** Relocates to swallow: foliate's start-of-book report + each programmatic goToCfi
@@ -248,7 +257,13 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             showMessage("Couldn't open ${entry.title}")
             return
         }
-        loadBookFile(f)
+        // The entry is the ONLY place the folder-qualified identity is known for a book behind a
+        // declared tree — the materialised cache file is named "<size>-<name>" with no folder —
+        // so the sync key travels in here rather than being derived from the file downstream.
+        loadBookFile(
+            f,
+            com.toolsboox.plugin.calendar.da.v2.ReadingState.keyFor(entry.folder, entry.name, entry.sizeBytes)
+        )
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -566,6 +581,11 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
     override fun onPause() {
         super.onPause()
         (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = null
+        // Closing the book (or the app going behind something) is the moment the debounced
+        // reading-state push must not wait out its quiet timer — "after five still seconds" may
+        // be after the process is gone, and the page you closed on is the page the next device
+        // should open to.
+        context?.let { com.toolsboox.plugin.calendar.ot.ReadingStateStore.flush(it) }
     }
 
     /** Pick from the imported books, or import a new one. */
@@ -830,7 +850,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         showModal(dialog)
     }
 
-    private fun loadBookFile(file: File) {
+    private fun loadBookFile(file: File, readingId: String? = null) {
         file.setLastModified(System.currentTimeMillis())   // track recency (last opened)
         // Audiobooks aren't e-books — hand them to the shared player instead of the foliate WebView.
         if (com.toolsboox.ui.plugin.LedgerPlayer.isAudioFile(file.name)) {
@@ -840,7 +860,17 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             return
         }
         currentBookFile = file
-        requireContext().getSharedPreferences(PREFS, 0).edit().putString(KEY_BOOK, file.absolutePath).apply()
+        // The sync key: handed in by the shelf (which alone knows a tree entry's folder), derived
+        // for plain files under the default shelf (imports, directory rows). Persisted BESIDE the
+        // path in the same edit so the last-book restore gets the identity back with the file —
+        // deriving it at restore time would mis-key a materialised cache copy ("<size>-<name>").
+        val id = readingId ?: com.toolsboox.plugin.calendar.ot.ReadingStateStore
+            .idForShelfFile(booksDir(), file)
+        currentReadingId = id
+        requireContext().getSharedPreferences(PREFS, 0).edit()
+            .putString(KEY_BOOK, file.absolutePath)
+            .putString(KEY_READING_ID, id)
+            .apply()
         bookReady = false
         binding.readerEmpty.visibility = View.GONE
         openWhenReady()
@@ -1081,9 +1111,18 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
     }
 
     private fun restoreLastBook() {
-        val path = requireContext().getSharedPreferences(PREFS, 0).getString(KEY_BOOK, null) ?: return
+        val prefs = requireContext().getSharedPreferences(PREFS, 0)
+        val path = prefs.getString(KEY_BOOK, null) ?: return
         val f = File(path)
-        if (f.exists()) { currentBookFile = f; pendingOpen = true }
+        if (f.exists()) {
+            currentBookFile = f
+            // The identity saved beside the path (see [loadBookFile]); a pre-upgrade pref has no
+            // saved id, so derive one — right for shelf files, and for a stale cache copy it only
+            // means this session keys under the cache name until the book is next opened properly.
+            currentReadingId = prefs.getString(KEY_READING_ID, null)
+                ?: com.toolsboox.plugin.calendar.ot.ReadingStateStore.idForShelfFile(booksDir(), f)
+            pendingOpen = true
+        }
     }
 
     /** Jump back to where we left off in this book (the CFI stored on the last relocate). */
@@ -1099,15 +1138,40 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             val esc = cfi.replace("\\", "\\\\").replace("'", "\\'")
             binding.readerWeb.evaluateJavascript("window.goToCfi && window.goToCfi('$esc')", null)
         }
-        val localCfi = ReaderPositionStore.get(ctx, book)
+        // Two stores answer here while the fleet crosses over: `reading-state.json`
+        // (folder-qualified name+size key, the 2026-08-11 Listen/Library sidecar) is
+        // authoritative when it knows the book; `reader/positions.json` (bare-name key) is the
+        // fallback for books whose progress predates the new file. Only ONE of them may drive
+        // the re-jump — two merge callbacks each entitled to move the page would race each
+        // other's landing — so the new store drives whenever the book has a sync key, and the
+        // legacy file is still round-tripped (no callback) to keep devices on older builds fed.
+        val id = currentReadingId
+        val localState = id?.let { com.toolsboox.plugin.calendar.ot.ReadingStateStore.get(ctx, it) }
+        val localCfi = localState?.locator ?: ReaderPositionStore.get(ctx, book)
         localCfi?.let { jump(it) }
-        ReaderPositionStore.sync(ctx) { merged ->
-            val remoteCfi = merged.optJSONObject(book)?.optString("cfi")?.takeIf { it.isNotBlank() }
-            if (remoteCfi != null && remoteCfi != localCfi) {
-                binding.readerWeb.post {
-                    if (!isAdded) return@post
-                    skipRelocates++    // the re-jump's own relocate must not re-stamp
-                    jump(remoteCfi)
+        if (id != null) {
+            com.toolsboox.plugin.calendar.ot.ReadingStateStore.sync(ctx) { merged ->
+                // The merge already decided whose read is newest: if the locator it kept is not
+                // the one we resumed to, another device is ahead — go there.
+                val remote = merged.firstOrNull { it.id == id && !it.isDeleted }
+                if (remote != null && remote.locator.isNotBlank() && remote.locator != localCfi) {
+                    binding.readerWeb.post {
+                        if (!isAdded) return@post
+                        skipRelocates++    // the re-jump's own relocate must not re-stamp
+                        jump(remote.locator)
+                    }
+                }
+            }
+            ReaderPositionStore.sync(ctx)
+        } else {
+            ReaderPositionStore.sync(ctx) { merged ->
+                val remoteCfi = merged.optJSONObject(book)?.optString("cfi")?.takeIf { it.isNotBlank() }
+                if (remoteCfi != null && remoteCfi != localCfi) {
+                    binding.readerWeb.post {
+                        if (!isAdded) return@post
+                        skipRelocates++    // the re-jump's own relocate must not re-stamp
+                        jump(remoteCfi)
+                    }
                 }
             }
         }
@@ -1170,6 +1234,14 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
                 val cfi = msg.optString("cfi")
                 if (cfi.isNotBlank()) currentBookFile?.let {
                     ReaderPositionStore.set(requireContext(), it.nameWithoutExtension, cfi)
+                }
+                // The new sidecar too, under the folder-qualified key — locator plus foliate's
+                // own fraction, which is what the shelf/almanac can show as "42% read". The
+                // store's push is debounced (five quiet seconds), so a fast page-turner costs
+                // local writes only.
+                if (cfi.isNotBlank()) currentReadingId?.let {
+                    com.toolsboox.plugin.calendar.ot.ReadingStateStore
+                        .record(requireContext(), it, cfi, currentFraction)
                 }
             }
             "searchResults" -> {
@@ -1643,6 +1715,10 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         private const val PREFS = "ledger_reader_prefs"
         private const val HL_PREFS = "ledger_reader_highlights"
         private const val KEY_BOOK = "current_book_path"
+        /** The open book's `reading-state.json` key, saved beside [KEY_BOOK] (same literal is
+         *  written by BookshelfFragment.open and LedgerDirectory.openBook, which set the path
+         *  from outside and navigate here). */
+        private const val KEY_READING_ID = "current_reading_id"
         private const val KEY_FONT = "reader_font_pct"
         private const val KEY_THEME = "reader_theme"
 

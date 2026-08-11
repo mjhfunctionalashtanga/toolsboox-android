@@ -47,6 +47,49 @@ object LedgerPlayer {
 
     var capture: Capture? = null; private set
 
+    // ---- Listen state (the synced playhead) ------------------------------------------------
+
+    /** The episode's fleet-wide name in `listen-state.json` — [Capture.url], the same identity the
+     *  star files. Null for tracks with no capturable identity (TTS read-aloud, voice memos,
+     *  audiobook files): a voice memo has no cross-device name worth syncing, and audiobooks join
+     *  when the library manifest gives them one. */
+    private var listenId: String? = null
+
+    /** For the state writes that happen after the starting fragment is gone (stop from another
+     *  surface, the 15s heartbeat) — always the application context, set at [startAudio]. */
+    private var appContext: Context? = null
+
+    /** How often the playhead is noted to local disk while playing. Local only — the round trips
+     *  ride on pause/stop/finish, the moments another device might realistically be next to play. */
+    private const val HEARTBEAT_MS = 15_000L
+
+    /** A cross-device re-seek only fires when it would MOVE the listener — a jump smaller than
+     *  this is the same sentence again, not worth the audio hiccup. */
+    private const val RESEEK_SLOP_MS = 5_000L
+
+    private val heartbeat = object : Runnable {
+        override fun run() {
+            if (media == null) return
+            if (media?.isPlaying == true) recordListen(sync = false)
+            main.postDelayed(this, HEARTBEAT_MS)
+        }
+    }
+
+    /** Note the current playhead into [ListenStateStore] (no-op for untracked tracks). The
+     *  position/duration are read on the caller's thread while [media] is still alive; the file
+     *  write rides the sidecar executor so the heartbeat never does IO on main. */
+    private fun recordListen(sync: Boolean) {
+        val ctx = appContext ?: return
+        val id = listenId ?: return
+        val m = media ?: return
+        val pos = runCatching { m.currentPosition }.getOrDefault(0).toLong()
+        val dur = runCatching { m.duration }.getOrDefault(0).toLong()
+        if (pos <= 0L) return
+        com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.background {
+            com.toolsboox.plugin.calendar.ot.ListenStateStore.record(ctx, id, pos, dur, sync)
+        }
+    }
+
     /** Monotonic playback-session token: bumped on every start/stop so background lookups
      *  (chapter/transcript resolves racing the network) can tell "still my track" from
      *  "the listener moved on" and lose quietly. */
@@ -169,25 +212,88 @@ object LedgerPlayer {
         this.title = title?.takeIf { it.isNotBlank() }
         this.subtitle = subtitle?.takeIf { it.isNotBlank() }
         this.image = null
+        appContext = context.applicationContext
+        listenId = capture?.url?.takeIf { it.isNotBlank() }
         loadImage(imageUrl)
+        // Resume in two phases, the reader's own restore pattern (restoreReadingPosition):
+        // start INSTANTLY from the local spot, then re-seek once the sidecar pull merges if
+        // another device's playhead turns out to be newer. The heartbeat deliberately does not
+        // start until that pull lands — a heartbeat stamped before the merge would out-merge the
+        // other device's genuinely newer position with this device's stale one (the exact
+        // silent-revert the reader's restore already had and fixed).
+        val local = listenId?.let {
+            com.toolsboox.plugin.calendar.ot.ListenStateStore.get(context, it)
+        }
+        val resumeMs = com.toolsboox.plugin.calendar.da.v2.ListenState.resumePointMs(local)
         runCatching {
             media = android.media.MediaPlayer().apply {
                 setDataSource(source)
                 setOnPreparedListener { mp ->
                     runCatching { mp.playbackParams = mp.playbackParams.setSpeed(speed) }  // carry chosen speed
+                    // Jump back to where the listener left off — but only when the jump is worth
+                    // making (>10s in, not into the outro of a finished episode): resumePointMs
+                    // answers 0 for both of those, and a finished episode restarts from the top.
+                    if (resumeMs > 0) runCatching { mp.seekTo(resumeMs.toInt()) }
                     mp.start(); main.post { notifyChange() }
                 }
-                setOnCompletionListener { stopMedia(); main.post { notifyChange() } }
+                setOnCompletionListener { mp ->
+                    // Ran off the end: heard, whatever the last heartbeat said. Record it at the
+                    // full duration (position == duration crosses the >95% done line) and push —
+                    // "done" is the one fact every device wants promptly, it is what the Listen
+                    // lens's unheard filters read. Captured from [mp] directly because stopMedia()
+                    // is about to release the player.
+                    val ctx = appContext; val id = listenId
+                    val dur = runCatching { mp.duration }.getOrDefault(0).toLong()
+                    if (ctx != null && id != null && dur > 0) {
+                        com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.background {
+                            com.toolsboox.plugin.calendar.ot.ListenStateStore.record(ctx, id, dur, dur, sync = true)
+                        }
+                    }
+                    stopMedia(); main.post { notifyChange() }
+                }
                 setOnErrorListener { _, _, _ -> stopMedia(); main.post { notifyChange() }; true }
                 prepareAsync()
             }
         }.onFailure { Timber.w(it, "audio start failed"); stopMedia() }
+        if (listenId != null) {
+            val startedSession = session
+            val resumedUpdated = local?.updated ?: 0L
+            val id = listenId!!
+            com.toolsboox.plugin.calendar.ot.ListenStateStore.sync(context.applicationContext) { merged ->
+                val remote = merged.firstOrNull { it.id == id && !it.isDeleted }
+                main.post {
+                    // The listener may have moved on while the pull was in flight — a stale
+                    // session's answer must lose quietly (the [session] contract).
+                    if (session != startedSession || media == null) return@post
+                    // Re-seek only when the MERGE was won by a record we did not resume from —
+                    // when the newest copy is our own, the difference between it and the playhead
+                    // is just the seconds listened since, and "correcting" that would yank the
+                    // listener backwards.
+                    if (remote != null && remote.updated > resumedUpdated) {
+                        val target = com.toolsboox.plugin.calendar.da.v2.ListenState.resumePointMs(remote)
+                        if (target > 0 && kotlin.math.abs(target - positionMs) > RESEEK_SLOP_MS) {
+                            seekTo(target.toInt())
+                        }
+                    }
+                    main.removeCallbacks(heartbeat)
+                    main.postDelayed(heartbeat, HEARTBEAT_MS)
+                }
+            }
+        }
         notifyChange()
     }
 
     /** Play/pause toggle — dispatches to whichever backend is active. */
     fun toggle() {
-        media?.let { m -> runCatching { if (m.isPlaying) m.pause() else m.start() }; notifyChange(); return }
+        media?.let { m ->
+            val pausing = runCatching { m.isPlaying }.getOrDefault(false)
+            runCatching { if (m.isPlaying) m.pause() else m.start() }
+            // Pause is a punctuation mark: the moment after it, another device is as likely as
+            // this one to press play next, so the playhead rides to the hub now rather than
+            // waiting out the local-only heartbeat.
+            if (pausing) recordListen(sync = true)
+            notifyChange(); return
+        }
         val e = tts ?: return
         when {
             e.isPaused -> e.resume()
@@ -239,6 +345,10 @@ object LedgerPlayer {
     }
 
     fun stop() {
+        // Before the player is released: stop is the strongest punctuation there is, and the
+        // whole point of the listen sidecar is that the position at THIS moment reaches the
+        // device you pick the episode up on.
+        recordListen(sync = true)
         tts?.stop()
         stopMedia()
         newSession()
@@ -253,9 +363,11 @@ object LedgerPlayer {
         chapters = emptyList()
         transcriptProvider = null
         capture = null
+        listenId = null
     }
 
     private fun stopMedia() {
+        main.removeCallbacks(heartbeat)
         media?.let { runCatching { it.stop() }; runCatching { it.release() } }
         media = null
     }

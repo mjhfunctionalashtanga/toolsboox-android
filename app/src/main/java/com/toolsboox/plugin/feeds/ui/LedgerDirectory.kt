@@ -140,7 +140,17 @@ fun ledgerDirectoryFolders(
             return
         }
         fragment.requireContext().getSharedPreferences("ledger_reader_prefs", 0).edit()
-            .putString("current_book_path", f.absolutePath).apply()
+            .putString("current_book_path", f.absolutePath)
+            // The sync key beside the path (the reader restores both together). These rows are
+            // always plain files under the default shelf, so the derived key IS the
+            // folder-qualified name+size the fleet agrees on.
+            .putString(
+                "current_reading_id",
+                com.toolsboox.plugin.calendar.ot.ReadingStateStore.idForShelfFile(
+                    java.io.File(fragment.requireContext().filesDir, "reader/books"), f
+                )
+            )
+            .apply()
         nav.navigate(R.id.action_to_reader)
     }
     val shelf = java.io.File(fragment.requireContext().filesDir, "reader/books")

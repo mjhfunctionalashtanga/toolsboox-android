@@ -387,7 +387,15 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
         val f = BookshelfSource.materialise(requireContext(), entry)
         if (f == null) { showMessage("Couldn't open ${entry.title}"); return }
         requireContext().getSharedPreferences("ledger_reader_prefs", 0).edit()
-            .putString("current_book_path", f.absolutePath).apply()
+            .putString("current_book_path", f.absolutePath)
+            // The sync key rides beside the path: only THIS entry knows the folder-qualified
+            // name+size ("reading-state.json" identity) — the materialised cache file the reader
+            // restores from is named "<size>-<name>" and could not answer for itself.
+            .putString(
+                "current_reading_id",
+                com.toolsboox.plugin.calendar.da.v2.ReadingState.keyFor(entry.folder, entry.name, entry.sizeBytes)
+            )
+            .apply()
         runCatching { findNavController().navigate(R.id.action_to_reader) }
     }
 
