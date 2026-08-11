@@ -63,6 +63,20 @@ object LedgerWebBridge {
         Config("", "", "", 0)
     }
 
+    /**
+     * A SPECIFIC site's boards/booking/WP config — the boards-flavoured twin of
+     * [LedgerCommunityBridge.configFor], carrying the site's own default board id. This is what
+     * lets every consumer below take a per-call config instead of demanding the site be made
+     * globally active first: two surfaces pointed at two sites each carry their own creds, and
+     * neither can re-point the other (Michael: no dominant global site).
+     */
+    fun configFor(context: Context, site: LedgerSite): Config = Config(
+        site.url.trim().trimEnd('/'),
+        site.username.trim(),
+        SiteStore.password(context, site.id),
+        site.boardId.trim().toIntOrNull() ?: 0,
+    )
+
     fun saveConfig(context: Context, c: Config) {
         try {
             prefs(context).edit()
@@ -76,11 +90,15 @@ object LedgerWebBridge {
         }
     }
 
-    private var cachedStages: Pair<Int, List<Long>>? = null
+    // Keyed "site|boardId", NOT boardId alone: every FluentBoards install counts its boards from 1,
+    // so with per-call configs two different sites' "board 3"s are different boards — a bare-int
+    // key would quietly serve one site's stage ids for the other's push.
+    private var cachedStages: Pair<String, List<Long>>? = null
 
     /** Remote stage ids ordered by position (0 = To do, 1 = Doing, 2 = Done). */
     private fun stageIds(c: Config): List<Long> {
-        cachedStages?.let { if (it.first == c.boardId) return it.second }
+        val key = "${c.site}|${c.boardId}"
+        cachedStages?.let { if (it.first == key) return it.second }
         return try {
             val req = Request.Builder()
                 .url("${c.site}/wp-json/ledgr/v1/board/${c.boardId}/compact")
@@ -94,7 +112,7 @@ object LedgerWebBridge {
                     .map { stages.getJSONObject(it) }
                     .sortedBy { it.optDouble("position", 0.0) }
                     .map { it.getLong("id") }
-                cachedStages = c.boardId to list
+                cachedStages = key to list
                 list
             }
         } catch (e: Exception) {
@@ -267,12 +285,14 @@ object LedgerCommunityBridge {
      * Post a gram (base64 PNG) into [spaceId]. Optional [provenance] renders a "↩ in reply to…"
      * block leading the gram (with [provUrl] as a source link) — the user edits it before sharing.
      * Returns a short toast status. Dispatchers.IO.
+     * [cfg] targets a specific site (a space id only means anything on its own site, so the caller
+     * that knows the space knows the site); null = the active one, as ever.
      */
     fun postGram(
         context: Context, pngBase64: String, title: String, noteUuid: String, spaceId: Long,
-        provenance: String? = null, provUrl: String? = null,
+        provenance: String? = null, provUrl: String? = null, cfg: Config? = null,
     ): String {
-        val c = config(context)
+        val c = cfg ?: config(context)
         if (!c.ready) return "Community bridge not configured"
         val png = try {
             android.util.Base64.decode(pngBase64, android.util.Base64.DEFAULT)
@@ -462,9 +482,16 @@ object LedgerCorrespondence {
         }
     }
 
+    // Every function below takes an optional [cfg] naming the site the id belongs to (feed/thread/
+    // comment ids collide across sites — each Fluent install counts from 1 — so an id without its
+    // site is only half an address). Null = the active site, which keeps single-site installs and
+    // every legacy caller behaving exactly as before. This per-call threading is the load-bearing
+    // piece of "no dominant global site": the old pattern (activate the row's site, then run the
+    // active-site code) mutated the ONE global cred set, so two surfaces on two sites fought.
+
     /** Toggle a like on a community post. Returns (liked, count) or null on failure. Dispatchers.IO. */
-    fun reactPost(context: Context, feedId: Long): Pair<Boolean, Int>? {
-        val c = LedgerCommunityBridge.config(context)
+    fun reactPost(context: Context, feedId: Long, cfg: LedgerCommunityBridge.Config? = null): Pair<Boolean, Int>? {
+        val c = cfg ?: LedgerCommunityBridge.config(context)
         if (!c.ready) return null
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("feed_id", feedId.toString())
@@ -487,8 +514,8 @@ object LedgerCorrespondence {
     }
 
     /** A gram/post's provenance + your neighbouring posts (the "▸ related" strip). Null on failure. */
-    fun communityRelated(context: Context, feedId: Long): CommunityRelated? {
-        val c = LedgerCommunityBridge.config(context)
+    fun communityRelated(context: Context, feedId: Long, cfg: LedgerCommunityBridge.Config? = null): CommunityRelated? {
+        val c = cfg ?: LedgerCommunityBridge.config(context)
         if (!c.ready) return null
         return try {
             val req = Request.Builder()
@@ -516,12 +543,12 @@ object LedgerCorrespondence {
     }
 
     /** Every comment on a post/card, oldest-first — to read the exchange in-app. Dispatchers.IO. */
-    fun threadComments(context: Context, source: String, threadId: Long): List<ThreadComment> =
-        threadBundle(context, source, threadId).comments
+    fun threadComments(context: Context, source: String, threadId: Long, cfg: LedgerCommunityBridge.Config? = null): List<ThreadComment> =
+        threadBundle(context, source, threadId, cfg).comments
 
     /** The original post + its comments in one call — for the in-app thread reader. Dispatchers.IO. */
-    fun threadBundle(context: Context, source: String, threadId: Long): ThreadBundle {
-        val c = LedgerCommunityBridge.config(context)
+    fun threadBundle(context: Context, source: String, threadId: Long, cfg: LedgerCommunityBridge.Config? = null): ThreadBundle {
+        val c = cfg ?: LedgerCommunityBridge.config(context)
         if (!c.ready) return ThreadBundle(null, emptyList())
         return try {
             val req = Request.Builder()
@@ -559,8 +586,8 @@ object LedgerCorrespondence {
     }
 
     /** Delete a comment/upload from a thread — your own only (server-enforced). True on success. */
-    fun deleteThreadComment(context: Context, source: String, commentId: Long): Boolean {
-        val c = LedgerCommunityBridge.config(context)
+    fun deleteThreadComment(context: Context, source: String, commentId: Long, cfg: LedgerCommunityBridge.Config? = null): Boolean {
+        val c = cfg ?: LedgerCommunityBridge.config(context)
         if (!c.ready) return false
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("source", source)
@@ -581,9 +608,10 @@ object LedgerCorrespondence {
         }
     }
 
-    /** Fetch a thread image (a handwritten reply) to a bitmap. Null on failure. Dispatchers.IO. */
-    fun loadImage(context: Context, url: String): android.graphics.Bitmap? {
-        val c = LedgerCommunityBridge.config(context)
+    /** Fetch a thread image (a handwritten reply) to a bitmap. Null on failure. Dispatchers.IO.
+     *  [cfg] carries the image's own site's creds — private-space media 401s under another site's. */
+    fun loadImage(context: Context, url: String, cfg: LedgerCommunityBridge.Config? = null): android.graphics.Bitmap? {
+        val c = cfg ?: LedgerCommunityBridge.config(context)
         return try {
             val req = Request.Builder().url(url)
                 .apply { if (c.ready) header("Authorization", Credentials.basic(c.user, c.pass)) }.build()
@@ -607,9 +635,9 @@ object LedgerCorrespondence {
     fun postInkReply(
         context: Context, feedId: Long, png: ByteArray?, parentId: Long = 0, caption: String = "",
         avFile: java.io.File? = null, avKind: String = "", avTitle: String = "",
-        posterPng: ByteArray? = null
+        posterPng: ByteArray? = null, cfg: LedgerCommunityBridge.Config? = null,
     ): String {
-        val c = LedgerCommunityBridge.config(context)
+        val c = cfg ?: LedgerCommunityBridge.config(context)
         if (!c.ready) return "Community bridge not configured"
         val isAv = avFile != null && avFile.exists() && (avKind == "audio" || avKind == "video")
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
@@ -663,8 +691,8 @@ object LedgerCorrespondence {
 
     /** Post a TEXT reply to a community post (optionally nested under [parentId]). Dispatchers.IO.
      *  [markdown] true → the bridge renders a safe markdown subset to HTML. */
-    fun postTextReply(context: Context, feedId: Long, text: String, parentId: Long = 0, markdown: Boolean = true): String {
-        val c = LedgerCommunityBridge.config(context)
+    fun postTextReply(context: Context, feedId: Long, text: String, parentId: Long = 0, markdown: Boolean = true, cfg: LedgerCommunityBridge.Config? = null): String {
+        val c = cfg ?: LedgerCommunityBridge.config(context)
         if (!c.ready) return "Community bridge not configured"
         if (text.isBlank()) return "Nothing to send"
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
@@ -792,9 +820,15 @@ object LedgerBoards {
 
     private fun auth(c: LedgerWebBridge.Config) = Credentials.basic(c.user, c.pass)
 
+    // Every function takes an optional [cfg] naming the board's own site ([LedgerWebBridge.configFor]);
+    // null = the active site. Board and task ids collide across sites (each FluentBoards counts from
+    // 1), so the config is what makes a board id a full address — and per-call configs are what let
+    // Site Boards open an ashtanga.tech board while the Booking sheet works theyoga.club, with no
+    // SiteStore.activate() fight over the shared write-through creds in between.
+
     /** Every board the signed-in user can see, alphabetical. Empty on any failure. */
-    fun boards(context: Context): List<SiteBoard> {
-        val c = LedgerWebBridge.config(context)
+    fun boards(context: Context, cfg: LedgerWebBridge.Config? = null): List<SiteBoard> {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank() || c.user.isBlank() || c.pass.isBlank()) return emptyList()
         return try {
             val req = Request.Builder()
@@ -822,8 +856,8 @@ object LedgerBoards {
 
     /** Every due-dated card across all boards, bucketed server-side — the timeline feed.
      *  One call, server-filtered (won't pull big boards' full compacts). Dispatchers.IO. */
-    fun dueCards(context: Context, limit: Int = 200): List<DueCard> {
-        val c = LedgerWebBridge.config(context)
+    fun dueCards(context: Context, limit: Int = 200, cfg: LedgerWebBridge.Config? = null): List<DueCard> {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank() || c.user.isBlank() || c.pass.isBlank()) return emptyList()
         return try {
             val req = Request.Builder()
@@ -851,8 +885,8 @@ object LedgerBoards {
     }
 
     /** A board's columns and cards. Null on any failure. */
-    fun compactBoard(context: Context, boardId: Int): SiteBoardCompact? {
-        val c = LedgerWebBridge.config(context)
+    fun compactBoard(context: Context, boardId: Int, cfg: LedgerWebBridge.Config? = null): SiteBoardCompact? {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank()) return null
         return try {
             val req = Request.Builder()
@@ -891,8 +925,8 @@ object LedgerBoards {
     }
 
     /** Move a card to a stage (append to the end). Returns a short toast status. */
-    fun moveTask(context: Context, boardId: Int, taskId: Long, newStageId: Long): String {
-        val c = LedgerWebBridge.config(context)
+    fun moveTask(context: Context, boardId: Int, taskId: Long, newStageId: Long, cfg: LedgerWebBridge.Config? = null): String {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank()) return "Bridge not configured"
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("new_stage_id", newStageId.toString())
@@ -918,8 +952,8 @@ object LedgerBoards {
     }
 
     /** The full task behind a card. Null on any failure. */
-    fun taskDetail(context: Context, boardId: Int, taskId: Long): SiteTaskDetail? {
-        val c = LedgerWebBridge.config(context)
+    fun taskDetail(context: Context, boardId: Int, taskId: Long, cfg: LedgerWebBridge.Config? = null): SiteTaskDetail? {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank()) return null
         return try {
             val req = Request.Builder()
@@ -973,8 +1007,8 @@ object LedgerBoards {
      * Inbox. Idempotent server-side, so re-running only adds the new ones. Returns (created, skipped)
      * or null on failure.
      */
-    fun syncInbox(context: Context, boardId: Int): Pair<Int, Int>? {
-        val c = LedgerWebBridge.config(context)
+    fun syncInbox(context: Context, boardId: Int, cfg: LedgerWebBridge.Config? = null): Pair<Int, Int>? {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank()) return null
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("board_id", boardId.toString())
@@ -998,8 +1032,8 @@ object LedgerBoards {
     }
 
     /** A card's provenance + related cards (the "▸ related" strip). Null on failure. */
-    fun related(context: Context, boardId: Int, taskId: Long): RelatedResult? {
-        val c = LedgerWebBridge.config(context)
+    fun related(context: Context, boardId: Int, taskId: Long, cfg: LedgerWebBridge.Config? = null): RelatedResult? {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank()) return null
         return try {
             val req = Request.Builder()
@@ -1027,8 +1061,8 @@ object LedgerBoards {
     }
 
     /** The board's people — the roster a card can be assigned to. Empty on failure. */
-    fun members(context: Context, boardId: Int): List<SiteAssignee> {
-        val c = LedgerWebBridge.config(context)
+    fun members(context: Context, boardId: Int, cfg: LedgerWebBridge.Config? = null): List<SiteAssignee> {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank()) return emptyList()
         return try {
             val req = Request.Builder()
@@ -1056,8 +1090,9 @@ object LedgerBoards {
     fun updateTask(
         context: Context, boardId: Int, taskId: Long,
         assignees: List<Int>? = null, dueAt: String? = null, priority: String? = null,
+        cfg: LedgerWebBridge.Config? = null,
     ): String {
-        val c = LedgerWebBridge.config(context)
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank()) return "Bridge not configured"
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .apply {
@@ -1087,8 +1122,8 @@ object LedgerBoards {
     }
 
     /** Move a card to a stage at a precise 1-based index (0 = append). Returns toast status. */
-    fun moveTaskAt(context: Context, boardId: Int, taskId: Long, newStageId: Long, newIndex: Int): String {
-        val c = LedgerWebBridge.config(context)
+    fun moveTaskAt(context: Context, boardId: Int, taskId: Long, newStageId: Long, newIndex: Int, cfg: LedgerWebBridge.Config? = null): String {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank()) return "Bridge not configured"
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("new_stage_id", newStageId.toString())
@@ -1115,8 +1150,8 @@ object LedgerBoards {
     }
 
     /** Add a comment to a card — typed text and/or a handwriting PNG. Returns toast status. */
-    fun commentTask(context: Context, boardId: Int, taskId: Long, text: String?, png: ByteArray?): String {
-        val c = LedgerWebBridge.config(context)
+    fun commentTask(context: Context, boardId: Int, taskId: Long, text: String?, png: ByteArray?, cfg: LedgerWebBridge.Config? = null): String {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank()) return "Bridge not configured"
         if (text.isNullOrBlank() && png == null) return "Nothing to send"
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
@@ -1240,8 +1275,8 @@ object LedgerBooking {
      * Bookings in a date window (plain yyyy-MM-dd, inclusive), host-scoped server-side.
      * Passing no window asks for everything still upcoming. Empty on any failure.
      */
-    fun bookings(context: Context, from: String? = null, to: String? = null, limit: Int = 200): List<SiteBooking> {
-        val c = LedgerWebBridge.config(context)
+    fun bookings(context: Context, from: String? = null, to: String? = null, limit: Int = 200, cfg: LedgerWebBridge.Config? = null): List<SiteBooking> {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank() || c.user.isBlank() || c.pass.isBlank()) return emptyList()
         val window = if (from != null && to != null) "&from=$from&to=$to" else ""
         return try {
@@ -1262,8 +1297,8 @@ object LedgerBooking {
     }
 
     /** The whole booking behind a row. Null on any failure. */
-    fun booking(context: Context, bookingId: Long): SiteBookingDetail? {
-        val c = LedgerWebBridge.config(context)
+    fun booking(context: Context, bookingId: Long, cfg: LedgerWebBridge.Config? = null): SiteBookingDetail? {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank()) return null
         return try {
             val req = Request.Builder()
@@ -1312,8 +1347,8 @@ object LedgerBooking {
     }
 
     /** Cancel a booking. FluentBooking sends the attendee's email itself. Returns toast status. */
-    fun cancel(context: Context, bookingId: Long, reason: String?): String {
-        val c = LedgerWebBridge.config(context)
+    fun cancel(context: Context, bookingId: Long, reason: String?, cfg: LedgerWebBridge.Config? = null): String {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank()) return "Bridge not configured"
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .apply { if (!reason.isNullOrBlank()) addFormDataPart("reason", reason) }
@@ -1323,8 +1358,8 @@ object LedgerBooking {
     }
 
     /** Move a booking to [startTime] (UTC 'yyyy-MM-dd HH:mm:ss'). Duration is preserved. */
-    fun reschedule(context: Context, bookingId: Long, startTime: String, reason: String?): String {
-        val c = LedgerWebBridge.config(context)
+    fun reschedule(context: Context, bookingId: Long, startTime: String, reason: String?, cfg: LedgerWebBridge.Config? = null): String {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank()) return "Bridge not configured"
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("start_time", startTime)
@@ -1334,8 +1369,8 @@ object LedgerBooking {
     }
 
     /** Write a note on a booking — typed and/or handwritten. Mirrors onto the contact in the CRM. */
-    fun note(context: Context, bookingId: Long, text: String?, png: ByteArray?): String {
-        val c = LedgerWebBridge.config(context)
+    fun note(context: Context, bookingId: Long, text: String?, png: ByteArray?, cfg: LedgerWebBridge.Config? = null): String {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank()) return "Bridge not configured"
         if (text.isNullOrBlank() && png == null) return "Nothing to send"
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
@@ -1348,8 +1383,8 @@ object LedgerBooking {
     }
 
     /** Open start times on an event, UTC, ascending — the times a booking can be moved to. */
-    fun slots(context: Context, eventId: Long, fromDate: String, days: Int = 14): List<String> {
-        val c = LedgerWebBridge.config(context)
+    fun slots(context: Context, eventId: Long, fromDate: String, days: Int = 14, cfg: LedgerWebBridge.Config? = null): List<String> {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank()) return emptyList()
         return try {
             val req = Request.Builder()
@@ -1439,8 +1474,8 @@ object LedgerChat {
     private fun plain(html: String): String = HtmlText.toPlain(html)
 
     /** Group (space) chats first, then DMs. Empty on failure. */
-    fun threads(context: Context): List<ChatThread> {
-        val c = LedgerCommunityBridge.config(context)
+    fun threads(context: Context, cfg: LedgerCommunityBridge.Config? = null): List<ChatThread> {
+        val c = cfg ?: LedgerCommunityBridge.config(context)
         if (!c.ready) return emptyList()
         return try {
             val req = Request.Builder().url("${base(c)}/threads")
@@ -1489,8 +1524,8 @@ object LedgerChat {
     }
 
     /** A thread's recent messages, oldest-first. Your own are flagged by [myUsername]. Empty on failure. */
-    fun messages(context: Context, threadId: Long): List<ChatMessage> {
-        val c = LedgerCommunityBridge.config(context)
+    fun messages(context: Context, threadId: Long, cfg: LedgerCommunityBridge.Config? = null): List<ChatMessage> {
+        val c = cfg ?: LedgerCommunityBridge.config(context)
         if (!c.ready) return emptyList()
         return try {
             val req = Request.Builder().url("${base(c)}/messages/$threadId")
@@ -1506,8 +1541,8 @@ object LedgerChat {
     }
 
     /** Messages newer than [lastId] (polling). Empty when nothing new or on failure. */
-    fun newMessages(context: Context, threadId: Long, lastId: Long): List<ChatMessage> {
-        val c = LedgerCommunityBridge.config(context)
+    fun newMessages(context: Context, threadId: Long, lastId: Long, cfg: LedgerCommunityBridge.Config? = null): List<ChatMessage> {
+        val c = cfg ?: LedgerCommunityBridge.config(context)
         if (!c.ready) return emptyList()
         return try {
             val req = Request.Builder().url("${base(c)}/messages/$threadId/new?last_message_id=$lastId")
@@ -1523,8 +1558,8 @@ object LedgerChat {
     }
 
     /** Send a text message. Returns true on success. */
-    fun send(context: Context, threadId: Long, text: String): Boolean {
-        val c = LedgerCommunityBridge.config(context)
+    fun send(context: Context, threadId: Long, text: String, cfg: LedgerCommunityBridge.Config? = null): Boolean {
+        val c = cfg ?: LedgerCommunityBridge.config(context)
         if (!c.ready || text.isBlank()) return false
         return try {
             val payload = JSONObject().put("text", text).toString()
@@ -1542,8 +1577,8 @@ object LedgerChat {
      * Send a handwritten message (+ optional text) via the bridge — it sideloads the PNG and posts
      * it as a chat message, since the chat's own send wants a pre-registered media URL. True on OK.
      */
-    fun sendInk(context: Context, threadId: Long, text: String?, png: ByteArray): Boolean {
-        val c = LedgerCommunityBridge.config(context)
+    fun sendInk(context: Context, threadId: Long, text: String?, png: ByteArray, cfg: LedgerCommunityBridge.Config? = null): Boolean {
+        val c = cfg ?: LedgerCommunityBridge.config(context)
         if (!c.ready) return false
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("png", "ink.png", png.toRequestBody("image/png".toMediaType()))
@@ -1562,8 +1597,8 @@ object LedgerChat {
     }
 
     /** Fetch a chat image to a bitmap (for rendering inbound handwriting). Null on failure. */
-    fun loadImage(context: Context, url: String): android.graphics.Bitmap? {
-        val c = LedgerCommunityBridge.config(context)
+    fun loadImage(context: Context, url: String, cfg: LedgerCommunityBridge.Config? = null): android.graphics.Bitmap? {
+        val c = cfg ?: LedgerCommunityBridge.config(context)
         return try {
             val req = Request.Builder().url(url)
                 .apply { if (c.ready) header("Authorization", auth(c)) }.build()

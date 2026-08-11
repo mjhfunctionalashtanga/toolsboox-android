@@ -45,19 +45,24 @@ import kotlin.math.abs
  * wire data and both devices are drawing the same 1404×1872 sheet. This matters past looks: the
  * settle pass ([settleAllStars]) files every card onto its own kind's shelf, and if the two forks
  * settled the same cards to different shelves, every sync would ping-pong positions — each device
- * "correcting" the other's geometry forever. Copied verbatim from IntakePageTemplate.swift:
+ * "correcting" the other's geometry forever.
  *
  * ┌─────────────────────────────────────────────────────────────────────────────────────────┐
  * │ ALL STARS BAND GEOMETRY — CROSS-FORK REFERENCE                                          │
- * │ iOS is canon for these numbers; the Android twin (CalendarDayPageIntake) copies them.   │
+ * │ THIS TABLE MOVED, 2026-08-11 (Android leads this round; iOS copies these numbers on    │
+ * │ its next pass — until it does, a card settled on one fork can be re-settled by the     │
+ * │ other, which is exactly the ping-pong the shared table exists to prevent, so copy it   │
+ * │ soon). Michael's punchlist: "All Stars individual cards are too small to read." The    │
+ * │ old grid was 12-to-a-row, ~100×118pt slots on a 1404pt sheet — a link card's face      │
+ * │ (1080pt wide as rendered) landed at under a tenth of its natural size, which is a      │
+ * │ register you can count but not read. Six-to-a-row, one tall row: each face gets ~2×    │
+ * │ the width and ~4× the area, and the sheet budget still closes exactly (see worst case).│
  * │                                                                                         │
  * │ Design space: the fixed 1404 × 1872 sheet, shared with the Boox, points 1:1.            │
  * │ Page title:  "ALL STARS · <window>", 40pt mono bold, baseline y = 72, x = 40.           │
  * │ Bands, in reading order (kind → label):                                                 │
  * │     read → THE READ, watch → THE WATCH, listen → THE LISTEN,                            │
- * │     books → THE BOOKS, educate → EMAIL (legacy storage key kept).                       │
- * │     THE BOOKS shipped on iOS first — Android's store knows read/watch/listen/educate    │
- * │     and grows the books band when it copies this table.                                 │
+ * │     books → THE BOOKS, educate → THE MAIL (legacy "educate" storage key kept).          │
  * │ Band box: x = 40, width = 1324 (right edge 1364), 2pt rule.                             │
  * │ First box top: y = 156.                                                                 │
  * │ Band label: 40pt mono bold, its BOTTOM 14pt above its box top (so it spans roughly      │
@@ -65,20 +70,23 @@ import kotlin.math.abs
  * │ Inter-band pitch: nextBoxTop = prevBoxBottom + 74. That 74 is the label's 47, plus      │
  * │     13 clear above it and 14 clear below — the label can NEVER collide with either box. │
  * │ Box inner padding: 16 all round.                                                        │
- * │ Slot grid: 12 columns per row; slot gap 8; slot width = (1324 − 32 − 11·8)/12 ≈ 100.3;  │
- * │     slot height 118; row gap 8. Cards aspect-fit centred in their slot inset by 4.      │
- * │ Band height by count n (rows r = ceil(n/12), capped at 2):                              │
+ * │ Slot grid: 6 columns, ONE row; slot gap 8; slot width = (1324 − 32 − 5·8)/6 ≈ 208.7;    │
+ * │     slot height 252. Cards aspect-fit centred in their slot inset by 4.                 │
+ * │ Band height by count n:                                                                 │
  * │     n = 0  → 56   (compact strip: dashed 1.5pt rule, hint centred at 26pt)              │
- * │     r = 1  → 150  (16 + 118 + 16)                                                       │
- * │     r = 2  → 276  (16 + 118 + 8 + 118 + 16)                                             │
- * │ Overflow (n > 24): extras pile on the last slot (row 2, col 12), each successive card   │
- * │     26pt further LEFT, clamped at the box's inner padding — the pile fans along the     │
- * │     bottom row and never leaves its band.                                               │
+ * │     n ≥ 1 → 284  (16 + 252 + 16)                                                        │
+ * │ Overflow (n > 6): extras pile on the last slot (col 6), each successive card 44pt       │
+ * │     further LEFT, clamped at the box's inner padding — the pile fans along the row      │
+ * │     and never leaves its band.                                                          │
  * │ Settle margin: every card is kept inside its band's box inset by 8 (scaled down first   │
  * │     if it cannot fit, then translated in).                                              │
  * │ ✓-corner: 34 × 34, 8pt in from the gram's own top-right.                                │
- * │ Worst case: 156 + 5·276 + 4·74 = 1832 ≤ 1872 — five full bands still fit the sheet.     │
+ * │ Worst case: 156 + 5·284 + 4·74 = 1872 ≤ 1872 — five full bands fill the sheet exactly,  │
+ * │     to the point: the slot height is 252 BECAUSE that is the largest card five full     │
+ * │     one-row bands can carry without pushing THE MAIL off the page.                      │
  * └─────────────────────────────────────────────────────────────────────────────────────────┘
+ * (IntakeGeometryTest pins these numbers so a drive-by "improvement" on either constant fails
+ * a test here instead of silently forking the wire geometry.)
  *
  * One label differs from the table: on this fork the educate band has always printed THE MAIL
  * ("The Read, The Watch, The Listen, The Mail" — Michael's own naming), and iOS is adopting THE
@@ -103,38 +111,58 @@ class CalendarDayPageIntake : Creator {
         private const val labelPitch = 74f
         private const val labelGap = 14f
         private const val cellPad = 16f   // inner padding of a band before its shelf
-        private const val slotCols = 12
+        // SIX to a row, not twelve — the 2026-08-11 punchlist ("All Stars individual cards are
+        // too small to read"). Legibility is bought with slot area, and slot area is bought by
+        // holding fewer cards at once; six wide, one tall row is the trade the sheet budget
+        // allows (see the worst case in the table above). `internal` rather than `private`
+        // because IntakeGeometryTest pins these numbers: they are wire geometry shared with the
+        // iOS fork, and changing one casually must fail a test, not just a code review.
+        internal const val slotCols = 6
         private const val slotGap = 8f
-        private const val slotH = 118f
-        // A band grows a second row when its first fills, and stops there: two full rows of
-        // twelve is the most height a band may claim, because five bands at that maximum are what
-        // the 1872px sheet was budgeted against. Past 24 cards the extras pile on the last slot.
-        private const val maxRows = 2
+        internal const val slotH = 252f
+        // ONE row per band, because five bands at one 252pt row each is already the whole sheet.
+        // A band that fills its six slots piles the extras on the last one — the register keeps
+        // everything, it just stops claiming height for it.
+        internal const val maxRows = 1
         // An empty band is a compact strip — a labeled row of the register awaiting its first
         // star, not a void the size of a full shelf.
-        private const val emptyBandHeight = 56f
+        internal const val emptyBandHeight = 56f
         // Every card is kept inside its band's box inset by this (see [settledFrame]).
         private const val settleInset = 8f
-        // How far each overflow card in the pile peeks out from under the one on top of it.
-        private const val STACK_PEEK = 26f
+        // How far each overflow card in the pile peeks out from under the one on top of it —
+        // scaled up with the wider slots so a buried card still shows a readable spine.
+        private const val STACK_PEEK = 44f
 
-        private val slotW = (right - left - 2 * cellPad - (slotCols - 1) * slotGap) / slotCols
+        internal val slotW = (right - left - 2 * cellPad - (slotCols - 1) * slotGap) / slotCols
+
+        /** The sheet's worst case — five bands, each at full one-row height, plus the four label
+         *  pitches between them. Pure arithmetic (no android.graphics) so the unit test can hold
+         *  the budget: this must never exceed the 1872pt sheet, because the day THE MAIL slides
+         *  off the bottom is the day the register silently stops being a register. */
+        internal fun worstCaseBottom(): Float =
+            bandFirstTop + kinds.size * boxHeight(slotCols * maxRows) + (kinds.size - 1) * labelPitch
 
         // High-quality bitmap paint for gram thumbnails — filtered + dithered so a card downscaled
         // into its slot stays smooth and legible, and holds up when the page is zoomed to read it.
-        private val gramPaint = Paint().apply { isFilterBitmap = true; isAntiAlias = true; isDither = true }
+        //
+        // The paints are `by lazy`, and that is load-bearing, not style: this companion is half
+        // geometry (pure arithmetic — the wire numbers IntakeGeometryTest pins on the JVM) and
+        // half ink. A JVM unit test touching ANY companion member runs the whole static init,
+        // and android.graphics constructors throw off-device — so the ink waits until a canvas
+        // actually asks for it, which only ever happens on the device.
+        private val gramPaint by lazy { Paint().apply { isFilterBitmap = true; isAntiAlias = true; isDither = true } }
 
         // The ✓-corner target on each gram: tap it to graduate the gram into its own Pickings page.
         // Once graduated it wears the check and the whole gram becomes a link into that board.
         private const val cornerSize = 34f
-        private val cornerFill = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL; isAntiAlias = true }
-        private val cornerBorder = Paint().apply {
+        private val cornerFill by lazy { Paint().apply { color = Color.WHITE; style = Paint.Style.FILL; isAntiAlias = true } }
+        private val cornerBorder by lazy { Paint().apply {
             color = Color.argb(200, 0, 0, 0); strokeWidth = 2.5f; style = Paint.Style.STROKE; isAntiAlias = true
-        }
-        private val checkPaint = TextPaint().apply {
+        } }
+        private val checkPaint by lazy { TextPaint().apply {
             color = Color.BLACK; textAlign = Paint.Align.CENTER; textSize = cornerSize * 0.82f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD); isAntiAlias = true
-        }
+        } }
 
         /** One kind of star: its storage key and its printed name. This list is the register's
          *  vocabulary; the rectangles come from [panels], which needs to know what the day holds. */
@@ -194,12 +222,14 @@ class CalendarDayPageIntake : Creator {
             return c
         }
 
-        /** How many rows a band of [count] cards shelves (0 for an empty strip, capped at [maxRows]). */
+        /** How many rows a band of [count] cards shelves (0 for an empty strip, capped at
+         *  [maxRows] — which is 1 now; the cap stays written as arithmetic so the geometry is
+         *  one constant away from a second row if a taller sheet ever exists). */
         private fun rowsFor(count: Int): Int =
             if (count <= 0) 0 else minOf((count + slotCols - 1) / slotCols, maxRows)
 
-        /** A band's box height for [count] cards — the strip, one row, or two. */
-        private fun boxHeight(count: Int): Float {
+        /** A band's box height for [count] cards — the compact strip, or the one full row. */
+        internal fun boxHeight(count: Int): Float {
             val r = rowsFor(count)
             if (r == 0) return emptyBandHeight
             return 2 * cellPad + r * slotH + (r - 1) * slotGap
@@ -239,10 +269,10 @@ class CalendarDayPageIntake : Creator {
         fun panelAt(x: Float, y: Float): IntakePanel? = panelsNow().firstOrNull { it.rect.contains(x, y) }
 
         /**
-         * The design-space slot rectangle for the card at [slot] within a band's box: twelve to a
-         * row, two rows at most. Past the last slot of the last row the pile begins — each further
-         * card sits [STACK_PEEK] to the LEFT of the one before, clamped at the box's inner
-         * padding, so the overflow fans along the bottom row and never leaves its band.
+         * The design-space slot rectangle for the card at [slot] within a band's box: six to the
+         * row, one row. Past the last slot the pile begins — each further card sits [STACK_PEEK]
+         * to the LEFT of the one before, clamped at the box's inner padding, so the overflow fans
+         * along the row and never leaves its band.
          */
         fun slotRect(box: RectF, slot: Int): RectF {
             val capacity = slotCols * maxRows
@@ -267,10 +297,15 @@ class CalendarDayPageIntake : Creator {
          *
          * Stars arrive organised — you never file one — but they are ordinary elements from the
          * moment they land, so this only chooses a starting point. Drag one and it stays where you
-         * put it (within its band; [settleAllStars] keeps every card inside its own shelf). The
-         * half-size cards Michael asked for ("grams added to all stars should be 1/2 the size
-         * they currently are") ARE the slot size now — one card to a slot, no doubling-up — and
-         * the page zooms for reading anyway.
+         * put it (within its band; [settleAllStars] keeps every card inside its own shelf).
+         *
+         * ON SIZE, twice corrected and worth the history: first "grams added to all stars should
+         * be 1/2 the size they currently are" shrank arrivals to the slot; then the slots
+         * themselves shrank to twelve-a-row and 2026-08-11's "All Stars individual cards are too
+         * small to read" named the result. Both notes are about the same thing — the card should
+         * be exactly slot-sized, and the SLOT is where legibility lives. One card to a slot, six
+         * slots to the row, and the slot is now big enough (≈209×252) that "zoom to read it" is
+         * a choice rather than a requirement.
          *
          * [cardW]/[cardH] give the card's shape; the returned rect carries the fitted size as
          * well as the position, so the caller places exactly what the band laid out. Returns null
@@ -416,7 +451,7 @@ class CalendarDayPageIntake : Creator {
             gram.right - cornerSize - 8f, gram.top + 8f, gram.right - 8f, gram.top + 8f + cornerSize
         )
 
-        /** The grams of one kind among [elements], newest first. NOT capped — past a band's 24
+        /** The grams of one kind among [elements], newest first. NOT capped — past a band's six
          *  slots the band piles them (see [slotRect]), because dropping the overflow would
          *  silently lose something you starred, and a register that omits entries is not a
          *  register. */
@@ -631,7 +666,7 @@ class CalendarDayPageIntake : Creator {
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
                 // Decode with 2× headroom over the slot so zooming the page still reads crisply —
-                // the cards are intentionally small at 1× (twelve to a row) and meant to be zoomed.
+                // the slots are legible at 1× now (six to a row), but a zoom should still win detail.
                 val target = maxOf(cell.width(), cell.height()) * 2f
                 var sample = 1
                 while (bounds.outWidth / (sample * 2) >= target && bounds.outHeight / (sample * 2) >= target) sample *= 2

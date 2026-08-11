@@ -24,7 +24,9 @@ import java.util.concurrent.TimeUnit
  * status and the CRM contact id, so the day's people are one tap from their record.
  *
  * Reuses [LedgerWebBridge]'s stored site/user/pass creds (the same "Community & Boards" settings),
- * exactly as [LedgerBooking] and [LedgerBoards] do. All calls run on Dispatchers.IO and fail quietly
+ * exactly as [LedgerBooking] and [LedgerBoards] do — and, like them, every call takes an optional
+ * per-site [LedgerWebBridge.Config] so the roster (which lives on theyoga.club, where FluentBooking
+ * runs) can be read without making that site globally active. All calls run on Dispatchers.IO and fail quietly
  * to an empty/null result, e-ink-quietly. Mirrors iOS `App/RosterView.swift` `RosterBridge`.
  */
 object RosterBridge {
@@ -73,8 +75,8 @@ object RosterBridge {
      * The day's attendees ([date] = "yyyy-MM-dd"). Empty on any failure or when the bridge isn't
      * configured. Call from Dispatchers.IO.
      */
-    fun roster(context: Context, date: String): List<Attendee> {
-        val c = LedgerWebBridge.config(context)
+    fun roster(context: Context, date: String, cfg: LedgerWebBridge.Config? = null): List<Attendee> {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank() || c.user.isBlank() || c.pass.isBlank()) return emptyList()
         return try {
             val req = Request.Builder()
@@ -117,8 +119,8 @@ object RosterBridge {
      * Mirrors [roster]'s client/timeouts/auth/`.use{}`/guarded-JSON idiom, but the endpoint returns a
      * bare JSON array of {id,name,email,photo}.
      */
-    fun crmContacts(context: Context, search: String = ""): List<CrmContact> {
-        val c = LedgerWebBridge.config(context)
+    fun crmContacts(context: Context, search: String = "", cfg: LedgerWebBridge.Config? = null): List<CrmContact> {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank() || c.user.isBlank() || c.pass.isBlank()) return emptyList()
         return try {
             val q = URLEncoder.encode(search, "UTF-8")
@@ -150,10 +152,10 @@ object RosterBridge {
      * The next upcoming (scheduled, still in the future) attendee-slot today — for the appointment
      * nudge. Null when nothing is coming. Call from Dispatchers.IO.
      */
-    fun nextToday(context: Context): Attendee? {
+    fun nextToday(context: Context, cfg: LedgerWebBridge.Config? = null): Attendee? {
         val ds = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
         val now = System.currentTimeMillis()
-        return roster(context, ds)
+        return roster(context, ds, cfg)
             .filter { it.status == "scheduled" && (it.startEpochMillis ?: Long.MIN_VALUE) >= now - 600_000L }
             .minByOrNull { it.startEpochMillis ?: Long.MAX_VALUE }
     }
@@ -162,8 +164,8 @@ object RosterBridge {
      * Post a note onto a contact's CRM timeline (the endpoint matches on email too when the contact
      * id is unknown). Returns true on a 200. Call from Dispatchers.IO.
      */
-    fun saveNote(context: Context, contactId: Int, email: String, text: String): Boolean {
-        val c = LedgerWebBridge.config(context)
+    fun saveNote(context: Context, contactId: Int, email: String, text: String, cfg: LedgerWebBridge.Config? = null): Boolean {
+        val c = cfg ?: LedgerWebBridge.config(context)
         if (c.site.isBlank() || text.trim().isEmpty()) return false
         return try {
             val payload = JSONObject()

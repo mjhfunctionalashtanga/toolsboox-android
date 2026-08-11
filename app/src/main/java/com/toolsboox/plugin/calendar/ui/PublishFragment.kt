@@ -28,7 +28,9 @@ import java.util.Calendar
 import javax.inject.Inject
 
 /**
- * Compose and publish to the ACTIVE WordPress site from inside Ledger — pick the post type (any
+ * Compose and publish to THIS SURFACE's target WordPress site from inside Ledger (the SITE row
+ * picks it; the choice is remembered as "last used" — Publish's natural home — and never moves
+ * the app's global active site) — pick the post type (any
  * public CPT), write it, set categories/tags (create new ones inline), attach an image as the
  * featured image, and choose its fate: save a draft, schedule it, publish now, or keep it private.
  * Mirrors iOS `PublishView.swift`. Editing an existing post: pass [ARG_TYPE] + [ARG_POST_ID].
@@ -40,6 +42,9 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
     companion object {
         const val ARG_TYPE = "publish_type"
         const val ARG_POST_ID = "publish_post_id"
+        /** The site a deep link (Posts browser row) wants edited — its own site, explicitly,
+         *  instead of the old shape where the caller ACTIVATED the site before navigating. */
+        const val ARG_SITE_ID = "publish_site_id"
 
         /** Optional seed for "publish this gram / page" entry points; consumed once on load. */
         @JvmStatic
@@ -68,13 +73,23 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
     private var publishing = false
     private var loaded = false
 
-    // The target site is chosen inline (the SITE row), not in Settings — so a post can go to any
-    // configured site without switching the app's active site for good. We do it by pointing the
-    // active creds at the chosen site while composing (so WPPublish, which reads the active creds,
-    // targets it), then restoring the entry active on exit. [entryActiveId] is that entry value;
-    // [siteTargeted] flips once the picker actually re-points, so an untouched compose restores nothing.
-    private var entryActiveId = ""
-    private var siteTargeted = false
+    // The target site is chosen inline (the SITE row), not in Settings — a post can go to any
+    // configured site. It is a FRAGMENT-HELD target now, threaded into every WPPublish call as a
+    // per-call config: the old shape activated the chosen site globally while composing and
+    // restored the entry site on exit, which both re-pointed every other Fluent surface mid-compose
+    // and depended on onDestroyView running to undo itself. Publish's natural home is "wherever you
+    // last published" (essays → michaeljoelhall.com, course notes → ashtanga.tech), so the picker
+    // remembers the choice through [SiteAffinity] under [SiteRouting.PUBLISH] — and the Posts
+    // browser hands an explicit site over in [ARG_SITE_ID] when a row is opened for editing.
+    private var targetSite: com.toolsboox.plugin.calendar.nw.LedgerSite? = null
+
+    /** Per-call config for the target; null = legacy active-site creds (see [SiteAffinity]). */
+    private fun wpCfg(): com.toolsboox.plugin.calendar.nw.LedgerWebBridge.Config? {
+        val ctx = context ?: return null
+        val site = targetSite ?: return null
+        if (SiteStore.password(ctx, site.id).isBlank() && SiteStore.activeId(ctx) == site.id) return null
+        return com.toolsboox.plugin.calendar.nw.LedgerWebBridge.configFor(ctx, site)
+    }
 
     // Kept across re-renders so a picker rebuild never loses what you've typed.
     private var titleField: EditText? = null
@@ -99,17 +114,15 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
         binding = FragmentPublishBinding.bind(view)
         binding.publishClose.setOnClickListener { NavHostFragment.findNavController(this).popBackStack() }
         binding.publishAction.setOnClickListener { go() }
-        entryActiveId = SiteStore.activeId(requireContext())
+        // Resolve the target: an explicit deep-link site first (a post can only be edited on the
+        // site it lives on), else this surface's own affinity (last used → active → first). No
+        // restore-on-exit is needed any more — nothing global was touched.
+        val argSiteId = arguments?.getString(ARG_SITE_ID)
+        targetSite = argSiteId?.let { id -> SiteStore.all(requireContext()).firstOrNull { it.id == id } }
+            ?: com.toolsboox.plugin.calendar.nw.SiteAffinity.siteFor(
+                requireContext(), com.toolsboox.plugin.calendar.nw.SiteRouting.PUBLISH
+            )
         load()
-    }
-
-    override fun onDestroyView() {
-        // An inline target-pick is for THIS compose only — return the global active site to what it
-        // was on entry, so choosing where one post lands never silently hijacks the app's active site.
-        if (siteTargeted && entryActiveId.isNotBlank()) {
-            context?.let { runCatching { SiteStore.activate(it, entryActiveId) } }
-        }
-        super.onDestroyView()
     }
 
     private fun load() {
@@ -117,8 +130,9 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
         val argType = arguments?.getString(ARG_TYPE)
         val argId = arguments?.getInt(ARG_POST_ID, 0) ?: 0
         viewLifecycleOwner.lifecycleScope.launch {
+            val cfg = wpCfg()
             if (!argType.isNullOrBlank() && argId > 0) {
-                val post = withContext(Dispatchers.IO) { WPPublish.getPost(ctx, argType, argId) }
+                val post = withContext(Dispatchers.IO) { WPPublish.getPost(ctx, argType, argId, cfg) }
                 if (post != null) {
                     editing = post
                     trashed = post.status == "trash"
@@ -140,10 +154,10 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
             if (pendingTitle.isNotBlank()) { draft.title = pendingTitle; pendingTitle = "" }
             if (pendingBody.isNotBlank()) { draft.content = pendingBody; pendingBody = "" }
 
-            types = withContext(Dispatchers.IO) { WPPublish.postTypes(ctx) }
+            types = withContext(Dispatchers.IO) { WPPublish.postTypes(ctx, cfg) }
             if (types.none { it.restBase == draft.type }) types.firstOrNull()?.let { draft.type = it.restBase }
-            categories = withContext(Dispatchers.IO) { WPPublish.terms(ctx, "categories") }.toMutableList()
-            tags = withContext(Dispatchers.IO) { WPPublish.terms(ctx, "tags") }.toMutableList()
+            categories = withContext(Dispatchers.IO) { WPPublish.terms(ctx, "categories", cfg) }.toMutableList()
+            tags = withContext(Dispatchers.IO) { WPPublish.terms(ctx, "tags", cfg) }.toMutableList()
             loaded = true
             render()
         }
@@ -182,9 +196,10 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
             })
         }
 
-        if (!WPPublish.configured(ctx)) {
+        if (!WPPublish.configured(ctx, wpCfg())) {
             c.addView(TextView(ctx).apply {
-                text = "Add your site + application password in Calendar Settings, then publish from here."
+                text = "Add " + (targetSite?.display?.let { "$it's" } ?: "your site +") +
+                    " application password (Sites → Site Settings), then publish from here."
                 textSize = 15f; setTextColor(0xFF444444.toInt()); setPadding(px(4), px(16), px(4), 0)
             })
             return
@@ -199,7 +214,7 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
         // with a single site there's nothing to pick, and Publish behaves exactly as before.
         val sites = SiteStore.all(ctx)
         if (sites.size > 1) {
-            val target = SiteStore.active(ctx)
+            val target = targetSite
             c.addView(sectionLabel("SITE"))
             c.addView(TextView(ctx).apply {
                 text = "🌐  ${target?.display ?: "Choose a site"}   ▾"; textSize = 16f; setTextColor(0xFF2F6F96.toInt())
@@ -300,40 +315,43 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
         })
     }
 
-    /** Choose which site this post publishes to. Re-points the active creds at it (so the type list
-     *  and the publish call use the chosen site's url + password) and reloads that site's types/terms;
-     *  onDestroyView restores the entry active site. */
+    /** Choose which site this post publishes to. Sets THIS surface's target (remembered as the
+     *  last-used publish site) and reloads that site's types/terms — the global active site and
+     *  every other surface stay untouched. */
     private fun pickSite() {
         val ctx = context ?: return
         val sites = SiteStore.all(ctx)
         if (sites.size < 2) return
         val labels = sites.map { it.display }.toTypedArray()
-        val current = sites.indexOfFirst { it.id == SiteStore.activeId(ctx) }.coerceAtLeast(0)
+        val current = sites.indexOfFirst { it.id == targetSite?.id }.coerceAtLeast(0)
         androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Publish to…")
             .setSingleChoiceItems(labels, current) { d, which ->
                 d.dismiss()
                 val chosen = sites[which]
-                if (chosen.id == SiteStore.activeId(ctx)) return@setSingleChoiceItems
+                if (chosen.id == targetSite?.id) return@setSingleChoiceItems
                 syncText()
-                SiteStore.activate(ctx, chosen.id)
-                siteTargeted = chosen.id != entryActiveId
+                targetSite = chosen
+                com.toolsboox.plugin.calendar.nw.SiteAffinity.remember(
+                    ctx, com.toolsboox.plugin.calendar.nw.SiteRouting.PUBLISH, chosen.id
+                )
                 loadSiteData()
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
-    /** Refresh the post types + taxonomy for the now-active (chosen) site, preserving typed text.
+    /** Refresh the post types + taxonomy for the chosen target site, preserving typed text.
      *  Category/tag ids are per-site, so the previous site's selections are cleared — they wouldn't
      *  map. Featured-media ids are per-site too; a picked image re-uploads on publish, so it stays. */
     private fun loadSiteData() {
         val ctx = context ?: return
         viewLifecycleOwner.lifecycleScope.launch {
-            types = withContext(Dispatchers.IO) { WPPublish.postTypes(ctx) }
+            val cfg = wpCfg()
+            types = withContext(Dispatchers.IO) { WPPublish.postTypes(ctx, cfg) }
             if (types.isNotEmpty() && types.none { it.restBase == draft.type }) draft.type = types.first().restBase
-            categories = withContext(Dispatchers.IO) { WPPublish.terms(ctx, "categories") }.toMutableList()
-            tags = withContext(Dispatchers.IO) { WPPublish.terms(ctx, "tags") }.toMutableList()
+            categories = withContext(Dispatchers.IO) { WPPublish.terms(ctx, "categories", cfg) }.toMutableList()
+            tags = withContext(Dispatchers.IO) { WPPublish.terms(ctx, "tags", cfg) }.toMutableList()
             draft.categories = emptyList(); draft.tags = emptyList()
             if (isAdded) render()
         }
@@ -412,7 +430,8 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
                 val name = input.text.toString().trim()
                 if (name.isBlank()) { pickTerms(taxonomy); return@setPositiveButton }
                 viewLifecycleOwner.lifecycleScope.launch {
-                    val term = withContext(Dispatchers.IO) { WPPublish.createTerm(ctx, taxonomy, name) }
+                    val cfg = wpCfg()
+                    val term = withContext(Dispatchers.IO) { WPPublish.createTerm(ctx, taxonomy, name, cfg) }
                     if (term != null) {
                         val listRef = if (taxonomy == "categories") categories else tags
                         listRef.add(term); listRef.sortBy { it.name.lowercase() }
@@ -441,24 +460,25 @@ class PublishFragment @Inject constructor() : ScreenFragment() {
         if (!loaded || publishing) return
         syncText()
         if (draft.title.isBlank()) { toast("Add a title"); return }
-        if (!WPPublish.configured(ctx)) { toast("Set an active site in Settings"); return }
+        if (!WPPublish.configured(ctx, wpCfg())) { toast("Add the site's app password in Site Settings"); return }
         publishing = true
         binding.publishAction.isEnabled = false
         // The view's scope, not the fragment's: everything after the save renders into this view,
         // and a ghost render after back-navigation is worse than an abandoned upload.
         viewLifecycleOwner.lifecycleScope.launch {
+            val cfg = wpCfg()
             val res = try {
                 val img = image
                 if (img != null) {
                     val png = withContext(Dispatchers.IO) {
                         val baos = ByteArrayOutputStream(); img.compress(Bitmap.CompressFormat.PNG, 100, baos); baos.toByteArray()
                     }
-                    val mediaId = withContext(Dispatchers.IO) { WPPublish.uploadMedia(ctx, png, draft.title) }
+                    val mediaId = withContext(Dispatchers.IO) { WPPublish.uploadMedia(ctx, png, draft.title, cfg) }
                     if (mediaId != null) draft.featuredMedia = mediaId
                 }
                 draft.status = statusChoice
                 draft.dateIso = if (statusChoice == "future") WPPublish.isoLocal(scheduleMillis) else null
-                withContext(Dispatchers.IO) { WPPublish.save(ctx, draft, editing?.id) }
+                withContext(Dispatchers.IO) { WPPublish.save(ctx, draft, editing?.id, cfg) }
             } finally {
                 // Also on cancellation — a wedged flag here would refuse every future save.
                 publishing = false

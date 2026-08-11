@@ -76,6 +76,32 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
     // existing single-site path (inbox row, columns, moves, comments) runs unchanged.
     private val siteState = SiteFilterState("ledger_site_boards")
     private var boardRows: List<SiteFetch.SiteBoardRow> = emptyList()   // the aggregate list
+
+    /**
+     * The site the OPEN board (and its detail dialogs, moves, comments, uploads) belongs to.
+     * Before this pass an aggregate row's tap called [SiteStore.activate] so the single-site
+     * clients would follow — which re-pointed Publish, Bookings and Community globally, the
+     * "dominant global site" Michael's ruling retires. Now the site rides here and its config
+     * rides on every [LedgerBoards] call ([boardsCfg]); the global active site never moves.
+     * Null = resolve by this surface's affinity (narrowed filter → remembered → ashtanga.tech,
+     * the site the working boards actually live on → active).
+     */
+    private var openSite: com.toolsboox.plugin.calendar.nw.LedgerSite? = null
+
+    private fun resolvedSite(): com.toolsboox.plugin.calendar.nw.LedgerSite? =
+        openSite
+            ?: siteState.filter?.let { id -> allSites().firstOrNull { it.id == id } }
+            ?: com.toolsboox.plugin.calendar.nw.SiteAffinity.siteFor(
+                requireContext(), com.toolsboox.plugin.calendar.nw.SiteRouting.SITE_BOARDS
+            )
+
+    /** Per-call config for the resolved site; null = legacy active-site creds (see [SiteAffinity]). */
+    private fun boardsCfg(): com.toolsboox.plugin.calendar.nw.LedgerWebBridge.Config? {
+        val ctx = context ?: return null
+        val site = resolvedSite() ?: return null
+        if (SiteStore.password(ctx, site.id).isBlank() && SiteStore.activeId(ctx) == site.id) return null
+        return com.toolsboox.plugin.calendar.nw.LedgerWebBridge.configFor(ctx, site)
+    }
     // The mode is decided once per list load and held, so "up" from an opened board (and a
     // deep-linked board, which always uses the single-site path) redraws the list it actually built.
     private var aggregateMode = false
@@ -105,8 +131,9 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
                 }.getOrNull()
             }
             if (png == null) { toast("Couldn't read image"); return@launch }
+            val cfg = boardsCfg()
             val status = withContext(Dispatchers.IO) {
-                LedgerBoards.commentTask(requireContext(), target.first, target.second, null, png)
+                LedgerBoards.commentTask(requireContext(), target.first, target.second, null, png, cfg)
             }
             toast(if (status == "Reply posted") "Uploaded to card" else status)
         }
@@ -186,11 +213,12 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         upButton.visibility = View.GONE
         openBoard = null
         renderMessage("Loading boards…")
-        // Narrowed to a site → make it active so the existing single-site path (inbox row, columns,
-        // card moves, comments) targets it. A blank filter with several sites aggregates instead;
-        // a deep-linked board always uses the single-site path (it targets the active site).
+        // Narrowed to a site → the single-site path (inbox row, columns, card moves, comments)
+        // targets it through per-call configs — the site is never made globally active. A blank
+        // filter with several sites aggregates instead; a deep-linked board uses the single-site
+        // path against this surface's resolved site (the same site whose due-cards produced it).
         aggregateMode = siteState.filter == null && allSites().size > 1 && pendingBoardId == 0
-        siteState.filter?.let { SiteStore.activate(requireContext(), it) }
+        openSite = null
         lifecycleScope.launch {
             if (aggregateMode) {
                 // All sites: fan out the board lists in parallel, each with its own creds, per-site
@@ -211,7 +239,9 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
                 boardRows = rows
                 if (openBoard == null) showList()
             } else {
-                val list = withContext(Dispatchers.IO) { LedgerBoards.boards(requireContext()) }
+                openSite = resolvedSite()
+                val cfg = boardsCfg()
+                val list = withContext(Dispatchers.IO) { LedgerBoards.boards(requireContext(), cfg) }
                 boards = list
                 val target = pendingBoardId
                 if (target > 0) {
@@ -243,9 +273,10 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
                 col.addView(listHint("No boards on any site.\n\nAdd a site + application password (tap 🌐 above), or check Settings → Community & Boards."))
             } else {
                 // Each board tagged with its site — board ids collide across sites, so the tag is
-                // what tells two "Board 1"s apart. Tapping activates that site, then opens it.
+                // what tells two "Board 1"s apart. Tapping carries that site into [openSite]; the
+                // board's whole detail path then rides its config, no global switch.
                 for (r in boardRows) col.addView(boardRow(r.board, r.site.display) {
-                    SiteStore.activate(ctx, r.site.id); loadBoard(r.board)
+                    openSite = r.site; loadBoard(r.board)
                 })
             }
         } else {
@@ -253,8 +284,10 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
                 col.addView(listHint("No boards.\n\nSet the site, user and app password under Settings → Community & Boards (Fluent), then refresh with ↻."))
             } else {
                 // Correspondence Inbox — replies to shared items become cards on the configured board
-                // (a per-site concept, so only in the narrowed / single-site view).
-                val inboxBoardId = com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).boardId
+                // (a per-site concept, so only in the narrowed / single-site view). The board id is
+                // the RESOLVED site's own default, not the active site's — the two can differ now.
+                val inboxBoardId = boardsCfg()?.boardId
+                    ?: com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).boardId
                 if (inboxBoardId > 0) col.addView(inboxRow(inboxBoardId))
                 for (b in boards) col.addView(boardRow(b, null) { loadBoard(b) })
             }
@@ -312,7 +345,8 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
     private fun syncInboxThenOpen(boardId: Int) {
         toast("Gathering replies…")
         lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) { LedgerBoards.syncInbox(requireContext(), boardId) }
+            val cfg = boardsCfg()
+            val result = withContext(Dispatchers.IO) { LedgerBoards.syncInbox(requireContext(), boardId, cfg) }
             if (!isAdded) return@launch
             if (result == null) { toast("Couldn't reach the inbox"); return@launch }
             val (created, _) = result
@@ -363,7 +397,8 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         upButton.visibility = View.VISIBLE
         renderMessage("Loading ${board.title}…")
         lifecycleScope.launch {
-            val c = withContext(Dispatchers.IO) { LedgerBoards.compactBoard(requireContext(), board.id) }
+            val cfg = boardsCfg()
+            val c = withContext(Dispatchers.IO) { LedgerBoards.compactBoard(requireContext(), board.id, cfg) }
             if (openBoard?.id != board.id) return@launch
             compact = c
             if (c == null) renderMessage("Couldn't reach ${board.title}.") else renderColumns(board, c)
@@ -544,8 +579,9 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         val samePlace = task.stageId == stage.id
         dragging = null
         lifecycleScope.launch {
+            val cfg = boardsCfg()
             val status = withContext(Dispatchers.IO) {
-                LedgerBoards.moveTaskAt(requireContext(), board.id, task.id, stage.id, index)
+                LedgerBoards.moveTaskAt(requireContext(), board.id, task.id, stage.id, index, cfg)
             }
             if (!samePlace) toast(if (status == "Moved") "→ ${stage.title}" else status)
             if (status != "Moved") openBoard?.let { loadBoard(it) }   // reconcile on failure
@@ -565,7 +601,8 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setView(container).create()
         dialog.show()
         lifecycleScope.launch {
-            val detail = withContext(Dispatchers.IO) { LedgerBoards.taskDetail(requireContext(), board.id, task.id) }
+            val cfg = boardsCfg()
+            val detail = withContext(Dispatchers.IO) { LedgerBoards.taskDetail(requireContext(), board.id, task.id, cfg) }
             if (!isAdded) return@launch
             container.removeAllViews()
             if (detail == null) {
@@ -610,7 +647,8 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         val relatedBox = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         col.addView(relatedBox)
         lifecycleScope.launch {
-            val r = withContext(Dispatchers.IO) { LedgerBoards.related(requireContext(), board.id, d.id) }
+            val cfg = boardsCfg()
+            val r = withContext(Dispatchers.IO) { LedgerBoards.related(requireContext(), board.id, d.id, cfg) }
             if (r == null || !isAdded) return@launch
             if (r.provenance == null && r.related.isEmpty()) return@launch
             relatedBox.addView(label("▸ RELATED"))
@@ -784,8 +822,9 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             }
             if (text == null && png == null) { toast("Nothing to send"); return@actionBtn }
             lifecycleScope.launch {
+                val cfg = boardsCfg()
                 val status = withContext(Dispatchers.IO) {
-                    LedgerBoards.commentTask(requireContext(), board.id, d.id, text, png)
+                    LedgerBoards.commentTask(requireContext(), board.id, d.id, text, png, cfg)
                 }
                 toast(status)
                 if (status == "Reply posted") { dialog.dismiss(); parent.dismiss(); openDetail(board, taskStub(d)) }
@@ -812,8 +851,12 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         val ctx = requireContext()
         val provDefault = "↩ On board card “${d.title}” · ${board.title}"
         lifecycleScope.launch {
+            // The board's site's community, not the active site's — the card lives there.
+            val communityCfg = resolvedSite()?.let {
+                com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.configFor(requireContext(), it)
+            }?.takeIf { it.ready }
             val spaces = withContext(Dispatchers.IO) {
-                com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.spaces(requireContext())
+                com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.spaces(requireContext(), communityCfg)
             }
             if (!isAdded) return@launch
             if (spaces.isEmpty()) { toast("No community spaces to share into"); bmp.recycle(); return@launch }
@@ -864,7 +907,8 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
                     lifecycleScope.launch {
                         val status = withContext(Dispatchers.IO) {
                             com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.postGram(
-                                requireContext(), b64, "", uuid, spaceId, provenance.ifBlank { null }, null
+                                requireContext(), b64, "", uuid, spaceId, provenance.ifBlank { null }, null,
+                                communityCfg
                             )
                         }
                         toast(status)
@@ -884,8 +928,9 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
         assignees: List<Int>? = null, dueAt: String? = null, priority: String? = null,
     ) {
         lifecycleScope.launch {
+            val cfg = boardsCfg()
             val status = withContext(Dispatchers.IO) {
-                LedgerBoards.updateTask(requireContext(), board.id, d.id, assignees, dueAt, priority)
+                LedgerBoards.updateTask(requireContext(), board.id, d.id, assignees, dueAt, priority, cfg)
             }
             toast(status)
             if (status == "Saved") { parent.dismiss(); openDetail(board, taskStub(d)) }
@@ -894,7 +939,8 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
 
     private fun promptAssign(board: SiteBoard, d: SiteTaskDetail, parent: androidx.appcompat.app.AlertDialog) {
         lifecycleScope.launch {
-            val roster = withContext(Dispatchers.IO) { LedgerBoards.members(requireContext(), board.id) }
+            val cfg = boardsCfg()
+            val roster = withContext(Dispatchers.IO) { LedgerBoards.members(requireContext(), board.id, cfg) }
             if (!isAdded) return@launch
             if (roster.isEmpty()) { toast("No people on this board to assign"); return@launch }
             val names = roster.map { it.name }.toTypedArray()

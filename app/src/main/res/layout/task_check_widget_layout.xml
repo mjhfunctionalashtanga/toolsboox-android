@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Task Checklist widget's frame: section-bar header (title left, today's date right —
+     the bitmap Task List's header line), then a native ListView the launcher scrolls. White
+     ground hardcoded, like every Ledger widget face. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/task_check_widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#FFFFFF">
+
+    <LinearLayout
+        android:id="@+id/task_check_widget_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#CC808080"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="7dp"
+        android:paddingBottom="7dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/widget_task_check_header"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:singleLine="true" />
+
+        <TextView
+            android:id="@+id/task_check_widget_count"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:singleLine="true" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <ListView
+            android:id="@+id/task_check_widget_list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:divider="#33000000"
+            android:dividerHeight="1px" />
+
+        <TextView
+            android:id="@+id/task_check_widget_empty"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:padding="12dp"
+            android:text="@string/widget_task_check_empty"
+            android:textColor="#99000000"
+            android:textSize="13sp" />
+    </FrameLayout>
+</LinearLayout>

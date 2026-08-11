@@ -229,6 +229,54 @@
                 android:permission="android.permission.BIND_REMOTEVIEWS"
                 android:exported="false"/>
 
+        <!-- The scrollable Mail List widget — the Feed List pattern over the inbox. A separate
+             provider so the bitmap Mail widget above keeps its identity. -->
+        <receiver
+                android:name=".plugin.calendar.widget.MailListWidgetProvider"
+                android:label="@string/widget_mail_list_label"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <action android:name="com.toolsboox.widget.ACTION_REFRESH"/>
+            </intent-filter>
+
+            <meta-data
+                    android:name="android.appwidget.provider"
+                    android:resource="@xml/mail_list_widget_info"/>
+        </receiver>
+
+        <service
+                android:name=".plugin.calendar.widget.MailListWidgetService"
+                android:permission="android.permission.BIND_REMOTEVIEWS"
+                android:exported="false"/>
+
+        <!-- The scrollable Task Checklist widget — per-row ✓ checkboxes that mark done from the
+             home screen. A separate provider so the bitmap Task List widget keeps its identity. -->
+        <receiver
+                android:name=".plugin.calendar.widget.TaskChecklistWidgetProvider"
+                android:label="@string/widget_task_check_label"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <action android:name="com.toolsboox.widget.ACTION_REFRESH"/>
+            </intent-filter>
+
+            <meta-data
+                    android:name="android.appwidget.provider"
+                    android:resource="@xml/task_check_widget_info"/>
+        </receiver>
+
+        <service
+                android:name=".plugin.calendar.widget.TaskChecklistWidgetService"
+                android:permission="android.permission.BIND_REMOTEVIEWS"
+                android:exported="false"/>
+
+        <!-- The Task Checklist's row receiver (✓ marks done / row opens its day). Not exported:
+             only this app's own PendingIntent template addresses it, explicitly. -->
+        <receiver
+                android:name=".plugin.calendar.widget.TaskDoneReceiver"
+                android:exported="false"/>
+
         <receiver
                 android:name=".plugin.calendar.widget.TaskListWidgetProvider"
                 android:label="@string/widget_task_list_label"

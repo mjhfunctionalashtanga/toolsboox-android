@@ -10,6 +10,8 @@
     <string name="widget_mail_description">Starred and recent inbox mail — sender and subject</string>
     <string name="widget_feed_description">Latest RSS headlines with unread count</string>
     <string name="widget_feed_list_description">Scrollable feed headlines — small thumbnail, title, source and age; each row opens its article</string>
+    <string name="widget_mail_list_description">Scrollable inbox — starred first; each row opens its letter</string>
+    <string name="widget_task_check_description">Scrollable open tasks with real checkboxes — check one off from the home screen; each row opens its day</string>
     <string name="widget_daily_pile_description">Everything today gathered — tasks, events, birthdays, grams</string>
     <string name="widget_task_list_description">Today\'s open tasks as checkbox rows, plus the next event</string>
     <string name="widget_all_stars_description">Today\'s stars by band — Read, Watch, Listen, Books, Email</string>
@@ -33,6 +35,13 @@
     <string name="widget_feed_list_label">Ledger Feed List</string>
     <string name="widget_feed_list_header">⧉ Feed</string>
     <string name="widget_feed_list_empty">Feed all caught up</string>
+    <string name="widget_mail_list_label">Ledger Mail List</string>
+    <string name="widget_mail_list_header">✉ Mail</string>
+    <string name="widget_mail_list_empty">Inbox clear</string>
+    <string name="widget_task_check_label">Ledger Task Checklist</string>
+    <string name="widget_task_check_header">⚡ Tasks</string>
+    <string name="widget_task_check_empty">No open tasks</string>
+    <string name="widget_task_check_box">☐</string>
     <string name="widget_daily_pile_label">Ledger Daily Pile</string>
     <string name="widget_task_list_label">Ledger Task List</string>
     <string name="widget_all_stars_label">Ledger All Stars</string>

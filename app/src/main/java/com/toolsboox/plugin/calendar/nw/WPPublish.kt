@@ -67,30 +67,38 @@ object WPPublish {
     /** Result of a create/update. [error] carries WP's own words when the site refused the save. */
     data class SaveResult(val ok: Boolean, val id: Int?, val link: String?, val error: String? = null)
 
-    // MARK: - Config (active WP site)
+    // MARK: - Config (active WP site, or an explicit per-call site)
+
+    // Every public function takes an optional [cfg] — a specific site's creds via
+    // [LedgerWebBridge.configFor] — with null still meaning the ACTIVE site. This is the same
+    // config-per-call move the Fluent clients made, and for the same reason: Publish remembers its
+    // own target site now (SiteRouting), so composing a post for michaeljoelhall.com must not
+    // require re-pointing the global creds that Boards, Booking and Community are concurrently
+    // reading. The old shape (activate the target, publish, restore the entry site on exit) was
+    // exactly the shared-state fight Michael's "no dominant global site" ruling retires.
 
     /** The bridge's stored creds double as the WP application password for wp/v2. */
-    fun configured(context: Context): Boolean {
-        val c = LedgerWebBridge.config(context)
+    fun configured(context: Context, cfg: LedgerWebBridge.Config? = null): Boolean {
+        val c = cfg ?: LedgerWebBridge.config(context)
         return c.site.isNotBlank() && c.user.isNotBlank() && c.pass.isNotBlank()
     }
 
-    private fun base(context: Context): String? {
-        val c = LedgerWebBridge.config(context)
+    private fun resolved(context: Context, cfg: LedgerWebBridge.Config?): LedgerWebBridge.Config =
+        cfg ?: LedgerWebBridge.config(context)
+
+    private fun base(c: LedgerWebBridge.Config): String? {
         if (c.site.isBlank()) return null
         return c.site.trimEnd('/') + "/wp-json/wp/v2/"
     }
 
-    private fun auth(context: Context): String {
-        val c = LedgerWebBridge.config(context)
-        return Credentials.basic(c.user, c.pass)
-    }
+    private fun auth(c: LedgerWebBridge.Config): String = Credentials.basic(c.user, c.pass)
 
-    private fun getResp(context: Context, path: String): okhttp3.Response? {
-        val b = base(context) ?: return null
+    private fun getResp(context: Context, path: String, cfg: LedgerWebBridge.Config? = null): okhttp3.Response? {
+        val c = resolved(context, cfg)
+        val b = base(c) ?: return null
         return try {
             client.newCall(
-                Request.Builder().url(b + path).header("Authorization", auth(context)).build()
+                Request.Builder().url(b + path).header("Authorization", auth(c)).build()
             ).execute()
         } catch (e: Exception) {
             Timber.w(e, "wp GET %s failed", path); null
@@ -100,8 +108,8 @@ object WPPublish {
     // MARK: - Taxonomy / types
 
     /** Public post types the user can create — posts, pages, and any public CPT (by rest_base). */
-    fun postTypes(context: Context): List<PostType> {
-        val resp = getResp(context, "types?context=edit") ?: return emptyList()
+    fun postTypes(context: Context, cfg: LedgerWebBridge.Config? = null): List<PostType> {
+        val resp = getResp(context, "types?context=edit", cfg) ?: return emptyList()
         return resp.use { r ->
             if (!r.isSuccessful) return emptyList()
             val obj = try { JSONObject(r.body?.string() ?: return emptyList()) } catch (e: Exception) { return emptyList() }
@@ -122,8 +130,8 @@ object WPPublish {
     }
 
     /** [taxonomy] is a rest_base: "categories" | "tags". */
-    fun terms(context: Context, taxonomy: String): List<Term> {
-        val resp = getResp(context, "$taxonomy?per_page=100&_fields=id,name&orderby=name&order=asc") ?: return emptyList()
+    fun terms(context: Context, taxonomy: String, cfg: LedgerWebBridge.Config? = null): List<Term> {
+        val resp = getResp(context, "$taxonomy?per_page=100&_fields=id,name&orderby=name&order=asc", cfg) ?: return emptyList()
         return resp.use { r ->
             if (!r.isSuccessful) return emptyList()
             val arr = try { JSONArray(r.body?.string() ?: return emptyList()) } catch (e: Exception) { return emptyList() }
@@ -147,9 +155,9 @@ object WPPublish {
      * and ordered by name, so on a site whose tag list outgrows that cap a name scan starts
      * silently missing terms that exist — and a miss here reads as "the tag didn't stick".
      */
-    fun termBySlug(context: Context, taxonomy: String, slug: String): Term? {
+    fun termBySlug(context: Context, taxonomy: String, slug: String, cfg: LedgerWebBridge.Config? = null): Term? {
         val q = java.net.URLEncoder.encode(slug, "UTF-8")
-        val resp = getResp(context, "$taxonomy?slug=$q&_fields=id,name&per_page=1") ?: return null
+        val resp = getResp(context, "$taxonomy?slug=$q&_fields=id,name&per_page=1", cfg) ?: return null
         return resp.use { r ->
             if (!r.isSuccessful) return null
             val arr = try { JSONArray(r.body?.string() ?: return null) } catch (e: Exception) { return null }
@@ -160,14 +168,15 @@ object WPPublish {
     }
 
     /** Create a term inline; returns it (with its new id) or null. */
-    fun createTerm(context: Context, taxonomy: String, name: String): Term? {
-        val b = base(context) ?: return null
+    fun createTerm(context: Context, taxonomy: String, name: String, cfg: LedgerWebBridge.Config? = null): Term? {
+        val c = resolved(context, cfg)
+        val b = base(c) ?: return null
         val body = JSONObject().put("name", name).toString()
             .toRequestBody("application/json; charset=utf-8".toMediaType())
         return try {
             client.newCall(
                 Request.Builder().url(b + taxonomy).post(body)
-                    .header("Authorization", auth(context)).build()
+                    .header("Authorization", auth(c)).build()
             ).execute().use { r ->
                 val o = try { JSONObject(r.body?.string() ?: return null) } catch (e: Exception) { return null }
                 val id = o.optInt("id", 0)
@@ -187,14 +196,15 @@ object WPPublish {
     // MARK: - Media (an image -> featured image)
 
     /** Upload a PNG to the media library; returns its id for `featured_media`, or null. */
-    fun uploadMedia(context: Context, png: ByteArray, filename: String): Int? {
-        val b = base(context) ?: return null
+    fun uploadMedia(context: Context, png: ByteArray, filename: String, cfg: LedgerWebBridge.Config? = null): Int? {
+        val c = resolved(context, cfg)
+        val b = base(c) ?: return null
         val safe = filename.ifBlank { "gram" }.replace(Regex("[^A-Za-z0-9_-]"), "-").take(48).ifBlank { "gram" }
         val body = png.toRequestBody("image/png".toMediaType())
         return try {
             client.newCall(
                 Request.Builder().url(b + "media").post(body)
-                    .header("Authorization", auth(context))
+                    .header("Authorization", auth(c))
                     .header("Content-Disposition", "attachment; filename=\"$safe.png\"")
                     .build()
             ).execute().use { r ->
@@ -214,15 +224,16 @@ object WPPublish {
      * the point is a URL you can paste into Canva/a post/anywhere. Same wire as [uploadMedia]
      * (raw POST /media, Content-Disposition filename, app-password Basic auth); null on failure.
      */
-    fun uploadMediaAsset(context: Context, png: ByteArray, filename: String): MediaUpload? {
-        val b = base(context) ?: return null
+    fun uploadMediaAsset(context: Context, png: ByteArray, filename: String, cfg: LedgerWebBridge.Config? = null): MediaUpload? {
+        val c = resolved(context, cfg)
+        val b = base(c) ?: return null
         val safe = filename.removeSuffix(".png").ifBlank { "gram" }
             .replace(Regex("[^A-Za-z0-9_-]"), "-").take(64).ifBlank { "gram" }
         val body = png.toRequestBody("image/png".toMediaType())
         return try {
             client.newCall(
                 Request.Builder().url(b + "media").post(body)
-                    .header("Authorization", auth(context))
+                    .header("Authorization", auth(c))
                     .header("Content-Disposition", "attachment; filename=\"$safe.png\"")
                     .build()
             ).execute().use { r ->
@@ -239,8 +250,9 @@ object WPPublish {
     // MARK: - Lifecycle
 
     /** Create ([id] == null) or update ([id] != null) a post. */
-    fun save(context: Context, draft: Draft, id: Int? = null): SaveResult {
-        val b = base(context) ?: return SaveResult(false, null, null)
+    fun save(context: Context, draft: Draft, id: Int? = null, cfg: LedgerWebBridge.Config? = null): SaveResult {
+        val c = resolved(context, cfg)
+        val b = base(c) ?: return SaveResult(false, null, null)
         val json = JSONObject()
             .put("title", draft.title)
             .put("content", draft.content)
@@ -254,7 +266,7 @@ object WPPublish {
         return try {
             client.newCall(
                 Request.Builder().url(b + path).post(body)
-                    .header("Authorization", auth(context)).build()
+                    .header("Authorization", auth(c)).build()
             ).execute().use { r ->
                 val text = r.body?.string() ?: ""
                 val o = try { JSONObject(text) } catch (e: Exception) { null }
@@ -280,14 +292,14 @@ object WPPublish {
             ?.let { decodeHtml(it).replace(Regex("<[^>]+>"), "").trim() }?.takeIf { it.isNotBlank() }
 
     /** Recent posts of a [type] (rest_base), filtered by [statuses]. Empty on any failure. */
-    fun list(context: Context, type: String, statuses: List<String>, search: String = ""): List<WpPost> {
+    fun list(context: Context, type: String, statuses: List<String>, search: String = "", cfg: LedgerWebBridge.Config? = null): List<WpPost> {
         var path = "$type?context=edit&per_page=30&orderby=date&order=desc"
         if (statuses.isNotEmpty()) path += "&status=${statuses.joinToString(",")}"
         if (search.isNotBlank()) {
             val q = java.net.URLEncoder.encode(search, "UTF-8")
             path += "&search=$q"
         }
-        val resp = getResp(context, path) ?: return emptyList()
+        val resp = getResp(context, path, cfg) ?: return emptyList()
         return resp.use { r ->
             if (!r.isSuccessful) return emptyList()
             val arr = try { JSONArray(r.body?.string() ?: return emptyList()) } catch (e: Exception) { return emptyList() }
@@ -296,8 +308,8 @@ object WPPublish {
     }
 
     /** A single post by id (for opening the editor). Null on any failure. */
-    fun getPost(context: Context, type: String, id: Int): WpPost? {
-        val resp = getResp(context, "$type/$id?context=edit") ?: return null
+    fun getPost(context: Context, type: String, id: Int, cfg: LedgerWebBridge.Config? = null): WpPost? {
+        val resp = getResp(context, "$type/$id?context=edit", cfg) ?: return null
         return resp.use { r ->
             if (!r.isSuccessful) return null
             val o = try { JSONObject(r.body?.string() ?: return null) } catch (e: Exception) { return null }
@@ -324,12 +336,13 @@ object WPPublish {
 
     /** Trash a post (WordPress soft-deletes to the trash by default). Null on success; on refusal,
      *  WP's own message (falling back to a generic line) so the browser can show the real reason. */
-    fun trash(context: Context, type: String, id: Int): String? {
-        val b = base(context) ?: return "No active site configured"
+    fun trash(context: Context, type: String, id: Int, cfg: LedgerWebBridge.Config? = null): String? {
+        val c = resolved(context, cfg)
+        val b = base(c) ?: return "No active site configured"
         return try {
             client.newCall(
                 Request.Builder().url(b + "$type/$id").delete()
-                    .header("Authorization", auth(context)).build()
+                    .header("Authorization", auth(c)).build()
             ).execute().use { r ->
                 if (r.isSuccessful) null
                 else {

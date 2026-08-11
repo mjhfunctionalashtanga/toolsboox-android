@@ -855,9 +855,16 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     private fun mergeSiteColumnCards() {
         val ctx = requireContext()
         lifecycleScope.launch {
+            // The boards surface's own site (its affinity: remembered → ashtanga.tech → active),
+            // NOT the bare active site — so the cards merged here are the same cards the Site
+            // Boards deep-link will find when one is tapped.
+            val boardsCfg = com.toolsboox.plugin.calendar.nw.SiteAffinity.boardsConfigFor(
+                ctx, com.toolsboox.plugin.calendar.nw.SiteRouting.SITE_BOARDS
+            )
             val cards = withContext(Dispatchers.IO) {
-                if (!com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).ready) emptyList()
-                else com.toolsboox.plugin.calendar.nw.LedgerBoards.dueCards(ctx)   // server-filtered + bucketed
+                val eff = boardsCfg ?: com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx)
+                if (!eff.ready) emptyList()
+                else com.toolsboox.plugin.calendar.nw.LedgerBoards.dueCards(ctx, cfg = boardsCfg)   // server-filtered + bucketed
             }
             if (!isAdded || cards.isEmpty()) return@launch
             fun place(bucket: String, container: LinearLayout, head: TextView, title: String) {
@@ -879,9 +886,17 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     private fun mergeSiteColumnBookings() {
         val ctx = requireContext()
         lifecycleScope.launch {
+            // Bookings ALWAYS come from the bookings surface's site — theyoga.club by default,
+            // where FluentBooking actually runs — regardless of the app's active site. This is
+            // Michael's "pull up Yoga Club events without switching a dominant global site" made
+            // literal: the studio's day is visible while the rest of the app points anywhere.
+            val bookingCfg = com.toolsboox.plugin.calendar.nw.SiteAffinity.boardsConfigFor(
+                ctx, com.toolsboox.plugin.calendar.nw.SiteRouting.BOOKINGS
+            )
             val bookings = withContext(Dispatchers.IO) {
-                if (!com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).ready) emptyList()
-                else com.toolsboox.plugin.calendar.nw.LedgerBooking.bookings(ctx, limit = 60)
+                val eff = bookingCfg ?: com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx)
+                if (!eff.ready) emptyList()
+                else com.toolsboox.plugin.calendar.nw.LedgerBooking.bookings(ctx, limit = 60, cfg = bookingCfg)
             }
             if (!isAdded || bookings.isEmpty()) return@launch
             fun place(bucket: String, container: LinearLayout, head: TextView, title: String) {
@@ -973,14 +988,23 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 .getBoolean("include_site", false)) return
         val (start, end) = periodRange(navPeriod, anchor)
         lifecycleScope.launch {
-            val ready = withContext(Dispatchers.IO) {
-                com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).ready
-            }
-            if (!ready) return@launch
+            // Cards ride the boards surface's site, bookings the bookings surface's (theyoga.club
+            // by default) — two different sites, two configs, one timeline. Ready-ness is judged
+            // per source: a device that only knows theyoga.club still gets its bookings here.
+            val boardsCfg = com.toolsboox.plugin.calendar.nw.SiteAffinity.boardsConfigFor(
+                ctx, com.toolsboox.plugin.calendar.nw.SiteRouting.SITE_BOARDS
+            )
+            val bookingCfg = com.toolsboox.plugin.calendar.nw.SiteAffinity.boardsConfigFor(
+                ctx, com.toolsboox.plugin.calendar.nw.SiteRouting.BOOKINGS
+            )
+            val legacy = withContext(Dispatchers.IO) { com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx) }
+            val boardsReady = (boardsCfg ?: legacy).ready
+            val bookingReady = (bookingCfg ?: legacy).ready
+            if (!boardsReady && !bookingReady) return@launch
 
-            val cards = withContext(Dispatchers.IO) {
-                com.toolsboox.plugin.calendar.nw.LedgerBoards.dueCards(ctx)
-            }.filter { c ->
+            val cards = (if (!boardsReady) emptyList() else withContext(Dispatchers.IO) {
+                com.toolsboox.plugin.calendar.nw.LedgerBoards.dueCards(ctx, cfg = boardsCfg)
+            }).filter { c ->
                 val d = c.dueAt?.take(10)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
                 d != null && !d.isBefore(start) && !d.isAfter(end)
             }
@@ -988,11 +1012,12 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             // The server windows by UTC, the timeline thinks in local days — so ask a day wide on
             // either side and settle the boundary here. Without the slack, an early-morning or
             // late-evening booking lands on the wrong day for anyone far enough from UTC.
-            val bookings = withContext(Dispatchers.IO) {
+            val bookings = (if (!bookingReady) emptyList() else withContext(Dispatchers.IO) {
                 com.toolsboox.plugin.calendar.nw.LedgerBooking.bookings(
-                    ctx, from = start.minusDays(1).toString(), to = end.plusDays(1).toString()
+                    ctx, from = start.minusDays(1).toString(), to = end.plusDays(1).toString(),
+                    cfg = bookingCfg
                 )
-            }.mapNotNull { b -> bookingLocalTime(b.startTime)?.let { b to it } }
+            }).mapNotNull { b -> bookingLocalTime(b.startTime)?.let { b to it } }
                 .filter { (_, at) -> !at.first.isBefore(start) && !at.first.isAfter(end) }
 
             if (!isAdded || (cards.isEmpty() && bookings.isEmpty())) return@launch

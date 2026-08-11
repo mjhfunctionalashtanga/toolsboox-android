@@ -42,7 +42,14 @@ import com.toolsboox.ot.InkPadView
  * Messages — the Ledger's window into FluentCommunity chat (the live fluent-messaging plugin).
  * A list of your group (space) chats and 1:1 DMs; open one to read the thread and send text, with
  * a light poll keeping it fresh (no sockets — kind to e-ink). Handwriting replies are a follow-on.
- * Reuses the "Community & Boards" bridge creds; empty with a hint if unconfigured.
+ *
+ * SITE AFFINITY: this surface carries its OWN site (default ashtanga.tech — the site
+ * fluent-messaging is actually deployed on), resolved through [SiteRouting]/[SiteAffinity] and
+ * switchable from the 🌐 chip atop the thread list. Before this pass Messages silently followed
+ * the global active site, so a Bookings-driven switch to theyoga.club (which has no chat) emptied
+ * this screen — the exact "dominant global site" failure Michael's ruling retires. Every
+ * [LedgerChat] call carries this surface's config explicitly, so chatting on ashtanga.tech and
+ * working theyoga.club bookings at the same time never fight.
  */
 @AndroidEntryPoint
 class MessagesFragment @Inject constructor() : ScreenFragment() {
@@ -55,6 +62,19 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
 
     private var threads: List<ChatThread> = emptyList()
     private var openThread: ChatThread? = null
+
+    /** This surface's own site (remembered pick → ashtanga.tech → active → first). */
+    private fun chatSite(): com.toolsboox.plugin.calendar.nw.LedgerSite? =
+        com.toolsboox.plugin.calendar.nw.SiteAffinity.siteFor(
+            requireContext(), com.toolsboox.plugin.calendar.nw.SiteRouting.MESSAGES
+        )
+
+    /** Per-call config for every [LedgerChat] call; null falls back to the active-site creds
+     *  (the legacy single-site path — see [SiteAffinity.communityConfigFor]'s WHY). */
+    private fun chatCfg(): com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.Config? =
+        com.toolsboox.plugin.calendar.nw.SiteAffinity.communityConfigFor(
+            requireContext(), com.toolsboox.plugin.calendar.nw.SiteRouting.MESSAGES
+        )
 
     /** The messages column + the id of the newest shown, so polling only appends the new. */
     private var messagesColumn: LinearLayout? = null
@@ -99,7 +119,8 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
         upButton.visibility = View.GONE
         renderMessage("Loading chats…")
         lifecycleScope.launch {
-            val list = withContext(Dispatchers.IO) { LedgerChat.threads(requireContext()) }
+            val cfg = chatCfg()
+            val list = withContext(Dispatchers.IO) { LedgerChat.threads(requireContext(), cfg) }
             threads = list
             if (openThread == null) showThreadList()
         }
@@ -111,7 +132,12 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
         titleView.text = "Messages"
         upButton.visibility = View.GONE
         if (threads.isEmpty()) {
-            renderMessage("No chats yet.\n\nSet the community site + app password under Settings → Community & Boards (Fluent), then refresh with ↻. Group chats appear here once a space has group chat on.")
+            val siteName = chatSite()?.display
+            renderMessage(
+                "No chats yet" + (if (siteName != null) " on $siteName" else "") + ".\n\n" +
+                    "Add the site's application password (Sites → Site Settings), then refresh with ↻. " +
+                    "Group chats appear here once a space has group chat on."
+            )
             return
         }
         val ctx = requireContext()
@@ -120,6 +146,7 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
             orientation = LinearLayout.VERTICAL
             setPadding(px(10), px(6), px(10), px(24))
         }
+        siteChip()?.let { col.addView(it) }
         val groups = threads.filter { it.isGroup }
         val dms = threads.filter { !it.isGroup }
         if (groups.isNotEmpty()) {
@@ -132,6 +159,40 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
         }
         scroll.addView(col)
         setContent(scroll)
+    }
+
+    /**
+     * The lightweight site chip — "🌐 site ▾", the Publish SITE-row grammar rather than the full
+     * switcher accordion, because Messages has no aggregate view: chat lives on ONE site at a time
+     * and the chip just says (and changes) which. Hidden with a single configured site — nothing
+     * to disambiguate. Switching here re-points THIS surface only; the global active site and
+     * every other surface stay exactly where they were.
+     */
+    private fun siteChip(): View? {
+        val ctx = context ?: return null
+        val sites = com.toolsboox.plugin.calendar.nw.SiteStore.all(ctx)
+        if (sites.size < 2) return null
+        val current = chatSite()
+        return TextView(ctx).apply {
+            text = "🌐  ${current?.display ?: "Choose a site"}   ▾"
+            textSize = 14f; setTextColor(Color.parseColor("#2F6F96"))
+            setPadding(px(6), px(6), px(6), px(8))
+            setOnClickListener {
+                val labels = sites.map { it.display }.toTypedArray()
+                val cur = sites.indexOfFirst { it.id == current?.id }.coerceAtLeast(0)
+                androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                    .setTitle("Messages on…")
+                    .setSingleChoiceItems(labels, cur) { d, which ->
+                        d.dismiss()
+                        com.toolsboox.plugin.calendar.nw.SiteAffinity.remember(
+                            ctx, com.toolsboox.plugin.calendar.nw.SiteRouting.MESSAGES, sites[which].id
+                        )
+                        loadThreads()
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+            }
+        }
     }
 
     private fun sectionLabel(t: String) = TextView(requireContext()).apply {
@@ -177,7 +238,8 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
         lastMessageId = 0
         renderMessage("Loading…")
         lifecycleScope.launch {
-            val msgs = withContext(Dispatchers.IO) { LedgerChat.messages(requireContext(), thread.id) }
+            val cfg = chatCfg()
+            val msgs = withContext(Dispatchers.IO) { LedgerChat.messages(requireContext(), thread.id, cfg) }
             if (openThread?.id != thread.id) return@launch
             renderChat(thread, msgs)
             startPolling(thread)
@@ -286,7 +348,8 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
             bubbleBox.addView(img)
             val url = m.imageUrl
             lifecycleScope.launch {
-                val bmp = withContext(Dispatchers.IO) { LedgerChat.loadImage(requireContext(), url) }
+                val cfg = chatCfg()
+                val bmp = withContext(Dispatchers.IO) { LedgerChat.loadImage(requireContext(), url, cfg) }
                 if (bmp != null && isAdded) img.setImageBitmap(bmp)
             }
         }
@@ -299,7 +362,8 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
         if (text.isEmpty()) return
         input.text.clear()
         lifecycleScope.launch {
-            val ok = withContext(Dispatchers.IO) { LedgerChat.send(requireContext(), thread.id, text) }
+            val cfg = chatCfg()
+            val ok = withContext(Dispatchers.IO) { LedgerChat.send(requireContext(), thread.id, text, cfg) }
             if (!ok) { toast("Couldn't send"); input.setText(text); return@launch }
             pollOnce(thread)   // pull our own message (+ any others) straight back
         }
@@ -347,8 +411,9 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
             bmp.compress(Bitmap.CompressFormat.PNG, 100, baos); bmp.recycle()
             val typed = input.text.toString().trim().ifBlank { null }
             lifecycleScope.launch {
+                val cfg = chatCfg()
                 val ok = withContext(Dispatchers.IO) {
-                    LedgerChat.sendInk(requireContext(), thread.id, typed, baos.toByteArray())
+                    LedgerChat.sendInk(requireContext(), thread.id, typed, baos.toByteArray(), cfg)
                 }
                 if (!ok) { toast("Couldn't send"); return@launch }
                 input.text.clear()
@@ -382,8 +447,9 @@ class MessagesFragment @Inject constructor() : ScreenFragment() {
     }
 
     private suspend fun pollOnce(thread: ChatThread) {
+        val cfg = chatCfg()
         val fresh = withContext(Dispatchers.IO) {
-            LedgerChat.newMessages(requireContext(), thread.id, lastMessageId)
+            LedgerChat.newMessages(requireContext(), thread.id, lastMessageId, cfg)
         }
         if (fresh.isEmpty() || openThread?.id != thread.id) return
         val col = messagesColumn ?: return

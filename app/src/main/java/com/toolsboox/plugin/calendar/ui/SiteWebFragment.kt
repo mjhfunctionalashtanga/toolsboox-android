@@ -44,6 +44,13 @@ class SiteWebFragment @Inject constructor() : ScreenFragment() {
         const val ARG_PATH = "site_web_path"
         const val ARG_TITLE = "site_web_title"
 
+        /** An explicit BASE URL for [ARG_PATH] — the caller's own site, e.g. the Roster's
+         *  theyoga.club CRM deep link — instead of the active site's `site` key. Part of the
+         *  per-surface affinity pass: a surface bound to its own site must be able to open that
+         *  site's pages without first making it globally active. Cookies are per-host in the
+         *  shared WebView jar, so each site's login sticks independently. */
+        const val ARG_BASE = "site_web_base"
+
         // Mirrors the SiteWebTarget statics in iOS App/SiteWebView.swift. The pref keys are the ones
         // SiteStore.activate() write-throughs (communityPortal/boardsPortal/bookingPortal/…).
         private val TARGETS = mapOf(
@@ -63,6 +70,8 @@ class SiteWebFragment @Inject constructor() : ScreenFragment() {
     private var target: Target = TARGETS.getValue("community")
     /** When present, an explicit path off the `site` base wins over the [target] portal. */
     private var explicitPath: String? = null
+    /** When present, [explicitPath] rides off THIS base instead of the active site's. */
+    private var explicitBase: String? = null
     /** Enabled only while the WebView has history, so system back walks pages before popping. */
     private var webBackCallback: androidx.activity.OnBackPressedCallback? = null
 
@@ -72,6 +81,7 @@ class SiteWebFragment @Inject constructor() : ScreenFragment() {
         binding = FragmentSiteWebBinding.bind(view)
 
         explicitPath = arguments?.getString(ARG_PATH)?.takeIf { it.isNotBlank() }
+        explicitBase = arguments?.getString(ARG_BASE)?.takeIf { it.isNotBlank() }
         target = TARGETS[arguments?.getString(ARG_TARGET)] ?: TARGETS.getValue("community")
         binding.siteWebTitle.text = if (explicitPath != null)
             (arguments?.getString(ARG_TITLE)?.takeIf { it.isNotBlank() } ?: "Site") else target.title
@@ -159,8 +169,9 @@ class SiteWebFragment @Inject constructor() : ScreenFragment() {
     private fun resolveUrl(): String? {
         val p = prefs()
         explicitPath?.let { path ->
-            val site = (p.getString("site", "") ?: "").trim()
-                .ifBlank { (p.getString("communitySite", "") ?: "").trim() }
+            val site = explicitBase?.trim()?.trimEnd('/')
+                ?: (p.getString("site", "") ?: "").trim()
+                    .ifBlank { (p.getString("communitySite", "") ?: "").trim() }
             if (site.isBlank()) return null
             val base = if (site.endsWith("/")) site else "$site/"
             return base + path.trimStart('/')

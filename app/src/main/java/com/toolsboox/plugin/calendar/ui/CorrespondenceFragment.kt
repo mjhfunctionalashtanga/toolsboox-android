@@ -174,20 +174,41 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     private fun aggregate(): Boolean = context != null && siteState.filter == null && allSites().size > 1
 
     /**
-     * Point every ACTIVE-site consumer (thread reader, replies, likes, grams) at [site] — the
-     * seam the sister surfaces use: an aggregated row's tap activates ITS site first, then the
-     * proven single-site code runs unchanged. Also swings this page's space choice to the site's
-     * own, so "share as gram" from a reply lands in that site's space, never another site's.
+     * Point this PAGE's consumers (thread reader, replies, likes, grams) at [site] — the seam an
+     * aggregated row's tap uses before running the single-site code. It used to call
+     * [SiteStore.activate], which re-pointed the whole APP: liking an ashtanga.tech post here
+     * silently moved Publish, Bookings and the boards onto ashtanga.tech too. Now the focus is a
+     * fragment-held site whose config rides on every call ([focusCfg]) — Michael's "no dominant
+     * global site" — and the global active site is left exactly where the user put it. Also swings
+     * this page's space choice to the site's own, so "share as gram" from a reply lands in that
+     * site's space, never another site's.
      */
+    private var focusedSite: LedgerSite? = null
+
     private fun focusSite(site: LedgerSite?) {
-        val ctx = context ?: return
         if (site == null) return
-        if (SiteStore.activeId(ctx) != site.id) SiteStore.activate(ctx, site.id)
+        focusedSite = site
         val sid = spaceIdFor(site.id)
         if (sid > 0) {
             spaceId = sid
             spaceTitle = spaceTitleFor(site.id).ifBlank { "Space $sid" }
         }
+    }
+
+    /** The site the single-site reads and every thread/reply action target: the row focus, else
+     *  the narrowed filter, else this surface's affinity (remembered → ashtanga.tech → active). */
+    private fun siteInFocus(): LedgerSite? =
+        focusedSite
+            ?: siteState.filter?.let { id -> allSites().firstOrNull { it.id == id } }
+            ?: context?.let { com.toolsboox.plugin.calendar.nw.SiteAffinity.siteFor(it, com.toolsboox.plugin.calendar.nw.SiteRouting.CORRESPONDENCE) }
+
+    /** Per-call config for the focused site; null = the legacy active-site creds (the one case a
+     *  site record can be blank while the write-through keys still work — see [SiteAffinity]). */
+    private fun focusCfg(): LedgerCommunityBridge.Config? {
+        val ctx = context ?: return null
+        val site = siteInFocus() ?: return null
+        if (SiteStore.password(ctx, site.id).isBlank() && SiteStore.activeId(ctx) == site.id) return null
+        return LedgerCommunityBridge.configFor(ctx, site)
     }
 
     // A community space id only means anything on its own site, so the choice is kept PER SITE
@@ -229,11 +250,12 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     }
 
     /** "· 🌐 site" for compose surfaces — naming the write target whenever there is more than one
-     *  place a write COULD go. Blank with a single site: nothing to disambiguate. */
+     *  place a write COULD go. Blank with a single site: nothing to disambiguate. Names THIS
+     *  page's focused site (where the write will actually land), not the global active one. */
     private fun activeSiteLabel(): String {
         val ctx = context ?: return ""
         if (SiteStore.all(ctx).size < 2) return ""
-        return SiteStore.active(ctx)?.display ?: ""
+        return siteInFocus()?.display ?: ""
     }
 
     // Thread reader state — so a reply posted from inside it can reopen it fresh.
@@ -265,7 +287,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         }
         container.addView(com.toolsboox.ot.InkMount.wrapInColumn(ctx, img))
         lifecycleScope.launch {
-            val bmp = withContext(Dispatchers.IO) { LedgerCorrespondence.loadImage(ctx, url) }
+            val bmp = withContext(Dispatchers.IO) { LedgerCorrespondence.loadImage(ctx, url, focusCfg()) }
             if (bmp != null && isAdded) {
                 img.setImageBitmap(bmp)
                 com.toolsboox.ot.ImageZoom.makeTappable(img)
@@ -338,9 +360,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         siteState.load(requireContext())
         // A filter naming a site that has since been deleted = All.
         siteState.dropMissing(allSites().map { it.id })
-        // The space choice belongs to the active site; the unqualified prefs are the pre-multi-site
+        // The space choice belongs to this SURFACE's site (its affinity — remembered narrowing,
+        // else ashtanga.tech, else the active site); the unqualified prefs are the pre-multi-site
         // fallback so nothing moves for a single-site install.
-        val act = SiteStore.active(requireContext())
+        val act = siteInFocus()
         spaceId = act?.let { spaceIdFor(it.id) }?.takeIf { it > 0 } ?: prefs().getLong("space_id", 25L)
         spaceTitle = act?.let { spaceTitleFor(it.id) }?.takeIf { it.isNotBlank() }
             ?: (prefs().getString("space_title", "MichaelFilter") ?: "MichaelFilter")
@@ -441,9 +464,10 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     private fun load() {
         val ctx = context ?: return
         val seq = ++loadSeq
-        // Narrowed → that site becomes the live one, so the whole proven single-site path (thread
-        // reader, replies, likes, grams) targets it unchanged — the SiteBoards seam.
-        siteState.filter?.let { id -> focusSite(allSites().firstOrNull { it.id == id }) }
+        // Narrowed → that site becomes this page's FOCUS (not the app's active site), so the
+        // single-site path targets it; All resets the focus so row taps re-decide per row.
+        val f = siteState.filter
+        if (f != null) focusSite(allSites().firstOrNull { it.id == f }) else focusedSite = null
         lifecycleScope.launch {
             if (mode == "community") {
                 if (aggregate()) {
@@ -468,7 +492,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     if (seq != loadSeq || !isAdded) return@launch
                     communityRows = rows
                 } else {
-                    val posts = withContext(Dispatchers.IO) { LedgerCorrespondence.fetchSpaceFeed(ctx, spaceId) }
+                    val cfg = focusCfg()
+                    val posts = withContext(Dispatchers.IO) { LedgerCorrespondence.fetchSpaceFeed(ctx, spaceId, cfg = cfg) }
                     if (seq != loadSeq || !isAdded) return@launch
                     communityRows = posts.map { null to it }
                 }
@@ -489,7 +514,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     if (seq != loadSeq || !isAdded) return@launch
                     replyRows = rows
                 } else {
-                    val replies = withContext(Dispatchers.IO) { LedgerCorrespondence.fetch(ctx) }
+                    val cfg = focusCfg()
+                    val replies = withContext(Dispatchers.IO) { LedgerCorrespondence.fetch(ctx, cfg) }
                     if (seq != loadSeq || !isAdded) return@launch
                     replyRows = replies.map { null to it }
                 }
@@ -549,7 +575,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
      *  [site] targets a specific site's spaces (the aggregate's chips); null = the active site. */
     private fun pickSpace(site: LedgerSite? = null) {
         val ctx = requireContext()
-        val target = site ?: SiteStore.active(ctx)
+        val target = site ?: siteInFocus()
         lifecycleScope.launch {
             val cfg = target?.let { LedgerCommunityBridge.configFor(ctx, it) }
             val spaces = withContext(Dispatchers.IO) { LedgerCommunityBridge.spaces(ctx, cfg) }
@@ -563,9 +589,9 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 .setItems(labels) { _, i ->
                     val chosen = spaces[i]
                     target?.let { setSpaceFor(it.id, chosen.id, chosen.title) }
-                    // The unqualified legacy keys keep tracking the ACTIVE site's choice, so the
+                    // The unqualified legacy keys keep tracking THIS page's current site, so the
                     // single-site path (and anything else still reading them) stays truthful.
-                    if (target == null || target.id == SiteStore.activeId(ctx)) {
+                    if (target == null || target.id == siteInFocus()?.id) {
                         spaceId = chosen.id; spaceTitle = chosen.title
                         prefs().edit().putLong("space_id", spaceId).putString("space_title", spaceTitle).apply()
                     }
@@ -585,9 +611,11 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         // The 🌐 switcher first — All sites aggregates, a pick narrows (the Mail-inbox idiom).
         container.addView(switcherBar())
         addTabs(container)
-        fun sid(site: LedgerSite?) = site?.id ?: SiteStore.activeId(ctx)
+        // Single-site rows (null site) belong to THIS page's focused site — the same id the
+        // ✓-replied / hidden markers are written under now that writes carry the focus.
+        fun sid(site: LedgerSite?) = site?.id ?: siteInFocus()?.id ?: SiteStore.activeId(ctx)
 
-        if (!aggregate() && !com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(ctx).ready) {
+        if (!aggregate() && !(focusCfg() ?: com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(ctx)).ready) {
             container.addView(TextView(ctx).apply {
                 text = "Add the site's application password (tap 🌐 above, or Calendar Settings), then a space's posts appear here."
                 textSize = 15f; setTextColor(0xFF444444.toInt()); setPadding(px(8), px(16), px(8), 0)
@@ -667,7 +695,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     liked = !liked; likeCount = (likeCount + if (liked) 1 else -1).coerceAtLeast(0)
                     text = label()   // optimistic flip
                     lifecycleScope.launch {
-                        val res = withContext(Dispatchers.IO) { LedgerCorrespondence.reactPost(ctx, post.id) }
+                        val cfg = focusCfg()
+                        val res = withContext(Dispatchers.IO) { LedgerCorrespondence.reactPost(ctx, post.id, cfg) }
                         if (res == null) { liked = was; likeCount = count0; text = label() }   // revert
                         else { liked = res.first; likeCount = res.second; text = label() }
                     }
@@ -721,9 +750,11 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         // The 🌐 switcher first — All sites aggregates, a pick narrows (the Mail-inbox idiom).
         container.addView(switcherBar())
         addTabs(container)
-        fun sid(site: LedgerSite?) = site?.id ?: SiteStore.activeId(ctx)
+        // Single-site rows (null site) belong to THIS page's focused site — the same id the
+        // ✓-replied / hidden markers are written under now that writes carry the focus.
+        fun sid(site: LedgerSite?) = site?.id ?: siteInFocus()?.id ?: SiteStore.activeId(ctx)
 
-        if (!aggregate() && !com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(ctx).ready) {
+        if (!aggregate() && !(focusCfg() ?: com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(ctx)).ready) {
             container.addView(TextView(ctx).apply {
                 text = "Add the site's application password (tap 🌐 above, or Calendar Settings), and replies to your posts and cards gather here."
                 textSize = 15f; setTextColor(0xFF444444.toInt()); setPadding(px(8), px(24), px(8), 0)
@@ -858,7 +889,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT
         )
         lifecycleScope.launch {
-            val bundle = withContext(Dispatchers.IO) { LedgerCorrespondence.threadBundle(ctx, source, threadId) }
+            val cfg = focusCfg()
+            val bundle = withContext(Dispatchers.IO) { LedgerCorrespondence.threadBundle(ctx, source, threadId, cfg) }
             if (!isAdded) return@launch
             val items = bundle.comments
             col.removeAllViews()
@@ -885,7 +917,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     }
                     col.addView(img)
                     lifecycleScope.launch {
-                        val bmp = withContext(Dispatchers.IO) { LedgerCorrespondence.loadImage(ctx, url) }
+                        val bmp = withContext(Dispatchers.IO) { LedgerCorrespondence.loadImage(ctx, url, focusCfg()) }
                         if (bmp != null && isAdded) {
                             img.setImageBitmap(bmp)
                             com.toolsboox.ot.ImageZoom.makeTappable(img)
@@ -972,7 +1004,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     }
                     col.addView(img)
                     lifecycleScope.launch {
-                        val bmp = withContext(Dispatchers.IO) { LedgerCorrespondence.loadImage(ctx, url) }
+                        val bmp = withContext(Dispatchers.IO) { LedgerCorrespondence.loadImage(ctx, url, focusCfg()) }
                         if (bmp != null && isAdded) {
                             img.setImageBitmap(bmp)
                             com.toolsboox.ot.ImageZoom.makeTappable(img)
@@ -994,7 +1026,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                             .setMessage("Delete this reply?")
                             .setPositiveButton("Delete") { _, _ ->
                                 lifecycleScope.launch {
-                                    val ok = withContext(Dispatchers.IO) { LedgerCorrespondence.deleteThreadComment(ctx, source, c.id) }
+                                    val cfg = focusCfg()
+                                    val ok = withContext(Dispatchers.IO) { LedgerCorrespondence.deleteThreadComment(ctx, source, c.id, cfg) }
                                     android.widget.Toast.makeText(ctx, if (ok) "Deleted" else "Couldn't delete", android.widget.Toast.LENGTH_SHORT).show()
                                     if (ok) { afterReplyPosted(source, threadId, title) }
                                 }
@@ -1054,7 +1087,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         lifecycleScope.launch {
-            val r = withContext(Dispatchers.IO) { LedgerCorrespondence.communityRelated(ctx, post.id) }
+            val cfg = focusCfg()
+            val r = withContext(Dispatchers.IO) { LedgerCorrespondence.communityRelated(ctx, post.id, cfg) }
             if (!isAdded) return@launch
             col.removeAllViews()
             if (r == null) { col.addView(TextView(ctx).apply { text = "Couldn't load." }); return@launch }
@@ -1305,15 +1339,16 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     val baos = ByteArrayOutputStream(); it.compress(Bitmap.CompressFormat.PNG, 100, baos); baos.toByteArray()
                 }
                 lifecycleScope.launch {
+                    val cfg = focusCfg()
                     val status = withContext(Dispatchers.IO) {
                         if (attachedAvFile != null) LedgerCorrespondence.postInkReply(
                             ctx, feedId, null, parentId, text,
-                            attachedAvFile, attachedAvKind, attachedAvTitle, png)
-                        else if (png != null) LedgerCorrespondence.postInkReply(ctx, feedId, png, parentId, text)
-                        else LedgerCorrespondence.postTextReply(ctx, feedId, text, parentId)
+                            attachedAvFile, attachedAvKind, attachedAvTitle, png, cfg)
+                        else if (png != null) LedgerCorrespondence.postInkReply(ctx, feedId, png, parentId, text, cfg = cfg)
+                        else LedgerCorrespondence.postTextReply(ctx, feedId, text, parentId, cfg = cfg)
                     }
                     android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
-                    if (status == "Reply posted") { markReplied("community", feedId, SiteStore.activeId(ctx)); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
+                    if (status == "Reply posted") { markReplied("community", feedId, siteInFocus()?.id ?: SiteStore.activeId(ctx)); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
                 }
             } else {
                 // Draw mode: [attached image] stacked above [your ink], one combined PNG, with the
@@ -1343,11 +1378,12 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 val alsoSave = saveToLedger && combined != null
                 val saveBmp = if (alsoSave) combined!!.copy(combined.config ?: Bitmap.Config.ARGB_8888, false) else null
                 lifecycleScope.launch {
+                    val cfg = focusCfg()
                     val status = withContext(Dispatchers.IO) {
                         if (avFile != null) LedgerCorrespondence.postInkReply(
-                            ctx, feedId, inkOnlyPng, parentId, cap, avFile, avKind, avTitle, posterPng)
-                        else if (png != null) LedgerCorrespondence.postInkReply(ctx, feedId, png, parentId, cap)
-                        else LedgerCorrespondence.postTextReply(ctx, feedId, cap, parentId)
+                            ctx, feedId, inkOnlyPng, parentId, cap, avFile, avKind, avTitle, posterPng, cfg)
+                        else if (png != null) LedgerCorrespondence.postInkReply(ctx, feedId, png, parentId, cap, cfg = cfg)
+                        else LedgerCorrespondence.postTextReply(ctx, feedId, cap, parentId, cfg = cfg)
                     }
                     // Rhizome: the reply also becomes a gram whose provenance points back here.
                     // It lands where the last gram went — a background mirror of a posted reply
@@ -1371,7 +1407,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     if (inkBmp !== combined) inkBmp?.recycle()
                     if (combined !== attachedBitmap && combined !== inkBmp) combined?.recycle()
                     android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
-                    if (status == "Reply posted") { markReplied("community", feedId, SiteStore.activeId(ctx)); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
+                    if (status == "Reply posted") { markReplied("community", feedId, siteInFocus()?.id ?: SiteStore.activeId(ctx)); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
                 }
             }
         })
@@ -1438,9 +1474,13 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 val provenance = input.text.toString().trim()
                 val uuid = "gram-" + java.util.UUID.randomUUID().toString().lowercase()
                 lifecycleScope.launch {
+                    // The space id was chosen per-site (spaceIdFor), so the gram must carry that
+                    // same site's creds — a space id posted under another site's config lands in
+                    // whatever space happens to share the number there.
+                    val cfg = focusCfg()
                     val status = withContext(Dispatchers.IO) {
                         com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.postGram(
-                            ctx, b64, "", uuid, spaceId, provenance.ifBlank { null }, provUrl
+                            ctx, b64, "", uuid, spaceId, provenance.ifBlank { null }, provUrl, cfg
                         )
                     }
                     android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()

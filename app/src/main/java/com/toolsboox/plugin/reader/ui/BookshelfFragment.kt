@@ -120,6 +120,12 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
                 com.toolsboox.ot.TuckPanel.Item(0, "Add a book", glyph = "＋") { addBook() },
                 com.toolsboox.ot.TuckPanel.Item(0, "Catalog", glyph = "🌐") { openCatalog() },
                 com.toolsboox.ot.TuckPanel.Item(0, "Books folder", glyph = "🗂") { chooseFolder() },
+                // The spacing dial, on the shelf itself — you adjust a shelf while LOOKING at
+                // it. The same ladder sits in the reader's wrench under "Bookshelf" (Michael
+                // asked for it there); this is the second door, not a second setting.
+                com.toolsboox.ot.TuckPanel.Item(
+                    0, "Shelf: ${ShelfDensity.current(requireContext()).label}", glyph = "▦"
+                ) { showDensityMenu() },
                 com.toolsboox.ot.TuckPanel.Item(0, "Today", glyph = "☀") {
                     level = Level.WEEK; anchor = LocalDate.now(); renderNav(); load()
                 },
@@ -203,6 +209,25 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
 
     private fun chooseFolder() {
         runCatching { pickFolder.launch(BookshelfSource.pickIntent()) }
+    }
+
+    /**
+     * The spacing ladder as a menu — three named rungs, current one marked, same radio grammar
+     * as the carry menu two doors down. Choosing a rung is ONE relayout: prefs first, then a
+     * single [load] (the shelf's normal draw-once pass) and a rail rebuild so "Shelf: Cozy"
+     * tells the truth. No preview, no incremental reflow — e-ink pays per paint.
+     */
+    private fun showDensityMenu() {
+        val ctx = requireContext()
+        val cur = ShelfDensity.current(ctx)
+        showIconMenu("Shelf spacing", ShelfDensity.entries.map { d ->
+            val mark = if (d == cur) "●" else "○"
+            "$mark  ${d.label} · ${d.columns} across" to {
+                ShelfDensity.set(ctx, d)
+                rebuildActionRail("bookshelf")
+                load()
+            }
+        })
     }
 
     /**
@@ -391,10 +416,13 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
      *
      * Takes tiles rather than entries so real books and ghost cards share one grid: a ghost is a
      * different tile in the same row, not a different surface.
+     *
+     * The column count comes off the [ShelfDensity] ladder — read at build time, so the whole
+     * page is laid at ONE density per [load] pass even if the pref changes mid-flight.
      */
     private fun gridOf(tiles: List<View>): View {
         val ctx = requireContext()
-        val columns = 4
+        val columns = ShelfDensity.current(ctx).columns
         val outer = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         var row: LinearLayout? = null
         for ((i, t) in tiles.withIndex()) {
@@ -414,9 +442,12 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
 
     private fun tile(entry: BookshelfSource.Entry): View {
         val ctx = requireContext()
+        // Cover height, padding and title size all ride the one density rung — three numbers,
+        // one decision (see [ShelfDensity]). Cozy is byte-for-byte the old hard-coded tile.
+        val d = ShelfDensity.current(ctx)
         val col = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(6), dp(6), dp(6), dp(6))
+            setPadding(dp(d.padDp), dp(d.padDp), dp(d.padDp), dp(d.padDp))
             isClickable = true
             setBackgroundResource(android.R.drawable.list_selector_background)
             setOnClickListener { open(entry) }
@@ -426,12 +457,12 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.FIT_CENTER
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(150))
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(d.coverDp))
         }
         col.addView(art)
         col.addView(TextView(ctx).apply {
             text = entry.title
-            textSize = 12f
+            textSize = d.titleSp
             maxLines = 2
             ellipsize = android.text.TextUtils.TruncateAt.END
             setTextColor(0xFF000000.toInt())
@@ -474,10 +505,13 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
      */
     private fun ghostTile(book: com.toolsboox.plugin.calendar.da.v2.LibraryBook): View {
         val ctx = requireContext()
+        // Same density rung as the real tiles — a ghost stands on the same shelf, so it must be
+        // the same size as the book it will become, at every rung of the ladder.
+        val d = ShelfDensity.current(ctx)
         val title = book.name.substringBeforeLast('.', book.name)
         val col = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(6), dp(6), dp(6), dp(6))
+            setPadding(dp(d.padDp), dp(d.padDp), dp(d.padDp), dp(d.padDp))
             isClickable = true
             alpha = 0.45f   // the ghost of it
             setBackgroundResource(android.R.drawable.list_selector_background)
@@ -489,11 +523,11 @@ class BookshelfFragment @Inject constructor() : ScreenFragment() {
             gravity = android.view.Gravity.CENTER
             setTextColor(0xFF666666.toInt())
             setBackgroundResource(android.R.drawable.dialog_holo_light_frame)
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(150))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(d.coverDp))
         })
         col.addView(TextView(ctx).apply {
             text = "$title — fetch?"
-            textSize = 12f
+            textSize = d.titleSp
             maxLines = 2
             ellipsize = android.text.TextUtils.TruncateAt.END
             setTextColor(0xFF444444.toInt())

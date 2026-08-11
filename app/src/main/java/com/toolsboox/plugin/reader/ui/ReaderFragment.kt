@@ -505,8 +505,24 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             a11y.edit().putString(com.toolsboox.ot.ModalScale.PILL_SIZE_KEY, m).apply()
             reapplyPillScale(binding.readerGrip, binding.readerBar, "reader")
         }
+        // The shelf's spacing ladder, from inside the reader — Michael's 2026-08-11 punchlist:
+        // "Bookshelf needs clear spacing adjustments available in wrench — probably unto
+        // 'reading' in the wrench in the book reader." Its own section beside Books/Reading
+        // rather than a row hidden inside either, because the wrench's grammar is named
+        // sections and "how the SHELF draws" is neither a book nor the read-aloud transport.
+        // Radio rows, current rung marked; picking one persists and the shelf relays out once
+        // on its next load — nothing here repaints the reader, which is showing a book.
+        val shelfCur = ShelfDensity.current(requireContext())
+        val shelfRows: List<Pair<String, () -> Unit>> = ShelfDensity.entries.map { d ->
+            val mark = if (d == shelfCur) "◉" else "○"
+            "$mark  ${d.label} · ${d.columns} across" to {
+                ShelfDensity.set(requireContext(), d)
+                showMessage("Bookshelf · ${d.label}")
+            }
+        }
         showDirectory(listOf(
             "Books" to bookRows,
+            "Bookshelf" to shelfRows,
             "Reading" to readingRows,
             "Screen" to listOf(
                 "🔄  Rotate screen" to { cycleScreenOrientation() },

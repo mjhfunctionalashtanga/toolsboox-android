@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Mail List widget's frame — the Feed List's grammar verbatim: grey section-bar header
+     (white bold label), then a native ListView the launcher scrolls. Hardcoded white ground so
+     it can't flip dark with the phone's theme while the bitmap widgets stay paper-coloured. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/mail_list_widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#FFFFFF">
+
+    <TextView
+        android:id="@+id/mail_list_widget_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#CC808080"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="7dp"
+        android:paddingBottom="7dp"
+        android:text="@string/widget_mail_list_header"
+        android:textColor="#FFFFFF"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:singleLine="true" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <ListView
+            android:id="@+id/mail_list_widget_list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:divider="#33000000"
+            android:dividerHeight="1px" />
+
+        <TextView
+            android:id="@+id/mail_list_widget_empty"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:padding="12dp"
+            android:text="@string/widget_mail_list_empty"
+            android:textColor="#99000000"
+            android:textSize="13sp" />
+    </FrameLayout>
+</LinearLayout>

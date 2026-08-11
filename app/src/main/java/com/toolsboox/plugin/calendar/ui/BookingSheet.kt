@@ -46,6 +46,29 @@ import com.toolsboox.ot.InkPadView
  */
 object BookingSheet {
 
+    /**
+     * The site every read AND write in this sheet targets: the bookings-surface affinity
+     * (remembered → theyoga.club, where FluentBooking actually runs the studio calendar → active).
+     * Resolved ONCE per sheet and threaded into each [LedgerBooking] call, so Yoga Club events are
+     * reachable — and actionable — while the rest of the app points anywhere else. Null = the
+     * legacy active-site creds (single-site installs, or the seeded-active-site case
+     * [SiteAffinity] documents).
+     */
+    private fun bookingCfg(ctx: Context): com.toolsboox.plugin.calendar.nw.LedgerWebBridge.Config? =
+        com.toolsboox.plugin.calendar.nw.SiteAffinity.boardsConfigFor(
+            ctx, com.toolsboox.plugin.calendar.nw.SiteRouting.BOOKINGS
+        )
+
+    /** "· 🌐 theyoga.club" for the sheet title — naming where the booking lives, so acting on it
+     *  from a device whose active site is elsewhere is never a surprise. Blank with one site. */
+    private fun siteLabel(ctx: Context): String {
+        if (com.toolsboox.plugin.calendar.nw.SiteStore.all(ctx).size < 2) return ""
+        val site = com.toolsboox.plugin.calendar.nw.SiteAffinity.siteFor(
+            ctx, com.toolsboox.plugin.calendar.nw.SiteRouting.BOOKINGS
+        ) ?: return ""
+        return "  ·  🌐 ${site.display}"
+    }
+
     private val WIRE: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
     private val DAY: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE d MMM")
     private val CLOCK: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
@@ -87,7 +110,8 @@ object BookingSheet {
         dialog.show()
 
         fragment.lifecycleScope.launch {
-            val detail = withContext(Dispatchers.IO) { LedgerBooking.booking(ctx, bookingId) }
+            val cfg = bookingCfg(ctx)
+            val detail = withContext(Dispatchers.IO) { LedgerBooking.booking(ctx, bookingId, cfg) }
             if (!fragment.isAdded) return@launch
             container.removeAllViews()
             if (detail == null) {
@@ -120,7 +144,7 @@ object BookingSheet {
             text = b.title; setTextColor(Color.BLACK); textSize = 20f; typeface = Typeface.DEFAULT_BOLD
         })
         col.addView(TextView(ctx).apply {
-            text = whenLine(b.startTime, b.endTime)
+            text = whenLine(b.startTime, b.endTime) + siteLabel(ctx)
             setTextColor(Color.parseColor("#333333")); textSize = 15f
             setPadding(0, px(ctx, 5), 0, 0)
         })
@@ -243,8 +267,9 @@ object BookingSheet {
             .setPositiveButton("Cancel booking") { _, _ ->
                 val reason = input.text.toString().trim().ifBlank { null }
                 fragment.lifecycleScope.launch {
+                    val cfg = bookingCfg(ctx)
                     val status = withContext(Dispatchers.IO) {
-                        LedgerBooking.cancel(ctx, d.booking.id, reason)
+                        LedgerBooking.cancel(ctx, d.booking.id, reason, cfg)
                     }
                     if (!fragment.isAdded) return@launch
                     toast(ctx, status)
@@ -267,8 +292,9 @@ object BookingSheet {
             ?: LocalDateTime.now().toLocalDate().toString()
 
         fragment.lifecycleScope.launch {
+            val cfg = bookingCfg(ctx)
             val slots = withContext(Dispatchers.IO) {
-                LedgerBooking.slots(ctx, d.booking.eventId, from, 21)
+                LedgerBooking.slots(ctx, d.booking.eventId, from, 21, cfg)
             }
             if (!fragment.isAdded) return@launch
             if (slots.isEmpty()) {
@@ -291,7 +317,7 @@ object BookingSheet {
                     val target = options[which]
                     fragment.lifecycleScope.launch {
                         val status = withContext(Dispatchers.IO) {
-                            LedgerBooking.reschedule(ctx, d.booking.id, target, null)
+                            LedgerBooking.reschedule(ctx, d.booking.id, target, null, cfg)
                         }
                         if (!fragment.isAdded) return@launch
                         toast(ctx, status)
@@ -366,8 +392,9 @@ object BookingSheet {
             }
             if (text == null && png == null) { toast(ctx, "Nothing to send"); return@actionBtn }
             fragment.lifecycleScope.launch {
+                val cfg = bookingCfg(ctx)
                 val status = withContext(Dispatchers.IO) {
-                    LedgerBooking.note(ctx, d.booking.id, text, png)
+                    LedgerBooking.note(ctx, d.booking.id, text, png, cfg)
                 }
                 if (!fragment.isAdded) return@launch
                 toast(ctx, status)

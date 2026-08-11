@@ -1265,7 +1265,32 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                         com.toolsboox.plugin.feeds.ui.FeedSelection.mode = "stars"
                         com.toolsboox.plugin.feeds.ui.FeedSelection.kind = "mail"
                         com.toolsboox.plugin.feeds.ui.FeedSelection.mailMailbox = null
+                        // A Mail List widget ROW names the letter it shows (mailOpenId, via the
+                        // collection's fill-in intent); the header — and the bitmap Mail widget —
+                        // name none and land on the lens as before. Rides the SAME one-shot
+                        // handoff the gram router's mail:// links set: the pane consumes
+                        // pendingMailOpenId after its warm load, and an id the store no longer
+                        // holds falls through to the plain lens rather than erroring. Consumed
+                        // like widgetDest itself, so a re-resume doesn't re-open it.
+                        val mailId = intent?.getStringExtra("mailOpenId")
+                        intent?.removeExtra("mailOpenId")
+                        if (!mailId.isNullOrBlank()) {
+                            com.toolsboox.plugin.feeds.ui.FeedSelection.pendingMailOpenId = mailId
+                        }
                         nav.navigate(R.id.action_to_feeds)
+                    }
+                    // A Task Checklist widget ROW opens the day page that owns its task — a
+                    // lookback row lands on the day it was written, not today. The date rides
+                    // widgetDay (ISO), set by TaskDoneReceiver's open arm; unparseable or
+                    // missing falls back to today, which is the day the header already opens.
+                    "day" -> {
+                        val d = runCatching {
+                            java.time.LocalDate.parse(intent?.getStringExtra("widgetDay") ?: "")
+                        }.getOrNull() ?: java.time.LocalDate.now()
+                        intent?.removeExtra("widgetDay")
+                        nav.navigate(R.id.action_to_calendar_day, bundleOf(
+                            "year" to "${d.year}", "month" to "${d.monthValue}",
+                            "day" to "${d.dayOfMonth}"))
                     }
                     "feeds" -> {
                         // A Feed List widget ROW names the entry it shows (feedEntryId, via the

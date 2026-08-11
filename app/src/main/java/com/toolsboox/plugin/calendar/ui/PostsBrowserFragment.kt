@@ -210,7 +210,11 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
     private fun referenceSite(): LedgerSite? {
         val ctx = requireContext()
         val scope = sitesInScope()
-        return scope.firstOrNull { it.id == siteState.filter } ?: SiteStore.active(ctx) ?: scope.firstOrNull()
+        // The default reference is this SURFACE's affinity (last-used publish/posts site → the
+        // global default → first), not the bare active site — the switcher is a default, not a lock.
+        return scope.firstOrNull { it.id == siteState.filter }
+            ?: com.toolsboox.plugin.calendar.nw.SiteAffinity.siteFor(ctx, com.toolsboox.plugin.calendar.nw.SiteRouting.POSTS)
+            ?: scope.firstOrNull()
     }
 
     private fun typeName(rest: String) = types.firstOrNull { it.restBase == rest }?.name ?: rest
@@ -379,13 +383,18 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
         }
     }
 
-    /** Open a post to edit — on its OWN site: activate that site so [PublishFragment] (and its
-     *  WP client, which reads the active creds) targets the right place. */
+    /** Open a post to edit — on its OWN site, handed to [PublishFragment] as an explicit argument.
+     *  This used to ACTIVATE the row's site first so the editor's active-site client would follow —
+     *  the global-switch side effect Michael's ruling retires (it silently re-pointed Bookings,
+     *  Messages and the boards as a byproduct of opening one post). */
     private fun openEditor(sp: com.toolsboox.plugin.calendar.ui.SiteFetch.SitePost) {
-        SiteStore.activate(requireContext(), sp.site.id)
         NavHostFragment.findNavController(this).navigate(
             R.id.action_to_publish,
-            bundleOf(PublishFragment.ARG_TYPE to sp.post.type, PublishFragment.ARG_POST_ID to sp.post.id)
+            bundleOf(
+                PublishFragment.ARG_TYPE to sp.post.type,
+                PublishFragment.ARG_POST_ID to sp.post.id,
+                PublishFragment.ARG_SITE_ID to sp.site.id,
+            )
         )
     }
 
@@ -412,8 +421,9 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
             .show()
     }
 
-    /** Trash a post on its OWN site: activate it, then reuse the active-site WP client. A single,
-     *  confirmed action, so the transient re-point is harmless and reload() reflects the result. */
+    /** Trash a post on its OWN site — the site's config rides on the call itself; nothing global
+     *  is re-pointed, even transiently (a "harmless" transient re-point stops being harmless the
+     *  moment another surface reads the creds mid-flight, which concurrent surfaces now do). */
     private fun confirmTrash(sp: com.toolsboox.plugin.calendar.ui.SiteFetch.SitePost) {
         val ctx = context ?: return
         val p = sp.post
@@ -421,9 +431,9 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
             .setMessage("Move “${p.title.ifBlank { "(no title)" }}” to Trash on ${sp.site.display}?")
             .setPositiveButton("Trash") { _, _ ->
                 viewLifecycleOwner.lifecycleScope.launch {
+                    val cfg = com.toolsboox.plugin.calendar.nw.LedgerWebBridge.configFor(ctx, sp.site)
                     val err = withContext(Dispatchers.IO) {
-                        SiteStore.activate(ctx, sp.site.id)
-                        WPPublish.trash(ctx, p.type, p.id)
+                        WPPublish.trash(ctx, p.type, p.id, cfg)
                     }
                     android.widget.Toast.makeText(ctx, err ?: "Trashed", android.widget.Toast.LENGTH_SHORT).show()
                     if (err == null) reload()

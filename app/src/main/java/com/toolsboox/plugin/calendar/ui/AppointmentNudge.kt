@@ -47,7 +47,12 @@ object AppointmentNudge {
         val ctx = fragment.requireContext().applicationContext
 
         fragment.lifecycleScope.launch {
-            val next = withContext(Dispatchers.IO) { RosterBridge.nextToday(ctx) } ?: return@launch
+            // The nudge watches the ROSTER's site (theyoga.club by default) — sessions live
+            // there whatever the app's active site is.
+            val cfg = com.toolsboox.plugin.calendar.nw.SiteAffinity.boardsConfigFor(
+                ctx, com.toolsboox.plugin.calendar.nw.SiteRouting.ROSTER
+            )
+            val next = withContext(Dispatchers.IO) { RosterBridge.nextToday(ctx, cfg) } ?: return@launch
             if (!fragment.isAdded || !fragment.isResumed || showing) return@launch
             if (next.eventId <= 0) return@launch
             if (!RecordPrefs.enabled(ctx, next.eventId)) return@launch

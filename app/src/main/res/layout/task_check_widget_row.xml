@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One Task Checklist row: a ☐ checkbox that marks THIS task done (its own fill-in target,
+     padded to a finger-sized square), then the task text over an optional "since Aug 3" line
+     for the lookback rows. The row root is the second fill-in target — it opens the task's
+     own day page. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/task_row_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingStart="2dp"
+    android:paddingEnd="8dp"
+    android:background="#FFFFFF">
+
+    <TextView
+        android:id="@+id/task_row_check"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="9dp"
+        android:paddingBottom="9dp"
+        android:text="@string/widget_task_check_box"
+        android:textColor="#000000"
+        android:textSize="16sp" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:paddingTop="5dp"
+        android:paddingBottom="5dp">
+
+        <TextView
+            android:id="@+id/task_row_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textColor="#000000"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/task_row_since"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textColor="#99000000"
+            android:textSize="11sp" />
+    </LinearLayout>
+</LinearLayout>

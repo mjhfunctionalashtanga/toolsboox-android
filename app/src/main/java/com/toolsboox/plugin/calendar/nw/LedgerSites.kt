@@ -127,7 +127,15 @@ object SiteStore {
     fun activeId(context: Context): String = prefs(context).getString(KEY_ACTIVE, "") ?: ""
     fun active(context: Context): LedgerSite? = all(context).firstOrNull { it.id == activeId(context) }
 
-    /** Make [id] the live site: write its creds into every legacy key the Fluent consumers read. */
+    /**
+     * Make [id] the DEFAULT site: write its creds into every legacy key the Fluent consumers read.
+     *
+     * Since the per-surface affinity pass ([SiteRouting]/[SiteAffinity]) this is "set all the
+     * defaults at once", not a lock: each Fluent surface resolves its own site (remembered pick →
+     * natural home → this active site) and threads that site's config per call, so activating a
+     * site here re-points only the surfaces that haven't chosen for themselves. Nothing in the
+     * write-through changed — every legacy single-cred reader keeps working unmodified.
+     */
     fun activate(context: Context, id: String) {
         val s = all(context).firstOrNull { it.id == id } ?: return
         val pass = password(context, id)

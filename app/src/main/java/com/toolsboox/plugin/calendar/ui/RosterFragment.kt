@@ -237,6 +237,22 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
         )
     }
 
+    /**
+     * The roster's own site: the ROSTER surface affinity (remembered → theyoga.club, where
+     * FluentBooking's calendar and the attendees actually live → active). Threaded into every
+     * [RosterBridge] call so the studio's day is readable — and its CRM writable — regardless of
+     * which site the rest of the app points at (Michael's no-dominant-global-site ruling).
+     */
+    private fun rosterSite(): com.toolsboox.plugin.calendar.nw.LedgerSite? =
+        com.toolsboox.plugin.calendar.nw.SiteAffinity.siteFor(
+            requireContext(), com.toolsboox.plugin.calendar.nw.SiteRouting.ROSTER
+        )
+
+    private fun rosterCfg(): LedgerWebBridge.Config? =
+        com.toolsboox.plugin.calendar.nw.SiteAffinity.boardsConfigFor(
+            requireContext(), com.toolsboox.plugin.calendar.nw.SiteRouting.ROSTER
+        )
+
     private fun load() {
         if (!isAdded) return
         // The date left the title when the strip arrived. It was in there because nothing else on
@@ -254,6 +270,7 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
         // The view's scope: the fetch exists only to draw this roster, so back-navigation
         // cancels it instead of ghost-rendering into a dead view.
         viewLifecycleOwner.lifecycleScope.launch {
+            val cfg = rosterCfg()
             val list = withContext(Dispatchers.IO) {
                 // Concurrently, because a month is thirty round trips and doing them in a row is
                 // the difference between a pane that opens and a pane you wait for. One day's
@@ -261,7 +278,7 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
                 // unreachable Tuesday must not empty the rest of the week.
                 coroutineScope {
                     days.map { d ->
-                        async { runCatching { RosterBridge.roster(ctx, d) }.getOrDefault(emptyList()) }
+                        async { runCatching { RosterBridge.roster(ctx, d, cfg) }.getOrDefault(emptyList()) }
                     }.awaitAll().flatten()
                 }
             }
@@ -533,15 +550,18 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
 
     /** Open the attendee's FluentCRM record IN-APP: the wp-admin subscriber deep link rendered in the
      *  persistent-session [SiteWebFragment] WebView (sign in once, cookies stick), matching iOS where
-     *  "Open CRM profile" pushes a SiteWebView. The path rides off the active site's base. */
+     *  "Open CRM profile" pushes a SiteWebView. The path rides off the ROSTER's own site's base
+     *  ([SiteWebFragment.ARG_BASE]) — the attendee's CRM record lives where their booking does. */
     private fun openCrmProfile(a: RosterBridge.Attendee) {
-        if (LedgerWebBridge.config(requireContext()).site.isBlank()) { toast("Site not configured"); return }
+        val site = rosterSite()
+        if (site == null && LedgerWebBridge.config(requireContext()).site.isBlank()) { toast("Site not configured"); return }
         val path = "wp-admin/admin.php?page=fluentcrm-admin#/subscribers/${a.crmContactId}"
         NavHostFragment.findNavController(this).navigate(
             R.id.action_to_site_web,
             androidx.core.os.bundleOf(
                 SiteWebFragment.ARG_PATH to path,
-                SiteWebFragment.ARG_TITLE to "CRM · ${a.name}"
+                SiteWebFragment.ARG_TITLE to "CRM · ${a.name}",
+                SiteWebFragment.ARG_BASE to (site?.url ?: "")
             )
         )
     }
@@ -554,7 +574,7 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
             val text = withContext(Dispatchers.IO) { PanelOcr.recognizeImage(bmp) }.trim()
             bmp.recycle()
             if (text.isEmpty()) { toast("Couldn't read the note"); return@launch }
-            val ok = withContext(Dispatchers.IO) { RosterBridge.saveNote(ctx, a.crmContactId, a.email, text) }
+            val ok = withContext(Dispatchers.IO) { RosterBridge.saveNote(ctx, a.crmContactId, a.email, text, rosterCfg()) }
             if (!isAdded) return@launch
             if (ok) {
                 // Into the rhizome: the person joins the connection graph, linked to the session day.

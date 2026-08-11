@@ -336,7 +336,9 @@ object ListWidgetRenderer {
     // relativeAgeIso/parseEpoch are internal, not private: the Feed List widget's RemoteViews
     // factory prints the same "source · age" line and must age entries with the same clock.
 
-    private fun relativeAge(epochMs: Long): String {
+    // internal, not private: the Mail List widget's RemoteViews factory prints the same
+    // "sender · age" line and must age letters with the same clock.
+    internal fun relativeAge(epochMs: Long): String {
         if (epochMs <= 0L) return ""
         return humanise(Duration.ofMillis(System.currentTimeMillis() - epochMs))
     }

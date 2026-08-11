@@ -456,8 +456,10 @@ fun ledgerDirectoryFolders(
         // read. The local kanban is a mode of Tasks now, Pickings is called Pickings, and this one
         // says whose boards it means.
         ScreenFragment.Folder("🌐", "Sites", listOf(
-            // WordPress publishing on the active site — compose (post/schedule/draft, CPTs, grams as
-            // the featured image) and browse/edit/trash posts.
+            // WordPress publishing — compose (post/schedule/draft, CPTs, grams as the featured
+            // image) and browse/edit/trash posts. Each of these surfaces carries its OWN site
+            // (SiteRouting): Publish/Posts remember where you last worked, Messages/Correspondence/
+            // Site Boards default to ashtanga.tech — the global active site is only the fallback.
             "🖋  Publish" to { nav.navigate(R.id.action_to_publish) },
             "🗎  Posts" to { nav.navigate(R.id.action_to_posts_browser) },
             "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
@@ -711,10 +713,22 @@ fun setLastNoteTemplate(context: android.content.Context, surface: String) {
 fun showBookingPicker(fragment: ScreenFragment) {
     val ctx = fragment.requireContext()
     fragment.showMessage("Loading bookings…")
+    // The Booking door is bound to the BOOKINGS surface's site — theyoga.club by default, where
+    // FluentBooking actually runs — never to whatever site happens to be globally active. That
+    // binding is labeled in the list title below, so "whose calendar am I looking at" always has
+    // a printed answer. (Michael: pull up Yoga Club events without switching a dominant site.)
+    val bookingSite = com.toolsboox.plugin.calendar.nw.SiteAffinity.siteFor(
+        ctx, com.toolsboox.plugin.calendar.nw.SiteRouting.BOOKINGS
+    )
+    val bookingCfg = com.toolsboox.plugin.calendar.nw.SiteAffinity.boardsConfigFor(
+        ctx, com.toolsboox.plugin.calendar.nw.SiteRouting.BOOKINGS
+    )
+    val multiSite = com.toolsboox.plugin.calendar.nw.SiteStore.all(ctx).size > 1
     Thread {
         val bookings = runCatching {
-            if (!com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx).ready) emptyList()
-            else com.toolsboox.plugin.calendar.nw.LedgerBooking.bookings(ctx, limit = 60)
+            val eff = bookingCfg ?: com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(ctx)
+            if (!eff.ready) emptyList()
+            else com.toolsboox.plugin.calendar.nw.LedgerBooking.bookings(ctx, limit = 60, cfg = bookingCfg)
         }.getOrDefault(emptyList())
         runCatching {
             fragment.requireActivity().runOnUiThread {
@@ -725,7 +739,8 @@ fun showBookingPicker(fragment: ScreenFragment) {
                 }
                 showDirectoryList(
                     fragment,
-                    title = "Booking",
+                    // Multi-site: name the calendar's site right in the title.
+                    title = if (multiSite && bookingSite != null) "Booking · ${bookingSite.display}" else "Booking",
                     // Same threshold as everywhere else: below a handful, a filter field asks you
                     // to type what you can already see.
                     searchHint = if (bookings.size > 6) "Find a booking" else null,

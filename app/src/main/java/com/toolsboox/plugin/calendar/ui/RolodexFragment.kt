@@ -163,7 +163,12 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         val ctx = requireContext()
         val q = binding.searchField.text?.toString()?.trim().orEmpty()
         lifecycleScope.launch {
-            val list = withContext(Dispatchers.IO) { RosterBridge.crmContacts(ctx, q) }
+            // The CRM the rolodex reads is the ROSTER surface's site (theyoga.club by default —
+            // the studio's people live in ITS FluentCRM), not the app's active site.
+            val cfg = com.toolsboox.plugin.calendar.nw.SiteAffinity.boardsConfigFor(
+                ctx, com.toolsboox.plugin.calendar.nw.SiteRouting.ROSTER
+            )
+            val list = withContext(Dispatchers.IO) { RosterBridge.crmContacts(ctx, q, cfg) }
             if (!isAdded || source != "crm") return@launch
             crmAll = list
             crmById = list.associateBy { it.id.toString() }
@@ -299,9 +304,13 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
     }
 
     /** Open the contact's FluentCRM record in-app, exactly as `RosterFragment.openCrmProfile` does:
-     *  the wp-admin subscriber deep link rendered in the persistent-session [SiteWebFragment]. */
+     *  the wp-admin subscriber deep link rendered in the persistent-session [SiteWebFragment] — on
+     *  the ROSTER surface's own site's base, the same CRM the ids above were read from. */
     private fun openCrmProfile(crm: RosterBridge.CrmContact) {
-        if (LedgerWebBridge.config(requireContext()).site.isBlank()) {
+        val site = com.toolsboox.plugin.calendar.nw.SiteAffinity.siteFor(
+            requireContext(), com.toolsboox.plugin.calendar.nw.SiteRouting.ROSTER
+        )
+        if (site == null && LedgerWebBridge.config(requireContext()).site.isBlank()) {
             Toast.makeText(requireContext(), "Site not configured", Toast.LENGTH_SHORT).show(); return
         }
         val path = "wp-admin/admin.php?page=fluentcrm-admin#/subscribers/${crm.id}"
@@ -309,7 +318,8 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
             R.id.action_to_site_web,
             androidx.core.os.bundleOf(
                 SiteWebFragment.ARG_PATH to path,
-                SiteWebFragment.ARG_TITLE to "CRM · ${crm.name}"
+                SiteWebFragment.ARG_TITLE to "CRM · ${crm.name}",
+                SiteWebFragment.ARG_BASE to (site?.url ?: "")
             )
         )
     }

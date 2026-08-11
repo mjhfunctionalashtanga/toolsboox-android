@@ -16,7 +16,11 @@ import com.toolsboox.plugin.calendar.nw.SiteStore
 
 /**
  * The Sites settings surface — every WordPress site the app knows, each editable in its own dialog,
- * with one set ACTIVE (the site the Fluent actions target). Reached from the Community/Boards section
+ * with one set ACTIVE — the DEFAULT the Fluent surfaces fall back to. Since the per-surface
+ * affinity pass, "Use this site" means "point everything that hasn't chosen its own site here":
+ * Messages/Correspondence/Site Boards default to ashtanga.tech, Bookings/Events/Roster to
+ * theyoga.club, Publish/Posts to wherever you last published, and each surface's 🌐 chip can
+ * re-point just itself ([com.toolsboox.plugin.calendar.nw.SiteRouting]). Reached from the Community/Boards section
  * of Calendar settings. Deliberately dialog-based and plain: no new navigation graph entry, no fancy
  * list widget — one tap opens the list, one tap opens a site, big rows and buttons for e-ink.
  *
@@ -145,7 +149,8 @@ object SitesSettingsDialog {
             .setView(scroll)
             // Save persists the site + password (and activates the very first site you add).
             .setPositiveButton("Save", null)
-            // "Use" persists then makes this the active site — the one actions target.
+            // "Use" persists then makes this the active site — the global DEFAULT surfaces
+            // without their own pick fall back to.
             .setNeutralButton("Use this site", null)
             .setNegativeButton("Cancel", null)
             .create()
