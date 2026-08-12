@@ -174,6 +174,13 @@ object ListWidgetRenderer {
             var d = date.minusDays(1)
             val floor = date.minusDays(30)
             var slots = MAX_TASK_ROWS - undone.size
+            // The lookback must announce itself (Michael's 08-12 page: ghost rows self-explain).
+            // Muted "since Aug 3" alone didn't say WHY yesterday's task sits under today's — one
+            // divider row does. Inserted lazily with the FIRST lookback row, so a day with no
+            // leftovers never wears an empty heading; it spends one of the lookback's slots
+            // (never a today-row's) — a knowingly paid cost: five leftovers shown instead of six,
+            // in exchange for the six making sense.
+            var divided = false
             while (!d.isBefore(floor) && slots > 0) {
                 val y = "%04d".format(d.year); val m = "%02d".format(d.monthValue); val dd = "%02d".format(d.dayOfMonth)
                 val f = File(File(root, "calendar/$y/$m"), "day-$y-$m-$dd-v2.json")
@@ -181,6 +188,12 @@ object ListWidgetRenderer {
                     for (it in runCatching { svc.loadLedgerItems(f) }.getOrNull().orEmpty()) {
                         if (it.kind != LedgerItem.Kind.TASK || it.done || it.stage == "done" || it.text.isBlank()) continue
                         if (!said.add(com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe.key(it.text))) continue
+                        if (!divided) {
+                            divided = true
+                            // Only when a row can still follow it — a divider that is itself
+                            // the last row would be an empty heading.
+                            if (slots >= 2) { rows.add(Row(primary = "— still open —", muted = true)); --slots }
+                        }
                         rows.add(Row(primary = it.text, secondary = "since ${d.format(sinceFmt)}", marker = "·", muted = true))
                         if (--slots <= 0) break
                     }

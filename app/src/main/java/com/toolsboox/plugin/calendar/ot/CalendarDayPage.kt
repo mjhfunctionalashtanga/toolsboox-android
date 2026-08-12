@@ -114,6 +114,15 @@ class CalendarDayPage {
             color = android.graphics.Color.rgb(150, 150, 150)
         }
 
+        /** The one-line caption over the ghost block. Lighter than the rows it introduces —
+         *  it explains them, it doesn't compete with them. Michael's 08-12 page: the ghosts
+         *  need to SAY what they are; a first-time reader saw grey rows appear on today's
+         *  page and had no way to know they were older days' leftovers, or that they answer
+         *  to a tap. */
+        private val ghostCaption = android.text.TextPaint(Creator.textSmallBlack).apply {
+            color = android.graphics.Color.rgb(150, 150, 150)
+        }
+
         // The compact ⚡ GLIMPSE and its hit-testing are gone. It lived in the bottom slice of the
         // Roots band and had already been drawn down to nothing there — the wins render as the panel
         // rows below, which is the honest place for them — so when the Roots band retired, the
@@ -410,8 +419,23 @@ class CalendarDayPage {
             if (openTasks.isNotEmpty()) {
                 val free = LedgerTaskCarryOver.freeRows(context, calendarDay)
                 val sinceFmt = DateTimeFormatter.ofPattern("MMM d")
+                // The block explains itself before it speaks: one caption row, consumed from the
+                // same free-row budget so the first ghost can't draw over it. Ghosts start at
+                // free[1] — when the page is so full that only one free row exists, the caption
+                // yields to nothing (there are no ghost rows visible to explain) and the single
+                // row goes to the first ghost as before.
+                var ghostSlotBase = 0
+                if (free.size >= 2) {
+                    val capRow = free[0]
+                    val capY = to + (capRow + 1) * ceh
+                    canvas.drawText(
+                        "· still open from earlier days — tap to act",
+                        lo + cew + 110.0f, capY + ceh - 15.0f, ghostCaption
+                    )
+                    ghostSlotBase = 1
+                }
                 for ((slot, open) in openTasks.withIndex()) {
-                    val row = free.getOrNull(slot) ?: break
+                    val row = free.getOrNull(slot + ghostSlotBase) ?: break
                     val topY = to + (row + 1) * ceh
                     Creator.drawEllipsizedText(
                         canvas, "· ${open.item.text}", ghostText,

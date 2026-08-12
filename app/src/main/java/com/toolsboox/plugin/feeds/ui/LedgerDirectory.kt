@@ -235,6 +235,19 @@ fun ledgerDirectoryFolders(
             (fragment as? com.toolsboox.ui.plugin.ReturnAnchorProvider)?.prepareReturnAnchor()
             nav.navigate(R.id.action_to_calendar_day)
         }),
+        // 🕘 History — where you've BEEN this session, newest first (Michael's 08-12 page). The
+        // ring is fed by MainActivity's destination-changed listener (the one true choke point
+        // navigation has; see LedgerHistory's header), each row re-navigates with the args it
+        // was recorded with — the same day, the same note page — and the fold simply isn't
+        // there before the first hop, because an empty history is a promise, not a place.
+        // Sits under Today: both are "get me back to where the work is" moves, not stations.
+        com.toolsboox.ui.plugin.LedgerHistory.recent().takeIf { it.isNotEmpty() }?.let { trail ->
+            ScreenFragment.Folder("🕘", "History", trail.map { v ->
+                // Guarded: a destination that can't be reached anymore (its args named
+                // something since deleted) must cost nothing but the tap.
+                v.label to fun() { runCatching { nav.navigate(v.destId, v.args) } }
+            })
+        },
         // Feed Ledger — the RSS reader lenses. Starred (your RSS stars) and Later (the read-later
         // intake) are DIFFERENT stores — both here, as on iPad, not one standing in for the other.
         ScreenFragment.Folder("📰", "Incoming", listOf(

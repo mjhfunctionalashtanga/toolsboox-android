@@ -422,9 +422,17 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
                 "🔖  Bookmarks…" to { showBookNotes(BookNote.BOOKMARK) },
                 "🗒  Notes on this book…" to { showBookNotes(BookNote.NOTE) }
             ),
-            "Synthesize" to listOf(
-                "🔬  3 questions → Synthesize" to { readerSynthesize() },
-                "✍  Writing prompt → Lines" to { readerWritingPrompt() },
+            // "Write", not "Synthesize" (08-12 sweep). The Synthesize surface retired — no door
+            // of its own anywhere else in the app (the day page stopped offering it as a move
+            // target, the hub's Ask group ruled synthesis an Ask OUTPUT, not a place) — but this
+            // group still carried its name and its lead row, "🔬 3 questions → Synthesize",
+            // which built fresh content onto that doorless page. The row and its private
+            // placement fork (readerSynthesize + placeSourcedQuestionsToDay, a byte-for-byte
+            // copy of the day page's retired pipeline) are gone. The two verbs that remain were
+            // never synthesis: both land on the LIVE Write page — and the prompt row now says
+            // so ("→ Lines" was label drift; the code always wrote pageKey "write").
+            "Write" to listOf(
+                "✍  Writing prompt → Write" to { readerWritingPrompt() },
                 "🗒  Essay outline → Write" to { readerOutline() }
             )
         )
@@ -478,11 +486,13 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         val readingRows: List<Pair<String, () -> Unit>> = when {
             player.isSpeaking -> listOf(
                 "⏸  Pause reading" to { player.toggle() },
-                "🎛  Player…" to { player.showModal(requireContext()) },
-                "⏹  Stop reading" to { player.stop() })
+                // Inline, not modal — this surface is where the playback lives (08-12 rule),
+                // so "Player" seats the persistent transport card on the page.
+                "🎛  Player" to { seatTransport() },
+                "⏹  Stop reading" to { player.stop(); seatTransport() })
             player.isPaused -> listOf(
                 "▶  Resume reading" to { player.toggle() },
-                "⏹  Stop reading" to { player.stop() })
+                "⏹  Stop reading" to { player.stop(); seatTransport() })
             else -> listOf("🔊  Read aloud" to { readAloud() })
         }
         val tapOn = readerNavPrefs().getBoolean("tap_zones", true)
@@ -592,6 +602,9 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
     override fun onResume() {
         super.onResume()
         consumeCatalogRequest()
+        // Audio survives navigation (LedgerPlayer is process-wide) — so a reader you come BACK
+        // to mid-listen re-seats the inline transport it left; nothing seats when idle.
+        seatTransport()
         (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = handler@{ up ->
             if (!readerNavPrefs().getBoolean("volume_turn", true)) return@handler false
             pageTurn(next = !up)   // volume-up = back a page, volume-down = forward
@@ -877,7 +890,10 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         if (com.toolsboox.ui.plugin.LedgerPlayer.isAudioFile(file.name)) {
             com.toolsboox.ui.plugin.LedgerPlayer.startAudio(
                 requireContext(), file.nameWithoutExtension, "Audiobook", null, file.absolutePath)
-            com.toolsboox.ui.plugin.LedgerPlayer.showModal(requireContext())
+            // Inline transport, not the modal: the reader is where this playback lives, so the
+            // controls seat themselves ON the surface (08-12) — seek bar, times, speed, ⏹ —
+            // and stay there across page turns until ⏹ or the file ends.
+            seatTransport()
             return
         }
         currentBookFile = file
@@ -948,6 +964,39 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             addView(stepper("A+", 10))
         }
 
+        // Line spacing — the same dial character as size, so the same stepper shape. This row is
+        // the fix for "Bookshelf reader is not surfacing the line spacing settings" (Michael,
+        // 08-12): the foliate embed has carried a lineHeight setting since day one
+        // (reader-embed.js `settings.lineHeight`, emitted into every book's CSS by buildCSS),
+        // and applyReaderSettings() is a blind merge that would have taken the key all along —
+        // but no pref, no row and no payload key ever existed on the Android side, so every
+        // book rendered at the hard-coded 1.5. Stored in tenths (KEY_LINE, 15 = 1.5×) because
+        // SharedPreferences floats invite drift and the dial only moves in 0.1 steps anyway.
+        lateinit var lineLabel: android.widget.TextView
+        fun lineText() = "%.1f×".format(prefs.getInt(KEY_LINE, LINE_DEFAULT) / 10.0)
+        fun lineStepper(glyph: String, delta: Int) = android.widget.TextView(ctx).apply {
+            text = glyph
+            textSize = 22f
+            setPadding(px(22), px(6), px(22), px(6))
+            setBackgroundResource(android.R.drawable.list_selector_background)
+            setOnClickListener {
+                changeLineHeight(delta)
+                lineLabel.text = lineText()
+            }
+        }
+        lineLabel = android.widget.TextView(ctx).apply {
+            text = lineText()
+            textSize = 18f
+            setPadding(px(16), 0, px(16), 0)
+        }
+        val lineRow = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            addView(lineStepper("☰−", -1))
+            addView(lineLabel)
+            addView(lineStepper("☰+", +1))
+        }
+
         fun row(label: String, onTap: (android.widget.TextView) -> Unit) = android.widget.TextView(ctx).apply {
             text = label
             textSize = 16f
@@ -960,6 +1009,7 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             orientation = android.widget.LinearLayout.VERTICAL
             setPadding(px(8), px(12), px(8), 0)
             addView(sizeRow)
+            addView(lineRow)
             addView(row(themeLabel()) { v ->
                 cycleTheme()
                 v.text = themeLabel()
@@ -1039,6 +1089,14 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         applyReaderSettings()
     }
 
+    /** Line spacing in tenths, 1.0×–2.5× — see the settings-panel comment for why this exists. */
+    private fun changeLineHeight(delta: Int) {
+        val prefs = requireContext().getSharedPreferences(PREFS, 0)
+        val tenths = (prefs.getInt(KEY_LINE, LINE_DEFAULT) + delta).coerceIn(10, 25)
+        prefs.edit().putInt(KEY_LINE, tenths).apply()
+        applyReaderSettings()
+    }
+
     private fun cycleTheme() {
         val prefs = requireContext().getSharedPreferences(PREFS, 0)
         val idx = THEMES.indexOf(prefs.getString(KEY_THEME, "default") ?: "default").coerceAtLeast(0)
@@ -1052,9 +1110,11 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         val pct = prefs.getInt(KEY_FONT, 100)
         val theme = prefs.getString(KEY_THEME, "default") ?: "default"
         val columns = if (prefs.getBoolean(KEY_SPREAD, false)) 2 else 1
+        // Locale-proof decimal: "%.1f" under a comma locale would hand JS `lineHeight:1,5`.
+        val lineHeight = "%.1f".format(Locale.US, prefs.getInt(KEY_LINE, LINE_DEFAULT) / 10.0)
         binding.readerWeb.evaluateJavascript(
             "window.applyReaderSettings && window.applyReaderSettings(" +
-                "{fontSize:$pct,theme:'$theme',columns:$columns})", null
+                "{fontSize:$pct,theme:'$theme',columns:$columns,lineHeight:$lineHeight})", null
         )
     }
 
@@ -1520,58 +1580,11 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
         }
     }
 
-    /** The same Synthesize loop as the day pages, from the selected passage / current section: 3 questions. */
-    private fun readerSynthesize() {
-        val creds = com.toolsboox.plugin.chat.nw.AiCreds.get(requireContext())
-            ?: run { showMessage("Add your Ask-my-Ledger key in Settings first."); return }
-        readerIntakeText { text, scope ->
-            lifecycleScope.launch {
-                val qs = withContext(Dispatchers.IO) {
-                    runLlmLines(creds, "You are the reader's thinking partner. From the book passage below, propose " +
-                        "EXACTLY three focused, generative questions worth answering. Output ONLY the three questions, " +
-                        "one per line, no numbering.", text).take(3)
-                }
-                if (qs.isEmpty()) { showMessage("Couldn't synthesize."); return@launch }
-                // Grouped on the Synthesize page: a source gram (back-link to this book) + the questions.
-                val srcLink = currentBookFile?.let { "book://${it.absolutePath}" } ?: ""
-                val srcLabel = (bookTitle.ifBlank { currentBookFile?.nameWithoutExtension ?: "book" }) + " · " + scope
-                com.toolsboox.plugin.calendar.ot.SynthesisIdeaStore.add(
-                    requireContext(), LocalDate.now(), qs, "question", bookTitle.ifBlank { "book" })
-                withContext(Dispatchers.IO) {
-                    placeSourcedQuestionsToDay(qs, "synthesize", srcLink, srcLabel)
-                }
-                showMessage("3 questions placed on your Synthesize page.")
-                CalendarNavigator.toDayNote(this@ReaderFragment, LocalDate.now(), "synthesize")
-            }
-        }
-    }
-
-    /**
-     * Reader-side twin of the day page's grouped placement: a source gram card (with the back-link)
-     * at the top of the batch, then the question text boxes beneath it, written straight to today.
-     */
-    private fun placeSourcedQuestionsToDay(lines: List<String>, pageKey: String, sourceLink: String, sourceLabel: String) {
-        val root = documentsRoot(); val today = LocalDate.now()
-        val day = calendarDayService.load(root, today, null, Locale.getDefault())
-        var y = 140f
-        if (sourceLink.isNotBlank()) runCatching {
-            val bmp = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
-                "↩ Synthesized from\n$sourceLabel", null, null, 1100, 240)
-            val baos = java.io.ByteArrayOutputStream(); bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
-            val base64 = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
-            val w = 620f; val h = w * bmp.height / bmp.width
-            day.imageElements.add(com.toolsboox.da.ImageElement(
-                x = 90f, y = y, width = w, height = h, data = base64, page = pageKey,
-                sourceLink = sourceLink, sourceLabel = sourceLabel))
-            y += h + 30f
-        }
-        for (line in lines) {
-            day.textElements.add(com.toolsboox.da.TextElement(
-                x = 90f, y = y, width = 1220f, height = 100f, text = line, pageKey = pageKey))
-            y += 120f
-        }
-        calendarDayService.save(root, today, day)
-    }
+    // readerSynthesize() and placeSourcedQuestionsToDay() lived here until the 08-12 sweep —
+    // the reader's private fork of the day page's Synthesize pipeline, still placing question
+    // groups onto the retired Synthesize page (a page with no door of its own anywhere in the
+    // app). Retired with the "🔬 3 questions → Synthesize" row in the book directory above;
+    // synthesis is an Ask capability now (the hub's Ask group), not a reader shortcut.
 
     /** Offer 3 writing prompts from the selected passage / current section; the chosen one seeds Write. */
     private fun readerWritingPrompt() {
@@ -1593,11 +1606,16 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
                         lifecycleScope.launch {
                             withContext(Dispatchers.IO) {
                                 val root = documentsRoot(); val today = LocalDate.now()
-                                val day = calendarDayService.load(root, today, null, Locale.getDefault())
-                                day.textElements.add(com.toolsboox.da.TextElement(
-                                    x = 90f, y = 140f, width = 1220f, height = 100f,
-                                    text = "Prompt: " + prompts[which], pageKey = "write"))
-                                calendarDayService.save(root, today, day)
+                                // Under the day lock — every load→mutate→save of a day file
+                                // serializes there (the widget-checkbox tear made the rule
+                                // non-negotiable; see TaskDoneQueue).
+                                com.toolsboox.plugin.calendar.ot.DayLocks.withDay(today) {
+                                    val day = calendarDayService.load(root, today, null, Locale.getDefault())
+                                    day.textElements.add(com.toolsboox.da.TextElement(
+                                        x = 90f, y = 140f, width = 1220f, height = 100f,
+                                        text = "Prompt: " + prompts[which], pageKey = "write"))
+                                    calendarDayService.save(root, today, day)
+                                }
                             }
                             CalendarNavigator.toDayNote(this@ReaderFragment, LocalDate.now(), "write")
                         }
@@ -1624,14 +1642,17 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
                     requireContext(), LocalDate.now(), lines, "outline", bookTitle.ifBlank { "book" })
                 withContext(Dispatchers.IO) {
                     val root = documentsRoot(); val today = LocalDate.now()
-                    val day = calendarDayService.load(root, today, null, Locale.getDefault())
-                    var y = 140f
-                    for (line in lines) {
-                        day.textElements.add(com.toolsboox.da.TextElement(
-                            x = 90f, y = y, width = 1220f, height = 100f, text = line, pageKey = "write"))
-                        y += 120f
+                    // Under the day lock — same rule as the prompt writer above.
+                    com.toolsboox.plugin.calendar.ot.DayLocks.withDay(today) {
+                        val day = calendarDayService.load(root, today, null, Locale.getDefault())
+                        var y = 140f
+                        for (line in lines) {
+                            day.textElements.add(com.toolsboox.da.TextElement(
+                                x = 90f, y = y, width = 1220f, height = 100f, text = line, pageKey = "write"))
+                            y += 120f
+                        }
+                        calendarDayService.save(root, today, day)
                     }
-                    calendarDayService.save(root, today, day)
                 }
                 showMessage("Outline placed in Write.")
                 CalendarNavigator.toDayNote(this@ReaderFragment, LocalDate.now(), "write")
@@ -1692,8 +1713,15 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
             if (text.isBlank()) { showMessage(R.string.reader_capture_failed); return@evaluateJavascript }
             val player = com.toolsboox.ui.plugin.LedgerPlayer
             player.start(requireContext(), bookTitle.ifBlank { "Reading" }, bookAuthor.ifBlank { null }, null, text)
-            player.showModal(requireContext())
+            // TTS through the same transport as audio (08-12): the inline card renders ¶ chunk
+            // progress for the speech backend, so read-aloud wears the identical controls.
+            seatTransport()
         }
+    }
+
+    /** Seat (or clear) the inline Now Playing transport over the page — see NowPlayingCard.seat. */
+    private fun seatTransport() {
+        runCatching { com.toolsboox.plugin.feeds.ui.NowPlayingCard.seat(binding.readerTransport) }
     }
 
     override fun onDestroyView() {
@@ -1748,6 +1776,11 @@ class ReaderFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.
 
         /** Two pages side by side. Persisted, and independent of orientation — see [toggleSpread]. */
         private const val KEY_SPREAD = "reader_spread"
+
+        /** Line spacing in TENTHS of the CSS line-height multiplier (15 = 1.5×, the engine's
+         *  old hard-coded value, kept as the default so existing readers see no change). */
+        private const val KEY_LINE = "reader_line_height_tenths"
+        private const val LINE_DEFAULT = 15
         private val THEMES = listOf("default", "sepia", "gray", "black")
         private val SHIM_JS = """
             window.webkit = window.webkit || {};

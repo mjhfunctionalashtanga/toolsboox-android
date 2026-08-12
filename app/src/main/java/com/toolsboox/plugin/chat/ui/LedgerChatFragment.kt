@@ -100,7 +100,14 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
      *  voice-in → voice-out symmetry and the spoken-errors rule. */
     private var lastVoiced = false
 
-    private var tts: com.toolsboox.ui.plugin.LedgerTts? = null
+    /** Field-held (not inline) so add/removeListener pair on the SAME lambda — the standing
+     *  leak lesson from the feeds rail listener. Mirrors LedgerPlayer's speech state onto the
+     *  tap-to-stop pill, now that Ask speaks through the shared player (see [speak]). */
+    private val speakingPillListener: () -> Unit = {
+        if (::binding.isInitialized)
+            binding.speakingPill.visibility =
+                if (com.toolsboox.ui.plugin.LedgerPlayer.isSpeaking) View.VISIBLE else View.GONE
+    }
 
     private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var recTicker: Runnable? = null
@@ -209,6 +216,7 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
         updateSpeakerLabel()
         binding.speakerToggle.setOnClickListener { cycleSpeakerMode() }
         binding.speakingPill.setOnClickListener { stopSpeaking() }
+        com.toolsboox.ui.plugin.LedgerPlayer.addListener(speakingPillListener)
 
         // The presets that ship arrive on first look rather than at install, the same way the
         // personas do, so a fresh Ask has something on the chip row to tap.
@@ -262,11 +270,13 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
             }
             cancelCountdown()
         }
-        stopSpeaking()
+        // NO stopSpeaking() here any more (08-12): a spoken answer rides the app-scoped
+        // LedgerPlayer now, and audio survives navigation — only the pause/stop VERBS (the
+        // pill, the transport, a new question) end it. A lifecycle event is not a verb.
     }
 
     override fun onDestroyView() {
-        tts?.shutdown(); tts = null
+        com.toolsboox.ui.plugin.LedgerPlayer.removeListener(speakingPillListener)
         uiHandler.removeCallbacksAndMessages(null)
         super.onDestroyView()
     }
@@ -361,10 +371,23 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
      * is cited as `yyyy-MM-dd · kind · label`; making that tappable is the difference between
      * "the machine says you wrote this" and being able to go and look. Underline only, no
      * colour — the standing e-ink rule.
+     *
+     * RENDERED, not raw: the model answers in markdown (nothing in the prompt forbids it, and
+     * every model reaches for it under headings-and-bullets pressure), and this TextView used to
+     * show the `**`/`##`/`- ` characters literally. [com.toolsboox.ot.MarkdownRender] is the
+     * house renderer — the same pure markdown→Spanned pass the Text Notes preview trusts — and
+     * it returns a SpannableStringBuilder, so the citation ClickableSpans layer straight on top.
+     *
+     * ORDER MATTERS: render FIRST, then find citations in the RENDERED text. Rendering strips
+     * the markdown marks, which shifts every character offset — spans found against the raw
+     * string would land mid-word (or off the end) once the marks are gone. CitationLinks'
+     * date-pattern targets (`2026-08-12 · journal`) survive the render verbatim, so re-running
+     * the finder over `rendered.toString()` finds the same doors at their true offsets.
      */
     private fun setAnswerWithLinks(target: android.widget.TextView, text: String) {
-        val span = android.text.SpannableString(text)
-        for (link in com.toolsboox.plugin.calendar.ot.CitationLinks.find(text)) {
+        val span = com.toolsboox.ot.MarkdownRender.render(text) as? android.text.Spannable
+            ?: android.text.SpannableString(text)
+        for (link in com.toolsboox.plugin.calendar.ot.CitationLinks.find(span.toString())) {
             span.setSpan(object : android.text.style.ClickableSpan() {
                 override fun onClick(widget: View) {
                     if (link.notePage != null) {
@@ -576,26 +599,27 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
         else -> voiced
     }
 
-    private fun ensureTts(): com.toolsboox.ui.plugin.LedgerTts {
-        tts?.let { return it }
-        val t = com.toolsboox.ui.plugin.LedgerTts(requireContext())
-        t.onStateChange = { speaking ->
-            if (::binding.isInitialized)
-                binding.speakingPill.visibility = if (speaking) View.VISIBLE else View.GONE
-        }
-        tts = t
-        return t
-    }
-
     /** Speak an answer. Citation tags are for eyes — `[2026-07-13 · book · …]` read aloud is
-     *  noise — so they're stripped from the spoken copy only; the screen keeps them as doors. */
+     *  noise — so they're stripped from the spoken copy only; the screen keeps them as doors.
+     *
+     *  THROUGH THE ONE TRANSPORT now (08-12): this used to run a private LedgerTts the rest of
+     *  the app couldn't see — a spoken answer was invisible to the rail, the Now Playing card
+     *  and the hub's player row, could talk OVER a running podcast, and died with this view.
+     *  LedgerPlayer.start speaks through the same engine but as the app's ONE audio: starting
+     *  it replaces whatever played (the standing single-player semantic), every transport can
+     *  pause/stop it, and it keeps speaking when you navigate away — only verbs stop it. */
     private fun speak(text: String) {
         val spoken = text.replace(Regex("\\[[^\\[\\]]{0,80}·[^\\[\\]]{0,80}\\]"), "").trim()
-        if (spoken.isNotEmpty()) ensureTts().speak(spoken)
+        if (spoken.isEmpty()) return
+        com.toolsboox.ui.plugin.LedgerPlayer.start(
+            requireContext(), "💬 Ask", lastQuestion.take(80).ifBlank { null }, null, spoken)
     }
 
+    /** Stop OUR speech — guarded to the TTS backend, so "talking over the bot" or a new
+     *  question never yanks a podcast that happens to be playing app-wide. */
     private fun stopSpeaking() {
-        tts?.takeIf { it.isActive }?.stop()
+        val player = com.toolsboox.ui.plugin.LedgerPlayer
+        if (player.isSpeaking || player.isPaused) player.stop()
         if (::binding.isInitialized) binding.speakingPill.visibility = View.GONE
     }
 

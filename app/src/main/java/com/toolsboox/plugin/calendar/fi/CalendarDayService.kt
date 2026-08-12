@@ -22,6 +22,17 @@ import javax.inject.Inject
  * @author <a href="mailto:gabor.auth@toolsboox.com">Gábor AUTH</a>
  */
 class CalendarDayService @Inject constructor() {
+
+    companion object {
+        /**
+         * Process-wide per-target-file locks for [save]'s write+rename — companion, because
+         * services are minted freely (Hilt injects them per consumer, and the widget code
+         * hand-wires its own instances), so an instance-level lock would only guard a writer
+         * against itself. See the comment inside [save] for the tear this closes.
+         */
+        private val saveLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
+    }
+
     /**
      * The Moshi instance.
      */
@@ -416,26 +427,56 @@ class CalendarDayService @Inject constructor() {
         // process is killed mid-write (low-memory kill, crash, battery death) —
         // and that corrupt file then gets pushed downstream by the sync worker.
         // The atomic rename guarantees the final file is always a complete day.
+        //
+        // TWO HARDENINGS on top of that, both learned from a torn today-file on one of Michael's
+        // devices ("day file exists but wouldn't load"), 2026-08:
+        //
+        //  1. The temp name is UNIQUE PER SAVE. It used to be the one fixed name
+        //     "$baseName-v2.json.tmp" — so two concurrent saves of the same day opened FileWriters
+        //     on the SAME temp file and interleaved their bytes; worse, the first writer's
+        //     ATOMIC_MOVE renamed that inode to the real name while the second writer's fd was
+        //     still open on it, and an fd follows its inode through a rename — the second writer
+        //     kept writing INTO THE INSTALLED TARGET. "Atomic" replaced the day with a tear.
+        //     With a per-save suffix, no two writers can ever share a temp inode.
+        //
+        //  2. The write+rename runs under a PROCESS-WIDE PER-TARGET LOCK. Callers are supposed to
+        //     hold DayLocks around their whole load→mutate→save (and the widget flow now never
+        //     writes at all — it queues through TaskDoneQueue) — but this file is the last line,
+        //     and the lock makes save() itself torn-write-proof even for a future writer that
+        //     forgets the discipline. Everything is one process (no android:process in the
+        //     manifest), so a JVM lock genuinely covers all writers. Concurrent same-day saves
+        //     then serialize; last-writer-wins on content is a lost UPDATE (DayLocks' job), but
+        //     never a lost FILE.
         val target = File(fullPath, "$baseName-v2.json")
-        val temp = File(fullPath, "$baseName-v2.json.tmp")
-        // PrintWriter swallows IOExceptions — on a full disk it "succeeds" with a truncated
-        // temp file, and the atomic move would then replace the good day with garbage.
-        // checkError() surfaces the failure so we abort before the move.
-        PrintWriter(FileWriter(temp)).use {
-            it.write(json(calendarDay))
-            it.flush()
-            if (it.checkError()) {
-                temp.delete()
-                throw java.io.IOException("write failed (disk full?) for $baseName-v2.json")
+        synchronized(saveLocks.getOrPut(target.absolutePath) { Any() }) {
+            // Sweep temp leavings of earlier saves of THIS day (a process killed mid-write
+            // strands one). Deterministic prefix + suffix keeps the sweep exact; the sync
+            // workers only pick up *-v2.json / *.json names, so strays never travel, but they
+            // shouldn't accumulate either.
+            fullPath.listFiles { f ->
+                f.name.startsWith("$baseName-v2.json.") && f.name.endsWith(".tmp")
+            }?.forEach { runCatching { it.delete() } }
+
+            val temp = File(fullPath, "$baseName-v2.json.${System.nanoTime()}.tmp")
+            // PrintWriter swallows IOExceptions — on a full disk it "succeeds" with a truncated
+            // temp file, and the atomic move would then replace the good day with garbage.
+            // checkError() surfaces the failure so we abort before the move.
+            PrintWriter(FileWriter(temp)).use {
+                it.write(json(calendarDay))
+                it.flush()
+                if (it.checkError()) {
+                    temp.delete()
+                    throw java.io.IOException("write failed (disk full?) for $baseName-v2.json")
+                }
             }
-        }
-        try {
-            Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
-        } catch (e: Exception) {
-            // ATOMIC_MOVE can be unsupported on some filesystems; fall back to a
-            // plain replace, which is still safer than writing the target directly.
-            Timber.w(e, "Atomic move unavailable for $baseName-v2.json; falling back to replace")
-            Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            try {
+                Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+            } catch (e: Exception) {
+                // ATOMIC_MOVE can be unsupported on some filesystems; fall back to a
+                // plain replace, which is still safer than writing the target directly.
+                Timber.w(e, "Atomic move unavailable for $baseName-v2.json; falling back to replace")
+                Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
         }
 
         // ── The placed-card index rides the save ──────────────────────────────────────────────

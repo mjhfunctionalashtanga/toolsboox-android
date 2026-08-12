@@ -659,6 +659,41 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         runCatching { resumedScreen()?.onExternalNoteAdded(date) }
     }
 
+    /**
+     * Consume the Task Checklist widget's done-marks — the app end of the single-writer channel
+     * (see [com.toolsboox.plugin.calendar.ot.TaskDoneQueue] for the corruption story that forced
+     * it). The widget's ✓ never writes a day file; it queues, and THIS is the only consumer:
+     * called from [onResume] (the foreground drain) and from the queue's [onEnqueued] nudge
+     * while this activity is resumed (the tap-lands-in-a-breath drain). The drain itself runs
+     * each load→mark→save under DayLocks on IO, like every other writer in this activity.
+     *
+     * After a real change, the same telling as every other background writer here (see the
+     * "THE WHOLE ACTIVITY IS A BACKGROUND WRITER" essay above): a resumed day page is holding a
+     * pre-drain copy of its day, and its next pen-up save would write the un-done task straight
+     * back. Re-read, never save.
+     */
+    private fun drainWidgetDoneQueue() {
+        lifecycleScope.launch {
+            val changed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    com.toolsboox.plugin.calendar.ot.TaskDoneQueue.drain(
+                        this@MainActivity, calendarDayService, documentsRoot()
+                    )
+                }.getOrDefault(emptySet())
+            }
+            if (changed.isNotEmpty()) {
+                // The done flag lives in the day JSON the page has open; same telling (and same
+                // pageKey) as the OCR task filing above — the fragment re-reads its currentDate.
+                tellSurfaceGramPlaced(com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY)
+                // And the widget family re-renders off the now-saved files, so the optimistic
+                // face and the truth converge.
+                runCatching {
+                    com.toolsboox.plugin.calendar.widget.CalendarWidgetProvider.refreshAllDebounced(this@MainActivity)
+                }
+            }
+        }
+    }
+
     private fun ingestPhotoFile(f: java.io.File) {
         val bmp = runCatching { decodeSampled(android.net.Uri.fromFile(f)) }.getOrNull()
         f.delete()
@@ -817,6 +852,65 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         }
     }
 
+    /**
+     * The human reading of a destination for the 🕘 History fold — the hub's vocabulary
+     * (emoji + name), enriched from args where the args are what make it a place: a day page
+     * is WHICH day (and which note page), not "CalendarDayFragment". Unknown destinations fall
+     * back to the graph label so a future surface is never invisible to history, just plain.
+     */
+    private fun historyLabel(dest: androidx.navigation.NavDestination, args: Bundle?): String = when (dest.id) {
+        R.id.CalendarDayFragment -> {
+            val date = runCatching {
+                java.time.LocalDate.of(
+                    args?.getString("year")!!.toInt(), args.getString("month")!!.toInt(), args.getString("day")!!.toInt()
+                )
+            }.getOrNull()
+            val note = args?.getString("notePage")
+            buildString {
+                append("📅  Day")
+                if (date != null) append(" · " + date.format(java.time.format.DateTimeFormatter.ofPattern("MMM d")))
+                if (!note.isNullOrBlank()) append(" · $note")
+            }
+        }
+        R.id.CalendarWeekFragment -> "🗓  Week"
+        R.id.CalendarMonthFragment -> "🗓  Month"
+        R.id.CalendarQuarterFragment -> "🗓  Quarter"
+        R.id.CalendarYearFragment -> "🗓  Year"
+        R.id.FeedsFragment -> "📰  Feeds"
+        R.id.FeedArticleFragment -> "📄  Article"
+        R.id.LedgerChatFragment -> "💬  Ask"
+        R.id.BookshelfFragment -> "📚  Bookshelf"
+        R.id.ReaderFragment -> "📖  Reader"
+        R.id.TextNotesFragment -> "🗒  Text Notes"
+        R.id.ReadingLogFragment -> "🔍  Search"
+        R.id.LedgerItemsFragment -> "☑  Items"
+        R.id.LedgerMapFragment -> "🗺  Map"
+        R.id.LedgerRhizomeFragment -> "🌱  Rhizome"
+        R.id.QuickWinsFragment -> "⚡  Quick Wins"
+        R.id.MissedRhizomesFragment -> "🔀  Missed Connections"
+        R.id.RolodexFragment -> "📇  Rolodex"
+        R.id.CorrespondenceFragment -> "✉️  Correspondence"
+        R.id.SiteBoardsFragment -> "🗂  Site Boards"
+        R.id.MessagesFragment -> "💬  Messages"
+        R.id.BlueskyFragment -> "🦋  Bluesky"
+        R.id.SiteWebFragment -> "🌐  Site"
+        R.id.RosterFragment -> "👥  Roster"
+        R.id.PublishFragment -> "📤  Publish"
+        R.id.PostsBrowserFragment -> "📄  Posts"
+        R.id.MailComposeFragment -> "✍️  Compose"
+        R.id.NotesTagsFragment -> "🏷  Tags"
+        R.id.CalendarSettingsFragment -> "⚙️  Settings"
+        else -> dest.label?.toString() ?: "Surface"
+    }
+
+    override fun onPause() {
+        // Unhook the widget-queue nudge: a paused activity must not be the one draining (its
+        // fragments can't be told to re-read), and holding a lambda over a dying activity in a
+        // process-lifetime object would leak it. Marks enqueued while paused wait for onResume.
+        com.toolsboox.plugin.calendar.ot.TaskDoneQueue.onEnqueued = null
+        super.onPause()
+    }
+
     override fun onDestroy() {
         runCatching { unregisterReceiver(screenOffReceiver) }
         super.onDestroy()
@@ -844,6 +938,19 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         com.toolsboox.ot.ScreenRotation.restore(this)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // 🕘 History's ONE recorder. There are 112 navigate() call sites and no router, so the
+        // NavController itself is the only true choke point — every hop, from every surface,
+        // ends here, and the hub's History fold reads what this wrote (LedgerHistory). Looked
+        // up through the NavHostFragment, not binding.fragmentContent.findNavController():
+        // with a FragmentContainerView the view-based lookup throws until the first layout.
+        (supportFragmentManager.findFragmentById(R.id.fragmentContent)
+            as? androidx.navigation.fragment.NavHostFragment)?.navController
+            ?.addOnDestinationChangedListener { _, dest, args ->
+                runCatching {
+                    com.toolsboox.ui.plugin.LedgerHistory.record(dest.id, historyLabel(dest, args), args)
+                }
+            }
 
         // EDGE-TO-EDGE, APP-WIDE. The window draws behind the system bars and the insets pad
         // the content frame back — ALL FOUR SIDES now.
@@ -1193,6 +1300,12 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
      */
     override fun onResume() {
         super.onResume()
+
+        // The app end of the widget ✓ write-channel: drain whatever queued while we were away,
+        // and stay registered for taps that land while we're up. Registered here (not onCreate)
+        // and cleared in onPause so the nudge only ever fires into a resumed activity.
+        com.toolsboox.plugin.calendar.ot.TaskDoneQueue.onEnqueued = { drainWidgetDoneQueue() }
+        drainWidgetDoneQueue()
 
         // Share-to-Ledger (text/link): a chooser offers where it lands — a GRAM (a card with the
         // source clickable) on this page or in Pickings, filed to read/watch/listen, or as a text box.

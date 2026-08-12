@@ -828,9 +828,13 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         }
     }
 
-    /** A tapped ghost row: the two verbs a still-open task needs from here. */
+    /** A tapped ghost row: the two verbs a still-open task needs from here. Titled with WHAT
+     *  this row is — "Still open since <date>" — because the menu is where a ghost gets to
+     *  explain itself (Michael's 08-12 page: the ghost rows must self-explain). The task's own
+     *  words ride on the second line so you still know which task you tapped. */
     private fun ghostMenu(open: com.toolsboox.plugin.calendar.ot.OpenTasks.Open) {
-        showIconMenu(open.item.text.take(80), listOf(
+        val since = open.sourceDay.format(java.time.format.DateTimeFormatter.ofPattern("MMM d"))
+        showIconMenu("Still open since $since\n${open.item.text.take(80)}", listOf(
             "✓  Done" to { markGhostDone(open) },
             "↗  Open its day" to {
                 CalendarNavigator.toDayPage(this, open.sourceDay, CalendarDay.DEFAULT_STYLE)

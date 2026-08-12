@@ -17,7 +17,6 @@ import com.toolsboox.ui.main.MainActivity
 import java.io.File
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 /**
  * "Ledger Task Checklist" — the scrollable task widget, and the first widget with INDIVIDUAL
@@ -107,6 +106,9 @@ class TaskChecklistRemoteViewsFactory(private val context: Context) : RemoteView
         /** A scroll's worth — same budget as the other list widgets. */
         private const val MAX_ROWS = 50
         internal const val LOOKBACK_DAYS = 30L
+
+        /** The lookback divider's sentinel text (paired with a blank id — see [gather]). */
+        private const val DIVIDER_TEXT = "— still open —"
     }
 
     /** One open task: the day whose file owns it, its id there, its text, and — for lookback
@@ -125,11 +127,19 @@ class TaskChecklistRemoteViewsFactory(private val context: Context) : RemoteView
         val today = LocalDate.now()
         val out = mutableListOf<TaskRow>()
 
+        // The optimistic face of the single-writer design (see TaskDoneReceiver): a tapped ✓
+        // only ENQUEUES its mark — the day file changes when the app drains. Until then the
+        // file still says "open", so the factory subtracts the pending marks here; otherwise
+        // every checked row would pop back on the data-changed poke and sit there until the
+        // app next came to the foreground, which reads as "the checkbox doesn't work".
+        val pendingDone = com.toolsboox.plugin.calendar.ot.TaskDoneQueue.pending(context)
+            .mapTo(HashSet()) { "${it.date}|${it.itemId}" }
+
         val day = WidgetRenderer.loadCalendarDay(context, today)
         val dead = (day?.deletedItemIds.orEmpty() + day?.deletedElementIds.orEmpty()).toSet()
         val tasks = day?.ledgerItems.orEmpty()
             .filter { it.kind == LedgerItem.Kind.TASK && it.text.isNotBlank() && it.id !in dead }
-        tasks.filter { !it.done && it.stage != "done" }
+        tasks.filter { !it.done && it.stage != "done" && "$today|${it.id}" !in pendingDone }
             .forEach { out.add(TaskRow(today, it.id, it.text, null)) }
 
         // Dedupe against EVERYTHING today's file says — done included, so a task checked off
@@ -150,13 +160,23 @@ class TaskChecklistRemoteViewsFactory(private val context: Context) : RemoteView
         val sinceFmt = DateTimeFormatter.ofPattern("MMM d")
         var d = today.minusDays(1)
         val floor = today.minusDays(LOOKBACK_DAYS)
+        // The lookback block self-explains (Michael's 08-12 page): one muted "— still open —"
+        // divider before the first lookback row, so yesterday's leftovers don't read as today's
+        // list quietly doubling. A sentinel TaskRow with a blank id — getViewAt strips its
+        // checkbox and intents, and the receiver ignores a tap with no parseable date anyway.
+        var divided = false
         while (!d.isBefore(floor) && out.size < MAX_ROWS) {
             val y = "%04d".format(d.year); val m = "%02d".format(d.monthValue); val dd = "%02d".format(d.dayOfMonth)
             val f = File(File(root, "calendar/$y/$m"), "day-$y-$m-$dd-v2.json")
             if (f.exists()) {
                 for (it in runCatching { svc.loadLedgerItems(f) }.getOrNull().orEmpty()) {
                     if (it.kind != LedgerItem.Kind.TASK || it.done || it.stage == "done" || it.text.isBlank()) continue
+                    if ("$d|${it.id}" in pendingDone) continue
                     if (!said.add(LedgerTaskDedupe.key(it.text))) continue
+                    if (!divided) {
+                        divided = true
+                        out.add(TaskRow(d, "", DIVIDER_TEXT, null))
+                    }
                     out.add(TaskRow(d, it.id, it.text, "since ${d.format(sinceFmt)}"))
                     if (out.size >= MAX_ROWS) break
                 }
@@ -175,6 +195,19 @@ class TaskChecklistRemoteViewsFactory(private val context: Context) : RemoteView
     override fun getViewAt(position: Int): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.task_check_widget_row)
         val row = rows.getOrNull(position) ?: return views
+
+        // The "— still open —" divider (blank id): no checkbox, no bold, no doors. Same layout
+        // as a task row (a second view type forces every launcher to re-inflate the adapter),
+        // just stripped down to a grey label. No fill-in intents set — the template fires with
+        // no extras and the receiver drops it at the date parse.
+        if (row.id.isEmpty()) {
+            views.setViewVisibility(R.id.task_row_check, android.view.View.GONE)
+            views.setViewVisibility(R.id.task_row_since, android.view.View.GONE)
+            views.setTextViewText(R.id.task_row_text, row.text)
+            views.setTextColor(R.id.task_row_text, 0x66000000)
+            return views
+        }
+        views.setViewVisibility(R.id.task_row_check, android.view.View.VISIBLE)
 
         views.setTextViewText(R.id.task_row_text, row.text)
         if (row.since != null) {
@@ -216,13 +249,26 @@ class TaskChecklistRemoteViewsFactory(private val context: Context) : RemoteView
 /**
  * The small receiver behind the Task Checklist's rows. Two arms, forked on taskAction:
  *
- *  • "done" — load the named day through CalendarDayService (moshi wired by hand, the widget-
- *    process rule), set done=true on the named task AND its same-day dedupe twins (QuickWins'
- *    rule: a typed copy and a reading-log copy of one task check off together or the unchecked
- *    twin resurfaces), save back through the same service — the one-throat save, so the card
- *    index, media externalization and (for today's file) the debounced widget poke all ride —
- *    then refresh this family debounced. Done is MONOTONIC: this receiver only ever sets it,
- *    never clears it, so a stale widget tap can never un-do a task.
+ *  • "done" — append a (date, itemId) mark to [com.toolsboox.plugin.calendar.ot.TaskDoneQueue]
+ *    and refresh this widget's face. THE RECEIVER NEVER WRITES A DAY FILE.
+ *
+ *    That is the SINGLE-WRITER RULE, and this file is where it was learned the hard way: until
+ *    1.06.57 this receiver did its own load→mark→save on a bare Thread, outside DayLocks, while
+ *    the app's presenters saved the same file per pen-up. One process, two unserialized writers
+ *    — and CalendarDayService.save then funneled both through ONE shared temp-file name, so the
+ *    first writer's atomic rename installed a file the second writer's still-open FileWriter
+ *    kept writing into (an fd follows its inode through a rename). A checkbox tap racing a pen
+ *    save tore today's file — "day file exists but wouldn't load", live, on one of Michael's
+ *    devices. So: day files have ONE writer, the app, always under DayLocks; anything in the
+ *    widget flow (this receiver, the RemoteViewsFactory binder threads, WidgetRefreshWorker)
+ *    that wants a day file changed ENQUEUES and lets the app consume it. The queue nudges the
+ *    app when it is alive (MainActivity registers a drainer while resumed) and is drained on
+ *    the next foreground otherwise; the widget face doesn't wait — the factory hides rows whose
+ *    marks are still pending, so the ✓ lands optically the moment it is tapped.
+ *
+ *    Done stays MONOTONIC end to end: the queue only ever sets it (never clears), so a stale
+ *    widget tap can never un-do a task, and the same-day dedupe-twin rule (QuickWins': a typed
+ *    copy and a reading-log copy check off together) is applied at drain time by the app.
  *
  *  • "open" — start MainActivity on the task's own day page (widgetDest="day"). See the
  *    provider's comment for the Android 14+ background-activity caveat.
@@ -241,53 +287,31 @@ class TaskDoneReceiver : BroadcastReceiver() {
             }
             "done" -> {
                 val itemId = intent.getStringExtra("taskId") ?: return
-                // File I/O off the main thread, with the receiver kept alive for it — the same
-                // goAsync + Thread plumbing CalendarWidgetProvider.onReceive uses for renders.
+                // A small file append, but still I/O — off the main thread, with the receiver
+                // kept alive for it (the goAsync + Thread plumbing the render receivers use).
                 val pending = goAsync()
                 Thread {
                     try {
-                        runCatching { markDone(context, date, itemId) }
+                        runCatching {
+                            com.toolsboox.plugin.calendar.ot.TaskDoneQueue.enqueue(context, date, itemId)
+
+                            // Optimistic face: the checked row must leave the list NOW, not when
+                            // the app gets around to draining. The factory filters pending marks
+                            // out of its rows, so a data-changed poke is all it takes; the
+                            // debounced family refresh keeps the glance widgets in step once the
+                            // real save lands.
+                            val mgr = AppWidgetManager.getInstance(context)
+                            val ids = mgr.getAppWidgetIds(
+                                ComponentName(context, TaskChecklistWidgetProvider::class.java)
+                            )
+                            if (ids.isNotEmpty()) mgr.notifyAppWidgetViewDataChanged(ids, R.id.task_check_widget_list)
+                            CalendarWidgetProvider.refreshAllDebounced(context)
+                        }
                     } finally {
                         pending.finish()
                     }
                 }.start()
             }
         }
-    }
-
-    private fun markDone(context: Context, date: LocalDate, itemId: String) {
-        val svc = com.toolsboox.plugin.calendar.fi.CalendarDayService().apply {
-            moshi = com.squareup.moshi.Moshi.Builder()
-                .add(com.toolsboox.ot.LocaleJsonAdapter())
-                .add(com.toolsboox.ot.DateJsonAdapter())
-                .add(com.toolsboox.ot.UUIDJsonAdapter())
-                .build()
-            // With the app context wired, the save behaves exactly like an in-app save —
-            // media externalization runs and today's file pokes the widget family itself.
-            appContext = context.applicationContext
-        }
-        val root = com.toolsboox.ot.LedgerPaths.documentsRoot(context)
-        val day = svc.load(root, date, null, Locale.getDefault())
-
-        val target = day.ledgerItems.firstOrNull { it.id == itemId } ?: return
-        val key = LedgerTaskDedupe.key(target.text)
-        var changed = false
-        for (li in day.ledgerItems) {
-            if (li.kind == LedgerItem.Kind.TASK && !li.done &&
-                (li.id == itemId || (key.isNotEmpty() && LedgerTaskDedupe.key(li.text) == key))
-            ) {
-                li.done = true; changed = true
-            }
-        }
-        if (!changed) return
-        svc.save(root, date, day)
-
-        // The checked row must leave the list promptly — the save's own poke covers today's
-        // file only (and is debounced 5s); a lookback mark would otherwise sit stale for half
-        // an hour. Data-changed now for this list, the debounced family refresh for the rest.
-        val mgr = AppWidgetManager.getInstance(context)
-        val ids = mgr.getAppWidgetIds(ComponentName(context, TaskChecklistWidgetProvider::class.java))
-        if (ids.isNotEmpty()) mgr.notifyAppWidgetViewDataChanged(ids, R.id.task_check_widget_list)
-        CalendarWidgetProvider.refreshAllDebounced(context)
     }
 }

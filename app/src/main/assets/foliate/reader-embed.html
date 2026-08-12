@@ -7,8 +7,17 @@
   html, body { height: 100%; margin: 0; }
   body { font-family: system-ui, sans-serif; background: Canvas; color: CanvasText; }
   foliate-view { display: block; height: 100vh; }
-  #msg { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-         color: CanvasText; font-size: 14px; line-height: 1.5; padding: 24px; text-align: center;
+  /* Opaque and ON TOP. #msg used to have no background and no z-index while <foliate-view> is
+     appended AFTER it in tree order — and the paginator host is position:relative with z-index
+     auto, so it painted OVER the message in root-stacking-context tree order, while the
+     paginator's own background layer stays transparent here (buildCSS never sets
+     --theme-bg-color). Net effect: any status/error text pinned open showed through UNDER the
+     book's prose — Michael hit it in two-page mode, where the spread relayout is the likeliest
+     error source. A message that is showing must be a legible overlay; one that isn't warranted
+     must not be showing at all (see the relocate handler and the benign-error filter in
+     reader-embed.js). */
+  #msg { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+         background: Canvas; color: CanvasText; font-size: 14px; line-height: 1.5; padding: 24px; text-align: center;
          white-space: pre-wrap; overflow: auto; }
 </style>
 <div id="msg">Loading reader…</div>
@@ -21,8 +30,14 @@
     var msg = document.getElementById('msg')
     function show(t) { if (msg) { msg.style.display = 'flex'; msg.textContent = t } }
     window.__readerShow = show
+    window.__readerHide = function () { if (msg) msg.style.display = 'none' }
     window.__readerStarted = false
     window.addEventListener('error', function (e) {
+      // ResizeObserver "loop" reports are benign by spec (undelivered notifications, the
+      // browser recovers) and the paginator's spread relayout is documented to flirt with
+      // them at threshold widths — surfacing one here pinned the overlay open under the
+      // book text in two-page mode. Not an error a reader can act on; drop it.
+      if (e && typeof e.message === 'string' && e.message.indexOf('ResizeObserver loop') !== -1) return
       // Resource load errors (e.target is the failing element) vs runtime errors.
       if (e && e.target && e.target !== window && (e.target.src || e.target.href)) {
         show('Failed to load: ' + (e.target.src || e.target.href))

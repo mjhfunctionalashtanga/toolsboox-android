@@ -217,18 +217,25 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
                 val root = documentsRoot()
-                val cd = calendarDayService.load(root, w.sourceDay, null, Locale.getDefault())
-                // Same-day twins (a typed copy and a reading-log copy of one task) check off
-                // together, or the unchecked twin resurfaces as a fresh win on the next load.
-                val key = LedgerTaskDedupe.key(w.text)
-                var changed = false
-                for (li in cd.ledgerItems) {
-                    if (li.kind == LedgerItem.Kind.TASK && !li.done &&
-                        (li.id == w.id || (key.isNotEmpty() && LedgerTaskDedupe.key(li.text) == key))) {
-                        li.done = true; changed = true
+                // Under the day lock, like every other load→mutate→save of a day file. This one
+                // ran bare until the widget-checkbox tear (see TaskDoneQueue's header): the same
+                // whole-file cycle, racing the day page's per-pen-up save of the same date, and
+                // two interleaved cycles silently drop each other's items even when the write
+                // itself doesn't tear.
+                com.toolsboox.plugin.calendar.ot.DayLocks.withDay(w.sourceDay) {
+                    val cd = calendarDayService.load(root, w.sourceDay, null, Locale.getDefault())
+                    // Same-day twins (a typed copy and a reading-log copy of one task) check off
+                    // together, or the unchecked twin resurfaces as a fresh win on the next load.
+                    val key = LedgerTaskDedupe.key(w.text)
+                    var changed = false
+                    for (li in cd.ledgerItems) {
+                        if (li.kind == LedgerItem.Kind.TASK && !li.done &&
+                            (li.id == w.id || (key.isNotEmpty() && LedgerTaskDedupe.key(li.text) == key))) {
+                            li.done = true; changed = true
+                        }
                     }
+                    if (changed) calendarDayService.save(root, w.sourceDay, cd)
                 }
-                if (changed) calendarDayService.save(root, w.sourceDay, cd)
             }
         }
         showMessage("Done — one off the pile", requireView())

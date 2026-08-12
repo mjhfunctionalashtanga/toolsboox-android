@@ -373,6 +373,42 @@ object NowPlayingCard {
         return holder
     }
 
+    /**
+     * Seat the transport INLINE on a hosting surface — the 08-12 rule: where playback LIVES
+     * (the book reader mid-read-aloud, the open article speaking or playing its podcast), the
+     * transport is part of the surface, persistent, with the seek bar and the clock; the modal
+     * popup is for surfaces that only reach FOR the player (the hub's "▶️ Now Playing" row).
+     * TTS rides the very same card — [build] already renders ¶ chunk progress when the TTS
+     * backend is up — so read-aloud and podcast wear one set of controls.
+     *
+     * Contract: give it an empty FrameLayout parked over the surface (top-anchored, so it
+     * never sits on the page-turn corners or the nav pill at the bottom). It empties and
+     * fills the container by playback state, and re-seats itself through [build]'s onStopped,
+     * so the card leaves the surface the moment ⏹ lands or the episode ends. Call it again
+     * whenever the surface starts something or resumes — idempotent, cheap when idle.
+     * Navigation never touches playback: LedgerPlayer is process-wide, and this container
+     * dying with its fragment tears down LISTENERS only (the attach-state hook in [build]).
+     */
+    fun seat(container: android.view.ViewGroup) {
+        container.removeAllViews()
+        if (!LedgerPlayer.isActive) { container.visibility = View.GONE; return }
+        container.visibility = View.VISIBLE
+        val card = build(container.context) {
+            // Stopped/finished: fall back through the same door — empties the container.
+            seat(container)
+        }
+        container.addView(
+            card,
+            android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                val m = dp(container.context, 6)
+                setMargins(m, m, m, m)
+            }
+        )
+    }
+
     /** The compact chapter list: "12:34  Title" rows, tap to seek. Plain dialog items — solid
      *  black text on white, no custom shading to lose on e-ink. */
     private fun showChapterList(context: Context) {

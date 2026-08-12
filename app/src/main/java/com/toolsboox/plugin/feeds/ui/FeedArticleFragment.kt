@@ -280,11 +280,12 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         val readItems: List<Pair<String, () -> Unit>> = when {
             player.isSpeaking -> listOf(
                 "⏸  Pause reading" to { player.toggle() },
-                "🎛  Player…" to { player.showModal(requireContext()) },
-                "⏹  Stop reading" to { player.stop() })
+                // Inline, not modal — the article is where this playback lives (08-12 rule).
+                "🎛  Player" to { seatTransport() },
+                "⏹  Stop reading" to { player.stop(); seatTransport() })
             player.isPaused -> listOf(
                 "▶  Resume reading" to { player.toggle() },
-                "⏹  Stop reading" to { player.stop() })
+                "⏹  Stop reading" to { player.stop(); seatTransport() })
             else -> listOf("🔊  Read aloud" to { readAloud() })
         }
         val fixed: List<Pair<String, () -> Unit>> = listOf(
@@ -340,13 +341,23 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         ) { raw ->
             val player = com.toolsboox.ui.plugin.LedgerPlayer
             player.start(requireContext(), e?.title, e?.feedTitle?.ifBlank { null }, e?.imageUrl, unquoteJs(raw))
-            // No auto-popup on TTS start — the transport lives in the feeds drawer card and
-            // the explicit "Player…" menu row; a modal jumping up mid-read was the wonk.
+            // No popup, ever, on this surface — but the transport does arrive ON the page
+            // (08-12): the inline card seats itself, seek + ¶ progress + ⏹, and stays across
+            // navigation until a stop verb. The modal was the wonk; a card in the surface isn't.
+            seatTransport()
         }
+    }
+
+    /** Seat (or clear) the inline Now Playing transport over the article — NowPlayingCard.seat. */
+    private fun seatTransport() {
+        runCatching { NowPlayingCard.seat(binding.artTransport) }
     }
 
     override fun onResume() {
         super.onResume()
+        // Coming back to an article that is still speaking/playing re-seats its inline
+        // transport (playback itself never noticed the navigation — LedgerPlayer is app-scoped).
+        seatTransport()
         // Volume-key page turn (opt-in), routed through the host activity.
         (activity as? com.toolsboox.ui.main.MainActivity)?.volumeKeyHandler = handler@{ up ->
             if (!volumeTurnOn()) return@handler false

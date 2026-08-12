@@ -33,9 +33,28 @@ function showStatus(text) {
 
 const errText = e => e ? (e.stack || e.message || String(e)) : String(e)
 
-// Surface any failure ON SCREEN so we can see why nothing renders.
-window.addEventListener('error', e => { showStatus('JS error: ' + errText(e.error || e.message)); post('error', { message: String(e.message) }) })
-window.addEventListener('unhandledrejection', e => { showStatus('Rejected: ' + errText(e.reason)); post('error', { message: String(e.reason) }) })
+// A page that renders clears any stale status — the overlay's ONE hide used to be the one-shot
+// success line after view.open(), so the first later error pinned it open for the whole session
+// (visible as ghost text under the prose before #msg got its opaque z-indexed style).
+function hideStatus() {
+    if (window.__readerHide) { window.__readerHide(); return }
+    if (msg) msg.style.display = 'none'
+}
+
+// ResizeObserver loop reports are benign per spec (the browser retries next frame) and the
+// paginator's own comments flag spread-mode relayout as oscillation-prone at threshold widths —
+// exactly the two-page case. Nothing a reader can act on; don't paint it, don't post it.
+const benign = m => typeof m === 'string' && m.includes('ResizeObserver loop')
+
+// Surface any real failure ON SCREEN so we can see why nothing renders.
+window.addEventListener('error', e => {
+    if (benign(e.message)) return
+    showStatus('JS error: ' + errText(e.error || e.message)); post('error', { message: String(e.message) })
+})
+window.addEventListener('unhandledrejection', e => {
+    if (benign(String(e.reason))) return
+    showStatus('Rejected: ' + errText(e.reason)); post('error', { message: String(e.reason) })
+})
 
 // Import the engine; if the module graph fails to load, say so visibly.
 let engineOK = false
@@ -206,11 +225,17 @@ async function openBook(file) {
         // The chapter label rides along because the app groups marks by it: there is no CFI
         // comparator on the Kotlin side, so where the reader IS at the moment of a mark is the
         // only chance to record which section it belongs to.
-        view.addEventListener('relocate', e => post('relocate', {
-            fraction: e.detail.fraction ?? 0,
-            cfi: e.detail.cfi || '',
-            chapter: String(e.detail.tocItem?.label || '').trim(),
-        }))
+        view.addEventListener('relocate', e => {
+            // A relocate means a page just laid out and rendered — whatever the status overlay
+            // was reporting is over. This is the standing hide (the post-open hide below only
+            // ever ran once per book, so a mid-session error used to stick until the book closed).
+            hideStatus()
+            post('relocate', {
+                fraction: e.detail.fraction ?? 0,
+                cfi: e.detail.cfi || '',
+                chapter: String(e.detail.tocItem?.label || '').trim(),
+            })
+        })
     } catch (e) {
         showStatus('Open failed: ' + errText(e))
         post('error', { message: String(e) })

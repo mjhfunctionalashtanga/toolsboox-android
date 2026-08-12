@@ -30,6 +30,16 @@
          Corners are the smallest defensible patch; the center stays live for the content.
          L/R = page back/forward; double = prev/next article; triple L = feed list, triple R =
          next feed. Toggled in the ☰ menu. -->
+    <!-- Inline Now Playing transport (NowPlayingCard.seat) — the article speaking itself or
+         playing its podcast wears its controls ON the surface (seek + times + speed + ⏹),
+         not in a popup. Top-anchored clear of the tap corners and the pill; GONE when idle. -->
+    <FrameLayout
+        android:id="@+id/art_transport"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:visibility="gone"/>
+
     <LinearLayout
         android:id="@+id/tap_zones"
         android:orientation="horizontal"

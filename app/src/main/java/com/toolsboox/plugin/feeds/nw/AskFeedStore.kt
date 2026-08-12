@@ -42,8 +42,10 @@ object AskFeedStore {
                 feedTitle = "Ask my Ledger",
                 url = "",
                 author = null,
-                content = "<p>" + body.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                    .replace("\n", "<br>") + "</p>",
+                // The answer is markdown (the model's native register) — render it to HTML for
+                // the article view instead of escaping it raw, or the saved copy shows the same
+                // `**`/`##` litter the chat pane used to. MarkdownHtml escapes on its way through.
+                content = com.toolsboox.plugin.calendar.ot.MarkdownHtml.html(body),
                 publishedAt = o.optString("at"),
                 starred = false,
                 category = null
