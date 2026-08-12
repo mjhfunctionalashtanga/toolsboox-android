@@ -82,6 +82,20 @@ class PickHarvestTest {
     }
 
     @Test
+    fun `only http links are harvestable — provenance refs are not addresses`() {
+        // The gram hold menu routes on this: a web source runs the link flow, anything else
+        // harvests the gram's own text. A ledger:// or mail:// ref is real provenance but not
+        // fetchable, and pretending otherwise would fetch nothing and blame the article.
+        assertEquals("https://example.com/a", PickHarvest.harvestableLink("https://example.com/a"))
+        assertEquals("http://example.com/a", PickHarvest.harvestableLink(" http://example.com/a "))
+        assertEquals(null, PickHarvest.harvestableLink("ledger://2026-08-01/pickings"))
+        assertEquals(null, PickHarvest.harvestableLink("mail://inbox/42"))
+        assertEquals(null, PickHarvest.harvestableLink(""))
+        // "httpsomething" is not a scheme — the prefix test must include the "://".
+        assertEquals(null, PickHarvest.harvestableLink("httpsomething"))
+    }
+
+    @Test
     fun `bullets before any heading are dropped, not guessed at`() {
         // Without a heading there is no way to know whether a line is an observation or a
         // quotation — and guessing wrong turns a paraphrase into a quotation, which is the one

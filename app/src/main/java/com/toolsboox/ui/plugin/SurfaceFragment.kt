@@ -3124,6 +3124,18 @@ abstract class SurfaceFragment : ScreenFragment() {
             send.add(LedgerContextMenu.Item("❝ Open its board") { onImageOpenBoard(element) })
         send.add(LedgerContextMenu.Item("Post to community…") { postGramToCommunity(element) })
         send.add(LedgerContextMenu.Item("Pin to Board…") { onImagePinToBoard(element) })
+        // ❦ Harvest — the paste-a-link Pick Harvest flow with the GRAM as the key. Michael: "if I
+        // don't have the link handy, I can have the gram so that it can then auto-populate." The
+        // label is honest about which of the two things will happen: a gram with a web source
+        // harvests THE SOURCE (identical result to pasting its link into "Harvest a link…"), and
+        // a gram without one harvests what the gram itself holds — its card's exact words, or OCR
+        // of its face. The decision uses PickHarvest's own test (harvestableLink), so the row
+        // never promises a link flow the harvester would then quietly fail to deliver on a
+        // ledger:// or mail:// provenance.
+        send.add(LedgerContextMenu.Item(
+            if (com.toolsboox.plugin.calendar.ot.PickHarvest.harvestableLink(element.sourceLink) != null)
+                "❦ Harvest source to Pickings" else "❦ Harvest to Pickings"
+        ) { harvestGramToPickings(element) })
         send.add(LedgerContextMenu.Item("Save to Clippings") {
             // The clippings sidecar stays base64 (out of the wire brief's scope), so a ref'd
             // face is resolved back to base64 at this seam.
@@ -3148,6 +3160,89 @@ abstract class SurfaceFragment : ScreenFragment() {
         })
         send.add(LedgerContextMenu.Item("🎁 Export asset…") { exportGramAsset(element, pressX, pressY) })
         showLedgerMenu(pressX, pressY, "SEND / SAVE", listOf(send))
+    }
+
+    /**
+     * "❦ Harvest (source) to Pickings" — turn this gram into a filled Pickings board.
+     *
+     * Two ways in, one flow ([com.toolsboox.plugin.calendar.ot.PickHarvest]) and one integrity
+     * rule (quotes are verbatim or they do not exist):
+     *
+     *  1. The gram carries a fetchable http(s) `sourceLink` → run the existing link harvest with
+     *     it, byte-for-byte the same as pasting that URL into the directory's "Harvest a link…"
+     *     dialog. The gram is standing in for the link he doesn't have handy — that is the whole
+     *     feature.
+     *  2. No fetchable link → harvest the words the gram itself holds. `cardText` first, because
+     *     for a rendered text card those are the EXACT characters the face was drawn from — better
+     *     evidence than reading its own pixels back. Only when there is no cardText does OCR read
+     *     the face (the same ML Kit pass panel capture uses). Either way the text goes through the
+     *     same prompt and the same verbatim-or-nothing parse as a fetched article.
+     *
+     * The empty states are named, not blurred together: a missing AI key fails HERE, by name,
+     * before any fetch or OCR is spent (PickHarvest.run would just return null, which the link
+     * dialog reports as "nothing came back" — wrong diagnosis for a fixable configuration); a gram
+     * with no text and no link says exactly that instead of minting an empty board; and a harvest
+     * that genuinely found nothing worth keeping says what the link dialog says.
+     *
+     * Detached scope on purpose (the runCaptureSections precedent): a harvest is a network
+     * round-trip plus a compose, and it should land its board even if he pages away while it
+     * works — viewLifecycleOwner's scope would cancel it mid-write. The completion message is
+     * therefore delivered through runCatching { runOnUiThread }, exactly like the link dialog's
+     * Thread does, so a torn-down view drops the toastline rather than crashing the harvest.
+     */
+    @kotlin.OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    private fun harvestGramToPickings(element: ImageElement) {
+        val ctx = context?.applicationContext ?: return
+        if (com.toolsboox.plugin.chat.nw.AiCreds.get(ctx) == null) {
+            showMessage(getString(R.string.ledger_ai_key_needed), provideSurfaceView())
+            return
+        }
+        val link = com.toolsboox.plugin.calendar.ot.PickHarvest.harvestableLink(element.sourceLink)
+        // The board's name, from what the gram knows about itself — no re-typing, the gram is the
+        // key. Blank is fine: the link path falls back to the URL's host, the text path to "Gram".
+        val title = element.mediaTitle.ifBlank { element.sourceLabel }
+        showMessage("Harvesting…", provideSurfaceView())
+        kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+            val msg = if (link != null) {
+                val note = runCatching {
+                    com.toolsboox.plugin.calendar.ot.PickHarvest.run(
+                        ctx,
+                        com.toolsboox.plugin.calendar.fi.CalendarDayService(),
+                        com.toolsboox.ot.LedgerPaths.documentsRoot(ctx),
+                        link, title,
+                    )
+                }.getOrNull()
+                if (note == null) "Nothing worth keeping came back." else "Pickings · ${note.name}"
+            } else {
+                // resolveBitmap directly rather than bitmapForElement: this coroutine outlives the
+                // view, and the cache it would touch belongs to the surface's thread.
+                var text = element.cardText.trim()
+                if (text.isBlank()) {
+                    val bmp = com.toolsboox.ot.LedgerMedia.resolveBitmap(ctx, element.data, element.dataRef)
+                    if (bmp != null)
+                        text = com.toolsboox.plugin.calendar.ot.PanelOcr.recognizeImage(bmp).trim()
+                }
+                if (text.isBlank()) "This gram carries no text or link to harvest."
+                else {
+                    val note = runCatching {
+                        com.toolsboox.plugin.calendar.ot.PickHarvest.runText(
+                            ctx,
+                            com.toolsboox.plugin.calendar.fi.CalendarDayService(),
+                            com.toolsboox.ot.LedgerPaths.documentsRoot(ctx),
+                            text,
+                            // Non-http provenance (ledger://, mail://) still rides along — it is a
+                            // real door back to the origin even though it was never fetchable.
+                            sourceLink = element.sourceLink,
+                            title = title,
+                        )
+                    }.getOrNull()
+                    if (note == null) "Nothing worth keeping came back." else "Pickings · ${note.name}"
+                }
+            }
+            runCatching {
+                requireActivity().runOnUiThread { showMessage(msg, requireView()) }
+            }
+        }
     }
 
     /**
