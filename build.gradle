@@ -17,8 +17,8 @@ plugins {
 
 ext {
     applicationName = 'toolboox'
-    parentVersionCode =  1_06_58_00
-    parentVersionName = '1.06.58-00'
+    parentVersionCode =  1_06_59_00
+    parentVersionName = '1.06.59-00'
 }
 
 allprojects {

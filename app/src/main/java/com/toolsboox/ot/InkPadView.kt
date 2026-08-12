@@ -323,13 +323,26 @@ class InkPadView(context: Context) : View(context) {
             // tools use), and arming any one disarms the others — one nib in the hand at a time.
             lateinit var refreshArmed: () -> Unit
 
+            // THE PAD REMEMBERS THE PEN — all three legs of it. The "pen is a habit" fix
+            // (AnnotationPen, 08-08/08-11) landed on the Edit-in-ink bar but never on THIS bar,
+            // the one every reply/annotation pad actually wears — so each pad still opened at
+            // medium black ballpoint, and the 🖋 nib in particular reset every single time
+            // ("Calligraphy effect seems to disappear", 08-12). The pad now opens holding the
+            // pen it was last used with: width, colour, and the calligraphy nib, all from the
+            // one shared store, so a pen chosen on any pad is the pen every pad offers next.
+            pad.penColor = AnnotationPen.color(context)
+            pad.calligraphyMode = AnnotationPen.calligraphy(context)
+
             fun swatch(color: Int): android.widget.TextView {
                 lateinit var tv: android.widget.TextView
                 tv = android.widget.TextView(context).apply {
                     text = "●"; textSize = 22f; setTextColor(color); setPadding(px(5), 0, px(5), 0)
+                    // The active ink is the underlined one — the REMEMBERED ink on open, not
+                    // hard-coded black.
+                    if (color == pad.penColor) paintFlags = Paint.UNDERLINE_TEXT_FLAG
                     setOnClickListener {
                         pad.penColor = color
-                        // The active ink is the underlined one.
+                        AnnotationPen.setColor(context, color)
                         (parent as? android.widget.LinearLayout)?.let { row ->
                             for (i in 0 until row.childCount) {
                                 val c = row.getChildAt(i) as? android.widget.TextView ?: continue
@@ -346,7 +359,7 @@ class InkPadView(context: Context) : View(context) {
                 text = "↶"; textSize = 20f; setTextColor(ACCENT); setPadding(px(4), 0, px(10), 0)
                 setOnClickListener { pad.undo() }
             })
-            bar.addView(swatch(Color.BLACK).also { it.paintFlags = Paint.UNDERLINE_TEXT_FLAG })
+            bar.addView(swatch(Color.BLACK))
             bar.addView(swatch(Color.parseColor(RED)))
             bar.addView(swatch(Color.parseColor(BLUE)))
             bar.addView(swatch(Color.parseColor(GREEN)))
@@ -354,11 +367,16 @@ class InkPadView(context: Context) : View(context) {
                 layoutParams = android.widget.LinearLayout.LayoutParams(0, 1, 1f)
             })
 
-            var widthIdx = 1
+            var widthIdx = AnnotationPen.widthIndex(context).coerceIn(0, WIDTHS.size - 1)
+            pad.penWidth = WIDTHS[widthIdx] * dp / 2.5f
             bar.addView(android.widget.TextView(context).apply {
                 text = "✒"; textSize = 16f; setTextColor(ACCENT); setPadding(px(6), 0, px(4), 0)
                 // Design units → view px, the same density/2.5 the pad's other geometry wears.
-                setOnClickListener { widthIdx = (widthIdx + 1) % WIDTHS.size; pad.penWidth = WIDTHS[widthIdx] * dp / 2.5f }
+                setOnClickListener {
+                    widthIdx = (widthIdx + 1) % WIDTHS.size
+                    pad.penWidth = WIDTHS[widthIdx] * dp / 2.5f
+                    AnnotationPen.setWidthIndex(context, widthIdx)
+                }
             })
 
             // 🖋 the calligraphy nib — a mode, not a one-shot, so it stays down until tapped off.
@@ -367,6 +385,7 @@ class InkPadView(context: Context) : View(context) {
                 setOnClickListener {
                     pad.calligraphyMode = !pad.calligraphyMode
                     pad.eraseMode = false
+                    AnnotationPen.setCalligraphy(context, pad.calligraphyMode)
                     refreshArmed()
                 }
             }

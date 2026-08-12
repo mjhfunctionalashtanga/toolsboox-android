@@ -425,6 +425,18 @@ class TuckPanel(
             textSize = size * 0.7f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
         }
+        // FIT THE FACE. The 0.7×box size is right for the single glyph this recipe was written
+        // for — but the transport's speed button wears its VALUE as its face ("1.25×", by
+        // design: the answer to "what speed am I on" should be readable without pressing
+        // anything), and a five-character string at single-glyph size is wider than the square
+        // bitmap it is drawn into. drawText clips at the bitmap's edge, so the face came out
+        // oversized AND cropped — Michael's 08-12 punchlist: "Playback speed in the pop-out is
+        // too big by just a bit." A bit is exactly what this trims: measure the string, and
+        // only when it overruns the face, scale the text down to fit (a small side inset keeps
+        // the digits off the rounded corners). Single glyphs measure well inside the box and
+        // render precisely as before — the design he likes doesn't move.
+        val fitted = fittedGlyphTextSize(paint.textSize, paint.measureText(glyph), size * 0.92f)
+        if (fitted != paint.textSize) paint.textSize = fitted
         val y = size / 2f - (paint.descent() + paint.ascent()) / 2f
         canvas.drawText(glyph, size / 2f, y, paint)
         return bmp
@@ -440,6 +452,17 @@ class TuckPanel(
     }
 
     companion object {
+        /**
+         * The text size that fits [measuredWidth] of glyph inside [maxWidth], scaling down from
+         * [base] proportionally — and never up: a face that already fits keeps the house size,
+         * so every single-glyph button in the rail stays pixel-identical. Text width scales
+         * linearly with text size, which is the whole arithmetic. Pure, for [drawGlyph] and
+         * for the unit test that pins the speed face ("1.25×") to its button.
+         */
+        fun fittedGlyphTextSize(base: Float, measuredWidth: Float, maxWidth: Float): Float =
+            if (measuredWidth > maxWidth && measuredWidth > 0f) base * maxWidth / measuredWidth
+            else base
+
         /**
          * The tucked strip's width in dp.
          *

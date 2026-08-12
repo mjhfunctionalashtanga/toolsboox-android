@@ -84,6 +84,17 @@ class StrokeClipboard @Inject constructor() {
      * Create a paste-ready copy of the clipboard strokes, offset so that the bounding-box
      * top-left lands at (targetX, targetY). Each stroke receives a fresh UUID.
      *
+     * THE PASTE KEEPS THE PEN. Michael's 08-12 punchlist: "Calligraphy effect seems to
+     * disappear." One provable place it disappeared was RIGHT HERE: this mint used the Stroke
+     * constructor's defaults for everything but geometry, so a pasted stroke came back as
+     * 3.0-wide BLACK BALLPOINT no matter what it was copied as — the calligraphy nib
+     * (inkStyle), the chosen colour and the chosen width were all silently reset the moment
+     * ink went through copy/cut → paste. The redraw path is innocent (drawStrokePath renders
+     * whatever inkStyle the stroke carries; Moshi round-trips the field; the lasso MOVE
+     * mutates points in place) — it was the re-mint that forgot. A stamped stroke is the SAME
+     * ink in a new place with a new identity: geometry moves, identity re-mints, and every
+     * style field (color, strokeWidth, inkStyle) must ride along unchanged.
+     *
      * @param targetX the X coordinate for the top-left of the pasted group
      * @param targetY the Y coordinate for the top-left of the pasted group
      * @return new strokes positioned at the target, with new UUIDs
@@ -97,7 +108,10 @@ class StrokeClipboard @Inject constructor() {
             val movedPoints = stroke.strokePoints.map { pt ->
                 StrokePoint(pt.x + dx, pt.y + dy, pt.p, pt.t)
             }
-            Stroke(UUID.randomUUID(), timestamp, movedPoints)
+            Stroke(
+                UUID.randomUUID(), timestamp, movedPoints,
+                stroke.color, stroke.strokeWidth, stroke.inkStyle
+            )
         }
     }
 

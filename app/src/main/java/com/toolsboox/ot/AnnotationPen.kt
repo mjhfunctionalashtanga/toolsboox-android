@@ -30,6 +30,7 @@ object AnnotationPen {
     private const val PREFS = "ledger_annotation_pen"
     private const val KEY_WIDTH = "width_index"
     private const val KEY_COLOR = "color"
+    private const val KEY_CALLIG = "calligraphy"
 
     /** Medium — the middle of the fine/medium/bold ladder, and the right first guess. */
     private const val DEFAULT_WIDTH_INDEX = 1
@@ -47,5 +48,22 @@ object AnnotationPen {
 
     fun setColor(context: Context, color: Int) {
         prefs(context).edit().putInt(KEY_COLOR, color).apply()
+    }
+
+    /**
+     * The 🖋 calligraphy nib, REMEMBERED — the third leg of the same habit.
+     *
+     * Michael's 08-12 punchlist: "Calligraphy effect seems to disappear." On the pads it did,
+     * with a boring cause: the width and colour learned to persist here (08-08/08-11), but the
+     * NIB never did — [com.toolsboox.ot.InkPadView.penBar] built every pad with
+     * `calligraphyMode = false`, so the broad edge someone chose evaporated the moment the
+     * dialog closed. The nib is not a garnish on the pen, it IS the pen — a calligrapher who
+     * has to re-arm the 🖋 on every reply pad experiences that as the effect randomly turning
+     * itself off. Default false: ballpoint is the right first guess, exactly as medium black is.
+     */
+    fun calligraphy(context: Context): Boolean = prefs(context).getBoolean(KEY_CALLIG, false)
+
+    fun setCalligraphy(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean(KEY_CALLIG, on).apply()
     }
 }

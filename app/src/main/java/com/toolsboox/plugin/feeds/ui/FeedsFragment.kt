@@ -1233,7 +1233,14 @@ class FeedsFragment @Inject constructor() : ScreenFragment(), com.toolsboox.ui.p
     private fun consumePendingMailOpen() {
         val id = FeedSelection.pendingMailOpenId ?: return
         FeedSelection.pendingMailOpenId = null
-        val m = InboxStore.messages(requireContext()).firstOrNull { it.id == id } ?: return
+        // Resolution through MailOpenResolver, not a bare id equality: an All Stars gram starred
+        // on the iPad names this same letter under the iPad's account row id, and the exact
+        // match alone is why "select an 'Email'" reached the lens but never the letter (08-12
+        // punchlist). The resolver tries exact first, then the letter's own IMAP uid tail —
+        // and only an unambiguous answer opens; anything else keeps the old fall-through.
+        val messages = InboxStore.messages(requireContext())
+        val openId = com.toolsboox.plugin.mail.MailOpenResolver.resolve(id, messages.map { it.id }) ?: return
+        val m = messages.firstOrNull { it.id == openId } ?: return
         // Minting the row maps it into [mailById] even when the current view doesn't list it (a
         // long-read letter under Unread, say) — the pane can open a letter the list isn't showing,
         // exactly as [openMail] keeps an open letter alive across a re-gather.

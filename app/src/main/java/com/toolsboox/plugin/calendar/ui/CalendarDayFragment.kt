@@ -273,9 +273,33 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
 
     /**
      * Element changes need calendarDay/calendarPattern; both load asynchronously.
+     *
+     * "READY" MEANS LOADED **AND CURRENT** — not merely loaded once. Michael's 08-12 punchlist:
+     * "Adding an image doesn't render the image immediately — leaving the page and returning
+     * does render." The mechanics, provable from the lifecycle: launching the system picker or
+     * camera pauses this fragment; the activity result is dispatched when the fragment is
+     * STARTED — i.e. BEFORE onResume — and onResume then launches presenter.load, an async
+     * re-read of the day file. The old check answered true (calendarDay was initialized from
+     * the previous session), so the insert landed in the in-memory day and queued its async
+     * save … and then renderPage arrived with the freshly-read (pre-save) disk copy, REPLACED
+     * calendarDay and repainted WITHOUT the new image. The save still completed — the element
+     * was on disk — which is exactly why leaving and returning showed it: the bug was never
+     * "not inserted", it was "inserted into a snapshot a scheduled reload was about to
+     * overwrite". Requiring isResumed (the pre-resume dispatch) and no in-flight resume reload
+     * (the post-resume window) routes those inserts through the existing deferral
+     * (deferredInsertUri), which renderPage consumes AFTER the fresh data is on screen — so
+     * the insert lands in the current day, paints immediately, and nothing races the save.
      */
     override fun isPageDataReady(): Boolean =
-        ::calendarDay.isInitialized && ::calendarPattern.isInitialized
+        ::calendarDay.isInitialized && ::calendarPattern.isInitialized &&
+            isResumed && !resumeReloadPending
+
+    /**
+     * True from onResume's presenter.load launch until the renderPage it produces has run —
+     * the window in which an element insert would be applied to data a reload is about to
+     * replace. See [isPageDataReady].
+     */
+    private var resumeReloadPending = false
 
     /**
      * The current note page key ("pickings", "gratitude", "intake", "0"...),
@@ -4617,6 +4641,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // be in hand BEFORE the first day page of the session is minted, because a day is stamped
         // with it exactly once, at creation, and owns it from then on.
         PagePrefs.sync(appCtx)
+        // Arm the insert deferral BEFORE the reload is launched: any picker/camera/share result
+        // that fires between here and the load's renderPage must wait for the fresh data, or the
+        // reload repaints over it (see isPageDataReady). renderPage clears the flag.
+        resumeReloadPending = true
         timer = GlobalScope.launch(Dispatchers.Main) {
             presenter.load(this@CalendarDayFragment, binding, currentDate, seedStartHour, locale)
             syncPresenter.backgroundSync(this@CalendarDayFragment, UUID.randomUUID())
@@ -4720,6 +4748,10 @@ class CalendarDayFragment @Inject constructor() : SurfaceFragment() {
         // (a fast second page turn replaced it), don't post an intermediate page's strokes onto the
         // surface — that's another way old ink lands over the destination page.
         if (!isAdded || !isResumed) return
+        // The resume reload has landed: from here on the in-memory day IS the file, so element
+        // inserts may apply directly again (and the deferred one is consumed at the end of this
+        // very render, onto the fresh data it was waiting for).
+        resumeReloadPending = false
         this.calendarDay = calendarDay
         this.calendarPattern = calendarPattern
         this.lastRenderedEvents = calendarEvents

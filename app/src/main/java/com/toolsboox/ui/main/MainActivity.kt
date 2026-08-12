@@ -521,8 +521,21 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         // its own (the "Scratch" alias of the day fragment). That alias is retired with the rest of
         // the Scratch vocabulary and the button lands on the ordinary day destination now — so the
         // live question moves one step closer to the truth: the fragment on screen knows which page
-        // it is showing, and a note page is exactly one whose key is not null.
-        if (currentDayNotePage() != null) {
+        // it is showing.
+        //
+        // "ON YOUR NOTE" MEANS THE NUMERIC NOTES PAGE, NOT ANY NOTE-KEYED SURFACE. Michael's 08-12
+        // punchlist: "The Note jump button goes first to the today page, then Notes on a second
+        // push." The double-hop was this toggle answering its question too broadly: `notePage !=
+        // null` is true on EVERY note-keyed surface — All Stars ("intake"), Pickings, Gratitude,
+        // Gram Picks, a Write/Grid/Sketch document — so pressing Notes while standing on ANY of
+        // them took the "you're already on your note → flip to the day page" branch. First tap:
+        // today's day page (never asked for); second tap (now genuinely off a note): Notes at
+        // last. But the toggle's own memory says what "your note" is: rememberNoteLocation stores
+        // NUMERIC pages only (the free-form lined pages this button resumes), so the flip-to-day
+        // branch is honest exactly when the surface on screen is one of those. Everything else is
+        // "not on your note" and one tap lands on the note directly. `substringBefore('#')` keeps
+        // a numeric sub-page counting as its base, the same convention the pager uses.
+        if (currentDayNotePage()?.substringBefore('#')?.toIntOrNull() != null) {
             // Second tap — you're on your note → open that day's day page.
             val d = runCatching { java.time.LocalDate.parse(p.getString("current_view_date", "") ?: "") }
                 .getOrNull() ?: java.time.LocalDate.now()

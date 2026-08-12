@@ -1110,8 +1110,17 @@ abstract class SurfaceFragment : ScreenFragment() {
         // Fold "trash" into the eraser — and give the hold a SLIDE-OUT tray instead of jumping
         // straight to the clear confirm (Michael: "set the erase button to object erase or pixel
         // erase and include clear page in that, too, as a slide out"). Object = the whole-stroke
-        // eraser; Pixel = the procrastinator eraser (its standalone button stays hidden); Clear
-        // page keeps its are-you-sure. The tray pauses the hardware pen like any modal over ink.
+        // eraser; Pixel = the procrastinator eraser (its standalone button stays hidden). The
+        // tray pauses the hardware pen like any modal over ink.
+        //
+        // The 🗑 Clear-page row is GONE from this tray — Michael, 08-12: "The trash on the side
+        // panel drawer doesn't have a purpose, since holding eraser will erase the page — we can
+        // delete it." He's right about the redundancy: the eraser in hand already clears any
+        // amount of the page, including all of it, so a second verb for the same destruction was
+        // chrome. The toolbarTrash CLICK HANDLER above stays wired, are-you-sure intact — it is
+        // the one guarded door to "wipe everything at once" for anything that still performs a
+        // click on it, and deleting a guarded path because its button is hidden is how a later
+        // caller ends up wiping a page with no confirm.
         provideToolbarDrawing().toolbarTrash.visibility = View.GONE
         provideToolbarDrawing().toolbarEraser.setOnLongClickListener { eraserBtn ->
             val ctx = requireContext()
@@ -1130,7 +1139,6 @@ abstract class SurfaceFragment : ScreenFragment() {
                 background = androidx.core.content.ContextCompat.getDrawable(ctx, R.drawable.dialog_rounded_bg)
                 addView(trayRow("\u25FB  Object erase") { provideToolbarDrawing().toolbarEraser.performClick() })
                 addView(trayRow("\u2592  Pixel erase") { provideToolbarDrawing().toolbarProcrastinator.performClick() })
-                addView(trayRow("\uD83D\uDDD1  Clear page\u2026") { provideToolbarDrawing().toolbarTrash.performClick() })
             }
             com.toolsboox.ot.LedgerFonts.applyTree(col)
             popup = android.widget.PopupWindow(col,
