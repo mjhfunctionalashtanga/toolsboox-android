@@ -30,8 +30,10 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <!-- Nav line: hamburger left of the navigator (unified with feed / Tasks & Events / log). -->
+    <!-- Nav line: hamburger left of the navigator (unified with feed / Tasks & Events / log). In
+         full screen (the one panel language, Michael 2026-10-11) the [⛶] pill takes its leading end. -->
     <LinearLayout
+        android:id="@+id/shelf_nav_row"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingHorizontal="8dp" android:paddingTop="8dp"
@@ -39,7 +41,7 @@
         <ImageButton
             android:id="@+id/goto_button"
             android:src="@drawable/ic_menu"
-            android:background="?attr/selectableItemBackgroundBorderless"
+            android:background="@drawable/eink_press_bg"
             android:scaleType="fitCenter" android:padding="3dp"
             android:layout_marginEnd="4dp"
             android:contentDescription="@string/go_to_title"
@@ -65,6 +67,21 @@
         android:id="@+id/period_text"
         android:textSize="15sp" android:textColor="#444444"
         android:paddingHorizontal="14dp" android:paddingBottom="6dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+    <!-- The shelf's search, summoned by the panel's Search seat (the one panel language, Michael
+         2026-10-11 — parity with the iPhone shelf's "Search books"): narrows the shelf by title
+         and folder as you type. Away until asked for. -->
+    <EditText
+        android:id="@+id/shelf_search"
+        android:visibility="gone"
+        android:hint="Search books — title or folder"
+        android:textColor="#000000" android:textColorHint="#777777"
+        android:textSize="16sp"
+        android:singleLine="true"
+        android:inputType="text"
+        android:imeOptions="actionSearch"
+        android:layout_marginHorizontal="12dp"
         android:layout_width="match_parent" android:layout_height="wrap_content"/>
 
     <ProgressBar
@@ -118,13 +135,13 @@
             android:layout_width="wrap_content" android:layout_height="44dp"/>
         <ImageButton android:id="@+id/shelf_page_up" android:layout_width="46dp" android:layout_height="44dp"
             android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/reader_prev"/>
         <ImageButton android:id="@+id/notes_goto" android:layout_width="46dp" android:layout_height="44dp"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_today"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/go_to_title"/>
         <ImageButton android:id="@+id/shelf_page_down" android:layout_width="46dp" android:layout_height="44dp"
             android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/reader_next"/>
     </LinearLayout>
 
 </FrameLayout>

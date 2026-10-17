@@ -93,8 +93,9 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
             // The walk's ↑/↓ lead, so this surface is a STATION you pass through rather than a
             // room you have to back out of — it sits between Self Executive and Missed Connections
             // on the Daily walk. Its own Sequence action follows them.
+            // Today's steps, said out loud: this surface has no day of its own to keep.
             actions = { com.toolsboox.plugin.calendar.ot.RitualWalk.stepItems(
-                this, com.toolsboox.plugin.calendar.ot.RitualWalk.QUICK_WINS) + listOf(
+                this, com.toolsboox.plugin.calendar.ot.RitualWalk.QUICK_WINS, java.time.LocalDate.now()) + listOf(
                 com.toolsboox.ot.TuckPanel.Item(0, "Sequence", glyph = "⇅") { narratePath() }
             ) }
         )
@@ -174,7 +175,7 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
         }
         actions.addView(actionButton("✧ Path") { generatePath(w) })
         actions.addView(actionButton("✓ Done") { markDone(w) })
-        actions.addView(actionButton("⁂ Rhizome") { openRhizome(w) })
+        actions.addView(actionButton("🕸 Rhizome") { openRhizome(w) })
         actions.addView(View(ctx).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })
         actions.addView(actionButton("✋ Grab") { grab(w) })
         box.addView(actions)
@@ -214,8 +215,8 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
         val ctx = context ?: return
         done.add(w.id)
         render()
-        lifecycleScope.launch(Dispatchers.IO) {
-            runCatching {
+        lifecycleScope.launch {
+            val failure = withContext(Dispatchers.IO) { runCatching {
                 val root = documentsRoot()
                 // Under the day lock, like every other load→mutate→save of a day file. This one
                 // ran bare until the widget-checkbox tear (see TaskDoneQueue's header): the same
@@ -223,7 +224,7 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
                 // two interleaved cycles silently drop each other's items even when the write
                 // itself doesn't tear.
                 com.toolsboox.plugin.calendar.ot.DayLocks.withDay(w.sourceDay) {
-                    val cd = calendarDayService.load(root, w.sourceDay, null, Locale.getDefault())
+                    val cd = calendarDayService.loadForWriteOrThrow(root, w.sourceDay, null, Locale.getDefault())
                     // Same-day twins (a typed copy and a reading-log copy of one task) check off
                     // together, or the unchecked twin resurfaces as a fresh win on the next load.
                     val key = LedgerTaskDedupe.key(w.text)
@@ -236,9 +237,24 @@ class QuickWinsFragment @Inject constructor() : ScreenFragment() {
                     }
                     if (changed) calendarDayService.save(root, w.sourceDay, cd)
                 }
+            }.onFailure { timber.log.Timber.w(it, "quick wins: check-off save failed") }.exceptionOrNull() }
+            // (`view` here is ScreenFragment's layout id, not the fragment's View.)
+            if (!isAdded) return@launch
+            val v = runCatching { requireView() }.getOrNull() ?: return@launch
+            if (failure == null) {
+                showMessage("Done — one off the pile", v)
+            } else {
+                // The day didn't take it, so the win goes back on the pile it never left — said, not
+                // left to reappear on the next load after "Done" was shown.
+                done.remove(w.id)
+                render()
+                showMessage(
+                    com.toolsboox.plugin.calendar.fi.CalendarDayService.refusal(failure, "check it off")
+                        ?: "Couldn't check it off just now.",
+                    v
+                )
             }
         }
-        showMessage("Done — one off the pile", requireView())
     }
 
     private fun openRhizome(w: QuickWinsEngine.Win) {

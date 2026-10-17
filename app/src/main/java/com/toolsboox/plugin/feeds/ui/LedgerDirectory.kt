@@ -1,6 +1,9 @@
 package com.toolsboox.plugin.feeds.ui
 
 import androidx.navigation.fragment.NavHostFragment
+import androidx.navigation.fragment.findNavController
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import com.toolsboox.R
 import com.toolsboox.plugin.calendar.CalendarNavigator
 import com.toolsboox.plugin.calendar.ui.LogOrigin
@@ -8,6 +11,78 @@ import com.toolsboox.plugin.calendar.ui.ReadingLogSelection
 import com.toolsboox.ui.plugin.ScreenFragment
 import java.time.LocalDate
 import java.util.Locale
+
+/**
+ * Jump to a Feed Ledger view (feed / stars / read / later, optionally by kind) by setting the
+ * selection and navigating — the same wiring across every surface, the Hub's rows among them.
+ */
+fun openFeedView(
+    nav: androidx.navigation.NavController, mode: String, kind: String?, laterLane: String? = null,
+    popMail: Boolean = false,
+) {
+    FeedSelection.filterFeedTitle = null
+    FeedSelection.mode = mode; FeedSelection.kind = kind
+    FeedSelection.laterLane = laterLane
+    // The plain Feeds door lands WHERE YOU WERE (Michael 2026-10-11: "going back to where
+    // you were on incoming should be easy") — the remembered lens, feed and view, with
+    // the drawer's fold following that lens rather than left open over another (09-03: "it
+    // started with mail accordion open for no reason"). A lens door lands on its lens, at your
+    // Unread / Read / All.
+    FeedSelection.restorePlaceOnArrival = (mode == "feed" || mode == "both") && kind == null
+    // Open the feed panel (directory) on arrival too — reaching a feed view from the hub should
+    // show the same left panel you'd have coming from within the feed list (Later especially).
+    FeedSelection.openDirectory = true
+    // [popMail]: a hop across from The Mail's room (its drawer's "📰 Feeds ↗") REPLACES that room,
+    // as the old lens swap did in place — Back goes where it went before, and two rooms' WebViews
+    // don't pile up on the B6.
+    val opts = if (!popMail) null
+        else androidx.navigation.NavOptions.Builder().setPopUpTo(R.id.MailFragment, true).build()
+    nav.navigate(R.id.action_to_feeds, null, opts)
+}
+
+/**
+ * THE ONE DOOR INTO 📧 THE MAIL'S ROOM (Michael 2026-10-11: "You can move mail ... out of
+ * incoming" · "Mail can have its own accordion then") — the Hub's Mail fold and its rows,
+ * Sections › 📧 The Mail, the Doors and Mail widgets, Correspondence's letters, the gram router's
+ * mail:// links and the ↩ chip all come through here, to the MailFragment destination (the feeds
+ * pane's class, fixed on the mail lens). The same one-shot FeedSelection channel the lens rode:
+ *  - nothing named (the Hub's "The Mail", Sections): the mailbox and view you were in
+ *    ([MailPlace], the remembered place);
+ *  - [mailbox]: an account id (its Inbox), one account's Sent / Junk / Trash ([MailPlace.of]),
+ *    the every-account [MailPlace.SENT] / [MailPlace.TRASH], or [MailPlace.ALL_ACCOUNTS]
+ *    (📥 Inbox — every account);
+ *  - [mode]: a view ("stars" for ⭐ Starred, "both" for All);
+ *  - [letterId]: a letter to open once the store is warm (its row on screen: every account).
+ * The `kind` stays "mail" so a request that ever lands in Feeds is recognised and forwarded.
+ * [popFeeds]: the hop REPLACES the Feeds room it came from (the Feeds drawer's "📧 The Mail ↗",
+ * that forward) — as the old lens swap did in place, so Back goes where it went before.
+ * [popMail]: the Hub's Mail rows used from INSIDE The Mail replace that room rather than stack a
+ * second one on it (2026-10-11 review: Back returned to the first room on its old mailbox, whose
+ * next save overwrote the one just picked, and two WebViews stayed alive on the B6).
+ */
+fun openMailRoom(
+    nav: androidx.navigation.NavController,
+    mailbox: String? = null, mode: String? = null, letterId: String? = null,
+    popFeeds: Boolean = false, popMail: Boolean = false,
+) {
+    FeedSelection.filterFeedTitle = null
+    FeedSelection.mode = mode
+    FeedSelection.kind = "mail"
+    FeedSelection.laterLane = null
+    FeedSelection.mailMailbox = mailbox
+    FeedSelection.pendingMailOpenId = letterId
+    FeedSelection.restorePlaceOnArrival = false
+    val opts = when {
+        popMail -> androidx.navigation.NavOptions.Builder().setPopUpTo(R.id.MailFragment, true).build()
+        popFeeds -> androidx.navigation.NavOptions.Builder().setPopUpTo(R.id.FeedsFragment, true).build()
+        else -> null
+    }
+    nav.navigate(R.id.action_to_mail, null, opts)
+}
+
+/** [openMailRoom] from a fragment — the older name every caller already knew. */
+fun openMailLens(fragment: androidx.fragment.app.Fragment, accountId: String? = null) =
+    openMailRoom(NavHostFragment.findNavController(fragment), mailbox = accountId)
 
 /**
  * The ONE Ledger directory, shared by every surface — the day page's ▦ hub, the feed list's
@@ -27,17 +102,28 @@ fun ledgerDirectoryFolders(
     val locale = Locale.getDefault()
 
     // Open the hub with the folder CONTAINING the current surface already expanded — on Roots the
-    // Garden folder is open, on Mail the Desk, and so on. Inferred from the calling fragment's type
+    // Garden folder is open, in The Mail its own fold, and so on. Inferred from the calling fragment's type
     // (every surface passes `this`), so all ~15 call sites get it for free; the explicit
     // [expandFeedLedger] wins over inference (the feeds back-ladder wants Feed open from the day
     // page). One folder at most; surfaces that aren't inside any folder (the day page is "Today",
     // the week/month almanacs) expand nothing. The accordion renders expanded folders in its single
     // build pass, so there is no post-open toggle to flash the e-ink.
-    val home: String? = if (expandFeedLedger) "Incoming" else when (fragment) {
-        is FeedsFragment, is FeedArticleFragment,
-        is com.toolsboox.plugin.mail.ui.MailComposeFragment -> "Incoming"
-        is com.toolsboox.plugin.calendar.ui.RolodexFragment,
-        is com.toolsboox.plugin.calendar.ui.LedgerItemsFragment -> "Desk"
+    val home: String? = if (expandFeedLedger) FEEDS_HOME else when (fragment) {
+        // The Mail's room and its compose call The Mail's own fold home; Feeds, Feeds (Michael
+        // 2026-10-11: "Change "Incoming" to "Feeds" with the rss image").
+        is FeedsFragment -> if (fragment.isMailRoom) MAIL_HOME else FEEDS_HOME
+        is com.toolsboox.plugin.mail.ui.MailComposeFragment -> MAIL_HOME
+        is FeedArticleFragment -> FEEDS_HOME
+        // Contacts moved into The Mail (Michael 2026-10-11: "Can you put contacts in mail
+        // (currently in desk)?"), so the Rolodex calls The Mail home.
+        is com.toolsboox.plugin.calendar.ui.RolodexFragment -> MAIL_HOME
+        // Bluesky moved into the Desk the same day ("Can Bluesky move to desk?"), beside the
+        // Correspondence and Event Attendees rows the Desk already held — those three called a
+        // "Sites" folder home that no longer exists, so they expanded nothing.
+        is com.toolsboox.plugin.calendar.ui.LedgerItemsFragment,
+        is com.toolsboox.plugin.calendar.ui.CorrespondenceFragment,
+        is com.toolsboox.plugin.calendar.ui.BlueskyFragment,
+        is com.toolsboox.plugin.calendar.ui.RosterFragment -> "Desk"
         // Quick Wins and Missed Connections are the two reflective surfaces that survived the
         // garden; they call Daily home beside Gratitude and Self Executive.
         is com.toolsboox.plugin.calendar.ui.QuickWinsFragment,
@@ -54,18 +140,15 @@ fun ledgerDirectoryFolders(
         // The chat surface IS the Ask group's centre — Chat, and the two thinking rows that open it
         // with a question already drafted.
         is com.toolsboox.plugin.chat.ui.LedgerChatFragment -> "Ask"
-        // The site-facing native surfaces moved out of the retired Community folder into Sites,
-        // beside Publish and Posts — they are all the same act: your sites, worked from here.
+        // The site-facing native surfaces and the Fluent portals all live in the WordPress folder
+        // now (its rows: Publish · Posts · Portal · Courses · Support · Shop · Messages · Site
+        // Boards) — they called a retired "Sites" folder home and expanded nothing (fixed
+        // 2026-10-11 with the menu reorder).
         is com.toolsboox.plugin.calendar.ui.SiteBoardsFragment,
-        is com.toolsboox.plugin.calendar.ui.CorrespondenceFragment,
         is com.toolsboox.plugin.calendar.ui.MessagesFragment,
-        is com.toolsboox.plugin.calendar.ui.BlueskyFragment,
-        is com.toolsboox.plugin.calendar.ui.RosterFragment,
         is com.toolsboox.plugin.calendar.ui.PublishFragment,
-        is com.toolsboox.plugin.calendar.ui.PostsBrowserFragment -> "Sites"
-        // The Fluent portals are the member-facing WEB face of the same sites, so they get their
-        // own folder and their own home.
-        is com.toolsboox.plugin.calendar.ui.SiteWebFragment -> "Fluent"
+        is com.toolsboox.plugin.calendar.ui.PostsBrowserFragment,
+        is com.toolsboox.plugin.calendar.ui.SiteWebFragment -> "WordPress"
         is com.toolsboox.plugin.calendar.ui.CalendarSettingsFragment,
         is com.toolsboox.plugin.cloud.ui.CloudFragment -> "Settings"
         // The day surface hosts many pages: the day grid itself is "Today" (no folder), the
@@ -97,30 +180,9 @@ fun ledgerDirectoryFolders(
     }
 
     // Jump to a Feed Ledger view (feed / stars / read / later, optionally by kind) by setting the
-    // selection and navigating — the same wiring across every surface.
-    fun openFeed(mode: String, kind: String?, laterLane: String? = null) {
-        FeedSelection.filterFeedTitle = null
-        FeedSelection.mode = mode; FeedSelection.kind = kind
-        FeedSelection.laterLane = laterLane
-        // Open the feed panel (directory) on arrival too — reaching a feed view from the hub should
-        // show the same left panel you'd have coming from within the feed list (Later especially).
-        FeedSelection.openDirectory = true
-        nav.navigate(R.id.action_to_feeds)
-    }
-    /**
-     * Open the Feed Ledger wearing 📧 The Mail lens, unified or narrowed to one account.
-     *
-     * Mail's one home is the lens now — the standalone inbox screen retired once Michael had
-     * lived with The Mail ("Retire") — so this door rides the same one-shot FeedSelection
-     * channel as every other feed view: the kind picks the lens, the mailbox rides beside it,
-     * and the mode lands on Unread, which is the lens's own cold-entry view. (The narrowing
-     * used to travel through the `account_filter` preference the screen read on arrival; the
-     * lens maintains that preference itself now, for compose's sake.)
-     */
-    fun openMail(accountId: String?) {
-        FeedSelection.mailMailbox = accountId
-        openFeed("feed", "mail")
-    }
+    // selection and navigating — the same wiring across every surface ([openFeedView]).
+    fun openFeed(mode: String, kind: String?, laterLane: String? = null) =
+        openFeedView(nav, mode, kind, laterLane)
 
     fun openHistory(origin: LogOrigin?) {
         ReadingLogSelection.origin = origin
@@ -141,6 +203,9 @@ fun ledgerDirectoryFolders(
         }
         fragment.requireContext().getSharedPreferences("ledger_reader_prefs", 0).edit()
             .putString("current_book_path", f.absolutePath)
+            // A streamed (tree) book's keys outrank the path on restore — retire them, or the
+            // last tree book opens instead of this one (09-13).
+            .remove("current_book_uri").remove("current_book_name")
             // The sync key beside the path (the reader restores both together). These rows are
             // always plain files under the default shelf, so the derived key IS the
             // folder-qualified name+size the fleet agrees on.
@@ -155,17 +220,68 @@ fun ledgerDirectoryFolders(
     }
     val shelf = java.io.File(fragment.requireContext().filesDir, "reader/books")
         .listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() }?.take(6) ?: emptyList()
+    // The ebook mid-flight, by the synced ReadingState: newest record, matched back to a shelf
+    // file by the same key the reader stamps (`idForShelfFile`). The percent is the subtitle.
+    val shelfRoot = java.io.File(fragment.requireContext().filesDir, "reader/books")
+    val continueBook: Pair<String, () -> Unit>? = runCatching {
+        val all = shelfRoot.listFiles()?.filter { it.isFile } ?: emptyList()
+        com.toolsboox.plugin.calendar.ot.ReadingStateStore.loadAll(fragment.requireContext())
+            .filter { !it.isDeleted && it.percent > 0.0 && it.percent < 0.98 }
+            .sortedByDescending { it.updated }
+            .firstNotNullOfOrNull { rs ->
+                all.firstOrNull {
+                    com.toolsboox.plugin.calendar.ot.ReadingStateStore.idForShelfFile(shelfRoot, it) == rs.id
+                }?.let { f ->
+                    "📖  Continue · ${f.nameWithoutExtension.take(40)} · ${(rs.percent * 100).toInt()}%" to { openBook(f) }
+                }
+            }
+    }.getOrNull()
     val bookRows: List<Pair<String, () -> Unit>> =
+        // The audiobook mid-flight leads the shelf — it IS a book, and this is where books are.
+        listOfNotNull(continueListeningRow(fragment, audiobook = true)) +
         recentBooks.ifEmpty { shelf.map { f -> ("📖  " + f.nameWithoutExtension) to { openBook(f) } } } +
-        // Michael's punchlist №6: "All Books in Bookshelf does not go to [the books]". It went to
-        // the reader holding whatever was last open — a book, not a shelf. Now it goes to the shelf.
-        ("📚  All books" to { nav.navigate(R.id.action_to_bookshelf) })
-    val bookshelf = ScreenFragment.Folder("📚", "Bookshelf", bookRows, expanded = home == "Bookshelf")
+        // The shelf's doors, from the drawer (Michael, 09-11: "there should be an 'add books' too,
+        // not just clicking bookshelf"): the shelf opens WITH its add menu up.
+        listOf("➕  Add a book…" to {
+            fragment.requireContext().getSharedPreferences("ledger_reader_prefs", 0).edit().putBoolean("open_add_book_on_arrival", true).apply()
+            nav.navigate(R.id.action_to_bookshelf)
+        })
+    // "📚 All books" absorbed by the folder door (the folder-as-door ruling): tap Bookshelf =
+    // the shelf; the caret keeps the recent books.
+    val bookshelf = ScreenFragment.Folder("📚", "Bookshelf", bookRows, expanded = home == "Bookshelf",
+        action = { nav.navigate(R.id.action_to_bookshelf) })
+
+    // ⏯ CONTINUE — everything mid-flight, one row per kind, at the top of the hub (Michael, 09-11:
+    // "a new continue listening section period / for RSS feeds being read like news one at a
+    // time / or audiobooks, or podcasts"). The article you were in (the durable media log, newest
+    // READ row not marked done), the podcast, the audiobook, the ebook: each is also findable in
+    // its own room, but the thing you were in the middle of is the commonest reason to open the
+    // drawer at all, so it leads. Not there when nothing is mid-flight — an empty Continue is a
+    // promise, not a place — and the listen rows step aside while the transport is live for them
+    // (Now Playing already IS that row).
+    val continueArticle: Pair<String, () -> Unit>? = runCatching {
+        com.toolsboox.plugin.calendar.ot.MediaLogStore.list(fragment.requireContext(),
+            com.toolsboox.plugin.calendar.da.v2.MediaLogEntry.READ)
+            .firstOrNull { !it.done && it.title.isNotBlank() }
+            ?.let { e -> "📰  Continue · ${e.title.take(40)}" to { openLogRow(fragment, e) } }
+    }.getOrNull()
+    val playing = com.toolsboox.ui.plugin.LedgerPlayer.isActive
+    val continueRows = listOfNotNull(
+        continueArticle,
+        if (playing) null else continueListeningRow(fragment),
+        if (playing) null else continueListeningRow(fragment, audiobook = true),
+        continueBook,
+    )
+    val continueFolder = if (continueRows.isEmpty()) null
+        else ScreenFragment.Folder("⏯", "Continue", continueRows, expanded = false)
 
     // Read-aloud transport, only while something is playing — reachable from every surface.
     val nowPlaying = if (com.toolsboox.ui.plugin.LedgerPlayer.isActive)
         ScreenFragment.Folder("▶️", "Now Playing",
-            action = { com.toolsboox.ui.plugin.LedgerPlayer.showModal(fragment.requireContext()) })
+            // The fragment rides along so the transport's title can be a door back to the entry
+            // (LedgerPlayer.openPlayingEntry) — it needs a nav host, and this is the caller that
+            // has one.
+            action = { com.toolsboox.ui.plugin.LedgerPlayer.showModal(fragment.requireContext(), fragment) })
     else null
 
     // What to open when the Search row is tapped: the Log/history surface, arriving ready to
@@ -176,7 +292,9 @@ fun ledgerDirectoryFolders(
     }
 
     // Michael's order, 2026-08: Ask · Today · Incoming · Filter · Daily · Desk · Notes · Bookshelf ·
-    // Sites · Fluent · Log · Settings.
+    // Sites · Fluent · Log · Settings. Since then Filter folded into Daily, and on 2026-10-11 it is
+    // his list, word for word: "Today, Daily, Mail, Feeds, Desk, Bookshelf, Notes, wordpress" —
+    // then Log · Ask · Directory · Settings as they were (Now Playing and ⏯ Continue stay above).
     //
     // The shape of it is worth saying plainly, because it is the thing the iOS twin has to copy.
     // The hub used to be arranged by WHERE a thing lived (a Flow of surfaces, a Garden of surfaces);
@@ -187,6 +305,7 @@ fun ledgerDirectoryFolders(
     // seen as a member sees them.
     return listOfNotNull(
         nowPlaying,
+        continueFolder,
         // ASK — one dropdown above Today: Search, Chat, and the Directory.
         //
         // Search reads what you already wrote; Chat asks the same corpus in prose. That is the whole
@@ -207,101 +326,30 @@ fun ledgerDirectoryFolders(
         // 🔍 Search row below is the same door with nothing typed yet. Nothing runs while you type —
         // see [ScreenFragment.FolderField] for why a live corpus query behind the keyboard is the
         // one thing a drawer on e-ink must not do.
-        ScreenFragment.Folder("🔎", "Ask", listOf(
-            // Named for WHERE IT GOES, not for what it does. Michael, 2026-08-04: "Hamburger menu
-            // 'search' the ledger and find anything… what's the difference?" — a fair question,
-            // because the field above and this row were both called searching and landed on two
-            // different surfaces. The field runs the query against your written history; this row
-            // opens the full search, across everything, with its filters.
-            "🔍  Search everything" to openSearch,
-            "💬  Chat" to { nav.navigate(R.id.action_to_ledger_chat) },
-            // The one Ask output that goes OUTSIDE the ledger for material and brings it back as
-            // a working page rather than an answer.
-            "🔗  Research a topic…" to { showResearch(fragment) },
-            // Pick Harvest: one link, broken into cards you can arrange. Beside Research because
-            // both go OUTSIDE and come back with a page rather than an answer.
-            "❝  Harvest a link…" to { showPickHarvest(fragment) },
-            // The Map is a way of SEEING what connects — thinking, not a daily station. It sits
-            // with Search and Chat because all three answer a question you came with.
-            "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
-        ), expanded = home == "Ask", action = { nav.navigate(R.id.action_to_ledger_chat) },
-            field = ScreenFragment.FolderField("Quick find in your writing") { q ->
-                com.toolsboox.plugin.calendar.ui.ReadingLogSelection.seedQuery = q.ifBlank { null }
-                if (q.isBlank()) openSearch() else openHistory(null)
-            }),
-        // One-tap jump to today's Day page — no submenu. If we're leaving an open article/book,
-        // drop a return anchor so the Day page can jump straight back.
-        ScreenFragment.Folder("☀️", "Today", action = {
-            (fragment as? com.toolsboox.ui.plugin.ReturnAnchorProvider)?.prepareReturnAnchor()
-            nav.navigate(R.id.action_to_calendar_day)
-        }),
-        // 🕘 History — where you've BEEN this session, newest first (Michael's 08-12 page). The
-        // ring is fed by MainActivity's destination-changed listener (the one true choke point
-        // navigation has; see LedgerHistory's header), each row re-navigates with the args it
-        // was recorded with — the same day, the same note page — and the fold simply isn't
-        // there before the first hop, because an empty history is a promise, not a place.
-        // Sits under Today: both are "get me back to where the work is" moves, not stations.
-        com.toolsboox.ui.plugin.LedgerHistory.recent().takeIf { it.isNotEmpty() }?.let { trail ->
-            ScreenFragment.Folder("🕘", "History", trail.map { v ->
+        ScreenFragment.Folder("☀️", "Today",
+            items = com.toolsboox.ui.plugin.LedgerHistory.recent().map { v ->
                 // Guarded: a destination that can't be reached anymore (its args named
                 // something since deleted) must cost nothing but the tap.
                 v.label to fun() { runCatching { nav.navigate(v.destId, v.args) } }
-            })
-        },
-        // Feed Ledger — the RSS reader lenses. Starred (your RSS stars) and Later (the read-later
-        // intake) are DIFFERENT stores — both here, as on iPad, not one standing in for the other.
-        ScreenFragment.Folder("📰", "Incoming", listOf(
-            "📧  Mail" to { openMail(null) },
-            // Bluesky, in from Sites (Michael: "Bluesky either feeds or elsewhere in Incoming").
-            //
-            // A PLAIN ROW, not a lens. The Read / The Watch / The Listen are all one call —
-            // openFeed("feed", kind) — because they are three filters over the ONE Miniflux store
-            // this folder is built on. Bluesky is a different service on a different secret with its
-            // own fragment and its own reply queue on the VPS; making it wear the lens grammar would
-            // mean inventing a feed that doesn't exist, and the row would then be the only "lens"
-            // that opened a different screen. It sits directly under Mail because those two are the
-            // arrivals that are PEOPLE talking; the block below them is publications.
-            "🦋  Bluesky" to { nav.navigate(R.id.action_to_bluesky) },
-            "📰  All" to { openFeed("feed", null) },
-            "📖  The Read" to { openFeed("feed", "read") },
-            "📺  The Watch" to { openFeed("feed", "watch") },
-            "🎧  The Listen" to { openFeed("feed", "listen") },
-            // 🔖 Later List sits directly under 🎧 The Listen — Michael: "I'd love later list to
-            // appear in feeds like a feed instead of this, instead under '🎧 The Listen' like
-            // '🔖 Later List'." It's the end of the media block, above Starred and the rest,
-            // because it's the one list here you KEEP rather than a lens over what arrived.
-            "🔖  Later List" to { openFeed("later", null) },
-            "⭐  Starred" to { openFeed("stars", null) },
-            // The rest of the feed drawer's views, here too so the hub and the drawer agree
-            // (they're sidebar rows on iPad). "pickings" and "local" ride the same one-shot
-            // FeedSelection mode the lens rows use; Smart Feeds are each their own saved
-            // search, so that row lands on the list with the drawer open — the smart rows
-            // live there, one tap away, without duplicating the fragment's private wiring.
-            "❝  Feed Pickings" to { openFeed("pickings", null) },
-            "#  Smart Feeds" to {
-                FeedSelection.filterFeedTitle = null
-                FeedSelection.openDirectory = true
-                nav.navigate(R.id.action_to_feeds)
             },
-            "📡  Local Feeds" to { openFeed("local", null) }
-        ), expanded = home == "Incoming",
-            // The two rows with a family of destinations behind them fold for real — a caret on
-            // the row, sub-rows beneath — instead of the old leading-space fake-indent, which cost
-            // this folder up to six always-visible rows and read as clutter, not depth ("the
-            // submenu got rid of the submenus"). Mail keeps navigating to the unified inbox —
-            // The Mail lens, since the standalone screen retired — and its fold holds the
-            // per-account doors (built only past one account, as before);
-            // Later List keeps navigating to the whole list and its fold holds the four lanes.
-            // Just these two: this hub is a launcher, and the Feeds page's own directory pane
-            // already carries the deep tree.
-            subFolds = mapOf(
-                "📧  Mail" to mailAccountRows(fragment, ::openMail),
-                "🔖  Later List" to com.toolsboox.plugin.feeds.nw.LaterFeed.LANES.map { (lane, label, _) ->
-                    label to { openFeed("later", null, lane) }
-                },
-            )),
-        // FILTER — what arrived, being sorted. Directly under Incoming, because that is the order it
-        // happens in: the world comes in through Incoming, and this is the sieve.
+            action = {
+                (fragment as? com.toolsboox.ui.plugin.ReturnAnchorProvider)?.prepareReturnAnchor()
+                nav.navigate(R.id.action_to_calendar_day)
+            }),
+        // 📚 THE LOG — what you have read, watched and heard, newest first, grouped by kind.
+        //
+        // Durable and synced, unlike "Recent places" directly above it ([MediaLogStore]): this is
+        // the record of the material, and Michael's reason for wanting it is that it becomes
+        // something to ACT on — "I would be able to have the llm/ask make slides from the article,
+        // or create critical thinking questions, or create pictures, or create a mind map". So a
+        // TAP reopens the thing and a HOLD runs an ⚗ engine over its cached text, which is the
+        // whole point arriving: the engines already existed and already took plain material.
+        //
+        // The fold isn't there before the first row, for the same reason Recent places isn't: an
+        // empty log is a promise, not a place.
+        // FILTER (history — folded into Daily below) — what arrived, being sorted. It sat directly
+        // under Incoming (now Feeds), because that is the order it happens in: the world comes in,
+        // and this is the sieve.
         //
         // It was called Flow and held five rows. Michael's words were "no more flow": the name
         // promised a current carrying you from catching to making, and the measured record says the
@@ -337,33 +385,117 @@ fun ledgerDirectoryFolders(
         // connection graph, holding no data of their own, and Michael's reading of Roots and Seeds
         // was "pretty useless". Nothing they showed has been lost: it is all still in the graph, and
         // Missed Connections still reads it.
-        ScreenFragment.Folder("🪴", "Daily", listOf(
+        ScreenFragment.Folder("★", "Daily", listOf(
+            // All Stars back as its own row ABOVE All Picks (Michael, 09-02: "All Stars was
+            // supposed to appear above All Picks after Daily" — and Daily itself wears the ★).
+            // The folder door still opens the intake page, so the tap and the row agree.
             "★  All Stars" to { CalendarNavigator.toDayNote(fragment, today, "intake") },
-            // Gram Picks between All Stars and Pickings — the iPhone's order. Where every grabbed
-            // gram lands, so sorting happens once, later, in one place.
-            "◈  Gram Picks" to {
+            // All Picks under All Stars — where every grabbed gram lands, so sorting happens
+            // once, later, in one place. The door opens the day the unsorted picks actually
+            // sit on (see [gramPicksHome]) — today only when today holds them, else the newest
+            // day that does.
+            "◈  All Picks" to {
                 CalendarNavigator.toDayNote(
-                    fragment, today,
+                    fragment, gramPicksHome(fragment.requireContext()),
                     com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
                 )
             },
-            "❝  Pickings" to { showPickingsPicker(fragment) },
-            "🐘  Self Executive" to { CalendarNavigator.toDayNote(fragment, today, "selfexec") },
-            "⚡  Quick Wins" to { nav.navigate(R.id.action_to_quick_wins) },
-            // "Missed Connections" is a LABEL change only. The class, the file, the nav id and every
-            // stored key still say "rhizome", deliberately: the surface is wired through the rhizome
-            // graph, and renaming that vocabulary would be churn with a live wire in it. He reads
-            // "Missed Connections"; the compiler reads MissedRhizomesFragment.
-            "✧  Missed Connections" to { nav.navigate(R.id.action_to_missed_rhizomes) },
-            // Map keeps the door it has always had, in the folder it has always been in. Its future
-            // is as a rendering of an Ask output rather than a place you visit — that is a later
-            // slice, and until then taking its only top-level door away would strand a working
-            // viewer to make a menu tidier.
-            // Gratitude last, on Michael's ordering: the day's material is caught, sorted and
-            // worked through above, and this is what you write when that is done.
-            "🙏  Gratitude" to { CalendarNavigator.toDayNote(fragment, today, "gratitude") }
-        ), expanded = home == "Daily"),
-        // DESK — people, and the work. Four rows now (Michael: "Roster/Booking goes in Desk").
+            // Michael's 08-23 ruling finished what the 08-17 page started: "the Daily category
+            // can be All Stars, Gram Picks, Notes." Pickings and Gratitude are TEMPLATES a Notes
+            // page wears — their pages ride the dated note's ‹ N › walk, and a named pickings
+            // note is just a note named for its topic. Self Executive is eliminated as a
+            // destination (history still renders). Quick Wins and Missed Connections were built
+            // into Ask — a computed answer belongs in the room where questions are asked.
+            "✒  Notes" to { CalendarNavigator.toDayNote(fragment, today, "0") }
+        ), expanded = home == "Daily",
+            action = { CalendarNavigator.toDayNote(fragment, today, "intake") }),
+        // 📧 THE MAIL — ITS OWN FOLD (Michael 2026-10-11: "You can move mail ... out of incoming" ·
+        // "Mail can have its own accordion then"), second after Daily in his list ("Today, Daily,
+        // Mail, Feeds, Desk, …"). Tap the name = the mailbox you were in (MailPlace, the
+        // remembered place); the caret = its rows, in his order ("Inbox then starred then
+        // @gmail"): 📥 Inbox (every account) · ⭐ Starred · one row per account — the label its
+        // Inbox, its own caret the account's Inbox · Sent · Junk · Trash ("Mail accounts also have
+        // individual sents, junks, trash. That can be a drop down under each account") · 👤 Contacts
+        // (in from the Desk) · the permanent "⚙ Mail accounts…" door (rule of 09-07: a setup door
+        // never vanishes after the first success). Hub → The Mail is 2 taps (☰ · The Mail).
+        run {
+            val fold = mailFold(fragment)
+            ScreenFragment.Folder(IncomingDoors.Door.THE_MAIL.glyph, MAIL_HOME, fold.rows,
+                expanded = home == MAIL_HOME,
+                action = { openMailRoom(nav, popMail = (fragment as? FeedsFragment)?.isMailRoom == true) },
+                subFolds = fold.subFolds)
+        },
+        // 📰 FEEDS — the RSS reader lenses, and what else arrives to be read (Michael 2026-10-11:
+        // "Change "Incoming" to "Feeds" with the rss image"). 📰 is the glyph the hub draws as the
+        // RSS mark (ScreenFragment's emoji→icon map turns 📰 into ic_feed), so the folder wears the
+        // RSS image with no new renderer. Starred (your RSS stars) and Later (the read-later intake)
+        // are DIFFERENT stores — both here, as on iPad, not one standing in for the other. Right
+        // under The Mail and above the Desk, at his word (2026-10-11: "Today, Daily, Mail, Feeds,
+        // Desk, Bookshelf, Notes, wordpress").
+        ScreenFragment.Folder("📰", FEEDS_HOME, IncomingDoors.rows(
+            // THE SHARED DOOR ORDER (Michael 2026-10-11: "the shared order everywhere") —
+            // [IncomingDoors] owns the order and the names; this map only says which doors the Hub
+            // carries and where each goes, so the Hub, the drawer, Sections, The Net's launcher
+            // and the Doors widget can never drift apart again.
+            mapOf<IncomingDoors.Door, () -> Unit>(
+            // ➕ SAVE FOR LATER, just before The Net (Michael, 09-13: "I still want '+ for later'
+            // just before The Net"): the link on the clipboard, or one you type, filed to the
+            // Later List through the one write path (IntakePageStore.fileLink). One press.
+            IncomingDoors.Door.SAVE_FOR_LATER to { saveForLater(fragment) },
+            // 🌐 THE NET — the browser, in Feeds (Michael, 09-13: "move the browser into incoming
+            // and just call it the net…").
+            IncomingDoors.Door.THE_NET to {
+                nav.navigate(R.id.action_to_site_web, androidx.core.os.bundleOf(
+                    com.toolsboox.plugin.calendar.ui.SiteWebFragment.ARG_OPEN_WEB to true))
+            },
+            // (📧 The Mail left for its own fold just above — Michael 2026-10-11: "You can move
+            // mail ... out of incoming". 🦋 Bluesky left for the Desk the same day — "Can Bluesky
+            // move to desk?" — its replies-and-pad screen is answering people, not reading.)
+            // "📰 All" retired as a child (Michael: "get rid of the 'all feeds' link on
+            // 'Incoming' because that's where you'd go") — the FOLDER is the all-feeds door.
+            IncomingDoors.Door.READ to { openFeed("feed", "read") },
+            IncomingDoors.Door.WATCH to { openFeed("feed", "watch") },
+            IncomingDoors.Door.LISTEN to { openFeed("feed", "listen") },
+            // 🔖 Later List sits directly under 🎧 The Listen — Michael: "I'd love later list to
+            // appear in feeds like a feed instead of this, instead under '🎧 The Listen' like
+            // '🔖 Later List'." It's the end of the media block, above Starred and the rest,
+            // because it's the one list here you KEEP rather than a lens over what arrived.
+            IncomingDoors.Door.LATER to { openFeed("later", null) },
+            IncomingDoors.Door.STARRED to { openFeed("stars", null) },
+            // The rest of the feed drawer's views, here too so the hub and the drawer agree
+            // (they're sidebar rows on iPad). "local" rides the same one-shot FeedSelection
+            // mode the lens rows use; Smart Feeds are each their own saved search, so that row
+            // lands on the list with the drawer open — the smart rows live there, one tap away,
+            // without duplicating the fragment's private wiring. (Feed Pickings' row retired by
+            // ruling — 08-17 page: "still no point in 'Feed Pickings'" — the boards have their
+            // own doors; the mode still resolves for anything that addresses it.)
+            IncomingDoors.Door.SMART to {
+                FeedSelection.filterFeedTitle = null
+                FeedSelection.openDirectory = true
+                nav.navigate(R.id.action_to_feeds)
+            },
+            IncomingDoors.Door.LOCAL to { openFeed("local", null) },
+            ),
+            // ▶ CONTINUE — the episode mid-flight, by name, one tap from anywhere (the
+            // AntennaPod lift: the continue-listening surface the synced ListenState always
+            // held the data for). Present only when something actually is mid-flight; not a
+            // door, so it rides under 🎧 The Listen rather than holding a place in the order.
+            after = mapOf(IncomingDoors.Door.LISTEN to listOfNotNull(continueListeningRow(fragment))),
+        ), expanded = home == FEEDS_HOME,
+            action = { openFeed("both", null) },
+            // The row with a family of destinations behind it folds for real — a caret on the
+            // row, sub-rows beneath — instead of the old leading-space fake-indent ("the submenu
+            // got rid of the submenus"). Later List navigates to the whole list (a Later door with
+            // no lane means it — IncomingPlace.arrive) and its fold holds the four lanes. (The
+            // Mail's account fold became The Mail's own folder above.) This hub is a launcher; the
+            // Feeds page's own directory pane carries the deep tree. Keyed by the shared label.
+            subFolds = mapOf(
+                IncomingDoors.Door.LATER.label to com.toolsboox.plugin.feeds.nw.LaterFeed.LANES.map { (lane, label, _) ->
+                    label to { openFeed("later", null, lane) }
+                },
+            )),
+        // DESK — people, and the work. Five rows now (Michael: "Roster/Booking goes in Desk"; 🦋
+        // Bluesky in, 👤 Contacts out, 2026-10-11 — see below).
         //
         // "Boards & Tasks" is ONE row because a board is not a thing beside a task, it is a LENS
         // over tasks — Michael's own reasoning, and the measurement behind it is stark: 263 tasks,
@@ -387,12 +519,22 @@ fun ledgerDirectoryFolders(
         //
         // Quick Wins moved to Daily; Publish and Posts moved to Sites, where the rest of the work on
         // his sites now lives.
+        //
+        // 2026-10-11 (Michael: "Can you put contacts in mail (currently in desk)? Can Bluesky move
+        // to desk?"): 👤 Contacts left for The Mail's fold — the people the letters go to — and
+        // 🦋 Bluesky came in from Feeds, last: the replies to his posts waiting on an answer and
+        // the pad he answers them on, desk work beside Correspondence. (The Feeds room's own
+        // drawer keeps its 🦋 timeline lens — reading the mirror like a feed is Feeds' job.)
         ScreenFragment.Folder("🗒", "Desk", listOf(
-            "👤  Contacts" to { nav.navigate(R.id.action_to_rolodex) },
+            // Correspondence moved in from Sites (Michael, 09-03): the exchange with PEOPLE is
+            // desk work — the Sites folder keeps the operator's publishing surfaces.
+            "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
             "☑  Boards & Tasks" to { nav.navigate(R.id.action_to_ledger_items) },
             "🎟  Event Attendees" to { nav.navigate(R.id.action_to_roster) },
-            "🕘  Booking" to { showBookingPicker(fragment) }
+            "🕘  Booking" to { showBookingPicker(fragment) },
+            IncomingDoors.Door.BLUESKY.label to { nav.navigate(R.id.action_to_bluesky) },
         ), expanded = home == "Desk"),
+        bookshelf,
         // NOTES — ONE DOOR, FIVE TEMPLATES.
         //
         // Michael: "Notes have template options: Pickings, Jots, Lines, Grid, Text. Each can be
@@ -422,40 +564,33 @@ fun ledgerDirectoryFolders(
             // when you open Notes — going to the last page you wrote is what you do when you
             // already know where you were going, and that is the shorter journey, not the
             // primary one.
-            "🗂  All notes…" to { showNotesTemplatePicker(fragment, today) },
-            "✒  Notes" to { CalendarNavigator.toLastDayNote(fragment) },
+            // ONE list, newest first, every kind — the notebook a person expects when they
+            // ask to see their notes. The kind-by-kind walk still lives on this row's FOLD.
+            "🗂  All notes…" to { showNotebook(fragment, today) },
+            // "✒ Notes" absorbed by the folder door — tap Notes = the last note you were on,
+            // hold = the family sheet (both moved to the header, see action/hold below).
+            // ⟡ Paper — one name in both doors (his ruling: "added to Ask and to Notes").
+            "❖  Synthesize" to { CalendarNavigator.toDayNote(fragment, today,
+                com.toolsboox.plugin.calendar.ot.SynthPageStore.DEFAULT_KEY) },
             // Named for what it makes. The ellipsis went when the tap stopped asking — a label
             // that promises a question and then acts is the small lie that makes a hub feel
             // untrustworthy. The fold beside it still holds all five.
-            newNoteLabel(fragment) to { showNewNotePicker(fragment, today) },
-            // #hashtags harvested off note pages → jump to any page a tag appears on. No naming.
-            "#  Tags" to { showTagIndex(fragment) },
-            // Its sibling: tags are what you MARKED, links are what you CONNECTED.
-            "🔗  Links" to { showLinkIndex(fragment) },
-            // Notes & Tags — a period-filtered list ("it's like Feeds") of the days that hold note
-            // content and/or #tags, the Almanac nav as its filter. Opens at this week around today.
-            "🗓  Notes & Tags" to {
-                com.toolsboox.plugin.calendar.ui.NotesTagsFragment.open(fragment, today, "week")
-            }
+            // PLAIN "＋ New note…" — no template word on the label, no accordion of kinds
+            // (Michael, field, 08-27: "the lines note with an accordion and then the other named
+            // templates — that UX is kinda whack"). Tap mints on the last paper; HOLD picks the
+            // paper (the chrome canon's hold-to-act), and the ▤ on the page changes it any time.
+            "＋  New note…" to { showNewNotePicker(fragment, today) }
+            // THE THREE DOORS AND NO MORE (Michael, 2026-08-27: the notes list should read like a
+            // classic notes app). Tags, Links and Notes & Tags retired as sibling doors — the #
+            // and 🔗 indexes now live INSIDE the Notebook (its foot rows), and the period lens
+            // survives in the Almanac. The five-template shelf folds retired with them: kinds are
+            // paper, and the kind-first walk lives on only behind the hub's Directory row.
         ), expanded = home == "Notes",
-            // The five templates ride under the two doors that take one, as a real fold rather than
-            // as five more top-level rows: the folder says Notes, and opening the fold says which
-            // kinds of note there are. It is also what keeps the old one-tap habits alive — "today's
-            // grid" is now Notes › All notes › Grid, and the fold makes that two taps rather than a
-            // dialog. Built from LedgerDocuments.TEMPLATES so the order is his, in one place.
-            subFolds = mapOf(
-                newNoteLabel(fragment) to noteTemplateRows(fragment) { surface ->
-                    // Picking from the fold also SETS the default, so the row you tap next time
-                    // makes the kind you last chose — which is the only reading of "last template"
-                    // that matches what you did.
-                    setLastNoteTemplate(fragment.requireContext(), surface)
-                    createNoteOfTemplate(fragment, surface, today)
-                },
-                "🗂  All notes…" to noteTemplateRows(fragment) { surface ->
-                    openNoteTemplateDirectory(fragment, surface, today)
-                }
+            action = { CalendarNavigator.toLastDayNote(fragment) },
+            hold = { showNotesFamilySheet(fragment) },
+            holds = mapOf(
+                "＋  New note…" to { showNewNoteTemplateChooser(fragment, today) },
             )),
-        bookshelf,
         // SITES — YOUR sites, worked from here.
         //
         // This folder and the Fluent one below split what used to be "Community" and "Sites" along a
@@ -468,25 +603,33 @@ fun ledgerDirectoryFolders(
         // menu where the same word means three things is a menu you have to remember rather than
         // read. The local kanban is a mode of Tasks now, Pickings is called Pickings, and this one
         // says whose boards it means.
-        ScreenFragment.Folder("🌐", "Sites", listOf(
-            // WordPress publishing — compose (post/schedule/draft, CPTs, grams as the featured
-            // image) and browse/edit/trash posts. Each of these surfaces carries its OWN site
-            // (SiteRouting): Publish/Posts remember where you last worked, Messages/Correspondence/
-            // Site Boards default to ashtanga.tech — the global active site is only the fallback.
+        // 🌐 THE NET — the browser room's OWN door (Michael, 09-03: "maybe it needs its own
+        // thingie 'The Net'"), not a row lost in Incoming's pile. Tap = the room (last page
+        // standing); the room's title bar is the address bar. Hold a link inside to KEEP it
+        // instead of tabbing it; clicks weave the 🕸 trail.
+        // 🚪 FLUENT (09-13, was "The Net" — the browser moved up into Incoming as The Net; this
+        // folder is the sites' front doors behind a doorway, and its door is the Portal).
+        ScreenFragment.Folder("🚪", "WordPress", listOf(
+            // WordPress — the operator's half, moved in (was its own folder).
             "🖋  Publish" to { nav.navigate(R.id.action_to_publish) },
             "🗎  Posts" to { nav.navigate(R.id.action_to_posts_browser) },
-            "@  Correspondence" to { nav.navigate(R.id.action_to_correspondence) },
+            // Fluent — the member-facing front doors + the suite's surfaces, moved in.
+            "🏛  Portal" to { openSiteWeb(nav, "community") },
+            "🎓  Courses" to { openSiteWeb(nav, "courses") },
+            "🛟  Support" to { openSiteWeb(nav, "support") },
+            "🛍  Shop" to { openSiteWeb(nav, "shop") },
             "💬  Messages" to { nav.navigate(R.id.action_to_messages) },
             "🗃  Site Boards" to { nav.navigate(R.id.action_to_site_boards) },
-            // Site accounts is configuration OF THESE SITES, so it sits with them rather than in the
-            // gear where it was buried. Same manager the settings screen opens; one source of truth.
-            "🖥  Site Settings" to { com.toolsboox.plugin.calendar.ui.SitesSettingsDialog.show(fragment.requireContext()) }
-        ), expanded = home == "Sites"),
+            "🖥  Site Settings" to { com.toolsboox.plugin.calendar.ui.SitesSettingsDialog.show(fragment.requireContext(), present = { d -> fragment.showModal(d) }) }
+        ), expanded = home == "WordPress",
+            action = { openSiteWeb(nav, "community") }),
         // Bluesky LEFT this folder for Incoming (Michael: "Bluesky either feeds or elsewhere in
         // Incoming"). It was folded under Correspondence on the reasoning that both are the exchange
         // with people about what you made — true, but it put the one PUBLIC TIMELINE in the app
         // behind a fold in the operator's folder, two taps from the things it actually resembles.
         // A timeline is something that arrives; Incoming is where the things that arrive live.
+        // (2026-10-11: the Hub's 🦋 row — the replies waiting on an answer, and the pad — moved on
+        // to the Desk, Michael: "Can Bluesky move to desk?")
         // FLUENT — the same sites as a member sees them: the four Fluent front ends in a
         // persistent-session WebView (sign in once, cookies stick).
         //
@@ -497,30 +640,81 @@ fun ledgerDirectoryFolders(
         // Michael's IA listed "Support" in BOTH this group and Sites. There is exactly one support
         // destination in the app — the FluentSupport portal — so it is here, with its family, and
         // not duplicated above under a second name. Flagged rather than guessed at.
-        ScreenFragment.Folder("🚪", "Fluent", listOf(
-            "🏛  Portal" to { openSiteWeb(nav, "community") },
-            "🎓  Courses" to { openSiteWeb(nav, "courses") },
-            "🛟  Support" to { openSiteWeb(nav, "support") },
-            "🛍  Shop" to { openSiteWeb(nav, "shop") }
-        ), expanded = home == "Fluent"),
-        // Log — the zettelkasten: one screen with range/origin/search inside. Ask lived here
-        // (asking IS querying the log) before it went to the top of the hub; the door up there
-        // reaches the same chat surface.
-        ScreenFragment.Folder("🕘", "Log", listOf(
-            // "History", not "Log" — the child shares the folder's name and Search's destination,
-            // and a distinct name + glyph is what tells you it's the browse-the-past door.
-            "🕰  History" to { openHistory(null) }
-        ), expanded = home == "Log"),
+        // ONE LOG (Michael, field, 08-27: "'The Log' shows up twice in the tuck panel"). The
+        // zettelkasten History (where you went / what you kept) and the media piles (what you
+        // read, watched, heard — the old standalone "📚 The Log" folder) live under ONE 🕘 Log
+        // door now: the History row leads, the media kind-folds ride beneath it. Two folders
+        // both answering to "log" was a drawer you had to already understand to use.
+        run {
+            val media = mediaLogFolds(fragment)
+            ScreenFragment.Folder("🕘", "Log",
+                // Door = History ("make the others work like they do"); the "🕰 History" child is
+                // absorbed. The media piles surface as one row per kind — the keyed folds only
+                // render on a row whose label matches the key, so behind the old History-only
+                // roster they were latently unreachable.
+                // 📊 Your year… leads the roster: the log read as a whole — what was opened,
+                // finished, marked, heard, written and inked over a span (iOS: the same row
+                // under Log in the sidebar).
+                items = listOf<Pair<String, () -> Unit>>(
+                    "📊  ${com.toolsboox.plugin.calendar.ot.LedgerYear.DOOR_TITLE}" to
+                        fun() { nav.navigate(R.id.action_to_year_in_ledger) }
+                ) + (media?.first?.keys?.map { k -> k to fun() { openHistory(null) } } ?: emptyList()),
+                expanded = home == "Log",
+                action = { openHistory(null) },
+                subFolds = media?.first ?: emptyMap(),
+                holds = media?.second ?: emptyMap())
+        },
         // DIRECTORY — standing alone above Settings, exactly as Michael put it.
         //
         // No submenu and no folder: it is one door onto one place, the way Today is. It used to be
         // the third row of the Search/Ask dropdown, which read as a third KIND of question; down
         // here it reads as what it is — the opposite of asking. You go and look.
+        // ASK AT THE BOTTOM, Directory under it, Settings last (his final order, 09-03) —
+        // the working rooms lead; the question box, the index, and the gear close the drawer.
+        ScreenFragment.Folder("🔎", "Ask", listOf(
+            // Named for WHERE IT GOES, not for what it does. Michael, 2026-08-04: "Hamburger menu
+            // 'search' the ledger and find anything… what's the difference?" — a fair question,
+            // because the field above and this row were both called searching and landed on two
+            // different surfaces. The field runs the query against your written history; this row
+            // opens the full search, across everything, with its filters.
+            "🔍  Search everything" to openSearch,
+            "💬  Chat" to { nav.navigate(R.id.action_to_ledger_chat) },
+            // ⟡ Paper — the thinking surface (DESIGN-synthesis-claude-2026-08-30 §7). Today it
+            // opens the daily synthesis page; P6 grows it into the Paper-sessions pane. The name
+            // ships now so the vocabulary never has to change under him. "Bubbles can DO things
+            // for you, paper THINKS with you."
+            "❖  Synthesize" to { CalendarNavigator.toDayNote(fragment, today,
+                com.toolsboox.plugin.calendar.ot.SynthPageStore.DEFAULT_KEY) },
+            // The one Ask output that goes OUTSIDE the ledger for material and brings it back as
+            // a working page rather than an answer.
+            "🔗  Research a topic…" to { showResearch(fragment) },
+            // Pick Harvest: one link, broken into cards you can arrange. Beside Research because
+            // both go OUTSIDE and come back with a page rather than an answer.
+            "❝  Harvest a link…" to { showPickHarvest(fragment) },
+            // The Map is a way of SEEING what connects — thinking, not a daily station. It sits
+            // with Search and Chat because all three answer a question you came with.
+            "🗺  Map" to { nav.navigate(R.id.action_to_ledger_map) },
+        ), expanded = home == "Ask", action = { nav.navigate(R.id.action_to_ledger_chat) },
+            field = ScreenFragment.FolderField("Quick find in your writing") { q ->
+                com.toolsboox.plugin.calendar.ui.ReadingLogSelection.seedQuery = q.ifBlank { null }
+                if (q.isBlank()) openSearch() else openHistory(null)
+            }),
+        // TODAY, with the day's trail folded UNDER it — the iOS sidebar's shape, mimicked on
+        // Michael's ask (08-30: "iOS handles the today/history well in the sidebar. Android
+        // should mimic"), which is itself his 08-23 ruling landed: "history can be placed as a
+        // dropdown from within today… clicking Today does the typical today thing but clicking
+        // the accordion arrow gives the day's history." The label is the door (tap = today,
+        // return anchor dropped); the caret is the fold (the session's trail, newest first).
+        // The old sibling "Recent places" folder retires into this fold — one row fewer in the
+        // drawer, same rows inside it. When the trail is empty the caret simply isn't there
+        // (an empty history is a promise, not a place — the standing rule), and Today reads as
+        // the plain door it always was. WHAT YOU CONSUMED stays in the Log below, durable and
+        // synced; this fold is WHERE YOU WENT, session-scoped, a way back.
+        // Directory rides RIGHT UNDER Ask (his order, 09-03: "Ask should go above
+        // Directory") — the questions, then the index of everything they ask over.
         ScreenFragment.Folder("🗂", "Directory", action = { showLedgerRootDirectory(fragment) }),
         ScreenFragment.Folder("⚙", "Settings", listOf(
-            // "All settings", not "⚙ Settings" — the folder is already called Settings and wears
-            // the gear; a child repeating both read as the same door twice.
-            "⚙  All settings" to { nav.navigate(R.id.action_to_settings) },
+            // "⚙ All settings" absorbed by the folder door — tap Settings = the settings screen.
             // Site accounts left this folder for Sites, as "Site Settings" — it is configuration OF
             // those sites, and it now sits with them instead of two folders away from everything it
             // configures. Same dialog, one door.
@@ -529,8 +723,11 @@ fun ledgerDirectoryFolders(
             // than Notes because it is a property of where the ledger LIVES, not a thing you do
             // to a note — the same shelf of decisions as cloud sync, which it sits beside.
             "🪞  Notes → Markdown folder" to { showNotesMirrorSettings(fragment) },
+            // (The "⬇ About & Update" door that sat here duplicated the Update + Credits buttons
+            // on the Settings screen itself — one door, on Settings, where THIS DEVICE lives.)
             "☁  Cloud sync" to { nav.navigate(R.id.action_to_cloud) }
-        ), expanded = home == "Settings")
+        ), expanded = home == "Settings",
+            action = { nav.navigate(R.id.action_to_settings) })
     )
 }
 
@@ -583,12 +780,28 @@ private fun noteTemplateRows(
  */
 private fun createNoteOfTemplate(fragment: ScreenFragment, surface: String, date: LocalDate) {
     val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
-    val made = docs.startNote(fragment.requireContext(), surface, "", date)
-    if (made == null) {
-        fragment.showMessage("Couldn't start a new ${docs.label(surface)} note.")
-        return
+    // THE MINT OFFERS THE NAME (Michael, 2026-08-27: "creating a new note on the day would
+    // allow the person to name the note, or it would be named for the day with a -1 … -2, -3").
+    // Blank = the day-suffix default; the pad never blocks a fast capture — Create with nothing
+    // typed is one tap, same as the old silent mint.
+    promptTitle(
+        fragment, surface,
+        dialogTitle = "New ${docs.noun(surface)}",
+        fieldHint = "Name it — or leave blank for the day",
+        seed = null,
+        saveLabel = "Create",
+    ) { name, face ->
+        val ctx = fragment.requireContext()
+        val made = docs.startNote(ctx, surface, name, date)
+        if (made == null) {
+            fragment.showMessage("Couldn't start a new ${docs.label(surface)} note.")
+            return@promptTitle
+        }
+        face?.let {
+            com.toolsboox.plugin.calendar.ot.LedgerTitleInk.put(ctx, surface, made.key, made.date, it)
+        }
+        openNewNote(fragment, made)
     }
-    openNewNote(fragment, made)
 }
 
 /**
@@ -599,6 +812,58 @@ private fun createNoteOfTemplate(fragment: ScreenFragment, surface: String, date
  * only forget in one place. Public because the Ask slice will mint notes from outside this file and
  * will want to open the one it just wrote.
  */
+/**
+ * THE CHAT'S GRAMS (Michael, 09-13: "read a note or chat with me and then put ten poses on the
+ * page organized as you see fit"): every page of his sites that an Ask answer cited, laid down as
+ * link grams on a NEW Grid note named for the question, and the walk goes there. Nothing when the
+ * answer cited nothing — the transcript is the answer then, as before.
+ */
+internal fun placeCitedSiteGramsOntoNewNote(fragment: ScreenFragment, question: String, answer: String) {
+    val ctx = fragment.context ?: return
+    val urls = com.toolsboox.plugin.calendar.nw.SiteLinker.citedSiteUrls(ctx, answer)
+    if (urls.isEmpty()) return
+    val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    val dayService = runCatching {
+        dagger.hilt.android.EntryPointAccessors.fromActivity(
+            fragment.requireActivity(), com.toolsboox.plugin.calendar.ot.AskBridge.Services::class.java).calendarDayService()
+    }.getOrNull() ?: return
+    val appCtx = ctx.applicationContext
+    val root = com.toolsboox.ot.LedgerPaths.documentsRoot(ctx)
+    val sites = com.toolsboox.plugin.calendar.nw.SiteStore.all(ctx)
+    fragment.showMessage("◈ Making a page of ${urls.size} pick" + (if (urls.size == 1) "" else "s") + "…")
+    fragment.viewLifecycleOwner.lifecycleScope.launch {
+        val made = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val note = docs.startNote(appCtx, docs.GRID, question.trim().take(48).ifBlank { "Picks" }, LocalDate.now()) ?: return@withContext null
+            val cat = runCatching { com.toolsboox.plugin.calendar.nw.SiteLinker.catalogue(appCtx, sites) }.getOrDefault(emptyList())
+            var placed = 0
+            for (u in urls) {
+                val e = cat.firstOrNull { it.url.trimEnd('/') == u.trimEnd('/') }
+                val meta = if (e != null && e.excerpt.isNotBlank()) com.toolsboox.plugin.calendar.nw.SiteLinker.Meta(e.title, e.excerpt, null)
+                           else com.toolsboox.plugin.calendar.nw.SiteLinker.meta(u)
+                val image = meta.image ?: runCatching { com.toolsboox.plugin.calendar.nw.SiteLinker.meta(u).image }.getOrNull()
+                val thumb = image?.let { com.toolsboox.plugin.calendar.nw.SiteLinker.bitmap(it) }
+                val title = meta.title ?: e?.title ?: u
+                val siteName = e?.siteName ?: (runCatching { java.net.URI(u).host }.getOrNull() ?: "")
+                val card = runCatching {
+                    com.toolsboox.plugin.calendar.ot.LinkCardRenderer.render(u, title, "read", thumb = thumb, sourceName = siteName, excerpt = meta.description.orEmpty())
+                }.getOrNull() ?: continue
+                com.toolsboox.plugin.calendar.ot.DayLocks.withDay(note.date) {
+                    runCatching {
+                        com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
+                            dayService, root, card, note.date, note.key,
+                            sourceLink = u, sourceLabel = title, cardText = title, sourceFeed = siteName)
+                    }
+                }
+                placed++
+            }
+            note to placed
+        }
+        if (made == null) { fragment.showMessage("Couldn't start a note for the picks."); return@launch }
+        fragment.showMessage("◈ ${made.second} picks on “${made.first.name}”")
+        openNewNote(fragment, made.first)
+    }
+}
+
 fun openNewNote(fragment: ScreenFragment, note: com.toolsboox.plugin.calendar.ot.LedgerDocuments.NewNote) {
     if (note.isTextNote)
         com.toolsboox.plugin.textnotes.ui.TextNotesFragment.open(fragment, note.date, note.key)
@@ -651,6 +916,318 @@ fun showNewNotePicker(fragment: ScreenFragment, date: LocalDate = LocalDate.now(
     }
 }
 
+/**
+ * 📚 THE LOG — the media log as a directory folder: what you read, watched and heard.
+ *
+ * Grouped by kind through [ScreenFragment.Folder.subFolds] (Read · Watched · Listened), newest
+ * first inside each, because "what have I been listening to" and "what did I read this week" are
+ * the two questions this surface exists to answer and they want different piles.
+ *
+ * A TAP reopens the thing. A HOLD runs an ⚗ engine over its cached text — see [runLogEngine],
+ * which is the point of the whole feature arriving: the engines already existed and already took
+ * plain material, so "make slides from this article / critical thinking questions / a mind map"
+ * was never a new capability, only a missing door.
+ *
+ * Returns null before the first row: an empty log is a promise, not a place.
+ */
+private fun mediaLogFolds(
+    fragment: ScreenFragment,
+): Pair<Map<String, List<Pair<String, () -> Unit>>>, Map<String, () -> Unit>>? {
+    val ctx = fragment.context ?: return null
+    val store = com.toolsboox.plugin.calendar.ot.MediaLogStore
+    val kinds = com.toolsboox.plugin.calendar.da.v2.MediaLogEntry
+    // Sync + prune on the moment the log is BUILT — which is arrival at the directory, the one
+    // moment the fleet's answer has to be complete. Recording itself stays local (see the store's
+    // note on cadence): a WebDAV round trip per page turn would keep the radio hot all session.
+    store.sync(ctx)
+    store.prune(ctx)
+    val all = store.list(ctx)
+    if (all.isEmpty()) return null
+
+    val fmt = java.time.format.DateTimeFormatter.ofPattern("MMM d")
+    fun rowLabel(e: com.toolsboox.plugin.calendar.da.v2.MediaLogEntry): String {
+        val day = java.time.Instant.ofEpochMilli(e.at).atZone(java.time.ZoneId.systemDefault())
+            .toLocalDate().format(fmt)
+        val title = e.title.ifBlank { e.url }.let { if (it.length > 52) it.take(51).trimEnd() + "…" else it }
+        return "${kinds.glyph(e.kind)}  $title  ·  $day"
+    }
+
+    val subFolds = LinkedHashMap<String, List<Pair<String, () -> Unit>>>()
+    val holds = LinkedHashMap<String, () -> Unit>()
+    for (kind in kinds.KINDS) {
+        // 40 a pile: enough to walk back a season, few enough to skim. The rest is what search
+        // is for, and a drawer that renders a thousand rows is a drawer nobody opens twice.
+        val rows = all.filter { it.kind == kind }.take(40)
+        if (rows.isEmpty()) continue
+        subFolds[kinds.label(kind)] = rows.map { e ->
+            val label = rowLabel(e)
+            holds[label] = { runLogEngine(fragment, e) }
+            label to fun() { openLogRow(fragment, e) }
+        }
+    }
+    if (subFolds.isEmpty()) return null
+    return subFolds to holds
+}
+
+/**
+ * A log row's tap: go back to the thing itself, in the reader it was read in.
+ *
+ * Through [FeedSelection.pendingInPaneEntry] — the channel a gram's "Go to source" already uses —
+ * so a log row lands in the same in-pane reader with the same paging and the same star, rather
+ * than in a second reader that would have to learn all of that again.
+ *
+ * An entry that has aged out of every cache cannot be reopened, and the log says so plainly
+ * instead of opening something adjacent: the row still holds its TEXT, which is what the hold is
+ * for, and pretending otherwise would send you to the wrong article.
+ */
+/** ➕ The hub's intake: the clipboard's link prefilled (a kept link is nearly always the one just
+ *  copied), a title if you want one, filed to the Later List lane its kind belongs to. */
+private fun saveForLater(fragment: ScreenFragment) {
+    val ctx = fragment.context ?: return
+    val dp = ctx.resources.displayMetrics.density
+    val clip = (ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager)
+        ?.primaryClip?.getItemAt(0)?.coerceToText(ctx)?.toString()?.trim().orEmpty()
+    val urlIn = android.widget.EditText(ctx).apply {
+        hint = "A link"; setSingleLine(); if (clip.startsWith("http")) setText(clip)
+        inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+    }
+    val titleIn = android.widget.EditText(ctx).apply { hint = "Title (optional)"; setSingleLine() }
+    val box = android.widget.LinearLayout(ctx).apply {
+        orientation = android.widget.LinearLayout.VERTICAL
+        setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0); addView(urlIn); addView(titleIn)
+    }
+    val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle("Save for later").setView(box)
+        .setPositiveButton("Save") { _, _ ->
+            val url = urlIn.text.toString().trim(); if (!url.startsWith("http")) { fragment.showMessage("That isn't a link."); return@setPositiveButton }
+            val title = titleIn.text.toString().trim().ifBlank { url }
+            val kind = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.inferKind(url)
+            val appCtx = ctx.applicationContext
+            Thread {
+                runCatching { com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.fileLink(appCtx, java.time.LocalDate.now(), kind, url, title) }
+                android.os.Handler(android.os.Looper.getMainLooper()).post { runCatching { fragment.showMessage("🔖 Saved for later") } }
+            }.start()
+        }
+        .setNegativeButton(android.R.string.cancel, null).create()
+    fragment.showModal(dialog)
+}
+
+private fun openLogRow(fragment: ScreenFragment, e: com.toolsboox.plugin.calendar.da.v2.MediaLogEntry) {
+    val ctx = fragment.context ?: return
+    val known = runCatching { com.toolsboox.plugin.feeds.nw.FeedCache.loadFreshestEntries(ctx) }
+        .getOrDefault(emptyList())
+    val entry = known.firstOrNull { it.id == e.feedId && e.feedId != 0L }
+        ?: known.firstOrNull { it.url.isNotBlank() && it.url == e.url }
+    // Aged out of the feed: the row still knows its title and URL, and the readable copy (or the
+    // transcript) was cached by the reading you already did — so open THAT, as a synthetic
+    // entry, rather than telling you to hold a row that has no hold (Michael, 09-13: "the
+    // suggestion to long-hold didn't work"). Only when nothing at all is cached does it say so.
+    val open = entry ?: run {
+        val cache = com.toolsboox.plugin.feeds.nw.FeedCache
+        val cached = runCatching { cache.loadContent(ctx, e.feedId) ?: cache.loadTranscript(ctx, e.feedId) }.getOrNull().orEmpty()
+        if (cached.isBlank() && e.url.isBlank()) {
+            fragment.showMessage("That one has aged out of the feed and nothing of it is kept here.")
+            return
+        }
+        com.toolsboox.plugin.feeds.da.FeedEntry(
+            id = e.feedId, title = e.title, feedTitle = e.source, url = e.url,
+            author = null, content = cached, publishedAt = "", starred = false, read = true,
+        )
+    }
+    FeedSelection.pendingInPaneEntry = open
+    FeedSelection.mode = "feed"
+    FeedSelection.kind = open.kind
+    FeedSelection.filterFeedTitle = null
+    fragment.findNavController().navigate(com.toolsboox.R.id.action_to_feeds)
+}
+
+/**
+ * A log row's HOLD: run an ⚗ engine over what the thing actually said.
+ *
+ * THE MATERIAL IS ALREADY ON DISK — this is why the feature is small. A podcast or a video resolves
+ * to its TRANSCRIPT first, because for those the transcript IS the article; an article resolves to
+ * its readable copy. Both were cached by the reading you already did, and transcripts are fetched
+ * eagerly now on a keep-offline ask, so the log can act on things you have no signal for.
+ *
+ * The result lands as a NEW NOTE seeded with it, rather than on whatever page you happen to be
+ * standing on: you asked this from the directory, which is nowhere in particular, and a synthesis
+ * that landed on an unrelated page would be ink you did not ask for on paper you were using.
+ */
+private fun runLogEngine(fragment: ScreenFragment, e: com.toolsboox.plugin.calendar.da.v2.MediaLogEntry) {
+    val ctx = fragment.context ?: return
+    val cache = com.toolsboox.plugin.feeds.nw.FeedCache
+    // Transcript first — for a podcast or a video the transcript IS the article.
+    val material = (cache.loadTranscript(ctx, e.feedId) ?: cache.loadContent(ctx, e.feedId))
+        ?.let { android.text.Html.fromHtml(it, android.text.Html.FROM_HTML_MODE_COMPACT).toString().trim() }
+        ?.takeIf { it.isNotBlank() }
+    if (material == null) {
+        fragment.showMessage("No saved text for that one yet — open it once, or keep it offline.")
+        return
+    }
+    com.toolsboox.plugin.calendar.ot.SynthEngines.pick(
+        ctx, "⚗  ${e.title.ifBlank { "This" }}", present = { fragment.showModal(it) }
+    ) { engine ->
+        runEngineIntoNewNote(fragment, engine, material, e.title)
+    }
+}
+
+/**
+ * Run an engine and land the result as a NEW NOTE seeded with it.
+ *
+ * The day page's own `runEngine` places output on the page you are standing on, which is right
+ * there and wrong here: you asked this from the directory, which is nowhere in particular, and a
+ * synthesis that landed on whatever page happened to be open would be ink you did not ask for on
+ * paper you were using. A note of its own is also what the result IS — the engine wrote something,
+ * and the thing it wrote wants a name and a place in the shelf like anything else you made.
+ *
+ * The note is named for the engine and the source, and its default date-name rule still applies to
+ * everything else — see LedgerDefaultName.
+ */
+internal fun runEngineIntoNewNote(
+    fragment: ScreenFragment,
+    engine: com.toolsboox.plugin.calendar.ot.SynthEngines.Engine,
+    material: String,
+    sourceTitle: String,
+) {
+    val ctx = fragment.context ?: return
+    val creds = com.toolsboox.plugin.chat.nw.AiCreds.get(ctx)
+    if (creds == null) {
+        fragment.showMessage("Add your AI key in Ask my Ledger settings")
+        return
+    }
+    val (provider, key, model) = creds
+    fragment.showMessage("Synthesizing…")
+    val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    // The Ledger's own rhymes ride in per the picker's dial (SynthEngines.ledgerContext).
+    val dayService = runCatching {
+        dagger.hilt.android.EntryPointAccessors.fromActivity(
+            fragment.requireActivity(), com.toolsboox.plugin.calendar.ot.AskBridge.Services::class.java).calendarDayService()
+    }.getOrNull()
+    val appCtx = ctx.applicationContext
+    val root = com.toolsboox.ot.LedgerPaths.documentsRoot(ctx)
+    fragment.viewLifecycleOwner.lifecycleScope.launch {
+        val res = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val extra = dayService?.let { ds ->
+                runCatching {
+                    com.toolsboox.plugin.calendar.ot.SynthEngines.ledgerContext(
+                        appCtx, com.toolsboox.plugin.chat.fi.LedgerCorpusService(ds, appCtx), root, material)
+                }.getOrDefault("")
+            }.orEmpty()
+            com.toolsboox.plugin.chat.nw.LedgerChatService().run(provider, key, model, engine.prompt, material + extra)
+        }
+        when (res) {
+            is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok -> {
+                val name = (engine.name.trim() + " · " + sourceTitle).take(60)
+                val body = "${engine.name}\n\n${res.answer.trim()}"
+                val made = docs.startNote(ctx, docs.WRITE, name, LocalDate.now(), body)
+                if (made == null) fragment.showMessage("Couldn't start a note for that.")
+                else {
+                    // `startNote` ignores `body` for the page templates — the text is written onto
+                    // the page here, or the note arrives blank (it did, until 09-11).
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        dayService?.let { writeTextOntoNote(ctx, it, made, body) }
+                    }
+                    openNewNote(fragment, made)
+                }
+            }
+            is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Err ->
+                fragment.showMessage("⚠ ${res.message}")
+        }
+    }
+}
+
+/** Put [body] on a page-template note as its first text box — the one way an engine's words
+ *  reach a note that `startNote` minted blank. Blocking (a day-file read + write): call on IO. */
+internal fun writeTextOntoNote(
+    ctx: android.content.Context,
+    dayService: com.toolsboox.plugin.calendar.fi.CalendarDayService,
+    note: com.toolsboox.plugin.calendar.ot.LedgerDocuments.NewNote,
+    body: String,
+) {
+    if (note.isTextNote || body.isBlank()) return
+    runCatching {
+        val root = com.toolsboox.ot.LedgerPaths.documentsRoot(ctx)
+        val day = dayService.loadForWriteOrThrow(root, note.date, null, java.util.Locale.getDefault())
+        day.textElements.add(com.toolsboox.da.TextElement(
+            x = 80f, y = 140f, width = 1100f, height = 60f, text = body, fontSize = 26f, pageKey = note.key))
+        dayService.save(root, note.date, day)
+    }
+}
+
+/**
+ * THE NOTES FAMILY — five rows, ONE list, two doors (DESIGN-notes-ia-2026-08-22, and Michael's
+ * 2026-08-23 ruling that the directory and the pager "can have the same five").
+ *
+ * Built once and shared, because the alternative is what this codebase keeps warning itself about:
+ * two sheets with the same title answering nearly the same question drift, and the drift is only
+ * ever noticed on the device. The two doors differ in ORDER and nothing else.
+ *
+ * "Most recent" is the one row allowed to leave today: it reopens the remembered note page on the
+ * remembered DAY, which the tap deliberately never does ([CalendarNavigator.toLastDayNote]'s
+ * data-loss rule) — safe here because a row named "Most recent" is an explicit ask rather than a
+ * default you landed on.
+ *
+ * The five stopped being TYPES with the notes-IA ruling ("each of those prior note types are really
+ * just templates"). What is left is five places to go, and the sheet a page wears is chosen after,
+ * with ▤, on the page where you can see it.
+ */
+private fun notesFamilyRows(
+    fragment: ScreenFragment,
+    date: LocalDate,
+    mostRecentFirst: Boolean,
+): List<Pair<String, () -> Unit>> {
+    val ctx = fragment.requireContext()
+    val mostRecent: Pair<String, () -> Unit> = "⏱  Most recent" to {
+        val p = ctx.getSharedPreferences("ledger_notes", 0)
+        val d = runCatching { LocalDate.parse(p.getString("last_note_date", "") ?: "") }.getOrNull()
+        if (d == null) CalendarNavigator.toLastDayNote(fragment)
+        else CalendarNavigator.toDayNote(fragment, d, p.getString("last_note_page", "0") ?: "0")
+    }
+    val rest = listOf<Pair<String, () -> Unit>>(
+        "📅  Today's note" to { CalendarNavigator.toLastDayNote(fragment) },
+        // A NOTE FOR A WEEK, A NOTE FOR A MONTH (Michael, 2026-08-27: "create a note for today,
+        // a note for a week, a note for a month when using the note button"). The surfaces are
+        // the toolsboox week/month note pages — they already store, page, and sync; this is the
+        // promotion into the Notes room (DESIGN-notes-room-2026-08-27 §2c).
+        "🗓  This week's note" to { openWeekNote(fragment, date) },
+        "🗓  This month's note" to { CalendarNavigator.toMonthNote(fragment, date, "0") },
+        "❖  Synthesize" to { CalendarNavigator.toDayNote(fragment, date,
+            com.toolsboox.plugin.calendar.ot.SynthPageStore.DEFAULT_KEY) },
+        "📝  Text notes" to { com.toolsboox.plugin.textnotes.ui.TextNotesFragment.open(fragment, date, null) },
+        "＋  Create new note…" to { showNewNotePicker(fragment, date) },
+        // THE saved-notes door is the Notebook — one flat list, newest first (the -19/-20 canon;
+        // the kind-first root lives on only behind the hub's Directory row).
+        "🗂  All notes…" to { showNotebook(fragment, date) },
+    )
+    // From the DIRECTORY you are choosing where to go, and today's note is the ordinary answer, so
+    // it leads. From the PAGER you are already standing on a note, and the thing you most often
+    // want is the one you were on before this one — so there, "Most recent" leads (his ruling).
+    return if (mostRecentFirst) listOf(mostRecent) + rest
+    else rest.take(4) + mostRecent + rest.drop(4)
+}
+
+/** The shared renderer, so the two doors cannot present the same five differently either. */
+private fun showNotesFamily(fragment: ScreenFragment, date: LocalDate, mostRecentFirst: Boolean) {
+    val ctx = fragment.requireContext()
+    val rows = notesFamilyRows(fragment, date, mostRecentFirst)
+    val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle("Notes")
+        .setItems(rows.map { it.first }.toTypedArray()) { _, which -> rows[which].second() }
+        .setNegativeButton(android.R.string.cancel, null)
+        .create()
+    fragment.showModal(dialog)   // pen-guarded: the Bigme daemon routes pen by view bounds
+    dialog.window?.decorView?.let { root -> root.post { com.toolsboox.ot.LedgerFonts.applyTree(root) } }
+}
+
+/** The ✒ Notes HOLD in the directory — today's note leads, because you are choosing where to go. */
+fun showNotesFamilySheet(fragment: ScreenFragment, date: LocalDate = LocalDate.now()) =
+    showNotesFamily(fragment, date, mostRecentFirst = false)
+
+/** The ‹ N › pager label's HOLD — the same five, led by "Most recent": you are already on a note,
+ *  and the note you were on before this one is the one you reach for. */
+fun showDatedNoteHoldSheet(fragment: ScreenFragment, date: LocalDate = LocalDate.now()) =
+    showNotesFamily(fragment, date, mostRecentFirst = true)
+
 /** "🗂 All notes…" — which template's shelf? Same five, same order, no last-used mark: you are
  *  looking for something, and where you last MADE a note says nothing about where it is. */
 fun showNotesTemplatePicker(fragment: ScreenFragment, date: LocalDate = LocalDate.now()) =
@@ -692,10 +1269,22 @@ private const val NOTE_TEMPLATE_KEY = "last_template"
  *  Shares the `ledger_notes` prefs file with last_note_date/last_note_page, which is the same
  *  question about the same door. */
 /** "＋ New Jots note", or plain "＋ New note…" until there is a last one to name. */
-private fun newNoteLabel(fragment: ScreenFragment): String {
-    val last = lastNoteTemplate(fragment.requireContext())
-        ?.takeIf { com.toolsboox.plugin.calendar.ot.LedgerDocuments.isTemplate(it) } ?: return "＋  New note…"
-    return "＋  New ${com.toolsboox.plugin.calendar.ot.LedgerDocuments.label(last)} note"
+/** The HOLD on "＋ New note…": pick the paper this one starts on (and make it the remembered
+ *  default — the only reading of "last template" that matches what you did). The tap never asks;
+ *  this is the deliberate hand. */
+internal fun showNewNoteTemplateChooser(fragment: ScreenFragment, date: LocalDate) {
+    val ctx = fragment.requireContext()
+    val rows = noteTemplateRows(fragment) { surface ->
+        setLastNoteTemplate(ctx, surface)
+        createNoteOfTemplate(fragment, surface, date)
+    }
+    val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle("New note on…")
+        .setItems(rows.map { it.first }.toTypedArray()) { _, which -> rows[which].second() }
+        .setNegativeButton(android.R.string.cancel, null)
+        .create()
+    fragment.showModal(dialog)
+    dialog.window?.decorView?.let { root -> root.post { com.toolsboox.ot.LedgerFonts.applyTree(root) } }
 }
 
 fun lastNoteTemplate(context: android.content.Context): String? =
@@ -877,6 +1466,65 @@ private const val KIND_TAGS = "tags"
 private const val KIND_GRAMPICKS = com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
 
 /**
+ * The day the Gram Picks DOOR opens: today when today holds picks (or nothing does), else the
+ * newest day still holding them. The inbox is wherever the grabs are — landing on an empty today
+ * while yesterday's picks wait is a door onto the wrong room (Michael, 08-15: "selecting gram
+ * pick went to today's gram pick (empty) instead of the source"). Same memoized tally the day
+ * rows read; no day file is opened to answer this.
+ */
+/** The newest episode mid-flight — heard past the resume floor, not done — as a directory
+ *  row, or null when nothing is. Tap = play it, resumed by the player's own two-phase restore. */
+private fun continueListeningRow(fragment: ScreenFragment, audiobook: Boolean = false): Pair<String, () -> Unit>? {
+    val ctx = fragment.context ?: return null
+    // Kick the sidecar round trip so the row converges across devices — this render shows the
+    // local truth, the NEXT one shows the fleet's.
+    runCatching { com.toolsboox.plugin.calendar.ot.ListenStateStore.sync(ctx.applicationContext) }
+    // Podcasts and audiobooks are asked for SEPARATELY because they surface in different rooms
+    // (Michael, 09-11: "continuing audiobooks would be in the bookshelf area"): the episode under
+    // Incoming, the Audiobookshelf book under Bookshelf, both under ⏯ Continue at the top.
+    val st = runCatching {
+        com.toolsboox.plugin.calendar.ot.ListenStateStore.loadAll(ctx)
+            .filter { !it.isDeleted && !it.done && it.positionMs > com.toolsboox.plugin.calendar.da.v2.ListenState.RESUME_MIN_MS }
+            .filter { it.id.startsWith("abs:") == audiobook }
+            .maxByOrNull { it.updated }
+    }.getOrNull() ?: return null
+    // The state names itself now (title/show ride the sidecar); the caches are the fallback.
+    val title = st.title.ifBlank { null }
+        ?: com.toolsboox.plugin.feeds.nw.FeedCache.loadEntries(ctx, "unread_all")
+            .firstOrNull { it.url == st.id || it.mediaUrl == st.id }?.title
+        ?: com.toolsboox.plugin.feeds.nw.LaterMedia.downloaded(ctx)
+            .firstOrNull { it.sourceUrl == st.id || it.audioUrl == st.id }?.title
+    val show = if (st.show.isBlank()) "" else " · ${st.show.take(24)}"
+    val left = if (st.durationMs > 0)
+        " · ${((st.durationMs - st.positionMs) / 60_000L).coerceAtLeast(1)}m left" else ""
+    val glyph = if (audiobook) "📚" else "▶"
+    return "$glyph  Continue · ${(title ?: st.displayTitle).take(40)}$show$left" to {
+        if (st.id.startsWith("abs:")) {
+            // An Audiobookshelf track resumes through its own player — the item is fetched again
+            // (session, chapters, up-next), never as a bare stream whose remembered token has expired.
+            val actx = ctx.applicationContext
+            Thread {
+                runCatching { com.toolsboox.plugin.reader.ui.AbsPlayback.resume(actx, st.id) }
+                    .onFailure { e -> android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        android.widget.Toast.makeText(actx, e.message ?: "Couldn't continue it.", android.widget.Toast.LENGTH_LONG).show() } }
+            }.start()
+            com.toolsboox.ui.plugin.LedgerPlayer.showModal(ctx)
+        } else {
+            FeedSelection.pendingResumeListenId = st.id
+            NavHostFragment.findNavController(fragment).navigate(R.id.action_to_feeds)
+        }
+    }
+}
+
+private fun gramPicksHome(context: android.content.Context): LocalDate {
+    val today = LocalDate.now()
+    val days = com.toolsboox.plugin.calendar.ot.PickingsCards.counts(context).entries
+        .filter { it.key.substringAfter('|', "") == KIND_GRAMPICKS && it.value > 0 }
+        .mapNotNull { runCatching { LocalDate.parse(it.key.substringBefore('|')) }.getOrNull() }
+    return if (days.isEmpty() || today in days) today else days.max()
+}
+
+/**
  * Michael's order: the inbox first, then THE FIVE TEMPLATES AS ONE BLOCK in his order, then the
  * plain day pages, the retired surface, and the two indexes over the whole thing.
  *
@@ -917,7 +1565,7 @@ private fun kindGlyph(kind: String): String = when (kind) {
 private fun kindLabel(kind: String): String = when (kind) {
     KIND_NOTES -> "Notes"
     KIND_TAGS -> "Tags"
-    KIND_GRAMPICKS -> "Gram Picks"
+    KIND_GRAMPICKS -> "All Picks"
     else -> com.toolsboox.plugin.calendar.ot.LedgerDocuments.label(kind)
 }
 
@@ -1107,7 +1755,9 @@ private fun directoryItems(context: android.content.Context, kind: String): List
         // A tag's "date" is the last day it was written on, so sorting by date puts the vocabulary
         // you are currently using at the top rather than the vocabulary you started with.
         KIND_TAGS -> com.toolsboox.plugin.calendar.ot.LedgerTags.list(context).map { t ->
-            DirItem(KIND_TAGS, t.tag, "#${t.tag}", t.occurrences.maxOf { it.first })
+            // A tag only OBJECTS wear (a Text Note, an email — 2026-10-11) has no page date; it
+            // sorts with the oldest rather than throwing on an empty list.
+            DirItem(KIND_TAGS, t.tag, "#${t.tag}", t.occurrences.maxOfOrNull { it.first } ?: LocalDate.MIN)
         }
 
         else -> emptyList()
@@ -1145,7 +1795,7 @@ private fun dayDocuments(context: android.content.Context, date: LocalDate): Lis
     // of history would be four hundred doors to the same nothing. The tally is the memoized
     // one-file read the badges already paid for.
     if ((com.toolsboox.plugin.calendar.ot.PickingsCards.counts(context)["$date|$KIND_GRAMPICKS"] ?: 0) > 0) {
-        out.add(DirItem(KIND_GRAMPICKS, KIND_GRAMPICKS, "Gram Picks", date))
+        out.add(DirItem(KIND_GRAMPICKS, KIND_GRAMPICKS, "All Picks", date))
     }
     out.add(DirItem(KIND_NOTES, "0", "Notes", date))
     return out
@@ -1266,7 +1916,7 @@ private fun showDocumentItems(
                 which == 0 -> CalendarNavigator.toDayNote(fragment, date, base)
                 which <= marks.size -> {
                     val (_, page, rect) = marks[which - 1]
-                    CalendarNavigator.toDayNote(fragment, date, page, rect)
+                    openPageOccurrence(fragment, date, page, rect)
                 }
 
                 which <= marks.size + cards.size -> {
@@ -1332,6 +1982,12 @@ private fun openDocument(
     doc: com.toolsboox.plugin.calendar.ot.LedgerDocument,
     currentKey: String?,
 ) {
+    // A text note's key is a tn- note id only its own fragment can open — handing it to the day
+    // navigator renders a blank page (the exact stray LedgerDocuments.create warns about).
+    if (surface == com.toolsboox.plugin.calendar.ot.LedgerDocuments.TEXT_NOTES) {
+        com.toolsboox.plugin.textnotes.ui.TextNotesFragment.open(fragment, doc.date, doc.key)
+        return
+    }
     if (doc.subPageCount > 1) showDocumentPages(fragment, surface, doc, currentKey)
     else CalendarNavigator.toDayNote(fragment, doc.date, doc.key)
 }
@@ -1372,9 +2028,10 @@ private fun kindDoorRow(fragment: ScreenFragment, kind: String, date: LocalDate)
         KIND_NOTES -> DirRow("↳", "Open Notes & Tags…", null, 1) {
             com.toolsboox.plugin.calendar.ui.NotesTagsFragment.open(fragment, date, "week")
         }
-        // The kind's own door is the page itself — today's inbox; the day rows below reach the past.
+        // The kind's own door is the page itself — the inbox wherever the unsorted picks sit
+        // (today only when today holds them); the day rows below reach the past directly.
         KIND_GRAMPICKS -> DirRow("↳", "Open Gram Picks…", null, 1) {
-            CalendarNavigator.toDayNote(fragment, LocalDate.now(), KIND_GRAMPICKS)
+            CalendarNavigator.toDayNote(fragment, gramPicksHome(fragment.requireContext()), KIND_GRAMPICKS)
         }
         docs.TEXT_NOTES -> DirRow("↳", "Open Text Notes…", null, 1) {
             com.toolsboox.plugin.textnotes.ui.TextNotesFragment.open(fragment, date, null)
@@ -1431,7 +2088,9 @@ private fun directoryRowFor(
     val cards = if (isTag) 0 else cardCounts["${item.date}|${item.key}"] ?: 0
     val detail = buildString {
         if (showKind) append(kindLabel(item.kind)).append("  ·  ")
-        append(item.date.toString())
+        // A tag only OBJECTS wear has no page date (LocalDate.MIN, see directoryItems): say what
+        // it is rather than print "-999999999-01-01" (review of dbe1a38d).
+        append(if (item.date == LocalDate.MIN) "also tagged" else item.date.toString())
         if (n > 0) append("  ·  🏷 ").append(n)
         if (cards > 0) append("  ·  ❝ ").append(cards)
     }
@@ -1652,6 +2311,8 @@ fun showLedgerRootDirectory(fragment: ScreenFragment, date: LocalDate = LocalDat
                 // kind's dates came off filenames and indexes. A day's contents are read only when
                 // that day's folder is opened, so walking the tree costs what you look at.
                 val days = DIRECTORY_KINDS.flatMap { items(it) }.map { it.date }
+                    // An objects-only tag's LocalDate.MIN is "no day", not a year to open.
+                    .filter { it != LocalDate.MIN }
                     .distinct().sortedDescending()
                 val locale = Locale.getDefault()
                 val byYear = days.groupBy { it.year }
@@ -1725,6 +2386,722 @@ fun showLedgerRootDirectory(fragment: ScreenFragment, date: LocalDate = LocalDat
  * document that lands you on an item inside it rather than at the top of it. The rows, the extras
  * and what each of them does are otherwise exactly what they were.
  */
+/**
+ * 📌 THE WORKING SET — a pin is a reader's thumb in the book, not a folder. Local v1
+ * (`notebook-pins.json`); the sidecar ride (the write-index pattern) is the follow-up.
+ */
+private object NotebookPins {
+    private fun file(ctx: android.content.Context) = java.io.File(ctx.filesDir, "notebook-pins.json")
+    /** A pin on a named day's old Write day-pad row ("<iso>|write") — that row left the list under
+     *  the named-day-note rule, and the day now lives on its dated row "day|<iso>" (review of
+     *  dbe1a38d). Read across here; the next toggle writes the new spelling. */
+    private val OLD_DAY_PIN = Regex("""^(\d{4}-\d{2}-\d{2})\|write$""")
+    fun all(ctx: android.content.Context): MutableSet<String> = runCatching {
+        org.json.JSONArray(file(ctx).readText()).let { a ->
+            (0 until a.length()).mapTo(mutableSetOf()) { i ->
+                val id = a.getString(i)
+                OLD_DAY_PIN.matchEntire(id)?.let { "day|${it.groupValues[1]}" } ?: id
+            }
+        }
+    }.getOrDefault(mutableSetOf())
+    fun toggle(ctx: android.content.Context, id: String): Boolean {
+        val s = all(ctx)
+        val nowPinned = if (s.contains(id)) { s.remove(id); false } else { s.add(id); true }
+        runCatching { file(ctx).writeText(org.json.JSONArray(s.toList()).toString()) }
+        return nowPinned
+    }
+}
+
+/**
+ * The DATED notes — the days that hold ink, enumerated by day-file SIZE, not by parsing.
+ * A 360-byte day is empty and a written day is hundreds of KB; parsing day files to ask
+ * "did I write?" would repeat the 35-second inventory mistake (HANDOFF 08-24 §1A). The
+ * heuristic can admit a heavy reading-only day; opening it is still correct, so the false
+ * positive costs one tap. ALL TIME, not a lookback: a directory listing of the calendar
+ * tree is as cheap as sixty probes and "all notes" gets to mean all of them
+ * (DESIGN-notes-room-2026-08-27 §2a).
+ */
+private fun datedNoteDays(fragment: ScreenFragment): List<LocalDate> {
+    val root = com.toolsboox.ot.LedgerPaths.documentsRoot(fragment.requireContext())
+    val re = Regex("day-(\\d{4}-\\d{2}-\\d{2})-v2\\.json")
+    val out = mutableListOf<LocalDate>()
+    java.io.File(root, "calendar").listFiles()?.forEach { year ->
+        year.listFiles()?.forEach { month ->
+            month.listFiles()?.forEach { f ->
+                if (f.length() > 20_000) {
+                    re.matchEntire(f.name)?.groupValues?.get(1)?.let { iso ->
+                        runCatching { LocalDate.parse(iso) }.getOrNull()?.let(out::add)
+                    }
+                }
+            }
+        }
+    }
+    return out.sortedDescending()
+}
+
+/**
+ * The calendar's OWN locale — the week-number vocabulary the week fragment and its files speak
+ * (the "calendarLocale" preference, same resolution as CalendarWeekFragment). The Notebook must
+ * speak it too: a week number computed with a different locale opens a different week.
+ */
+private fun notesCalendarLocale(ctx: android.content.Context): java.util.Locale {
+    val tag = ctx.getSharedPreferences("MAIN", 0).getString("calendarLocale", null)
+    return tag?.let { t -> java.util.Locale.forLanguageTag(t).takeIf { it.toLanguageTag() == t } }
+        ?: java.util.Locale.getDefault()
+}
+
+/**
+ * The WEEK and MONTH notes — the dormant toolsboox period surfaces, promoted into the Notes room
+ * (DESIGN-notes-room-2026-08-27 §2c). Same law as the dated trunk: enumerate by file SIZE from a
+ * directory listing, never parse. Period files are leaner than day files (no grams, no items), so
+ * the threshold is lower. The heuristic can admit a week whose only ink is PLANNER ink (grid and
+ * note strokes share the file) — opening it is still correct, so the false positive costs one tap.
+ *
+ * The week ANCHOR is reconstructed with CalendarWeekFragment's own formula — ofYearDay(year, 1)
+ * .with(weekOfYear, w).with(dayOfWeek, 1), in the calendar's locale — so the label always names
+ * the week a tap actually opens. (A week file minted from a year-boundary date can carry the
+ * neighbouring year in its name — toolsboox heritage; the row then honestly shows the week the
+ * receiver will resolve that name to.)
+ */
+private data class PeriodNote(val kind: String, val fileYear: Int, val ordinal: Int, val anchor: LocalDate)
+
+private fun periodNoteAnchors(fragment: ScreenFragment): List<PeriodNote> {
+    val ctx = fragment.requireContext()
+    val root = com.toolsboox.ot.LedgerPaths.documentsRoot(ctx)
+    val weekRe = Regex("week-(\\d{4})-(\\d{1,2})-v2\\.json")
+    val monthRe = Regex("month-(\\d{4})-(\\d{1,2})-v2\\.json")
+    val wf = java.time.temporal.WeekFields.of(notesCalendarLocale(ctx))
+    val out = mutableListOf<PeriodNote>()
+    java.io.File(root, "calendar").listFiles()?.forEach { year ->
+        year.listFiles()?.forEach { entry ->
+            if (entry.isFile) {
+                if (entry.length() > 4_000) weekRe.matchEntire(entry.name)?.let { m ->
+                    val y = m.groupValues[1].toInt()
+                    val w = m.groupValues[2].toInt()
+                    runCatching {
+                        LocalDate.ofYearDay(y, 1)
+                            .with(wf.weekOfYear(), w.toLong())
+                            .with(wf.dayOfWeek(), 1L)
+                    }.getOrNull()?.let { out += PeriodNote("week", y, w, it) }
+                }
+            } else {
+                entry.listFiles()?.forEach { f ->
+                    if (f.length() > 4_000) monthRe.matchEntire(f.name)?.let { m ->
+                        val y = m.groupValues[1].toInt()
+                        val mo = m.groupValues[2].toInt()
+                        runCatching { LocalDate.of(y, mo, 1) }.getOrNull()
+                            ?.let { out += PeriodNote("month", y, mo, it) }
+                    }
+                }
+            }
+        }
+    }
+    return out
+}
+
+/** Open a week note by the numbers the week fragment actually reads — calendar year + weekOfYear
+ *  in the calendar's locale, the receiver's own resolution formula — never a re-derivation that
+ *  can disagree with it at a year boundary or under a locale override. */
+internal fun openWeekNote(fragment: ScreenFragment, date: LocalDate) {
+    val wf = java.time.temporal.WeekFields.of(notesCalendarLocale(fragment.requireContext()))
+    androidx.navigation.fragment.NavHostFragment.findNavController(fragment).navigate(
+        com.toolsboox.R.id.action_to_calendar_week, androidx.core.os.bundleOf(
+            "year" to date.year.toString(),
+            "weekOfYear" to date.get(wf.weekOfYear()).toString(),
+            "notePage" to "0"))
+}
+
+/**
+ * THE NOTEBOOK — every note in ONE list, newest first, whatever kind made it.
+ *
+ * Michael, 2026-08-27: "notes, named or pickings or really all are so obtusely organized."
+ * The directory was FAMILY-FIRST — you had to know which KIND of note before you could see
+ * your notes. But "what have I been writing lately" is the question a notebook answers, and
+ * it doesn't care whether the answer is a Write, a Grid, a Jot, a board or a text note. One
+ * flat list, every family, sorted by date; the family survives as the row's GLYPH, exactly
+ * the weight it deserves. The per-family directories still exist behind the fold for the
+ * moments the kind IS the question.
+ */
+/** The Saber filing chooser: the folders in use, ＋ New folder (a typed prompt), and the way
+ *  back out for a row already filed. One modal; the prompt is guarded because a name mid-typing
+ *  is work. */
+private fun showFolderChooser(fragment: ScreenFragment, title: String, current: String,
+                              existing: List<String>, onPick: (String) -> Unit) {
+    val ctx = fragment.requireContext()
+    val rows = mutableListOf<Pair<String, () -> Unit>>()
+    for (name in existing.filter { it != current }) rows += "\ud83d\udcc1  $name" to { onPick(name) }
+    rows += "\uff0b  New folder\u2026" to {
+        val input = android.widget.EditText(ctx).apply { hint = "Folder name"; setSingleLine() }
+        val pad = (16 * ctx.resources.displayMetrics.density).toInt()
+        val box = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0); addView(input)
+        }
+        fragment.showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(
+            com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("New folder")
+            .setView(box)
+            .setPositiveButton("File it") { _, _ ->
+                input.text.toString().trim().takeIf { it.isNotBlank() }?.let(onPick)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create())
+    }
+    if (current.isNotBlank()) rows += "Take it out of \ud83d\udcc1 $current" to { onPick("") }
+    fragment.showModal(androidx.appcompat.app.AlertDialog.Builder(
+        com.toolsboox.ot.ModalScale.wrap(ctx))
+        .setTitle("File \u201c$title\u201d")
+        .setItems(rows.map { it.first }.toTypedArray()) { _, i -> rows[i].second() }
+        .setNegativeButton(android.R.string.cancel, null)
+        .create())
+}
+
+/**
+ * THE ALL-TIME NOTES WALK — the documents the Notebook builds its named rows from, as
+ * (surface, document) pairs (today's unnamed daily pads included; callers keep `named`).
+ *
+ * Lifted out of [showNotebook] unchanged so the Notebook, the Links index and link-following read
+ * ONE answer to "what is called what" (Michael 2026-10-11: "The links aren't quite working yet").
+ * Before, the Links index asked `forSurface(now)` for the templates alone, so a board or text note
+ * named on another day — or any synthesis topic — read as owed even though the Notebook listed it.
+ *
+ * Templates + Synthesize through [LedgerDocuments.forSurface] (the multi-page registries are global;
+ * the per-day ones answer for [date]), then PICKINGS AND TEXT NOTES ACROSS TIME ("pickings is
+ * involved here"). Their stores are file-per-day, so forSurface(date) only ever saw TODAY's boards
+ * — a board named last Tuesday vanished from every list. All-time here is a directory LISTING, not
+ * a scan: one file per touched day, tiny, local. Named things only — the unnamed daily boards
+ * already ride their dated rows.
+ */
+internal fun notebookWalk(
+    ctx: android.content.Context,
+    date: LocalDate,
+): List<Pair<String, com.toolsboox.plugin.calendar.ot.LedgerDocument>> {
+    val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    return (docs0.TEMPLATES + docs0.SYNTHESIZE).flatMap { surface ->
+        runCatching { docs0.forSurface(ctx, surface, date) }.getOrDefault(emptyList())
+            .map { surface to it }
+    } + run {
+        val dateRe = Regex("(\\d{4}-\\d{2}-\\d{2})")
+        fun daysOf(dir: String): List<LocalDate> =
+            java.io.File(ctx.filesDir, dir).listFiles()?.mapNotNull { f ->
+                dateRe.find(f.name)?.value?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            }?.filter { it != date }.orEmpty()
+        val boards = daysOf("pickings-index").flatMap { d ->
+            runCatching { com.toolsboox.plugin.calendar.ot.PickingsStore.listSaved(ctx, d) }
+                .getOrDefault(emptyList())
+                .filter { it.name.isNotBlank() }
+                .map { docs0.PICKINGS to com.toolsboox.plugin.calendar.ot.LedgerDocument(it.key, it.name, d, true) { 1 } }
+        }
+        val texts = daysOf("text-notes").flatMap { d ->
+            runCatching { com.toolsboox.plugin.textnotes.TextNotesStore.load(ctx, d) }
+                .getOrDefault(emptyList())
+                .filter { it.title.isNotBlank() }
+                .map { docs0.TEXT_NOTES to com.toolsboox.plugin.calendar.ot.LedgerDocument(it.id, it.title, d, true) { 1 } }
+        }
+        // NAMED GRID AND JOT DAY PADS OF OTHER DAYS. Their names are date-scoped like Write's, and
+        // forSurface supplies only [date]'s pad — so a grid page named last week was a link target
+        // ([namedNotes] added it) but no row here, while the iPad's Notebook lists every named pad
+        // (Michael 2026-10-11, parity: "Name parity"). Moved here from namedNotes so the Notebook
+        // and link-following read the one list. Write's day pads are NOT here: a Write day-pad
+        // name is the DAY NOTE's name and rides the dated row (see [namedNotes]).
+        val pads = listOf(
+            docs0.GRID to com.toolsboox.plugin.calendar.ot.GridPageStore,
+            docs0.JOT to com.toolsboox.plugin.calendar.ot.JotPageStore,
+        ).flatMap { (surface, store) ->
+            runCatching {
+                store.list(ctx).filter { it.key == store.defaultKey && it.name.isNotBlank() && it.date != date }
+                    .map { p ->
+                        // Lazy, like forSurface's — and showNotebook does NOT ask for it while it
+                        // builds the list (one streamed day-file read per pad, on the main thread;
+                        // review of dbe1a38d), so only a tapped row reads its day file to count.
+                        surface to com.toolsboox.plugin.calendar.ot.LedgerDocument(p.key, p.name, p.date, true) {
+                            docs0.subPageCount(ctx, p.key, p.date, emptySet())
+                        }
+                    }
+            }.getOrDefault(emptyList())
+        }
+        boards + texts + pads
+    }
+}
+
+/**
+ * Every NAMED note across all time — what a `[[link]]` can land on.
+ *
+ * The [notebookWalk]'s named rows (named Grid and Jot day pads of every day included), plus the
+ * named WRITE day pads of other days — forSurface only supplies the daily pad of the one date it is
+ * asked about. Without these, [[Monday's long run]] naming a day note would read as owed.
+ *
+ * THE NAMED-DAY-NOTE RULE (both apps, Michael 2026-10-11 parity): the date-scoped WRITE daily entry
+ * ("write" on D) is the DAY NOTE's name — "✎ Name this note…" on the Notes page writes it, the
+ * Lines daily pad's "Name this note…" writes the SAME entry, and the numbered Notes pages wear it in
+ * their header. A [[name]] that names it opens Notes page "0" of D — the page the Notebook's dated
+ * row (which wears the name) opens, where the day's ink is — never the Lines pad's own, usually
+ * empty, "write" page. Rewritten to "0" here, today's entry included. Named Grid and Jot day pads
+ * keep their keys: they name that pad, not the day.
+ */
+internal fun namedNotes(
+    ctx: android.content.Context,
+): List<Pair<String, com.toolsboox.plugin.calendar.ot.LedgerDocument>> {
+    val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    val now = LocalDate.now()
+    val write = com.toolsboox.plugin.calendar.ot.WritePageStore
+    fun dayNote(name: String, date: LocalDate) =
+        docs0.WRITE to com.toolsboox.plugin.calendar.ot.LedgerDocument("0", name, date, true) { 1 }
+    val walked = notebookWalk(ctx, now).filter { it.second.named }.map { (surface, doc) ->
+        if (surface == docs0.WRITE && doc.key == write.DEFAULT_KEY) dayNote(doc.title, doc.date)
+        else surface to doc
+    }
+    val dayPads = runCatching {
+        write.list(ctx).filter { it.key == write.DEFAULT_KEY && it.name.isNotBlank() && it.date != now }
+            .map { dayNote(it.name, it.date) }
+    }.getOrDefault(emptyList())
+    return walked + dayPads
+}
+
+/**
+ * Where the note a `[[link]]` names lives — the note itself, not a page that mentions it. Matched
+ * by [LedgerLinks.normalise] (the link's own comparison form); when two notes share a name the
+ * newest wins, the one you are most likely working in. Null when nothing is named that yet (an
+ * OWED link, which is ordinary).
+ *
+ * A same-day tie breaks by KIND in iOS `LedgerLinks.named()`'s walk order — Write, Synthesize,
+ * Grid, Jot, then text notes, then boards — so one name opens the same note on the B6 and the iPad
+ * (review of 6b46141e: the walk order alone put boards first here and Write first there).
+ */
+internal fun locateNote(
+    ctx: android.content.Context,
+    target: String,
+    names: List<Pair<String, com.toolsboox.plugin.calendar.ot.LedgerDocument>> = namedNotes(ctx),
+): Pair<String, com.toolsboox.plugin.calendar.ot.LedgerDocument>? = pickNamedNote(target, names)
+
+/** [locateNote]'s choice, over a walk already in hand — no Context, so it can be tested. */
+internal fun pickNamedNote(
+    target: String,
+    names: List<Pair<String, com.toolsboox.plugin.calendar.ot.LedgerDocument>>,
+): Pair<String, com.toolsboox.plugin.calendar.ot.LedgerDocument>? {
+    val links = com.toolsboox.plugin.calendar.ot.LedgerLinks
+    val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    val n = links.normalise(target)
+    if (n.isEmpty()) return null
+    val rank = listOf(docs0.WRITE, docs0.SYNTHESIZE, docs0.GRID, docs0.JOT, docs0.TEXT_NOTES, docs0.PICKINGS)
+    fun rankOf(surface: String) = rank.indexOf(surface).let { if (it < 0) rank.size else it }
+    return names.filter { links.normalise(it.second.title) == n }
+        .sortedWith(compareByDescending<Pair<String, com.toolsboox.plugin.calendar.ot.LedgerDocument>> { it.second.date }
+            .thenBy { rankOf(it.first) })
+        .firstOrNull()
+}
+
+/** Open a located note: Text Notes for a text note (its id only its own fragment can open), else
+ *  the note's first page directly — a link is a door, not a chooser. */
+private fun openLocatedNote(
+    fragment: ScreenFragment,
+    located: Pair<String, com.toolsboox.plugin.calendar.ot.LedgerDocument>,
+) {
+    val (surface, doc) = located
+    if (surface == com.toolsboox.plugin.calendar.ot.LedgerDocuments.TEXT_NOTES) {
+        com.toolsboox.plugin.textnotes.ui.TextNotesFragment.open(fragment, doc.date, doc.key)
+    } else {
+        CalendarNavigator.toDayNote(fragment, doc.date, doc.key)
+    }
+}
+
+/**
+ * FOLLOW A LINK: open the note [target] names (Michael 2026-10-11: "The links aren't quite working
+ * yet"). Returns false when nothing is named that, so the caller can say so or offer to write it.
+ * For a caller that already holds the walk ([names] — the Links index); a single tap from a gram or
+ * the Map goes through [followNoteLink], which walks off the main thread.
+ */
+fun openNamedNote(
+    fragment: ScreenFragment,
+    target: String,
+    names: List<Pair<String, com.toolsboox.plugin.calendar.ot.LedgerDocument>>? = null,
+): Boolean {
+    val ctx = fragment.context ?: return false
+    openLocatedNote(fragment, locateNote(ctx, target, names ?: namedNotes(ctx)) ?: return false)
+    return true
+}
+
+/**
+ * Land on one (date, page) a tag or a link was seen on. "default" (or blank) IS the day page —
+ * [com.toolsboox.ot.LedgerUri.page]'s default key, what "Tag this page…" on the day page and a typed
+ * [[link]] in a day-page box record — and handing it to toDayNote draws a blank note page called
+ * "default" instead of the day (review of 6b46141e). LedgerRhizomeFragment.open already routes it
+ * this way.
+ */
+internal fun openPageOccurrence(
+    fragment: ScreenFragment,
+    date: LocalDate,
+    pageKey: String,
+    rect: android.graphics.RectF? = null,
+) {
+    if (pageKey.isBlank() || pageKey == "default") CalendarNavigator.toDayPage(fragment, date)
+    else CalendarNavigator.toDayNote(fragment, date, pageKey, rect)
+}
+
+/**
+ * FOLLOW A `note://` ADDRESS from a single tap — a `[[link]]` gram, a Map node (Michael 2026-10-11:
+ * "The links aren't quite working yet"). The name walk lists every day folder and reads every
+ * day's text notes, so it runs on IO and lands after, as iOS followNoteLink does — not as a disk
+ * walk behind an e-ink tap.
+ *
+ * In order: the note NAMED [body]; else a typed note whose own id it is (iOS mints note://<id> for a
+ * text note on its Map, and the graph syncs here); else, for an OWED link, the newest page that
+ * mentions it other than [here] — the gram's old landing, kept so nothing the tap reached is lost;
+ * else say so in the words iOS shares.
+ */
+fun followNoteLink(
+    fragment: ScreenFragment,
+    body: String,
+    here: Pair<LocalDate, String>? = null,
+    /** What to say when nothing is found, instead of the owed-link wording — for a caller that
+     *  knows [body] is an object's id, not a name someone wrote. */
+    missing: String? = null,
+) {
+    val ctx = fragment.context?.applicationContext ?: return
+    val owner = runCatching { fragment.viewLifecycleOwner }.getOrNull() ?: return
+    owner.lifecycleScope.launch {
+        val io = kotlinx.coroutines.Dispatchers.IO
+        val located = kotlinx.coroutines.withContext(io) { runCatching { locateNote(ctx, body) }.getOrNull() }
+        if (!fragment.isAdded) return@launch
+        if (located != null) { openLocatedNote(fragment, located); return@launch }
+        val textDay = kotlinx.coroutines.withContext(io) {
+            runCatching {
+                java.io.File(ctx.filesDir, "text-notes").listFiles().orEmpty().asSequence()
+                    .mapNotNull { f ->
+                        Regex("(\\d{4}-\\d{2}-\\d{2})").find(f.name)?.value
+                            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+                    }
+                    .distinct()
+                    .firstOrNull { d ->
+                        com.toolsboox.plugin.textnotes.TextNotesStore.load(ctx, d).any { it.id == body }
+                    }
+            }.getOrNull()
+        }
+        if (!fragment.isAdded) return@launch
+        if (textDay != null) {
+            com.toolsboox.plugin.textnotes.ui.TextNotesFragment.open(fragment, textDay, body)
+            return@launch
+        }
+        val mention = com.toolsboox.plugin.calendar.ot.LedgerLinks.backlinks(ctx, body)
+            .firstOrNull { here == null || !(it.date == here.first && it.pageKey == here.second) }
+        if (mention != null) openPageOccurrence(fragment, mention.date, mention.pageKey)
+        else fragment.showMessage(missing ?: "Nothing named “$body” yet — write it and the link lands.")
+    }
+}
+
+fun showNotebook(fragment: ScreenFragment, date: LocalDate = LocalDate.now(),
+                 folderLens: String? = null) {
+    val ctx = fragment.requireContext()
+    val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    // THE SABER FOLDER LENS (Michael, 09-02: "Saber's note folder system is interesting to me"):
+    // a filter over the ONE flat list, never a hierarchy — the born-classic law stands, recents
+    // stay first because the list IS recency, and a folder is a lens you look through (the 📁
+    // foot row), not a place you descend into. Read once here, never per keystroke.
+    val folderMap: Map<String, String> = docs0.folderMap(ctx)
+    // + SYNTHESIZE: topic pages are notes with a correspondent in them (Michael, 08-30 — the
+    // 🔬 station left the walk on 08-23, so the Notebook is where a conversation is FOUND).
+    // The un-nameable daily page stays out via the named-only filter below.
+    for (surface in docs0.TEMPLATES + docs0.SYNTHESIZE) runCatching { docs0.sync(ctx, surface, date) }
+    // One pull per family, built once outside the redraw (each page count is a lazy streamed
+    // read — see showDocumentDirectory's note). The walk itself is [notebookWalk], shared with the
+    // Links index and link-following so a [[link]] lands on exactly what this list shows.
+    val all: List<Pair<String, com.toolsboox.plugin.calendar.ot.LedgerDocument>> =
+        notebookWalk(ctx, date)
+    val marks = directoryMarkCounts(ctx)
+    val cardCounts = com.toolsboox.plugin.calendar.ot.PickingsCards.counts(ctx)
+    // THE DATED NOTES JOIN — where ~70% of the ink lives (DESIGN-notes-filing-2026-08-27 §1);
+    // a notes directory that lists only the named branches loses the trunk. Today rides whatever
+    // its size: the Notebook is the shuttle to today's page (DESIGN-notes-room-2026-08-27 §2a).
+    val today = LocalDate.now()
+    val datedDays = datedNoteDays(fragment).toMutableList().also {
+        if (!it.contains(today)) it.add(0, today)
+    }
+    val weekdayFmt = java.time.format.DateTimeFormatter.ofPattern("EEEE")
+    val shortFmt = java.time.format.DateTimeFormatter.ofPattern("MMM d")
+    val monthFmt = java.time.format.DateTimeFormatter.ofPattern("MMMM")
+    // A date the way a person says it. The classic list speaks Today/Yesterday/weekday, not ISO
+    // (his 08-27 ruling: the list should read like a classic notes app).
+    fun humane(d: LocalDate): String = when {
+        d == today -> "Today"
+        d == today.minusDays(1) -> "Yesterday"
+        d.isAfter(today.minusDays(7)) -> d.format(weekdayFmt)
+        d.year == today.year -> d.format(shortFmt)
+        else -> d.toString()
+    }
+    // THE ROW MODELS, BUILT ONCE — the all-time walks (dated days, period files, per-day tags)
+    // are paid when the Notebook opens, never again per keystroke: the redraw lambda below only
+    // filters, sorts and draws. Hold verbs REOPEN the Notebook rather than redrawing it, because
+    // the shared list dismisses itself before a hold menu shows (see showDirectoryList) — a
+    // redraw() from a hold repaints a dialog nobody can see.
+    class Nb(val id: String, val glyph: String, val title: String, val detail: String,
+             val search: String, val itemDate: LocalDate, val onHoldPages: (() -> Unit)?,
+             val onHoldName: ((onDone: () -> Unit) -> Unit)?,
+             val folder: String = "", val onHoldFile: (() -> Unit)? = null,
+             val pagesLabel: String = "\u25a4  Pages\u2026",
+             val open: () -> Unit)
+    val items = mutableListOf<Nb>()
+    // NAMED notes only, and the row never speaks the template: the paper is not a kind (his
+    // 08-27 ruling — "I don't need all that jots graphs sketches pickings"). Today's unnamed
+    // daily pads are not rows; today's ink IS the 🗓 Today row.
+    for ((surface, doc) in all) {
+        if (!doc.named) continue
+        // THE NAMED-DAY-NOTE RULE ([namedNotes]): a named Write DAY PAD is the day note's name, and
+        // the dated row below wears it and opens Notes page "0". Listing it here as well put today
+        // in the list twice — once opening the (usually empty) Lines pad (Michael 2026-10-11).
+        if (surface == docs0.WRITE && doc.key == com.toolsboox.plugin.calendar.ot.WritePageStore.DEFAULT_KEY) continue
+        val id = "${doc.date}|${doc.key}"
+        val n = marks[id] ?: 0
+        val cards = cardCounts[id] ?: 0
+        // A named Grid/Jot DAY PAD of another day ([notebookWalk]'s pads) is counted only when its
+        // row is tapped (openDocument): counting here read one day file per pad, on the main
+        // thread, every time All notes opened (review of dbe1a38d).
+        val padOfOtherDay = (surface == docs0.GRID || surface == docs0.JOT) &&
+            doc.key == docs0.defaultKey(surface) && doc.date != date
+        val detail = buildString {
+            append(humane(doc.date))
+            if (!padOfOtherDay && doc.subPageCount > 1) append("  \u00b7  ${doc.subPageCount} pages")
+            if (n > 0) append("  \u00b7  \ud83c\udff7 $n")
+            if (cards > 0) append("  \u00b7  \u275d $cards")
+            folderMap[id]?.let { append("  \u00b7  \ud83d\udcc1 $it") }
+        }
+        val rowFolder = folderMap[id].orEmpty()
+        items += Nb(
+            id, "", doc.title, detail,
+            "${doc.title}  $detail  ${doc.date}".lowercase(), doc.date,
+            folder = rowFolder,
+            onHoldFile = if (!docs0.canFile(surface)) null else ({
+                showFolderChooser(fragment, doc.title, rowFolder,
+                    existing = docs0.allFolders(ctx)) { chosen ->
+                    docs0.setFolder(ctx, surface, doc.key, chosen, doc.date)
+                    showNotebook(fragment, date, folderLens)
+                }
+            }),
+            onHoldPages = if (surface == docs0.TEXT_NOTES) null
+            else ({ showDocumentItems(fragment, doc.title, doc.date, doc.key) }),
+            onHoldName = if (!docs0.canRename(surface, doc.key)) null else ({ onDone ->
+                promptTitle(
+                    fragment, surface,
+                    dialogTitle = "Name this note",
+                    fieldHint = doc.date.toString(),
+                    seed = if (doc.named) doc.title else null,
+                    saveLabel = "Save",
+                ) { name, face ->
+                    docs0.rename(ctx, surface, doc.key, name, doc.date)
+                    // A blank pad leaves the stored face alone — promptRenameDocument's rule.
+                    face?.let {
+                        com.toolsboox.plugin.calendar.ot.LedgerTitleInk.put(ctx, surface, doc.key, doc.date, it)
+                    }
+                    onDone()
+                }
+            }),
+            open = { openDocument(fragment, surface, doc, null) },
+        )
+    }
+    // A NAMED day note wears its NAME in the list (Michael, field, 08-27: "naming a note
+    // doesn't show the note name if it's the day note named"). The WRITE daily entries are
+    // read ONCE — the same date-scoped registry the page header and the ✎ menu already share.
+    val dayNames = com.toolsboox.plugin.calendar.ot.WritePageStore.list(ctx)
+        .filter {
+            it.key == com.toolsboox.plugin.calendar.ot.WritePageStore.DEFAULT_KEY &&
+                it.name.isNotBlank()
+        }
+        .associate { it.date to it.name }
+    // A NAMED day lists whatever its file size: the >20KB law is a guess at "did I write?", and a
+    // day you NAMED answers it — and a [[link]] to that name opens it (the named-day-note rule), so
+    // the Notebook must be able to show it too. Also how a day named on the iPad, whose ink this
+    // device may not hold yet, still turns up.
+    for (d in dayNames.keys) if (!datedDays.contains(d)) datedDays.add(d)
+    for (d in datedDays) {
+        val tags = com.toolsboox.plugin.calendar.ot.LedgerTags.tagsFor(ctx, d)
+        val dayName = dayNames[d]
+        // THE DAY NOTE'S FOLDER rides its dated row (review of dbe1a38d). The named Write day-pad
+        // row that carried it — and its 📁 filing and ▤ Pages holds — left the list under the
+        // named-day-note rule, so a filed day note dropped out of its folder ("0 notes") and could
+        // no longer be filed at all. The filing is the same date-scoped WRITE entry the name is.
+        val writeKey = com.toolsboox.plugin.calendar.ot.WritePageStore.DEFAULT_KEY
+        val dayFolder = folderMap["$d|$writeKey"].orEmpty()
+        val detail = buildString {
+            append(if (d.isAfter(today.minusDays(7))) d.format(shortFmt) else d.format(weekdayFmt))
+            if (dayName != null) append("  \u00b7  ").append(humane(d))
+            if (tags.isNotEmpty()) append("  \u00b7  ").append(tags.take(3).joinToString(" ") { "#$it" })
+            if (dayFolder.isNotBlank()) append("  \u00b7  \ud83d\udcc1 ").append(dayFolder)
+        }
+        // A folder needs the entry a name makes (WritePageStore.setFolder files an existing one).
+        val fileable = dayName != null || dayFolder.isNotBlank()
+        items += Nb("day|$d", "\ud83d\uddd3", dayName ?: humane(d), detail,
+            "${dayName.orEmpty()}  ${humane(d)}  $detail  $d".lowercase(), d,
+            // The LINES PAD of a named day: its row opened it before the named-day-note rule sent
+            // the name to Notes page "0". Nothing lost — it is a hold away, where its Pages… was.
+            onHoldPages = if (dayName == null) null else ({
+                showDocumentItems(fragment, dayName, d, writeKey)
+            }),
+            folder = dayFolder,
+            onHoldFile = if (!fileable) null else ({
+                showFolderChooser(fragment, dayName ?: humane(d), dayFolder,
+                    existing = docs0.allFolders(ctx)) { chosen ->
+                    docs0.setFolder(ctx, docs0.WRITE, writeKey, chosen, d)
+                    showNotebook(fragment, date, folderLens)
+                }
+            }),
+            pagesLabel = "\u25a4  Lines pad\u2026",
+            // The dated note is nameable from its row like every other note — the same
+            // date-scoped WRITE entry the page's ✎ menu writes.
+            onHoldName = { onDone ->
+                promptTitle(
+                    fragment, com.toolsboox.plugin.calendar.ot.LedgerDocuments.WRITE,
+                    dialogTitle = "Name this note",
+                    fieldHint = d.toString(),
+                    seed = dayName,
+                    saveLabel = "Save",
+                ) { name, face ->
+                    com.toolsboox.plugin.calendar.ot.LedgerDocuments.rename(
+                        ctx, com.toolsboox.plugin.calendar.ot.LedgerDocuments.WRITE,
+                        com.toolsboox.plugin.calendar.ot.WritePageStore.DEFAULT_KEY, name, d)
+                    face?.let {
+                        com.toolsboox.plugin.calendar.ot.LedgerTitleInk.put(
+                            ctx, com.toolsboox.plugin.calendar.ot.LedgerDocuments.WRITE,
+                            com.toolsboox.plugin.calendar.ot.WritePageStore.DEFAULT_KEY, d, it)
+                    }
+                    onDone()
+                }
+            }) {
+            com.toolsboox.plugin.calendar.CalendarNavigator.toDayNote(fragment, d, "0")
+        }
+    }
+    // WEEK AND MONTH notes join the one list (DESIGN-notes-room-2026-08-27 §2c). A week row taps
+    // through the FILE's own year/week numbers, never a re-derived pair.
+    for (p in periodNoteAnchors(fragment)) when (p.kind) {
+        "week" -> {
+            val title = "Week of ${p.anchor.format(shortFmt)}" +
+                (if (p.anchor.year == today.year) "" else " ${p.anchor.year}")
+            items += Nb("week|${p.fileYear}-${p.ordinal}", "\ud83d\uddd3", title, "week note",
+                "$title  week note  ${p.anchor}".lowercase(), p.anchor, null, null) {
+                androidx.navigation.fragment.NavHostFragment.findNavController(fragment).navigate(
+                    com.toolsboox.R.id.action_to_calendar_week, androidx.core.os.bundleOf(
+                        "year" to p.fileYear.toString(),
+                        "weekOfYear" to p.ordinal.toString(),
+                        "notePage" to "0"))
+            }
+        }
+        "month" -> {
+            val title = p.anchor.format(monthFmt) +
+                (if (p.anchor.year == today.year) "" else " ${p.anchor.year}")
+            items += Nb("month|${p.fileYear}-${p.ordinal}", "\ud83d\uddd3", title, "month note",
+                "$title  month note  ${p.anchor}".lowercase(), p.anchor, null, null) {
+                com.toolsboox.plugin.calendar.CalendarNavigator.toMonthNote(fragment, p.anchor, "0")
+            }
+        }
+    }
+    val ordered = items.sortedWith(compareByDescending<Nb> { it.itemDate }.thenBy { it.title.lowercase() })
+    // How far the list has been unrolled — the "…and N more" row raises its own cap and redraws.
+    val unroll = intArrayOf(80)
+    showDirectoryList(
+        fragment,
+        title = "Notebook",
+        searchHint = if (ordered.size > 6) "Find a note" else null,
+        empty = "No notes yet.",
+    ) { query, redraw ->
+        val q = query.lowercase()
+        val pins = NotebookPins.all(ctx)
+        val lensed = if (folderLens == null) ordered else ordered.filter { it.folder == folderLens }
+        val shown = lensed.filter { q.isEmpty() || it.search.contains(q) }
+        val rows = mutableListOf<DirRow>()
+        // 📌 THE WORKING SET stands above recency — and stands OUTSIDE the query and the cap, so a
+        // pinned row never silently vanishes behind a search or an unroll boundary.
+        val pinned = ordered.filter { pins.contains(it.id) }
+        fun rowOf(it: Nb, pinnedNow: Boolean): DirRow = DirRow(
+            it.glyph, it.title, it.detail,
+            onHold = {
+                val holdRows = mutableListOf<Pair<String, () -> Unit>>()
+                holdRows += (if (pinnedNow) "\ud83d\udccc  Unpin" else "\ud83d\udccc  Pin to the top") to {
+                    NotebookPins.toggle(ctx, it.id)
+                    showNotebook(fragment, date)
+                }
+                if (it.onHoldName != null) holdRows += "\u270e  Name this note\u2026" to {
+                    it.onHoldName.invoke { showNotebook(fragment, date) }
+                }
+                if (it.onHoldFile != null) holdRows += (
+                    if (it.folder.isBlank()) "\ud83d\udcc1  File into folder\u2026"
+                    else "\ud83d\udcc1  Move to folder\u2026") to { it.onHoldFile.invoke() }
+                if (it.onHoldPages != null) holdRows += it.pagesLabel to { it.onHoldPages.invoke() }
+                val d = androidx.appcompat.app.AlertDialog.Builder(
+                    com.toolsboox.ot.ModalScale.wrap(fragment.requireContext()))
+                    .setTitle(it.title)
+                    .setItems(holdRows.map { r -> r.first }.toTypedArray()) { _, i -> holdRows[i].second() }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .create()
+                fragment.showModal(d)
+            },
+        ) { it.open() }
+        for (it in pinned) rows += rowOf(it, pinnedNow = true)
+        if (pinned.isNotEmpty()) rows += DirRow("", "\u2500\u2500\u2500", null, 1, closes = false) {}
+        // THE SABER DRILL-IN (Michael, 09-03: "it's hard to find stuff when notes are pulled
+        // up so a folder system and a tag finding system are both solutions"): folders stand
+        // AT THE TOP as places you walk into — a row each, count on its face — instead of a
+        // lens hidden in the foot. Inside one, ‹ walks back up. Recents still rule beneath:
+        // the list stays the list; the folders are doors above it.
+        if (q.isEmpty()) {
+            if (folderLens != null) {
+                rows += DirRow("\u2039", "All notes", "leave ${folderLens}", 1) {
+                    showNotebook(fragment, date, null)
+                }
+            } else {
+                val counts = ordered.groupingBy { it.folder }.eachCount()
+                for (f in com.toolsboox.plugin.calendar.ot.LedgerDocuments.allFolders(ctx).sorted()) {
+                    rows += DirRow("\ud83d\udcc1", f, "${counts[f] ?: 0} notes", 1) {
+                        showNotebook(fragment, date, f)
+                    }
+                }
+            }
+        }
+        if (shown.isEmpty()) rows += DirRow("", "Nothing matches \u201c$query\u201d.", null, 1, closes = false) {}
+        val unpinned = shown.filter { !pins.contains(it.id) }
+        for (it in unpinned.take(unroll[0])) rows += rowOf(it, pinnedNow = false)
+        if (unpinned.size > unroll[0]) {
+            rows += DirRow("", "\u2026and ${unpinned.size - unroll[0]} more", "tap to show more", 1, closes = false) {
+                unroll[0] += 80; redraw()
+            }
+        }
+        // The # and 🔗 indexes live INSIDE the Notebook now — retrieval axes of the one room, not
+        // sibling doors on the hub (the filing doc's Phase 4, ruled in on 08-27).
+        run {
+            val folders = com.toolsboox.plugin.calendar.ot.LedgerDocuments.allFolders(ctx)
+            if (folderLens != null) {
+                rows += DirRow("\ud83d\udcc1", "${folderLens} \u00b7 showing this folder",
+                               "tap to show everything") { showNotebook(fragment, date, null) }
+            } else if (folders.isNotEmpty()) {
+                rows += DirRow("\ud83d\udcc1", "Folders\u2026") {
+                    val fr = folders.map { name ->
+                        "\ud83d\udcc1  $name" to { showNotebook(fragment, date, name) }
+                    }
+                    val d = androidx.appcompat.app.AlertDialog.Builder(
+                        com.toolsboox.ot.ModalScale.wrap(fragment.requireContext()))
+                        .setTitle("Folders")
+                        .setItems(fr.map { it.first }.toTypedArray()) { _, i -> fr[i].second() }
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .create()
+                    fragment.showModal(d)
+                }
+            }
+        }
+        rows += DirRow("#", "Tags\u2026") { showTagIndex(fragment) }
+        rows += DirRow("\ud83d\udd17", "Links\u2026") { showLinkIndex(fragment) }
+        // 🗓 NOTES & TAGS from All notes (Michael 2026-10-11, "Name parity": the B6 shape on both
+        // apps — Tags, Links and Notes & Tags live in All notes' foot, not as Hub rows). It is also
+        // the almanac's period lens on every notes surface; this is the door you can find from
+        // the directory. Opens on the week around [date], as the Directory's Notes row does.
+        rows += DirRow("\ud83d\uddd3", "Notes & Tags\u2026") {
+            com.toolsboox.plugin.calendar.ui.NotesTagsFragment.open(fragment, date, "week")
+        }
+        rows += DirRow("\uff0b", "New note\u2026") {
+            val last = lastNoteTemplate(ctx)
+            if (last != null && last in docs0.TEMPLATES) createNoteOfTemplate(fragment, last, date)
+            else showNewNotePicker(fragment, date)
+        }
+        rows
+    }
+}
+
 fun showDocumentDirectory(
     fragment: ScreenFragment,
     surface: String,
@@ -2353,7 +3730,7 @@ fun showPickHarvest(fragment: ScreenFragment) {
         orientation = android.widget.LinearLayout.VERTICAL
         setPadding((18 * dp).toInt(), (8 * dp).toInt(), (18 * dp).toInt(), 0)
         addView(android.widget.TextView(ctx).apply {
-            text = "Three notes and up to three quotes — verbatim — as cards on a Pickings board."
+            text = "Three notes and up to three quotes — verbatim — as cards on a Pickings note."
             textSize = 13f; setTextColor(0xFF666666.toInt())
             setPadding(0, 0, 0, (10 * dp).toInt())
         })
@@ -2369,20 +3746,29 @@ fun showPickHarvest(fragment: ScreenFragment) {
                 val title = titleIn.text.toString().trim()
                 fragment.showMessage("Harvesting\u2026", fragment.requireView())
                 Thread {
-                    val note = runCatching {
+                    // Says WHICH failure it was — see PickHarvest.Outcome. "Nothing worth keeping
+                    // came back" was standing in for a missing key and an unreachable page alike.
+                    val outcome = runCatching {
                         com.toolsboox.plugin.calendar.ot.PickHarvest.run(
                             ctx,
-                            com.toolsboox.plugin.calendar.fi.CalendarDayService(),
+                            com.toolsboox.plugin.calendar.fi.CalendarDayService.standalone(ctx),
                             com.toolsboox.ot.LedgerPaths.documentsRoot(ctx),
                             if (url.startsWith("http")) url else "https://$url",
                             title,
                         )
-                    }.getOrNull()
+                    }.getOrElse {
+                        com.toolsboox.plugin.calendar.ot.PickHarvest.Outcome.Failed(
+                            "The harvest failed: ${it.message ?: it::class.simpleName}")
+                    }
                     runCatching {
                         fragment.requireActivity().runOnUiThread {
                             fragment.showMessage(
-                                if (note == null) "Nothing worth keeping came back."
-                                else "Pickings \u00B7 ${note.name}",
+                                when (outcome) {
+                                    is com.toolsboox.plugin.calendar.ot.PickHarvest.Outcome.Ok ->
+                                        "Pickings \u00B7 ${outcome.note.name}"
+                                    is com.toolsboox.plugin.calendar.ot.PickHarvest.Outcome.Failed ->
+                                        outcome.reason
+                                },
                                 fragment.requireView(),
                             )
                         }
@@ -2430,19 +3816,26 @@ fun showResearch(fragment: ScreenFragment) {
                 if (topic.isBlank()) return@setPositiveButton
                 fragment.showMessage("Researching \u201C$topic\u201D\u2026", fragment.requireView())
                 Thread {
-                    val note = runCatching {
+                    val attempt = runCatching {
                         com.toolsboox.plugin.calendar.ot.ResearchAssistant.run(
                             ctx,
-                            com.toolsboox.plugin.calendar.fi.CalendarDayService(),
+                            com.toolsboox.plugin.calendar.fi.CalendarDayService.standalone(ctx),
                             com.toolsboox.ot.LedgerPaths.documentsRoot(ctx),
                             topic,
                         )
-                    }.getOrNull()
+                    }
+                    val note = attempt.getOrNull()
                     runCatching {
                         fragment.requireActivity().runOnUiThread {
                             fragment.showMessage(
-                                if (note == null) "Nothing solid came back \u2014 no page made."
-                                else "Jots \u00B7 ${note.name}",
+                                when {
+                                    note != null -> "Jots \u00B7 ${note.name}"
+                                    // The research came back but today's page refused the write:
+                                    // not "nothing solid came back", which blamed the model.
+                                    else -> com.toolsboox.plugin.calendar.fi.CalendarDayService
+                                        .refusal(attempt.exceptionOrNull(), "make the page")
+                                        ?: "Nothing solid came back \u2014 no page made."
+                                },
                                 fragment.requireView(),
                             )
                         }
@@ -2488,13 +3881,20 @@ fun showLinkIndex(fragment: ScreenFragment) {
     }
     // The names anything is actually called, so a target can be told from an owed one. Read once,
     // outside the redraw: it is a directory scan, and doing it per keystroke would put a disk walk
-    // behind the keyboard.
-    val known = com.toolsboox.plugin.calendar.ot.LedgerDocuments.TEMPLATES.flatMap { t ->
-        runCatching {
-            com.toolsboox.plugin.calendar.ot.LedgerDocuments
-                .forSurface(ctx, t, LocalDate.now()).map { it.title }
-        }.getOrDefault(emptyList())
+    // behind the keyboard. THE NOTEBOOK'S OWN ALL-TIME WALK ([namedNotes]), not forSurface(now):
+    // that saw only the templates' registries and TODAY's boards and text notes, so a board or
+    // text note named on another day — or a synthesis topic — read as owed (Michael 2026-10-11:
+    // "The links aren't quite working yet"). The same list resolves the tap below.
+    // The registries' background sync first, as the Notebook does on opening, so a name made on the
+    // iPad reaches this list's next opening (fire-and-forget; the walk below reads what is here).
+    val docs0 = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+    for (surface in docs0.TEMPLATES + docs0.SYNTHESIZE) {
+        runCatching { docs0.sync(ctx, surface, LocalDate.now()) }
     }
+    val named = namedNotes(ctx)
+    // Normalised ONCE into a set: the list is now every name across all time, and resolving each
+    // target against it per redraw (a normalise per name per target per keystroke) grew with it.
+    val known = named.mapTo(HashSet()) { links.normalise(it.second.title) }
 
     showDirectoryList(
         fragment,
@@ -2508,34 +3908,123 @@ fun showLinkIndex(fragment: ScreenFragment) {
         if (shown.isEmpty()) rows += DirRow("", "Nothing matches “$query”.", null, 1, closes = false) {}
         for (target in shown) {
             val from = links.backlinks(ctx, target)
-            val lands = links.resolves(target, known)
+            // Text Notes that link here (their [[links]] are harvested on save, 2026-10-11).
+            val fromObjects = links.objectBacklinks(ctx, target)
+            val lands = links.normalise(target) in known
             rows += DirRow(
                 if (lands) "🔗" else "◇",
                 target,
                 // The count is the useful fact about a link — one mention is a thought, six is a
                 // theme — and "owed" says the other thing worth knowing in one word.
-                (if (lands) "" else "owed · ") + "${from.size} page" + (if (from.size == 1) "" else "s"),
-                closes = false,
+                (if (lands) "" else "owed · ") + "${from.size} page" + (if (from.size == 1) "" else "s") +
+                    (if (fromObjects.isEmpty()) "" else " · ${fromObjects.size} note" + (if (fromObjects.size == 1) "" else "s")),
+                // A landing link leaves the index for its note, like a backlink row does; an owed
+                // one keeps the index behind the template chooser it raises.
+                closes = lands,
             ) {
                 // An owed link is a note you told yourself to write. Tapping it offers to write
-                // it — the gesture completed rather than merely reported. A link that already
-                // lands has nothing to offer here; its backlinks are the point, and they are
-                // already listed underneath.
+                // it — the gesture completed rather than merely reported. A link that LANDS opens
+                // the note it names (Michael 2026-10-11): before, the tap did nothing and nothing
+                // anywhere went from [[Collider]] to the note called Collider. Its backlinks stay
+                // listed underneath, one tap each, as they were.
                 if (!lands) offerToWrite(fragment, target)
+                else if (!openNamedNote(fragment, target, named)) offerToWrite(fragment, target)
             }
             // The pages that point here, indented under it. This IS the backlink list; a separate
             // screen for it would be a second tap to see the only thing the row is about.
             for (occ in from.take(12)) {
                 rows += DirRow("↳", occ.pageKey, occ.date.toString(), 1) {
-                    com.toolsboox.plugin.calendar.CalendarNavigator.toDayNote(
-                        fragment, occ.date, occ.pageKey)
+                    openPageOccurrence(fragment, occ.date, occ.pageKey)
                 }
             }
             if (from.size > 12) {
                 rows += DirRow("", "…and ${from.size - 12} more", null, 1, closes = false) {}
             }
+            for ((uri, label) in fromObjects.take(12)) {
+                rows += DirRow("↳", "${objectGlyph(uri)}  $label", objectKind(uri), 1) {
+                    openTaggedObject(fragment, uri, label)
+                }
+            }
         }
         rows
+    }
+}
+
+/** The glyph an "Also tagged" / backlink object row wears — the app's own marks for each kind. */
+internal fun objectGlyph(uri: String): String {
+    val scheme = uri.substringBefore("://", "").lowercase()
+    return when (scheme) {
+        "note" -> "Ⓣ"
+        "email", "mail" -> "✉"
+        "http", "https", "web" -> "🌐"
+        "book" -> "📖"
+        "journal", "wppost", "community" -> "📰"
+        "avgram" -> "🎙"
+        "task", "sitetask" -> "🃏"
+        "contact" -> "👤"
+        "clipping" -> "🖼"
+        "siteboard" -> "▦"
+        else -> "↪"
+    }
+}
+
+/** One word for what an object row is, under its label. */
+internal fun objectKind(uri: String): String = when (uri.substringBefore("://", "").lowercase()) {
+    "note" -> "text note"
+    "email", "mail" -> "email"
+    "http", "https", "web" -> uri.substringAfter("://").removePrefix("https://").removePrefix("http://")
+        .substringBefore('/')
+    "book" -> "book"
+    "journal" -> "archive post"
+    "wppost" -> "post"
+    "community" -> "community post"
+    "avgram" -> "recording"
+    "task", "sitetask" -> "task"
+    "contact" -> "contact"
+    "clipping" -> "clipping"
+    "siteboard" -> "board"
+    else -> uri.substringBefore("://", "object")
+}
+
+/**
+ * OPEN A TAGGED OBJECT where it lives — an "Also tagged" row, a Text Note backlink. Pages go through
+ * [openPageOccurrence]; a note:// through [followNoteLink] (a Text Note's own id, or a name); mail
+ * to its letter in The Mail; a web address INSIDE Ledgable (the in-pane reader, the gram router's
+ * landing — Michael 2026-10-11: web-link cards open in Ledgable); a book in the reader; tasks and
+ * contacts in their rooms. Anything this device has no room for opens its rhizome card, so a row
+ * always goes somewhere and never says "can't open" about a thing that has connections to show.
+ */
+internal fun openTaggedObject(fragment: ScreenFragment, uri: String, label: String) {
+    val nav = NavHostFragment.findNavController(fragment)
+    val scheme = uri.substringBefore("://", "").lowercase()
+    val body = uri.substringAfter("://")
+    when (scheme) {
+        "ledger" -> com.toolsboox.plugin.calendar.ot.LedgerTags.pageOfEnd(uri)
+            ?.let { openPageOccurrence(fragment, it.first, it.second) }
+        // A Text Note found nowhere was deleted (or hasn't synced here) — not an owed [[link]],
+        // which is what the default wording says (review of dbe1a38d).
+        "note" -> followNoteLink(fragment, body,
+            missing = "\u201c${label.ifBlank { body }}\u201d isn't on this device \u2014 it was deleted, or hasn't synced yet.")
+        "email", "mail" -> openMailRoom(nav, mode = "both", letterId = body)
+        "http", "https", "web" -> {
+            // web://<url> carries the whole address; a bare host gets https:// (the iOS port's webURL rule).
+            val url = if (scheme != "web") uri else if (body.contains("://")) body else "https://$body"
+            FeedSelection.pendingInPaneEntry = com.toolsboox.plugin.feeds.da.FeedEntry(
+                id = url.hashCode().toLong(), title = label.ifBlank { url }, feedTitle = "", url = url,
+                author = null, content = "",   // blank = load the live page (the gram router's sentinel)
+                publishedAt = java.time.Instant.now().toString(), starred = false)
+            nav.navigate(R.id.action_to_feeds)
+        }
+        "book" -> {
+            fragment.requireContext().getSharedPreferences("ledger_reader_prefs", 0).edit()
+                .putString("current_book_path", body).apply()
+            nav.navigate(R.id.action_to_reader)
+        }
+        "task" -> nav.navigate(R.id.action_to_ledger_items)
+        "contact" -> nav.navigate(R.id.action_to_rolodex)
+        else -> nav.navigate(R.id.action_to_ledger_rhizome, androidx.core.os.bundleOf(
+            com.toolsboox.plugin.calendar.ui.LedgerRhizomeFragment.ARG_URI to uri,
+            com.toolsboox.plugin.calendar.ui.LedgerRhizomeFragment.ARG_LABEL to label))
     }
 }
 
@@ -2565,7 +4054,7 @@ fun showTagIndex(fragment: ScreenFragment) {
     if (tags.isEmpty()) {
         androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Tags")
-            .setMessage("No #tags yet. Write #something on a page — it's harvested when the page's ink is captured.")
+            .setMessage("No #tags yet. Write #something on a page or in a Text Note — a page's is harvested when its ink is captured.")
             .setPositiveButton("Close", null)
             .show()
         return
@@ -2595,12 +4084,20 @@ fun showTagIndex(fragment: ScreenFragment) {
         // which is most-used first, and that is the ordering this index has always opened with.
         val ordered = when (sort) {
             DirectorySort.NAME -> shown.sortedBy { it.tag }
-            DirectorySort.DATE -> shown.sortedByDescending { t -> t.occurrences.maxOf { it.first } }
+            DirectorySort.DATE -> shown.sortedByDescending { t -> t.occurrences.maxOfOrNull { it.first } ?: LocalDate.MIN }
             DirectorySort.KIND -> shown
         }
         if (ordered.isEmpty()) rows += DirRow("", "Nothing matches “$query”.", null, 1, closes = false) {}
         for (t in ordered) {
-            rows += DirRow("#", t.tag, "${t.occurrences.size} pages") { showTagPages(fragment, t) }
+            // Pages, and — since 2026-10-11 — the objects that wear it too ("Also tagged": Text
+            // Notes, emails, articles), so a tag used only on those still has a row here.
+            val pages = t.occurrences.size
+            val also = t.objects.size
+            val detail = buildString {
+                append("$pages page" + if (pages == 1) "" else "s")
+                if (also > 0) append("  \u00b7  $also also tagged")
+            }
+            rows += DirRow("#", t.tag, detail) { showTagPages(fragment, t) }
         }
         rows += DirRow("‹", "All of the Ledger…") { showLedgerRootDirectory(fragment) }
         rows
@@ -2614,7 +4111,7 @@ fun showTagIndex(fragment: ScreenFragment) {
  *  On the shared [showDirectoryList] chassis, like every other hop in the drawer — this was the
  *  ONE directory still shipping as a bare setItems alert, so the last step of tag navigation
  *  dropped the idiom (no filter, no sort, no way back) exactly where a hot tag has the most rows. */
-private fun showTagPages(fragment: ScreenFragment, tag: com.toolsboox.plugin.calendar.ot.LedgerTags.TagInfo) {
+fun showTagPages(fragment: ScreenFragment, tag: com.toolsboox.plugin.calendar.ot.LedgerTags.TagInfo) {
     val ctx = fragment.requireContext()
     val occ = tag.occurrences
     showDirectoryList(
@@ -2622,7 +4119,7 @@ private fun showTagPages(fragment: ScreenFragment, tag: com.toolsboox.plugin.cal
         title = "#${tag.tag}",
         // Same threshold as the document directory: on a tag written six times the field would be
         // a box asking you to type what you can already see.
-        searchHint = if (occ.size > 6) "Find a page" else null,
+        searchHint = if (occ.size + tag.objects.size > 6) "Find a page" else null,
         empty = "No pages yet.",
     ) { query, redraw ->
         val sort = directorySort(ctx)
@@ -2644,10 +4141,23 @@ private fun showTagPages(fragment: ScreenFragment, tag: com.toolsboox.plugin.cal
                     .thenByDescending { it.first })
             else -> shown.sortedByDescending { it.first }
         }
-        if (ordered.isEmpty()) rows += DirRow("", "Nothing matches “$query”.", null, 1, closes = false) {}
+        val objects = tag.objects.filter { q.isEmpty() || it.label.lowercase().contains(q) || it.uri.lowercase().contains(q) }
+        if (ordered.isEmpty() && objects.isEmpty()) rows += DirRow("", "Nothing matches “$query”.", null, 1, closes = false) {}
         for ((date, page, rect) in ordered) {
             rows += DirRow(if (rect != null) "✎" else "", date.toString(), page) {
-                CalendarNavigator.toDayNote(fragment, date, page, rect)
+                openPageOccurrence(fragment, date, page, rect)
+            }
+        }
+        // ALSO TAGGED — the tag's non-page neighbours in the synced graph: Text Notes, emails,
+        // articles, posts, picks tagged on either device (Michael 2026-10-11: "tags aren't
+        // complete"). They were edges only, so the Tags list never showed them. Each opens where
+        // it lives ([openTaggedObject]). PARITY: iOS TagsIndexView has no such section yet.
+        if (objects.isNotEmpty()) {
+            rows += DirRow("", "Also tagged", null, 1, closes = false) {}
+            for (o in objects) {
+                rows += DirRow(objectGlyph(o.uri), o.label, objectKind(o.uri), 1) {
+                    openTaggedObject(fragment, o.uri, o.label)
+                }
             }
         }
         // Up, not out — the drawer's terminal row: back to the index this tag was picked from.
@@ -2679,21 +4189,68 @@ private fun showTagPages(fragment: ScreenFragment, tag: com.toolsboox.plugin.cal
 // end of the Filter funnel (All Stars → Gram Picks → Pickings), which is a different question from
 // "which template is this note" and reaches the same surface a different way.
 
+/** The Hub's folder names for the two rooms — the home keys and the drawn titles are one string,
+ *  so the fold the hub opens on and the folder it names can't drift apart. */
+const val FEEDS_HOME = "Feeds"
+val MAIL_HOME: String get() = IncomingDoors.Door.THE_MAIL.title
+
+/** The Mail fold: its rows, and the per-account folds hung off the account rows by label. */
+internal class MailFold(
+    val rows: List<Pair<String, () -> Unit>>,
+    val subFolds: Map<String, List<Pair<String, () -> Unit>>>,
+)
+
 /**
- * The configured mailboxes, as the Mail row's sub-fold — the Boox half of the iPad's accounts
- * rail, where each account is listed beside the feeds rather than hidden behind a chip inside the
- * inbox. Reaching one mailbox should cost the same as reaching one feed; it was costing a
- * navigation plus a chip plus an accordion. (These were leading-space fake-indented rows once;
- * now the fold is real, they carry plain labels and the renderer owns the depth.)
- *
- * Nothing is listed when there is only one account: a lone row under "Mail" says nothing "Mail"
- * didn't already say, and a directory earns its length by every row being a real choice.
+ * The Mail fold's rows, in Michael's order (2026-10-11: "Inbox then starred then @gmail is the
+ * preferred order in mail" · "Mail accounts also have individual sents, junks, trash. That can be
+ * a drop down under each account" · "Can you put contacts in mail (currently in desk)?") — the Boox
+ * half of the iPad's accounts rail. Reaching one mailbox costs the same as reaching one feed.
+ *  - 📥 Inbox (every account; "· all accounts" once there are two), ⭐ Starred (every account's
+ *    kept pile — the Mail widget's face).
+ *  - One "@ account" row per account — EVEN THE ONLY ONE, since its disclosure is where its Sent,
+ *    Junk and Trash live. The label is that account's Inbox; its caret ([MailFold.subFolds],
+ *    remembered per row like Later List's) holds 📥 Inbox · ➤ Sent · 🚫 Junk · 🗑 Trash for that
+ *    account. Labels are unique ([MailPlace.AccountLabel]) — the caret is keyed by its row's label.
+ *    (The every-account ➤ Sent and 🗑 Trash rows these replace left the fold; they stand at the foot
+ *    of The Mail's own drawer, for the letters no account owns — FluentCRM's, the samples.)
+ *  - 👤 Contacts — the Rolodex, in from the Desk.
+ *  - "⚙ Mail accounts…" (or "➕ Add a mail account…" with none) — always (rule of 09-07); ⚙ as on
+ *    iOS, since every account row now wears @.
+ * Labels come from [MailPlace.Box], the one list the Mail drawer reads too.
+ * Opened from inside The Mail's room, a row REPLACES that room ([openMailRoom]'s popMail) and the
+ * accounts door is the room's own editor, which lets go of a deleted account at once.
  */
-private fun mailAccountRows(
-    fragment: ScreenFragment,
-    open: (String?) -> Unit,
-): List<Pair<String, () -> Unit>> {
+internal fun mailFold(fragment: ScreenFragment): MailFold {
+    val nav = NavHostFragment.findNavController(fragment)
     val accounts = com.toolsboox.plugin.mail.MailAccountStore.all(fragment.requireContext())
-    if (accounts.size < 2) return emptyList()
-    return accounts.map { a -> "@  ${a.display}" to { open(a.id) } }
+    val room = (fragment as? FeedsFragment)?.takeIf { it.isMailRoom }
+    val inMail = room != null
+    val rows = mutableListOf<Pair<String, () -> Unit>>()
+    val subFolds = linkedMapOf<String, List<Pair<String, () -> Unit>>>()
+    for (box in MailPlace.Box.TOP) rows += box.label(accounts.size) to {
+        when (box) {
+            MailPlace.Box.STARRED -> openMailRoom(nav, mailbox = MailPlace.ALL_ACCOUNTS, mode = "stars", popMail = inMail)
+            else -> openMailRoom(nav, mailbox = MailPlace.ALL_ACCOUNTS, popMail = inMail)
+        }
+    }
+    // Unique per account (review 2026-10-11): the drop-downs below — and their remembered state —
+    // are keyed by this label, so two accounts sharing a display name must not share a row.
+    val names = MailPlace.AccountLabel.all(accounts.map { Triple(it.id, it.display, it.email) })
+    for (a in accounts) {
+        val label = names.getValue(a.id)
+        rows += label to { openMailRoom(nav, mailbox = a.id, popMail = inMail) }
+        subFolds[label] = MailPlace.Box.PER_ACCOUNT.map { box ->
+            box.label() to { openMailRoom(nav, mailbox = MailPlace.of(box, a.id), popMail = inMail) }
+        }
+    }
+    rows += "👤  Contacts" to { nav.navigate(R.id.action_to_rolodex) }
+    rows += (if (accounts.isEmpty()) "➕  Add a mail account…" else "⚙  Mail accounts…") to {
+        if (room != null) room.showMailAccounts()
+        else com.toolsboox.plugin.mail.ui.MailVerbs.showAccountsList(fragment, onChanged = {})
+    }
+    return MailFold(rows, subFolds)
 }
+
+/** A remembered audio/artwork address, made playable now (an Audiobookshelf path gets its token). */
+private fun resolveMedia(ctx: android.content.Context, url: String): String =
+    if (url.startsWith("/api/")) com.toolsboox.plugin.reader.ui.Audiobookshelf.resolve(ctx, url) else url

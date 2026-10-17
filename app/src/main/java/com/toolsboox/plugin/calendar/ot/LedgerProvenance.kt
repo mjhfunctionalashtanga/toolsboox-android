@@ -125,6 +125,12 @@ object LedgerProvenance {
      * The stamp for a page. [text] is the page's words — typed, or recognised — and is read ONLY
      * for the links in it, using [LedgerLinkedPdf.urlsIn] so the stamp's source list and the PDF's
      * index page can never disagree about what counts as a link on this page.
+     *
+     * [elementLinks] is the OTHER place a page's provenance lives: the `sourceLink` fields of its
+     * placed grams. A Gram Picks page has no text at all — its whole citation list is its
+     * elements' doors — so a stamp read from text alone left the one page made entirely of
+     * sources looking sourceless. Element links come FIRST (they are exact, minted at pick time;
+     * text links are whatever the OCR read), deduped against the text's.
      */
     fun of(
         context: Context,
@@ -133,15 +139,25 @@ object LedgerProvenance {
         pageKey: String?,
         title: String,
         text: String,
+        elementLinks: List<String> = emptyList(),
     ): Stamp = Stamp(
         surface = surface,
         date = date,
         title = title.trim(),
         canonicalUrl = publishedUrl(context, date, pageKey),
-        // Capped at eight: past that the block stops being a citation and starts being a second
-        // page of small print underneath a picture. The PDF's index page still lists them all.
-        sourceLinks = LedgerLinkedPdf.urlsIn(text).take(8),
+        sourceLinks = mergeSourceLinks(elementLinks, text),
     )
+
+    /**
+     * The stamp's source list: element doors first (exact, minted at pick time; text links are
+     * whatever the OCR read), deduped, http only — a gram's `ledger://` or `book://` door means
+     * nothing to a reader outside the app. Capped at eight: past that the block stops being a
+     * citation and starts being a second page of small print underneath a picture. The PDF's
+     * index page still lists them all.
+     */
+    fun mergeSourceLinks(elementLinks: List<String>, text: String): List<String> =
+        (elementLinks.filter { it.startsWith("http") } + LedgerLinkedPdf.urlsIn(text))
+            .distinct().take(8)
 
     /** "Write · 2026-07-29 · Rooms on Other People's Land" — the one line that says where this is
      *  from. The title is dropped when it IS the date, which is how an unnamed document is titled;

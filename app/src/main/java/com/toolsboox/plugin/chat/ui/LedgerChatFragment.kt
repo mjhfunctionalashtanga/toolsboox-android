@@ -708,14 +708,33 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
             original = existing?.name.orEmpty(),
             prompt = existing?.prompt.orEmpty(),
             onSave = { name, prompt ->
-                // Personas key on name, so a rename has to retire the old key or you get two.
-                if (existing != null && existing.name != name) {
-                    com.toolsboox.plugin.chat.nw.PersonaStore.delete(ctx, existing.name)
+                fun save(retireOld: Boolean) {
+                    // Personas key on name, so a rename has to retire the old key or you get two.
+                    // The tombstone carries the new name, so a Synthesize page still in the old voice
+                    // (on any device) answers in the renamed one.
+                    if (retireOld && existing != null) {
+                        com.toolsboox.plugin.chat.nw.PersonaStore.delete(ctx, existing.name, renamedTo = name)
+                    }
+                    com.toolsboox.plugin.chat.nw.PersonaStore.upsert(
+                        ctx, com.toolsboox.plugin.chat.nw.Persona(name, prompt))
+                    com.toolsboox.plugin.chat.nw.PersonaStore.setActive(ctx, name)
+                    updatePersonaLabel()
                 }
-                com.toolsboox.plugin.chat.nw.PersonaStore.upsert(
-                    ctx, com.toolsboox.plugin.chat.nw.Persona(name, prompt))
-                com.toolsboox.plugin.chat.nw.PersonaStore.setActive(ctx, name)
-                updatePersonaLabel()
+                if (existing == null || existing.name == name) save(retireOld = false)
+                else {
+                    // "New / Edit…" opens on the ACTIVE persona, so a new name typed there was always
+                    // a rename — and since the set syncs, that rename retires the old one on every
+                    // device and moves its pages to the new voice (review of b29cabbc). Asked once;
+                    // "Keep both" makes it the new persona it may have been meant as.
+                    val was = com.toolsboox.plugin.calendar.ot.SynthVoice.shortName(existing.name)
+                    val now = com.toolsboox.plugin.calendar.ot.SynthVoice.shortName(name)
+                    showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                        .setTitle("Rename $was to $now?")
+                        .setMessage("Pages in $was's voice will follow.")
+                        .setPositiveButton("Rename") { _, _ -> save(retireOld = true) }
+                        .setNegativeButton("Keep both") { _, _ -> save(retireOld = false) }
+                        .create())
+                }
             },
             onDelete = if (existing == null) null else { name ->
                 com.toolsboox.plugin.chat.nw.PersonaStore.delete(ctx, name); updatePersonaLabel()
@@ -765,6 +784,35 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
                 ).apply { marginEnd = gap }
             }
 
+        // ── The two computed questions (Michael's 08-23 ruling: "Quick Wins and Missed
+        // Connections can be built into Ask"). They were surfaces; they are ANSWERS — each chip
+        // runs its engine off-main, rides the result behind the question as ask_context (the
+        // same rail a shared passage rides), and the LLM presents it in the conversation where
+        // follow-ups are possible. The standalone screens' doors are gone from Daily; the
+        // machinery lives on here.
+        row.addView(chip("⚡ Quick wins", onTap = { askComputed(
+            question = "What are my quick wins right now? Pick the few that unlock the most, and say why.",
+            label = "Quick wins"
+        ) {
+            com.toolsboox.plugin.calendar.ot.QuickWinsEngine
+                .compute(ctx.applicationContext, corpusService, calendarDayService, documentsRoot())
+                .take(8)
+                .joinToString("\n") { w ->
+                    "- ${w.text} (${w.sourceDay}${if (w.committed) ", committed" else ""}" +
+                        (w.reasons.takeIf { it.isNotEmpty() }?.joinToString("; ", prefix = " — ") ?: "") + ")"
+                }
+        } }, onHold = null))
+        row.addView(chip("✧ Missed connections", onTap = { askComputed(
+            question = "These are things from my feeds that connect to my own roots and I never followed. What patterns do you see, and which two are worth picking up?",
+            label = "Missed connections"
+        ) {
+            com.toolsboox.plugin.calendar.ot.MissedRhizomes
+                .discover(ctx.applicationContext, corpusService, documentsRoot())
+                .take(10)
+                .joinToString("\n") { f ->
+                    "- \"${f.entryTitle}\" (${f.feedName}) → your #${f.rootTag}: ${f.quote.take(160)}"
+                }
+        } }, onHold = null))
         for (preset in com.toolsboox.plugin.chat.nw.AskPresetStore.all(ctx)) {
             row.addView(chip(preset.name, onTap = {
                 // The prompt goes into the visible question box rather than straight to the wire,
@@ -777,6 +825,24 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
             }, onHold = { showPresetEditor(preset) }))
         }
         row.addView(chip("＋ Preset", onTap = { showPresetEditor(null) }, onHold = null))
+    }
+
+    /** Run [gather] off-main, ride its result behind [question] as the ask-context, and ask.
+     *  An empty gather says so instead of asking the model to imagine one. */
+    private fun askComputed(question: String, label: String, gather: () -> String) {
+        android.widget.Toast.makeText(requireContext(), "Reading the ledger…", android.widget.Toast.LENGTH_SHORT).show()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val data = withContext(Dispatchers.IO) { runCatching(gather).getOrDefault("") }
+            if (!isAdded) return@launch
+            if (data.isBlank()) {
+                android.widget.Toast.makeText(requireContext(), "$label: nothing found right now.", android.widget.Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            askContext = "$label, computed from the ledger just now:\n$data"
+            binding.questionEdit.setText(question)
+            binding.questionEdit.setSelection(binding.questionEdit.text?.length ?: 0)
+            ask(voiced = false)
+        }
     }
 
     /** New / edit / delete a preset, through the same form the personas use. */
@@ -917,7 +983,10 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
 
         lifecycleScope.launch {
             val outcome = withContext(Dispatchers.IO) {
-                val persona = com.toolsboox.plugin.chat.nw.PersonaStore.activePrompt(requireContext())
+                // The sites' pages closest to the question ride in with the persona, so the
+                // answer can cite them by URL — and every cited page becomes a gram below.
+                val persona = com.toolsboox.plugin.chat.nw.PersonaStore.activePrompt(requireContext()) +
+                    com.toolsboox.plugin.calendar.nw.SiteLinker.referenceBlock(requireContext(), question)
                 val registry = NotebotRegistry.build(
                     requireContext().applicationContext, corpusService, calendarDayService,
                     documentsRoot(), scope)
@@ -940,6 +1009,8 @@ class LedgerChatFragment @Inject constructor() : ScreenFragment() {
                         requireContext(), question, outcome.text, sessionId)
                     // Voice in → voice out (or the remembered toggle's override).
                     if (shouldSpeak(voiced)) speak(outcome.text)
+                    // The pages it cited → a new note of picks, and the walk goes there.
+                    com.toolsboox.plugin.feeds.ui.placeCitedSiteGramsOntoNewNote(this@LedgerChatFragment, question, outcome.text)
                 }
                 is NotebotLoop.Outcome.Err -> {
                     answerView.text = "⚠️ " + outcome.message

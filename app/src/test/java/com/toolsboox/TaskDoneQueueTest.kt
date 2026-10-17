@@ -44,7 +44,7 @@ class TaskDoneQueueTest {
     private fun service(): CalendarDayService {
         val moshi = Moshi.Builder()
             .add(LocaleJsonAdapter()).add(DateJsonAdapter()).add(UUIDJsonAdapter()).build()
-        return CalendarDayService().apply { this.moshi = moshi }
+        return CalendarDayService(moshi)
     }
 
     private fun task(text: String, done: Boolean = false) = LedgerItem(
@@ -167,7 +167,7 @@ class DayFileConcurrentSaveTest {
     fun concurrentSavesNeverTearTheDayFile() {
         val moshi = Moshi.Builder()
             .add(LocaleJsonAdapter()).add(DateJsonAdapter()).add(UUIDJsonAdapter()).build()
-        val svc = CalendarDayService().apply { this.moshi = moshi }
+        val svc = CalendarDayService(moshi)
         val root = Files.createTempDirectory("tear").toFile()
         val d = LocalDate.of(2026, 8, 12)
 

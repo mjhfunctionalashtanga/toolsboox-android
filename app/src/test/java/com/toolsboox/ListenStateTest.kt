@@ -79,6 +79,44 @@ class ListenStateTest {
         assertTrue(ListenState.merge(listOf(killed), listOf(live)).single().isDeleted)
     }
 
+    // ---- the naming fields fill, never blank ---------------------------------------------
+
+    @Test
+    fun `a newer write with no art keeps the art the other copy had`() {
+        // The iPhone stored the cover; the Boox's newer heartbeat was written before it knew one.
+        val withArt = ep(pos = 600_000L, updated = 100L).copy(
+            title = "Ep 1", show = "The Show", artworkUrl = "https://img.example/cover.jpg",
+            audioUrl = "https://cdn.example/ep1.mp3")
+        val bare = ep(pos = 900_000L, updated = 200L)
+        for (merged in listOf(
+            ListenState.merge(listOf(withArt), listOf(bare)).single(),
+            ListenState.merge(listOf(bare), listOf(withArt)).single()
+        )) {
+            assertEquals(900_000L, merged.positionMs)   // the playhead still follows the newer write
+            assertEquals("https://img.example/cover.jpg", merged.artworkUrl)
+            assertEquals("Ep 1", merged.title)
+            assertEquals("The Show", merged.show)
+            assertEquals("https://cdn.example/ep1.mp3", merged.audioUrl)
+        }
+    }
+
+    @Test
+    fun `a filled field on the newer write wins over the older one`() {
+        val old = ep(updated = 100L).copy(artworkUrl = "https://img.example/old.jpg")
+        val new = ep(updated = 200L).copy(artworkUrl = "https://img.example/new.jpg")
+        assertEquals("https://img.example/new.jpg", ListenState.merge(listOf(old), listOf(new)).single().artworkUrl)
+        assertEquals("https://img.example/new.jpg", ListenState.merge(listOf(new), listOf(old)).single().artworkUrl)
+    }
+
+    @Test
+    fun `filling names never resurrects a tombstone`() {
+        val live = ep(updated = 100L).copy(artworkUrl = "https://img.example/cover.jpg")
+        val killed = ep(updated = 200L, deletedAt = 200L)
+        val merged = ListenState.merge(listOf(live), listOf(killed)).single()
+        assertTrue(merged.isDeleted)
+        assertEquals("https://img.example/cover.jpg", merged.artworkUrl)
+    }
+
     // ---- the finish line -----------------------------------------------------------------
 
     @Test

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Nib: back to your note — a pencil tip, the floating notes button's own pencil and iOS's pencil.tip.
+     One panel face family (review 2026-10-11, F5; Michael: "Icons lack design language"): the ink
+     tools' geometry — 256 grid, 16-unit round strokes, outline at rest; a filled face only for an
+     ON state (Star). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="256" android:viewportHeight="256"
+    android:tint="#000000">
+    <path android:pathData="M48,48H208L128,224Z"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+    <path android:pathData="M81,120L97,138L112,120L128,138L144,120L159,138L175,120"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+    <path android:pathData="M108,180H148L128,220Z"
+        android:fillColor="#FF000000" android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"/>
+</vector>

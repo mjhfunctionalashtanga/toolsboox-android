@@ -39,10 +39,7 @@ object CardTreatment {
      * thing someone put there. The margin and the edge are what make it an object.
      */
     fun card(src: Bitmap, tape: Boolean = true): Bitmap {
-        val side = (src.width * 0.05f).coerceAtLeast(12f)
-        // Room for the FULL tape: drawTape's strip is ~0.13·width wide and, rotated 20°, its far
-        // corner reaches ~0.14·width from the card corner. The old 0.06 clipped those ends off.
-        val overhang = if (tape) (src.width * 0.14f).coerceAtLeast(34f) else 0f
+        val (side, overhang) = cardInsets(src.width, tape)
         val out = Bitmap.createBitmap(
             (src.width + side * 2 + overhang * 2).toInt(),
             (src.height + side * 2 + overhang).toInt(),
@@ -65,6 +62,20 @@ object CardTreatment {
             drawTape(c, frame.right, frame.top, InkMount.TAPE_TILT_DEG, src.width)
         }
         return out
+    }
+
+    /**
+     * [card]'s margins for a face [w] wide: the paper (side) and the tape's room (overhang, top and
+     * both sides). The face sits at (overhang + side, overhang + side) in a card
+     * (w + 2·side + 2·overhang) × (h + 2·side + overhang) — what a pick's face slots are mapped
+     * through (PickingsPlacement.storedSlots).
+     */
+    fun cardInsets(w: Int, tape: Boolean = true): Pair<Float, Float> {
+        val side = (w * 0.05f).coerceAtLeast(12f)
+        // Room for the FULL tape: drawTape's strip is ~0.13·width wide and, rotated 20°, its far
+        // corner reaches ~0.14·width from the card corner. The old 0.06 clipped those ends off.
+        val overhang = if (tape) (w * 0.14f).coerceAtLeast(34f) else 0f
+        return side to overhang
     }
 
     /**

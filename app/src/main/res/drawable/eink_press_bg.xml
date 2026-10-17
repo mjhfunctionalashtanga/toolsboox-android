@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- THE E-INK PRESS STATE, in place of the borderless ripple (Michael, 09-13, on the Palma: "the
+     strange crescent behind the hamburger"). `?attr/selectableItemBackgroundBorderless` is a
+     CIRCULAR RIPPLE that animates outward; an e-ink panel repainting in partial mode catches it
+     mid-frame and keeps the arc as a ghost — a crescent behind the button, until a full refresh.
+     No animation here: a flat rounded fill while pressed, nothing otherwise. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="#22000000"/>
+            <corners android:radius="8dp"/>
+        </shape>
+    </item>
+    <item android:drawable="@android:color/transparent"/>
+</selector>

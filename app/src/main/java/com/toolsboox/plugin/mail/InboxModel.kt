@@ -40,6 +40,15 @@ data class InboxMessage(
      */
     val toName: String = "",
     val toEmail: String = "",
+    /**
+     * Attachment metadata (name/mime/size — never bytes; the tap fetches those on demand).
+     * Defaulted and written to JSON only when present, the [html]/[toEmail] compatibility rule;
+     * key names match iOS `InboxAttachment` so the two forks describe a letter the same way.
+     */
+    val attachments: List<InboxAttachment> = emptyList(),
+    /** `Message-ID` / `References` as received — a reply threads onto them (audit 09-10). Additive. */
+    val messageId: String = "",
+    val references: String = "",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("account", account)
@@ -50,6 +59,15 @@ data class InboxMessage(
         .apply { if (html.isNotBlank()) put("html", html) }
         .apply { if (toName.isNotBlank()) put("toName", toName) }
         .apply { if (toEmail.isNotBlank()) put("toEmail", toEmail) }
+        .apply { if (messageId.isNotBlank()) put("messageId", messageId) }
+        .apply { if (references.isNotBlank()) put("references", references) }
+        .apply {
+            if (attachments.isNotEmpty()) put("attachments", org.json.JSONArray().also { arr ->
+                attachments.forEach { a ->
+                    arr.put(JSONObject().put("name", a.name).put("mime", a.mime).put("size", a.size))
+                }
+            })
+        }
 
     /**
      * The same row with the two BULK fields left out — everything the list needs to draw a line and
@@ -79,9 +97,23 @@ data class InboxMessage(
             o.optString("html", ""),                        // pre-html files simply have none
             o.optString("toName", ""),                      // pre-recipient sent rows have no "to"
             o.optString("toEmail", ""),
+            // Pre-attachment files simply have none; a malformed row degrades to none, never throws.
+            o.optJSONArray("attachments")?.let { arr ->
+                (0 until arr.length()).mapNotNull { i ->
+                    arr.optJSONObject(i)?.let { a ->
+                        InboxAttachment(a.optString("name", ""), a.optString("mime", ""), a.optInt("size", 0))
+                    }.takeIf { it?.name?.isNotBlank() == true }
+                }
+            } ?: emptyList(),
+            messageId = o.optString("messageId", ""),
+            references = o.optString("references", "")
         )
     }
 }
+
+/** One attachment's metadata on a letter — the chip the letter view draws; bytes live on the
+ *  server until the tap that asks ([MailSync.attachmentBytes]). Keys mirror iOS. */
+data class InboxAttachment(val name: String, val mime: String, val size: Int)
 
 /**
  * The unified inbox's messages and per-message state.
@@ -137,13 +169,36 @@ object InboxStore {
         prefs(c).edit().putStringSet(key, capped).apply()
     }
 
-    fun isStarred(c: Context, id: String) = ids(c, STAR).contains(id)
-    fun isRead(c: Context, id: String) = ids(c, READ).contains(id)
-    fun isReplied(c: Context, id: String) = ids(c, REPLIED).contains(id)
+    // Membership WITHOUT the copy (audit 09-10): `ids()` clones the whole set so callers can
+    // mutate it, but these three are filter predicates run once or twice per row while the mail
+    // list is gathered — 5,000 rows × a 20,000-id clone each was the list's whole render budget.
+    // The prefs set is only read here, never handed out, so the no-copy read is safe.
+    private fun has(c: Context, key: String, id: String) =
+        prefs(c).getStringSet(key, emptySet())!!.contains(id)
+    fun isStarred(c: Context, id: String) = has(c, STAR, id)
+    fun isRead(c: Context, id: String) = has(c, READ, id)
+    fun isReplied(c: Context, id: String) = has(c, REPLIED, id)
 
     /** True for a synthetic sent row — its id prefix, so the bulk-clear guard can skip it without a
      *  file read. Sent rows are keep-forever (see [recordSent]); this is how the UI keeps them. */
     fun isSent(id: String) = id.startsWith("sent:")
+
+    /**
+     * What your sent rows answered, as [MailThreads.answeredKeys] spells it — each row's parent,
+     * and its chain paired with the person it went to (2026-10-10, critique C3 + review). With
+     * [isReplied] this is what "answered" means: the ↩ on a row, "↩ You replied" on a letter, and
+     * "Letters to answer" clearing. Cached against the sent pile's identity — the list gathers
+     * ask it once per row.
+     */
+    @Volatile private var answeredCache: Pair<List<InboxMessage>, Set<String>>? = null
+
+    fun answeredKeys(c: Context): Set<String> {
+        val sent = sentCache ?: run { loadSent(c); sentCache } ?: emptyList()
+        answeredCache?.let { (src, keys) -> if (src === sent) return keys }
+        val keys = MailThreads.answeredKeys(sent)
+        answeredCache = sent to keys
+        return keys
+    }
 
     fun setStarred(c: Context, m: InboxMessage, v: Boolean) {
         val s = ids(c, STAR); if (v) s.add(m.id) else s.remove(m.id); setIds(c, STAR, s)
@@ -155,13 +210,23 @@ object InboxStore {
         // record a kept message with no letter in it — durability that stores nothing. Hydrating
         // first costs one sidecar read, and only on the starring branch: un-starring writes no
         // content at all, so it stays free of disk reads for the main-thread `unstar` caller.
-        val kept = loadStarred(c)
-        kept.removeAll { it.id == m.id }
-        if (v) kept.add(hydrate(c, m))
-        saveStarred(c, kept)
+        synchronized(pileLock) {
+            val kept = loadStarred(c)
+            kept.removeAll { it.id == m.id }
+            if (v) kept.add(hydrate(c, m))
+            saveStarred(c, kept)
+        }
     }
 
     fun markRead(c: Context, id: String) { val s = ids(c, READ); s.add(id); setIds(c, READ, s) }
+
+    /** Put a letter back to unread (Michael 2026-10-11: Read / Unread where 🕸 Rhizome stood on the
+     *  letter, and on the row's hold — the iOS mail row's swipe on the other app). Per device, as
+     *  [markRead] is: the read set never leaves this device. */
+    fun markUnread(c: Context, id: String) {
+        val s = ids(c, READ)
+        if (s.remove(id)) setIds(c, READ, s)
+    }
 
     /** Mark a message replied-to — a keep-forever event that MIRRORS starring: the id joins the
      *  REPLIED set, is rescued from any prior clear, and the whole body is persisted to its own kept
@@ -179,7 +244,7 @@ object InboxStore {
         // id is exempt from retention either way because [keepForeverIds] reads the id set.
         val msg = (fetched.firstOrNull { it.id == id } ?: loadStarred(c).firstOrNull { it.id == id })
             ?.let { hydrate(c, it) }
-        if (msg != null) {
+        if (msg != null) synchronized(pileLock) {
             val kept = loadReplied(c)
             if (kept.none { it.id == id }) { kept.add(msg); saveReplied(c, kept) }
         }
@@ -192,19 +257,41 @@ object InboxStore {
      *  the fetch window and a restart and stay searchable forever. Sent rows persist purely via this
      *  pile — they carry no live account window and no id set, so nothing ever prunes them. Call OFF
      *  the main thread (it writes a file). */
-    fun recordSent(c: Context, original: InboxMessage, replyText: String) {
+    fun recordSent(
+        c: Context, original: InboxMessage, replyText: String, inkPng: ByteArray? = null,
+        /** The reply's own Message-ID (MailSync.sendReply returns it) — "" when unknown. */
+        messageId: String = "",
+    ) {
         // The from-identity is the account the reply is sent AS — resolved exactly as MailSync.sendReply
-        // resolves it (accountId embedded in the original's id → the configured account). If that can't
-        // be resolved, fall back to the original's account label and a best-effort self name.
-        val aid = MailSync.accountId(original.id)
+        // resolves it (accountId embedded in the original's id → the configured account; a follow-up
+        // to your own letter → the account it went from). If that can't be resolved, fall back to the
+        // original's account label and a best-effort self name.
+        val aid = MailThreads.replyAccountId(original)
         val a = if (aid != null) MailAccountStore.all(c).firstOrNull { it.id == aid } else null
         val subject = if (original.subject.lowercase().startsWith("re:")) original.subject else "Re: ${original.subject}"
         record(
             c, accountId = aid ?: "unknown", accountLabel = a?.display ?: original.account,
             fromName = a?.displayName ?: "Me", fromEmail = a?.email ?: "",
-            // A reply's recipient is whoever wrote the thing you're answering.
-            toName = original.fromName, toEmail = original.fromEmail,
-            subject = subject, text = replyText
+            // A reply's recipient is whoever wrote the thing you're answering — or, following up
+            // your own letter, whoever you wrote it to.
+            toName = MailThreads.replyName(original).takeIf { it != MailThreads.replyAddress(original) } ?: "",
+            toEmail = MailThreads.replyAddress(original),
+            subject = subject, text = replyText,
+            // The chain it answers (2026-10-10): what clears "Letters to answer", lights ↩ on the
+            // letter, and threads this row under it.
+            messageId = messageId, references = MailThreads.replyRefs(original).orEmpty(),
+            // THE INK STAYS WITH THE LETTER. A handwritten reply used to survive on this device
+            // only as a pick minted onto today's Notes page (-23) — the sent pile kept the words
+            // "(handwritten — see attached)" and nothing else. Michael, 09-07: "email replies end
+            // up on the first notes page as a pick — should they be in All Picks? or
+            // Correspondence?" Correspondence: a reply is a letter you sent, so the sent row
+            // carries the handwriting itself (a data: image — no request, renders in the letter
+            // reader and the 🧵 thread), and no pick is minted anywhere.
+            html = inkPng?.let { png ->
+                val esc = replyText.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                val b64 = android.util.Base64.encodeToString(png, android.util.Base64.NO_WRAP)
+                "<p>${esc.replace("\n", "<br/>")}</p><img src=\"data:image/png;base64,$b64\" style=\"max-width:100%;height:auto\" alt=\"handwritten reply\"/>"
+            } ?: ""
         )
     }
 
@@ -222,22 +309,76 @@ object InboxStore {
      */
     fun recordComposed(
         c: Context, accountId: String, accountLabel: String,
-        fromName: String, fromEmail: String, to: String, subject: String, body: String
+        fromName: String, fromEmail: String, to: String, subject: String, body: String,
+        messageId: String = "", references: String = "",
+        /** The person's name when the composer had one — the To field's "Name <addr>", or the
+         *  letter a reply answers (2026-10-10 review: a reply's Sent row showed a bare address). */
+        toName: String = "",
     ) = record(
         c, accountId = accountId, accountLabel = accountLabel,
         fromName = fromName, fromEmail = fromEmail,
-        // A composed letter knows the address it went to and nothing else about the person — the
-        // "Name <addr>" the composer offered is already reduced to an address by the time it sends.
-        toName = "", toEmail = to,
-        subject = subject, text = body
+        toName = toName.takeIf { it != to }.orEmpty(), toEmail = to,
+        subject = subject, text = body, messageId = messageId, references = references
+    )
+
+    /** A LETTER you wrote on the pad and sent from a chosen account (LetterPad) — recipient, subject
+     *  and the handwriting itself on the row, so Correspondence shows the page you sent. */
+    fun recordLetter(
+        c: Context, accountId: String, accountLabel: String, fromName: String, fromEmail: String,
+        toName: String, toEmail: String, subject: String, text: String, inkPng: ByteArray?,
+        messageId: String = "", references: String = "",
+    ) = recordLetter(c, accountId, accountLabel, fromName, fromEmail, toName, toEmail, subject, text,
+        inkPages = listOfNotNull(inkPng), messageId = messageId, references = references)
+
+    /** The same, a letter of several handwritten pages — every page on the row, in order. */
+    fun recordLetter(
+        c: Context, accountId: String, accountLabel: String, fromName: String, fromEmail: String,
+        toName: String, toEmail: String, subject: String, text: String, inkPages: List<ByteArray>,
+        /** The letter's own Message-ID and, on a reply, the chain it answers (2026-10-10). */
+        messageId: String = "", references: String = "",
+    ) = record(
+        c, accountId = accountId, accountLabel = accountLabel,
+        fromName = fromName, fromEmail = fromEmail, toName = toName, toEmail = toEmail,
+        subject = subject, text = text, messageId = messageId, references = references,
+        html = if (inkPages.isEmpty()) "" else {
+            val esc = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            "<p>${esc.replace("\n", "<br/>")}</p>" + inkPages.mapIndexed { i, png ->
+                // Bounded (audit 09-10): a three-page letter was ~8 MB of base64 in ONE row of
+                // sent.json, which is read whole with org.json on every launch. Over the cap the
+                // page becomes a ≤1400-px JPEG — still the letter, no longer the pile's problem.
+                val (bytes, mime) = boundedInk(png)
+                val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                "<img src=\"data:$mime;base64,$b64\" style=\"max-width:100%;height:auto;margin-bottom:8px\" alt=\"handwritten letter, page ${i + 1}\"/>"
+            }.joinToString("")
+        }
     )
 
     /** The shared write behind both: mint the synthetic row and append it to the sent pile. */
+    /** A page's bytes for the kept row: the PNG as-is under 400 KB, else a ≤1400-px JPEG. */
+    private fun boundedInk(png: ByteArray): Pair<ByteArray, String> {
+        if (png.size <= 400_000) return png to "image/png"
+        val src = runCatching { android.graphics.BitmapFactory.decodeByteArray(png, 0, png.size) }.getOrNull()
+            ?: return png to "image/png"
+        val scale = minOf(1f, 1400f / maxOf(src.width, src.height))
+        val w = (src.width * scale).toInt().coerceAtLeast(1); val h = (src.height * scale).toInt().coerceAtLeast(1)
+        val flat = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.RGB_565)
+        android.graphics.Canvas(flat).apply {
+            drawColor(android.graphics.Color.WHITE)
+            drawBitmap(src, null, android.graphics.Rect(0, 0, w, h), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+        }
+        val out = java.io.ByteArrayOutputStream()
+        flat.compress(android.graphics.Bitmap.CompressFormat.JPEG, 72, out)
+        return out.toByteArray() to "image/jpeg"
+    }
+
     private fun record(
         c: Context, accountId: String, accountLabel: String,
         fromName: String, fromEmail: String, toName: String, toEmail: String,
-        subject: String, text: String
-    ) {
+        subject: String, text: String, html: String = "",
+        // Kept on the row (2026-10-10, gap #4 + critique C3): its own Message-ID, so a reply to it
+        // can thread back; References = the chain it answered, so the answered letter knows.
+        messageId: String = "", references: String = "",
+    ): InboxMessage {
         val msg = InboxMessage(
             id = "sent:$accountId:${java.util.UUID.randomUUID()}",
             account = accountLabel,
@@ -247,11 +388,65 @@ object InboxStore {
             snippet = text.replace("\n", " ").take(140),
             body = text,
             date = System.currentTimeMillis(),
-            toName = toName, toEmail = toEmail
+            toName = toName, toEmail = toEmail,
+            html = html,
+            messageId = messageId.trim(), references = references.trim().replace(Regex("\\s+"), " ")
         )
         val kept = loadSent(c)
         kept.add(msg)
         saveSent(c, kept)
+        return msg
+    }
+
+    // ---- FluentCRM delivery state (09-11) ------------------------------------------------------
+    // A letter sent THROUGH a site's CRM has a campaign the site tracks (open pixel, click
+    // rewriting). The sent row remembers its campaign ("host|id"); the state the site last
+    // reported is cached beside it, so Correspondence can say "· opened" without a round trip.
+
+    private const val CRM_PREFS = "ledger_mail_crm"
+    fun noteCrmCampaign(c: Context, messageId: String, host: String, campaignId: Int) {
+        if (messageId.isBlank() || campaignId <= 0) return
+        c.getSharedPreferences(CRM_PREFS, 0).edit().putString("c:$messageId", "$host|$campaignId")
+            .putLong("t:$messageId", System.currentTimeMillis()).apply()
+    }
+    private const val CRM_ASK_FOR_MS = 14L * 24 * 3600 * 1000   // stop asking after two weeks
+    private const val CRM_SENDING_FOR_MS = 24L * 3600 * 1000    // "sending" is a day's worth of patience
+    /** (host, campaignId) for a sent row that went through a CRM, else null. */
+    fun crmCampaign(c: Context, messageId: String): Pair<String, Int>? =
+        c.getSharedPreferences(CRM_PREFS, 0).getString("c:$messageId", null)?.let { v ->
+            val i = v.lastIndexOf('|'); if (i <= 0) null else v.substring(0, i) to (v.substring(i + 1).toIntOrNull() ?: return null)
+        }
+    fun setCrmState(c: Context, host: String, campaignId: Int, state: String) =
+        c.getSharedPreferences(CRM_PREFS, 0).edit().putString("s:$host|$campaignId", state).apply()
+    /** "opened" · "clicked" · "sent" · "pending", or null when the row isn't a CRM letter. */
+    fun crmState(c: Context, messageId: String): String? {
+        val (host, id) = crmCampaign(c, messageId) ?: return null
+        return c.getSharedPreferences(CRM_PREFS, 0).getString("s:$host|$id", "pending")
+    }
+    /** The word the row wears, or "" — a sent letter that isn't a CRM letter says nothing. */
+    fun crmTag(c: Context, messageId: String): String = when (crmState(c, messageId)) {
+        "clicked" -> "clicked"; "opened" -> "opened"; "sent" -> "delivered"
+        "pending" -> {
+            val at = c.getSharedPreferences(CRM_PREFS, 0).getLong("t:$messageId", 0L)
+            if (at > 0L && System.currentTimeMillis() - at < CRM_SENDING_FOR_MS) "sending" else ""
+        }
+        else -> ""
+    }
+    /** Every CRM letter whose state can still change, grouped by host. */
+    fun crmPending(c: Context): Map<String, List<Int>> {
+        val p = c.getSharedPreferences(CRM_PREFS, 0)
+        val out = HashMap<String, MutableList<Int>>()
+        val now = System.currentTimeMillis()
+        for ((k, v) in p.all) {
+            if (!k.startsWith("c:") || v !is String) continue
+            val i = v.lastIndexOf('|'); if (i <= 0) continue
+            val host = v.substring(0, i); val id = v.substring(i + 1).toIntOrNull() ?: continue
+            if (p.getString("s:$host|$id", "pending") == "clicked") continue
+            val at = p.getLong("t:" + k.removePrefix("c:"), 0L)
+            if (at > 0L && now - at > CRM_ASK_FOR_MS) continue
+            out.getOrPut(host) { ArrayList() }.add(id)
+        }
+        return out
     }
 
     /**
@@ -276,12 +471,21 @@ object InboxStore {
             fetched = merged
         }
         persist(c, merged, fresh = listOf(m), overwriteBodies = true)
-        val kept = loadStarred(c)
-        val i = kept.indexOfFirst { it.id == m.id }
-        if (i >= 0) { kept[i] = m; saveStarred(c, kept) }
-        val rep = loadReplied(c)
-        val j = rep.indexOfFirst { it.id == m.id }
-        if (j >= 0) { rep[j] = m; saveReplied(c, rep) }
+        replaceKept(c, m)
+    }
+
+    /** The keep piles' half of [replace]: a starred or replied-to copy of [m] becomes [m], and
+     *  nothing else moves — for a letter that must never join the fetch window (a 🚫 Junk letter,
+     *  whose rest was just loaded: in the window it would read as Inbox mail). */
+    fun replaceKept(c: Context, m: InboxMessage) {
+        synchronized(pileLock) {
+            val kept = loadStarred(c)
+            val i = kept.indexOfFirst { it.id == m.id }
+            if (i >= 0) { kept[i] = m; saveStarred(c, kept) }
+            val rep = loadReplied(c)
+            val j = rep.indexOfFirst { it.id == m.id }
+            if (j >= 0) { rep[j] = m; saveReplied(c, rep) }
+        }
     }
 
     // =============================================================================================
@@ -344,6 +548,11 @@ object InboxStore {
     @Volatile private var cacheLoaded = false
 
     private val storeLock = Any()
+
+    /** Every load-change-save of the starred and replied piles holds this (2026-10-10 review): the
+     *  refresh thread heals their thread ids while the reader stars, un-stars and replies, and two
+     *  interleaved saves lose one side's change. Taken before [storeLock] if ever both — never after. */
+    private val pileLock = Any()
 
     /** Every cache write goes here — never on the caller's thread, and serialized, so two refreshes
      *  can't interleave halfway through rewriting the index. */
@@ -414,13 +623,64 @@ object InboxStore {
         synchronized(storeLock) {
             val byId = LinkedHashMap<String, InboxMessage>(fetched.size + window.size)
             for (m in fetched) if (m.id.isNotBlank()) byId[m.id] = m
-            for (m in window) if (m.id.isNotBlank()) byId[m.id] = m   // the window is the fresher copy
+            // A window fetched for an account removed while it was in flight must not resurrect it.
+            val known = MailAccountStore.all(c).map { it.id }.toSet()
+            for (m in window) {
+                if (m.id.isBlank()) continue
+                MailSync.accountId(m.id)?.let { acct -> if (acct !in known) continue }
+                // An IMAP UID names an immutable message, so the FULLER copy is the better one
+                // (audit 09-10): a "Load the rest" used to be undone by the next refresh's slice.
+                val old = byId[m.id]
+                byId[m.id] = if (old != null && !old.truncated && m.truncated && (old.body.isNotBlank() || old.html.isNotBlank()))
+                    m.copy(body = old.body, html = old.html, truncated = false, attachments = old.attachments)
+                else m
+            }
             merged = byId.values.sortedByDescending { it.date }
             fetched = merged
             cacheLoaded = true
         }
         persist(c, merged, fresh = window, overwriteBodies = false)
+        healPileIds(c, window)
         return merged
+    }
+
+    /** A refresh that carries a starred or answered letter back with its thread ids gives them to
+     *  the kept copy too (2026-10-10, critique C1) — the piles outlive the store's year, and a
+     *  letter kept forever should keep its place in its conversation. Writes only on a change. */
+    private fun healPileIds(c: Context, window: List<InboxMessage>) {
+        val fresh = window.filter { it.messageId.isNotBlank() }.associateBy { it.id }
+        if (fresh.isEmpty()) return
+        fun heal(list: MutableList<InboxMessage>): Boolean {
+            var changed = false
+            for (i in list.indices) {
+                val f = fresh[list[i].id] ?: continue
+                if (list[i].messageId.isBlank()) { list[i] = withThreadIds(list[i], f); changed = true }
+            }
+            return changed
+        }
+        // Under the pile lock (2026-10-10 review): this runs on the refresh thread, and an unlocked
+        // load-change-save racing an un-star would write the un-starred letter back into the pile.
+        runCatching {
+            synchronized(pileLock) {
+                val st = loadStarred(c); if (heal(st)) saveStarred(c, st)
+                val rp = loadReplied(c); if (heal(rp)) saveReplied(c, rp)
+            }
+        }.onFailure { Timber.w(it, "mail: pile id heal failed") }
+    }
+
+    /**
+     * Forget one account's cached window — every `acct:<id>:…` row that is not keep-forever. The
+     * UIDVALIDITY case (audit 09-10): the ids would otherwise point at different letters.
+     */
+    fun dropAccountWindow(c: Context, accountId: String) {
+        if (!cacheLoaded) warm(c)
+        val kept = keepForeverIds(c) + keepForeverPile(c).map { it.id }
+        val remaining: List<InboxMessage>
+        synchronized(storeLock) {
+            remaining = fetched.filter { !it.id.startsWith("acct:$accountId:") || it.id in kept }
+            fetched = remaining
+        }
+        persist(c, remaining, fresh = emptyList(), overwriteBodies = false)
     }
 
     /**
@@ -442,10 +702,17 @@ object InboxStore {
         // The keep piles are already in memory and hold whole messages — ask them before touching
         // the disk. This also covers a replied-to message whose body was back-filled there.
         keepForeverPile(c).firstOrNull { it.id == m.id && (it.body.isNotBlank() || it.html.isNotBlank()) }
-            ?.let { return it }
+            ?.let { return withThreadIds(it, m) }
         val stored = readBody(c, m.id) ?: return m
         return m.copy(body = stored.first, html = stored.second)
     }
+
+    /** [kept] (a pile's whole letter) wearing [fresh]'s thread ids when the pile copy predates them
+     *  (2026-10-10, critique C1): piles filed before ids were kept would otherwise hand the reader
+     *  an id-less letter, and a reply from it would thread onto nothing. */
+    private fun withThreadIds(kept: InboxMessage, fresh: InboxMessage): InboxMessage =
+        if (kept.messageId.isNotBlank() || fresh.messageId.isBlank()) kept
+        else kept.copy(messageId = fresh.messageId, references = kept.references.ifBlank { fresh.references })
 
     /**
      * Every id that is KEPT FOREVER, computed from the ID SETS — never from what the piles happen
@@ -627,16 +894,34 @@ object InboxStore {
     fun messages(c: Context): List<InboxMessage> {
         val cleared = ids(c, CLEARED)
         if (!hasAccounts(c)) return seeds().filter { !cleared.contains(it.id) }.sortedByDescending { it.date }
+        val visible = held(c).filter { !cleared.contains(it.id) }.sortedByDescending { it.date }
+        return retained(c, visible)
+    }
+
+    /**
+     * 🗑 TRASH (Michael 2026-10-11: the Mail fold's rows are "accounts, starred, inbox, sent,
+     * trash"): the letters you CLEARED on this device — 🧹 Sweep or 🗑 Delete — that the device
+     * still holds, newest first. That is all a Trash can honestly be here: neither verb ever
+     * touched a server (the IMAP client SELECTs INBOX and nothing else), so the cleared id set is
+     * the whole of "deleted", and [restore] is the whole of "move back". A cleared letter the
+     * store has since let go (retention, or [prune] after the server dropped it) is gone from here
+     * too — there is nothing left on the device to bring back. Memory only, like [messages].
+     */
+    fun cleared(c: Context): List<InboxMessage> {
+        val cleared = ids(c, CLEARED)
+        if (cleared.isEmpty()) return emptyList()
+        if (!hasAccounts(c)) return seeds().filter { cleared.contains(it.id) }.sortedByDescending { it.date }
+        return retained(c, held(c).filter { cleared.contains(it.id) }.sortedByDescending { it.date })
+    }
+
+    fun isCleared(c: Context, id: String) = has(c, CLEARED, id)
+
+    /** Everything the device holds — the store folded with the keep piles — cleared or not. */
+    private fun held(c: Context): Collection<InboxMessage> {
         val live = fetched
         // Keep-forever pile = starred ∪ replied ∪ sent, deduped by id, full bodies. These survive the
         // window, a restart, and BOTH retention bounds below.
         val keptForever = keepForeverPile(c)
-        // The EXEMPTION is by id, not by pile membership. [markReplied] deliberately records the id
-        // even when it can't resolve a body to persist (keep-more, back-fill on a later refresh), so
-        // a pile-only reading of "kept forever" would have let retention age out the one message the
-        // reader had already answered — the exact case the keep-forever rule exists for. The union
-        // here mirrors iOS `InboxStore.keepForeverIds()`, which is purely the three id sets.
-        val keptIds = keptForever.map { it.id }.toSet() + keepForeverIds(c)
 
         // Fold the store together with the piles. The store wins in general — it holds whatever the
         // last refresh or full fetch produced — EXCEPT when its copy is only an envelope and the
@@ -648,10 +933,20 @@ object InboxStore {
         for (m in keptForever) {
             val cur = byId[m.id]
             val curIsEmpty = cur != null && cur.body.isBlank() && cur.html.isBlank()
-            if (cur == null || (curIsEmpty && (m.body.isNotBlank() || m.html.isNotBlank()))) byId[m.id] = m
+            if (cur == null) byId[m.id] = m
+            else if (curIsEmpty && (m.body.isNotBlank() || m.html.isNotBlank())) byId[m.id] = withThreadIds(m, cur)
         }
-        val visible = byId.values.filter { !cleared.contains(it.id) }.sortedByDescending { it.date }
+        return byId.values
+    }
 
+    /** [visible] (newest first) under the retention bounds below — keep-forever rows always stay. */
+    private fun retained(c: Context, visible: List<InboxMessage>): List<InboxMessage> {
+        // The EXEMPTION is by id, not by pile membership. [markReplied] deliberately records the id
+        // even when it can't resolve a body to persist (keep-more, back-fill on a later refresh), so
+        // a pile-only reading of "kept forever" would have let retention age out the one message the
+        // reader had already answered — the exact case the keep-forever rule exists for. The union
+        // here mirrors iOS `InboxStore.keepForeverIds()`, which is purely the three id sets.
+        val keptIds = keepForeverPile(c).map { it.id }.toSet() + keepForeverIds(c)
         // Retention, applied ONLY to the non-keep-forever remainder: the last RETENTION_DAYS, then
         // the MAX_MESSAGES cap (keep-forever rows already shown always count first, so the cap only
         // trims the rest). The kept-forever rows themselves are never dropped, even alone past it.
@@ -664,12 +959,19 @@ object InboxStore {
     }
 
     /** The keep-forever pile: persisted starred, replied, and sent bodies, unioned and deduped by id. */
+    // Cached union (audit 09-10): this ran on EVERY render and copied three lists each time.
+    // Read-only to callers; dropped whenever any pile is (re)loaded or saved.
+    @Volatile private var keptUnion: List<InboxMessage>? = null
+
     private fun keepForeverPile(c: Context): List<InboxMessage> {
-        val out = loadStarred(c)
+        keptUnion?.let { return it }
+        val out = ArrayList<InboxMessage>(loadStarred(c))
         val seen = out.map { it.id }.toMutableSet()
         for (m in loadReplied(c)) if (seen.add(m.id)) out.add(m)
         for (m in loadSent(c)) if (seen.add(m.id)) out.add(m)
-        return out
+        val ro: List<InboxMessage> = java.util.Collections.unmodifiableList(out)
+        keptUnion = ro
+        return ro
     }
 
     /** Sweep the given (already-triaged) messages out of the inbox -- the "clear" pass. The caller
@@ -739,12 +1041,12 @@ object InboxStore {
             Timber.w(e, "starred mail read failed")
             mutableListOf<InboxMessage>()
         }
-        starredCache = list.toList()
+        starredCache = list.toList(); keptUnion = null
         return list
     }
 
     private fun saveStarred(c: Context, list: List<InboxMessage>) {
-        starredCache = list.toList()
+        starredCache = list.toList(); keptUnion = null
         try {
             val arr = JSONArray()
             list.forEach { arr.put(it.toJson()) }
@@ -773,12 +1075,12 @@ object InboxStore {
             Timber.w(e, "replied mail read failed")
             mutableListOf<InboxMessage>()
         }
-        repliedCache = list.toList()
+        repliedCache = list.toList(); keptUnion = null
         return list
     }
 
     private fun saveReplied(c: Context, list: List<InboxMessage>) {
-        repliedCache = list.toList()
+        repliedCache = list.toList(); keptUnion = null
         try {
             val arr = JSONArray()
             list.forEach { arr.put(it.toJson()) }
@@ -807,12 +1109,12 @@ object InboxStore {
             Timber.w(e, "sent mail read failed")
             mutableListOf<InboxMessage>()
         }
-        sentCache = list.toList()
+        sentCache = list.toList(); keptUnion = null
         return list
     }
 
     private fun saveSent(c: Context, list: List<InboxMessage>) {
-        sentCache = list.toList()
+        sentCache = list.toList(); keptUnion = null
         try {
             val arr = JSONArray()
             list.forEach { arr.put(it.toJson()) }

@@ -17,8 +17,8 @@ import java.time.LocalDate
  * Tags index (hub → Notes → Tags) so a bad OCR is fixable rather than lost.
  *
  * Storage is a local SharedPreferences map for the occurrence list; the tag↔page EDGES ride the
- * connection graph, which already syncs across devices, so the rhizome carries tags even though this
- * occurrence cache is device-local (a synced occurrence store can follow later). An occurrence is
+ * connection graph, which already syncs across devices, and [list] merges those edges back in as
+ * occurrences (2026-10-11), so a tag written on the other device lists here too. An occurrence is
  * "date|pageKey" held in a StringSet, so no delimiter can collide with a page key — OPTIONALLY
  * suffixed "|l,t,r,b" with the design-space rect of the CAPTURE ZONE the tag was written in, so a
  * jump from the Tags index can land on the tag's MARK (zoom/center that zone) rather than the page.
@@ -136,7 +136,126 @@ object LedgerTags {
      * occurrences, which just open the page. Kept as a Triple so `.first`/`.second` still read as
      * (date, page) for every existing caller, with the location added as `.third`.
      */
-    data class TagInfo(val tag: String, val created: Long, val occurrences: List<Triple<LocalDate, String, RectF?>>)
+    data class TagInfo(
+        val tag: String, val created: Long, val occurrences: List<Triple<LocalDate, String, RectF?>>,
+        /** The tag's NON-page neighbours in the synced graph — Text Notes, emails, articles, posts,
+         *  picks — what the tag pages list under "Also tagged" (Michael 2026-10-11: "tags aren't
+         *  complete"). A tag worn only by objects still lists in the index, with no pages. */
+        val objects: List<TaggedObject> = emptyList(),
+        /** The (date, page) occurrences the tag reaches ONLY through a GRAM on that page (a tagged
+         *  element, `ledger://D/P#<uuid>`). The Tags index lists them — the gram is found through its
+         *  page — but the page's own strip ([marksOn]) and "Tag this page…" do not count them as the
+         *  PAGE's tag, because unticking the page cannot take a gram's tag off (review of dbe1a38d). */
+        val gramOnly: Set<Pair<LocalDate, String>> = emptySet(),
+    )
+
+    /** One non-page object wearing a tag: its [uri] and what it was called when tagged. */
+    data class TaggedObject(val uri: String, val label: String)
+
+    /** An edge end resolved to the (date, page) it names, and whether it was an ELEMENT on it. */
+    internal data class PageEnd(val date: LocalDate, val page: String, val element: Boolean)
+
+    /**
+     * The (date, page) an edge end names FOR THE TAG INDEX: a whole page; a sub-page, whose
+     * all-digit "#n" tail [com.toolsboox.ot.LedgerUri.parse] splits off as a fragment
+     * ("write-1753#2"); or the page an ELEMENT sits on ("0#<uuid>" → "0", [PageEnd.element]) — a
+     * tagged gram is found through its page. Null for anything that is not a ledger page address.
+     * An iOS sub-page key ("grid-2", "write-1753900000000-3") is read as Android's ("grid#2") — see
+     * [androidPageKey].
+     */
+    internal fun endOf(uri: String): PageEnd? {
+        val ref = com.toolsboox.ot.LedgerUri.parse(uri) ?: return null
+        if (ref.scheme != com.toolsboox.ot.LedgerUri.SCHEME_LEDGER) return null
+        val date = ref.date?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: return null
+        val base = androidPageKey(ref.pageKey ?: return null)
+        val frag = ref.fragment
+        if (frag.isNullOrBlank()) return PageEnd(date, base, false)
+        if (frag.all { it.isDigit() }) return PageEnd(date, "$base#$frag", false)
+        // An element on a sub-page: "write-1753#2#<uuid>" parses as base "write-1753#2".
+        return PageEnd(date, base, true)
+    }
+
+    /** [endOf]'s (date, page), element or not. */
+    internal fun pageOfEnd(uri: String): Pair<LocalDate, String>? = endOf(uri)?.let { it.date to it.page }
+
+    /**
+     * iOS names a document's n-th page "<doc>-<n>" (ElementsView `pageKey(_:sub:)`); Android names
+     * it "<doc>#<n>" ([LedgerDocuments.subPageKey]). An edge written on the iPad for page 2 of a
+     * Grid pad therefore said "grid-2", which the merged Tags index listed as a document of its
+     * own and opened blank (review of dbe1a38d). A document key's tail is a 10+ digit stamp on both
+     * apps ("grid-1753900000000"), so only a SHORT numeric tail (1–3 digits: a dense page series
+     * from 0) after a known base is a sub-page; anything longer is left as the key it is. Android
+     * never writes "-<n>" itself, so its own keys pass through untouched.
+     */
+    private val IOS_SUBPAGE = Regex("""^((?:write|grid|sketch|synthesize)(?:-\d{10,})?)-(\d{1,3})$""")
+
+    internal fun androidPageKey(key: String): String {
+        val m = IOS_SUBPAGE.matchEntire(key) ?: return key
+        val n = m.groupValues[2].toIntOrNull() ?: return key
+        return if (n == 0) m.groupValues[1] else "${m.groupValues[1]}#$n"
+    }
+
+    /** What the synced graph says about tags: per tag, the pages and the objects it is joined to,
+     *  and the earliest edge (a created stamp for a tag only another device has seen). */
+    internal class EdgeTags(
+        /** Every page the tag reaches — whole-page ends and the pages its grams sit on. */
+        val pages: Map<String, List<Pair<LocalDate, String>>>,
+        val objects: Map<String, List<TaggedObject>>,
+        val created: Map<String, Long>,
+        /** The pages a tag reaches through a live WHOLE-PAGE edge (either direction). */
+        val wholePages: Map<String, Set<Pair<LocalDate, String>>> = emptyMap(),
+        /**
+         * Whole-page tag edges that are TOMBSTONED with no live twin: the tag was taken off that
+         * page — by "Tag this page…" on either device, a cut on the Map, or the page being deleted
+         * — after the last time anything recorded it. Every local occurrence write also joins the
+         * edge ([putOccurrence] → connect, which revives a tombstone), so a tombstone with no live
+         * twin can only postdate this device's own record, and that occurrence is dropped.
+         */
+        val removed: Map<String, Set<Pair<LocalDate, String>>> = emptyMap(),
+    )
+
+    /**
+     * Read every `tag://x` edge into [EdgeTags]. Pure — the graph handed in — so the merge rule
+     * is a plain JVM test. Either direction is accepted (both apps write tag → object, but an edge
+     * is an edge). Tag ↔ tag edges are not objects and are skipped. Live edges make pages and
+     * objects; tombstoned whole-page edges make [EdgeTags.removed].
+     */
+    internal fun deriveFromEdges(edges: List<com.toolsboox.plugin.calendar.da.v2.Connection>): EdgeTags {
+        val pages = HashMap<String, LinkedHashSet<Pair<LocalDate, String>>>()
+        val whole = HashMap<String, HashSet<Pair<LocalDate, String>>>()
+        val dead = HashMap<String, HashSet<Pair<LocalDate, String>>>()
+        val objects = HashMap<String, LinkedHashMap<String, TaggedObject>>()
+        val created = HashMap<String, Long>()
+        for (e in edges) {
+            val (tagEnd, other, otherLabel) = when {
+                e.from.startsWith("tag://") -> Triple(e.from, e.to, e.toLabel)
+                e.to.startsWith("tag://") -> Triple(e.to, e.from, e.fromLabel)
+                else -> continue
+            }
+            if (other.startsWith("tag://")) continue
+            val tag = tagEnd.removePrefix("tag://").trim().lowercase()
+            if (tag.isBlank()) continue
+            val end = endOf(other)
+            if (e.isDeleted) {
+                if (end != null && !end.element) dead.getOrPut(tag) { HashSet() }.add(end.date to end.page)
+                continue
+            }
+            created[tag] = minOf(created[tag] ?: Long.MAX_VALUE, e.created)
+            if (end != null) {
+                pages.getOrPut(tag) { LinkedHashSet() }.add(end.date to end.page)
+                if (!end.element) whole.getOrPut(tag) { HashSet() }.add(end.date to end.page)
+            } else if (!other.startsWith("ledger://")) objects.getOrPut(tag) { LinkedHashMap() }
+                .putIfAbsent(other, TaggedObject(other, otherLabel.ifBlank { com.toolsboox.ot.LedgerUri.describe(other) }))
+        }
+        val removed = dead.mapValues { (tag, gone) -> gone - whole[tag].orEmpty() }.filterValues { it.isNotEmpty() }
+        return EdgeTags(
+            pages.mapValues { it.value.toList() },
+            objects.mapValues { it.value.values.toList() },
+            created,
+            whole,
+            removed,
+        )
+    }
 
     /** Parse one stored occurrence — "date|pageKey" or "date|pageKey|l,t,r,b" — or null if unusable. */
     private fun parseOccurrence(o: String): Triple<LocalDate, String, RectF?>? {
@@ -161,33 +280,78 @@ object LedgerTags {
      * useful. Invalidated by writes, not by time, so a stale read needs a missed write.
      */
     @Volatile private var cached: List<TagInfo>? = null
+    /** The [ConnectionStore.generation] [cached] was built at — a merge that folds another
+     *  device's edges in moves it, and the next read rebuilds. */
+    @Volatile private var cachedAt: Long = -1L
     private val cacheLock = Any()
 
     /** Drop the memo. Called from every path that writes the store. */
     fun bumpGeneration() { synchronized(cacheLock) { cached = null } }
 
     fun list(context: Context): List<TagInfo> {
-        cached?.let { return it }
+        val gen = ConnectionStore.generation
+        cached?.let { if (cachedAt == gen) return it }
         synchronized(cacheLock) {
-            cached?.let { return it }
+            cached?.let { if (cachedAt == gen) return it }
             val out = buildList(context)
             cached = out
+            cachedAt = gen
             return out
         }
     }
 
+    /**
+     * THIS DEVICE'S OCCURRENCES, MERGED WITH THE SYNCED GRAPH'S (Michael 2026-10-11: "tags aren't
+     * complete"). The occurrence store is per device; the tag ↔ page EDGES ride ConnectionStore,
+     * which syncs — so a tag harvested on the iPad reached the B6 only as an edge, and nothing
+     * turned it into a row. Every live `tag://x → ledger://D/P` edge now counts as an occurrence
+     * (no rect: it just opens the page); where this device already holds (D, P) for the tag the
+     * LOCAL one is kept, because it carries the mark. Element edges (a tagged gram) count as their
+     * page, flagged [TagInfo.gramOnly] when nothing else puts the tag there. Non-page neighbours
+     * become [TagInfo.objects] — "Also tagged".
+     *
+     * REMOVALS TRAVEL TOO (review of dbe1a38d): a local occurrence whose whole-page edge is
+     * tombstoned with no live twin ([EdgeTags.removed]) is left out — the tag was unticked on the
+     * other device, or the page deleted there. Filtered, not pruned: if the tag comes back (a
+     * re-harvest, a re-tag on either device) the edge revives and the stored mark with it.
+     *
+     * PARITY: iOS's list() does not read the graph yet (its TagLinkGraph port is not wired); the
+     * same rule, removals included, is what it has to adopt.
+     */
     private fun buildList(context: Context): List<TagInfo> {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return prefs.all.keys
-            .filter { it.startsWith("tag:") && it.endsWith(":occ") }
-            .mapNotNull { key ->
-                val tag = key.removePrefix("tag:").removeSuffix(":occ")
-                val created = prefs.getString("tag:$tag:created", null)?.toLongOrNull() ?: 0L
-                val occs = prefs.getStringSet(key, emptySet()).orEmpty().mapNotNull { parseOccurrence(it) }
-                if (occs.isEmpty()) null else TagInfo(tag, created, occs)
+        val local = LinkedHashMap<String, MutableList<Triple<LocalDate, String, RectF?>>>()
+        for (key in prefs.all.keys) {
+            if (!key.startsWith("tag:") || !key.endsWith(":occ")) continue
+            val tag = key.removePrefix("tag:").removeSuffix(":occ")
+            local[tag] = prefs.getStringSet(key, emptySet()).orEmpty().mapNotNull { parseOccurrence(it) }.toMutableList()
+        }
+        val edges = runCatching { deriveFromEdges(ConnectionStore.snapshot(context)) }.getOrNull()
+        val tags = LinkedHashSet<String>(local.keys)
+        if (edges != null) { tags.addAll(edges.pages.keys); tags.addAll(edges.objects.keys) }
+        return tags.mapNotNull { tag ->
+            val gone = edges?.removed?.get(tag).orEmpty()
+            val occs = local[tag].orEmpty().filterNot { (it.first to it.second) in gone }.toMutableList()
+            val held = occs.mapTo(HashSet()) { it.first to it.second }
+            val whole = edges?.wholePages?.get(tag).orEmpty()
+            val gramOnly = HashSet<Pair<LocalDate, String>>()
+            edges?.pages?.get(tag)?.forEach { p ->
+                if (held.add(p)) {
+                    occs.add(Triple(p.first, p.second, null))
+                    if (p !in whole) gramOnly.add(p)
+                }
             }
-            .sortedByDescending { it.occurrences.size }
+            val objects = edges?.objects?.get(tag).orEmpty()
+            if (occs.isEmpty() && objects.isEmpty()) return@mapNotNull null
+            val created = prefs.getString("tag:$tag:created", null)?.toLongOrNull()
+                ?: edges?.created?.get(tag) ?: 0L
+            TagInfo(tag, created, occs, objects, gramOnly)
+        }.sortedByDescending { it.occurrences.size + it.objects.size }
     }
+
+    /** The objects (not pages) wearing [tag] — "Also tagged". */
+    fun objectsFor(context: Context, tag: String): List<TaggedObject> =
+        list(context).firstOrNull { it.tag == tag.lowercase() }?.objects.orEmpty()
 
     /**
      * Forget every tag occurrence on [pageKeys] of [date], and sever the tag↔page edges with them.
@@ -237,17 +401,21 @@ object LedgerTags {
             } else editor.putStringSet(key, kept)
         }
         if (changed) editor.apply()
-        for (page in pageKeys) {
-            val uri = "ledger://$date/$page"
-            runCatching {
-                for (edge in ConnectionStore.touching(context, uri)) {
-                    if (edge.otherEnd(uri)?.startsWith("tag://") == true) {
-                        ConnectionStore.disconnect(context, edge.id)
+        // Every live tag edge whose end RESOLVES to one of those pages ([endOf]): the page itself,
+        // a sub-page by its own key, a TAGGED GRAM on it ("ledger://D/P#<uuid>" — a gram's tag
+        // counts in the index through its page, so it must go with the page), and an iOS-spelled
+        // sub-page key ("grid-2" for "grid#2"). One pass over the graph instead of a touching()
+        // per page plus a second walk for the grams.
+        runCatching {
+            val dead = ConnectionStore.snapshot(context).filter { e ->
+                !e.isDeleted && (e.from.startsWith("tag://") || e.to.startsWith("tag://")) &&
+                    listOf(e.from, e.to).any { end ->
+                        endOf(end)?.let { it.date == date && it.page in pageKeys } == true
                     }
-                }
-            }
+            }.map { it.id }
+            for (id in dead) ConnectionStore.disconnect(context, id)
         }
-        if (changed) bumpGeneration()
+        bumpGeneration()
     }
 
     /**
@@ -306,6 +474,30 @@ object LedgerTags {
         bumpGeneration()
     }
 
+    /**
+     * Take [tag] off ONE page: its occurrence on (date, page) and the tag↔page edge.
+     *
+     * [untag] alone severs only the edge, which was enough while the picker tagged pages as objects
+     * (no occurrence to leave behind). Now that "Tag this page…" records a real occurrence (Michael
+     * 2026-10-11: "tags aren't complete"), removing it there has to remove that too, or the page's
+     * strip and the Tags index keep a tag the picker shows as gone. A tag still WRITTEN on the page
+     * comes back at its next harvest — it is there, after all.
+     */
+    fun untagPage(context: Context, date: LocalDate, pageKey: String, tag: String) {
+        val t = tag.trim().lowercase()
+        if (t.isBlank()) return
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val occs = prefs.getStringSet("tag:$t:occ", emptySet()).orEmpty()
+        val kept = occs.filterNot { it == "$date|$pageKey" || it.startsWith("$date|$pageKey|") }.toSet()
+        if (kept.size != occs.size) {
+            // The created stamp stays: objects may still wear the tag (recordObject keeps its own).
+            val editor = prefs.edit()
+            if (kept.isEmpty()) editor.remove("tag:$t:occ") else editor.putStringSet("tag:$t:occ", kept)
+            editor.apply()
+        }
+        untag(context, "ledger://$date/$pageKey", t)
+    }
+
     /** The (date, page, zoneRect?) occurrences of one tag, newest first. */
     fun pagesFor(context: Context, tag: String): List<Triple<LocalDate, String, RectF?>> =
         list(context).firstOrNull { it.tag == tag.lowercase() }?.occurrences?.sortedByDescending { it.first }
@@ -323,6 +515,10 @@ object LedgerTags {
      */
     fun marksOn(context: Context, date: LocalDate, pageKey: String): List<Pair<String, RectF?>> =
         list(context).mapNotNull { info ->
+            // A tag only a GRAM on this page wears is not the page's tag: the strip would show it
+            // while "Tag this page…" (which reads the page's own edges) showed it unticked, and
+            // unticking it there could never take it off (review of dbe1a38d).
+            if ((date to pageKey) in info.gramOnly) return@mapNotNull null
             val occ = info.occurrences.firstOrNull { it.first == date && it.second == pageKey }
             if (occ == null) null else info.tag to occ.third
         }.sortedBy { it.first }

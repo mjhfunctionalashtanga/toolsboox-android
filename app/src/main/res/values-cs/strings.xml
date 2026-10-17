@@ -172,17 +172,9 @@ Strings related to dashboard fragment -->
     <string name="calendar_settings_week_number_of_first_day_value">"T1"</string>
     <string name="calendar_settings_week_number_of_last_day_text">"Číslo týdne posledního dne:"</string>
     <string name="calendar_settings_week_number_of_last_day_value">"T52"</string>
-    <string name="calendar_settings_button_save">"Uložit"</string>
-    <string name="calendar_settings_button_back">"Zpět"</string>
     <string name="calendar_drawing_toolbar_pen">"Pero"</string>
     <string name="calendar_drawing_toolbar_eraser">"Guma"</string>
     <string name="calendar_drawing_toolbar_settings">"Nastavení"</string>
-    <string name="calendar_settings_select_start_view_text">"Vyberte výchozí zobrazení kalendáře:"</string>
-    <string name="calendar_settings_start_view_year">"Roční plánovač"</string>
-    <string name="calendar_settings_start_view_quarter">"Čtvrtletní plánovač"</string>
-    <string name="calendar_settings_start_view_month">"Měsíční plánovač"</string>
-    <string name="calendar_settings_start_view_week">"Týdenní plánovač"</string>
-    <string name="calendar_settings_start_view_day">"Denní plánovač"</string>
     <string name="calendar_settings_button_backup">"Uložit zálohu"</string>
     <string name="calendar_settings_backup_done">"Záloha kalendáře byla uložena do složky Downloads"</string>
     <string name="about_this_translation_contributors_title">"Překladatelé aktuální verze aplikace"</string>

@@ -141,7 +141,9 @@ object QuickWinsEngine {
                     if (prev == null || day > prev) tombstoneDay[id] = day
                 }
                 for (li in slice.ledgerItems) {
-                    if (li.kind == LedgerItem.Kind.TASK && li.text.trim().isNotEmpty())
+                    // A PROPOSED candidate is not a live task (offer-never-mint) — it can't be a win
+                    // to surface until it's promoted off the Proposed shelf.
+                    if (li.kind == LedgerItem.Kind.TASK && !li.proposed && li.text.trim().isNotEmpty())
                         copies.add(Task(li, day))
                 }
             }

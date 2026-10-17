@@ -37,7 +37,24 @@ object QuoteCardRenderer {
      */
     fun render(quote: String, source: String? = null, note: String? = null,
                W: Int = 1080, H: Int = 1350,
-               author: String? = null, cover: Bitmap? = null): Bitmap {
+               author: String? = null, cover: Bitmap? = null,
+               /** What rides on the pick (add-to-pick pin §4) — drawn ON the face. */
+               adds: PickFace.Adds? = null): Bitmap {
+        // ONE FACE (add-to-pick pin §4): every pick shape — Free (H = 0) and the four formats — is
+        // PickFace's layout, int for int with iOS QuoteCard; the typed note rides as the face's
+        // note. A size that is no pick shape (the synthesis back card) draws as it always did.
+        val shape = PickFace.shapeOf(W, H)
+        if (shape != null) {
+            val base = adds ?: PickFace.Adds.NONE
+            val words = listOf(note?.trim().orEmpty(), base.note.trim()).filter { it.isNotEmpty() }.joinToString("\n")
+            return PickFace.render(shape, quote.trim(), source, base.copy(note = words), author, cover).bitmap
+        }
+        return legacy(quote, source, note, W, H, author, cover)
+    }
+
+    /** The card as drawn before the one face — kept for sizes that are no pick shape. */
+    private fun legacy(quote: String, source: String?, note: String?, W: Int, H: Int,
+                       author: String?, cover: Bitmap?): Bitmap {
         val PAD = W * 0.089f
 
         val markPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -54,12 +71,24 @@ object QuoteCardRenderer {
         // Footer band: cover thumbnail / divider + one or two lines of source & author.
         val footerBand = 120f
 
-        val height = if (H > 0) H else run {
-            val qh = measure(quote.trim(), quotePaint, W, PAD, 12f)
-            val nh = if (note.isNullOrBlank()) 0f else 36f + measure(note.trim(), notePaint, W, PAD, 8f)
-            val top = PAD + markPaint.textSize * 0.5f + 24f
-            (top + qh + nh + 48f + footerBand + PAD).toInt().coerceIn(560, 2600)
+        // THE WHOLE PASSAGE, ALWAYS (Michael, 09-13, of the iOS twin: "it could not capture all
+        // of the highlight" — this card clipped the same way: 48pt past 220 chars and nothing
+        // past that, so a long highlight ran under the footer and off the canvas). The type
+        // steps DOWN until the passage fits the room the card has, to a 30px floor; past the
+        // floor a fixed-height card GROWS (to 2600) rather than lose a line.
+        val nh = if (note.isNullOrBlank()) 0f else 36f + measure(note.trim(), notePaint, W, PAD, 8f)
+        val top = PAD + markPaint.textSize * 0.5f + 24f
+        val chrome = top + nh + 48f + footerBand + PAD
+        var qh = measure(quote.trim(), quotePaint, W, PAD, 12f)
+        // A fixed card shrinks the type to its room; a free card (H = 0) may grow to 2600 first
+        // and shrinks only past that — either way no line is lost.
+        val room = (if (H > 0) H else 2600) - chrome
+        while (qh > room && quotePaint.textSize > 30f) {
+            quotePaint.textSize = (quotePaint.textSize - maxOf(1f, quotePaint.textSize * 0.06f)).coerceAtLeast(30f)
+            qh = measure(quote.trim(), quotePaint, W, PAD, 12f)
         }
+        val needed = (chrome + qh).toInt()
+        val height = if (H > 0 && needed <= H) H else needed.coerceIn(560, 2600)
 
         val bmp = Bitmap.createBitmap(W, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)

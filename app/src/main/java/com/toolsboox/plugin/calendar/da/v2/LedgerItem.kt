@@ -58,7 +58,21 @@ data class LedgerItem(
     var stage: String = "",
     /** Which named board this card belongs to ([Board.id]; "" = unfiled / on "All"). Wire-compatible
      *  with iOS `board`. New field with a default → backward-compatible. */
-    var board: String = ""
+    var board: String = "",
+    /** OFFER-NEVER-MINT (Michael's ruling, Aug 2026). An AUTO-created candidate — from the EMAIL
+     *  intake faucet ([source] "email", id "li-…") or the PATHWAY/PLAN expansion faucet ([source]
+     *  "path", id "pv-…") — is PROPOSED, not a live task. A proposed item is excluded from every
+     *  active-task read (the Tasks list, its count, the Kanban, the widgets, the day-page ghost
+     *  rows) and shown instead on the Proposed shelf, where one tap PROMOTES it (proposed=false →
+     *  a live task) or DISMISSES it (tombstone). Nothing becomes a task without that tap.
+     *
+     *  Handwritten and manually-typed tasks are NEVER proposed — the default is `false`, the CURRENT
+     *  behavior, so every existing item on disk and every hand-made task stays a live task unchanged;
+     *  only the two faucets set it true. New key + safe default (the Moshi legacy-key rule, same as
+     *  [contactId]/[stage]/[board]); the id-union merge carries it per-item, and promotion is
+     *  monotonic there (parity with [done], see CalendarDayMerger). Wire-compatible with a future
+     *  iOS `proposed`. */
+    var proposed: Boolean = false
 ) {
     enum class Kind {
         @Json(name = "task") TASK,

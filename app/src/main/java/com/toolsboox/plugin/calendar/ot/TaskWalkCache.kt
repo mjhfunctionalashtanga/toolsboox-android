@@ -2,7 +2,6 @@ package com.toolsboox.plugin.calendar.ot
 
 import com.toolsboox.plugin.calendar.da.v2.LedgerItem
 import java.io.File
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The all-tasks walk, remembered between opens.
@@ -32,16 +31,21 @@ object TaskWalkCache {
 
     private data class Entry(val lastModified: Long, val length: Long, val items: List<LedgerItem>)
 
-    private val entries = ConcurrentHashMap<String, Entry>()
+    // Bounded (audit 09-10): a year-long walk used to pin every day's decoded items for the life
+    // of the process. Access-ordered so the days a surface keeps asking about stay warm.
+    private const val MAX_ENTRIES = 400
+    private val entries = object : LinkedHashMap<String, Entry>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Entry>?) = size > MAX_ENTRIES
+    }
 
     /** The file's ledger items, decoded at most once per on-disk version of the file. */
     fun items(file: File, decode: (File) -> List<LedgerItem>): List<LedgerItem> {
         val key = file.absolutePath
         val mtime = file.lastModified()
         val length = file.length()
-        entries[key]?.let { if (it.lastModified == mtime && it.length == length) return it.items }
+        synchronized(entries) { entries[key] }?.let { if (it.lastModified == mtime && it.length == length) return it.items }
         val decoded = decode(file)
-        entries[key] = Entry(mtime, length, decoded)
+        synchronized(entries) { entries[key] = Entry(mtime, length, decoded) }
         return decoded
     }
 }

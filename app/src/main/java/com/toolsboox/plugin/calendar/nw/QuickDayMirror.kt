@@ -2,10 +2,6 @@ package com.toolsboox.plugin.calendar.nw
 
 import android.content.Context
 import android.os.Environment
-import com.squareup.moshi.Moshi
-import com.toolsboox.ot.DateJsonAdapter
-import com.toolsboox.ot.LocaleJsonAdapter
-import com.toolsboox.ot.UUIDJsonAdapter
 import timber.log.Timber
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -56,11 +52,7 @@ object QuickDayMirror {
             try {
                 val svc = LedgerSidecarSync.service(app) ?: return@Thread
                 val rootDir = app.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: return@Thread
-                val moshi = Moshi.Builder()
-                    .add(LocaleJsonAdapter())
-                    .add(DateJsonAdapter())
-                    .add(UUIDJsonAdapter())
-                    .build()
+                val moshi = com.toolsboox.ot.LedgerMoshi.standard()
                 val stats = kotlinx.coroutines.runBlocking {
                     CalendarWebDavSyncService(svc, rootDir, moshi, app).sync()
                 }

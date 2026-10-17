@@ -38,19 +38,50 @@
                     app:navGraph="@navigation/navigation_main"
                     app:layout_behavior="@string/appbar_scrolling_view_behavior"/>
 
-            <!-- Global "pull up a scratch ink surface" button, on every screen. -->
-            <ImageButton
-                    android:id="@+id/floatNoteButton"
-                    android:layout_width="44dp"
-                    android:layout_height="44dp"
+            <!-- THE BOTTOM PILL (Michael 2026-10-11: "more of an oblong than a circle"), on every
+                 screen: [corner | notes]. The corner half is GONE until an ink page lends it
+                 (BottomPill.Corner); alone, the notes half is the round notes button it was. -->
+            <LinearLayout
+                    android:id="@+id/floatNotePill"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
                     android:layout_gravity="bottom|start"
                     android:layout_margin="22dp"
-                    android:src="@drawable/ic_pencil"
-                    android:padding="11dp"
-                    android:scaleType="fitCenter"
-                    android:background="@drawable/dialog_rounded_bg"
-                    android:contentDescription="Notes"
-                    android:elevation="0dp"/>
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:background="@drawable/bottom_pill_bg"
+                    android:elevation="0dp">
+
+                <ImageButton
+                        android:id="@+id/floatCornerButton"
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:src="@drawable/ic_fullscreen"
+                        android:padding="11dp"
+                        android:scaleType="fitCenter"
+                        android:background="@android:color/transparent"
+                        android:contentDescription="Full screen"
+                        android:visibility="gone"/>
+
+                <View
+                        android:id="@+id/floatNoteDivider"
+                        android:layout_width="1dp"
+                        android:layout_height="22dp"
+                        android:background="#000000"
+                        android:visibility="gone"/>
+
+                <!-- Global "pull up a scratch ink surface" button, on every screen. -->
+                <ImageButton
+                        android:id="@+id/floatNoteButton"
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:src="@drawable/ic_pencil"
+                        android:padding="11dp"
+                        android:scaleType="fitCenter"
+                        android:background="@android:color/transparent"
+                        android:contentDescription="Notes"/>
+
+            </LinearLayout>
 
         </FrameLayout>
 

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Settings › Diagnostics — the door for sending a crash or a misbehaviour WITH EVIDENCE.
+
+    Three facts and three verbs, nothing else. The facts are what a report needs first (which
+    build, which device, did it crash); the verbs are the three things a person on a device
+    with no adb can actually do with the evidence: copy it, share it, throw it away. The rows
+    are the Settings page's own buttons (Settings.Button, 17sp) so this reads as one more room
+    of the same house and lands a stylus tap on e-ink.
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+        xmlns:tools="http://schemas.android.com/tools"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+    <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="12dp">
+
+        <TextView
+                android:id="@+id/diagnostics_app"
+                style="@style/Settings.Toggle"
+                android:minHeight="0dp"
+                android:textSize="17sp"
+                tools:text="Ledgable 1.06.212 (212) prodStandard/debug"/>
+
+        <TextView
+                android:id="@+id/diagnostics_device"
+                style="@style/Settings.Toggle"
+                android:minHeight="0dp"
+                android:textSize="17sp"
+                android:paddingTop="4dp"
+                tools:text="Bigme B6 · Android 11 (API 30)"/>
+
+        <TextView
+                android:id="@+id/diagnostics_last_crash"
+                style="@style/Settings.Hint"
+                android:textSize="15sp"
+                tools:text="Last crash: 2026-09-10T23:41:02-04:00 · java.lang.NullPointerException: no page"/>
+
+        <TextView
+                android:id="@+id/diagnostics_log_count"
+                style="@style/Settings.Toggle"
+                android:minHeight="0dp"
+                android:textSize="14sp"
+                android:paddingTop="10dp"
+                tools:text="212 recent log lines kept on this device"/>
+
+        <Button
+                style="@style/Settings.Button"
+                android:id="@+id/diagnostics_copy"
+                android:text="@string/diagnostics_copy"/>
+
+        <Button
+                style="@style/Settings.Button"
+                android:id="@+id/diagnostics_share"
+                android:text="@string/diagnostics_share"/>
+
+        <Button
+                style="@style/Settings.Button"
+                android:id="@+id/diagnostics_clear"
+                android:text="@string/diagnostics_clear"/>
+
+    </LinearLayout>
+</ScrollView>

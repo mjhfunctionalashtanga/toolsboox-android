@@ -86,6 +86,16 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 binding.ultrabridgePassInput.setText(ub.getString("ultrabridge_webdav_pass", ""))
                 binding.ultrabridgeEnableSwitch.isChecked = true
             }
+            if (result.applied.contains("michaelFilter")) {
+                // The import already ran MichaelFilterConnector.keyChanged; fill the box as a load so
+                // the watcher doesn't save the same key a second time.
+                val mf = com.toolsboox.plugin.michaelfilter.nw.MichaelFilterConnector
+                val wasLoading = loadingFields
+                loadingFields = true
+                binding.michaelfilterKeyInput.setText(mf.key(requireContext()))
+                loadingFields = wasLoading
+                binding.michaelfilterStatus.text = mf.statusLine(requireContext())
+            }
             val imported = if (result.applied.isEmpty()) "nothing else to import"
                 else "imported: ${result.applied.joinToString(", ")}"
             showMessage(
@@ -380,11 +390,6 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
     private lateinit var selectedLocaleLanguageTag: String
 
     /**
-     * The selected start view.
-     */
-    private var selectedStartView: Int = 0
-
-    /**
      * The selected start hour.
      */
     private var selectedStartHour: Int = -1
@@ -403,6 +408,42 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
      * The selected auto-sync interval index (maps to SYNC_INTERVAL_MINUTES).
      */
     private var selectedAutoSyncInterval: Int = 1
+
+    /**
+     * True while onResume is loading saved values INTO the fields. The text watchers below persist
+     * on every change, and a load is a change they must not answer — or opening the screen would
+     * rewrite every preference with the value it already holds (and the encrypted WebDAV prefs
+     * are not free to write on e-ink flash).
+     */
+    private var loadingFields: Boolean = false
+
+    /** Text watchers are attached once per inflated view; onResume can run many times. */
+    private var textPersistenceWired: Boolean = false
+
+    /**
+     * Set by the MichaelFilter box's own watcher when a PERSON changes it (not a load). The saved
+     * key is read off the main thread and arrives up to ~2 s after Settings opens; a paste made in
+     * that window must win, not be overwritten by the load.
+     */
+    private var michaelfilterEditedSinceLoad: Boolean = false
+
+    override fun onDestroyView() {
+        // The text fields are re-inflated with the view; the wiring must be too, or a return to
+        // Settings types into fields nothing saves (audit 09-11). Pending debounced writes land first.
+        flushPendingCommits()
+        uiHandler.removeCallbacksAndMessages(null)
+        pendingCommits.clear()
+        textPersistenceWired = false
+        super.onDestroyView()
+    }
+
+    /** The WebDAV fields shown for filling in while the switch is still off — see the switch. */
+    private var webdavFieldsRevealed: Boolean = false
+
+    private val uiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** One pending commit per text field, so a burst of typing lands as a single write. */
+    private val pendingCommits = HashMap<View, Runnable>()
 
     companion object {
         @Volatile private var cachedUbPrefs: SharedPreferences? = null
@@ -446,7 +487,7 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
 
         binding = FragmentCalendarSettingsBinding.bind(view)
 
-        // Set the ten section headings ONCE, here rather than in onResume: [styleSectionHeadings]
+        // Set the section headings ONCE, here rather than in onResume: [styleSectionHeadings]
         // rewrites each label into a two-line spanned form, and re-running it over its own output
         // would find no "·" left to split on and swallow the whole heading into the name line.
         // onViewCreated fires exactly once per inflated view, which is the guarantee this needs.
@@ -478,37 +519,24 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
 
         toolbar.root.title = getString(R.string.calendar_main_title, getString(R.string.calendar_settings_title))
 
+        // EVERY CONTROL ON THIS PAGE PERSISTS AS IT CHANGES. There is no Save button any more:
+        // switches flip and stick, dropdowns write on select, text fields write when they lose
+        // focus or 600 ms after the last keystroke (persistOnChange). A page where half the
+        // controls waited for a button at the bottom was a mode — you had to remember you were in
+        // it, and backing out lost what you typed. Loading the saved values below is itself a
+        // change the watchers must ignore, hence the flag.
+        loadingFields = true
+
         val imm = requireContext().getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
 
         val savedLocaleLanguageTag = sharedPreferences.getString("calendarLocale", Locale.getDefault().toLanguageTag())
         selectedLocaleLanguageTag = savedLocaleLanguageTag ?: Locale.getDefault().toLanguageTag()
 
-        selectedStartView = sharedPreferences.getInt("calendarStartView", 0)
         // Through PagePrefs so the spinner shows whatever the last sync landed — the setting is
         // shared with the iPad, and a screen that opened on a stale local copy would offer to save
         // the value it just failed to notice had changed.
         selectedStartHour = PagePrefs.settingHour(requireContext())
         selectedNoteTemplate = sharedPreferences.getInt("calendarNoteTemplate", 0)
-
-        // Start view settings
-        val listOfStartViews = mutableListOf<String>()
-        listOfStartViews.add(getString(R.string.calendar_settings_start_view_day))
-        listOfStartViews.add(getString(R.string.calendar_settings_start_view_week))
-        listOfStartViews.add(getString(R.string.calendar_settings_start_view_month))
-        listOfStartViews.add(getString(R.string.calendar_settings_start_view_quarter))
-        listOfStartViews.add(getString(R.string.calendar_settings_start_view_year))
-
-        val startViewAdapter = NoFilterAdapter(this.requireContext(), R.layout.list_item_locale, listOfStartViews)
-        binding.startViewSpinner.setAdapter(startViewAdapter)
-        startViewAdapter.notifyDataSetChanged()
-
-        binding.startViewSpinner.inputType = 0
-        binding.startViewSpinner.setOnItemClickListener { _, _, position, _ ->
-            requireActivity().currentFocus?.let {
-                imm.hideSoftInputFromWindow(it.windowToken, 0)
-            }
-            selectedStartView = position
-        }
 
         // Locale settings
         val listOfLocales = mutableListOf<LocaleItem>()
@@ -527,6 +555,7 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 imm.hideSoftInputFromWindow(it.windowToken, 0)
             }
             updateLocaleSettings(localeAdapter, position)
+            sharedPreferences.edit().putString("calendarLocale", selectedLocaleLanguageTag).apply()
         }
 
         // Start hour settings
@@ -551,6 +580,11 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 imm.hideSoftInputFromWindow(it.windowToken, 0)
             }
             selectedStartHour = position - 1
+            // Through PagePrefs, not straight into the pref box: the start hour is the one page
+            // setting that has to reach every device, because it is what SEEDS a new day and a day
+            // owns its hour for good afterwards. This stamps `updatedAt` and pushes
+            // `page-prefs/prefs.json`, so choosing 7 here is choosing 7 on the iPad too.
+            PagePrefs.setStartHour(requireContext(), selectedStartHour)
         }
 
         // Note template
@@ -568,6 +602,7 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 imm.hideSoftInputFromWindow(it.windowToken, 0)
             }
             selectedNoteTemplate = position
+            sharedPreferences.edit().putInt("calendarNoteTemplate", position).apply()
         }
 
         // Rotation orientation preferences — bitmask of allowed orientations
@@ -577,6 +612,11 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.rotationLandscapeCwCheck.isChecked = (rotationMask and 0b0010) != 0
         binding.rotationReversePortraitCheck.isChecked = (rotationMask and 0b0100) != 0
         binding.rotationLandscapeCcwCheck.isChecked = (rotationMask and 0b1000) != 0
+        // The four boxes used to wait for Save — the only controls on the page that did, once the
+        // switches persisted instantly, and so the ones most often "set" and then lost.
+        listOf(binding.rotationPortraitCheck, binding.rotationLandscapeCwCheck,
+               binding.rotationReversePortraitCheck, binding.rotationLandscapeCcwCheck)
+            .forEach { box -> box.setOnCheckedChangeListener { _, _ -> if (!loadingFields) persistRotationMask() } }
 
         // Auto-rotate. The rotate button's hold gesture was meant to do this and proved neither
         // discoverable nor reliable on the Palma, so it lives here as a plain switch. Applied
@@ -611,6 +651,42 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         // Auto-sync settings
         autoSyncEnabled = sharedPreferences.getBoolean("autoSyncEnabled", false)
         selectedAutoSyncInterval = sharedPreferences.getInt("autoSyncIntervalIndex", 1)
+        // The toolsBoox-account sync does nothing without that account's token (CalendarSyncWorker
+        // returns early) — a switch that can never do anything is not a setting (sweep, 09-10).
+        val hasToolsbooxAccount = !sharedPreferences.getString("accessToken", null).isNullOrBlank()
+        listOf(binding.autoSyncSectionLabel, binding.autoSyncSwitch, binding.autoSyncFold,
+               binding.autoSyncFieldsGroup, binding.dividerAutoSync)
+            .forEach { it.visibility = if (hasToolsbooxAccount) View.VISIBLE else View.GONE }
+        binding.buttonMailAccounts.setOnClickListener {
+            com.toolsboox.plugin.mail.ui.MailVerbs.showAccountsList(this, onChanged = {})
+        }
+        // The letter reader's two openings — persisted on change, read at every letter open.
+        run {
+            val mp = requireContext().getSharedPreferences(
+                com.toolsboox.plugin.feeds.ui.FeedsFragment.MAIL_PREFS, android.content.Context.MODE_PRIVATE)
+            binding.mailAsSentSwitch.isChecked = mp.getBoolean(com.toolsboox.plugin.feeds.ui.FeedsFragment.MAIL_PREF_AS_SENT, true)
+            binding.mailPicturesSwitch.isChecked = mp.getBoolean(com.toolsboox.plugin.feeds.ui.FeedsFragment.MAIL_PREF_PICTURES, true)
+            binding.mailAsSentSwitch.setOnCheckedChangeListener { _, on ->
+                mp.edit().putBoolean(com.toolsboox.plugin.feeds.ui.FeedsFragment.MAIL_PREF_AS_SENT, on).apply()
+            }
+            binding.mailPicturesSwitch.setOnCheckedChangeListener { _, on ->
+                mp.edit().putBoolean(com.toolsboox.plugin.feeds.ui.FeedsFragment.MAIL_PREF_PICTURES, on).apply()
+            }
+        }
+        binding.buttonStorage.setOnClickListener { showStorage() }
+        binding.buttonAudiobookshelf.setOnClickListener {
+            com.toolsboox.plugin.reader.ui.AbsSettingsDialog.show(this) { showMessage("Signed in — the shelf's Add a book menu browses it.") }
+        }
+        binding.buttonBookCatalog.setOnClickListener {
+            // The catalog's own settings live with the reader; arrive there with the door open.
+            requireContext().getSharedPreferences("ledger_reader_prefs", 0).edit().putBoolean("open_catalog_on_arrival", true).apply()
+            runCatching { androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.action_to_reader) }
+                .onFailure { showMessage("Open the Bookshelf → Add a book → From the catalog…") }
+        }
+        binding.buttonAskLedger.setOnClickListener {
+            runCatching { androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.LedgerChatFragment) }
+                .onFailure { showMessage("Open Ask my Ledger from the directory to add your key.") }
+        }
 
         binding.autoSyncSwitch.isChecked = autoSyncEnabled
 
@@ -630,6 +706,8 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 imm.hideSoftInputFromWindow(it.windowToken, 0)
             }
             selectedAutoSyncInterval = position
+            sharedPreferences.edit().putInt("autoSyncIntervalIndex", position).apply()
+            applyAutoSyncWork()
         }
 
         binding.autoSyncIntervalSpinner.setText(listOfIntervals[selectedAutoSyncInterval])
@@ -638,7 +716,9 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         updateAutoSyncIntervalVisibility()
         binding.autoSyncSwitch.setOnCheckedChangeListener { _, isChecked ->
             autoSyncEnabled = isChecked
+            sharedPreferences.edit().putBoolean("autoSyncEnabled", isChecked).apply()
             updateAutoSyncIntervalVisibility()
+            applyAutoSyncWork()
         }
 
         // Sync backend — WebDAV or Google Drive, one sync logic either way (design step D). The
@@ -694,9 +774,53 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.ultrabridgePassInput.setText(ultrabridgePrefs.getString("ultrabridge_webdav_pass", ""))
 
         // Toggle field visibility based on switch state
+        webdavFieldsRevealed = false
         updateUltrabridgeFieldsVisibility(ultrabridgeEnabled)
-        binding.ultrabridgeEnableSwitch.setOnCheckedChangeListener { _, isChecked ->
-            updateUltrabridgeFieldsVisibility(isChecked)
+        binding.ultrabridgeEnableSwitch.setOnCheckedChangeListener { sw, isChecked ->
+            if (loadingFields) return@setOnCheckedChangeListener
+            if (isChecked) {
+                // The switch simply cannot turn on until URL, user and password are all there.
+                // It used to turn on, and then Save aborted the WHOLE page with "fill in all
+                // WebDAV fields" after the other sections had already written. Now the guard is
+                // local: the switch falls back to off, the toast names the missing field, and the
+                // three boxes stay open underneath so it can be typed — a door that closed on the
+                // refusal would leave nowhere to type it.
+                val missing = missingWebdavField()
+                if (missing != null) {
+                    webdavFieldsRevealed = true
+                    sw.isChecked = false   // re-enters below with false; the flag keeps the box open
+                    updateUltrabridgeFieldsVisibility(true)
+                    Toast.makeText(
+                        requireContext(),
+                        getString(R.string.calendar_settings_ultrabridge_missing_field, missing),
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@setOnCheckedChangeListener
+                }
+                webdavFieldsRevealed = false
+                sharedPreferences.edit().putBoolean("ultrabridgeEnabled", true).apply()
+                updateUltrabridgeFieldsVisibility(true)
+                applyUltrabridgeWork(true)
+                Toast.makeText(requireContext(), R.string.calendar_settings_ultrabridge_enabled_toast, Toast.LENGTH_SHORT).show()
+            } else {
+                sharedPreferences.edit().putBoolean("ultrabridgeEnabled", false).apply()
+                updateUltrabridgeFieldsVisibility(webdavFieldsRevealed)
+                applyUltrabridgeWork(false)
+            }
+        }
+        if (!textPersistenceWired) {
+            // Credentials land in the encrypted prefs as they are typed, one key per box — the
+            // same keys, the same trimming Save used to do. Turning the upload on is a separate
+            // act (the switch above), so a half-typed URL never starts a sync.
+            persistOnChange(binding.ultrabridgeUrlInput) { v ->
+                getUltrabridgeEncryptedPrefs().edit().putString("ultrabridge_webdav_url", v.trim()).apply()
+            }
+            persistOnChange(binding.ultrabridgeUserInput) { v ->
+                getUltrabridgeEncryptedPrefs().edit().putString("ultrabridge_webdav_user", v.trim()).apply()
+            }
+            persistOnChange(binding.ultrabridgePassInput) { v ->
+                getUltrabridgeEncryptedPrefs().edit().putString("ultrabridge_webdav_pass", v).apply()
+            }
         }
 
         // Google Calendar (events) settings — events you add in Ledger land on this calendar.
@@ -704,46 +828,76 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.gcalEnableSwitch.isChecked = gcalEnabled
         binding.gcalIdInput.setText(sharedPreferences.getString(LedgerEventSync.CALENDAR_ID_KEY, "primary"))
         updateGcalFieldsVisibility(gcalEnabled)
+        if (!textPersistenceWired) {
+            // Blank means "primary", exactly as Save read it.
+            persistOnChange(binding.gcalIdInput) { v ->
+                sharedPreferences.edit()
+                    .putString(LedgerEventSync.CALENDAR_ID_KEY, v.trim().ifEmpty { "primary" })
+                    .apply()
+            }
+        }
 
         // The on-device extract retired with its menu row (2026-08-10) — the lasso flow is the
         // one blessed reader. The row hides rather than lies about controlling something.
         binding.autoExtractSwitch.visibility = android.view.View.GONE
         binding.autoExtractHint.visibility = android.view.View.GONE
 
-        // Community bridge (FluentCommunity) creds — one home for connection settings, instead
-        // of being buried under Boards → Web bridge.
-        val bridgeCfg = com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(requireContext())
-        val boardsCfg = com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(requireContext())
-        // Prefer whichever bridge already holds creds (they share site/user/pass on one site).
-        binding.communitySiteInput.setText(bridgeCfg.site.ifBlank { boardsCfg.site })
-        binding.communityUserInput.setText(bridgeCfg.user.ifBlank { boardsCfg.user })
-        binding.communityPassInput.setText(bridgeCfg.pass.ifBlank { boardsCfg.pass })
-        binding.communityBoardInput.setText(if (boardsCfg.boardId > 0) boardsCfg.boardId.toString() else "")
-        // Collapse the four connection fields behind an enable switch (like Ultrabridge / GCal),
-        // so a page full of credential boxes isn't the first thing you see. Start expanded only
-        // when creds already exist. Hiding a field never clears it — Save reads the inputs directly.
-        val communityHasCreds = bridgeCfg.site.isNotBlank() || boardsCfg.site.isNotBlank() ||
-            bridgeCfg.user.isNotBlank() || boardsCfg.user.isNotBlank() || boardsCfg.boardId > 0
-        binding.communityEnableSwitch.isChecked = communityHasCreds
-        updateCommunityFieldsVisibility(communityHasCreds)
-        binding.communityEnableSwitch.setOnCheckedChangeListener { _, isChecked ->
-            updateCommunityFieldsVisibility(isChecked)
+        // Sites: the one door. Every WordPress site with its URL, login, application password,
+        // default board and portal pages lives in SitesSettingsDialog; activating one write-throughs
+        // its creds into the bridge keys (SiteStore.activate). The inline "edit the active-site
+        // bridge here (advanced)" boxes that mirrored those keys are gone — one editor per thing.
+        binding.buttonManageSites.setOnClickListener {
+            SitesSettingsDialog.show(requireContext(), present = { d -> showModal(d) })
         }
 
-        // Manage sites: the multi-site surface. Activating a site write-throughs its creds into the
-        // same bridge keys these inline fields edit, so on return we re-read the active site's creds
-        // into the boxes to keep the two views in step.
-        binding.buttonManageSites.setOnClickListener {
-            SitesSettingsDialog.show(requireContext()) {
-                val bCfg = com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(requireContext())
-                val brCfg = com.toolsboox.plugin.calendar.nw.LedgerWebBridge.config(requireContext())
-                binding.communitySiteInput.setText(bCfg.site.ifBlank { brCfg.site })
-                binding.communityUserInput.setText(bCfg.user.ifBlank { brCfg.user })
-                binding.communityPassInput.setText(bCfg.pass.ifBlank { brCfg.pass })
-                binding.communityBoardInput.setText(if (brCfg.boardId > 0) brCfg.boardId.toString() else "")
-                val has = brCfg.site.isNotBlank() || bCfg.site.isNotBlank()
-                binding.communityEnableSwitch.isChecked = has
-                updateCommunityFieldsVisibility(has)
+        // MichaelFilter — a connector now, not a key compiled into the build (MichaelFilterConnector).
+        // The box saves as it changes, like every field here; the line under it says what the key is
+        // doing (not connected / connected / turned down, and how many links are waiting). The
+        // encrypted store opens off the main thread (it costs 200 ms–2 s on e-ink flash), and the box
+        // is then filled AS A LOAD — so merely opening Settings never re-saves the key, which would
+        // clear a "turned down" and send again. If the person has already started on the box by
+        // the time the key arrives (typed or pasted into it, or has it focused to paste), the load
+        // leaves it alone: their text and its own pending save win.
+        val mfConnector = com.toolsboox.plugin.michaelfilter.nw.MichaelFilterConnector
+        binding.michaelfilterStatus.text = mfConnector.statusLine(requireContext())
+        val mfAppContext = requireContext().applicationContext
+        val mfBinding = binding
+        michaelfilterEditedSinceLoad = false
+        viewLifecycleOwner.lifecycleScope.launch {
+            val saved = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                mfConnector.refresh(mfAppContext)
+            }
+            if (!isAdded || binding !== mfBinding) return@launch
+            if (michaelfilterEditedSinceLoad || binding.michaelfilterKeyInput.hasFocus()) {
+                binding.michaelfilterStatus.text = mfConnector.statusLine(mfAppContext)
+                return@launch
+            }
+            val wasLoading = loadingFields
+            loadingFields = true
+            binding.michaelfilterKeyInput.setText(saved)
+            loadingFields = wasLoading
+            binding.michaelfilterStatus.text = mfConnector.statusLine(mfAppContext)
+        }
+        if (!textPersistenceWired) {
+            binding.michaelfilterKeyInput.addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    if (!loadingFields) michaelfilterEditedSinceLoad = true
+                }
+            })
+            persistOnChange(binding.michaelfilterKeyInput) { v ->
+                val ctx = context ?: return@persistOnChange
+                mfConnector.setKey(ctx, v)
+                binding.michaelfilterStatus.text = mfConnector.statusLine(ctx)
+            }
+            // Done on the keyboard lands the key now (focus loss is what persistOnChange commits on).
+            binding.michaelfilterKeyInput.setOnEditorActionListener { v, actionId, _ ->
+                if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) {
+                    v.clearFocus()
+                    imm.hideSoftInputFromWindow(v.windowToken, 0)
+                }
+                false
             }
         }
         // Persist toggles the INSTANT they flip — not only on the Save button. Users expect a
@@ -776,6 +930,115 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         // layout comment for why we jump there instead of drawing our own toggle grid.
         binding.buttonNotificationCategories.setOnClickListener {
             com.toolsboox.ot.LedgerNotifications.openCategorySettings(requireContext())
+        }
+
+        // ♥ THE LINEAGE — in the app, not only in the repo (Michael, 09-02: "give credit to
+        // all of the different apps we used on our credits page!!!"). One dialog, the whole
+        // family tree; the license-bearing notices live in THIRD-PARTY-NOTICES.md.
+        binding.buttonCredits.setOnClickListener {
+            val text = """Ledgable stands on open projects whose ideas, research or code shaped it:
+
+♥ toolsboox — the trunk this fork grew from
+♥ Readest — annotate-on-selection, the quiet reading footer
+♥ foliate-js — the reading engine itself
+♥ Capy Reader — always-full-content per feed
+♥ AntennaPod — the sleep timer, up-next, continue listening
+♥ Podcast Republic — per-show speed and intro skip
+♥ Handy News Reader — offline articles, pictures included
+♥ Mihon extensions-lib — the ABI that runs the sources
+♥ EinkBro — the e-ink browsing grammar
+♥ Notate — draw-and-hold shape snapping
+♥ Notable — two-finger undo, three-finger redo
+♥ Aragonite — the research that opened the firmware's MyScript
+♥ Saber — folders as a lens, recents first
+♥ Seeneva — the speech-balloon detector
+♥ Mihon — finishing a comic offers the next
+♥ Thunderbird / K-9 — the measure for the mail room
+♥ WordPress for Android — the measure for the publishing doors
+♥ Simplenote — the notes companion off-device
+♥ Miniflux — the feed server behind Feeds
+
+Thank you — every one of you made this notebook better."""
+            showModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+                .setTitle("Credits")
+                .setMessage(text)
+                .setPositiveButton(android.R.string.ok, null)
+                .create())
+        }
+
+        // The diagnostics door — the crash report and the recent log, copied or shared from a
+        // device with no adb. See [DiagnosticsDialog].
+        binding.buttonDiagnostics.setOnClickListener {
+            DiagnosticsDialog.show(requireContext()) { showModal(it) }
+        }
+
+        // Bigme only: the experimental daemon ink path's switch. Off = 1.06.71's software ink
+        // (writing, slow); on = try the fast daemon at next page open, whose toast reports.
+        val isBigme = android.os.Build.MANUFACTURER.contains("bigme", true) || android.os.Build.BRAND.contains("bigme", true) ||
+            runCatching { Class.forName("com.xrz.HandwrittenClient"); true }.getOrDefault(false)
+        if (isBigme) {
+            binding.buttonBigmeFast.visibility = View.VISIBLE
+            fun renderBigmeFast() {
+                val on = sharedPreferences.getBoolean("bigme_fast_ink", false)
+                binding.buttonBigmeFast.text =
+                    if (on) "🖊 Bigme fast ink: ON — tap to turn off"
+                    else "🖊 Bigme fast ink: off — tap to try (experimental)"
+            }
+            renderBigmeFast()
+            binding.buttonBigmeFast.setOnClickListener {
+                val next = !sharedPreferences.getBoolean("bigme_fast_ink", false)
+                sharedPreferences.edit().putBoolean("bigme_fast_ink", next).apply()
+                renderBigmeFast()
+                android.widget.Toast.makeText(requireContext(),
+                    if (next) "Fast ink armed — open a note page and read its toast"
+                    else "Fast ink off — the software pen is back", android.widget.Toast.LENGTH_LONG).show()
+            }
+
+            // Hold the row for the ink-latency report: ring-buffer percentiles from the
+            // daemon path (kernel→JVM dispatch, first-paint) plus the stray-event heal
+            // counters — the field instrument for "is the pen slow / where did that
+            // stray line come from", on a device with no adb. The last recorded crash
+            // rides the same dialog: one long-press answers both questions.
+            binding.buttonBigmeFast.setOnLongClickListener {
+                val crash = com.toolsboox.ot.CrashRecorder.lastCrash(requireContext())
+                // The ink trace's tail rides along — the field view of the same file
+                // `adb pull` reads whole (the postmortem's "readable trace first" rule).
+                val trace = com.toolsboox.ot.InkTrace.dump().takeLast(4000)
+                val body = com.toolsboox.ot.InkPerf.report() +
+                    "\n\n═══ INK TRACE (tail) ═══\n$trace" +
+                    (crash?.let { "\n\n═══ LAST CRASH ═══\n$it" } ?: "")
+                android.app.AlertDialog.Builder(requireContext())
+                    .setTitle("Ink latency" + if (crash != null) " + last crash" else "")
+                    .setMessage(body)
+                    .setPositiveButton("Close", null)
+                    .setNegativeButton("Reset") { _, _ ->
+                        com.toolsboox.ot.InkPerf.reset()
+                        com.toolsboox.ot.CrashRecorder.clear(requireContext())
+                    }
+                    .show()
+                true
+            }
+        }
+
+        // The fleet's update door: the same R2 address every cabled install ships from,
+        // opened in the browser — download, tap the finished download, and the system
+        // installer upgrades in place (same debug signature on every build). The current
+        // version rides the tap's toast so "did it change?" has an answer afterward.
+        binding.buttonUpdateApk.setOnClickListener {
+            val v = runCatching {
+                requireContext().packageManager
+                    .getPackageInfo(requireContext().packageName, 0).versionName
+            }.getOrNull() ?: "?"
+            android.widget.Toast.makeText(requireContext(),
+                "You're on $v — downloading the latest…", android.widget.Toast.LENGTH_LONG).show()
+            runCatching {
+                startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse("https://pub-fd963781ad094611b656cc774c6dc163.r2.dev/ledger/ledger.apk")))
+            }.onFailure {
+                android.widget.Toast.makeText(requireContext(),
+                    "No browser answered — the address is pub-fd963781….r2.dev/ledger/ledger.apk",
+                    android.widget.Toast.LENGTH_LONG).show()
+            }
         }
 
         // Sync the patterns of the calendar
@@ -838,9 +1101,19 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         }
         binding.buttonImportNames.setOnClickListener { importNamesLauncher.launch("*/*") }
 
-        // "Import backup" was a dead button (no handler); it now restores a full-ledger backup zip —
-        // exactly what its label says, and the same action that was otherwise hidden on the long-press
-        // of Import settings below. Pairs with "Export backup".
+        // FULL ledger backup/restore (data, not just settings): zip the whole Documents tree
+        // (every day page, contact, board, clipping) to a file you pick; restore reads such a zip
+        // back over it. Two plain buttons — it used to be a long-press on the two settings buttons,
+        // which needed a paragraph to be findable. The settings JSON rides inside the zip, which
+        // is why the passphrase dialog comes first here too: the embedded copy carries the same
+        // secrets the standalone export does.
+        binding.buttonBackupFull.setOnClickListener {
+            promptExportPassphrase { pass ->
+                backupPassphrase = pass
+                val df = java.text.SimpleDateFormat("yyyy-MM-dd-HHmm", java.util.Locale.US)
+                backupCreateLauncher.launch("ledger-backup-${df.format(java.util.Date())}.zip")
+            }
+        }
         binding.buttonRestore.setOnClickListener {
             backupRestoreLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
         }
@@ -851,186 +1124,127 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         // stale one. calendar_settings_button_text_size now says it in the resource.
         binding.buttonTextSize.setOnClickListener { showLegibilityDialog() }
 
-        // FULL ledger backup/restore (data, not just settings): long-press Export = zip the whole
-        // Documents tree (every day page, contact, board, clipping) to a file you pick; long-press
-        // Import = restore a backup zip over it. Settings JSON is included in the zip — which is
-        // why the passphrase dialog comes first here too: the embedded copy carries the same
-        // secrets the standalone export does.
-        binding.buttonExportSettings.setOnLongClickListener {
-            promptExportPassphrase { pass ->
-                backupPassphrase = pass
-                val df = java.text.SimpleDateFormat("yyyy-MM-dd-HHmm", java.util.Locale.US)
-                backupCreateLauncher.launch("ledger-backup-${df.format(java.util.Date())}.zip")
-            }
-            true
-        }
-        binding.buttonImportSettings.setOnLongClickListener {
-            backupRestoreLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
-            true
-        }
-
-        // Save and back
-        binding.buttonSave.setOnClickListener {
-            sharedPreferences.edit().putString("calendarLocale", selectedLocaleLanguageTag).apply()
-            sharedPreferences.edit().putInt("calendarStartView", selectedStartView).apply()
-            // Through PagePrefs, not straight into the pref box: the start hour is the one page
-            // setting that has to reach every device, because it is what SEEDS a new day and a day
-            // owns its hour for good afterwards. This stamps `updatedAt` and pushes
-            // `page-prefs/prefs.json`, so choosing 7 here is choosing 7 on the iPad too.
-            PagePrefs.setStartHour(requireContext(), selectedStartHour)
-            sharedPreferences.edit().putInt("calendarNoteTemplate", selectedNoteTemplate).apply()
-
-            // Persist rotation orientation mask
-            var rotMask = 0
-            if (binding.rotationPortraitCheck.isChecked) rotMask = rotMask or 0b0001
-            if (binding.rotationLandscapeCwCheck.isChecked) rotMask = rotMask or 0b0010
-            if (binding.rotationReversePortraitCheck.isChecked) rotMask = rotMask or 0b0100
-            if (binding.rotationLandscapeCcwCheck.isChecked) rotMask = rotMask or 0b1000
-            if (rotMask == 0) rotMask = 0b0001  // never empty — fall back to portrait
-            sharedPreferences.edit().putInt("rotationOrientationMask", rotMask).apply()
-
-            // Persist auto-sync settings
-            sharedPreferences.edit().putBoolean("autoSyncEnabled", autoSyncEnabled).apply()
-            sharedPreferences.edit().putInt("autoSyncIntervalIndex", selectedAutoSyncInterval).apply()
-
-            // Persist the independent toggles EARLY — before the Ultrabridge validation below,
-            // which can `return@setOnClickListener` and used to silently drop these (the
-            // "toggle says it works but doesn't turn" bug). Google Calendar on/off + target,
-            // and the on-device extract switch, have nothing to do with Ultrabridge.
-            val gcalIdEarly = binding.gcalIdInput.text?.toString()?.trim().let { if (it.isNullOrEmpty()) "primary" else it }
-            sharedPreferences.edit()
-                .putBoolean(LedgerEventSync.ENABLED_KEY, binding.gcalEnableSwitch.isChecked)
-                .putString(LedgerEventSync.CALENDAR_ID_KEY, gcalIdEarly)
-                .apply()
-
-            // Enqueue or cancel periodic sync work
-            val workManager = WorkManager.getInstance(requireContext())
-            if (autoSyncEnabled) {
-                val intervalMinutes = SYNC_INTERVAL_MINUTES[selectedAutoSyncInterval]
-                val constraints = Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    // Skip only when the battery is genuinely low. No charging requirement —
-                    // this device often runs for days unplugged, and Doze already throttles
-                    // periodic work into occasional maintenance windows once the screen is off.
-                    .setRequiresBatteryNotLow(true)
-                    .build()
-                val syncRequest = PeriodicWorkRequestBuilder<CalendarSyncWorker>(
-                    intervalMinutes, TimeUnit.MINUTES
-                )
-                    .setConstraints(constraints)
-                    // Back off generously on failure so a flaky network can't cause a retry storm.
-                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
-                    .build()
-                workManager.enqueueUniquePeriodicWork(
-                    WORK_NAME,
-                    ExistingPeriodicWorkPolicy.UPDATE,
-                    syncRequest
-                )
-            } else {
-                workManager.cancelUniqueWork(WORK_NAME)
-            }
-
-            // Persist Ultrabridge settings
-            // Community (FluentCommunity) + Boards bridge creds — persisted FIRST, before the
-            // Ultrabridge validation below can early-return, so an incomplete Ultrabridge never
-            // silently drops community/boards creds typed in the same session.
-            run {
-                val bSite = binding.communitySiteInput.text?.toString()?.trim().orEmpty()
-                val bUser = binding.communityUserInput.text?.toString()?.trim().orEmpty()
-                val bPass = binding.communityPassInput.text?.toString().orEmpty().replace(" ", "")
-                com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.saveConfig(
-                    requireContext(),
-                    com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.Config(bSite, bUser, bPass)
-                )
-                val bBoard = binding.communityBoardInput.text?.toString()?.trim()?.toIntOrNull() ?: 0
-                com.toolsboox.plugin.calendar.nw.LedgerWebBridge.saveConfig(
-                    requireContext(),
-                    com.toolsboox.plugin.calendar.nw.LedgerWebBridge.Config(bSite, bUser, bPass, bBoard)
-                )
-            }
-
-            val ubEnabled = binding.ultrabridgeEnableSwitch.isChecked
-            val ubUrl = binding.ultrabridgeUrlInput.text?.toString()?.trim() ?: ""
-            val ubUser = binding.ultrabridgeUserInput.text?.toString()?.trim() ?: ""
-            val ubPass = binding.ultrabridgePassInput.text?.toString() ?: ""
-
-            if (ubEnabled && (ubUrl.isEmpty() || ubUser.isEmpty() || ubPass.isEmpty())) {
-                Toast.makeText(
-                    requireContext(),
-                    R.string.calendar_settings_ultrabridge_missing_fields,
-                    Toast.LENGTH_LONG
-                ).show()
-                return@setOnClickListener
-            }
-
-            sharedPreferences.edit().putBoolean("ultrabridgeEnabled", ubEnabled).apply()
-
-            // Store credentials in EncryptedSharedPreferences
-            val ubPrefs = getUltrabridgeEncryptedPrefs()
-            ubPrefs.edit()
-                .putString("ultrabridge_webdav_url", ubUrl)
-                .putString("ultrabridge_webdav_user", ubUser)
-                .putString("ultrabridge_webdav_pass", ubPass)
-                .apply()
-
-            // Enqueue or cancel Ultrabridge periodic work
-            if (ubEnabled) {
-                val ubConstraints = Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    // Skip only when the battery is genuinely low. No charging requirement —
-                    // this device runs for days unplugged. Doze throttles this periodic run, the
-                    // 60-min period keeps the wake count down, and the on-exit syncNow() (network-
-                    // only, no battery gate) still pushes a full re-mirror every time you close.
-                    .setRequiresBatteryNotLow(true)
-                    .build()
-                val ubRequest = PeriodicWorkRequestBuilder<UltrabridgeSyncWorker>(
-                    60, TimeUnit.MINUTES
-                )
-                    .setConstraints(ubConstraints)
-                    // Back off generously on failure so a flaky network can't cause a retry storm.
-                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
-                    .build()
-                workManager.enqueueUniquePeriodicWork(
-                    UltrabridgeSyncWorker.WORK_NAME,
-                    ExistingPeriodicWorkPolicy.UPDATE,
-                    ubRequest
-                )
-                Toast.makeText(
-                    requireContext(),
-                    R.string.calendar_settings_ultrabridge_enabled_toast,
-                    Toast.LENGTH_SHORT
-                ).show()
-            } else {
-                workManager.cancelUniqueWork(UltrabridgeSyncWorker.WORK_NAME)
-            }
-
-            // (Google Calendar, on-device extract, and community/boards creds were persisted early,
-            // above — before the Ultrabridge validation — so nothing is dropped on an early return.)
-
-            this@CalendarSettingsFragment.requireActivity().onBackPressed()
-        }
-
-        binding.buttonBack.setOnClickListener {
-            this@CalendarSettingsFragment.requireActivity().onBackPressed()
-        }
-
         // Set start of spinners
         if (localeIndex > -1) {
             binding.localesSpinner.setText(listOfLocales[localeIndex].toString())
             updateLocaleSettings(localeAdapter, localeIndex)
         }
 
-        binding.startViewSpinner.setText(listOfStartViews[selectedStartView])
         // Defensive even now the list is full-length: a preference arriving from another device
         // is data from outside this screen, and a settings page must not be the thing that crashes
         // on it. Out of range reads as "leave empty", the list's own first entry.
         binding.startHourSpinner.setText(
             listOfStartHours.getOrElse(selectedStartHour + 1) { listOfStartHours[0] })
         binding.noteTemplateSpinner.setText(listOfNoteTemplates[selectedNoteTemplate])
+
+        textPersistenceWired = true
+        loadingFields = false
     }
 
     /**
-     * Give the ten section headings the app's own hand: a glyph, the section's NAME in bold mono
+     * Persist a text field as it changes: at once when it loses focus, otherwise 600 ms after the
+     * last keystroke, so a burst of typing lands as one write. [commit] receives the field's
+     * current text. A load (onResume filling the boxes) is ignored via [loadingFields].
+     */
+    private fun persistOnChange(edit: android.widget.EditText, commit: (String) -> Unit) {
+        edit.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                if (loadingFields) return
+                pendingCommits.remove(edit)?.let { uiHandler.removeCallbacks(it) }
+                val r = Runnable {
+                    pendingCommits.remove(edit)
+                    if (isAdded) commit(edit.text?.toString() ?: "")
+                }
+                pendingCommits[edit] = r
+                uiHandler.postDelayed(r, 600)
+            }
+        })
+        edit.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) pendingCommits.remove(edit)?.let { uiHandler.removeCallbacks(it); it.run() }
+        }
+    }
+
+    /** Land every debounced write now — the page is being left, and 600 ms is longer than a back tap. */
+    private fun flushPendingCommits() {
+        val runs = pendingCommits.values.toList()
+        pendingCommits.clear()
+        runs.forEach { uiHandler.removeCallbacks(it); it.run() }
+    }
+
+    /** The rotate button's cycle, from the four boxes — never empty, portrait is the floor. */
+    private fun persistRotationMask() {
+        var rotMask = 0
+        if (binding.rotationPortraitCheck.isChecked) rotMask = rotMask or 0b0001
+        if (binding.rotationLandscapeCwCheck.isChecked) rotMask = rotMask or 0b0010
+        if (binding.rotationReversePortraitCheck.isChecked) rotMask = rotMask or 0b0100
+        if (binding.rotationLandscapeCcwCheck.isChecked) rotMask = rotMask or 0b1000
+        if (rotMask == 0) rotMask = 0b0001  // never empty — fall back to portrait
+        sharedPreferences.edit().putInt("rotationOrientationMask", rotMask).apply()
+    }
+
+    /** Enqueue or cancel the toolsBoox-account periodic sync to match the switch + interval. */
+    private fun applyAutoSyncWork() {
+        val workManager = WorkManager.getInstance(requireContext())
+        if (autoSyncEnabled) {
+            val intervalMinutes = SYNC_INTERVAL_MINUTES[selectedAutoSyncInterval]
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                // Skip only when the battery is genuinely low. No charging requirement —
+                // this device often runs for days unplugged, and Doze already throttles
+                // periodic work into occasional maintenance windows once the screen is off.
+                .setRequiresBatteryNotLow(true)
+                .build()
+            val syncRequest = PeriodicWorkRequestBuilder<CalendarSyncWorker>(
+                intervalMinutes, TimeUnit.MINUTES
+            )
+                .setConstraints(constraints)
+                // Back off generously on failure so a flaky network can't cause a retry storm.
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
+                .build()
+            workManager.enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, syncRequest)
+        } else {
+            workManager.cancelUniqueWork(WORK_NAME)
+        }
+    }
+
+    /** Enqueue or cancel the Ultrabridge periodic mirror to match the WebDAV switch. */
+    private fun applyUltrabridgeWork(enabled: Boolean) {
+        val workManager = WorkManager.getInstance(requireContext())
+        if (enabled) {
+            val ubConstraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                // Skip only when the battery is genuinely low. No charging requirement —
+                // this device runs for days unplugged. Doze throttles this periodic run, the
+                // 60-min period keeps the wake count down, and the on-exit syncNow() (network-
+                // only, no battery gate) still pushes a full re-mirror every time you close.
+                .setRequiresBatteryNotLow(true)
+                .build()
+            val ubRequest = PeriodicWorkRequestBuilder<UltrabridgeSyncWorker>(60, TimeUnit.MINUTES)
+                .setConstraints(ubConstraints)
+                // Back off generously on failure so a flaky network can't cause a retry storm.
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
+                .build()
+            workManager.enqueueUniquePeriodicWork(
+                UltrabridgeSyncWorker.WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, ubRequest
+            )
+        } else {
+            workManager.cancelUniqueWork(UltrabridgeSyncWorker.WORK_NAME)
+        }
+    }
+
+    /** The first blank WebDAV box, named the way its hint names it — or null when all three are filled. */
+    private fun missingWebdavField(): String? {
+        // A commit may still be pending on the box being typed in; read the boxes, not the prefs.
+        if (binding.ultrabridgeUrlInput.text.isNullOrBlank()) return getString(R.string.calendar_settings_ultrabridge_url_hint)
+        if (binding.ultrabridgeUserInput.text.isNullOrBlank()) return getString(R.string.calendar_settings_ultrabridge_user_hint)
+        if (binding.ultrabridgePassInput.text.isNullOrBlank()) return getString(R.string.calendar_settings_ultrabridge_pass_hint)
+        return null
+    }
+
+    /**
+     * Give the section headings the app's own hand: a glyph, the section's NAME in bold mono
      * caps, and its gloss on a second line at four-fifths the size.
      *
      * The glyphs are not decoration and none of them are new — every one is lifted from the row it
@@ -1060,11 +1274,11 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             binding.lookSectionLabel to "🔤",
             binding.rotationSectionLabel to "🔄",
             binding.calendarSectionLabel to "🗓",
-            binding.captureSectionLabel to "✒",
             binding.autoSyncSectionLabel to "☁",
             binding.ultrabridgeSectionLabel to "📄",
             binding.gcalSectionLabel to "☑",
             binding.communitySectionLabel to "🖥",
+            binding.michaelfilterSectionLabel to "📰",
             binding.dataSectionLabel to "🗃",
             binding.deviceSectionLabel to "⚙"
         ).forEach { (label, glyph) -> label.text = sectionHeading(glyph, label.text.toString()) }
@@ -1165,6 +1379,89 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
      * four days ago is as much of a warning as an outright failure, and only one of those two states
      * is visible if you print the outcome on its own.
      */
+    /**
+     * STORAGE — the audio this device is holding, and the way to let it go (Michael, 09-11: "I
+     * also need to be able to delete the downloaded audio files for books and podcasts"). Two
+     * piles, each row its size: podcast episodes kept offline (tap = delete; "Delete all") and
+     * audiobook files on the shelf (deleted here, tombstoned for the fleet — the shelf's own rule).
+     */
+    private fun showStorage() {
+        val ctx = requireContext()
+        fun size(b: Long): String = when {
+            b >= 1_000_000_000 -> "%.2f GB".format(b / 1e9)
+            b >= 1_000_000 -> "%.0f MB".format(b / 1e6)
+            b >= 1_000 -> "${b / 1_000} KB"
+            else -> "$b B"
+        }
+        lifecycleScope.launch {
+            val (episodes, books) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val eps = com.toolsboox.plugin.feeds.nw.LaterMedia.downloaded(ctx)
+                val audio = setOf("mp3", "m4a", "m4b", "aac", "ogg", "opus", "wav", "flac")
+                val bks = runCatching { com.toolsboox.plugin.reader.ui.BookshelfSource.list(ctx) }.getOrDefault(emptyList())
+                    .filter { it.name.substringAfterLast('.', "").lowercase() in audio }
+                    .sortedByDescending { it.sizeBytes }
+                eps to bks
+            }
+            if (!isAdded) return@launch
+            val epBytes = episodes.sumOf { com.toolsboox.plugin.feeds.nw.LaterMedia.localFile(ctx, it.audioUrl).length() }
+            val bkBytes = books.sumOf { it.sizeBytes }
+            val rows = ArrayList<Pair<String, () -> Unit>>()
+            // THE TWO DIALS (09-19, same on iOS): how many the silent sweep keeps (0 = off, every
+            // download is one you asked for) and how much the store may hold.
+            val lm = com.toolsboox.plugin.feeds.nw.LaterMedia
+            val keep = lm.keepLimit(ctx)
+            rows += "⬇  Auto-keep newest episodes: ${if (keep == 0) "off — only what you ask for" else "$keep"}" to {
+                val choices = listOf(0, 3, 5, 8, 10, 15, 20)
+                androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                    .setTitle("Auto-keep the newest…")
+                    .setItems(choices.map { if (it == 0) "Off — only episodes I ask for" else "$it episodes" }.toTypedArray()) { _, i ->
+                        lm.setKeepLimit(ctx, choices[i]); showStorage()
+                    }.setNegativeButton(android.R.string.cancel, null).show()
+            }
+            val capNow = lm.capBytes(ctx)
+            rows += "💾  Storage limit: ${lm.CAP_CHOICES.firstOrNull { it.second == capNow }?.first ?: size(capNow)}" to {
+                androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                    .setTitle("Keep at most…")
+                    .setItems(lm.CAP_CHOICES.map { it.first }.toTypedArray()) { _, i ->
+                        lm.setCapBytes(ctx, lm.CAP_CHOICES[i].second); showStorage()
+                    }.setNegativeButton(android.R.string.cancel, null).show()
+            }
+            rows += "🎧  Episodes kept offline · ${size(epBytes)}" to {}
+            episodes.forEach { e ->
+                val f = com.toolsboox.plugin.feeds.nw.LaterMedia.localFile(ctx, e.audioUrl)
+                val why = when (e.reason) { lm.REASON_ASKED -> " · you asked"; lm.REASON_RECENT -> " · newest"; else -> "" }
+                rows += "    🗑  ${e.title.take(40)} · ${size(f.length())}$why" to {
+                    com.toolsboox.plugin.feeds.nw.LaterMedia.remove(ctx, e.audioUrl)
+                    showMessage("Deleted · ${e.title.take(40)}"); showStorage()
+                }
+            }
+            if (episodes.isNotEmpty()) rows += "    🗑  Delete all episodes · ${size(epBytes)}" to {
+                androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                    .setTitle("Delete every episode kept offline?")
+                    .setMessage("${episodes.size} files · ${size(epBytes)}. Your place in each is kept; they stream again when played.")
+                    .setPositiveButton("Delete all") { _, _ -> com.toolsboox.plugin.feeds.nw.LaterMedia.removeAll(ctx); showStorage() }
+                    .setNegativeButton("Keep them", null).show()
+            }
+            rows += "📚  Audiobooks on the shelf · ${size(bkBytes)}" to {}
+            books.forEach { b ->
+                rows += "    🗑  ${b.name.substringBeforeLast('.').take(40)} · ${size(b.sizeBytes)}" to {
+                    androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                        .setTitle(b.name.substringBeforeLast('.'))
+                        .setMessage("Delete this audiobook from this device? Other devices keep their copies and are asked, not told.")
+                        .setPositiveButton("Delete") { _, _ ->
+                            val gone = b.file?.delete() ?: false
+                            if (gone) com.toolsboox.plugin.reader.ui.LibraryHub.recordDelete(ctx.applicationContext, com.toolsboox.plugin.reader.ui.LibraryHub.idFor(b))
+                            showMessage(if (gone) "Deleted · ${b.name.substringBeforeLast('.')}" else "Couldn't delete it (a streamed folder book — remove it in its own app).")
+                            showStorage()
+                        }
+                        .setNegativeButton("Keep it", null).show()
+                }
+            }
+            if (episodes.isEmpty() && books.isEmpty()) rows += "Nothing downloaded on this device." to {}
+            showIconMenu("Storage · downloaded audio", rows)
+        }
+    }
+
     private fun showLastMirrorResult(enabled: Boolean) {
         val view = binding.ultrabridgeLastResult
         val prefs = requireContext().getSharedPreferences("MAIN", android.content.Context.MODE_PRIVATE)
@@ -1193,17 +1490,6 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
         binding.gcalFieldsGroup.visibility = if (enabled) View.VISIBLE else View.GONE
         binding.gcalFold.visibility = if (enabled) View.GONE else View.VISIBLE
     }
-
-    /**
-     * Show or hide the Community / Boards bridge fields (site, user, pass, board) based on the
-     * enable switch. Hiding the GROUP via GONE keeps every field's text intact exactly as hiding
-     * them one by one did, so Save still persists what was typed before the block was folded.
-     */
-    private fun updateCommunityFieldsVisibility(enabled: Boolean) {
-        binding.communityFieldsGroup.visibility = if (enabled) View.VISIBLE else View.GONE
-        binding.communityFold.visibility = if (enabled) View.GONE else View.VISIBLE
-    }
-
 
     /**
      * Update the locale settings fields.
@@ -1250,6 +1536,7 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
     override fun onPause() {
         super.onPause()
 
+        flushPendingCommits()
         toolbar.toolbarPager.visibility = View.GONE
     }
 
@@ -1630,7 +1917,9 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             // button ~43dp, inside the narrowest margin the reading surfaces leave (44dp article,
             // ~46dp book reader on a Tab8). That's why it deserves its own dial — the arithmetic
             // is about the margin, and shouldn't move because a dialog wanted to be easier to read.
-            col.addView(sectionLabel("PILL SIZE  ·  floating pills & pen"))
+            // Renamed PANEL & PEN SIZE (plan v6 a1.20:8, 2026-10-10): the pills retired and this
+            // dial now sizes the tool column (TuckPanel rides it) and the floating pen.
+            col.addView(sectionLabel("PANEL & PEN SIZE  ·  tool column & pen"))
             val pillKey = com.toolsboox.ot.ModalScale.PILL_SIZE_KEY
             col.addView(chipRow(
                 modalSizes.map { (value, label) ->
@@ -1640,6 +1929,20 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
                 }
             ) { i -> prefs.edit().putString(pillKey, modalSizes[i].first).apply() })
         }
+
+        // TOOL LABELS — the captions under the tool column's icons (plan v6 §2.2 / S1.1, Michael
+        // 2026-10-10: "make labels an option"). Outside the linked block: it is a switch, not a
+        // size. The twin of More › ☐ Tool labels on the ink pages; one global key, so a page
+        // behind this panel re-dresses as it comes back to the front (TuckPanel's attach check).
+        col.addView(sectionLabel("TOOL LABELS  ·  captions under the tool icons"))
+        val labelChoices = listOf(true to "Shown", false to "Hidden")
+        col.addView(chipRow(
+            labelChoices.map { (on, label) ->
+                Triple(label, null as android.graphics.Typeface?) {
+                    com.toolsboox.ot.TuckPanel.labelsOn(ctx) == on
+                }
+            }
+        ) { i -> com.toolsboox.ot.TuckPanel.setLabelsOn(ctx, labelChoices[i].first) })
 
         // FLOATING PILLS — whether they are there at all.
         //
@@ -1664,6 +1967,23 @@ class CalendarSettingsFragment @Inject constructor() : ScreenFragment() {
             ctx.getSharedPreferences("ledger_widgets", 0).edit()
                 .putBoolean(com.toolsboox.ui.plugin.ScreenFragment.PILLS_HIDDEN, pillVisibility[i].first)
                 .apply()
+        })
+
+        // QUICK-NOTE BUTTON — the floating pen. Its wrench toggle only lived on surfaces that
+        // HAVE a wrench row for it, so hiding it in the reader stranded it everywhere else
+        // (Michael, field: "if you turn it off in the reader, you can't turn it back on on
+        // today"). This row is the belt: whatever surface you are on, Settings can always
+        // bring the pen back. Applies immediately (MainActivity owns the button).
+        col.addView(sectionLabel("QUICK-NOTE BUTTON  ·  the floating pen"))
+        val penVisibility = listOf(true to "Shown", false to "Hidden")
+        col.addView(chipRow(
+            penVisibility.map { (shown, label) ->
+                Triple(label, null as android.graphics.Typeface?) {
+                    ((activity as? com.toolsboox.ui.main.MainActivity)?.quickNoteVisible() ?: true) == shown
+                }
+            }
+        ) { i ->
+            (activity as? com.toolsboox.ui.main.MainActivity)?.setQuickNoteVisible(penVisibility[i].first)
         })
 
         refreshPreview()

@@ -39,7 +39,7 @@ import javax.inject.Inject
  */
 
 @AndroidEntryPoint
-class MainActivity : BaseActivity<MainPresenter>(), MainView {
+class MainActivity : BaseActivity<MainPresenter>(), MainView, com.toolsboox.ot.BottomPill.Host {
 
     /**
      * Optional volume-key page-turn handler set by the active reader fragment. Returns true
@@ -54,7 +54,131 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     /** How close two presses must be to count as one gesture. */
     private val doublePressWindowMs = 320L
 
+    /**
+     * THE LEFT EDGE'S FLICK, WHERE THE SYSTEM NEVER SEES IT (Michael 2026-10-12, on the B6 on -322:
+     * "The b6 doesn't have the left right working for bring up the hub it seems rn"). Every ink
+     * page claims its surface from the back gesture so the pen can write in the margins, and with
+     * the bars hidden the B6 honours the whole claim: a finger flick in from the left edge reached
+     * the page as a plain drag and the ladder never ran. This catcher sees the window's touches
+     * first ([dispatchTouchEvent]), passes every one on as it comes, and when a finger makes the
+     * flick hands the SAME Back-from-the-left a system swipe would to this activity's dispatcher —
+     * the screen's own Back first (an open article), then its ladder ([com.toolsboox.ot.EdgeLadder]:
+     * room pane → Hub → back). Where the system does take the edge (the Feeds list), it cancels the
+     * touch before the catcher's travel, so one swipe is never two rungs.
+     * [com.toolsboox.ot.LeftEdgeCatcher] has the rules; the Hub's dialog carries its own
+     * (ScreenFragment.closeOnDrawerSwipe).
+     */
+    private val edgeCatcher by lazy {
+        com.toolsboox.ot.LeftEdgeCatcher(
+            where = "the page",
+            density = resources.displayMetrics.density,
+            dispatcher = { onBackPressedDispatcher },
+            deliver = { e -> deliverTouch(e) },
+            landing = { x, y -> edgeLanding(x, y) },
+            beforeFire = { currentScreen()?.edgeDropFingerInk() },
+            afterFire = { guardEdgeEcho() }
+        )
+    }
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        val took = edgeCatcher.onTouch(ev)
+        // A touch-down shuts the echo window, a lift or a cancel re-times it: the guard follows.
+        when (ev.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP,
+            android.view.MotionEvent.ACTION_CANCEL -> refreshEchoGuard()
+        }
+        if (took) return true
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /** The views' own dispatch — the catcher's CANCEL goes this way. */
+    private fun deliverTouch(e: android.view.MotionEvent) {
+        super.dispatchTouchEvent(e)
+    }
+
+    /** The screen on top (as [handleVolumeKey] resolves it). */
+    private fun currentScreen(): com.toolsboox.ui.plugin.ScreenFragment? {
+        val navHost = supportFragmentManager.primaryNavigationFragment ?: return null
+        return navHost.childFragmentManager.fragments.lastOrNull { it.isResumed } as? com.toolsboox.ui.plugin.ScreenFragment
+    }
+
+    /** What a touch-down at the left edge landed on: the page the finger inks (the bezel bar), or
+     *  a floating pill / a sideways scroller (not the flick's). The ink is asked by its own screen
+     *  rectangle, not by the hit chain, so a transparent view laid over the page can't drop the
+     *  finger to the easier off-ink bar (review of f0035e3b, 2026-10-12). */
+    private fun edgeLanding(x: Float, y: Float): com.toolsboox.ot.LeftEdgeCatcher.Landing {
+        val chain = com.toolsboox.ot.LeftEdgeCatcher.hitChain(window.decorView, x, y)
+        val ink = currentScreen()?.edgeInkView()
+        return com.toolsboox.ot.LeftEdgeCatcher.Landing(
+            inks = ink != null && com.toolsboox.ot.LeftEdgeCatcher.isOn(ink, x, y),
+            standAside = com.toolsboox.ot.LeftEdgeCatcher.standsAside(chain)
+        )
+    }
+
+    /**
+     * One swipe, one rung: while [com.toolsboox.ot.EdgeLadder]'s echo window is open — from the
+     * flick through its lift and ECHO_MS past it, or held while the lift is unseen — a Back the
+     * system (or Bigme's xSettings) makes of the same swipe is swallowed on this window, at the top
+     * of its back callbacks (Android 13+; the key path is [dispatchKeyEvent]'s). Both would send
+     * it at the lift, so the guard stays up until the window shuts, not 300 ms from the fire
+     * (review of f0035e3b, 2026-10-12). Called by the page's catcher and by the Hub's, whose
+     * close-and-back leaves this window the one an echo would reach.
+     */
+    fun guardEdgeEcho() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (echoGuard == null) {
+            val guard = android.window.OnBackInvokedCallback {
+                val now = android.os.SystemClock.uptimeMillis()
+                if (com.toolsboox.ot.EdgeLadder.isEcho(now)) {
+                    Timber.i("EdgeLadder: a Back %d ms after the left-edge flick — the same swipe, swallowed",
+                        now - com.toolsboox.ot.EdgeLadder.catcherFiredAt)
+                } else {
+                    // The window shut a moment before the guard came down: not an echo — hand it on
+                    // as the plain Back it would have been.
+                    dropEchoGuard()
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+            runCatching {
+                onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                    android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY, guard)
+            }.onSuccess { echoGuard = guard }
+        }
+        refreshEchoGuard()
+    }
+
+    /** The guard on this window's back callbacks while an echo may come (an OnBackInvokedCallback,
+     *  held as Any so older Androids never load the class). */
+    private var echoGuard: Any? = null
+    private val echoGuardCheck = Runnable { refreshEchoGuard() }
+
+    /** Re-time the guard to the echo window: down when it has shut, else checked again as it ends. */
+    private fun refreshEchoGuard() {
+        if (echoGuard == null) return
+        val decor = window.decorView
+        decor.removeCallbacks(echoGuardCheck)
+        val left = com.toolsboox.ot.EdgeLadder.echoRemainingMs(android.os.SystemClock.uptimeMillis())
+        if (left <= 0L) dropEchoGuard() else decor.postDelayed(echoGuardCheck, left)
+    }
+
+    private fun dropEchoGuard() {
+        val g = echoGuard ?: return
+        echoGuard = null
+        window.decorView.removeCallbacks(echoGuardCheck)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            runCatching { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(g as android.window.OnBackInvokedCallback) }
+        }
+    }
+
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        // The same swipe heard twice (Michael 2026-10-12): a Back key within ECHO_MS of the left
+        // edge's in-app flick is that flick's echo — swallowed, so one swipe climbs one rung.
+        if (event.keyCode == android.view.KeyEvent.KEYCODE_BACK &&
+            com.toolsboox.ot.EdgeLadder.isEcho(android.os.SystemClock.uptimeMillis())) {
+            if (event.action == android.view.KeyEvent.ACTION_DOWN)
+                Timber.i("EdgeLadder: a Back key right after the left-edge flick — the same swipe, swallowed")
+            return true
+        }
         if (event.action == android.view.KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 // Boox page-turn buttons emit either volume OR page keycodes depending on device;
@@ -139,12 +263,52 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
     // 📷 Capture — photograph handwritten content and ingest it as a Ledger object.
     private var pendingCameraFile: java.io.File? = null
+    /** A one-shot taker for the NEXT camera result. The transport's 📷 (LedgerPlayerCapture) has
+     *  no fragment and so no launcher of its own; it borrows the activity's through
+     *  [capturePhotoThen]. Null = the pen button's ordinary ingest. */
+    private var cameraSink: ((java.io.File) -> Unit)? = null
     private val captureCameraLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.TakePicture()
-    ) { ok -> if (ok) pendingCameraFile?.let { ingestPhotoFile(it) } }
+    ) { ok ->
+        val sink = cameraSink
+        cameraSink = null
+        if (ok) pendingCameraFile?.let { f -> if (sink != null) sink(f) else ingestPhotoFile(f) }
+    }
+
+    /** Take ONE photo for a fragmentless caller — the file is handed to [onFile] instead of the
+     *  pen button's ingest. */
+    fun capturePhotoThen(onFile: (java.io.File) -> Unit) {
+        try {
+            val dir = java.io.File(cacheDir, "camera").apply { mkdirs() }
+            val photo = java.io.File(dir, "capture-${System.currentTimeMillis()}.jpg")
+            val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.fileprovider", photo)
+            cameraSink = onFile
+            pendingCameraFile = photo
+            captureCameraLauncher.launch(uri)
+        } catch (e: Exception) {
+            cameraSink = null
+            toast("No camera available")
+        }
+    }
+
+    /** A one-shot continuation for the NEXT microphone grant — [withMicrophone]'s. Null = the pen
+     *  button's own voice gram. */
+    private var micSink: (() -> Unit)? = null
+
+    /** Run [onGranted] with RECORD_AUDIO in hand, asking first when needed — for a fragmentless
+     *  caller (the transport's 🎤) that cannot register a permission launcher of its own. */
+    fun withMicrophone(onGranted: () -> Unit) {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO)
+            == android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) onGranted()
+        else { micSink = onGranted; micPermLauncher.launch(android.Manifest.permission.RECORD_AUDIO) }
+    }
     private val capturePickLauncher = registerForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.GetContent()
-    ) { uri -> uri?.let { ingestPhotoUri(it) } }
+        // More than one picture at a time (Michael, field, 08-28) — each selected image rides
+        // the single-photo ingest in order, minting its own pick; the -44 ruling routes every
+        // one to All Picks, where the inbox slotting lays them out side by side.
+        androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents()
+    ) { uris -> uris.forEach { ingestPhotoUri(it) } }
 
     /**
      * The view binding.
@@ -153,6 +317,22 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
     /** The pen button's unscaled square and padding (its XML values), captured before any re-size. */
     private var penButtonBase: IntArray? = null
+
+    /** THE BOTTOM PILL (Michael 2026-10-11): the notes button grown into `[corner | notes]` — the
+     *  corner half lent by whichever ink page is up ([com.toolsboox.ot.BottomPill.Corner]). */
+    private var pill: com.toolsboox.ot.BottomPill? = null
+    override val bottomPill: com.toolsboox.ot.BottomPill? get() = pill
+
+    /**
+     * True when this copy was RESTORED (process death, then back to Ledgable) until a new intent
+     * arrives: the system hands a restore the ORIGINAL launch intent, not the one we consumed, so a
+     * card handoff in it was already followed and must not re-navigate (the 09-07 rule, 2026-10-10).
+     */
+    private var staleLaunchIntent = false
+
+    /** True from onNewIntent to the next onResume: the intent reached this LIVE copy, so a
+     *  foreign SEND in it sits in Ledgable's own task (forwardForeignShare's warm case). */
+    private var intentArrivedWarm = false
 
     /**
      * Kept as a field: SharedPreferences holds listeners weakly, so an inline lambda would be
@@ -172,18 +352,21 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
      * instead. At Compact (0.8) the 54dp square draws at ~43dp — inside the 44dp article gutter
      * and the ~46dp book margin — while a TouchDelegate on its parent keeps the full 54dp square
      * tappable. Idempotent: scales from the remembered XML base, never from the current size.
+     * Both halves of the bottom pill take the same size (Michael 2026-10-11: one oblong).
      */
     private fun applyPenButtonScale() {
         val v = binding.floatNoteButton
         val base = penButtonBase ?: intArrayOf(v.layoutParams.width, v.layoutParams.height, v.paddingLeft)
             .also { penButtonBase = it }
         val mul = com.toolsboox.ot.ModalScale.pillScale(this)
-        v.layoutParams = v.layoutParams.apply {
-            width = Math.round(base[0] * mul)
-            height = Math.round(base[1] * mul)
+        for (half in listOf<android.view.View>(binding.floatNoteButton, binding.floatCornerButton)) {
+            half.layoutParams = half.layoutParams.apply {
+                width = Math.round(base[0] * mul)
+                height = Math.round(base[1] * mul)
+            }
+            val pad = Math.round(base[2] * mul)
+            half.setPadding(pad, pad, pad, pad)
         }
-        val pad = Math.round(base[2] * mul)
-        v.setPadding(pad, pad, pad, pad)
         refreshPenTouchDelegate()
     }
 
@@ -191,14 +374,18 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
      * Keep the pen button's TOUCH at its unscaled square even when drawn smaller. The delegate
      * rect lives in the parent's coordinates and does NOT follow view translation, so this must
      * be re-run after every drag and restore — a stale rect would tap where the button used to be.
+     * It grows the whole pill and hands each touch to the half nearest it ([PillTouchDelegate]) —
+     * the stock TouchDelegate re-aims every touch at its view's centre, the seam between halves.
      */
     private fun refreshPenTouchDelegate() {
-        val v = binding.floatNoteButton
+        val v = binding.floatNotePill
         v.post {
             val parent = v.parent as? android.view.View ?: return@post
             val base = penButtonBase ?: return@post
-            val growW = (base[0] - v.width).coerceAtLeast(0)
-            val growH = (base[1] - v.height).coerceAtLeast(0)
+            val half = binding.floatNoteButton.takeIf { it.visibility == android.view.View.VISIBLE }
+                ?: binding.floatCornerButton
+            val growW = (base[0] - half.width).coerceAtLeast(0)
+            val growH = (base[1] - half.height).coerceAtLeast(0)
             if ((growW == 0 && growH == 0) || v.visibility != android.view.View.VISIBLE) {
                 parent.touchDelegate = null; return@post
             }
@@ -208,31 +395,105 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                 v.right + v.translationX.toInt() + growW / 2,
                 v.bottom + v.translationY.toInt() + growH / 2
             )
-            parent.touchDelegate = android.view.TouchDelegate(r, v)
+            parent.touchDelegate = PillTouchDelegate(r, v)
         }
+    }
+
+    /** A TouchDelegate that keeps the touch's place: it lands in [target] clamped to its edge
+     *  nearest the finger, so the pill's frame hands it to the half under (or beside) it. */
+    private class PillTouchDelegate(private val bounds: android.graphics.Rect, private val target: android.view.View) :
+        android.view.TouchDelegate(bounds, target) {
+        private var routing = false
+        override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> routing = bounds.contains(event.x.toInt(), event.y.toInt())
+            }
+            if (!routing) return false
+            val e = android.view.MotionEvent.obtain(event)
+            val left = target.left + target.translationX
+            val top = target.top + target.translationY
+            e.setLocation(
+                (event.x - left).coerceIn(0f, (target.width - 1).coerceAtLeast(0).toFloat()),
+                (event.y - top).coerceIn(0f, (target.height - 1).coerceAtLeast(0).toFloat()))
+            val handled = target.dispatchTouchEvent(e)
+            e.recycle()
+            if (event.actionMasked == android.view.MotionEvent.ACTION_UP ||
+                event.actionMasked == android.view.MotionEvent.ACTION_CANCEL) routing = false
+            return handled
+        }
+    }
+
+    /**
+     * Where the pill may stand across: on screen, and on an ink page clear of the tuck panel's
+     * column (Michael 2026-10-11: the pill keeps clear of the rail) — the column's Normal width in
+     * both states, so a ⛶ never moves the pill and costs the page no second cut.
+     */
+    private fun pillXRange(v: android.view.View, parentWidth: Int): ClosedFloatingPointRange<Float> {
+        val (aL, aR) = bottomPill?.corner?.avoidPx() ?: (0 to 0)
+        val gap = (6 * resources.displayMetrics.density).toInt()
+        return com.toolsboox.ot.PillBounds.rangeAvoiding(v.left, v.right, parentWidth,
+            if (aL > 0) aL + gap else 0, if (aR > 0) aR + gap else 0)
+    }
+
+    /**
+     * Seat the pill again, always from the spot you last dragged it to (the stored one): an ink
+     * page's column came or went (the pill steps clear of it, and back once it has gone), the
+     * pill changed width (a half came or went), the screen resized. Never saved: your spot stays
+     * yours, so no detour can drift it (review 2026-10-11). At once when the pill is laid out — an
+     * ink page registers before its first frame, so the pill lands clear of the column in that
+     * frame and the page cuts round it once, not twice.
+     */
+    private fun clampPill() {
+        val v = binding.floatNotePill
+        val p = v.parent as? android.view.View
+        if (p == null || p.width == 0 || p.height == 0 || v.width == 0) { v.post { clampPillNow() }; return }
+        clampPillNow()
+    }
+
+    private fun clampPillNow() {
+        val v = binding.floatNotePill
+        val p = v.parent as? android.view.View ?: return
+        if (p.width == 0 || p.height == 0 || v.width == 0) return
+        // The touch target follows whatever the pill just did (a half came or went) either way.
+        refreshPenTouchDelegate()
+        val prefs = getSharedPreferences("MAIN", MODE_PRIVATE)
+        val nx = prefs.getFloat("floatNoteTx", 0f).coerceIn(pillXRange(v, p.width))
+        val ny = prefs.getFloat("floatNoteTy", 0f).coerceIn(com.toolsboox.ot.PillBounds.range(v.top, v.bottom, p.height))
+        if (nx == v.translationX && ny == v.translationY) return
+        v.translationX = nx
+        v.translationY = ny
+        refreshPenTouchDelegate()
+        // A translation lays nothing out: the page under it hears the move here.
+        bottomPill?.notifyMoved()
     }
 
     /**
      * Make the floating pen-note button draggable: a tap still opens Notes, but a drag repositions
      * it and persists where you put it — so it can move off whatever it's covering (e.g. the feed
-     * drawer's lower-left). Clamped on-screen; restored on next launch.
+     * drawer's lower-left). Clamped on-screen; restored on next launch. The whole bottom pill
+     * moves as one ([pill]); [handle] is the half under the finger, whose tap and hold fire.
      */
     @android.annotation.SuppressLint("ClickableViewAccessibility")
-    private fun makeFloatButtonDraggable(view: android.view.View) {
+    private fun makeFloatButtonDraggable(handle: android.view.View, pill: android.view.View, restore: Boolean) {
         val prefs = getSharedPreferences("MAIN", MODE_PRIVATE)
+        val view = pill
+        // A drag of the pill parked at the left edge moves it — never the left edge's swipe back
+        // (LeftEdgeCatcher stands aside for it; Michael 2026-10-12).
+        pill.setTag(R.id.tag_edge_stand_aside, true)
         // Restore through the same clamp the live drag uses: the persisted translation was saved
         // against SOME parent size, not necessarily this one, and applied raw it can park the
         // button off-screen with no handle left to drag it back. Needs the laid-out parent —
         // re-post until it has dimensions.
-        view.post(object : Runnable {
+        if (restore) view.post(object : Runnable {
             override fun run() {
                 val parent = view.parent as? android.view.View ?: return
                 if (parent.width == 0 || parent.height == 0) { view.post(this); return }
                 view.translationX = prefs.getFloat("floatNoteTx", 0f)
-                    .coerceIn(com.toolsboox.ot.PillBounds.range(view.left, view.right, parent.width))
+                    .coerceIn(pillXRange(view, parent.width))
                 view.translationY = prefs.getFloat("floatNoteTy", 0f)
                     .coerceIn(com.toolsboox.ot.PillBounds.range(view.top, view.bottom, parent.height))
                 refreshPenTouchDelegate()
+                bottomPill?.notifyMoved()
             }
         })
         // Keep the button through a screen flip, the way every pill is kept — the same rule as
@@ -243,22 +504,10 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         // flip scales the translation (halfway up stays halfway up) and persists; any other
         // parent resize (system bars coming and going) just re-clamps, unsaved, so a near-1.0
         // ratio can't compound drift into the stored spot.
-        view.post {
+        if (restore) view.post {
             val parent = view.parent as? android.view.View ?: return@post
             var lastW = parent.width
             var lastH = parent.height
-            fun clampNow(persist: Boolean) {
-                view.post {
-                    val p = view.parent as? android.view.View ?: return@post
-                    view.translationX = view.translationX
-                        .coerceIn(com.toolsboox.ot.PillBounds.range(view.left, view.right, p.width))
-                    view.translationY = view.translationY
-                        .coerceIn(com.toolsboox.ot.PillBounds.range(view.top, view.bottom, p.height))
-                    if (persist) prefs.edit().putFloat("floatNoteTx", view.translationX)
-                        .putFloat("floatNoteTy", view.translationY).apply()
-                    refreshPenTouchDelegate()
-                }
-            }
             parent.addOnLayoutChangeListener { _, l, t, r, b, _, _, _, _ ->
                 val w = r - l
                 val h = b - t
@@ -268,37 +517,55 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                 }
                 val flipped = (w < h) != (lastW < lastH)
                 if (flipped) {
-                    view.translationX = view.translationX * w / lastW
-                    view.translationY = view.translationY * h / lastH
-                    clampNow(persist = true)
+                    // YOUR spot is what scales and is saved — on screen only, never the spot an ink
+                    // page's column pushed it to (review 2026-10-11: saving the pushed spot moved
+                    // your pill each rotation); the column's clearance is laid on after.
+                    val sx = prefs.getFloat("floatNoteTx", 0f) * w / lastW
+                    val sy = prefs.getFloat("floatNoteTy", 0f) * h / lastH
+                    view.post {
+                        val p = view.parent as? android.view.View ?: return@post
+                        if (p.width > 0 && p.height > 0) prefs.edit()
+                            .putFloat("floatNoteTx", sx.coerceIn(com.toolsboox.ot.PillBounds.range(view.left, view.right, p.width)))
+                            .putFloat("floatNoteTy", sy.coerceIn(com.toolsboox.ot.PillBounds.range(view.top, view.bottom, p.height)))
+                            .apply()
+                        clampPillNow()
+                    }
                 } else if (w != lastW || h != lastH) {
-                    clampNow(persist = false)
+                    // System bars coming and going: re-seat from your spot, unsaved.
+                    view.post { clampPillNow() }
                 }
                 lastW = w
                 lastH = h
             }
+            // The pill's own width moves when an ink page lends (or takes back) the corner half:
+            // re-seat it from YOUR spot with its new width, so a widened pill can't hang past the
+            // edge and a narrowed one goes back where you put it (review 2026-10-11: re-clamped
+            // from where it stood, it stayed a corner's width short of your spot after leaving an
+            // ink page — the clearance clamp had run against the wide pill still laid out).
+            view.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or, _ ->
+                if (r - l != or - ol && r > l) clampPill()
+            }
         }
         var downX = 0f; var downY = 0f; var startTx = 0f; var startTy = 0f; var dragging = false
         val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
-        view.setOnTouchListener { v, e ->
+        handle.setOnTouchListener { h, e ->
             when (e.actionMasked) {
                 android.view.MotionEvent.ACTION_DOWN -> {
-                    downX = e.rawX; downY = e.rawY; startTx = v.translationX; startTy = v.translationY; dragging = false
+                    downX = e.rawX; downY = e.rawY; startTx = view.translationX; startTy = view.translationY; dragging = false
                     true
                 }
                 android.view.MotionEvent.ACTION_MOVE -> {
                     val dx = e.rawX - downX; val dy = e.rawY - downY
                     if (!dragging && Math.hypot(dx.toDouble(), dy.toDouble()) > slop) dragging = true
                     if (dragging) {
-                        val parent = v.parent as android.view.View
+                        val parent = view.parent as android.view.View
                         // Shared with the pills. This was its own inline copy of the same clamp,
                         // and the copy was worse: with the limits reversed `coerceIn(min, max)`
                         // throws rather than pinning, so a button laid out wider than its parent
                         // took the app down mid-drag instead of merely refusing to move.
-                        v.translationX = (startTx + dx)
-                            .coerceIn(com.toolsboox.ot.PillBounds.range(v.left, v.right, parent.width))
-                        v.translationY = (startTy + dy)
-                            .coerceIn(com.toolsboox.ot.PillBounds.range(v.top, v.bottom, parent.height))
+                        view.translationX = (startTx + dx).coerceIn(pillXRange(view, parent.width))
+                        view.translationY = (startTy + dy)
+                            .coerceIn(com.toolsboox.ot.PillBounds.range(view.top, view.bottom, parent.height))
                     }
                     true
                 }
@@ -307,18 +574,21 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                 // most want the pen button on, neither the tap nor the hold ever fired.
                 android.view.MotionEvent.ACTION_CANCEL -> {
                     if (dragging) {
-                        prefs.edit().putFloat("floatNoteTx", v.translationX)
-                            .putFloat("floatNoteTy", v.translationY).apply()
+                        prefs.edit().putFloat("floatNoteTx", view.translationX)
+                            .putFloat("floatNoteTy", view.translationY).apply()
                         refreshPenTouchDelegate()
+                        // One report per drag, at its end: the ink page re-cuts round the new spot.
+                        bottomPill?.notifyMoved()
                     } else if (e.eventTime - e.downTime >= 550L) {
-                        v.performLongClick()
+                        h.performLongClick()
                     }
                     true
                 }
                 android.view.MotionEvent.ACTION_UP -> {
                     if (dragging) {
-                        prefs.edit().putFloat("floatNoteTx", v.translationX).putFloat("floatNoteTy", v.translationY).apply()
+                        prefs.edit().putFloat("floatNoteTx", view.translationX).putFloat("floatNoteTy", view.translationY).apply()
                         refreshPenTouchDelegate()
+                        bottomPill?.notifyMoved()
                         // Clean the drag's ghost trail off the e-ink panel.
                         try {
                             com.onyx.android.sdk.api.device.epd.EpdController.repaintEveryThing(
@@ -326,9 +596,9 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                             )
                         } catch (t: Throwable) { /* non-Onyx device — no panel to clean */ }
                     } else if (e.eventTime - e.downTime >= 550L) {
-                        v.performLongClick()   // hold-in-place → the alternate surface (Text Notes)
+                        h.performLongClick()   // hold-in-place → the half's menu
                     } else {
-                        v.performClick()
+                        h.performClick()
                     }
                     true
                 }
@@ -344,42 +614,88 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     // Hold it to choose what it does; it then WEARS that choice, so going back to the same thing
     // is a tap. The four faces are the four ways of getting something down in a hurry.
 
-    // Seven faces for seven labels — the array runs parallel to QUICK_NOTE_LABELS, and a face
-    // short of the labels meant Gram Picks fell through getOrElse to the pencil: the button
-    // remembered the choice but wore the wrong coat. ◈ borrows the ❝ quote face the gram rows
-    // already wear ("To Pickings", the share sheet) — the closest thing the drawable set has to
-    // a gram, and better than a second surface wearing the pencil.
+    // One face per label — the array runs parallel to QUICK_NOTE_LABELS, and a face short of
+    // the labels meant Gram Picks fell through getOrElse to the pencil: the button remembered
+    // the choice but wore the wrong coat. ◈ borrows the ❝ quote face the gram rows already wear
+    // ("To Pickings", the share sheet). The week/month slots wear the pencil deliberately: they
+    // are the same note surface as slot 0, a period deep rather than a day deep.
     private val quickNoteFaces = intArrayOf(
         R.drawable.ic_pencil, R.drawable.ic_reader_view, R.drawable.ic_edit,
-        R.drawable.ic_toolbar_text, R.drawable.ic_camera, R.drawable.ic_mic, R.drawable.ic_quote
+        R.drawable.ic_toolbar_text, R.drawable.ic_camera, R.drawable.ic_mic, R.drawable.ic_quote,
+        R.drawable.ic_pencil, R.drawable.ic_pencil, R.drawable.ic_edit,
+        R.drawable.ic_quote,  // 10 · Synthesize
+        R.drawable.ic_feed,   // 11 · Feeds (never worn: ephemeral)
+        R.drawable.ic_nav_today   // 12 · Today (never worn: ephemeral)
     )
     /** The glyph for each style, shown in the hold-out picker. Same order as the labels/faces. */
-    private val quickNoteGlyphs = arrayOf("✒", "📈", "⌱", "Ⓣ", "📷", "🎤", "◈")
+    private val quickNoteGlyphs = arrayOf("✒", "📈", "⌱", "Ⓣ", "📷", "🎤", "◈", "Wk", "Mo", "＋", "❖", "📰", "☀")
 
     companion object {
         /** Hold-picker entries; the index is stored as the remembered tap action, so keep order stable. */
-        // The three surface rows now wear their TEMPLATE names — Grid / Jots / Text, the words
-        // Michael named and the words [LedgerDocuments.label] prints everywhere else. Only the
-        // labels changed: the indexes, the remembered tap action and the keys they navigate to
-        // ("grid", "sketch") are untouched, which is also why this list still cannot be reordered.
+        // GRID (1) and JOTS (2) are FOLDED (Michael 08-23: "the additional surfaces still exist for
+        // the graph and jot"). The Notes IA (DESIGN-notes-ia-2026-08-22) made a template a per-PAGE
+        // PROPERTY chosen on the page through the ▤ picker ([NotePageTemplates]), not a door of its
+        // own — so a quick-jump that opens a standalone "grid" / "sketch" surface is exactly the
+        // redundant destination that ruling retires. The two slots STAY (the index IS the remembered
+        // tap action; dropping them would silently re-point everyone's stored choice at a different
+        // surface), they are just [FOLDED_QUICK_NOTE_ACTIONS]: never offered in the tray, and a
+        // button that still remembers one falls back to Notes. No ink is touched — existing grid/jot
+        // documents are still reached through the Notes directory (Notes › All notes › Grid / Jots).
         //
-        // THIS IS THE FAST DOOR AND IT KEEPS ITS ONE-TAP ROWS. The hub's Notes folder folded its
-        // five surface rows into one door with a chooser; that is right for a menu you go to
-        // deliberately and wrong for a button that floats over every screen so a thought can be got
-        // down in a hurry. Capture stays fast: hold once to pick, tap for ever after.
+        // THIS IS STILL THE FAST DOOR. Its remaining rows keep their one-tap capture — Notes, Text,
+        // photo, voice, Gram Picks — hold once to pick, tap for ever after.
         val QUICK_NOTE_LABELS = arrayOf(
             "Notes — where you left off",
             "Grid",
             "Jots",
-            "Text",
+            // "Text Notes" — Michael's own word for it, and iOS's row (2026-10-11 parity).
+            "Text Notes",
             "Capture a photo",
-            "Record a voice gram",
+            "Record a voice pick",
             // APPENDED, never inserted: the index IS the remembered tap action, so putting Gram Picks
             // anywhere but the end would silently re-point everyone's remembered button at a
             // different surface. Michael: "the note modal quick jump button does not have a gram
             // picks on long hold" — it is a note surface, so it belongs in the notes picker.
-            "Gram Picks"
+            "All Picks",
+            // A NOTE FOR A WEEK, A NOTE FOR A MONTH (Michael 08-27: "create a note for today, a
+            // note for a week, a note for a month when using the note button"). The dormant
+            // toolsboox period surfaces, promoted (DESIGN-notes-room-2026-08-27 §2c). Appended,
+            // same law as above.
+            "This week's note",
+            "This month's note",
+            // ＋ NEW NOTE from the pen tray (Michael, field, 08-27: "Long hold on note button
+            // opens the slide out" and there was no way to MINT from it). Appended, same law.
+            "New note…",
+            // APPENDED (index 10): the third seat of the trimmed button — see FOLDED below.
+            "Synthesize",
+            // APPENDED (11, 12) with the bottom pill (Michael 2026-10-11): the hold menu is
+            // "Notes, text notes, back to feeds" and gains Today — iOS's noteMenuRows' names
+            // (Back to your reading, Today), drawn in its order ([QUICK_NOTE_TRAY_ORDER]). 📰 lands
+            // where you were (the Hub's Feeds door, openFeedView: your lens, feed and place); ☀
+            // Today is the panel's Today seat — today's page, or today's version of the page you're on.
+            "Back to your reading",
+            "Today"
         )
+
+        /** Slots that RUN but are never REMEMBERED as the tap action: a picker as the tap would
+         *  be a mode. ＋ New note (9), and the two doors AWAY from writing — 📰 Feeds (11) and
+         *  ☀ Today (12): the notes half's tap stays a way into your notes. */
+        val EPHEMERAL_QUICK_NOTE_ACTIONS = setOf(9, 11, 12)
+
+        /** The order the tray DRAWS its slots in — iOS's noteMenuRows (PARITY, review 2026-10-11):
+         *  ✒ Notes · 📰 Back to your reading · Ⓣ Text Notes · ❖ Synthesize · ☀ Today, Today last so
+         *  the rows Michael already reaches for keep their places. The slot indices stay the stored
+         *  tap's; any slot not named here (none offered today) follows in index order. */
+        val QUICK_NOTE_TRAY_ORDER = listOf(0, 11, 3, 10, 12)
+
+        /** The retired standalone-surface slots — Grid (1) and Jots (2). Kept in the arrays for
+         *  index stability, but skipped when the tray is drawn and coerced to Notes when read/run,
+         *  so the pen never opens a "grid"/"sketch" surface as its own destination again. */
+        // THE BUTTON IS THREE THINGS NOW — Notes · Text · Synthesize (Michael, 09-05: "we only need a
+        // notes and text notes and synthesize right? … the jump notes ain't right, and maybe that's
+        // part of where we get some of the weird lines clobbering"). Every other face folds; a
+        // remembered folded action falls back to Notes (quickNoteAction). Their code stays.
+        val FOLDED_QUICK_NOTE_ACTIONS = setOf(1, 2, 4, 5, 6, 7, 8, 9)
     }
 
     /**
@@ -396,9 +712,52 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         applyQuickNoteVisibility()
     }
 
+    /**
+     * A whole-screen writing page asks the pen pill to stand aside while it is up (Michael
+     * 2026-10-11, the one compose screen): the pill's corner is the bottom of the page — the palm
+     * zone, and over the ink pad, where the Bigme daemon would take its taps for ink. Transient,
+     * never saved: the page clears it on the way out and the pill's own switch is untouched.
+     */
+    var quickNoteSuppressed = false
+        set(v) { if (field != v) { field = v; applyQuickNoteVisibility() } }
+
+    /**
+     * The reader holding the notes pill away while its full screen leaves nothing on the page
+     * (Michael 2026-10-12, [com.toolsboox.ot.ReaderFullScreen]) — null when none is. A sibling of
+     * [quickNoteSuppressed], never saved, so the pill's own switch and its dragged spot are untouched.
+     */
+    private var readerAwayOwner: Any? = null
+
+    override fun readerAway(owner: Any, away: Boolean) {
+        if (away) {
+            if (readerAwayOwner === owner) return
+            readerAwayOwner = owner
+        } else {
+            if (readerAwayOwner !== owner) return
+            readerAwayOwner = null
+        }
+        applyQuickNoteVisibility()
+        // The read-aloud / audiobook chip stands aside with it, back with the peek (review
+        // 2026-10-12, as iOS's Now Playing does) — the same owner rule, so a reader that goes
+        // gives it back.
+        runCatching { com.toolsboox.plugin.feeds.ui.NowPlayingCard.summonAway(this, readerAwayOwner != null) }
+    }
+
+    /**
+     * THE KEYBOARD'S HEIGHT over the content frame (0 when it's down), for a screen that makes
+     * room for it itself (Michael 2026-10-11: "the keyboard stops covering the body"). Nothing
+     * app-wide moves for the keyboard — the frame keeps padding only for the system bars, and an
+     * ink pad must never change size under the Bigme daemon — so the one screen that listens
+     * decides what may give way.
+     */
+    var imeInset = 0
+        private set
+    var imeInsetListener: ((Int) -> Unit)? = null
+
     private fun applyQuickNoteVisibility() {
-        binding.floatNoteButton.visibility =
-            if (quickNoteVisible()) android.view.View.VISIBLE else android.view.View.GONE
+        // The notes half only: on an ink page the corner half stays — it is full screen's way
+        // back (Michael 2026-10-11), and a hidden convenience must never take the exit with it.
+        bottomPill?.notesShown = quickNoteVisible() && !quickNoteSuppressed && readerAwayOwner == null
         // The touch delegate outlives visibility on its own — a hidden button would keep
         // swallowing taps in its old corner. Keep the two in step.
         refreshPenTouchDelegate()
@@ -407,6 +766,9 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     private fun quickNoteAction(): Int =
         getSharedPreferences("MAIN", MODE_PRIVATE).getInt("quick_note_action", 0)
             .coerceIn(0, QUICK_NOTE_LABELS.size - 1)
+            // A button that still remembers the folded Grid/Jots surface falls back to Notes,
+            // and so does an ephemeral slot that should never have been remembered.
+            .let { if (it in FOLDED_QUICK_NOTE_ACTIONS || it in EPHEMERAL_QUICK_NOTE_ACTIONS) 0 else it }
 
     private fun setQuickNoteAction(which: Int) {
         getSharedPreferences("MAIN", MODE_PRIVATE).edit().putInt("quick_note_action", which).apply()
@@ -455,7 +817,15 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             background = androidx.core.content.ContextCompat.getDrawable(
                 this@MainActivity, R.drawable.dialog_rounded_bg)
         }
-        quickNoteGlyphs.forEachIndexed { i, glyph ->
+        // The pen pauses over an ink page before the tray can take a tap, and the page cuts it out
+        // of the B6 daemon's writes and the Onyx limit while it is up (review 2026-10-11) — the
+        // corner's picker's own protection. Off the ink pages there is no corner and nothing to do.
+        val corner = bottomPill?.corner
+        val order = QUICK_NOTE_TRAY_ORDER + quickNoteGlyphs.indices.filter { it !in QUICK_NOTE_TRAY_ORDER }
+        for (i in order) {
+            val glyph = quickNoteGlyphs.getOrNull(i) ?: continue
+            // Grid/Jots are folded: not offered as standalone surfaces (template is a ▤ page choice now).
+            if (i in FOLDED_QUICK_NOTE_ACTIONS) continue
             row.addView(android.widget.TextView(this).apply {
                 text = glyph
                 textSize = glyphSize
@@ -466,7 +836,8 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                 contentDescription = QUICK_NOTE_LABELS.getOrElse(i) { "" }
                 setOnClickListener {
                     popup.dismiss()
-                    setQuickNoteAction(i)   // remember it — a tap returns here next time
+                    // Ephemeral slots run without being remembered — the tap keeps its one job.
+                    if (i !in EPHEMERAL_QUICK_NOTE_ACTIONS) setQuickNoteAction(i)
                     runQuickNoteAction(i)   // …and go there now
                 }
             })
@@ -477,12 +848,14 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
             isOutsideTouchable = true
             elevation = 0f   // flat e-ink modal — no drop shadow (matches the app's other surfaces)
+            setOnDismissListener { corner?.trayClosed() }
         }
         // Unfurl to the RIGHT of the pen button, vertically centred on it.
         val anchor = binding.floatNoteButton
         row.measure(android.view.View.MeasureSpec.UNSPECIFIED, android.view.View.MeasureSpec.UNSPECIFIED)
-        popup.showAsDropDown(anchor, anchor.width + px(6),
-            -(anchor.height + row.measuredHeight) / 2)
+        corner?.trayOpened(row)
+        if (runCatching { popup.showAsDropDown(anchor, anchor.width + px(6),
+                -(anchor.height + row.measuredHeight) / 2) }.isFailure) corner?.trayClosed()
     }
 
     /** Jump to today's page for a given note-page key (grid/sketch), from the pen-button menu. */
@@ -496,14 +869,75 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
     private fun runQuickNoteAction(which: Int) {
         when (which) {
-            0 -> openLastNotePage()
-            1 -> navigateToDayNote("grid")
-            2 -> navigateToDayNote("sketch")
+            // 1 (Grid) and 2 (Jots) are folded onto Notes: no standalone grid/sketch surface — the
+            // template is a per-page choice via ▤. Defensive here too (the tray already skips them).
+            0, 1, 2 -> openLastNotePage()
             3 -> binding.fragmentContent.findNavController().navigate(R.id.action_to_text_notes)
             4 -> startCapture()
             5 -> requestVoiceGram()
             6 -> navigateToDayNote(com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS)
+            7 -> navigateToWeekNote()
+            8 -> navigateToMonthNote()
+            9 -> mintNewNote()
+            10 -> navigateToDayNote("synthesize")
+            // From inside The Mail's room the hop REPLACES that room, as its drawer's "📰 Feeds ↗"
+            // does — Back goes where it went before, and two rooms' WebViews don't pile up.
+            11 -> binding.fragmentContent.findNavController().let { nav ->
+                com.toolsboox.plugin.feeds.ui.openFeedView(nav, "both", null,
+                    popMail = nav.currentDestination?.id == R.id.MailFragment)
+            }
+            12 -> openToday()
         }
+    }
+
+    /** ☀ Today from the notes tray — the SAME act as the panel's Today seat (Michael 2026-10-11):
+     *  on a day page it is that page's own Today (today's version of the section you're on, or
+     *  today's page; "You're on today" when you are); anywhere else, today's page. */
+    private fun openToday() {
+        val host = supportFragmentManager.findFragmentById(R.id.fragmentContent)
+        val day = host?.childFragmentManager?.primaryNavigationFragment as?
+            com.toolsboox.plugin.calendar.ui.CalendarDayFragment
+        if (day != null && day.isResumed) { day.goToday(); return }
+        val d = java.time.LocalDate.now()
+        binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundleOf(
+            "year" to "${d.year}", "month" to "${d.monthValue}", "day" to "${d.dayOfMonth}"))
+    }
+
+    /** ＋ New note from the tray: the name-pad mint on whatever screen is up; with no resumed
+     *  screen to hang the pad on, land on today's notes first — minting lives one tap away there. */
+    private fun mintNewNote() {
+        val screen = resumedScreen()
+        if (screen != null)
+            com.toolsboox.plugin.feeds.ui.showNewNotePicker(screen, java.time.LocalDate.now())
+        else openLastNotePage()
+    }
+
+    /** This week's note — the toolsboox week surface, promoted into the Notes room (08-27).
+     *  The week number is calendar-year weekOfYear in the CALENDAR'S locale ("calendarLocale"
+     *  pref) — the exact pair CalendarWeekFragment resolves with, so this never opens a
+     *  neighbouring week at a year boundary or under a locale override. */
+    private fun navigateToWeekNote() {
+        val d = java.time.LocalDate.now()
+        val tag = getSharedPreferences("MAIN", MODE_PRIVATE).getString("calendarLocale", null)
+        val locale = tag?.let { t ->
+            java.util.Locale.forLanguageTag(t).takeIf { it.toLanguageTag() == t }
+        } ?: java.util.Locale.getDefault()
+        val wf = java.time.temporal.WeekFields.of(locale)
+        binding.fragmentContent.findNavController().navigate(
+            R.id.action_to_calendar_week, androidx.core.os.bundleOf(
+                "year" to d.year.toString(),
+                "weekOfYear" to d.get(wf.weekOfYear()).toString(),
+                "notePage" to "0"))
+    }
+
+    /** This month's note — same promotion, month surface. */
+    private fun navigateToMonthNote() {
+        val d = java.time.LocalDate.now()
+        binding.fragmentContent.findNavController().navigate(
+            R.id.action_to_calendar_month, androidx.core.os.bundleOf(
+                "year" to d.year.toString(),
+                "month" to d.monthValue.toString(),
+                "notePage" to "0"))
     }
 
     /** Note button, two-tap toggle:
@@ -592,7 +1026,11 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     // not just a page you happen to be standing on.
     private val micPermLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { granted -> if (granted) startVoiceGram() else toast("Microphone permission is needed to record") }
+    ) { granted ->
+        val sink = micSink
+        micSink = null
+        if (granted) (sink ?: ::startVoiceGram)() else toast("Microphone permission is needed to record")
+    }
 
     private fun requestVoiceGram() {
         if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO)
@@ -623,7 +1061,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                     // file. The mic is on the floating pen button, so this fires from every screen
                     // in the app — including the day page you were writing on when you hit record.
                     if (placed) tellSurfaceGramPlaced(com.toolsboox.plugin.calendar.ot.PickingsStore.DEFAULT_KEY)
-                    toast(if (placed) "🎤 Voice gram → today's Pickings" else "Voice gram saved")
+                    toast(if (placed) "🎤 Voice pick → today's Pickings" else "Voice pick saved")
                 }
             }
         )
@@ -805,13 +1243,16 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                 runCatching {
                     val root = documentsRoot()
                     if (asTask) {
-                        val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
-                        day.ledgerItems.add(com.toolsboox.plugin.calendar.da.v2.LedgerItem(
-                            id = "photo-" + java.util.UUID.randomUUID().toString().lowercase(),
-                            kind = if (asEvent) com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT
-                                   else com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
-                            text = text, date = java.util.Date(), stage = "todo"))
-                        calendarDayService.save(root, today, day)
+                        com.toolsboox.plugin.calendar.ot.DayLocks.withDay(today) {
+                            // Throws (→ filed = false) rather than save over a today-file that won't read.
+                            val day = calendarDayService.loadForWriteOrThrow(root, today, null, java.util.Locale.getDefault())
+                            day.ledgerItems.add(com.toolsboox.plugin.calendar.da.v2.LedgerItem(
+                                id = "photo-" + java.util.UUID.randomUUID().toString().lowercase(),
+                                kind = if (asEvent) com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.EVENT
+                                       else com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK,
+                                text = text, date = java.util.Date(), stage = "todo"))
+                            calendarDayService.save(root, today, day)
+                        }
                     } else {
                         com.toolsboox.plugin.textnotes.TextNotesStore.addNote(
                             this@MainActivity, today, "📷 Photo · $today", text)
@@ -890,15 +1331,18 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         R.id.CalendarQuarterFragment -> "🗓  Quarter"
         R.id.CalendarYearFragment -> "🗓  Year"
         R.id.FeedsFragment -> "📰  Feeds"
+        // The Mail's own room (Michael 2026-10-11) — its visits read as The Mail on the trail.
+        R.id.MailFragment -> "📧  The Mail"
         R.id.FeedArticleFragment -> "📄  Article"
         R.id.LedgerChatFragment -> "💬  Ask"
         R.id.BookshelfFragment -> "📚  Bookshelf"
         R.id.ReaderFragment -> "📖  Reader"
         R.id.TextNotesFragment -> "🗒  Text Notes"
         R.id.ReadingLogFragment -> "🔍  Search"
+        R.id.YearInLedgerFragment -> "📊  Your year"
         R.id.LedgerItemsFragment -> "☑  Items"
         R.id.LedgerMapFragment -> "🗺  Map"
-        R.id.LedgerRhizomeFragment -> "🌱  Rhizome"
+        R.id.LedgerRhizomeFragment -> "🕸  Rhizome"
         R.id.QuickWinsFragment -> "⚡  Quick Wins"
         R.id.MissedRhizomesFragment -> "🔀  Missed Connections"
         R.id.RolodexFragment -> "📇  Rolodex"
@@ -910,8 +1354,11 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         R.id.RosterFragment -> "👥  Roster"
         R.id.PublishFragment -> "📤  Publish"
         R.id.PostsBrowserFragment -> "📄  Posts"
-        R.id.MailComposeFragment -> "✍️  Compose"
-        R.id.NotesTagsFragment -> "🏷  Tags"
+        R.id.MailComposeFragment -> "✉  Compose"
+        // The screen's own name (strings.xml notes_tags_title) and the iPhone's — "Tags" here read
+        // as the tag index, a different room (Michael 2026-10-11: "'Notes and tags' doesn't go
+        // anywhere"). 🗓 as on iOS and the hub's own row: 🏷 is "Tag this page…" in both apps.
+        R.id.NotesTagsFragment -> "🗓  Notes & Tags"
         R.id.CalendarSettingsFragment -> "⚙️  Settings"
         else -> dest.label?.toString() ?: "Surface"
     }
@@ -921,6 +1368,10 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         // fragments can't be told to re-read), and holding a lambda over a dying activity in a
         // process-lifetime object would leak it. Marks enqueued while paused wait for onResume.
         com.toolsboox.plugin.calendar.ot.TaskDoneQueue.onEnqueued = null
+        com.toolsboox.ui.share.ShareNoteQueue.onEnqueued = null
+        com.toolsboox.ui.share.ShareActions.onDayWritten = null
+        // Words a ❖ summon finishes with from here on are owed, not toasted into the void.
+        com.toolsboox.plugin.calendar.ui.SynthSummons.foreground = false
         super.onPause()
     }
 
@@ -929,8 +1380,37 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         super.onDestroy()
     }
 
+    /**
+     * A re-delivered intent must become THE intent, or it never happened. Every widget row and
+     * share lands its payload in extras that [onResume] reads through getIntent() — but when the
+     * task already exists, the system may hand the tap to the LIVE activity through here instead
+     * of recreating it (standard launchMode + CLEAR_TOP leaves it the system's choice), and
+     * without setIntent the new extras die in this parameter while onResume keeps re-reading the
+     * stale launch intent. That was the Feed List widget's "tap a row, arrive at the app,
+     * no article" (08-17 page).
+     */
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        staleLaunchIntent = false
+        intentArrivedWarm = true
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        staleLaunchIntent = savedInstanceState != null
+        // Recents relaunching a task whose ROOT is a card launch (no Ledgable task existed, then
+        // Back emptied it) hands back that same intent, token and all — a replay too.
+        val fromHistory = ((intent?.flags ?: 0) and android.content.Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+        if (staleLaunchIntent || fromHistory) scrubReplayedLaunch()
+        // A share aimed straight at this component (EinkBro's remembered target, C8 — it only
+        // gets here on Android 12 and below, see forwardForeignShare) is the card's: hand it over
+        // before the day page inflates, and leave no second Ledgable in the sender.
+        if (savedInstanceState == null && forwardForeignShare()) {
+            finish()
+            @Suppress("DEPRECATION") overridePendingTransition(0, 0)
+            return
+        }
         // ACTION_SCREEN_OFF is delivery-only-to-registered receivers (no manifest route), and the
         // registration dies with the activity — which is exactly the scope wanted: an app that
         // isn't running has nothing unsynced to push.
@@ -942,6 +1422,9 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         // Bound the re-creatable caches (article copies, later media, temp shots) —
         // daily, off-main, never touching user media or day JSONs.
         com.toolsboox.ot.CacheJanitor.runDaily(this)
+        // ⏱ The mail + RSS fetch cycle (user-timed in Feed settings; idempotent re-arm) — so
+        // both lanes are already offline-readable when the surfaces open, not only after.
+        runCatching { com.toolsboox.plugin.feeds.nw.FeedFetchWorker.schedule(applicationContext) }
         // Which way up, before the first frame. The three controls that turn the screen all set
         // `requestedOrientation`, which is activity state and dies with the process — so a cold
         // start fell back to the manifest's `sensorPortrait` no matter what had been chosen, and
@@ -951,6 +1434,24 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         com.toolsboox.ot.ScreenRotation.restore(this)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // THE OLD PAGE FLASHING UP ON LAUNCH IS ANDROID'S TASK SNAPSHOT (Michael, 09-14, B6, after
+        // a cold power-off and a clean daemon: "it still flashes the notes"). Every time the app
+        // goes to the background Android screenshots its last frame; the next launch paints that
+        // screenshot as the starting window until our first frame lands — the notes page you
+        // left on, then the today page, and on e-ink the swap leaves ghosting. The snapshot is
+        // persisted to disk, which is why no reboot and no daemon clear ever touched it. Off:
+        // the starting window is the theme's plain background, and the recents card shows the
+        // app icon instead of a page (a fair trade on an e-ink app). API 33 has the public
+        // setter; before it the same method is hidden — the exemption is taken here first (the
+        // one further down in onCreate runs too late for this call).
+        runCatching {
+            if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false)
+            else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) HiddenApiBypass.addHiddenApiExemptions("")
+            if (Build.VERSION.SDK_INT < 33) android.app.Activity::class.java
+                .getMethod("setDisablePreviewScreenshots", Boolean::class.javaPrimitiveType)
+                .invoke(this, true)
+        }.onFailure { Timber.w(it, "task snapshot could not be disabled") }
 
         // 🕘 History's ONE recorder. There are 112 navigate() call sites and no router, so the
         // NavController itself is the only true choke point — every hop, from every surface,
@@ -1004,6 +1505,11 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
             binding.mainContentFrame.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            // The keyboard's height is PASSED ON, never padded in here: an ink surface must not
+            // change size under the Bigme daemon (see [imeInset]).
+            val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom
+            val over = (ime - bars.bottom).coerceAtLeast(0)
+            if (over != imeInset) { imeInset = over; imeInsetListener?.invoke(over) }
             androidx.core.view.WindowInsetsCompat.CONSUMED
         }
 
@@ -1012,7 +1518,17 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         // today's first page. Hold it instead to switch over to Text Notes.
         binding.floatNoteButton.setOnClickListener { runQuickNoteAction(quickNoteAction()) }
         binding.floatNoteButton.setOnLongClickListener { showQuickNoteSelector(); true }
-        makeFloatButtonDraggable(binding.floatNoteButton)
+        // THE BOTTOM PILL (Michael 2026-10-11: "The one top left and the one bottom right"): the
+        // notes button and full screen's old top-left pill, one oblong. The corner half's tap
+        // repeats the last-chosen action, its hold offers the four (the ink page answers both).
+        pill = com.toolsboox.ot.BottomPill(binding.floatNotePill, binding.floatCornerButton,
+            binding.floatNoteDivider, binding.floatNoteButton).also { bp ->
+            bp.onClearanceChanged = { clampPill() }
+            binding.floatCornerButton.setOnClickListener { bp.corner?.perform(bp.chosen()) }
+            binding.floatCornerButton.setOnLongClickListener { bp.corner?.showPicker(); true }
+        }
+        makeFloatButtonDraggable(binding.floatNoteButton, binding.floatNotePill, restore = true)
+        makeFloatButtonDraggable(binding.floatCornerButton, binding.floatNotePill, restore = false)
         applyQuickNoteFace()
         applyQuickNoteVisibility()
         // The pen button honours the modal-size dial like every floating pill — at Compact its
@@ -1029,6 +1545,10 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         } else {
             Timber.plant(ReleaseTree())
         }
+
+        // If the last run ended in a crash, say so once — a toast, never a dialog, and never
+        // again for the same crash (Diagnostics remembers which file it announced).
+        com.toolsboox.ot.Diagnostics.noticeCrashOnce(this)
 
         setSupportActionBar(binding.mainToolbar.root)
 
@@ -1054,6 +1574,167 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         }
 
         presenter.onViewCreated()
+
+        // A card row that opens Ledgable on a COLD start: route now, before the start destination
+        // (today's day page) ever gets a view — the B6 then never draws today first (P2).
+        if (savedInstanceState == null) routeCardHandoff(warm = false)
+    }
+
+    /**
+     * C8 — EinkBro's "share to last target" stores the component the user once picked, and before
+     * 2026-10-10 that was this activity. With the SEND filters moved to the card it fires an
+     * explicit SEND here, which would open the old chooser inside a second Ledgable in EinkBro's
+     * task. So a SEND from another package that the card didn't send on (EXTRA_FROM_CARD) is
+     * forwarded to the card — referrer carried, so it still says "via EinkBro", and the read
+     * grant passed on. True when forwarded.
+     *
+     * ANDROID 12 AND BELOW ONLY (review, 2026-10-10): Ledgable targets 36, and from Android 13 an
+     * explicit intent from another app must match one of the receiving component's filters —
+     * MainActivity has no SEND filter now, so the system drops EinkBro's remembered SEND before it
+     * arrives (EinkBro should fall back to its chooser, where Ledgable is the card — field-check;
+     * the "2 taps with last-target" figure holds only on 12 and below). The forward is for the
+     * Android 11/12 Boox slabs.
+     *
+     * The card must float over the SENDER, never over our own day page: a SEND that arrived with
+     * NEW_TASK — or into this live copy ([warm], onNewIntent) — is sitting in Ledgable's task, so
+     * the card gets a task of its own and ours goes to the back, leaving the sender behind it.
+     */
+    private fun forwardForeignShare(warm: Boolean = false): Boolean {
+        val i = intent ?: return false
+        if (i.action != android.content.Intent.ACTION_SEND) return false
+        if (i.getBooleanExtra(com.toolsboox.ui.share.ShareActions.EXTRA_FROM_CARD, false)) return false
+        val from = referrer?.takeIf { it.scheme == "android-app" }?.host
+        if (from == packageName) return false
+        val fwd = android.content.Intent(i).setClass(this, com.toolsboox.ui.share.ShareCatchActivity::class.java)
+        fwd.flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+        val ownTask = warm || (i.flags and android.content.Intent.FLAG_ACTIVITY_NEW_TASK) != 0
+        if (ownTask) fwd.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        fwd.putExtra(com.toolsboox.ui.share.ShareActions.EXTRA_FORWARDED, true)
+        referrer?.let { fwd.putExtra(android.content.Intent.EXTRA_REFERRER, it) }
+        return runCatching {
+            startActivity(fwd, android.app.ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle())
+            if (ownTask) moveTaskToBack(true)
+        }.onFailure { Timber.w(it, "share → card forward failed") }.isSuccess
+    }
+
+    /**
+     * A RESTORED copy (process death, or a recreate) is handed the ORIGINAL launch intent, and a
+     * card handoff or a share in it was already followed: strip them before anything reads them,
+     * so a reopen never replays the chooser over a share whose cached image may be swept by now
+     * (review, 2026-10-10; the 09-07 rule).
+     */
+    private fun scrubReplayedLaunch() {
+        val i = intent ?: return
+        val sa = com.toolsboox.ui.share.ShareActions
+        i.removeExtra(sa.EXTRA_CARD_OPEN)
+        i.removeExtra(sa.EXTRA_CARD_SEND)
+        if (i.action == android.content.Intent.ACTION_SEND) i.action = null
+    }
+
+    /**
+     * ⋯ More (and a share from Ledgable to itself): the card's SEND arrives whole inside a
+     * launcher-shaped intent (ShareActions.EXTRA_CARD_SEND) — unwrap it into THE intent, so the
+     * share arms in [onResume] read it exactly as before. Only with this process's card token.
+     */
+    private fun unwrapCardSend() {
+        val outer = intent ?: return
+        val sa = com.toolsboox.ui.share.ShareActions
+        if (!outer.hasExtra(sa.EXTRA_CARD_SEND)) return
+        @Suppress("DEPRECATION")
+        val send = runCatching { outer.getParcelableExtra<android.content.Intent>(sa.EXTRA_CARD_SEND) }.getOrNull()
+        val trusted = sa.isCardToken(outer.getStringExtra(sa.EXTRA_CARD_TOKEN))
+        outer.removeExtra(sa.EXTRA_CARD_SEND)
+        if (send == null || !trusted || staleLaunchIntent) return
+        setIntent(send)
+    }
+
+    /**
+     * Arriving at the day page from a share: REPLACE it when it's the screen you're on (one day
+     * surface, never two stacked), PUSH it over anything else so Back still returns to the book or
+     * article you left. Card handoffs and ⋯ More land in your live session now, not a throwaway
+     * copy in the sender's task (review, 2026-10-10: "not losing features, not having too many
+     * clicks").
+     */
+    private fun shareDayNavOptions(): androidx.navigation.NavOptions? {
+        val nav = (supportFragmentManager.findFragmentById(R.id.fragmentContent)
+            as? androidx.navigation.fragment.NavHostFragment)?.navController
+        return if (nav?.currentDestination?.id == R.id.CalendarDayFragment)
+            androidx.navigation.navOptions { popUpTo(R.id.CalendarDayFragment) { inclusive = true } }
+        else null
+    }
+
+    /**
+     * The card's "take me there" rows land here (ShareActions.OPEN_*). CONSUMED on first sight —
+     * a B6 rotation recreates the activity with the same intent, and an unconsumed handoff would
+     * re-navigate (the 09-07 rule). [warm] = the activity was already up: execute the navigation
+     * NOW, while the fragments are still only started, so the old screen never resumes (never
+     * re-attaches the ink daemon) and the target page primes its own template first (P2).
+     * Followed only with this process's card token — the activity is exported (review, 2026-10-10).
+     */
+    private fun routeCardHandoff(warm: Boolean) {
+        val i = intent ?: return
+        val sa = com.toolsboox.ui.share.ShareActions
+        val what = i.getStringExtra(sa.EXTRA_CARD_OPEN) ?: return
+        val trusted = sa.isCardToken(i.getStringExtra(sa.EXTRA_CARD_TOKEN))
+        i.removeExtra(sa.EXTRA_CARD_OPEN)
+        if (!trusted) { Timber.w("card handoff without the card's token — ignored"); return }
+        val host = supportFragmentManager.findFragmentById(R.id.fragmentContent)
+            as? androidx.navigation.fragment.NavHostFragment ?: return
+        val nav = host.navController
+        val dayNav = shareDayNavOptions()
+        runCatching {
+            when (what) {
+                sa.OPEN_NOTE -> {
+                    val date = java.time.LocalDate.parse(i.getStringExtra(sa.EXTRA_DATE))
+                    nav.navigate(R.id.action_to_calendar_day, bundleOf(
+                        "year" to "${date.year}", "month" to "${date.monthValue}", "day" to "${date.dayOfMonth}",
+                        "notePage" to i.getStringExtra(sa.EXTRA_KEY)))
+                }
+                sa.OPEN_DAY -> nav.navigate(R.id.action_to_calendar_day, null, dayNav)
+                sa.OPEN_TEXT_ON_DAY -> {
+                    val bundle = bundleOf("sharedText" to wrapForTextBox(i.getStringExtra(sa.EXTRA_TEXT).orEmpty()))
+                    i.getStringExtra(sa.EXTRA_URL)?.let {
+                        bundle.putString("sharedUrl", it); bundle.putString("notePage", "intake")
+                    }
+                    nav.navigate(R.id.action_to_calendar_day, bundle, dayNav)
+                }
+                sa.OPEN_IMAGE_ON_DAY -> {
+                    val img = i.getStringExtra(sa.EXTRA_IMAGE)
+                    if (sa.isOwnShareImage(this, img))
+                        nav.navigate(R.id.action_to_calendar_day, bundleOf("sharedImageUri" to img), dayNav)
+                }
+                sa.OPEN_ASK -> nav.navigate(R.id.action_to_ledger_chat, bundleOf(
+                    "ask_passage" to i.getStringExtra(sa.EXTRA_ASK_PASSAGE),
+                    "ask_context" to i.getStringExtra(sa.EXTRA_ASK_CONTEXT)))
+            }
+            if (warm) host.childFragmentManager.executePendingTransactions()
+        }.onFailure { Timber.w(it, "card handoff ($what) failed") }
+    }
+
+    /** Tell a resumed Text Notes screen about notes the card wrote — re-read, never save. */
+    private fun drainSharedNotes() {
+        for (d in com.toolsboox.ui.share.ShareNoteQueue.drain(this)) tellSurfaceNoteAdded(d)
+    }
+
+    /**
+     * Ledgable never offers itself in its own selection menus (C9): once it answers PROCESS_TEXT,
+     * Android lists "Ledgable" in every text selection on the device — here it would open the
+     * card over our own ink surface. This hears every action mode in the activity's window (the
+     * reader's web views, the day page's text); dialog windows guard their fields with
+     * [com.toolsboox.ui.share.OwnProcessText.guard] (ScreenFragment.showModal does it for every
+     * routed dialog).
+     *
+     * Web views are left to themselves (review, 2026-10-10): the reader, article and Site web
+     * views are SelectionMenuWebViews, which hide the item on every prepare; for a plain one an
+     * invalidate here only re-runs Chromium's prepare, which puts the item straight back — a
+     * second toolbar redraw on e-ink for nothing.
+     */
+    override fun onActionModeStarted(mode: android.view.ActionMode?) {
+        super.onActionModeStarted(mode)
+        if (currentFocus is android.webkit.WebView) return
+        if (mode != null && com.toolsboox.ui.share.OwnProcessText.strip(mode.menu, this)) {
+            runCatching { mode.invalidate() }
+        }
     }
 
     /**
@@ -1085,15 +1766,62 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         }
 
     /**
+     * The resumed screen fragment, when there is one — the share chrome needs it for the
+     * modal door below. Same resolution as [handleVolumeKey], and for the same reason: the
+     * fragment on screen is a fact best read at the moment it's needed.
+     */
+    private fun resumedScreenFragment(): com.toolsboox.ui.plugin.ScreenFragment? {
+        val navHost = supportFragmentManager.primaryNavigationFragment ?: return null
+        return navHost.childFragmentManager.fragments.lastOrNull { it.isResumed }
+            as? com.toolsboox.ui.plugin.ScreenFragment
+    }
+
+    /**
+     * THE MODAL DOOR FOR THE SHARE CHROME — never a bare show(). A share lands over whatever
+     * screen was up, and on a cold start that is the day page: an ink-capable surface whose
+     * hardware pen stays armed under an unrouted dialog, so every stylus tap fell through to
+     * the ink layer and the chooser "froze" — the tap that should have filed the link filed
+     * nothing. That was "Later-list shares/saves don't import" (08-17 queue), the same freeze
+     * the reader's note menu had, and the same cure: [ScreenFragment.showModal] runs the
+     * present hook that pauses the pen. With no resumed screen there is no pen to pause.
+     */
+    private fun showShareModal(dialog: androidx.appcompat.app.AlertDialog) {
+        val screen = resumedScreenFragment()
+        if (screen != null) screen.showModal(dialog) else dialog.show()
+    }
+
+    /**
+     * ⏳ Later — the local Instapaper, and it NEVER ASKS A QUESTION. One tap saves silently:
+     * the lane is derived from the URL by the same table every other filing path reads
+     * (youtube/vimeo → watch, podcast hosts and audio files → listen, else read), so a saved
+     * item already knows whether it reads, plays, or watches and the Later List badges it
+     * accordingly. The save is [IntakePageStore.fileLink] — the one write path — so the link
+     * is dressed with its og: face, cached for offline reading, published to the personal
+     * feed, and merged across devices like every other filing. The toast names the lane it
+     * landed in: the save stays verifiable without becoming a decision.
+     */
+    private fun saveSharedToLater(url: String, title: String?, excerpt: String?) {
+        // The store half is shared with the send-from-any-app card (ShareActions, 2026-10-10).
+        lifecycleScope.launch {
+            val lane = com.toolsboox.ui.share.ShareActions.saveToLater(applicationContext, url, title, excerpt)
+            android.widget.Toast.makeText(
+                this@MainActivity, "⏳ Saved for later · $lane", android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    /**
      * A shared link arrived — offer to file it into the reading pipeline (read later /
      * watch / listen / educate), or drop it as a box on the day page. Filing appends it to
      * today's intake sidecar (so it shows in Notes & Annotations) and enqueues it.
+     * The explicit-lane room: ⏳ Later infers the lane and never asks, so this chooser is
+     * reached only from its own "File to a lane…" row — for the shares where the lane IS the
+     * point (an article he wants under 📧 Email, a video he'll read the transcript of).
      */
     private fun offerToFileLink(url: String, title: String?, sharedText: String?) {
         // (iconRes, label, action). Monochrome outline icons for e-ink contrast.
         val fileAction: (String, String) -> Unit = { kind, label ->
-            com.toolsboox.plugin.michaelfilter.nw.IntakePageStore
-                .fileLink(applicationContext, java.time.LocalDate.now(), kind, url, title)
+            com.toolsboox.ui.share.ShareActions.fileToLane(applicationContext, kind, url, title)
             android.widget.Toast.makeText(this, getString(R.string.ledger_share_filed, label), android.widget.Toast.LENGTH_SHORT).show()
         }
         val items = listOf(
@@ -1121,7 +1849,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                 r.setOnClickListener { dialog.dismiss(); action() }
                 list.addView(r)
             }
-            dialog.show()
+            showShareModal(dialog)
         }
     }
 
@@ -1132,60 +1860,129 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             bundle.putString("sharedUrl", url)
             bundle.putString("notePage", "intake")
         }
-        val navOptions = androidx.navigation.navOptions {
-            popUpTo(R.id.CalendarDayFragment) { inclusive = true }
-        }
-        binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle, navOptions)
+        // Replace the day page only when it's the screen you're on — the chooser now runs in your
+        // live session (⋯ More), so Back must still reach the book you left (2026-10-10).
+        binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle, shareDayNavOptions())
     }
 
+    /** One row of the share fork. [big] marks the fast default — ⏳ Later — which reads first
+     *  and largest so it's reachable without reading the rest. */
+    private data class ShareRow(val iconRes: Int, val label: String, val big: Boolean = false, val action: () -> Unit)
+
     /**
-     * The share chooser — a shared item becomes a GRAM (a card with the source clickable back to it)
-     * on the current page or in Pickings, gets filed to read-later, or drops as a text box. Mirrors
-     * the iPad "Add to Ledger" chooser. Which destinations show depends on what was shared.
+     * THE FORK CHROME — sharing into Ledgable, any type, lands on this ONE chooser, and the two
+     * lanes fork here in our own chrome rather than in the system sheet (which stays one entry:
+     * "Ledgable"). ⏳ Later is the top row, big, one tap, no questions — the local Instapaper,
+     * for article AND video AND audio links alike. Below it, the gram lane (the iOS share-in's
+     * richness: place on this page, to the remembered board, or anywhere in the destination
+     * vocabulary), then the existing text/link behaviors as their own rows. This reorganizes the
+     * front door; it deletes no rooms.
      */
     private fun offerShareDestinations(
-        url: String?, title: String?, leftoverText: String?, sharedText: String?, imageUri: android.net.Uri?
+        url: String?, title: String?, leftoverText: String?, sharedText: String?, imageUri: android.net.Uri?,
+        via: String? = null,
     ) {
-        // The gram row goes where the LAST gram went (Gram Picks when the remembered place no
-        // longer exists today) — the share sheet is already one modal deep, so a second chooser
-        // here would interrupt the capture; the row names its destination instead and the shared
-        // memory does the routing. Every explicit chooser in the app teaches that memory.
+        // The one-tap gram row goes where the LAST gram went (Gram Picks when the remembered
+        // place no longer exists today); the "Place as pick…" row below it opens the whole
+        // destination vocabulary for the shares where the place is the point. Every explicit
+        // chooser in the app teaches that memory.
         val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.inbox(this)
         val preview = (title ?: url ?: leftoverText ?: sharedText)?.trim().orEmpty()
-        val items = mutableListOf<Triple<Int, String, () -> Unit>>()
+        val items = mutableListOf<ShareRow>()
 
+        // THE ORDER IS THE WANT (Michael, 09-13: "I never really want to put something on today
+        // when I add — I tend to want to make a pick or a note page… or save for later"; of a
+        // picture: "save it as a task, save it on to a new note page, make a task, connect to
+        // gram"). So: Later · the pick place · a fresh note page · a task card, and today's page
+        // LAST, for the share that really is about today. iOS 198 wears the same order.
         if (imageUri != null) {
-            items += Triple(R.drawable.ic_image, "On this page") { openSharedImageOnDay(imageUri) }
-            items += Triple(R.drawable.ic_quote, "To ${dest.name}") {
+            items += ShareRow(R.drawable.ic_quote, "◈  To ${dest.name}") {
                 val bmp = decodeSharedImage(imageUri)
                 if (bmp != null) placeGram(bmp, dest, "", "Shared image", openDay = false)
                 else android.widget.Toast.makeText(this, "Couldn't read that image", android.widget.Toast.LENGTH_SHORT).show()
             }
+            items += ShareRow(R.drawable.ic_edit, "✎  On a new note page") {
+                val bmp = decodeSharedImage(imageUri)
+                if (bmp != null) placeOnNewNotePage(bmp, "", "Shared image")
+                else android.widget.Toast.makeText(this, "Couldn't read that image", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            items += ShareRow(R.drawable.ic_bookmark, "☐  Task card") {
+                val bmp = decodeSharedImage(imageUri)
+                if (bmp != null) pinBitmapAsTask(bmp, "Shared image")
+                else android.widget.Toast.makeText(this, "Couldn't read that image", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            // The page-choice richness the iOS share has: the full destination vocabulary —
+            // Gram Picks, today's notes (the day's freeform sheet), any Pickings board, the All
+            // Stars bands, Synthesize — remembered-last-first, through the one funnel.
+            items += ShareRow(R.drawable.ic_quote, "Place as pick…") {
+                com.toolsboox.plugin.calendar.ot.GramDestinations.choose(
+                    this, title = "Place this image on",
+                    fragment = resumedScreenFragment()
+                ) { d ->
+                    val bmp = decodeSharedImage(imageUri)
+                    if (bmp != null) placeGram(bmp, d, "", "Shared image", openDay = false)
+                    else android.widget.Toast.makeText(this, "Couldn't read that image", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+            items += ShareRow(R.drawable.ic_image, "On this page") { openSharedImageOnDay(imageUri) }
         } else if (url != null) {
             val t = title ?: url
             // What the sharing app sent BESIDES the link and its title is the link's own blurb —
             // that's the excerpt band on the card. (ShareTextParser already pulled the url and
             // title out of the shared text; what's left is the description the app offered.)
             val blurb = leftoverText?.trim().orEmpty()
-            items += Triple(R.drawable.ic_reader_view, "On this page") { renderAndPlaceLink(url, t, blurb, null, openDay = true) }
-            items += Triple(R.drawable.ic_quote, "To ${dest.name}") { renderAndPlaceLink(url, t, blurb, dest, openDay = false) }
-            items += Triple(R.drawable.ic_bookmark, "Later — read / watch / listen") { offerToFileLink(url, title, sharedText) }
-            items += Triple(R.drawable.ic_edit, "As text") {
+            // ⏳ Later leads: the fast default, one silent tap, lane derived from the URL.
+            items += ShareRow(R.drawable.ic_bookmark, "⏳  Later", big = true) { saveSharedToLater(url, title, blurb) }
+            items += ShareRow(R.drawable.ic_quote, "◈  To ${dest.name}") { renderAndPlaceLink(url, t, blurb, dest, openDay = false) }
+            items += ShareRow(R.drawable.ic_edit, "✎  On a new note page") {
+                lifecycleScope.launch { renderLinkCard(url, t, blurb)?.let { placeOnNewNotePage(it, url, t) } }
+            }
+            items += ShareRow(R.drawable.ic_bookmark, "☐  Task card") {
+                lifecycleScope.launch { renderLinkCard(url, t, blurb)?.let { pinBitmapAsTask(it, t) } }
+            }
+            items += ShareRow(R.drawable.ic_quote, "Place as pick…") {
+                com.toolsboox.plugin.calendar.ot.GramDestinations.choose(
+                    this, title = "Place this card on",
+                    fragment = resumedScreenFragment()
+                ) { d -> renderAndPlaceLink(url, t, blurb, d, openDay = false) }
+            }
+            // The explicit-lane room ⏳ Later replaced as the default — still one row away for
+            // the shares where the lane is the point (see offerToFileLink).
+            items += ShareRow(R.drawable.ic_book, "File to a lane…") { offerToFileLink(url, title, sharedText) }
+            items += ShareRow(R.drawable.ic_edit, "As text") {
                 val boxText = wrapForTextBox(listOfNotNull(title, url).joinToString("\n").ifBlank { sharedText?.trim().orEmpty() })
                 if (boxText.isNotBlank()) dropTextOnDay(boxText, url)
             }
+            items += ShareRow(R.drawable.ic_reader_view, "On this page") { renderAndPlaceLink(url, t, blurb, null, openDay = true) }
         } else {
-            val text = wrapForTextBox(listOfNotNull(title, leftoverText).joinToString("\n").ifBlank { sharedText?.trim().orEmpty() })
-            if (text.isBlank()) return
-            items += Triple(R.drawable.ic_edit, "On this page (text)") { dropTextOnDay(text, null) }
-            items += Triple(R.drawable.ic_quote, "To ${dest.name}") {
+            // THE PLAIN-TEXT CARD, FIXED (2026-10-10): it was the passage cut at 600 characters with
+            // no word of it, no date, no source, and no cardText — the words existed only as pixels,
+            // so search, Synthesize and the iPad couldn't read them. Now it is the in-app ❝ Save
+            // highlight face: the whole passage (a visible "…" if the face must shorten), the
+            // "Oct 10, 2026 · via EinkBro" footer, and every word in cardText. The text BOX keeps
+            // its soft wrap; the card gets the unwrapped passage.
+            val plain = listOfNotNull(title, leftoverText).joinToString("\n").ifBlank { sharedText?.trim().orEmpty() }
+            val text = wrapForTextBox(plain)
+            if (plain.isBlank()) return
+            val footer = com.toolsboox.ui.share.ShareActions.footer(null, via)
+            val label = com.toolsboox.ui.share.ShareActions.sourceLabel(null, via, "Shared note")
+            val feed = via.orEmpty()
+            suspend fun stickyCard() = com.toolsboox.ui.share.ShareActions.textCard(plain, footer)
+            items += ShareRow(R.drawable.ic_quote, "◈  To ${dest.name}") {
+                lifecycleScope.launch { stickyCard()?.let { placeGram(it, dest, "", label, openDay = false, cardText = plain, sourceFeed = feed) } }
+            }
+            items += ShareRow(R.drawable.ic_edit, "✎  On a new note page") {
                 lifecycleScope.launch {
-                    val card = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                        runCatching { com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(text.take(600), "", "", 1080, 0) }.getOrNull()
+                    stickyCard()?.let {
+                        placeOnNewNotePage(it, "", label, cardText = plain, sourceFeed = feed,
+                            noteName = plain.lineSequence().firstOrNull()?.take(48))
                     }
-                    if (card != null) placeGram(card, dest, "", "Shared note", openDay = false)
                 }
             }
+            items += ShareRow(R.drawable.ic_bookmark, "☐  Task card") {
+                lifecycleScope.launch { stickyCard()?.let { pinBitmapAsTask(it, plain.lineSequence().firstOrNull()?.take(80) ?: "Shared note") } }
+            }
+            items += ShareRow(R.drawable.ic_edit, "On this page (text)") { dropTextOnDay(text, null) }
         }
 
         // Defer to after the first layout — a dialog straight from onResume on a share cold-start can
@@ -1194,7 +1991,7 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             val dp = resources.displayMetrics.density
             val list = android.widget.LinearLayout(this).apply { orientation = android.widget.LinearLayout.VERTICAL }
             val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(this))
-                .setTitle("Add to Ledger")
+                .setTitle("Add to Ledgable")
                 .setView(androidx.core.widget.NestedScrollView(this).apply { addView(list) })
                 .create()
             if (preview.isNotBlank()) list.addView(android.widget.TextView(this).apply {
@@ -1203,14 +2000,18 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                 setTextColor(0xFF666666.toInt()); textSize = 13f
                 maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END
             })
-            for ((iconRes, itemLabel, action) in items) {
+            for (row in items) {
                 val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
-                r.findViewById<android.widget.ImageView>(R.id.go_icon).apply { setImageResource(iconRes); visibility = android.view.View.VISIBLE }
-                r.findViewById<android.widget.TextView>(R.id.go_label).text = itemLabel
-                r.setOnClickListener { dialog.dismiss(); action() }
+                r.findViewById<android.widget.ImageView>(R.id.go_icon).apply { setImageResource(row.iconRes); visibility = android.view.View.VISIBLE }
+                r.findViewById<android.widget.TextView>(R.id.go_label).apply {
+                    text = row.label
+                    // The fast default earns its size: readable without reading, per the canon.
+                    if (row.big) { textSize = 21f; setTypeface(typeface, android.graphics.Typeface.BOLD) }
+                }
+                r.setOnClickListener { dialog.dismiss(); row.action() }
                 list.addView(r)
             }
-            dialog.show()
+            showShareModal(dialog)
         }
     }
 
@@ -1221,19 +2022,58 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         destination: com.toolsboox.plugin.calendar.ot.GramDestinations.Destination?, openDay: Boolean
     ) {
         lifecycleScope.launch {
-            val card = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                // The kind was hard-coded "read", so a shared YouTube link wore 🔖 READ and landed
-                // in the wrong Intake quarter — the iPad has always inferred it from the host
-                // (FeedNoteGram.kind(for:)). ShareTextParser.inferKind is the Boox's copy of that
-                // same table, already used by the day page's "Intake a link".
-                val kind = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.inferKind(url)
-                runCatching {
-                    com.toolsboox.plugin.calendar.ot.LinkCardRenderer.render(
-                        url, title, kind, excerpt = excerpt)
-                }.getOrNull()
-            }
+            // The kind was hard-coded "read", so a shared YouTube link wore 🔖 READ and landed in
+            // the wrong Intake quarter — ShareActions.renderLinkCard infers it from the host, the
+            // iPad's FeedNoteGram.kind(for:) table.
+            val card = com.toolsboox.ui.share.ShareActions.renderLinkCard(url, title, excerpt)
             if (card != null) placeGram(card, destination, url, title, openDay)
             else android.widget.Toast.makeText(this@MainActivity, "Couldn't make a card", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** The shared link's card face — the same renderer the pick doors use, kind inferred from the host. */
+    private suspend fun renderLinkCard(url: String, title: String, excerpt: String): android.graphics.Bitmap? {
+        val card = com.toolsboox.ui.share.ShareActions.renderLinkCard(url, title, excerpt)
+        if (card == null) android.widget.Toast.makeText(this, "Couldn't make a card", android.widget.Toast.LENGTH_SHORT).show()
+        return card
+    }
+
+    /**
+     * A FRESH grid note page under today with [bitmap] placed on it as a pick, then the page opened
+     * (Michael, 09-13: "save it on to a new note page"). The same start-a-note + place + open walk
+     * the Ask page's cited grams take (LedgerDirectory.placeCitedSiteGramsOntoNewNote).
+     */
+    private fun placeOnNewNotePage(
+        bitmap: android.graphics.Bitmap, sourceLink: String, sourceLabel: String,
+        cardText: String = "", sourceFeed: String = "", noteName: String? = null,
+    ) {
+        lifecycleScope.launch {
+            // The store half is the card's too (ShareActions); opening the page stays here.
+            val note = com.toolsboox.ui.share.ShareActions.placeOnNewNotePage(
+                applicationContext, bitmap, sourceLink, sourceLabel,
+                cardText = cardText, sourceFeed = sourceFeed, service = calendarDayService, noteName = noteName)
+            if (note == null) {
+                android.widget.Toast.makeText(this@MainActivity, "Couldn't start a note page", android.widget.Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val f = resumedScreenFragment()
+            if (f != null) com.toolsboox.plugin.calendar.CalendarNavigator.toDayNote(f, note.date, note.key)
+            else android.widget.Toast.makeText(this@MainActivity, "✎ On a new note page · ${note.name}", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * [bitmap] as a task card's ink face — unfiled, today (Michael, 09-13: "save it as a task").
+     * The day page's "Pin to board" door, minus the board question: same LedgerItem shape, same
+     * day-lock discipline, same push to the task sync.
+     */
+    private fun pinBitmapAsTask(bitmap: android.graphics.Bitmap, label: String) {
+        lifecycleScope.launch {
+            val saved = com.toolsboox.ui.share.ShareActions.pinBitmapAsTask(
+                applicationContext, bitmap, label, calendarDayService)
+            if (saved) tellSurfaceGramPlaced("default")
+            android.widget.Toast.makeText(this@MainActivity,
+                if (saved) "☐ Saved as a task card" else "Couldn't save that", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1242,71 +2082,59 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     private fun placeGram(
         bitmap: android.graphics.Bitmap,
         destination: com.toolsboox.plugin.calendar.ot.GramDestinations.Destination?,
-        sourceLink: String, sourceLabel: String, openDay: Boolean
+        sourceLink: String, sourceLabel: String, openDay: Boolean,
+        cardText: String = "", sourceFeed: String = "",
     ) {
         val pageKey = destination?.key ?: "default"
         lifecycleScope.launch {
-            val placed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching {
-                    com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
-                        calendarDayService, documentsRoot(), bitmap, java.time.LocalDate.now(), pageKey,
-                        sourceLink = sourceLink, sourceLabel = sourceLabel,
-                        intakeKind = destination?.kind ?: ""
-                    )
-                }.isSuccess
-            }
+            val placed = com.toolsboox.ui.share.ShareActions.placeGram(
+                applicationContext, bitmap, destination, sourceLink, sourceLabel,
+                cardText = cardText, sourceFeed = sourceFeed, service = calendarDayService)
             // Only the STAY branch needs telling — `openDay` navigates, and arriving at the day page
             // loads the day fresh. A share that stays put drops the caller back onto whatever screen
             // it interrupted, holding a day that predates the card by a second.
             if (placed && !openDay) tellSurfaceGramPlaced(pageKey)
             if (openDay) {
-                val navOptions = androidx.navigation.navOptions { popUpTo(R.id.CalendarDayFragment) { inclusive = true } }
-                runCatching { binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, null, navOptions) }
+                runCatching { binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, null, shareDayNavOptions()) }
             } else {
+                // One vocabulary with the card and iOS: "◈ Added to All Picks" (2026-10-10).
                 android.widget.Toast.makeText(
-                    this@MainActivity, "Added to ${destination?.name ?: "the page"}",
+                    this@MainActivity,
+                    if (!placed) "Couldn't save that"
+                    else destination?.let { "◈ Added to ${it.name}" } ?: "Added to the page",
                     android.widget.Toast.LENGTH_SHORT
                 ).show()
             }
         }
     }
 
+    /**
+     * Land a shared PDF on the bookshelf, wherever the shelf currently is (BookshelfSource
+     * follows a declared folder). Streamed, temp-then-rename inside writeInto — a half-copied
+     * PDF must never sit on the shelf looking like a book. Named by the sender's display name,
+     * with the extension pinned so the shelf (which lists by extension) can see it.
+     */
+    private fun importSharedPdf(uri: android.net.Uri) {
+        lifecycleScope.launch {
+            // Streamed temp-then-rename and pushed on add — ShareActions.importPdf, shared with the card.
+            val name = com.toolsboox.ui.share.ShareActions.importPdf(this@MainActivity, uri)
+            android.widget.Toast.makeText(
+                this@MainActivity,
+                if (name != null) "On the shelf · $name" else "Couldn't import that PDF",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
     /** The pre-existing "shared image onto today's page" behavior — a movable image element. */
     private fun openSharedImageOnDay(imageUri: android.net.Uri) {
         val bundle = bundleOf("sharedImageUri" to imageUri.toString())
-        val navOptions = androidx.navigation.navOptions { popUpTo(R.id.CalendarDayFragment) { inclusive = true } }
-        binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle, navOptions)
+        binding.fragmentContent.findNavController().navigate(R.id.action_to_calendar_day, bundle, shareDayNavOptions())
     }
 
-    /**
-     * Decode a shared image DOWNSAMPLED, never full-size. A 12MP camera share decoded whole is a
-     * ~48MB bitmap — enough to OOM a Palma — and whatever lands here gets base64'd into the day
-     * JSON by the gram placement path, so oversized pixels become permanent oversized JSON (the
-     * known media-bloat problem). Bounds first, then a power-of-two sample that brings the longest
-     * edge inside 2048px, then a JPEG ~85 round-trip: the lossy pass smooths sensor noise, which
-     * is what lets the placement path's PNG re-encode actually compress a photograph.
-     */
-    private fun decodeSharedImage(uri: android.net.Uri): android.graphics.Bitmap? = runCatching {
-        val maxEdge = 2048
-        // Pass 1: bounds only — no pixels allocated yet.
-        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
-        // Smallest power of two that lands the longest edge inside maxEdge.
-        var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > maxEdge) sample *= 2
-        // Pass 2: the real decode at the computed sample.
-        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
-        val decoded = contentResolver.openInputStream(uri)?.use {
-            android.graphics.BitmapFactory.decodeStream(it, null, opts)
-        } ?: return@runCatching null
-        // Pass 3: the JPEG round-trip that keeps the eventual day-JSON payload sane.
-        val baos = java.io.ByteArrayOutputStream()
-        if (!decoded.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, baos)) return@runCatching decoded
-        val settled = android.graphics.BitmapFactory.decodeByteArray(baos.toByteArray(), 0, baos.size())
-        if (settled != null && settled !== decoded) decoded.recycle()
-        settled ?: decoded
-    }.getOrNull()
+    /** A shared image, decoded downsampled — never full-size (see [com.toolsboox.ui.share.ShareActions.decodeImage]). */
+    private fun decodeSharedImage(uri: android.net.Uri): android.graphics.Bitmap? =
+        com.toolsboox.ui.share.ShareActions.decodeImage(this, uri)
 
     /**
      * Activity onResume.
@@ -1314,23 +2142,91 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
     override fun onResume() {
         super.onResume()
 
+        // A row on the send-from-any-app card that opens Ledgable (✎ New note page…, 🔎 Ask…, On
+        // this page…) — routed BEFORE the fragments resume, so the screen you were last on never
+        // re-attaches its ink only to be replaced (critique P2; a cold start routes in onCreate).
+        if (!staleLaunchIntent) routeCardHandoff(warm = true)
+
+        // Text Notes written from the card, announced to a resumed Text Notes screen so its next
+        // autosave can't un-write them. Posted: the fragments resume after this method returns.
+        com.toolsboox.ui.share.ShareNoteQueue.onEnqueued = { runOnUiThread { drainSharedNotes() } }
+        binding.root.post { drainSharedNotes() }
+        // And picks / task cards the card writes into the day file while we stay RESUMED beside
+        // the sender (Boox split screen, a floating window): re-read, never save (2026-10-10).
+        com.toolsboox.ui.share.ShareActions.onDayWritten = { key -> runOnUiThread { tellSurfaceGramPlaced(key) } }
+
+        // ❖ The summon that outlived its process (Michael, 2026-10-12, B6 -322): say what a summon
+        // that finished in the background still owes, and re-ask / land any summon a killed,
+        // rebooted or reinstalled process left mid-flight. Posted, so the day page resuming under
+        // us is the live page a landing finds.
+        com.toolsboox.plugin.calendar.ui.SynthSummons.foreground = true
+        binding.root.post { runCatching { com.toolsboox.plugin.calendar.ui.SynthSummons.onForeground(this) } }
+
         // The app end of the widget ✓ write-channel: drain whatever queued while we were away,
         // and stay registered for taps that land while we're up. Registered here (not onCreate)
         // and cleared in onPause so the nudge only ever fires into a resumed activity.
         com.toolsboox.plugin.calendar.ot.TaskDoneQueue.onEnqueued = { drainWidgetDoneQueue() }
         drainWidgetDoneQueue()
 
+        // Open-with-Ledgable (09-03): a mailto: link from anywhere opens the composer with the
+        // address standing; a web link opens the Web room on that page. Consumed like the share
+        // intents so a re-resume doesn't re-navigate.
+        if (intent?.action == android.content.Intent.ACTION_VIEW) {
+            val data = intent?.data
+            when {
+                // A pairing string from ledgable.cc/pair: the site lands in Settings › Sites, active,
+                // password and all. Consumed like the others so a re-resume doesn't re-pair.
+                com.toolsboox.plugin.calendar.nw.PairLink.isPair(data) -> {
+                    intent?.action = null
+                    val added = com.toolsboox.plugin.calendar.nw.PairLink.apply(this, data.toString())
+                    android.widget.Toast.makeText(this,
+                        if (added != null) "Site added: $added — it's now active under Settings › Sites"
+                        else "That pairing string didn't work — check it and try again",
+                        android.widget.Toast.LENGTH_LONG).show()
+                }
+                data?.scheme == "mailto" -> {
+                    intent?.action = null
+                    val nav = (supportFragmentManager.findFragmentById(R.id.fragmentContent)
+                        as? androidx.navigation.fragment.NavHostFragment)?.navController
+                    nav?.navigate(R.id.action_to_mail_compose, androidx.core.os.bundleOf(
+                        com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_TO_EMAIL
+                            to data.schemeSpecificPart.substringBefore('?')))
+                }
+                data?.scheme == "http" || data?.scheme == "https" -> {
+                    // Not the app-link host (toolsboox deep links keep their own route below).
+                    if (data?.host != "app.toolsboox.com") {
+                        intent?.action = null
+                        getSharedPreferences("browser_room", 0).edit()
+                            .putString("last_url", data.toString()).apply()
+                        val nav = (supportFragmentManager.findFragmentById(R.id.fragmentContent)
+                            as? androidx.navigation.fragment.NavHostFragment)?.navController
+                        nav?.navigate(R.id.action_to_site_web, androidx.core.os.bundleOf(
+                            com.toolsboox.plugin.calendar.ui.SiteWebFragment.ARG_OPEN_WEB to true))
+                    }
+                }
+            }
+        }
+
         // Share-to-Ledger (text/link): a chooser offers where it lands — a GRAM (a card with the
         // source clickable) on this page or in Pickings, filed to read/watch/listen, or as a text box.
+        // A SEND that didn't come from the card — EinkBro's remembered last target names THIS
+        // component (Android 12 and below; 13+ drops it before delivery) — goes to the card
+        // instead (C8), so it never opens a second Ledgable inside the sender. ⋯ More
+        // (EXTRA_FROM_CARD, unwrapped first) and Ledgable's own shares fall through to the arms.
+        unwrapCardSend()
+        val arrivedWarm = intentArrivedWarm.also { intentArrivedWarm = false }
+        if (!staleLaunchIntent && intent?.action == android.content.Intent.ACTION_SEND && forwardForeignShare(warm = arrivedWarm)) intent?.action = null
+        val shareVia = intent?.getStringExtra(com.toolsboox.ui.share.ShareActions.EXTRA_VIA)
+
         if (intent?.action == android.content.Intent.ACTION_SEND && intent?.type == "text/plain") {
-            val sharedText = intent?.getStringExtra(android.content.Intent.EXTRA_TEXT)
-            val sharedSubject = intent?.getStringExtra(android.content.Intent.EXTRA_SUBJECT)
+            val sharedText = intent?.getCharSequenceExtra(android.content.Intent.EXTRA_TEXT)?.toString()
+            val sharedSubject = intent?.getCharSequenceExtra(android.content.Intent.EXTRA_SUBJECT)?.toString()
             // Consume the intent so re-resume doesn't re-navigate.
             intent?.action = null
 
             val parsed = com.toolsboox.plugin.michaelfilter.ot.ShareTextParser.parse(sharedText, sharedSubject)
             Timber.i("Share to ledger (text): url=${parsed.url}")
-            offerShareDestinations(parsed.url, parsed.title, parsed.leftoverText, sharedText, null)
+            offerShareDestinations(parsed.url, parsed.title, parsed.leftoverText, sharedText, null, shareVia)
         }
 
         // Share-to-Ledger target: an image shared from Gallery or any app — same chooser (on this
@@ -1343,7 +2239,21 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
             if (streamUri != null) {
                 Timber.i("Share to ledger (image): $streamUri")
-                offerShareDestinations(null, null, null, null, streamUri)
+                offerShareDestinations(null, null, null, null, streamUri, shareVia)
+            }
+        }
+
+        // Share-to-Ledger target: a PDF lands on the BOOKSHELF — the shelf already reads PDFs
+        // (READABLE lists the extension); the share sheet just had no door for one. Same
+        // consume-the-intent contract as the two share arms above.
+        if (intent?.action == android.content.Intent.ACTION_SEND && intent?.type == "application/pdf") {
+            @Suppress("DEPRECATION")
+            val streamUri = intent?.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
+            intent?.action = null
+
+            if (streamUri != null) {
+                Timber.i("Share to ledger (pdf): $streamUri")
+                importSharedPdf(streamUri)
             }
         }
 
@@ -1351,14 +2261,11 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
         val path = intent?.data?.path
         if (host == "app") {
             if (path?.startsWith("/calendar") == true) {
-                val defaultCalendarStartActionId = when (sharedPreferences.getInt("calendarStartView", 0)) {
-                    0 -> R.id.action_to_calendar_day
-                    1 -> R.id.action_to_calendar_week
-                    2 -> R.id.action_to_calendar_month
-                    3 -> R.id.action_to_calendar_quarter
-                    4 -> R.id.action_to_calendar_year
-                    else -> R.id.action_to_calendar_day
-                }
+                // The day page, always. This used to read a "Start view" dropdown on Settings
+                // whose default was the day page and which the directory, the sidebar and every
+                // other door ignored — a setting that governed only this deep link and the home
+                // tile. The row retired (settings IA, 09-10); the default it had is now the rule.
+                val defaultCalendarStartActionId = R.id.action_to_calendar_day
 
                 val calendarStartActionId = when (path) {
                     "/calendar/day" -> R.id.action_to_calendar_day
@@ -1371,6 +2278,12 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
 
                 val bundle = Bundle()
                 binding.fragmentContent.findNavController().navigate(calendarStartActionId, bundle)
+                // CONSUMED, like every sibling arm here. It never was: a session opened from a
+                // `…/app/calendar` link re-ran this on EVERY onResume — and the B6 recreates the
+                // activity on a flip — so each rotation navigated to today's day page with an
+                // empty bundle over whatever page you were on (09-07: "whenever I rotate … it
+                // flashes the today page").
+                intent?.data = null
             }
         }
 
@@ -1383,14 +2296,53 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
             val nav = binding.fragmentContent.findNavController()
             runCatching {
                 when (dest) {
-                    // The Mail widget's face is the kept pile, so its tap lands in the feeds
-                    // pane wearing The Mail lens on ⭐ Starred — the standalone inbox screen it
-                    // used to open is retired (its own default view was Starred too, so the
-                    // widget's tap keeps landing where it always did).
+                    // THE DOORS WIDGET (09-13): seven rooms by name, each the drawer's own move.
+                    // 📧 The Mail's tile opens The Mail's own room (Michael 2026-10-11) at your
+                    // Unread / Read / All, on the mailbox you were in — one tap, as before.
+                    "door_mail" -> com.toolsboox.plugin.feeds.ui.openMailRoom(nav, mode = "feed")
+                    "door_read", "door_watch", "door_listen" -> {
+                        com.toolsboox.plugin.feeds.ui.FeedSelection.filterFeedTitle = null
+                        com.toolsboox.plugin.feeds.ui.FeedSelection.mode = "feed"
+                        com.toolsboox.plugin.feeds.ui.FeedSelection.kind = dest.removePrefix("door_")
+                        nav.navigate(R.id.action_to_feeds)
+                    }
+                    "door_continue" -> {
+                        // The article mid-flight (the media log's newest READ not done), reopened in
+                        // the pane — the hub's ⏯ Continue row, from the home screen.
+                        val e = runCatching {
+                            com.toolsboox.plugin.calendar.ot.MediaLogStore.list(this, com.toolsboox.plugin.calendar.da.v2.MediaLogEntry.READ)
+                                .firstOrNull { !it.done && it.title.isNotBlank() }
+                        }.getOrNull()
+                        if (e != null) {
+                            val known = runCatching { com.toolsboox.plugin.feeds.nw.FeedCache.loadFreshestEntries(this) }.getOrDefault(emptyList())
+                            val entry = known.firstOrNull { it.id == e.feedId && e.feedId != 0L }
+                                ?: known.firstOrNull { it.url.isNotBlank() && it.url == e.url }
+                                ?: com.toolsboox.plugin.feeds.da.FeedEntry(
+                                    id = e.feedId, title = e.title, feedTitle = e.source, url = e.url, author = null,
+                                    content = runCatching { com.toolsboox.plugin.feeds.nw.FeedCache.loadContent(this, e.feedId) }.getOrNull().orEmpty(),
+                                    publishedAt = "", starred = false, read = true)
+                            com.toolsboox.plugin.feeds.ui.FeedSelection.pendingInPaneEntry = entry
+                            com.toolsboox.plugin.feeds.ui.FeedSelection.mode = "feed"
+                            com.toolsboox.plugin.feeds.ui.FeedSelection.kind = entry.kind
+                        }
+                        nav.navigate(R.id.action_to_feeds)
+                    }
+                    "door_notes", "door_newnote" -> {
+                        // The day page is the start destination; once it stands, the Notebook (or
+                        // the new-note picker) opens over it — the hub's own rows.
+                        binding.root.postDelayed({
+                            val host = supportFragmentManager.findFragmentById(R.id.fragmentContent) as? androidx.navigation.fragment.NavHostFragment
+                            val frag = host?.childFragmentManager?.primaryNavigationFragment as? com.toolsboox.ui.plugin.ScreenFragment ?: return@postDelayed
+                            if (dest == "door_notes") com.toolsboox.plugin.feeds.ui.showNotebook(frag)
+                            else com.toolsboox.plugin.feeds.ui.showNewNotePicker(frag)
+                        }, 500)
+                    }
+                    // The Mail widget's face is the kept pile, so its tap lands in The Mail's own
+                    // room (Michael 2026-10-11) on ⭐ Starred — where it always landed.
                     "mail" -> {
-                        com.toolsboox.plugin.feeds.ui.FeedSelection.mode = "stars"
-                        com.toolsboox.plugin.feeds.ui.FeedSelection.kind = "mail"
-                        com.toolsboox.plugin.feeds.ui.FeedSelection.mailMailbox = null
+                        // The face is the kept pile across EVERY account, so the tap says so — a
+                        // bare null means "the mailbox you were in" (2026-10-11 review).
+                        val mailbox = com.toolsboox.plugin.feeds.ui.MailPlace.ALL_ACCOUNTS
                         // A Mail List widget ROW names the letter it shows (mailOpenId, via the
                         // collection's fill-in intent); the header — and the bitmap Mail widget —
                         // name none and land on the lens as before. Rides the SAME one-shot
@@ -1400,10 +2352,8 @@ class MainActivity : BaseActivity<MainPresenter>(), MainView {
                         // like widgetDest itself, so a re-resume doesn't re-open it.
                         val mailId = intent?.getStringExtra("mailOpenId")
                         intent?.removeExtra("mailOpenId")
-                        if (!mailId.isNullOrBlank()) {
-                            com.toolsboox.plugin.feeds.ui.FeedSelection.pendingMailOpenId = mailId
-                        }
-                        nav.navigate(R.id.action_to_feeds)
+                        com.toolsboox.plugin.feeds.ui.openMailRoom(
+                            nav, mailbox = mailbox, mode = "stars", letterId = mailId?.takeIf { it.isNotBlank() })
                     }
                     // A Task Checklist widget ROW opens the day page that owns its task — a
                     // lookback row lands on the day it was written, not today. The date rides

@@ -211,6 +211,7 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
     private fun goToDate(target: LocalDate) {
         main.removeCallbacks(saveRunnable)
         persist()
+        TextNotesStore.harvestLater(requireContext(), notes)   // the day being left
         TextNotesStore.sync(requireContext(), date, null)
         date = target
         loadDay()
@@ -234,7 +235,7 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
             val root = documentsRoot()
             val loc = java.util.Locale.getDefault()
             val (day, pat) = withContext(Dispatchers.IO) {
-                val cd = runCatching { calendarDayService.load(root, date, null, loc) }.getOrNull()
+                val cd = runCatching { calendarDayService.loadForDisplay(root, date, null, loc) }.getOrNull()
                     ?: com.toolsboox.plugin.calendar.da.v2.CalendarDay(
                         date.year, date.monthValue, date.dayOfMonth, startHour = null)
                 val p = runCatching { calendarPatternService.load(root, date, loc) }.getOrNull()
@@ -255,6 +256,69 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
         suppressWatch = false
         binding.textNotesEdit.text?.let { com.toolsboox.ot.MarkdownHighlight.apply(it) }
         binding.textNotesList.text = "≡ Notes (${notes.size})"
+        renderInk(n)
+    }
+
+    // Two ink loads can be in flight (step through notes fast); the last one asked for wins —
+    // the correspondence loadSeq pattern, or a slow fetch paints its pages under the wrong note.
+    private var inkSeq = 0
+
+    /**
+     * The bridged ink beneath the body — READ-ONLY display of the note's "images" refs
+     * (DESIGN-notes-bridge-2026-08-22, "Bridged Boox notes carry their ink").
+     *
+     * Each ref resolves through [com.toolsboox.plugin.textnotes.BridgedInk] off the main thread:
+     * local media store first, one lazy transport fetch on a miss. Decoded at the column's width —
+     * the size it is shown at — and set plainly, no fade: this is e-ink, and a stroke page that
+     * dissolves in is a stroke page that ghosts. A ref that resolves to nothing leaves a gap, not
+     * a complaint; the media pull that eventually lands the blob fills it on the next open.
+     * Tapping a page opens it in [com.toolsboox.ot.ImageZoom] — handwriting has real detail in
+     * it, and that wants magnifying.
+     */
+    private fun renderInk(note: TextNote) {
+        val seq = ++inkSeq
+        val container = binding.textNotesImages
+        container.removeAllViews()
+        val refs = note.images.filter {
+            com.toolsboox.ot.LedgerMedia.isValidRef(it.removePrefix("media/"))
+        }
+        binding.textNotesImagesScroll.visibility = if (refs.isEmpty()) View.GONE else View.VISIBLE
+        if (refs.isEmpty()) return
+        val appContext = requireContext().applicationContext
+        val maxPx = binding.textNotesEdit.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        for (ref in refs) {
+            val image = android.widget.ImageView(requireContext()).apply {
+                adjustViewBounds = true
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                setPadding(0, 0, 0, (12 * resources.displayMetrics.density).toInt())
+            }
+            container.addView(
+                image, android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+            viewLifecycleOwner.lifecycleScope.launch {
+                val bmp = withContext(Dispatchers.IO) {
+                    com.toolsboox.plugin.textnotes.BridgedInk.bitmap(appContext, ref, maxPx)
+                }
+                if (!isAdded || seq != inkSeq || bmp == null) return@launch
+                image.setImageBitmap(bmp)
+                image.setOnClickListener {
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        // Re-decode bigger for the zoom (the thumb was sized to the column);
+                        // 1872 is the page edge this screen already typesets to.
+                        val full = withContext(Dispatchers.IO) {
+                            com.toolsboox.plugin.textnotes.BridgedInk.bitmap(appContext, ref, 1872)
+                        }
+                        if (isAdded && full != null) {
+                            com.toolsboox.ot.ImageZoom.show(requireContext(), full)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /** Pull the editor's current text back into the model + persist locally. Bumps the note's
@@ -272,6 +336,7 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
 
     private fun newNote() {
         persist()
+        TextNotesStore.harvestLater(requireContext(), notes)
         notes.add(TextNote(TextNotesStore.newId(), "", ""))
         showNote(notes.lastIndex)
         TextNotesStore.save(requireContext(), date, notes)
@@ -280,6 +345,7 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
 
     private fun showNotesList() {
         persist()
+        TextNotesStore.harvestLater(requireContext(), notes)
         val labels = notes.mapIndexed { i, n ->
             val t = n.title.ifBlank { n.body.take(30).ifBlank { "Untitled" } }
             if (i == current) "• $t" else "  $t"
@@ -362,9 +428,12 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
     }
 
     private fun deleteCurrent() {
+        // Either branch retires the current note's id, so its tag and link edges go with it.
+        val gone = notes.getOrNull(current)?.id
         if (notes.size <= 1) { notes[0] = TextNote(TextNotesStore.newId(), "", "") }
         else notes.removeAt(current)
         TextNotesStore.save(requireContext(), date, notes)
+        gone?.let { TextNotesStore.forgetLater(requireContext(), it) }
         showNote(current.coerceAtMost(notes.lastIndex))
     }
 
@@ -406,6 +475,10 @@ class TextNotesFragment @Inject constructor() : ScreenFragment() {
         super.onPause()
         main.removeCallbacks(saveRunnable)
         persist()
+        // HARVEST ON SAVE (Michael 2026-10-11) — on the deliberate saves (leaving, switching notes
+        // or days, starting a new one), as iOS harvests on its persist(); never on the 400 ms
+        // typing debounce, which would mint #ash halfway through writing #ashtanga.
+        TextNotesStore.harvestLater(requireContext(), notes)
         TextNotesStore.sync(requireContext(), date, null)
     }
 

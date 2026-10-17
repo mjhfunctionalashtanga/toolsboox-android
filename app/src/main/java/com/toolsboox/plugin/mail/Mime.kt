@@ -16,6 +16,14 @@ data class FetchedMessage(
     val truncated: Boolean = false,   // oversized on the server; only a bounded slice was fetched
     /** The sender's original markup, "" when they sent none — see [Mime.Parsed.html]. */
     val html: String = "",
+    /** `Message-ID` / `References` as received — what a reply threads onto (audit 09-10). */
+    val messageId: String = "",
+    val references: String = "",
+    /** `In-Reply-To` as received (2026-10-10, critique C2): clients that send only this header
+     *  still thread — folded into the row's references by MailSync.toInbox. */
+    val inReplyTo: String = "",
+    /** Attachment metadata (never the bytes — those are fetched on the tap that asks). */
+    val attachments: List<Mime.Att> = emptyList(),
 )
 
 /**
@@ -34,9 +42,16 @@ object Mime {
      * wanted to. [text] is still the stripped reading (search, snippets, the corpus, and the plain
      * mode all want it); [html] is kept alongside so the reader can show the letter as sent.
      */
-    data class Parsed(val headers: Map<String, String>, val text: String, val html: String = "")
+    data class Parsed(
+        val headers: Map<String, String>, val text: String, val html: String = "",
+        val attachments: List<Att> = emptyList(),
+    )
 
-    fun parse(data: ByteArray): Parsed {
+    /** One attachment's metadata. [size] is the decoded estimate (base64 shrinks ~3/4) — a chip
+     *  label, not an accounting figure; the true bytes arrive only on the tap that asks. */
+    data class Att(val filename: String, val mime: String, val size: Int)
+
+    fun parse(data: ByteArray, embedCids: Boolean = false): Parsed {
         // The raw message rides through as ISO-8859-1 — a byte-TRANSPARENT carrier (latin-1 maps
         // all 256 byte values 1:1 onto chars), so each part can recover its ORIGINAL bytes and
         // decode them by its own declared charset. Decoding the whole message as UTF-8 up front
@@ -48,7 +63,143 @@ object Mime {
         // out of the carrier so From/Subject read right without touching the body bytes.
         val headers = parseHeaders(headBlock).mapValues { (_, v) -> fromCarrier(v) }
         val text = extractText(headers, body).trim()
-        return Parsed(headers, text, extractHtml(headers, body).trim())
+        var html = extractHtml(headers, body).trim()
+        // Inline cid: images embed as data: URIs so they render in place (they arrived WITH the
+        // letter and cost no request — [MailReaderHtml.blockRemote] leaves data: alone). Only on
+        // a WHOLE message: a truncated slice's base64 is cut mid-part and would embed garbage.
+        if (embedCids && html.isNotBlank()) html = embedCidImages(html, headers, body)
+        // Forwarded messages and bounce reports (audit 09-10): a `message/rfc822` part is a whole
+        // letter inside the letter, and `message/delivery-status` is the reason a bounce bounced.
+        // Neither has a filename, so both used to vanish — "FWD: see below" arrived as one line.
+        val fwdText = StringBuilder(); val fwdHtml = StringBuilder(); val fwdAtts = ArrayList<Att>()
+        var nestedSeen = 0
+        walkParts(headers, body) { phs, pb ->
+            val ct = (phs["content-type"] ?: "").substringBefore(';').trim().lowercase()
+            when (ct) {
+                "message/rfc822" -> {
+                    if (nestedSeen >= 4) return@walkParts
+                    nestedSeen++
+                    val nested = runCatching { parse(pb.toByteArray(Charsets.ISO_8859_1), embedCids) }.getOrNull() ?: return@walkParts
+                    val from = decodeEncodedWords(nested.headers["from"] ?: "").trim()
+                    val subj = decodeEncodedWords(nested.headers["subject"] ?: "").trim()
+                    val date = (nested.headers["date"] ?: "").trim()
+                    fwdText.append("\n\n———— Forwarded message ————\nFrom: ").append(from)
+                        .append("\nDate: ").append(date).append("\nSubject: ").append(subj).append("\n\n").append(nested.text)
+                    fwdHtml.append("<hr/><p><b>Forwarded message</b><br/>From: ").append(escapeHtml(from))
+                        .append("<br/>Date: ").append(escapeHtml(date)).append("<br/>Subject: ").append(escapeHtml(subj)).append("</p>")
+                        .append(nested.html.ifBlank { "<pre style=\"white-space:pre-wrap\">" + escapeHtml(nested.text) + "</pre>" })
+                    fwdAtts.addAll(nested.attachments)
+                }
+                "message/delivery-status" -> {
+                    val status = decodeBody(phs, pb).trim()
+                    if (status.isNotBlank()) {
+                        fwdText.append("\n\n———— Delivery status ————\n").append(status)
+                        fwdHtml.append("<hr/><p><b>Delivery status</b></p><pre style=\"white-space:pre-wrap\">").append(escapeHtml(status)).append("</pre>")
+                    }
+                }
+            }
+        }
+        val fullText = (text + fwdText).trim()
+        val fullHtml = if (fwdHtml.isEmpty()) html
+            else (html.ifBlank { "<p>" + escapeHtml(text).replace("\n", "<br/>") + "</p>" }) + fwdHtml
+        return Parsed(headers, fullText, fullHtml, collectAttachments(headers, body) + fwdAtts)
+    }
+
+    private fun escapeHtml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+
+    /**
+     * Every leaf part, depth-first — the one walk the attachment roster, the cid embeds and the
+     * on-demand byte carve all ride, so the three can never disagree about what a "part" is.
+     */
+    private fun walkParts(headers: Map<String, String>, body: String, visit: (Map<String, String>, String) -> Unit) {
+        val ctype = (headers["content-type"] ?: "text/plain").lowercase()
+        if (ctype.contains("multipart/")) {
+            val boundary = param(headers["content-type"] ?: "", "boundary") ?: return
+            for (part in splitMultipart(body, boundary)) {
+                val (ph, pb) = splitHeadersBody(part)
+                val phs = parseHeaders(ph)
+                if ((phs["content-type"] ?: "").lowercase().contains("multipart/")) walkParts(phs, pb, visit)
+                else visit(phs, pb)
+            }
+        } else visit(headers, body)
+    }
+
+    /** The part's declared filename (disposition first, content-type name second), decoded. */
+    private fun partFilename(phs: Map<String, String>): String? {
+        val name = param(phs["content-disposition"] ?: "", "filename")
+            ?: param(phs["content-type"] ?: "", "name")
+        return name?.let { decodeEncodedWords(it).trim().ifBlank { null } }
+    }
+
+    /**
+     * The attachment roster — parts dispositioned `attachment`, or carrying a filename that isn't
+     * an inline cid image (those are the letter's own pictures, embedded in place, not files).
+     * The iPad's MIMEParser used to `continue` past these and the letter view could never know a
+     * file existed; this walk is the Android side of that fix.
+     */
+    private fun collectAttachments(headers: Map<String, String>, body: String): List<Att> {
+        val out = ArrayList<Att>()
+        walkParts(headers, body) { phs, pb ->
+            val disp = (phs["content-disposition"] ?: "").lowercase()
+            val name = partFilename(phs) ?: return@walkParts
+            val mime = (phs["content-type"] ?: "application/octet-stream")
+                .substringBefore(';').trim().lowercase().ifBlank { "application/octet-stream" }
+            // The common inline shape is `image/png; name=logo.png` + Content-ID and NO disposition
+            // (audit 09-10): those pictures are already in the letter, not chips under it — unless
+            // the sender explicitly dispositioned them as a file. Matches the iPad's rule.
+            val inlineCid = phs["content-id"] != null && mime.startsWith("image/") && !disp.contains("attachment")
+            if (!inlineCid) {
+                val cte = (phs["content-transfer-encoding"] ?: "").lowercase()
+                val size = if (cte == "base64") pb.length * 3 / 4 else pb.length
+                out.add(Att(name, mime, size))
+            }
+        }
+        return out
+    }
+
+    private const val CID_IMAGE_CAP = 600_000       // one image past this stays a broken ref
+    private const val CID_MESSAGE_CAP = 3_000_000   // total embedded bytes per letter
+
+    /** `cid:` refs become `data:` URIs, capped per image and per message (the iPad's caps). */
+    private fun embedCidImages(html: String, headers: Map<String, String>, body: String): String {
+        if (!html.contains("cid:", ignoreCase = true)) return html
+        var out = html
+        var budget = CID_MESSAGE_CAP
+        walkParts(headers, body) { phs, pb ->
+            val cid = phs["content-id"]?.trim()?.removeSurrounding("<", ">") ?: return@walkParts
+            val ctype = (phs["content-type"] ?: "").substringBefore(';').trim().lowercase()
+            if (!ctype.startsWith("image/")) return@walkParts
+            // Whole token only (audit 09-10): a prefix replace turned `cid:logo10` into logo1's
+            // bytes plus a stray "0".
+            val token = Regex("(?i)cid:" + Regex.escape(cid) + "(?=[\"'\\s)>]|$)")
+            if (!token.containsMatchIn(out)) return@walkParts
+            val bytes = decodeBodyData(phs, pb)
+            if (bytes.isEmpty() || bytes.size > CID_IMAGE_CAP || bytes.size > budget) return@walkParts
+            budget -= bytes.size
+            val uri = "data:$ctype;base64," + Base64.getEncoder().encodeToString(bytes)
+            out = token.replace(out) { uri }
+        }
+        return out
+    }
+
+    /**
+     * Carve one attachment's BYTES out of a whole raw message, by filename — the tap-to-view
+     * path. Returns bytes + mime, or null when the name isn't found (the message changed on the
+     * server between the roster and the tap — say so, don't crash).
+     */
+    fun partBytes(data: ByteArray, filename: String): Pair<ByteArray, String>? {
+        val raw = String(data, Charsets.ISO_8859_1)
+        val (headBlock, body) = splitHeadersBody(raw)
+        val headers = parseHeaders(headBlock)
+        var found: Pair<ByteArray, String>? = null
+        walkParts(headers, body) { phs, pb ->
+            if (found == null && partFilename(phs) == filename) {
+                val mime = (phs["content-type"] ?: "application/octet-stream")
+                    .substringBefore(';').trim().lowercase().ifBlank { "application/octet-stream" }
+                found = decodeBodyData(phs, pb) to mime
+            }
+        }
+        return found
     }
 
     /**
@@ -77,6 +228,9 @@ object Mime {
                         val nested = extractHtml(phs, pb)
                         if (nested.isNotBlank()) return nested
                     }
+                    // An attached .html file is a FILE, not the letter (audit 09-10; iOS already
+                    // guarded this): skipped here, listed by collectAttachments.
+                    (phs["content-disposition"] ?: "").lowercase().contains("attachment") -> Unit
                     pct.contains("text/html") -> {
                         val h = decodeBody(phs, pb)
                         // "Real markup" = it strips to something. A part that's all tracking
@@ -141,6 +295,8 @@ object Mime {
                             val nested = extractText(phs, pb)
                             if (nested.isNotBlank()) return nested
                         }
+                        // An attached .txt is a file, not the message (audit 09-10).
+                        (phs["content-disposition"] ?: "").lowercase().contains("attachment") -> Unit
                         pct.contains("text/plain") -> {
                             val t = decodeBody(phs, pb)
                             if (t.isNotBlank()) return t
@@ -182,17 +338,19 @@ object Mime {
     /** Decode a single part's body per its Content-Transfer-Encoding + charset. The part rides in
      *  as carrier text (ISO-8859-1 chars ≡ original bytes), so ISO_8859_1 here RECOVERS bytes —
      *  it is not a guess about the part's language. */
-    private fun decodeBody(headers: Map<String, String>, body: String): String {
+    private fun decodeBody(headers: Map<String, String>, body: String): String =
+        decodeCharset(decodeBodyData(headers, body), param(headers["content-type"] ?: "", "charset")?.lowercase())
+
+    /** The transfer-decode alone — the byte truth an attachment or cid image wants whole. */
+    private fun decodeBodyData(headers: Map<String, String>, body: String): ByteArray {
         val cte = (headers["content-transfer-encoding"] ?: "").lowercase()
-        val charset = param(headers["content-type"] ?: "", "charset")?.lowercase()
-        val bytes: ByteArray = when (cte) {
+        return when (cte) {
             "base64" -> try {
                 Base64.getMimeDecoder().decode(body.filter { !it.isWhitespace() })
             } catch (e: Exception) { body.toByteArray(Charsets.ISO_8859_1) }
             "quoted-printable" -> decodeQuotedPrintable(body)
             else -> body.toByteArray(Charsets.ISO_8859_1)   // 7bit/8bit/binary: the original bytes
         }
-        return decodeCharset(bytes, charset)
     }
 
     // Encodings
@@ -259,18 +417,50 @@ object Mime {
     private fun fromCarrier(s: String): String = utf8OrLatin1(s.toByteArray(Charsets.ISO_8859_1))
 
     /** A key="value" / key=value parameter from a header value (content-type, etc.). */
-    private fun param(header: String, key: String): String? {
-        val idx = header.indexOf("$key=", ignoreCase = true)
-        if (idx < 0) return null
-        var rest = header.substring(idx + key.length + 1)
-        if (rest.startsWith("\"")) {
-            rest = rest.substring(1)
-            val end = rest.indexOf('"')
-            if (end >= 0) return rest.substring(0, end)
+    /**
+     * A header parameter, RFC 2231 included (audit 09-10): `filename*=UTF-8''r%C3%A9sum%C3%A9.pdf`,
+     * split continuations `filename*0*=…; filename*1=…`, and the plain `filename="…"` — matched at a
+     * parameter boundary, so `name=` never matches inside `filename=`. The old scan looked for the
+     * literal `key=` only, so every 2231 attachment was listed as "attachment.pdf".
+     */
+    internal fun param(header: String, key: String): String? {
+        // key=value  |  key*=charset'lang'pct  |  key*N=value  |  key*N*=pct
+        val re = Regex("(?i)(?:^|;)\\s*" + Regex.escape(key) + "(\\*(\\d+))?(\\*)?\\s*=\\s*(\"([^\"]*)\"|[^;\\s]+)")
+        val hits = re.findAll(header).toList()
+        if (hits.isEmpty()) return null
+        var charset: String? = null
+        fun value(m: MatchResult): String = m.groupValues[5].ifEmpty { m.groupValues[4] }
+        fun pct(v: String): String {
+            // charset'lang'value on the first extended piece; later pieces are bare pct-encoded
+            var body = v
+            if (charset == null && v.count { it == '\'' } >= 2) {
+                charset = v.substringBefore('\'').ifBlank { "UTF-8" }
+                body = v.substringAfter('\'').substringAfter('\'')
+            }
+            val cs = runCatching { java.nio.charset.Charset.forName(charset ?: "UTF-8") }.getOrDefault(Charsets.UTF_8)
+            val bytes = java.io.ByteArrayOutputStream()
+            var i = 0
+            while (i < body.length) {
+                val c = body[i]
+                if (c == '%' && i + 2 < body.length + 0 && i + 2 <= body.length - 1 && body[i + 1].isHex() && body[i + 2].isHex()) {
+                    bytes.write(body.substring(i + 1, i + 3).toInt(16)); i += 3
+                } else { bytes.write(c.toString().toByteArray(cs)); i += 1 }
+            }
+            return String(bytes.toByteArray(), cs)
         }
-        val end = rest.indexOfFirst { it == ';' || it == ' ' }
-        return (if (end < 0) rest else rest.substring(0, end)).trim()
+        val plain = hits.firstOrNull { it.groupValues[1].isEmpty() && it.groupValues[3].isEmpty() }
+        val extended = hits.filter { it.groupValues[1].isNotEmpty() || it.groupValues[3].isNotEmpty() }
+        if (extended.isEmpty()) return plain?.let { value(it) }
+        // Continuations in section order; a single `key*=` is section 0.
+        val sb = StringBuilder()
+        for (m in extended.sortedBy { it.groupValues[2].toIntOrNull() ?: 0 }) {
+            val v = value(m)
+            sb.append(if (m.groupValues[3].isNotEmpty()) pct(v) else v)
+        }
+        return sb.toString().ifBlank { plain?.let { value(it) } }
     }
+
+    private fun Char.isHex() = this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
 
     // Encoded-words (Subject / From)
 
@@ -349,12 +539,20 @@ object MailDate {
     private val formats = listOf(
         "EEE, d MMM yyyy HH:mm:ss Z", "d MMM yyyy HH:mm:ss Z",
         "EEE, d MMM yyyy HH:mm Z", "EEE, d MMM yyyy HH:mm:ss",
-        "d-MMM-yyyy HH:mm:ss Z"                 // IMAP INTERNALDATE ("17-Jul-2026 10:30:00 +0000")
+        "d-MMM-yyyy HH:mm:ss Z",                // IMAP INTERNALDATE ("17-Jul-2026 10:30:00 +0000")
+        "EEE, d MMM yy HH:mm:ss Z", "d MMM yy HH:mm:ss Z",   // obsolete two-digit years (list servers)
+        "EEE, d MMM yyyy HH:mm:ss", "d MMM yyyy HH:mm:ss",
     )
+    // Obsolete zone names → numeric offsets (RFC 5322 §4.3); SimpleDateFormat's Z reads only numbers reliably.
+    private val zones = mapOf("UT" to "+0000", "GMT" to "+0000", "Z" to "+0000",
+        "EST" to "-0500", "EDT" to "-0400", "CST" to "-0600", "CDT" to "-0500",
+        "MST" to "-0700", "MDT" to "-0600", "PST" to "-0800", "PDT" to "-0700")
 
     /** Epoch millis, or null if none of the formats match. */
     fun parseMillis(s: String): Long? {
-        val cleaned = s.replace(Regex("\\(.*\\)"), "").trim()
+        // Non-greedy comment strip (audit 09-10): `\(.*\)` ate everything between two comments.
+        var cleaned = s.replace(Regex("\\([^)]*\\)"), "").replace(Regex("\\s+"), " ").trim()
+        cleaned = cleaned.replace(Regex("\\b(UT|GMT|Z|[ECMP][SD]T)$")) { zones[it.value] ?: it.value }
         for (fmt in formats) {
             try {
                 val f = SimpleDateFormat(fmt, Locale.US); f.isLenient = false

@@ -173,7 +173,7 @@ class LedgerItemAdapter(
             val ctx = holder.itemView.context
             androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
                 .setItems(arrayOf(
-                    "🗂  Open card", "⁂  Its rhizome",
+                    "🗂  Open card", "🕸  Its rhizome",
                     "🔎  Ask about this", "🎓  Educate me",
                     "☑  Select rows…"
                 )) { _, which ->

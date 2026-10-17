@@ -171,17 +171,9 @@ Strings related to dashboard fragment -->
     <string name="calendar_settings_week_number_of_first_day_value">"W1"</string>
     <string name="calendar_settings_week_number_of_last_day_text">"Week nummer van de laatste dag:"</string>
     <string name="calendar_settings_week_number_of_last_day_value">"W52"</string>
-    <string name="calendar_settings_button_save">"Bewaar"</string>
-    <string name="calendar_settings_button_back">"Terug"</string>
     <string name="calendar_drawing_toolbar_pen">"Pen"</string>
     <string name="calendar_drawing_toolbar_eraser">"Gom"</string>
     <string name="calendar_drawing_toolbar_settings">"Instellingen"</string>
-    <string name="calendar_settings_select_start_view_text">"Selecteer de start weergave van de kalender:"</string>
-    <string name="calendar_settings_start_view_year">"Jaar planner"</string>
-    <string name="calendar_settings_start_view_quarter">"Kwartaal planner"</string>
-    <string name="calendar_settings_start_view_month">"Maand planner"</string>
-    <string name="calendar_settings_start_view_week">"Week planner"</string>
-    <string name="calendar_settings_start_view_day">"Dag planner"</string>
     <string name="calendar_settings_button_backup">"Exporteer backup"</string>
     <string name="calendar_settings_backup_done">"kalender backup geëxporteerd naar downloads"</string>
     <string name="about_this_translation_contributors_title">"medewerkers aan de huidige vertaling"</string>

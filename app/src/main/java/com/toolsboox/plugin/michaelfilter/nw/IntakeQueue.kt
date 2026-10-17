@@ -11,6 +11,7 @@ import com.toolsboox.plugin.michaelfilter.da.IntakeSubmission
 import timber.log.Timber
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /**
  * On-disk queue of unsent MichaelFilter intake submissions.
@@ -85,4 +86,25 @@ object IntakeQueue {
         WorkManager.getInstance(context)
             .enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.KEEP, request)
     }
+
+    /**
+     * A key was just saved: send what the queue has been holding — but not instantly. The Settings
+     * box saves as you type (600 ms after the last keystroke), so a key typed by hand passes through
+     * a run of partial keys; sending on each would earn a "turned down" for a key that isn't finished
+     * yet. REPLACE + a short delay means only the last save of a burst actually sends.
+     */
+    fun scheduleDrainAfterKeyChange(context: Context) {
+        val request = OneTimeWorkRequestBuilder<IntakeQueueWorker>()
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+            )
+            .setInitialDelay(KEY_SETTLE_SECONDS, TimeUnit.SECONDS)
+            .build()
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.REPLACE, request)
+    }
+
+    private const val KEY_SETTLE_SECONDS = 8L
 }

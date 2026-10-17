@@ -1,0 +1,350 @@
+{
+  "baseKeys": [
+    {
+      "key": "synthesize#2",
+      "base": "synthesize"
+    },
+    {
+      "key": "synthesize-1760284800000#1",
+      "base": "synthesize-1760284800000"
+    },
+    {
+      "key": "synthesize",
+      "base": "synthesize"
+    },
+    {
+      "key": "synthesize-1760284800000",
+      "base": "synthesize-1760284800000"
+    }
+  ],
+  "shortName": [
+    {
+      "name": "",
+      "short": "The Correspondent"
+    },
+    {
+      "name": "Spiral — what came back around",
+      "short": "Spiral"
+    },
+    {
+      "name": "Interviewer — Rooms on Other People's Land",
+      "short": "Interviewer"
+    },
+    {
+      "name": "Coach",
+      "short": "Coach"
+    },
+    {
+      "name": "  Padded — with a tagline  ",
+      "short": "Padded"
+    },
+    {
+      "name": "Morning pages without any tagline at all",
+      "short": "Morning pages without any taglin"
+    }
+  ],
+  "label": [
+    {
+      "name": "",
+      "label": "❖ The Correspondent"
+    },
+    {
+      "name": "Spiral — what came back around",
+      "label": "❖ Spiral"
+    },
+    {
+      "name": "The Correspondent — my own",
+      "label": "❖ The Correspondent"
+    }
+  ],
+  "header": [
+    {
+      "persona": "",
+      "voices": [],
+      "missing": "",
+      "expected": "❖ The Correspondent"
+    },
+    {
+      "persona": "Spiral — what came back around",
+      "voices": [
+        "Spiral — what came back around"
+      ],
+      "missing": "",
+      "expected": "❖ Spiral"
+    },
+    {
+      "persona": "Interviewer — Rooms on Other People's Land",
+      "voices": [
+        "Spiral — what came back around",
+        "Interviewer — Rooms on Other People's Land"
+      ],
+      "missing": "",
+      "expected": "❖ Interviewer · answering next"
+    },
+    {
+      "persona": "",
+      "voices": [
+        "",
+        "Spiral — what came back around",
+        ""
+      ],
+      "missing": "",
+      "expected": "❖ The Correspondent · answering next"
+    },
+    {
+      "persona": "",
+      "voices": [
+        "",
+        "Spiral — what came back around"
+      ],
+      "missing": "Spiral — what came back around",
+      "expected": "❖ The Correspondent · Spiral isn't on this device"
+    }
+  ],
+  "isReply": [
+    {
+      "why": "a legacy ⟡ Correspondent card",
+      "label": "⟡ The Correspondent",
+      "link": "synth://2026-08-30/synthesize",
+      "page": "synthesize",
+      "expected": true
+    },
+    {
+      "why": "a ❖ Correspondent card, wherever it stands",
+      "label": "❖ The Correspondent",
+      "link": "ledger://2026-10-12/synthesize",
+      "page": "grampicks",
+      "expected": true
+    },
+    {
+      "why": "a persona reply",
+      "label": "❖ Spiral",
+      "link": "ledger://2026-10-12/synthesize-1760284800000",
+      "page": "synthesize-1760284800000",
+      "expected": true
+    },
+    {
+      "why": "a persona reply on #2, linked to its base",
+      "label": "❖ Spiral",
+      "link": "ledger://2026-10-12/synthesize-1760284800000",
+      "page": "synthesize-1760284800000#2",
+      "expected": true
+    },
+    {
+      "why": "a persona reply on the daily page's #1",
+      "label": "❖ Interviewer",
+      "link": "ledger://2026-10-12/synthesize",
+      "page": "synthesize#1",
+      "expected": true
+    },
+    {
+      "why": "a breadcrumb points away",
+      "label": "❖ Breath work",
+      "link": "ledger://2026-10-12/synthesize-1760284800000",
+      "page": "default",
+      "expected": false
+    },
+    {
+      "why": "a moved persona card",
+      "label": "❖ Spiral",
+      "link": "ledger://2026-10-12/synthesize-1760284800000",
+      "page": "3",
+      "expected": false
+    },
+    {
+      "why": "a slinks ❖ pick on All Picks",
+      "label": "❖ Synthesize · Feeds",
+      "link": "ledger://2026-10-12/synthesize-1760284800000",
+      "page": "grampicks",
+      "expected": false
+    },
+    {
+      "why": "a card with no link",
+      "label": "❖ Spiral",
+      "link": "",
+      "page": "synthesize",
+      "expected": false
+    },
+    {
+      "why": "not a ❖ label",
+      "label": "— Light on Yoga",
+      "link": "ledger://2026-10-12/synthesize",
+      "page": "synthesize",
+      "expected": false
+    }
+  ],
+  "voiceList": [
+    {
+      "names": [
+        "Interviewer — Rooms on Other People's Land",
+        "Spiral — what came back around",
+        "Coach — the run-up"
+      ],
+      "current": "Spiral — what came back around",
+      "expected": [
+        "❖  The Correspondent",
+        "❖  Interviewer — Rooms on Other People's Land",
+        "✓  Spiral — what came back around",
+        "❖  Coach — the run-up"
+      ]
+    },
+    {
+      "names": [
+        "Interviewer — Rooms on Other People's Land",
+        "Spiral — what came back around"
+      ],
+      "current": "",
+      "expected": [
+        "✓  The Correspondent",
+        "❖  Interviewer — Rooms on Other People's Land",
+        "❖  Spiral — what came back around"
+      ]
+    },
+    {
+      "names": [
+        "Interviewer — Rooms on Other People's Land",
+        "Spiral — what came back around"
+      ],
+      "current": null,
+      "expected": [
+        "❖  The Correspondent",
+        "❖  Interviewer — Rooms on Other People's Land",
+        "❖  Spiral — what came back around"
+      ]
+    }
+  ],
+  "order": {
+    "rows": [
+      {
+        "name": "zeta",
+        "prompt": "z",
+        "at": 1760300000001
+      },
+      {
+        "name": "Brainstorm — what to do with this",
+        "prompt": "",
+        "at": 0
+      },
+      {
+        "name": "Alpha",
+        "prompt": "a",
+        "at": 1760300000002
+      },
+      {
+        "name": "Interviewer — Rooms on Other People's Land",
+        "prompt": "",
+        "at": 1760300000003,
+        "deleted": true
+      },
+      {
+        "name": "beta",
+        "prompt": "b",
+        "at": 1760300000004
+      },
+      {
+        "name": "Blank",
+        "prompt": "   ",
+        "at": 1760300000005
+      },
+      {
+        "name": "The Correspondent — my own",
+        "prompt": "mine",
+        "at": 1760300000006
+      },
+      {
+        "name": "Spiral — what came back around",
+        "prompt": "",
+        "at": 0
+      },
+      {
+        "name": "Synthesize — what these make together",
+        "prompt": "Edited synthesist.",
+        "at": 1760300000007
+      }
+    ],
+    "order": [
+      "Spiral — what came back around",
+      "Synthesize — what these make together",
+      "Brainstorm — what to do with this",
+      "Alpha",
+      "beta",
+      "Blank",
+      "The Correspondent — my own",
+      "zeta"
+    ],
+    "voiceList": [
+      "Spiral — what came back around",
+      "Synthesize — what these make together",
+      "Brainstorm — what to do with this",
+      "Alpha",
+      "beta",
+      "zeta"
+    ]
+  },
+  "resolve": {
+    "rows": [
+      {
+        "name": "Coach",
+        "prompt": "",
+        "at": 1760302000000,
+        "deleted": true,
+        "renamedTo": "Coach — v2"
+      },
+      {
+        "name": "Coach — v2",
+        "prompt": "",
+        "at": 1760303000000,
+        "deleted": true,
+        "renamedTo": "Coach — the run-up"
+      },
+      {
+        "name": "Coach — the run-up",
+        "prompt": "Run coach.",
+        "at": 1760304000000
+      },
+      {
+        "name": "Gone",
+        "prompt": "",
+        "at": 1760305000000,
+        "deleted": true
+      },
+      {
+        "name": "Spiral — what came back around",
+        "prompt": "",
+        "at": 0
+      }
+    ],
+    "cases": [
+      {
+        "wanted": "Coach",
+        "persona": "Coach — the run-up",
+        "missing": ""
+      },
+      {
+        "wanted": "Coach — the run-up",
+        "persona": "Coach — the run-up",
+        "missing": ""
+      },
+      {
+        "wanted": "Spiral — what came back around",
+        "persona": "Spiral — what came back around",
+        "missing": ""
+      },
+      {
+        "wanted": "Gone",
+        "persona": "",
+        "missing": "Gone"
+      },
+      {
+        "wanted": "Never Was",
+        "persona": "",
+        "missing": "Never Was"
+      },
+      {
+        "wanted": "",
+        "persona": "",
+        "missing": ""
+      }
+    ]
+  }
+}

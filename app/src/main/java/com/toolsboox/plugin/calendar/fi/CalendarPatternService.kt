@@ -20,7 +20,15 @@ import javax.inject.Inject
  *
  * @author <a href="mailto:gabor.auth@toolsboox.com">Gábor AUTH</a>
  */
-class CalendarPatternService @Inject constructor() {
+class CalendarPatternService @Inject constructor(
+    /**
+     * The Moshi instance — a constructor value, as on CalendarDayService (2026-10-12): a field-
+     * injected `lateinit` let `CalendarPatternService()` compile anywhere and fail every decode,
+     * and this service's load QUARANTINES a file it cannot decode — a bare instance would have
+     * renamed the (unsynced) pattern file aside.
+     */
+    val moshi: Moshi,
+) {
 
     // Companion object
     companion object {
@@ -29,11 +37,6 @@ class CalendarPatternService @Inject constructor() {
         val mutex = Mutex()
     }
 
-    /**
-     * The Moshi instance.
-     */
-    @Inject
-    lateinit var moshi: Moshi
 
     /**
      * Load the data class from JSON file on the specified path.

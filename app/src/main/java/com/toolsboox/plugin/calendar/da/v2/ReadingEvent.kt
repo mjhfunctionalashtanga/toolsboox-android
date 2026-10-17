@@ -43,7 +43,16 @@ data class ReadingEvent(
     val starred: Boolean = false,
     /** The article's PUBLICATION date (articles) — lets the Log place a starred piece on
      *  the day it was published as well as the day it was starred. */
-    val published: Date? = null
+    val published: Date? = null,
+    /**
+     * When this LINE was last changed — a note added to an article highlight days later, an edit
+     * of it (Michael 2026-10-12: "It goes in the day it was picked's log", updated in place).
+     * The day merge keeps the newer copy of a line by this, instead of whichever whole day is
+     * newer (design critique #2): without it an edit made on one device reverted the moment the
+     * other device's day file happened to be saved later. Null on every line written before —
+     * those merge exactly as they always did. Wire name shared with iOS `ReadingEvent.updatedAt`.
+     */
+    val updatedAt: Date? = null
 ) {
     enum class Kind {
         @Json(name = "article") ARTICLE,

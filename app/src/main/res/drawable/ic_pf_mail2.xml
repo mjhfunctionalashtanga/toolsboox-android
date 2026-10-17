@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Mail, the room: two stacked in-trays (iOS tray.2) — the door to The Mail and its drawer
+     seat. One tray (ic_pf_mail) is an Inbox.
+     One panel face family (review 2026-10-11, F5; Michael: "Icons lack design language"): the ink
+     tools' geometry — 256 grid, 16-unit round strokes, outline at rest. Drawn for the room panes'
+     rows (Michael 2026-10-12: monochrome glyphs only — no colour emoji in the Feeds or Mail pane). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="256" android:viewportHeight="256"
+    android:tint="#000000">
+    <path android:pathData="M44,104H212a12,12 0 0,1 12,12V204a12,12 0 0,1 -12,12H44a12,12 0 0,1 -12,-12V116a12,12 0 0,1 12,-12Z"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+    <path android:pathData="M32,164H80L100,188H156L176,164H224"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+    <path android:pathData="M56,104V68a12,12 0 0,1 12,-12H188a12,12 0 0,1 12,12V104"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+</vector>

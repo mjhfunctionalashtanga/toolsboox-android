@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Reader view: the plain page (the article Reader glyph).
+     One panel face family (review 2026-10-11, F5; Michael: "Icons lack design language"): the ink
+     tools' geometry — 256 grid, 16-unit round strokes, outline at rest; a filled face only for an
+     ON state (Star). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="256" android:viewportHeight="256"
+    android:tint="#000000">
+    <path android:pathData="M64,32H192a16,16 0 0,1 16,16V208a16,16 0 0,1 -16,16H64a16,16 0 0,1 -16,-16V48a16,16 0 0,1 16,-16Z"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+    <path android:pathData="M88,88H168M88,128H168M88,168H136"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+</vector>

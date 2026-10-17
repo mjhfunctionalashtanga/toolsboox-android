@@ -1,0 +1,41 @@
+Date: Fri, 11 Sep 2026 00:52:17 +0000
+From: =?UTF-8?Q?Support_=C2=B7_Example_Studio?= <support@example.org>
+Message-ID: <lswaDt8vVwdcsKQL0YzLLOp49cJHHwMVvGBAkKCBF7Q@mail.example.org>
+X-Mailer: PHPMailer 7.1.1 (https://github.com/PHPMailer/PHPMailer)
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="b1=_lswaDt8vVwdcsKQL0YzLLOp49cJHHwMVvGBAkKCBF7Q"
+Content-Transfer-Encoding: 8bit
+To: Sam Reader <reader@example.com>
+Subject: =?UTF-8?Q?Corpus:_related-cid_=E2=80=94_caf=C3=A9_r=C3=A9sum?=
+ =?UTF-8?Q?=C3=A9_=E6=97=A5=E6=9C=AC?=
+
+--b1=_lswaDt8vVwdcsKQL0YzLLOp49cJHHwMVvGBAkKCBF7Q
+Content-Type: text/plain; charset=us-ascii
+
+plain alt
+
+--b1=_lswaDt8vVwdcsKQL0YzLLOp49cJHHwMVvGBAkKCBF7Q
+Content-Type: multipart/related;
+ boundary="b2=_lswaDt8vVwdcsKQL0YzLLOp49cJHHwMVvGBAkKCBF7Q";
+ type="text/html"
+
+--b2=_lswaDt8vVwdcsKQL0YzLLOp49cJHHwMVvGBAkKCBF7Q
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><body><h1>Héllo — “quotes”</h1><p>Paragraph one with a <a href="https://example.org/x?a=1&b=2">link</a>.</p><p>Line with trailing spaces   </p><p>=3D looks like qp</p><p>.leading dot line</p></body></html><img src="cid:img1">
+
+--b2=_lswaDt8vVwdcsKQL0YzLLOp49cJHHwMVvGBAkKCBF7Q
+Content-Type: image/png; name=dot.png
+Content-Transfer-Encoding: base64
+Content-ID: <img1>
+Content-Disposition: inline; filename=dot.png
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6
+kgAAAABJRU5ErkJggg==
+
+--b2=_lswaDt8vVwdcsKQL0YzLLOp49cJHHwMVvGBAkKCBF7Q--
+
+
+--b1=_lswaDt8vVwdcsKQL0YzLLOp49cJHHwMVvGBAkKCBF7Q--

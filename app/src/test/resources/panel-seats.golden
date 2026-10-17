@@ -1,0 +1,26 @@
+# panel-seats.golden — the tuck panel's one design language (Michael, 2026-10-11).
+# dress[·flags]: head | frame | hand | room | foot. ios:/and: = that platform only.
+# Byte-identical in ledger-ipad and toolsboox; regenerate from PanelSeats on either side.
+day: full | today more | ios:input pen eraser lasso undo redo zoom synth | up down sections | side
+day·notes+yourDay+typed: full | today more | ios:input pen eraser lasso undo redo zoom synth ios:yourDay ios:byHand | up down ios:new sections | side
+ios:section: full | today more | - | up down backToPage sections nib | side
+ios:typedPage: full | today more | - | up down sections | side
+ios:typedPage·typed: full | today more | byHand | up down sections | side
+feedList: full | today nib more | pageUp pageDown previous next refresh | search show ios:order synth | side
+feedList·noScope: full | today nib more | pageUp pageDown previous next refresh | search ios:order synth | side
+mailList: full | today nib more | pageUp pageDown previous next refresh | search show compose ios:order synth accounts | side
+mailList·sweep: full | today nib more | pageUp pageDown previous next refresh | search show compose ios:order synth sweep accounts | side
+article: full | today nib more | pageUp pageDown previous next | bookNotes star note find reader type listen ios:annotate synth later | side
+article·aloud: full | today nib more | pageUp pageDown previous next | bookNotes star note find reader type listen ios:lineBack ios:lineForward ios:annotate synth later | side
+article·later-source: full | today nib more | pageUp pageDown previous next | bookNotes note find reader type listen ios:annotate synth | side
+article·outside: full | hub feeds today nib more | pageUp pageDown previous next | bookNotes star note find reader type listen ios:annotate synth later | side
+letter: full | today nib more | pageUp pageDown previous next | star note find readAs listen ios:annotate reply delete tag pick toSynth thread links rhizome | side
+letter·picturesOff: full | today nib more | pageUp pageDown previous next | star note find readAs listen ios:annotate ios:pictures reply delete tag pick toSynth thread links rhizome | side
+letter·trash: full | today nib more | pageUp pageDown previous next | star note find readAs listen ios:annotate reply moveBack tag pick toSynth thread links rhizome | side
+letter·annotating: full | today nib more | pageUp pageDown previous next | star note find readAs listen ios:annotate reply tag pick toSynth thread links rhizome | side
+letter·noReply: full | today nib more | pageUp pageDown previous next | star note find readAs listen ios:annotate delete tag pick toSynth thread links rhizome | side
+letter·outside: full | hub today nib more | pageUp pageDown previous next | star note find readAs listen ios:annotate reply delete tag pick toSynth thread links rhizome | side
+ios:listen: full | today nib more | refresh | synth | ios:close side
+net: full | today nib more | pageUp pageDown ios:back refresh | address piles bookmark and:listen annotate later | ios:close side
+shelf: full | today nib more | pageUp pageDown | folders search add continueReading | ios:close side
+book: full | today nib more | pageBack pageForward | book bookNotes find type listen mark ios:annotate | ios:close side

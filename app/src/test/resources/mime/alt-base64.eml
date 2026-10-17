@@ -1,0 +1,39 @@
+Date: Fri, 11 Sep 2026 00:52:17 +0000
+From: =?UTF-8?Q?Support_=C2=B7_Example_Studio?= <support@example.org>
+Message-ID: <9fVINdGhuOdydEYQl9rKb5v3cJThUS1H9mmv9t9LA@mail.example.org>
+X-Mailer: PHPMailer 7.1.1 (https://github.com/PHPMailer/PHPMailer)
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="b1=_9fVINdGhuOdydEYQl9rKb5v3cJThUS1H9mmv9t9LA"
+To: Sam Reader <reader@example.com>
+Subject: =?UTF-8?B?Q29ycHVzOiBhbHQtYmFzZTY0IOKAlCBjYWbDqSByw6lzdW3DqSDml6XmnKw=?=
+
+--b1=_9fVINdGhuOdydEYQl9rKb5v3cJThUS1H9mmv9t9LA
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: base64
+
+cGxhaW4gYWx0
+
+--b1=_9fVINdGhuOdydEYQl9rKb5v3cJThUS1H9mmv9t9LA
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGJvZHk+PGgxPkjDqWxsbyDigJQg4oCccXVvdGVz4oCdPC9oMT48cD5QYXJhZ3JhcGgg
+b25lIHdpdGggYSA8YSBocmVmPSJodHRwczovL2V4YW1wbGUub3JnL3g/YT0xJmI9MiI+bGluazwv
+YT4uPC9wPjxwPkxpbmUgd2l0aCB0cmFpbGluZyBzcGFjZXMgICA8L3A+PHA+PTNEIGxvb2tzIGxp
+a2UgcXA8L3A+PHA+LmxlYWRpbmcgZG90IGxpbmU8L3A+PC9ib2R5PjwvaHRtbD48aHRtbD48Ym9k
+eT48aDE+SMOpbGxvIOKAlCDigJxxdW90ZXPigJ08L2gxPjxwPlBhcmFncmFwaCBvbmUgd2l0aCBh
+IDxhIGhyZWY9Imh0dHBzOi8vZXhhbXBsZS5vcmcveD9hPTEmYj0yIj5saW5rPC9hPi48L3A+PHA+
+TGluZSB3aXRoIHRyYWlsaW5nIHNwYWNlcyAgIDwvcD48cD49M0QgbG9va3MgbGlrZSBxcDwvcD48
+cD4ubGVhZGluZyBkb3QgbGluZTwvcD48L2JvZHk+PC9odG1sPjxodG1sPjxib2R5PjxoMT5Iw6ls
+bG8g4oCUIOKAnHF1b3Rlc+KAnTwvaDE+PHA+UGFyYWdyYXBoIG9uZSB3aXRoIGEgPGEgaHJlZj0i
+aHR0cHM6Ly9leGFtcGxlLm9yZy94P2E9MSZiPTIiPmxpbms8L2E+LjwvcD48cD5MaW5lIHdpdGgg
+dHJhaWxpbmcgc3BhY2VzICAgPC9wPjxwPj0zRCBsb29rcyBsaWtlIHFwPC9wPjxwPi5sZWFkaW5n
+IGRvdCBsaW5lPC9wPjwvYm9keT48L2h0bWw+PGh0bWw+PGJvZHk+PGgxPkjDqWxsbyDigJQg4oCc
+cXVvdGVz4oCdPC9oMT48cD5QYXJhZ3JhcGggb25lIHdpdGggYSA8YSBocmVmPSJodHRwczovL2V4
+YW1wbGUub3JnL3g/YT0xJmI9MiI+bGluazwvYT4uPC9wPjxwPkxpbmUgd2l0aCB0cmFpbGluZyBz
+cGFjZXMgICA8L3A+PHA+PTNEIGxvb2tzIGxpa2UgcXA8L3A+PHA+LmxlYWRpbmcgZG90IGxpbmU8
+L3A+PC9ib2R5PjwvaHRtbD4=
+
+
+--b1=_9fVINdGhuOdydEYQl9rKb5v3cJThUS1H9mmv9t9LA--

@@ -84,4 +84,11 @@ class TuckPanelTest {
         assertEquals(0 to 0, TuckPanel.overlapMargins(false, false, strip, true))
         assertEquals(0 to 0, TuckPanel.overlapMargins(false, false, strip, false))
     }
+
+    @Test
+    fun `the Aa Type seat keeps the Type caption`() {
+        // Aa Type review, Michael 2026-10-11: the reader seat was "Aa" → "Type"; renamed, it stays.
+        assertEquals("Type", com.toolsboox.ot.TuckPanel.captionFor("Aa Type"))
+        assertEquals("Type", com.toolsboox.ot.TuckPanel.captionFor("Aa"))
+    }
 }

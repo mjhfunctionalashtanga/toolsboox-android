@@ -28,6 +28,56 @@ import com.toolsboox.plugin.calendar.ot.LedgerTags
 object TagPicker {
 
     /**
+     * The (date, page) [uri] addresses when it is a WHOLE PAGE, else null (an element, an email,
+     * anything else). A page gets a page OCCURRENCE — the thing the Tags index lists and the page's
+     * own tag strip draws — not just a graph edge; iOS TagPickerSheet.toggle's page branch.
+     *
+     * Android's sub-page keys carry a '#' ("write-1753#2", [com.toolsboox.plugin.calendar.ot
+     * .LedgerDocuments.subPageKey]), which [LedgerUri.parse] splits off as a fragment. An element
+     * id is a UUID, never all digits, so an all-digit fragment is the sub-page half of the key.
+     */
+    internal fun pageOf(uri: String): Pair<java.time.LocalDate, String>? {
+        val ref = LedgerUri.parse(uri) ?: return null
+        if (ref.scheme != LedgerUri.SCHEME_LEDGER) return null
+        val date = ref.date?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() } ?: return null
+        val base = ref.pageKey ?: return null
+        val frag = ref.fragment
+        return when {
+            frag.isNullOrBlank() -> date to base
+            frag.all { it.isDigit() } -> date to "$base#$frag"
+            else -> null
+        }
+    }
+
+    /**
+     * Put [tag] on [uri]. Michael 2026-10-11 ("tags aren't complete"): "Tag this page…" used to go
+     * through [LedgerTags.recordObject] — an edge only — so a page tagged here never reached the
+     * Tags index or the page's tag strip. A page now records a real occurrence (which also writes
+     * the same edge); everything else keeps the object path.
+     */
+    private fun add(context: Context, uri: String, label: String, tag: String) {
+        val page = pageOf(uri)
+        when {
+            page == null -> LedgerTags.recordObject(context, uri, label, "#$tag")
+            // Already on the page (typed into "＋ Add" while ✓, or an edge the old picker cut while
+            // the occurrence stayed): rejoin the edge only. recordTag would replace the stored
+            // occurrence with a bare one and lose WHERE the tag is written, so the strip would open
+            // the page top instead of the word (review of 6b46141e). Same edge id either way.
+            LedgerTags.marksOn(context, page.first, page.second).any { it.first == tag.lowercase() } ->
+                LedgerTags.recordObject(context, "ledger://${page.first}/${page.second}", page.second, "#$tag")
+            else -> LedgerTags.recordTag(context, page.first, page.second, tag)
+        }
+    }
+
+    /** Take [tag] off [uri] — for a page, its occurrence too, so the strip and the index let go
+     *  with the ✓ rather than keeping a tag the picker says is gone. */
+    private fun remove(context: Context, uri: String, tag: String) {
+        val page = pageOf(uri)
+        if (page != null) LedgerTags.untagPage(context, page.first, page.second, tag)
+        else LedgerTags.untag(context, uri, tag)
+    }
+
+    /**
      * Show the picker for [uri].
      *
      * [onChanged] fires after any add or remove so a caller can redraw a tag strip. The dialog
@@ -77,8 +127,8 @@ object TagPicker {
                     setPadding(px(4), px(10), px(4), px(10))
                     setBackgroundResource(android.R.drawable.list_selector_background)
                     setOnClickListener {
-                        if (chosen.contains(tag)) LedgerTags.untag(context, uri, tag)
-                        else LedgerTags.recordObject(context, uri, label, "#$tag")
+                        if (chosen.contains(tag)) remove(context, uri, tag)
+                        else add(context, uri, label, tag)
                         onChanged()
                         rebuild()
                     }
@@ -124,7 +174,7 @@ object TagPicker {
                     // itself would reject — no private dialect.
                     val t = LedgerTags.extract("#" + input.text.toString().trim().trimStart('#')).firstOrNull()
                     if (t != null) {
-                        LedgerTags.recordObject(context, uri, label, "#$t")
+                        add(context, uri, label, t)
                         onChanged()
                         rebuild()
                     }

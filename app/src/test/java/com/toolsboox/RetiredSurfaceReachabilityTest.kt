@@ -59,7 +59,7 @@ class RetiredSurfaceReachabilityTest {
 
     @Test
     fun `the retired surface keeps the vocabulary the directory prints`() {
-        assertEquals("🔬", LedgerDocuments.glyph(LedgerDocuments.SYNTHESIZE))
+        assertEquals("❖", LedgerDocuments.glyph(LedgerDocuments.SYNTHESIZE))
         assertEquals("Synthesize", LedgerDocuments.label(LedgerDocuments.SYNTHESIZE))
         assertNotNull(LedgerDocuments.noun(LedgerDocuments.SYNTHESIZE))
         // Renaming a named synthesis has to keep working: the directory offers it, and a document you

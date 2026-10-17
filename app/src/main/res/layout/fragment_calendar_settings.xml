@@ -73,7 +73,7 @@
             android:requiresFadingEdge="none"
 
             app:layout_constraintTop_toBottomOf="@id/title_divider"
-            app:layout_constraintBottom_toTopOf="@id/button_bar_divider"
+            app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent">
 
@@ -85,15 +85,18 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content">
 
-            <!-- ORDER OF THIS PAGE, and why.
-                 It used to be a flat run of nine sections in the order they were written, so the
+            <!-- ORDER OF THIS PAGE, and why — the IA shared with the iOS app:
+                 LOOK · WHICH WAY UP · DAY PAGE · SYNC BETWEEN DEVICES · GOOGLE CALENDAR ·
+                 ASK MY LEDGER · YOUR SITES · BACKUP & TRANSFER · THIS DEVICE.
+                 It used to be a flat run of sections in the order they were written, so the
                  setting people come here for most — Legibility — sat at the very bottom under a
                  heading that said BACKUP & DATA, three screens past anything to do with looking at
-                 things. The order now runs by what you came to change: first how it LOOKS right
-                 now (legibility, which way up), then how the planner BEHAVES, then what happens to
-                 your INK, then the four places pages GO, and last the archive and upkeep errands
-                 you touch once a year. Every heading names a visible effect, not the subsystem
-                 underneath it. -->
+                 things. The order runs by what you came to change: first how it LOOKS right now
+                 (legibility, which way up), then the DAY PAGE itself (hour, ruling, week, and what
+                 happens to its ink), then the places pages GO, and last the archive and upkeep
+                 errands you touch once a year. Every heading names a visible effect, not the
+                 subsystem underneath it. (The toolsBoox-cloud block between DAY PAGE and SYNC is
+                 GONE at runtime unless that account is signed in — see the fragment.) -->
 
             <!-- HOW THIS PAGE IS SET, and why.
                  Everything below is built from six styles in values/styles.xml, because the medium
@@ -117,7 +120,8 @@
             <!-- One button to a dialog that holds seven dials. It was the last widget on the page;
                  it is now the first, because "make this readable" is the errand that brings someone
                  to Settings on an e-ink screen in bad light.
-                 It is also one of only two SOLID buttons on the screen (Save is the other). Filled
+                 It is also the one SOLID button on the screen (Save was the other, until the page
+                 learned to persist as it changes and the bar retired). Filled
                  ink is the sole emphasis this panel can draw, so it is spent on the control that
                  the whole reordering was done to promote — the first thing the eye lands on when
                  the page opens is a black block saying Legibility. -->
@@ -194,42 +198,22 @@
                     style="@style/Settings.Rule"
                     android:id="@+id/divider_rotation"/>
 
-            <!-- The auto-capture switch used to float above the first section heading, with no
-                 group at all. It now lives under "HANDWRITING" further down. -->
+            <!-- DAY PAGE: the hour a new day is seeded with, the ruling new pages get, the locale
+                 that decides the week, and the vision read of the ink when you leave the page. -->
             <TextView
                     style="@style/Settings.SectionHeading"
                     android:id="@+id/calendar_section_label"
                     android:text="@string/calendar_settings_calendar_label"/>
 
-            <!-- Three dropdowns and a fourth below, and NO rules between them any more. There were
+            <!-- Two dropdowns and a third below, and NO rules between them any more. There were
                  three, at 2dp of #e0e0e0, which is paper on this panel — so they were invisible
                  lines doing the job of a section break inside a section that had not ended. The
                  caption's top margin is now the separator: a caption sits close to its own box and
                  far from the box above it, and proximity alone says which label owns which
-                 control. Rules are reserved for section boundaries, one weight, one meaning. -->
-            <TextView
-                    style="@style/Settings.FieldLabel"
-                    android:id="@+id/start_view_spinner_text"
-                    android:text="@string/calendar_settings_select_start_view_text"/>
-
-            <com.google.android.material.textfield.TextInputLayout
-                    android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
-                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
-
-                    android:id="@+id/start_view_spinner_layout"
-                    android:spinnerMode="dropdown"
-
-                    android:layout_width="match_parent"
-                    android:layout_height="60dp">
-
-                <com.toolsboox.ot.AutoCompleteTextView
-                        android:id="@+id/start_view_spinner"
-                        android:labelFor="@id/start_view_spinner_text"
-                        android:layout_width="match_parent"
-                        android:layout_height="match_parent"
-                        android:inputType="text"/>
-            </com.google.android.material.textfield.TextInputLayout>
-
+                 control. Rules are reserved for section boundaries, one weight, one meaning.
+                 (A "Start view" dropdown used to lead this run. Only the home tile and one deep
+                 link ever read it, both defaulting to the day page, so it retired and the day page
+                 is simply the rule — one decision fewer.) -->
             <TextView
                     style="@style/Settings.FieldLabel"
                     android:id="@+id/start_hour_spinner_text"
@@ -380,21 +364,16 @@
                         android:layout_height="wrap_content"/>
             </LinearLayout>
 
-            <View
-                    style="@style/Settings.Rule"
-                    android:id="@+id/divider_locale"/>
-
-            <!-- HANDWRITING. Moved up from below the four connection blocks: what happens to your
-                 ink is a property of the page you write on, not of a server, and it was stranded
-                 among credential boxes. -->
-            <TextView
-                    style="@style/Settings.SectionHeading"
-                    android:id="@+id/capture_section_label"
-                    android:text="@string/calendar_settings_capture_label"/>
-
+            <!-- What happens to the ink on the page belongs to the page: the vision read that
+                 runs when you leave a day used to head its own HANDWRITING section between the
+                 planner and the sync blocks — a one-switch section, on a page that already had
+                 ten. It closes the DAY PAGE section instead, after the hour, the ruling and the
+                 week — the same section the iOS app keeps it in. The two rows under it are the
+                 retired on-device extract (GONE at runtime; ids kept). -->
             <androidx.appcompat.widget.SwitchCompat
                     style="@style/Settings.Toggle"
                     android:id="@+id/auto_capture_switch"
+                    android:layout_marginTop="14dp"
                     android:text="@string/calendar_settings_capture_enable"/>
 
             <androidx.appcompat.widget.SwitchCompat
@@ -402,12 +381,6 @@
                     android:id="@+id/auto_extract_switch"
                     android:text="@string/calendar_settings_extract_enable"/>
 
-            <!-- Was a bare title TextView reading "On-device extract" above the switch — two lines
-                 saying the same word twice. It carries the caveat instead, because the switch's
-                 real effect (a menu item appears) is not what "extract" leads anyone to expect.
-                 As a caveat it must not read as a third switch, which at the same size and ink as
-                 the two above it did; the margin rule and indent of Settings.Hint are what
-                 separate them now, since grey is unavailable on this panel. -->
             <TextView
                     style="@style/Settings.Hint"
                     android:id="@+id/auto_extract_hint"
@@ -415,7 +388,7 @@
 
             <View
                     style="@style/Settings.Rule"
-                    android:id="@+id/divider_capture"/>
+                    android:id="@+id/divider_locale"/>
 
             <!-- THE FOUR DESTINATIONS, back to back: toolsBoox cloud, WebDAV, Google Calendar,
                  WordPress. They answer one question — where does this end up — and each already
@@ -678,11 +651,80 @@
                     style="@style/Settings.Rule"
                     android:id="@+id/divider_gcal"/>
 
-            <!-- Sites & bridge. "Manage sites" is the SOURCE OF TRUTH (every WordPress site + the
-                 active one). The single-cred fields below are the same active-site bridge as an
-                 advanced quick-edit — they write the same prefs, so editing them mirrors, and can
-                 override, the active site. Hidden behind the toggle so the two aren't mistaken for
-                 rival editors. -->
+            <!-- Mail: the accounts dialog the Incoming room already owns — a door here too (shared IA). -->
+            <TextView
+                    style="@style/Settings.SectionHeading"
+                    android:id="@+id/mail_section_label"
+                    android:text="@string/calendar_settings_mail_label"/>
+
+            <Button
+                    style="@style/Settings.Button"
+                    android:id="@+id/button_mail_accounts"
+                    android:text="@string/calendar_settings_button_mail_accounts"/>
+
+            <!-- How a letter opens (Michael, 09-11: "load the rendered version first… set those in
+                 settings — I want it to load and render for me"). Both ON by default. -->
+            <androidx.appcompat.widget.SwitchCompat
+                    style="@style/Settings.Toggle"
+                    android:id="@+id/mail_as_sent_switch"
+                    android:text="@string/calendar_settings_mail_as_sent"/>
+
+            <androidx.appcompat.widget.SwitchCompat
+                    style="@style/Settings.Toggle"
+                    android:id="@+id/mail_pictures_switch"
+                    android:text="@string/calendar_settings_mail_pictures"/>
+
+            <View
+                    style="@style/Settings.Fold"
+                    android:id="@+id/divider_mail"/>
+
+            <!-- Books: the sources the shelf pulls from. Same rows as iOS Settings › Books. -->
+            <TextView
+                    style="@style/Settings.SectionHeading"
+                    android:id="@+id/books_section_label"
+                    android:text="@string/calendar_settings_books_label"/>
+
+            <Button
+                    style="@style/Settings.Button"
+                    android:id="@+id/button_audiobookshelf"
+                    android:text="@string/calendar_settings_button_audiobookshelf"/>
+
+            <Button
+                    style="@style/Settings.Button"
+                    android:id="@+id/button_storage"
+                    android:text="@string/calendar_settings_button_storage"/>
+
+            <Button
+                    style="@style/Settings.Button"
+                    android:id="@+id/button_book_catalog"
+                    android:text="@string/calendar_settings_button_book_catalog"/>
+
+            <View
+                    style="@style/Settings.Fold"
+                    android:id="@+id/divider_books"/>
+
+            <!-- Ask my Ledger. The key itself is edited on the Ask page (its fold-out); this is the
+                 DOOR from Settings, which three error strings have pointed at for months while the
+                 screen had no such row (settings sweep, 09-10). -->
+            <TextView
+                    style="@style/Settings.SectionHeading"
+                    android:id="@+id/ask_section_label"
+                    android:text="@string/calendar_settings_ask_label"/>
+
+            <Button
+                    style="@style/Settings.Button"
+                    android:id="@+id/button_ask_ledger"
+                    android:text="@string/calendar_settings_button_ask"/>
+
+            <View
+                    style="@style/Settings.Fold"
+                    android:id="@+id/divider_ask"/>
+
+            <!-- Sites. "Manage sites" is the one door: every WordPress site the app knows, each
+                 with its URL, login, application password, default board and portal pages, and
+                 one set active. There used to be an "edit the active-site bridge here (advanced)"
+                 switch under it with four bare credential boxes that wrote the same keys — two
+                 editors for one thing, and the second one had no name for which site it edited. -->
             <TextView
                     style="@style/Settings.SectionHeading"
                     android:id="@+id/community_section_label"
@@ -693,104 +735,75 @@
                     android:id="@+id/button_manage_sites"
                     android:text="@string/calendar_settings_button_manage_sites"/>
 
-            <androidx.appcompat.widget.SwitchCompat
-                    style="@style/Settings.Toggle"
-                    android:id="@+id/community_enable_switch"
-                    android:layout_marginTop="6dp"
-                    android:text="@string/calendar_settings_community_enable"/>
-
             <View
-                    style="@style/Settings.Fold"
-                    android:id="@+id/community_fold"/>
+                    style="@style/Settings.Rule"
+                    android:id="@+id/divider_sites"/>
+
+            <!-- MichaelFilter: a connector, not a secret in the build. The key used to be compiled
+                 into every APK; now it is pasted here, kept in encrypted prefs, and nothing is sent
+                 to MichaelFilter without it (MichaelFilterConnector). The box saves as it changes,
+                 like every other field on this page; the line under it says what the key is doing. -->
+            <TextView
+                    style="@style/Settings.SectionHeading"
+                    android:id="@+id/michaelfilter_section_label"
+                    android:text="@string/calendar_settings_michaelfilter_label"/>
+
+            <TextView
+                    style="@style/Settings.Hint"
+                    android:id="@+id/michaelfilter_hint"
+                    android:text="@string/calendar_settings_michaelfilter_hint"/>
 
             <LinearLayout
                     style="@style/Settings.Group"
-                    android:id="@+id/community_fields_group"
+                    android:id="@+id/michaelfilter_fields_group"
                     android:orientation="vertical">
 
                 <com.google.android.material.textfield.TextInputLayout
                         android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
                         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                        android:id="@+id/community_site_layout"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:hint="Community site URL (https://…)">
-                    <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/community_site_input"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:inputType="textUri"
-                            android:singleLine="true"/>
-                </com.google.android.material.textfield.TextInputLayout>
 
-                <com.google.android.material.textfield.TextInputLayout
-                        android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
-                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                        android:id="@+id/community_user_layout"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
-                        android:hint="WordPress username">
-                    <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/community_user_input"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:inputType="text"
-                            android:singleLine="true"/>
-                </com.google.android.material.textfield.TextInputLayout>
+                        android:id="@+id/michaelfilter_key_layout"
 
-                <com.google.android.material.textfield.TextInputLayout
-                        android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
-                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                        android:id="@+id/community_pass_layout"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
-                        android:hint="Application password">
+
+                        android:hint="@string/calendar_settings_michaelfilter_key_hint"
+                        app:passwordToggleEnabled="true">
+
                     <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/community_pass_input"
+                            android:id="@+id/michaelfilter_key_input"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:inputType="textPassword"
+                            android:imeOptions="actionDone"
+                            android:importantForAutofill="no"
                             android:singleLine="true"/>
                 </com.google.android.material.textfield.TextInputLayout>
 
-                <com.google.android.material.textfield.TextInputLayout
-                        android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
-                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                        android:id="@+id/community_board_layout"
+                <TextView
+                        android:id="@+id/michaelfilter_status"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="10dp"
-                        android:hint="FluentBoards board ID (for pinned grams)">
-                    <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/community_board_input"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:inputType="number"
-                            android:singleLine="true"/>
-                </com.google.android.material.textfield.TextInputLayout>
+                        android:layout_marginTop="8dp"
+                        android:textSize="14sp"
+                        android:textColor="@color/fgColor"
+                        tools:text="Connected — links you file are sent to MichaelFilter."/>
             </LinearLayout>
 
             <View
                     style="@style/Settings.Rule"
-                    android:id="@+id/divider_sites"/>
+                    android:id="@+id/divider_michaelfilter"/>
 
-            <!-- BACKUP & TRANSFER. Six buttons used to sit here in the order somebody added them,
-                 so the pair you actually want together ("Export settings", "Import settings") was
-                 split by a calendar-only zip and a full-ledger restore, and the whole run was
-                 shuffled in with a shortcut maker and a mark rebuilder. Now: settings out, settings
-                 in, the gesture that turns those two into a whole-ledger backup, then the restore
-                 that reads such a backup, then the odd one out (calendar-only) last and labelled
-                 as the different thing it is.
-                 Export and Import are a PAIR and now look like one: same width, 10dp apart, with
-                 the hint about their long-press bracketed under both. The three that follow are
-                 separate errands and sit at the normal spacing, so the grouping is legible from
-                 the gaps alone — which is the only grouping device left when you cannot tint a
-                 background or draw a card that floats.
-                 A SECOND pair joined them: names & structure, built the same way (two buttons, one
-                 hint bracketing both) precisely so the shape says "these two go together" without
-                 anything having to explain it twice. -->
+            <!-- BACKUP & TRANSFER, in size order: the whole ledger out, the whole ledger back,
+                 then settings out and in, then names & structure out and in — everything, then a
+                 page, then a file. The whole-ledger zip used to be a LONG-PRESS on the two settings
+                 buttons, explained by a paragraph under them; a gesture that needs a paragraph is
+                 not a door. Now it is a button that says what it does, first in the run, with its
+                 restore right under it.
+                 Each pair sits at 10dp; the gap between pairs is 20dp, so the grouping is legible
+                 from the gaps alone — the only grouping device left when you cannot tint a
+                 background or draw a card that floats. The calendar-only export is the odd one
+                 out and sits last, labelled as the different thing it is. -->
             <TextView
                     style="@style/Settings.SectionHeading"
                     android:id="@+id/data_section_label"
@@ -798,7 +811,18 @@
 
             <Button
                     style="@style/Settings.Button"
+                    android:id="@+id/button_backup_full"
+                    android:text="@string/calendar_settings_button_backup_full"/>
+
+            <Button
+                    style="@style/Settings.Button"
+                    android:id="@+id/button_restore"
+                    android:text="@string/calendar_settings_button_restore"/>
+
+            <Button
+                    style="@style/Settings.Button"
                     android:id="@+id/button_export_settings"
+                    android:layout_marginTop="20dp"
                     android:text="@string/calendar_settings_button_export_settings"/>
 
             <Button
@@ -806,17 +830,9 @@
                     android:id="@+id/button_import_settings"
                     android:text="@string/calendar_settings_button_import_settings"/>
 
-            <TextView
-                    style="@style/Settings.Hint"
-                    android:id="@+id/backup_gesture_hint"
-                    android:text="@string/calendar_settings_backup_gesture_hint"/>
-
-            <!-- NAMES & STRUCTURE, a second pair built like the first and sitting next to it because
-                 it is the same kind of errand: a small JSON you carry to another device, not an
-                 archive. It goes between the settings pair and the whole-ledger buttons in size
-                 order — settings (a page), names (a file), the ledger (everything) — so the run
-                 reads as a scale rather than an assortment. Its hint is not optional decoration:
-                 it is the only place that says the file holds no page ink. -->
+            <!-- NAMES & STRUCTURE: a small JSON you carry to another device, not an archive. Its
+                 hint is not optional decoration: it is the only place that says the file holds no
+                 page ink. -->
             <Button
                     style="@style/Settings.Button"
                     android:id="@+id/button_export_names"
@@ -835,13 +851,8 @@
 
             <Button
                     style="@style/Settings.Button"
-                    android:id="@+id/button_restore"
-                    android:layout_marginTop="20dp"
-                    android:text="@string/calendar_settings_button_restore"/>
-
-            <Button
-                    style="@style/Settings.Button"
                     android:id="@+id/button_backup"
+                    android:layout_marginTop="20dp"
                     android:text="@string/calendar_settings_button_backup"/>
 
             <View
@@ -878,58 +889,46 @@
                     android:id="@+id/button_notification_categories"
                     android:text="@string/calendar_settings_button_notification_categories"/>
 
+            <!-- The fleet's own update door: the R2 build the cabled installs come from,
+                 one tap from inside the app ("a link inside of ledgable in the settings
+                 that lets me download the latest version", 08-22). The browser downloads;
+                 the system installer does the rest — same signature, upgrades in place. -->
+            <Button
+                    style="@style/Settings.Button"
+                    android:id="@+id/button_update_apk"
+                    android:text="@string/calendar_settings_button_update_apk"/>
+
+            <!-- ♥ The lineage. Every app that taught this one, named in the app itself —
+                 his ask, 09-02: "give credit to all of the different apps we used". -->
+            <Button
+                    style="@style/Settings.Button"
+                    android:id="@+id/button_credits"
+                    android:text="♥ Credits — the apps that taught this one"/>
+
+            <!-- The diagnostics door: send a crash or a misbehaviour WITH EVIDENCE. A tester's
+                 "HiBreak Plus crashes on launch" could not be acted on because nothing captured
+                 the crash; this row opens the build, the device, the last crash and the recent
+                 log, with Copy / Share / Clear. -->
+            <Button
+                    style="@style/Settings.Button"
+                    android:id="@+id/button_diagnostics"
+                    android:text="@string/calendar_settings_button_diagnostics"/>
+
+            <!-- Bigme only (GONE elsewhere): the experimental daemon ink path, opt-in after
+                 the 0×0 lesson — a fast path that can eat the pen ships behind a switch. -->
+            <Button
+                    style="@style/Settings.Button"
+                    android:id="@+id/button_bigme_fast"
+                    android:visibility="gone"
+                    tools:text="🖊 Bigme fast ink: off — tap to try"/>
+
         </LinearLayout>
     </ScrollView>
 
-    <!-- The button bar's rule matches the masthead's 4dp rather than the sections' 3dp: both are
-         the page's own frame, and the frame should be heavier than anything it contains. It also
-         tells the scroller where it ends — with no scrollbar (e-ink smears one) and no shadow
-         under a sticky bar, a heavy line is the only thing that says "the page stops here and
-         these two buttons do not scroll away". -->
-    <View
-            android:id="@+id/button_bar_divider"
-            android:layout_width="match_parent"
-            android:layout_height="4dp"
-            android:layout_marginBottom="10dp"
-            android:background="@color/fgColor"
-
-            app:layout_constraintTop_toTopOf="@id/button_back"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"/>
-
-    <!-- Save is solid and Back is outlined — the second and last of the page's two filled buttons.
-         They were two identical Material buttons of different widths floating over the bottom edge
-         with nothing to say which one commits, on a screen where every other affordance (colour,
-         elevation, a ripple on press) is unavailable. Equal halves of the bar, 20dp gutters
-         matching the column above, so the bar sits on the same left and right edges as the page. -->
-    <Button
-            style="@style/Settings.Button.Primary"
-            android:id="@+id/button_save"
-            android:text="@string/calendar_settings_button_save"
-
-            android:layout_width="0dp"
-            android:layout_marginTop="0dp"
-            android:layout_marginStart="20dp"
-            android:layout_marginEnd="6dp"
-            android:layout_marginBottom="12dp"
-
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintEnd_toStartOf="@id/button_back"
-            app:layout_constraintBottom_toBottomOf="parent"/>
-
-    <Button
-            style="@style/Settings.Button"
-            android:id="@+id/button_back"
-            android:text="@string/calendar_settings_button_back"
-
-            android:layout_width="0dp"
-            android:layout_marginTop="0dp"
-            android:layout_marginStart="6dp"
-            android:layout_marginEnd="20dp"
-            android:layout_marginBottom="12dp"
-
-            app:layout_constraintStart_toEndOf="@id/button_save"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintBottom_toBottomOf="parent"/>
+    <!-- No Save/Back bar. Every control above persists the moment it changes (switches on flip,
+         dropdowns on select, text boxes on focus-loss or a beat after typing), so there is nothing
+         left for a Save button to do and the system back / toolbar is the way out. A bar whose
+         half of the page waited on it was a mode: you had to remember you were in it, and backing
+         out lost what you had typed. -->
 
 </androidx.constraintlayout.widget.ConstraintLayout>

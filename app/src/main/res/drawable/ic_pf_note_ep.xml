@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Note ep: a note on the moment in what is playing — a note in a ring (never the reading Note's face).
+     One panel face family (review 2026-10-11, F5; Michael: "Icons lack design language"): the ink
+     tools' geometry — 256 grid, 16-unit round strokes, outline at rest; a filled face only for an
+     ON state (Star). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="256" android:viewportHeight="256"
+    android:tint="#000000">
+    <path android:pathData="M28,128a100,100 0 1,0 200,0a100,100 0 1,0 -200,0Z"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+    <path android:pathData="M140,176H92a8,8 0 0,1 -8,-8V88a8,8 0 0,1 8,-8H164a8,8 0 0,1 8,8V144ZM140,176V144H172"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+</vector>

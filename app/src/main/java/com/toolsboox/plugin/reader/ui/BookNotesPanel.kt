@@ -54,8 +54,11 @@ object BookNotesPanel {
         startType: String = BookNote.ANNOTATION,
         showModal: (AlertDialog) -> Unit = { it.show() },
         onJump: (BookNote) -> Unit,
+        /** A mark's note was written or changed from the list (its card re-draws). */
+        onEdited: (BookNote) -> Unit = {},
         onUnmark: (BookNote) -> Unit
     ) {
+        editedHook = onEdited
         val dp = context.resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
 
@@ -244,7 +247,7 @@ object BookNotesPanel {
         val rows = mutableListOf<Pair<String, () -> Unit>>()
         if (note.cfi.isNotBlank()) rows += "↪  Go to this spot" to { dialog.dismiss(); onJump(note) }
         rows += (if (note.note.isBlank() && note.image == null) "🖍  Add a note" else "✎  Edit the note") to {
-            editNote(context, note, showModal) { onChanged() }
+            editNote(context, note, showModal) { onChanged(); editedHook(note) }
         }
         if (note.text.isNotBlank()) rows += "📋  Copy the passage" to {
             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -263,6 +266,9 @@ object BookNotesPanel {
 
     /** Which book the rows and the composer write to; set by the reader before either opens. */
     private var currentBook: String = ""
+
+    /** The open list's "a note changed" hook ([show]'s onEdited). */
+    private var editedHook: (BookNote) -> Unit = {}
 
     fun bind(book: String) { currentBook = book }
 

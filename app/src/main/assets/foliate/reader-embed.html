@@ -28,9 +28,9 @@
 <script>
   (function () {
     var msg = document.getElementById('msg')
-    function show(t) { if (msg) { msg.style.display = 'flex'; msg.textContent = t } }
+    function show(t) { if (msg && (msg.style.display !== 'flex' || msg.textContent !== t)) { msg.style.display = 'flex'; msg.textContent = t } }
     window.__readerShow = show
-    window.__readerHide = function () { if (msg) msg.style.display = 'none' }
+    window.__readerHide = function () { if (msg && msg.style.display !== 'none') msg.style.display = 'none' }
     window.__readerStarted = false
     window.addEventListener('error', function (e) {
       // ResizeObserver "loop" reports are benign by spec (undelivered notifications, the

@@ -46,6 +46,38 @@ import javax.inject.Inject
  * @author <a href="mailto:gabor.auth@toolsboox.com">Gábor AUTH</a>
  */
 class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter() {
+
+    companion object {
+        /**
+         * Why a "cloud-only" item must NOT be installed, or null when it may be.
+         *
+         * The local inventory ([fileList]) is built by DECODING every file, so a day that is on
+         * disk but won't read (a decode error, a newer app's enum, an 86 MB photo day that runs out
+         * of memory) is missing from it — the item then looks cloud-only, and the Drive copy used
+         * to be installed straight over the local file, taking every local edit newer than Drive
+         * with it. The install writes exactly one file, the day's `-v2.json` (whatever the Drive
+         * item's version — a v1 item is converted on the way in), so that is the file asked about,
+         * through the same [CalendarDayService.read] every writer trusts:
+         *  - [CalendarDayService.DayRead.Missing] (no file, or a blank one — nothing to lose):
+         *    null, install. A blank local file is healed by Drive's copy, as it always was.
+         *  - [CalendarDayService.DayRead.Unreadable]: blocked — never written over.
+         *  - [CalendarDayService.DayRead.Loaded]: blocked for the BACKGROUND pass — a readable local
+         *    day that still looks cloud-only is a version mismatch (a stale `-v1` item on Drive), and
+         *    converting that over the day is the overwrite this guard exists to stop. The
+         *    hand-tapped row ignores this case: there, "take Drive's" is what the person asked for.
+         * A stale unreadable v1 `day-X.json` beside a missing v2 does not block: the install never
+         * writes it (save() only renames it to `.backup`, bytes kept). Week/month/quarter/year
+         * items are not day files and are never blocked here — their own loads quarantine a file
+         * they can't decode, so for them the install is still the recovery path.
+         */
+        internal fun cloudOnlyInstallBlocker(
+            rootPath: File, item: CalendarSyncItem, days: CalendarDayService,
+        ): CalendarDayService.DayRead? {
+            if (!item.baseName.startsWith("day-")) return null
+            val target = File(File(rootPath, "calendar/${item.path}"), "${item.baseName}-v2.json")
+            return days.read(target).takeUnless { it is CalendarDayService.DayRead.Missing }
+        }
+    }
     /**
      * The shared preferences.
      */
@@ -215,10 +247,28 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
         val rootPath = rootPath(fragment, Environment.DIRECTORY_DOCUMENTS)
         fragment.lifecycleScope.launch(Dispatchers.IO) {
             try {
+                // The hand-tapped install obeys the same rule as the background one: a local day
+                // that is there but won't read is not replaced. (A readable older copy still is —
+                // that row is a legitimate "take Drive's".) The refusal gets its own message below,
+                // not somethingHappened's "it'll retry": it won't, until the local file reads.
+                val blocker = cloudOnlyInstallBlocker(rootPath, calendarSyncItem, calendarDayService)
+                if (blocker is CalendarDayService.DayRead.Unreadable)
+                    throw CalendarDayService.UnreadableDayException(blocker.file, blocker.cause)
                 val result = fileUpdate(rootPath, calendarSyncItem)
                 fragment.lifecycleScope.launch(Dispatchers.Main) {
                     fragment.hideLoading()
                     fragment.fileUpdateResult(result)
+                }
+            } catch (e: CalendarDayService.UnreadableDayException) {
+                // Not "it'll retry": this refusal stands until the local file reads (or is set
+                // aside), so say what happened and that nothing was replaced.
+                withContext(Dispatchers.Main) {
+                    fragment.runOnActivity {
+                        fragment.showMessage(
+                            "Left as it is — this device can't read its copy of that day, so Drive's isn't written over it",
+                            binding.root
+                        )
+                    }
                 }
             } catch (e: IOException) {
                 withContext(Dispatchers.Main) {
@@ -303,42 +353,76 @@ class CalendarGoogleDriveSyncPresenter @Inject constructor() : FragmentPresenter
                                 if (syncList.isEmpty()) return@launch
 
                                 Timber.i("Background sync items: ${syncList}")
+                                // Each item is fenced on its own: a single unreadable or corrupt
+                                // file must skip, never kill the app from this worker thread —
+                                // and a side that loaded WITHOUT content must never enter the
+                                // merge/LWW writes, where it would clobber the good side.
                                 syncList.forEach { item ->
-                                    val fileItem = item.file
-                                    val cloudItem = item.cloud
-                                    when {
-                                        // New on cloud only → pull it down as-is.
-                                        fileItem == null && cloudItem != null -> {
-                                            Timber.i("File create (cloud-only): ${cloudItem}")
-                                            fileUpdate(rootPath, cloudLoad(driveService, cloudItem))
-                                        }
-                                        // New on local only → push it up as-is.
-                                        cloudItem == null && fileItem != null -> {
-                                            Timber.i("Cloud create (local-only): ${fileItem}")
-                                            cloudUpdate(driveService, fileLoad(rootPath, fileItem))
-                                        }
-                                        // Exists on both and diverged → stroke-level MERGE (union
-                                        // by id) instead of last-write-wins clobber, then write the
-                                        // merged result to BOTH sides so the two devices converge.
-                                        fileItem != null && cloudItem != null -> {
-                                            val localLoaded = fileLoad(rootPath, fileItem)
-                                            val cloudLoaded = cloudLoad(driveService, cloudItem)
-                                            val merged = mergeDaySyncItem(localLoaded, cloudLoaded)
-                                            if (merged != null) {
-                                                Timber.i("Merge (both sides): ${fileItem.baseName}")
-                                                fileUpdate(rootPath, merged)
-                                                cloudUpdate(driveService, merged)
-                                            } else {
-                                                // Non-day / legacy file → last-write-wins fallback.
-                                                if ((fileItem.updated?.time ?: 0L) < (cloudItem.updated?.time ?: 0L)) {
-                                                    Timber.i("File update (LWW): ${cloudItem}")
-                                                    fileUpdate(rootPath, cloudLoaded)
+                                    runCatching {
+                                        val fileItem = item.file
+                                        val cloudItem = item.cloud
+                                        when {
+                                            // New on cloud only → pull it down as-is.
+                                            // Unless a local file IS there and just didn't read —
+                                            // then the Drive copy is never installed over it.
+                                            fileItem == null && cloudItem != null -> {
+                                                when (val blocker = cloudOnlyInstallBlocker(rootPath, cloudItem, calendarDayService)) {
+                                                    null -> {
+                                                        Timber.i("File create (cloud-only): ${cloudItem}")
+                                                        fileUpdate(rootPath, cloudLoad(driveService, cloudItem))
+                                                    }
+                                                    is CalendarDayService.DayRead.Unreadable -> Timber.e(
+                                                        "Sync skip (cloud-only, but ${blocker.file.name} is on disk and would not read): " +
+                                                            "not installing the Drive copy over it"
+                                                    )
+                                                    else -> Timber.w(
+                                                        "Sync skip (cloud-only ${cloudItem.version} item, but a readable local " +
+                                                            "${cloudItem.baseName}-v2.json is there): not converting Drive's copy over it"
+                                                    )
+                                                }
+                                            }
+                                            // New on local only → push it up as-is.
+                                            cloudItem == null && fileItem != null -> {
+                                                val localLoaded = fileLoad(rootPath, fileItem)
+                                                if (localLoaded.json == null) {
+                                                    Timber.w("Sync skip (local file has no content): ${fileItem.path}/${fileItem.baseName}")
                                                 } else {
-                                                    Timber.i("Cloud update (LWW): ${fileItem}")
+                                                    Timber.i("Cloud create (local-only): ${fileItem}")
                                                     cloudUpdate(driveService, localLoaded)
                                                 }
                                             }
+                                            // Exists on both and diverged → stroke-level MERGE (union
+                                            // by id) instead of last-write-wins clobber, then write the
+                                            // merged result to BOTH sides so the two devices converge.
+                                            fileItem != null && cloudItem != null -> {
+                                                val localLoaded = fileLoad(rootPath, fileItem)
+                                                val cloudLoaded = cloudLoad(driveService, cloudItem)
+                                                if (localLoaded.json == null || cloudLoaded.json == null) {
+                                                    Timber.w(
+                                                        "Sync skip (no content): ${fileItem.path}/${fileItem.baseName}" +
+                                                            " localJson=${localLoaded.json != null} cloudJson=${cloudLoaded.json != null}"
+                                                    )
+                                                    return@forEach
+                                                }
+                                                val merged = mergeDaySyncItem(localLoaded, cloudLoaded)
+                                                if (merged != null) {
+                                                    Timber.i("Merge (both sides): ${fileItem.baseName}")
+                                                    fileUpdate(rootPath, merged)
+                                                    cloudUpdate(driveService, merged)
+                                                } else {
+                                                    // Non-day / legacy file → last-write-wins fallback.
+                                                    if ((fileItem.updated?.time ?: 0L) < (cloudItem.updated?.time ?: 0L)) {
+                                                        Timber.i("File update (LWW): ${cloudItem}")
+                                                        fileUpdate(rootPath, cloudLoaded)
+                                                    } else {
+                                                        Timber.i("Cloud update (LWW): ${fileItem}")
+                                                        cloudUpdate(driveService, localLoaded)
+                                                    }
+                                                }
+                                            }
                                         }
+                                    }.onFailure {
+                                        Timber.w(it, "Sync item failed, skipped: ${item.file?.baseName ?: item.cloud?.baseName}")
                                     }
                                 }
                             } catch (e: IOException) {

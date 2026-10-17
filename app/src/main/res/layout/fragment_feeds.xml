@@ -27,8 +27,10 @@
     android:background="#FFFFFF">
 
     <!-- Full-width timeline filter across the very top: the date navigator scopes the feed
-         (a finite feed to clear day to day), above BOTH the directory drawer and the list. -->
+         (a finite feed to clear day to day), above BOTH the directory drawer and the list. In full
+         screen (the one panel language, Michael 2026-10-11) the [⛶] pill takes its leading end. -->
     <LinearLayout
+        android:id="@+id/feeds_top_row"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingHorizontal="8dp" android:paddingTop="6dp"
@@ -38,7 +40,7 @@
         <ImageButton
             android:id="@+id/feeds_hub_button"
             android:src="@drawable/ic_bar_sections"
-            android:background="?attr/selectableItemBackgroundBorderless"
+            android:background="@drawable/eink_press_bg"
             android:scaleType="fitCenter" android:padding="3dp"
             android:layout_marginEnd="4dp"
             android:contentDescription="@string/go_to_title"
@@ -46,7 +48,7 @@
         <ImageButton
             android:id="@+id/ledger_button"
             android:src="@drawable/ic_feed"
-            android:background="?attr/selectableItemBackgroundBorderless"
+            android:background="@drawable/eink_press_bg"
             android:scaleType="fitCenter" android:padding="3dp"
             android:layout_marginEnd="4dp"
             android:contentDescription="@string/feeds_title"
@@ -103,8 +105,10 @@
             android:layout_height="wrap_content"/>
     </ScrollView>
 
+    <!-- The pane's edge: black, as every line in a room pane (Michael 2026-10-12 — readable on
+         e-ink; the old #D8D5CE all but vanished there). -->
     <View android:id="@+id/directory_divider"
-        android:layout_width="1dp" android:layout_height="match_parent" android:background="#D8D5CE"/>
+        android:layout_width="1dp" android:layout_height="match_parent" android:background="#000000"/>
 
     <LinearLayout
     android:orientation="vertical"
@@ -190,6 +194,29 @@
         android:visibility="gone"
         android:layout_width="match_parent" android:layout_height="1dp" android:background="#000000"/>
 
+    <!-- A SEARCH AT THE TOP OF EVERY FEED (Michael, 09-10: "put a search at the top of each feed
+         that searches that feed"): filters the loaded list by title/blurb/feed as you type — the
+         same in-feed search the 🔎 dialog ran, standing in the open. Gone while a letter/article
+         pane is up. -->
+    <EditText
+        android:id="@+id/feeds_list_search"
+        android:hint="Search this feed"
+        android:inputType="text"
+        android:imeOptions="actionSearch"
+        android:maxLines="1"
+        android:textSize="15sp"
+        android:textColor="#000000"
+        android:textColorHint="#777777"
+        android:background="#F3F1EC"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="8dp"
+        android:layout_marginHorizontal="8dp"
+        android:layout_marginVertical="4dp"
+        android:drawableStart="@android:drawable/ic_menu_search"
+        android:drawablePadding="8dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/feeds_recycler"
         android:layout_width="match_parent"
@@ -211,7 +238,7 @@
             android:paddingHorizontal="6dp"
             android:layout_width="match_parent" android:layout_height="wrap_content">
             <ImageButton android:id="@+id/article_back" android:src="@drawable/ic_nav_left"
-                android:background="?attr/selectableItemBackgroundBorderless"
+                android:background="@drawable/eink_press_bg"
                 android:scaleType="fitCenter" android:padding="8dp"
                 android:contentDescription="@string/reader_prev"
                 android:layout_width="40dp" android:layout_height="40dp"/>
@@ -219,7 +246,7 @@
                 android:textColor="#000000" android:textSize="15sp"
                 android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"/>
             <ImageButton android:id="@+id/article_browser" android:src="@drawable/ic_globe"
-                android:background="?attr/selectableItemBackgroundBorderless"
+                android:background="@drawable/eink_press_bg"
                 android:scaleType="fitCenter" android:padding="9dp"
                 android:contentDescription="@string/feeds_open_external"
                 android:visibility="gone"
@@ -278,7 +305,7 @@
         </LinearLayout>
         <FrameLayout
             android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
-            <WebView android:id="@+id/article_web"
+            <com.toolsboox.plugin.feeds.ot.SelectionMenuWebView android:id="@+id/article_web"
                 android:layout_width="match_parent" android:layout_height="match_parent"/>
             <!-- Page-turn zones: bottom CORNERS only, like thumbing a paper page (same fix as
                  the book reader). The old full-width 200dp band swallowed every touch in the
@@ -321,13 +348,13 @@
         android:padding="2dp">
         <ImageButton android:id="@+id/feeds_page_up" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="5dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/reader_prev"/>
         <ImageButton android:id="@+id/feeds_goto" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="6dp" android:scaleType="fitCenter" android:src="@drawable/ic_menu"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/go_to_title"/>
         <ImageButton android:id="@+id/feeds_page_down" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="5dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/reader_next"/>
     </LinearLayout>
 
     <!-- Persistent floating nav pill (grip = tap to collapse), matching the day/article/
@@ -348,42 +375,42 @@
         <!-- Refresh + settings(wrench) sit left of the ↑ carrot. -->
         <ImageButton android:id="@+id/refresh_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="5dp" android:scaleType="fitCenter" android:src="@drawable/ic_refresh"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_refresh"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/feeds_refresh"/>
         <ImageButton android:id="@+id/settings_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="6dp" android:scaleType="fitCenter" android:src="@drawable/ic_wrench"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_settings"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/feeds_settings"/>
         <!-- Article actions (shown only while reading an article in-pane). -->
         <ImageButton android:id="@+id/feeds_star" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="5dp" android:scaleType="fitCenter" android:src="@drawable/ic_star"
             android:visibility="gone"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_view_starred"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/feeds_view_starred"/>
         <ImageButton android:id="@+id/feeds_note" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="6dp" android:scaleType="fitCenter" android:src="@drawable/ic_pencil"
             android:visibility="gone"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/go_to_title"/>
         <ImageButton android:id="@+id/feeds_parsed" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="5dp" android:scaleType="fitCenter" android:src="@drawable/ic_reader_view"
             android:visibility="gone"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/go_to_title"/>
         <ImageButton android:id="@+id/feeds_tts" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="5dp" android:scaleType="fitCenter" android:src="@drawable/ic_speaker"
             android:visibility="gone"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/go_to_title"/>
         <ImageButton android:id="@+id/feeds_later" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="5dp" android:scaleType="fitCenter" android:src="@drawable/ic_go_later"
             android:visibility="gone"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_add_later"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/feeds_add_later"/>
         <!-- Shrunk article drawer (shown only when the pill is shrunk while reading):
              ⏫ last article · ⏬ next article. The ‹ › pair left this pill 07-24 — paging
              lives in the side nav pill and the corner tap zones; twice was clutter. -->
         <ImageButton android:id="@+id/feeds_dw_prev" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="5dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up2"
             android:visibility="gone"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_prev_article"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/feeds_prev_article"/>
         <ImageButton android:id="@+id/feeds_dw_next" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="5dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down2"
             android:visibility="gone"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/feeds_next_article"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/feeds_next_article"/>
     </LinearLayout>
 
 </FrameLayout>

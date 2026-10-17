@@ -130,7 +130,7 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
             val loc = java.util.Locale.getDefault()
             val at = anchor
             val (day, pat) = withContext(Dispatchers.IO) {
-                val cd = runCatching { calendarDayService.load(root, at, null, loc) }.getOrNull()
+                val cd = runCatching { calendarDayService.loadForDisplay(root, at, null, loc) }.getOrNull()
                     ?: com.toolsboox.plugin.calendar.da.v2.CalendarDay(
                         at.year, at.monthValue, at.dayOfMonth, startHour = null)
                 cd to runCatching { calendarPatternService.load(root, at, loc) }.getOrNull()
@@ -297,7 +297,7 @@ class PostsBrowserFragment @Inject constructor() : ScreenFragment() {
                     types = emptyList()   // the reference site changed — re-derive its types
                     reload()
                 },
-                onManage = { SitesSettingsDialog.show(ctx) { types = emptyList(); reload() } },
+                onManage = { SitesSettingsDialog.show(ctx, present = { d -> showModal(d) }) { types = emptyList(); reload() } },
             )
         )
 

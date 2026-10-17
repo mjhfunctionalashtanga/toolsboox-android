@@ -1,0 +1,47 @@
+Date: Fri, 11 Sep 2026 00:52:17 +0000
+From: =?UTF-8?Q?Support_=C2=B7_Example_Studio?= <support@example.org>
+Message-ID: <BFHf14Y9hOBC6x9JFzXorhCq57uwvRBXb3YoRg5I@mail.example.org>
+X-Mailer: PHPMailer 7.1.1 (https://github.com/PHPMailer/PHPMailer)
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="b1=_BFHf14Y9hOBC6x9JFzXorhCq57uwvRBXb3YoRg5I"
+To: Sam Reader <reader@example.com>
+Subject: =?UTF-8?B?Q29ycHVzOiBhbHQtcXAg4oCUIGNhZsOpIHLDqXN1bcOpIOaXpeacrA==?=
+
+--b1=_BFHf14Y9hOBC6x9JFzXorhCq57uwvRBXb3YoRg5I
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+plain alt line that is fairly long so quoted printable must soft-wrap it at=
+ seventy six characters ok=0Aplain alt line that is fairly long so quoted p=
+rintable must soft-wrap it at seventy six characters ok=0Aplain alt line th=
+at is fairly long so quoted printable must soft-wrap it at seventy six char=
+acters ok=0Aplain alt line that is fairly long so quoted printable must sof=
+t-wrap it at seventy six characters ok=0Aplain alt line that is fairly long=
+ so quoted printable must soft-wrap it at seventy six characters ok=0A
+--b1=_BFHf14Y9hOBC6x9JFzXorhCq57uwvRBXb3YoRg5I
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+<html><body><h1>H=C3=A9llo =E2=80=94 =E2=80=9Cquotes=E2=80=9D</h1><p>Paragr=
+aph one with a <a href=3D"https://example.org/x?a=3D1&b=3D2">link</a>.</p>=
+<p>Line with trailing spaces   </p><p>=3D3D looks like qp</p><p>.leading do=
+t line</p></body></html><html><body><h1>H=C3=A9llo =E2=80=94 =E2=80=9Cquote=
+s=E2=80=9D</h1><p>Paragraph one with a <a href=3D"https://example.org/x?a=
+=3D1&b=3D2">link</a>.</p><p>Line with trailing spaces   </p><p>=3D3D looks =
+like qp</p><p>.leading dot line</p></body></html><html><body><h1>H=C3=A9llo=
+ =E2=80=94 =E2=80=9Cquotes=E2=80=9D</h1><p>Paragraph one with a <a href=3D"=
+https://example.org/x?a=3D1&b=3D2">link</a>.</p><p>Line with trailing spac=
+es   </p><p>=3D3D looks like qp</p><p>.leading dot line</p></body></html><h=
+tml><body><h1>H=C3=A9llo =E2=80=94 =E2=80=9Cquotes=E2=80=9D</h1><p>Paragrap=
+h one with a <a href=3D"https://example.org/x?a=3D1&b=3D2">link</a>.</p><p=
+>Line with trailing spaces   </p><p>=3D3D looks like qp</p><p>.leading dot =
+line</p></body></html><html><body><h1>H=C3=A9llo =E2=80=94 =E2=80=9Cquotes=
+=E2=80=9D</h1><p>Paragraph one with a <a href=3D"https://example.org/x?a=
+=3D1&b=3D2">link</a>.</p><p>Line with trailing spaces   </p><p>=3D3D looks =
+like qp</p><p>.leading dot line</p></body></html><html><body><h1>H=C3=A9llo=
+ =E2=80=94 =E2=80=9Cquotes=E2=80=9D</h1><p>Paragraph one with a <a href=3D"=
+https://example.org/x?a=3D1&b=3D2">link</a>.</p><p>Line with trailing spac=
+es   </p><p>=3D3D looks like qp</p><p>.leading dot line</p></body></html>
+
+--b1=_BFHf14Y9hOBC6x9JFzXorhCq57uwvRBXb3YoRg5I--

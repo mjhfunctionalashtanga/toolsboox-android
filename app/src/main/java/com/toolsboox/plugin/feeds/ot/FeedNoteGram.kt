@@ -28,7 +28,7 @@ import java.util.Locale
 /**
  * A saved article note IS a gram — you only choose its MEDIUM.
  *
- * The old note dialog treated the gram as an option on the side ("🃏 Gram…"), so most notes
+ * The old note dialog treated the gram as an option on the side ("🃏 Pick…"), so most notes
  * ended their lives as a line in the Ledger Log and never became an object you could move,
  * connect, or rework. This flips it: every note saved from the feed reader lands on TODAY's
  * Notes page (page "0") as a placed card, stamped with today's date and where it came from,
@@ -67,34 +67,58 @@ object FeedNoteGram {
         feedTitle: String,
         articleUrl: String,
         captureAv: (Attachment.Kind, (Attachment) -> Unit) -> Unit,
-        logEvent: (excerpt: String?, note: String?) -> Unit
+        logEvent: (excerpt: String?, note: String?) -> Unit,
+        /** ★ Star it — the surface's own star ceremony (article, letter, page). Null hides the
+         *  row: a surfaced garden item is already in the ledger and has nothing to star. */
+        star: (() -> Unit)? = null
     ) {
         val ctx = fragment.requireContext()
         val sel = selection.trim()
-        // With a highlight in hand, the first row is the one-tap keep: the bare passage as a
-        // gram, no note required. The mediums follow for when you have something to add, and
-        // 🔎 hands the passage — or, with nothing highlighted, the whole article — to Ask.
+        // THE CANON (Michael, 09-06 / 09-10: "make sure every annotation surface has 'Save
+        // highlight' with the handwriting, audio capture, etc."). Every annotate surface — the
+        // feeds pane (articles AND letters), the standalone article, The Net, the garden's
+        // picks — offers the SAME seven ways to keep something, in the same order:
+        //   ❝ Save highlight · ✍ Handwrite · 🎤 Voice · 📷 Photo · ⌨ Type · ★ Star · 📝 Onto today's note
+        // A bare highlight is a complete annotation, so ❝ leads (one tap, no note required).
+        // The extras — video, the passage's links, Ask, Educate — follow the seven rather than
+        // interleaving with them, so the hand learns one ladder on every surface.
         val items = mutableListOf<Pair<String, () -> Unit>>()
         if (sel.isNotBlank()) items.add("❝  Save highlight" to {
             saveHighlight(fragment, service, root, sel, articleTitle, feedTitle, articleUrl, logEvent)
         })
-        items.add("✍  Handwriting" to {
+        items.add("✍  Handwrite a note" to {
             inkNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl, logEvent)
         })
-        items.add("⌨  Text" to {
-            textNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl, logEvent)
-        })
-        items.add("🎤  Audio" to {
+        items.add("🎤  Record a voice note" to {
             avNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl,
                 Attachment.Kind.AUDIO, captureAv, logEvent)
+        })
+        items.add("📷  Photo" to {
+            photoNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl,
+                captureAv, logEvent)
+        })
+        items.add("⌨  Type a note" to {
+            textNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl, logEvent)
+        })
+        if (star != null) items.add("★  Star it" to { star() })
+        if (sel.isNotBlank()) items.add("📝  Onto today's note" to {
+            ontoTodaysNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl, logEvent)
         })
         items.add("🎥  Video" to {
             avNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl,
                 Attachment.Kind.VIDEO, captureAv, logEvent)
         })
-        items.add("🖼  Picture" to {
-            photoNote(fragment, service, root, sel, articleTitle, feedTitle, articleUrl,
-                captureAv, logEvent)
+        // 🔗 Highlight a passage, keep ITS links (09-03: "you'd have to be able to highlight
+        // and then select a button to do it… emails, rss, and the net").
+        val selLinks = Regex("""https?://[^\s"'<>)\]]+""").findAll(sel).map { it.value }.distinct().toList()
+        if (selLinks.isNotEmpty()) items.add("🔖  ${selLinks.size} link${if (selLinks.size == 1) "" else "s"} \u2192 Later" to {
+            Thread {
+                for (u in selLinks.take(40)) runCatching {
+                    com.toolsboox.plugin.michaelfilter.nw.IntakePageStore.fileLink(
+                        ctx.applicationContext, java.time.LocalDate.now(), "read", u, u)
+                }
+            }.apply { isDaemon = true }.start()
+            android.widget.Toast.makeText(ctx, "\ud83d\udd17 ${selLinks.size} \u2192 Later", android.widget.Toast.LENGTH_SHORT).show()
         })
         items.add("🔎  Ask about this" to {
             // selection = null means "the whole article"; the bridge goes straight to the Ask
@@ -130,16 +154,24 @@ object FeedNoteGram {
                     text = "Highlight"; textSize = 18f; setTextColor(0xFF000000.toInt())
                     typeface = android.graphics.Typeface.DEFAULT_BOLD
                 })
+                // THE WHOLE HIGHLIGHT (Michael, 09-13: "it could not capture all of the
+                // highlight" — this preview cut it at 280 chars and four lines, so the dialog
+                // itself said the capture was short). It scrolls past six lines instead.
                 addView(android.widget.TextView(ctx).apply {
-                    text = "“${sel.take(280)}”"; textSize = 13f; setTextColor(0xFF444444.toInt())
-                    maxLines = 4; ellipsize = android.text.TextUtils.TruncateAt.END
+                    text = "“$sel”"; textSize = 13f; setTextColor(0xFF444444.toInt())
+                    maxHeight = px(120); isVerticalScrollBarEnabled = true
+                    movementMethod = android.text.method.ScrollingMovementMethod()
                     setPadding(0, px(4), 0, 0)
                 })
             })
         } else {
-            b.setTitle("Note")
+            b.setTitle("🖍  Note")
         }
-        b.show()
+        // Through the modal door, never a bare show(): over an ink-capable surface an unrouted
+        // dialog leaves the hardware pen armed, and the stylus that tapped the notes icon then
+        // taps a menu that cannot hear it — the popup "freezes". [ScreenFragment.showModal]
+        // runs the present hook that pauses the pen; a menu still closes on an outside tap.
+        fragment.showModal(b.create())
     }
 
     /** ❝ Save highlight — the bare passage kept as a gram in ONE tap, no note required: the
@@ -153,6 +185,22 @@ object FeedNoteGram {
     ) {
         logEvent(sel, null)
         placeAsync(fragment, service, root, articleUrl, articleTitle, feedTitle, cardText = sel) {
+            QuoteCardRenderer.render(sel, footer(articleTitle, feedTitle), null, CARD_W, 0)
+        }
+    }
+
+    /** 📝 Onto today's note — the passage as a quote gram ON TODAY'S NOTES PAGE (page "0"),
+     *  whatever the remembered destination is. ❝ keeps the passage where your grams have been
+     *  going; this is the explicit "put it on the page I'm writing" — with the same Log line. */
+    private fun ontoTodaysNote(
+        fragment: ScreenFragment, service: CalendarDayService, root: File, sel: String,
+        articleTitle: String, feedTitle: String, articleUrl: String,
+        logEvent: (String?, String?) -> Unit
+    ) {
+        logEvent(sel, null)
+        placeAsync(fragment, service, root, articleUrl, articleTitle, feedTitle, cardText = sel,
+            destination = com.toolsboox.plugin.calendar.ot.GramDestinations.Destination(
+                "📝", "Today's notes", NOTES_PAGE)) {
             QuoteCardRenderer.render(sel, footer(articleTitle, feedTitle), null, CARD_W, 0)
         }
     }
@@ -180,12 +228,12 @@ object FeedNoteGram {
 
     /** "Title · Feed" — the same both-names label the gram studio path uses, so a card from
      *  The Guardian sits with the others from The Guardian. */
-    private fun label(articleTitle: String, feedTitle: String): String =
+    fun label(articleTitle: String, feedTitle: String): String =
         listOf(articleTitle, feedTitle).filter { it.isNotBlank() }.joinToString(" · ")
 
     /** The footer line: "date · source" — today's date stamped to the note, as asked. */
-    private fun footer(articleTitle: String, feedTitle: String): String {
-        val date = LocalDate.now().format(DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.getDefault()))
+    fun footer(articleTitle: String, feedTitle: String, day: LocalDate = LocalDate.now()): String {
+        val date = day.format(DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.getDefault()))
         return listOf(date, label(articleTitle, feedTitle)).filter { it.isNotBlank() }.joinToString(" · ")
     }
 
@@ -198,31 +246,44 @@ object FeedNoteGram {
         articleTitle: String, feedTitle: String, articleUrl: String,
         logEvent: (String?, String?) -> Unit
     ) {
+        typeNoteDialog(fragment, sel) { n ->
+            if (n.isBlank() && sel.isBlank()) return@typeNoteDialog
+            logEvent(sel.ifBlank { null }, n.ifBlank { null })
+            val body = sel.ifBlank { n }                       // highlight leads; else the note
+            val note = if (sel.isNotBlank()) n.ifBlank { null } else null
+            placeAsync(fragment, service, root, articleUrl, articleTitle, feedTitle, cardText = body) {
+                QuoteCardRenderer.render(body, footer(articleTitle, feedTitle), note, CARD_W, 0)
+            }
+        }
+    }
+
+    /**
+     * The typed-note dialog, alone — [onSave] hears the trimmed words (blank allowed). [initial]
+     * prefills it: editing the note already on an article highlight (Michael 2026-10-12 — the note
+     * joins that highlight's one card; ArticleHighlights) opens with the words you wrote.
+     */
+    fun typeNoteDialog(
+        fragment: ScreenFragment, sel: String, initial: String = "",
+        title: String = if (sel.isNotBlank()) "Highlight + note" else "Note",
+        onSave: (String) -> Unit
+    ) {
         val ctx = fragment.requireContext()
         val dp = ctx.resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
         val input = EditText(ctx).apply {
             hint = "Note"; setSingleLine(false); minLines = 3; gravity = android.view.Gravity.TOP
+            setText(initial); setSelection(initial.length)
         }
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(px(20), px(8), px(20), 0); addView(input)
         }
         val b = AlertDialog.Builder(ModalScale.wrap(ctx))
-            .setTitle(if (sel.isNotBlank()) "Highlight + note" else "Note")
+            .setTitle(title)
             .setView(box)
-            .setPositiveButton("Save") { _, _ ->
-                val n = input.text.toString().trim()
-                if (n.isBlank() && sel.isBlank()) return@setPositiveButton
-                logEvent(sel.ifBlank { null }, n.ifBlank { null })
-                val body = sel.ifBlank { n }                       // highlight leads; else the note
-                val note = if (sel.isNotBlank()) n.ifBlank { null } else null
-                placeAsync(fragment, service, root, articleUrl, articleTitle, feedTitle, cardText = body) {
-                    QuoteCardRenderer.render(body, footer(articleTitle, feedTitle), note, CARD_W, 0)
-                }
-            }
+            .setPositiveButton("Save") { _, _ -> onSave(input.text.toString().trim()) }
             .setNegativeButton(android.R.string.cancel, null)
-        if (sel.isNotBlank()) b.setMessage("“${sel.take(400)}”")
+        if (sel.isNotBlank()) b.setMessage("“$sel”")   // the whole passage; the dialog scrolls
         // A note being typed is work — a stray touch outside must not throw it away. Cancel and
         // the back gesture remain the ways out.
         fragment.showGuardedModal(b.create())
@@ -237,6 +298,20 @@ object FeedNoteGram {
         articleTitle: String, feedTitle: String, articleUrl: String,
         logEvent: (String?, String?) -> Unit
     ) {
+        inkNoteDialog(fragment, sel) { written ->
+            if (written == null && sel.isBlank()) return@inkNoteDialog
+            if (sel.isNotBlank()) logEvent(sel, null)     // the passage still earns its Log line
+            placeAsync(fragment, service, root, articleUrl, articleTitle, feedTitle) {
+                inkCard(written, sel.ifBlank { null }, footer(articleTitle, feedTitle))
+            }
+        }
+    }
+
+    /**
+     * The shared ink pad in its guarded dialog, alone — [onSave] hears the rendered ink (null:
+     * nothing written). Save sits at the TOP, out of the writing hand's way.
+     */
+    fun inkNoteDialog(fragment: ScreenFragment, sel: String, onSave: (Bitmap?) -> Unit) {
         val ctx = fragment.requireContext()
         val dp = ctx.resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
@@ -268,13 +343,10 @@ object FeedNoteGram {
                 setTextColor(0xFFFFFFFF.toInt()); setBackgroundColor(0xFF000000.toInt())
                 setPadding(px(12), px(6), px(12), px(6))
                 setOnClickListener {
+                    isEnabled = false   // first tap wins
                     val written = pad.render()
-                    if (written == null && sel.isBlank()) { dialog.dismiss(); return@setOnClickListener }
-                    if (sel.isNotBlank()) logEvent(sel, null)     // the passage still earns its Log line
                     dialog.dismiss()
-                    placeAsync(fragment, service, root, articleUrl, articleTitle, feedTitle) {
-                        inkCard(written, sel.ifBlank { null }, footer(articleTitle, feedTitle))
-                    }
+                    onSave(written)
                 }
             })
         }
@@ -282,7 +354,9 @@ object FeedNoteGram {
             orientation = LinearLayout.VERTICAL; setPadding(px(16), px(10), px(16), px(10))
             addView(topBar)
             if (sel.isNotBlank()) addView(android.widget.TextView(ctx).apply {
-                text = "“${sel.take(200)}”"; textSize = 13f; setTextColor(0xFF444444.toInt())
+                text = "“$sel”"; textSize = 13f; setTextColor(0xFF444444.toInt())
+                maxHeight = px(96); isVerticalScrollBarEnabled = true
+                movementMethod = android.text.method.ScrollingMovementMethod()
                 setPadding(0, 0, 0, px(6))
             })
             addView(InkPadView.penBar(ctx, pad)); addView(frame)
@@ -292,6 +366,61 @@ object FeedNoteGram {
         // a slab, and that touch must not cost the ink. Cancel / SAVE up top and the back
         // gesture remain the ways out.
         fragment.showGuardedModal(dialog)
+    }
+
+    /**
+     * An article highlight's ONE card face, drawn from everything said about it (Michael
+     * 2026-10-12: a note "goes onto the SAME pick/card"): the passage up top in the quote serif,
+     * the typed note under it, then the pictures (handwriting first, then photos), a line naming
+     * any voice or video note, and the date·source footer — the quote card's siblings, one face.
+     */
+    fun noteCard(quote: String, note: String?, images: List<Bitmap>, mediaLine: String?, footerText: String): Bitmap {
+        if (images.isEmpty()) {
+            val words = listOfNotNull(note?.takeIf { it.isNotBlank() }, mediaLine?.takeIf { it.isNotBlank() })
+                .joinToString("\n").ifBlank { null }
+            return QuoteCardRenderer.render(quote, footerText, words, CARD_W, 0)
+        }
+        val PAD = CARD_W * 0.089f
+        val contentW = (CARD_W - 2 * PAD).toInt()
+        val quotePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ink; typeface = Typeface.SERIF
+            textSize = if (quote.length > 220) 48f else 60f
+        }
+        val notePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = muted; typeface = Typeface.create(Typeface.SERIF, Typeface.ITALIC); textSize = 40f
+        }
+        fun layout(t: String, p: TextPaint) = StaticLayout.Builder.obtain(t, 0, t.length, p, contentW)
+            .setLineSpacing(10f, 1f).build()
+        val quoteLayout = quote.takeIf { it.isNotBlank() }?.let { layout("“$it”", quotePaint) }
+        val words = listOfNotNull(note?.takeIf { it.isNotBlank() }, mediaLine?.takeIf { it.isNotBlank() }).joinToString("\n")
+        val noteLayout = words.takeIf { it.isNotBlank() }?.let { layout(it, notePaint) }
+        val imgHeights = images.map { contentW.toFloat() * it.height / it.width.coerceAtLeast(1) }
+        val footerBand = 120f
+        var height = PAD
+        if (quoteLayout != null) height += quoteLayout.height + 36f
+        if (noteLayout != null) height += noteLayout.height + 30f
+        height += imgHeights.sum() + 24f * images.size + footerBand + PAD
+        val h = height.toInt().coerceIn(560, 4000)
+        val bmp = Bitmap.createBitmap(CARD_W, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        canvas.drawColor(paper)
+        var y = PAD
+        if (quoteLayout != null) {
+            canvas.save(); canvas.translate(PAD, y); quoteLayout.draw(canvas); canvas.restore()
+            y += quoteLayout.height + 36f
+        }
+        if (noteLayout != null) {
+            canvas.save(); canvas.translate(PAD, y); noteLayout.draw(canvas); canvas.restore()
+            y += noteLayout.height + 30f
+        }
+        for ((i, img) in images.withIndex()) {
+            if (y + imgHeights[i] > h - footerBand - PAD) break
+            canvas.drawBitmap(img, null, android.graphics.RectF(PAD, y, PAD + contentW, y + imgHeights[i]),
+                Paint(Paint.FILTER_BITMAP_FLAG))
+            y += imgHeights[i] + 24f
+        }
+        drawFooter(canvas, h, footerText)
+        return bmp
     }
 
     /**
@@ -435,7 +564,7 @@ object FeedNoteGram {
 
     /** Decode a local capture, downsampled so the long edge is ≤1024 px — [fetchImage]'s twin for
      *  a file the camera or gallery already landed in the attachments dir. */
-    private fun decodeLocal(file: File): Bitmap? = runCatching {
+    internal fun decodeLocal(file: File): Bitmap? = runCatching {
         if (!file.exists()) return@runCatching null
         val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
         android.graphics.BitmapFactory.decodeFile(file.path, bounds)
@@ -455,7 +584,7 @@ object FeedNoteGram {
     // --- ⁂ Photo gram (hold on a picture) ------------------------------------------------------
 
     /**
-     * Where the last gram went — the remembered default, so "Save as photo gram" is one tap and
+     * Where the last gram went — the remembered default, so "Save as photo pick" is one tap and
      * lands where you've been working. The memory itself moved to
      * [com.toolsboox.plugin.calendar.ot.GramDestinations] (same preference keys, so nothing is
      * forgotten on upgrade): one vocabulary, one memory, shared with every other capture path.
@@ -463,9 +592,9 @@ object FeedNoteGram {
     private fun lastDestination(ctx: android.content.Context) =
         com.toolsboox.plugin.calendar.ot.GramDestinations.inbox(ctx)
 
-    /** The one-tap menu label, naming where the gram will land: "⁂  Save as photo gram → …". */
+    /** The one-tap menu label, naming where the gram will land: "⁂  Save as photo pick → …". */
     fun photoGramLabel(ctx: android.content.Context): String =
-        "⁂  Save as photo gram → ${lastDestination(ctx).name}"
+        "⁂  Save as photo pick → ${lastDestination(ctx).name}"
 
     /** Menu for a bare image held in the reader (SRC_IMAGE_TYPE — no link under it). */
     fun showImageMenu(
@@ -473,16 +602,18 @@ object FeedNoteGram {
         imageUrl: String, articleTitle: String, feedTitle: String, articleUrl: String
     ) {
         val ctx = fragment.requireContext()
-        AlertDialog.Builder(ModalScale.wrap(ctx))
+        // Same modal door as [show] — this menu answers a stylus HOLD on an image, the one
+        // gesture guaranteed to come from the pen the present hook must pause.
+        fragment.showModal(AlertDialog.Builder(ModalScale.wrap(ctx))
             .setTitle(imageUrl)
-            .setItems(arrayOf(photoGramLabel(ctx), "⁂  Photo gram to…")) { _, which ->
+            .setItems(arrayOf(photoGramLabel(ctx), "⁂  Photo pick to…")) { _, which ->
                 when (which) {
                     0 -> savePhotoGram(fragment, service, root, imageUrl, articleTitle, feedTitle, articleUrl)
                     1 -> photoGramTo(fragment, service, root, imageUrl, articleTitle, feedTitle, articleUrl)
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create())
     }
 
     /** Choose the destination explicitly — the one funnel, and it becomes the remembered
@@ -493,7 +624,7 @@ object FeedNoteGram {
     ) {
         val ctx = fragment.requireContext()
         com.toolsboox.plugin.calendar.ot.GramDestinations.choose(
-            ctx, title = "Photo gram to…", fragment = fragment
+            ctx, title = "Photo pick to…", fragment = fragment
         ) { dest ->
             savePhotoGram(fragment, service, root, imageUrl, articleTitle, feedTitle, articleUrl, dest)
         }
@@ -529,7 +660,7 @@ object FeedNoteGram {
             }
             val ok = runCatching {
                 PickingsPlacement.place(
-                    service, root, photoCard(photo, foot), LocalDate.now(), dest.key,
+                    service, root, photoCard(photo, foot), dest.date ?: LocalDate.now(), dest.key,
                     sourceLink = articleUrl.takeIf { it.startsWith("http", ignoreCase = true) } ?: imageUrl,
                     sourceLabel = label(articleTitle, feedTitle), sourceFeed = feedTitle,
                     intakeKind = dest.kind
@@ -540,7 +671,7 @@ object FeedNoteGram {
     }
 
     /** Download + decode the image, downsampled so the long edge is ≤1024 px. Null on any failure. */
-    private fun fetchImage(url: String): Bitmap? = runCatching {
+    internal fun fetchImage(url: String): Bitmap? = runCatching {
         val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
         conn.connectTimeout = 10_000; conn.readTimeout = 15_000
         conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 11) LedgerReader/1.0")
@@ -561,7 +692,7 @@ object FeedNoteGram {
 
     /** The photo on the paper ground with the divider + date·source footer — sibling face to the
      *  quote and ink cards; the tape comes from CardTreatment at placement. */
-    private fun photoCard(photo: Bitmap, footerText: String): Bitmap {
+    internal fun photoCard(photo: Bitmap, footerText: String): Bitmap {
         val PAD = CARD_W * 0.089f
         val contentW = (CARD_W - 2 * PAD)
         val photoH = contentW * photo.height / photo.width.coerceAtLeast(1)
@@ -608,7 +739,8 @@ object FeedNoteGram {
         // Dedupe by sourceLink. Read-before-place is unlocked, but stars arrive at human speed
         // and re-stars route through this same path, so a stale read can't stack twins in practice.
         if (url.isNotBlank()) {
-            val day = service.load(root, today, null, Locale.getDefault())
+            // Read-only dedupe peek; the placement below is the writer (and refuses an unreadable day).
+            val day = service.loadForDisplay(root, today, null, Locale.getDefault())
             if (day.imageElements.any { it.page == INTAKE_PAGE && it.sourceLink == url }) {
                 // Say so — a silent no-op reads as a dead star. The gram is already on the
                 // register (arranged, annotated), which is exactly why nothing new is placed.
@@ -666,12 +798,15 @@ object FeedNoteGram {
     private fun placeAsync(
         fragment: ScreenFragment, service: CalendarDayService, root: File,
         articleUrl: String, articleTitle: String, feedTitle: String,
-        cardText: String = "", face: () -> Bitmap
+        cardText: String = "",
+        /** A named landing place; null = the remembered one ([GramDestinations.inbox]). */
+        destination: com.toolsboox.plugin.calendar.ot.GramDestinations.Destination? = null,
+        face: () -> Bitmap
     ) {
         val src = articleUrl.takeIf { it.startsWith("http", ignoreCase = true) } ?: ""
         val appCtx = fragment.requireContext().applicationContext
         Thread {
-            val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.inbox(appCtx)
+            val dest = destination ?: com.toolsboox.plugin.calendar.ot.GramDestinations.inbox(appCtx)
             val ok = runCatching {
                 PickingsPlacement.place(
                     service, root, face(), LocalDate.now(), dest.key,
@@ -694,7 +829,7 @@ object FeedNoteGram {
 
     /** Offer the trip rather than taking it — you were mid-article, so staying is the default
      *  and the page the gram landed on is one tap away. */
-    private fun offerTrip(fragment: ScreenFragment, pageKey: String, name: String) {
+    internal fun offerTrip(fragment: ScreenFragment, pageKey: String, name: String) {
         runCatching {
             fragment.requireActivity().runOnUiThread {
                 runCatching {

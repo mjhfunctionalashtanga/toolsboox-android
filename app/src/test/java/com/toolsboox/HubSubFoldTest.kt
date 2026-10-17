@@ -27,6 +27,14 @@ class HubSubFoldTest {
     }
 
     @Test
+    fun `a leading article is styling too`() {
+        // "📧  Mail" → "📧  The Mail" (Michael 2026-10-11) keeps the remembered mailbox fold.
+        assertEquals("hub_sub_open_mail", HubSubFold.prefKey("📧  The Mail"))
+        // Only a LEADING article: a "the" inside a name is part of the name.
+        assertEquals("hub_sub_open_over_the_wall", HubSubFold.prefKey("Over the wall"))
+    }
+
+    @Test
     fun `case is styling too`() {
         assertEquals(HubSubFold.prefKey("LATER LIST"), HubSubFold.prefKey("Later List"))
     }

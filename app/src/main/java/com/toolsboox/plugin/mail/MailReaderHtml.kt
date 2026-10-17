@@ -9,13 +9,68 @@ package com.toolsboox.plugin.mail
  * is what e-ink actually wants: a marketing email's pale grey on off-white dithers into mud on a
  * screen with no backlight and sixteen greys.
  *
- * [blockRemote] is the privacy half and runs on both.
+ * [blockRemote] is the privacy half and runs on both; [disarm] is the other half of it.
+ *
+ * A LETTER RUNS NO CODE — but the pane's WebView now reads letters with JavaScript ON, because
+ * that is the only way to read the passage you highlighted (09-06: "when I highlight and click
+ * the pin… in the email reader, it doesn't give me just the option to leave the highlighted
+ * text" — the selection probe is JavaScript, and with scripts off it could never run). So the
+ * no-code promise moves from the WebView setting into the markup: [disarm] strips everything
+ * executable out of the message before either reading shapes it, and the document loads on no
+ * origin with no file or content access. What is left cannot run, whatever the setting says.
  */
 object MailReaderHtml {
 
-    /** Scripts never run in mail. Stripped from every reading before anything else happens. */
+    /** Belt to [disarm]'s braces: the raw regex pass still runs first, so a fragment jsoup
+     *  cannot parse cleanly has its <script> blocks gone before anything else happens. */
     private val SCRIPT = Regex("""<script\b.*?</script>""", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
-    private val HEAD_OPEN = Regex("""<head[^>]*>""", RegexOption.IGNORE_CASE)
+
+    /** URL schemes that are code, not places. Anything in an href/src/action that starts with
+     *  one of these is dropped whole. `ledger:` too (2026-10-10, critique P5): the reader's own
+     *  doors (load images, attachments, the thread cards) are ledger:// links the app adds AFTER
+     *  this pass — a sender's markup must never be able to press them. */
+    private val CODE_SCHEMES = listOf("javascript:", "vbscript:", "data:text/html", "livescript:", "ledger:")
+
+    /**
+     * Everything executable out of the letter, the design left standing.
+     *
+     * Not a Safelist clean — that would throw away the sender's inline styles and tables, which
+     * is precisely what As-sent exists to keep. This is a targeted pass over the parsed tree:
+     *  - `script`, `noscript`, `iframe`, `frame`, `object`, `embed`, `applet`, `base` go;
+     *  - `link` and `meta[http-equiv]` go (a remote stylesheet is a tracking request the image
+     *    block never covered; a refresh meta is a navigation the reader did not ask for);
+     *  - every `on*` attribute goes, on every element;
+     *  - `href`/`src`/`action`/`formaction`/`xlink:href` carrying a code scheme go.
+     * Output is the whole document again (head and all) so the readings' `inject` still finds
+     * the head it looks for. jsoup normalises a head-less fragment into a full document, which
+     * `inject` already tolerated either way.
+     */
+    fun disarm(raw: String): String {
+        val doc = runCatching { org.jsoup.Jsoup.parse(SCRIPT.replace(raw, "")) }.getOrNull()
+            ?: return SCRIPT.replace(raw, "")
+        doc.select("script, noscript, iframe, frame, frameset, object, embed, applet, base, link, meta[http-equiv]").remove()
+        for (el in doc.allElements) {
+            val attrs = el.attributes()
+            val drop = mutableListOf<String>()
+            for (a in attrs) {
+                val key = a.key.lowercase()
+                if (key.startsWith("on")) { drop += a.key; continue }
+                if (key in URL_ATTRS) {
+                    val v = a.value.trim().lowercase().replace(Regex("[\\s\\u0000-\\u001f]"), "")
+                    if (CODE_SCHEMES.any { v.startsWith(it) }) drop += a.key
+                }
+            }
+            for (k in drop) el.removeAttr(k)
+        }
+        doc.outputSettings().prettyPrint(false)
+        return doc.outerHtml()
+    }
+
+    private val URL_ATTRS = setOf("href", "src", "action", "formaction", "xlink:href", "poster", "background")
+    // `<head(\s…)?>` — NOT `<head[^>]*>`, which happily matched `<header>` and planted the
+    // injected styles inside body content on head-less fragments (the iPad found this the hard
+    // way; both forks carried it).
+    private val HEAD_OPEN = Regex("""<head(\s[^>]*)?>""", RegexOption.IGNORE_CASE)
 
     private val IMG_SRC = Regex("""(<img[^>]+)\bsrc(\s*=\s*["']https?://)""", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
     private val IMG_SRCSET = Regex("""(<img[^>]+)\bsrcset(\s*=)""", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
@@ -54,19 +109,26 @@ object MailReaderHtml {
         """.trimIndent())
     }
 
-    /** The message as its sender built it, fitted to the screen. */
-    fun asSent(raw: String): String = inject(SCRIPT.replace(raw, ""), """
+    /**
+     * The message as its sender built it, fitted to the screen.
+     *
+     * The fit rides at the document's END, not the head: injected at head-start the sender's own
+     * stylesheet loads after it and out-cascades the caps (equal specificity, later wins) — the
+     * "doesn't scale to the window" report on both forks. And the caps cover `body *`, because
+     * designed mail's fixed/min-width 600px WRAPPER DIVS are what actually push the page sideways
+     * — img/table/td alone let every wrapper sail past.
+     */
+    fun asSent(raw: String): String = inject(disarm(raw), """
         <meta name="viewport" content="width=device-width, initial-scale=1">
+    """.trimIndent()) + """
         <style>
           html { -webkit-text-size-adjust: 100%; }
           body { margin: 0; }
-          /* Designed mail is built for a ~600px desktop column. Keep the design; just never let it
-             push the page sideways — a sideways page on e-ink is a page you can't read. */
           html, body { overflow-x: hidden; }
-          img, video, table, td, th { max-width: 100% !important; }
+          body * { max-width: 100% !important; min-width: 0 !important; }
           img, video { height: auto !important; }
         </style>
-    """.trimIndent())
+    """.trimIndent()
 
     /**
      * The same letter, reflowed for e-ink: one column, pure black on white, generous line height,
@@ -76,8 +138,9 @@ object MailReaderHtml {
      * greys and tinted panels that a backlit LCD renders as "subtle" and an e-ink panel renders as
      * illegible, so Reader takes the words and drops the palette.
      */
-    fun reader(raw: String): String = inject(SCRIPT.replace(raw, ""), """
+    fun reader(raw: String): String = inject(disarm(raw), """
         <meta name="viewport" content="width=device-width, initial-scale=1">
+    """.trimIndent()) + """
         <style>
           html { -webkit-text-size-adjust: 100%; }
           body {
@@ -100,7 +163,7 @@ object MailReaderHtml {
           /* A newsletter's footer is half its bytes and none of its point. */
           [class*="footer"], [id*="footer"], [class*="unsubscribe"] { opacity: .6; }
         </style>
-    """.trimIndent())
+    """.trimIndent()
 
     /** Put [head] inside the document's head, or wrap a bare fragment in a document that has one. */
     private fun inject(html: String, head: String): String {

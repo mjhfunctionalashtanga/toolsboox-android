@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- THE BOTTOM PILL's frame (Michael 2026-10-11: "more of an oblong than a circle"): opaque white,
+     a 2dp black outline (plan v6 §2.7, and iOS's pill: Capsule stroked 2pt), ends fully rounded at
+     every Compact size — no material, nothing animated: one cheap e-ink draw. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#FFFFFF"/>
+    <corners android:radius="24dp"/>
+    <stroke android:width="2dp" android:color="#000000"/>
+</shape>

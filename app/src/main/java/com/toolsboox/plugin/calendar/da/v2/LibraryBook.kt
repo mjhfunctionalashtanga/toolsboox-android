@@ -56,15 +56,25 @@ data class LibraryBook(
     /** Epoch ms of the add. */
     var added: Long = 0L,
     /** Delete tombstone (0 = live) so an id-union merge keeps deletes across devices. */
-    var deletedAt: Long = 0L
+    var deletedAt: Long = 0L,
+    /**
+     * When the book's BYTES were last confirmed on the hub (an upload landing, a fetch
+     * succeeding); 0 = unknown. ADDITIVE (2026-08-27, the wants ruling): a legacy record's 0
+     * means "could be either" — an entry-only declared-tree ghost and an old app-directory book
+     * read the same — so 0 permits a fetch attempt (the historical behavior) and invites one
+     * confirming upload from a device holding the bytes, after which the stamp stops the
+     * retries. Never a merge-identity field beyond its stamp contribution.
+     */
+    var bytesAt: Long = 0L
 ) {
     val isDeleted: Boolean get() = deletedAt > 0L
 
     /**
-     * The record's clock: the newer of its two possible acts. `added` and `deletedAt` are both
-     * writes; whichever happened later is when this record last said something true.
+     * The record's clock: the newest of its possible acts. `added`, `deletedAt` and `bytesAt`
+     * are all writes; whichever happened last is when this record last said something true —
+     * which is what lets a bytes-confirmation travel the fleet without an `updated` field.
      */
-    val stamp: Long get() = maxOf(added, deletedAt)
+    val stamp: Long get() = maxOf(added, deletedAt, bytesAt)
 
     /**
      * Where the bytes live on the hub: `books/<folder>/<name>`, the shelf's folder structure

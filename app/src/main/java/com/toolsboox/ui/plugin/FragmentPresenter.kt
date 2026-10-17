@@ -93,11 +93,30 @@ abstract class FragmentPresenter {
      * @param fragment the fragment
      * @param fallback the fallback path component
      */
+    companion object {
+        /** The process's application context and the last Documents root it resolved — the
+         *  fallbacks a detached fragment can no longer provide (see rootPath). */
+        @Volatile private var cachedAppContext: android.content.Context? = null
+        @Volatile private var cachedDocumentsRoot: File? = null
+    }
+
     protected fun rootPath(fragment: Fragment, fallback: String): File {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             when (fallback) {
                 Environment.DIRECTORY_DOCUMENTS -> {
-                    fragment.requireContext().getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)!!
+                    // NEVER `requireContext()!!` here (audit 09-10): every caller runs on
+                    // Dispatchers.IO inside GlobalScope with only IOException caught, and the
+                    // day page's per-stroke save is one of them — lift the pen, back out, and the
+                    // fragment is detached when the job runs: IllegalStateException, uncaught in
+                    // GlobalScope, process gone with the stroke. The app context outlives the
+                    // fragment, and the last resolved root stands in when even that is missing.
+                    val ctx = fragment.context?.applicationContext ?: cachedAppContext
+                    cachedAppContext = ctx ?: cachedAppContext
+                    val root = ctx?.let { it.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: it.filesDir }
+                        ?: cachedDocumentsRoot
+                        ?: File(Environment.getExternalStorageDirectory(), "toolsBoox")
+                    cachedDocumentsRoot = root
+                    root
                 }
 
                 else -> {

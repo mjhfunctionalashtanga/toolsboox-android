@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Ledgable's own About: the version you're on, the door to the latest build, and the
+     lineage owed to the upstream project ("The about is still about the original author…
+     I'd say we convert that about page into a place where the latest version can be
+     grabbed", 08-22). -->
 <ScrollView
         xmlns:android="http://schemas.android.com/apk/res/android"
         xmlns:tools="http://schemas.android.com/tools"
@@ -26,177 +30,66 @@
                 tools:visibility="visible"/>
 
         <TextView
-                android:id="@+id/aboutMeTitle"
+                android:id="@+id/aboutAppTitle"
+                android:layout_width="fill_parent"
+                android:layout_height="wrap_content"
+                android:gravity="start"
+                android:textSize="26sp"
+                android:textStyle="bold"
+                android:text="@string/about_app_title"/>
+
+        <TextView
+                android:id="@+id/aboutVersion"
+                android:layout_marginTop="6dp"
+                android:layout_width="fill_parent"
+                android:layout_height="wrap_content"
+                android:gravity="start"
+                android:textSize="16sp"
+                tools:text="Version 1.06.72-00"/>
+
+        <Button
+                android:id="@+id/aboutUpdateButton"
+                android:layout_marginTop="16dp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="16sp"
+                android:text="@string/about_update_button"/>
+
+        <TextView
+                android:id="@+id/aboutUpdateHint"
+                android:layout_marginTop="8dp"
+                android:layout_width="fill_parent"
+                android:layout_height="wrap_content"
+                android:gravity="start"
+                android:textSize="13sp"
+                android:text="@string/about_update_hint"/>
+
+        <TextView
+                android:id="@+id/aboutLineageTitle"
+                android:layout_marginTop="28dp"
                 android:layout_width="fill_parent"
                 android:layout_height="wrap_content"
                 android:gravity="start"
                 android:textSize="20sp"
-                android:maxLines="4"
-                android:singleLine="false"
-                android:text="@string/about_about_me_title"/>
+                android:text="@string/about_lineage_title"/>
 
         <TextView
-                android:id="@+id/aboutMeMessage"
+                android:id="@+id/aboutLineageMessage"
                 android:layout_marginTop="10dp"
                 android:layout_width="fill_parent"
                 android:layout_height="wrap_content"
                 android:gravity="start"
-                android:maxLines="4"
                 android:singleLine="false"
-                android:text="@string/about_about_me_message"/>
+                android:text="@string/about_lineage_message"/>
 
         <TextView
-                android:id="@+id/aboutMeLink"
+                android:id="@+id/aboutLineageLink"
+                android:layout_marginTop="6dp"
                 android:layout_width="fill_parent"
                 android:layout_height="wrap_content"
                 android:gravity="start"
-                android:maxLines="4"
                 android:singleLine="false"
                 android:text=""/>
-
-        <TextView
-                android:id="@+id/projectHomeTitle"
-                android:layout_marginTop="20dp"
-                android:layout_width="fill_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start"
-                android:textSize="20sp"
-                android:maxLines="4"
-                android:singleLine="false"
-                android:text="@string/about_project_home_title"/>
-
-        <TextView
-                android:id="@+id/projectHomeMessage"
-                android:layout_marginTop="10dp"
-                android:layout_width="fill_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start"
-                android:maxLines="4"
-                android:singleLine="false"
-                android:text="@string/about_project_home_message"/>
-
-        <TextView
-                android:id="@+id/projectHomeLink"
-                android:layout_width="fill_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start"
-                android:maxLines="4"
-                android:singleLine="false"
-                android:text=""/>
-
-        <TextView
-                android:id="@+id/otherLinksTitle"
-                android:layout_marginTop="20dp"
-                android:layout_width="fill_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start"
-                android:textSize="20sp"
-                android:maxLines="4"
-                android:singleLine="false"
-                android:text="@string/about_other_links_title"/>
-
-        <TextView
-                android:id="@+id/otherLinksWebpage"
-                android:layout_marginTop="10dp"
-                android:layout_width="fill_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start"
-                android:maxLines="4"
-                android:singleLine="false"
-                android:text="@string/about_other_links_webpage_link"/>
-
-        <TextView
-                android:id="@+id/otherLinksTranslate"
-                android:layout_marginTop="10dp"
-                android:layout_width="fill_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start"
-                android:maxLines="4"
-                android:singleLine="false"
-                android:text="@string/about_other_links_translate_link"/>
-
-        <TextView
-                android:id="@+id/otherLinksFacebook"
-                android:layout_marginTop="10dp"
-                android:layout_width="fill_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start"
-                android:maxLines="4"
-                android:singleLine="false"
-                android:text="@string/about_other_links_facebook_link"/>
-
-        <TextView
-                android:id="@+id/otherLinksDiscord"
-                android:layout_marginTop="10dp"
-                android:layout_width="fill_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start"
-                android:maxLines="4"
-                android:singleLine="false"
-                android:text="@string/about_other_links_discord_link"/>
-
-        <TextView
-                android:id="@+id/projectHelpTitle"
-                android:layout_marginTop="20dp"
-                android:layout_width="fill_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start"
-                android:textSize="20sp"
-                android:maxLines="4"
-                android:singleLine="false"
-                android:text="@string/about_project_help_title"/>
-
-        <TextView
-                android:id="@+id/projectHelpMessage1"
-                android:layout_marginTop="10dp"
-                android:layout_width="fill_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start"
-                android:maxLines="4"
-                android:singleLine="false"
-                android:text="@string/about_project_help_message_1"/>
-
-        <TextView
-                android:id="@+id/projectHelpMessage2"
-                android:layout_marginTop="10dp"
-                android:layout_width="fill_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start"
-                android:maxLines="4"
-                android:singleLine="false"
-                android:text="@string/about_project_help_message_2"/>
-
-        <TextView
-                android:id="@+id/projectHelpMessage3"
-                android:layout_marginTop="10dp"
-                android:layout_width="fill_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start"
-                android:maxLines="4"
-                android:singleLine="false"
-                android:text="@string/about_project_help_message_3"/>
-
-        <TextView
-                android:id="@+id/this_translation_title"
-                android:layout_marginTop="20dp"
-                android:layout_width="fill_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start"
-                android:textSize="20sp"
-                android:maxLines="4"
-                android:singleLine="false"
-                android:text="@string/about_this_translation_contributors_title"/>
-
-        <TextView
-                android:id="@+id/this_translation_text"
-                android:layout_marginTop="10dp"
-                android:layout_marginBottom="30dp"
-                android:layout_width="fill_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start"
-                android:maxLines="4"
-                android:singleLine="false"
-                android:text="@string/about_this_translation_contributors_list"/>
 
     </LinearLayout>
 </ScrollView>

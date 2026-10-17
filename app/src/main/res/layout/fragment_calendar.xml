@@ -34,6 +34,8 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent">
 
+        <!-- The date strip takes the whole top; the panel column starts beneath it (Michael
+             2026-10-10). CalendarUtils.updateToolbar re-states this per dock side. -->
         <ImageView
                 android:id="@+id/navigatorImageView"
                 android:layout_width="0dp"
@@ -42,7 +44,7 @@
                 android:contentDescription="@string/calendar_navigator_image"
 
                 app:layout_constraintTop_toTopOf="parent"
-                app:layout_constraintStart_toEndOf="@id/toolbarDrawing"
+                app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toEndOf="parent"/>
 
         <!-- iPad-style jump buttons by the carets: left = apps/almanac, right = sections.
@@ -111,13 +113,13 @@
                 android:contentDescription="@null"/>
             <ImageButton android:id="@+id/navUp" android:layout_width="30dp" android:layout_height="30dp"
                 android:padding="5dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
-                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_group_day"/>
+                android:background="@drawable/eink_press_bg" android:contentDescription="@string/go_group_day"/>
             <ImageButton android:id="@+id/navGoto" android:layout_width="30dp" android:layout_height="30dp"
                 android:padding="7dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_today"
-                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+                android:background="@drawable/eink_press_bg" android:contentDescription="@string/go_to_title"/>
             <ImageButton android:id="@+id/navDown" android:layout_width="30dp" android:layout_height="30dp"
                 android:padding="5dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
-                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_group_day"/>
+                android:background="@drawable/eink_press_bg" android:contentDescription="@string/go_group_day"/>
             <ImageButton android:id="@+id/navExpand" android:visibility="gone"
                 android:layout_width="0dp" android:layout_height="0dp" android:src="@drawable/ic_nav_left"
                 android:contentDescription="@null"/>
@@ -155,22 +157,22 @@
                 android:contentDescription="@null"/>
             <ImageButton android:id="@+id/toolPen" android:layout_width="30dp" android:layout_height="30dp"
                 android:padding="4dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_pen"
-                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_pen"/>
+                android:background="@drawable/eink_press_bg" android:contentDescription="@string/calendar_drawing_toolbar_pen"/>
             <ImageButton android:id="@+id/toolEraser" android:layout_width="30dp" android:layout_height="30dp"
                 android:padding="4dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_eraser"
-                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_eraser"/>
+                android:background="@drawable/eink_press_bg" android:contentDescription="@string/calendar_drawing_toolbar_eraser"/>
             <ImageButton android:id="@+id/toolLasso" android:layout_width="30dp" android:layout_height="30dp"
                 android:padding="4dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_lasso"
-                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_lasso"/>
+                android:background="@drawable/eink_press_bg" android:contentDescription="@string/calendar_drawing_toolbar_lasso"/>
             <ImageButton android:id="@+id/toolUndo" android:layout_width="30dp" android:layout_height="30dp"
                 android:padding="4dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_undo"
-                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="Undo"/>
+                android:background="@drawable/eink_press_bg" android:contentDescription="Undo"/>
             <ImageButton android:id="@+id/toolRedo" android:layout_width="30dp" android:layout_height="30dp"
                 android:padding="4dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_toolbar_redo"
-                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="Redo"/>
+                android:background="@drawable/eink_press_bg" android:contentDescription="Redo"/>
             <ImageButton android:id="@+id/toolGear" android:layout_width="30dp" android:layout_height="30dp"
                 android:padding="7dp" android:scaleType="fitCenter" app:srcCompat="@drawable/ic_wrench"
-                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/calendar_drawing_toolbar_settings"/>
+                android:background="@drawable/eink_press_bg" android:contentDescription="@string/calendar_drawing_toolbar_settings"/>
             <ImageButton android:id="@+id/toolExpand" android:visibility="gone"
                 android:layout_width="0dp" android:layout_height="0dp" android:src="@drawable/ic_nav_left"
                 android:contentDescription="@null"/>
@@ -180,9 +182,9 @@
                 layout="@layout/toolbar_drawing"
                 android:id="@+id/toolbarDrawing"
                 android:layout_width="@dimen/ledger_toolbar_width"
-                android:layout_height="match_parent"
+                android:layout_height="0dp"
 
-                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/navigatorImageView"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintEnd_toStartOf="@id/templateImageView"/>
@@ -224,20 +226,94 @@
                 android:padding="0dp"
                 android:visibility="gone"
                 app:layout_constraintTop_toBottomOf="@id/navigatorImageView"
-                app:layout_constraintStart_toStartOf="parent"
-                android:layout_marginStart="150dp"
+                app:layout_constraintEnd_toEndOf="parent"
+                android:layout_marginEnd="64dp"
                 android:layout_marginTop="2dp">
 
             <ImageButton android:id="@+id/notePagerPrev" android:layout_width="30dp" android:layout_height="30dp"
                 android:padding="6dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_left"
-                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/toolbar_previous_image"/>
+                android:background="@drawable/eink_press_bg" android:contentDescription="@string/toolbar_previous_image"/>
             <TextView android:id="@+id/notePagerLabel" android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:paddingHorizontal="6dp" android:textColor="#000000" android:textSize="13sp"
                 android:fontFamily="@font/atkinson_hyperlegible"/>
             <ImageButton android:id="@+id/notePagerNext" android:layout_width="30dp" android:layout_height="30dp"
                 android:padding="6dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_right"
-                android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/toolbar_next_image"/>
+                android:background="@drawable/eink_press_bg" android:contentDescription="@string/toolbar_next_image"/>
+            <!-- ⟡ THE SUMMON (DESIGN-synthesis-claude-2026-08-30 §4) — synth surfaces only.
+                 A child of the pill: rides its constraints (no cloned-ConstraintSet entry to owe),
+                 sits in the ink-excluded chrome band, tucks with the pill when the pen works. -->
+            <TextView android:id="@+id/notePagerSynth" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:minWidth="72dp" android:minHeight="40dp"
+                android:gravity="center" android:paddingStart="14dp" android:paddingEnd="14dp"
+                android:layout_marginStart="6dp"
+                android:text="✒ Synth" android:textSize="14sp" android:textStyle="bold"
+                android:textColor="#000000" android:visibility="gone"
+                android:background="@drawable/bg_synth_pill"
+                android:contentDescription="Synth — write back"/>
         </LinearLayout>
+
+        <!-- THE PILL'S WRITING-STATE TAB (field, 08-29: "the pill sort of blocks the usable
+             writing space"). The first stroke of a page visit collapses the whole ‹ N › pill to
+             this one ›; one tap brings the pill back, and every pagination rebuilds the fragment
+             with the full pill. Two discrete e-ink states, no animation, no mode. Since the column
+             shares the row under the date strip (Michael 2026-10-10) the screen's start edge is
+             ⛶'s, so the tab stays where the pill's own › stood (review 2026-10-10): the same 30dp
+             square at the pager's top-right spot, inside the rect the pen already left alone,
+             never on the title ink top-left or the full-screen pill. CalendarUtils.updateToolbar
+             pins it with the pager. -->
+        <TextView
+                android:id="@+id/notePagerTab"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:gravity="center"
+                android:padding="0dp"
+                android:text="›"
+                android:textColor="#000000"
+                android:textSize="13sp"
+                android:fontFamily="@font/atkinson_hyperlegible"
+                android:visibility="gone"
+                android:contentDescription="@string/toolbar_next_image"
+                app:layout_constraintTop_toBottomOf="@id/navigatorImageView"
+                app:layout_constraintEnd_toEndOf="parent"
+                android:layout_marginEnd="64dp"
+                android:layout_marginTop="2dp"/>
+
+        <!-- THE NOTES BAND (the Schedule face only): the day's dated-note pages as tappable
+             chips, the standing 🖊 Doodle always last — the today page as the living index
+             (DESIGN-homepages-2026-08-22: "you can see the day's notes and click on them
+             immediately from the today page"). Overlaid on the page's bottom margin — the
+             strip below the schedule grid's closing rule — via constraints, NOT in the layout
+             flow, for the same reason the pager and the chip are: the canvas draws in a fixed
+             1404-wide design space and a view that pushed it would move every template's
+             geometry. Like the pager it must ALSO be described in CalendarUtils' cloned
+             ConstraintSet or it comes back 0×0. Gone by default; only the day face turns it on. -->
+        <HorizontalScrollView
+                android:id="@+id/notesBand"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:scrollbars="none"
+                android:visibility="gone"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintStart_toStartOf="@id/templateImageView"
+                app:layout_constraintEnd_toEndOf="@id/templateImageView"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp"
+                android:layout_marginBottom="6dp">
+
+            <LinearLayout
+                    android:id="@+id/notesBandRow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"/>
+        </HorizontalScrollView>
+
+        <!-- THE TODAY DASHBOARD is no longer a View overlay. Michael's CORRECTION 3
+             (DESIGN-homepages-2026-08-22): "They're meant to be part of the page, not laid on top of
+             the page." The Schedule-left / right-column-50/50 dashboard (Tasks + Memo write-by-hand,
+             three recent-note minis, landscape Doodle) is now DRAWN INTO the schedule template bitmap
+             by CalendarDayPage.drawDashboardRight; its taps are page-region hit-rects. Nothing to
+             overlay here — the old todayDashboard LinearLayout and its CalendarUtils constraints are
+             retired. -->
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 

@@ -6,9 +6,6 @@ import com.jakewharton.retrofit2.adapter.kotlin.coroutines.CoroutineCallAdapterF
 import com.squareup.moshi.Moshi
 import com.toolsboox.BuildConfig
 import com.toolsboox.ProductConstants
-import com.toolsboox.ot.DateJsonAdapter
-import com.toolsboox.ot.LocaleJsonAdapter
-import com.toolsboox.ot.UUIDJsonAdapter
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -110,11 +107,8 @@ object NetworkModule {
      */
     @Provides
     fun provideMoshi(): Moshi {
-        return Moshi.Builder()
-            .add(LocaleJsonAdapter())
-            .add(DateJsonAdapter())
-            .add(UUIDJsonAdapter())
-            .build()
+        // The ledger's one builder — the hand-wired services outside Hilt use the same one.
+        return com.toolsboox.ot.LedgerMoshi.standard()
     }
 
     /**

@@ -3,10 +3,18 @@
           xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Play Console: firebase-analytics merges in the AD_ID permission even though collection is
+         deactivated in this manifest. Ledgable never reads the advertising ID, so strip it. -->
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>
     <!-- Notifications are opt-in on API 33+; without this declaration a future notify() would
          throw rather than ask. All posting funnels through ot/LedgerNotifications, which checks
          the runtime grant and degrades to silence. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- The playback anchor: audio must survive backgrounding (08-30). mediaPlayback-typed
+         foreground service; the WAKE_LOCK rides MediaPlayer.setWakeMode. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.READ_CALENDAR"/>
@@ -14,6 +22,18 @@
     <uses-permission android:name="android.permission.WRITE_CONTACTS"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>
+
+    <!-- "via EinkBro" on a shared pick: the sender's package comes from the referrer, its NAME
+         needs visibility on Android 11+. A short named list, never QUERY_ALL_PACKAGES (Play
+         policy; Ledgable is in a closed test) — ShareActions.viaName has a fallback table. -->
+    <queries>
+        <package android:name="info.plateaukao.einkbro"/>
+        <package android:name="info.plateaukao.einkbro.g"/>  <!-- the Play edition on his B6 -->
+        <package android:name="com.android.chrome"/>
+        <package android:name="com.onyx.kreader"/>
+        <package android:name="org.koreader.launcher"/>
+        <package android:name="com.google.android.gm"/>
+    </queries>
 
     <application
             android:name=".ui.BaseApplication"
@@ -91,8 +111,75 @@
                 <data android:scheme="toolsboox"/>
                 <data android:host="app"/>
             </intent-filter>
-            <!-- Share-to-Ledger (text): URLs feed the MichaelFilter intake pipeline AND
-                 land as a text box on today's day page. One share identity: "Ledger". -->
+            <!-- The pairing string: ledgable://pair?site=…&user=…&pass=… from ledgable.cc/pair
+                 (and the plugin's wizard). One tap adds the site and its application password. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="ledgable"/>
+                <data android:host="pair"/>
+            </intent-filter>
+            <!-- Open-with-Ledgable (09-03: "make sure ledgable accepts mail urls and web urls
+                 etc as ways to open them"): mailto: opens the composer prefilled; a web link
+                 offers the Web room / keep chooser. Ledgable joins the system chooser — it
+                 never claims default. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="mailto"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="http"/>
+                <data android:scheme="https"/>
+            </intent-filter>
+            <!-- The three SEND filters MOVED to ShareCatchActivity below (2026-10-10). The card's
+                 ⋯ More reaches MainActivity inside a launcher-shaped intent (never a SEND root).
+                 EinkBro's remembered "share to last target" (which stores this component) still
+                 arrives on Android 12 and below and is forwarded to the card; from Android 13 an
+                 explicit intent must match a filter here, so the system drops it before delivery
+                 (EinkBro should fall back to its chooser, where Ledgable is the card — field-check)
+                 — see forwardForeignShare. -->
+        </activity>
+
+        <!--
+            SEND FROM ANY APP — the card (Michael, 2026-10-10: "highlight text, or pick an image, in
+            EinkBro or any other app. A small Ledgable card appears over that app. One tap saves
+            it, and you're back in EinkBro."). Translucent and floating over the sender, inside the
+            sender's task: excludeFromRecents + noHistory + an empty taskAffinity keep it out of
+            recents, out of the back stack, and off Ledgable's own task (a NEW_TASK share would
+            otherwise surface the day page behind it). EinkBro's highlight menu lists it by this
+            label and icon.
+
+            ALL THREE SEND filters live here, not split with MainActivity: EinkBro's last-target
+            shortcut sends to the OTHER activity when a package has two that accept text
+            (IntentUnit.resolveBestActivityClass). PROCESS_TEXT is the selection-menu door. One
+            entry, not two (a 1-tap "◈ Pick" alias would sit in every app's selection menu —
+            Michael, decision 1: "As you like").
+        -->
+        <activity
+                android:name=".ui.share.ShareCatchActivity"
+                android:label="@string/ledger_share_target_title"
+                android:theme="@style/Ledger.ShareCatch"
+                android:exported="true"
+                android:excludeFromRecents="true"
+                android:noHistory="true"
+                android:taskAffinity=""
+                android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|navigation|uiMode|density|fontScale|layoutDirection|locale"
+                android:enableOnBackInvokedCallback="true">
+            <intent-filter android:label="@string/ledger_share_target_title">
+                <action android:name="android.intent.action.PROCESS_TEXT"/>
+
+                <category android:name="android.intent.category.DEFAULT"/>
+
+                <data android:mimeType="text/plain"/>
+            </intent-filter>
+            <!-- Share-to-Ledgable (text): the fork chrome offers ⏳ Later first, then the gram
+                 lane and the text-box rows. One share identity: "Ledgable" — he says Ledgable. -->
             <intent-filter android:label="@string/ledger_share_target_title">
                 <action android:name="android.intent.action.SEND"/>
 
@@ -107,6 +194,16 @@
                 <category android:name="android.intent.category.DEFAULT"/>
 
                 <data android:mimeType="image/*"/>
+            </intent-filter>
+            <!-- Share-to-Ledger target: a PDF shared from any app lands on the bookshelf.
+                 Without this filter the share sheet never offered Ledger for a PDF at all
+                 ("PDFs won't import", 08-17 queue) — text and images were the only doors. -->
+            <intent-filter android:label="@string/ledger_share_target_title">
+                <action android:name="android.intent.action.SEND"/>
+
+                <category android:name="android.intent.category.DEFAULT"/>
+
+                <data android:mimeType="application/pdf"/>
             </intent-filter>
         </activity>
         <receiver
@@ -223,6 +320,12 @@
                     android:resource="@xml/feed_list_widget_info"/>
         </receiver>
 
+        <!-- The playback lifecycle anchor — foreground only while real audio plays. -->
+        <service
+                android:name=".ui.plugin.LedgerPlayerService"
+                android:foregroundServiceType="mediaPlayback"
+                android:exported="false"/>
+
         <!-- The Feed List widget's row factory. BIND_REMOTEVIEWS keeps it launcher-only. -->
         <service
                 android:name=".plugin.calendar.widget.FeedListWidgetService"
@@ -252,6 +355,18 @@
 
         <!-- The scrollable Task Checklist widget — per-row ✓ checkboxes that mark done from the
              home screen. A separate provider so the bitmap Task List widget keeps its identity. -->
+        <receiver
+                android:name=".plugin.calendar.widget.DoorsWidgetProvider"
+                android:label="@string/widget_doors_label"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+            </intent-filter>
+            <meta-data
+                    android:name="android.appwidget.provider"
+                    android:resource="@xml/doors_widget_info"/>
+        </receiver>
+
         <receiver
                 android:name=".plugin.calendar.widget.TaskChecklistWidgetProvider"
                 android:label="@string/widget_task_check_label"

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Doors widget: seven rooms, one tap each. White ground, square tiles — the Ledger widget
+     grammar (greyscale, no rounded corners), so it sits beside the day-page widgets.
+     The Incoming tiles keep the shared door order and names (IncomingDoors; Michael 2026-10-11):
+     📧 The Mail · 📖 Read · 📺 Watch · 🎧 Listen — Watch before Listen. IncomingDoorsTest reads
+     this file and fails if the tiles drift. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:background="#FFFFFFFF" android:padding="3dp">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal">
+        <LinearLayout android:id="@+id/door_continue" android:layout_width="0dp" android:layout_height="match_parent"
+            android:layout_weight="1" android:orientation="vertical" android:gravity="center"
+            android:layout_margin="3dp" android:background="#FFF2F2F2" android:clickable="true" android:focusable="true">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="⏯" android:textSize="22sp" android:textColor="#FF000000"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Continue" android:textSize="11sp" android:textColor="#FF000000" android:maxLines="1"/>
+        </LinearLayout>
+        <LinearLayout android:id="@+id/door_mail" android:layout_width="0dp" android:layout_height="match_parent"
+            android:layout_weight="1" android:orientation="vertical" android:gravity="center"
+            android:layout_margin="3dp" android:background="#FFF2F2F2" android:clickable="true" android:focusable="true">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="📧" android:textSize="22sp" android:textColor="#FF000000"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="The Mail" android:textSize="11sp" android:textColor="#FF000000" android:maxLines="1"/>
+        </LinearLayout>
+        <LinearLayout android:id="@+id/door_read" android:layout_width="0dp" android:layout_height="match_parent"
+            android:layout_weight="1" android:orientation="vertical" android:gravity="center"
+            android:layout_margin="3dp" android:background="#FFF2F2F2" android:clickable="true" android:focusable="true">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="📖" android:textSize="22sp" android:textColor="#FF000000"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Read" android:textSize="11sp" android:textColor="#FF000000" android:maxLines="1"/>
+        </LinearLayout>
+        <LinearLayout android:id="@+id/door_watch" android:layout_width="0dp" android:layout_height="match_parent"
+            android:layout_weight="1" android:orientation="vertical" android:gravity="center"
+            android:layout_margin="3dp" android:background="#FFF2F2F2" android:clickable="true" android:focusable="true">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="📺" android:textSize="22sp" android:textColor="#FF000000"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Watch" android:textSize="11sp" android:textColor="#FF000000" android:maxLines="1"/>
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal">
+        <LinearLayout android:id="@+id/door_listen" android:layout_width="0dp" android:layout_height="match_parent"
+            android:layout_weight="1" android:orientation="vertical" android:gravity="center"
+            android:layout_margin="3dp" android:background="#FFF2F2F2" android:clickable="true" android:focusable="true">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🎧" android:textSize="22sp" android:textColor="#FF000000"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Listen" android:textSize="11sp" android:textColor="#FF000000" android:maxLines="1"/>
+        </LinearLayout>
+        <LinearLayout android:id="@+id/door_notes" android:layout_width="0dp" android:layout_height="match_parent"
+            android:layout_weight="1" android:orientation="vertical" android:gravity="center"
+            android:layout_margin="3dp" android:background="#FFF2F2F2" android:clickable="true" android:focusable="true">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🗂" android:textSize="22sp" android:textColor="#FF000000"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="All notes" android:textSize="11sp" android:textColor="#FF000000" android:maxLines="1"/>
+        </LinearLayout>
+        <LinearLayout android:id="@+id/door_newnote" android:layout_width="0dp" android:layout_height="match_parent"
+            android:layout_weight="1" android:orientation="vertical" android:gravity="center"
+            android:layout_margin="3dp" android:background="#FFF2F2F2" android:clickable="true" android:focusable="true">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="＋" android:textSize="22sp" android:textColor="#FF000000"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="New note" android:textSize="11sp" android:textColor="#FF000000" android:maxLines="1"/>
+        </LinearLayout>
+        <View android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"/>
+    </LinearLayout>
+</LinearLayout>

@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.text.Html
 import android.view.View
 import android.widget.TextView
+import android.widget.Toast
 import com.toolsboox.R
 import com.toolsboox.databinding.FragmentAboutBinding
 import com.toolsboox.ui.plugin.ScreenFragment
@@ -13,9 +14,15 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
 /**
- * About main fragment.
+ * Ledgable's About: the version in hand, the door to the latest build, and the lineage.
  *
- * @author <a href="mailto:gabor.auth@toolsboox.com">Gábor AUTH</a>
+ * This page used to be the upstream project's own about ("the about is still about the
+ * original author", 08-22) — it is Ledgable's now, and its one working job is the update:
+ * the same R2 address every cabled install ships from, one tap from inside the app. The
+ * lineage section keeps the debt honest: Ledgable grew from Gábor AUTH's open-source
+ * Toolsboox, and the fork's history carries his work in every file.
+ *
+ * @author <a href="mailto:gabor.auth@toolsboox.com">Gábor AUTH</a> (upstream)
  */
 @AndroidEntryPoint
 class AboutFragment @Inject constructor() : ScreenFragment() {
@@ -36,6 +43,15 @@ class AboutFragment @Inject constructor() : ScreenFragment() {
      */
     private lateinit var binding: FragmentAboutBinding
 
+    companion object {
+        /** The fleet's one build address — the same file `reference_ledger_apk_publish`
+         *  ships to; the browser downloads it and the system installer upgrades in place
+         *  (same debug signature on every build). */
+        private const val APK_URL =
+            "https://pub-fd963781ad094611b656cc774c6dc163.r2.dev/ledger/ledger.apk"
+        private const val UPSTREAM_URL = "https://github.com/gaborauth/toolsboox-android/"
+    }
+
     /**
      * OnViewCreated hook.
      *
@@ -47,30 +63,22 @@ class AboutFragment @Inject constructor() : ScreenFragment() {
 
         binding = FragmentAboutBinding.bind(view)
 
-        htmlLinks(
-            binding.aboutMeLink, R.string.about_about_me_link,
-            "https://github.com/gaborauth/"
-        )
-        htmlLinks(
-            binding.projectHomeLink, R.string.about_project_home_link,
-            "https://github.com/gaborauth/toolsboox-android/"
-        )
-        htmlLinks(
-            binding.otherLinksWebpage, R.string.about_other_links_webpage_link,
-            "https://toolsboox.com"
-        )
-        htmlLinks(
-            binding.otherLinksTranslate, R.string.about_other_links_translate_link,
-            "https://poeditor.com/join/project?hash=dbYOuWr2UB"
-        )
-        htmlLinks(
-            binding.otherLinksFacebook, R.string.about_other_links_facebook_link,
-            "https://www.facebook.com/toolsboox"
-        )
-        htmlLinks(
-            binding.otherLinksDiscord, R.string.about_other_links_discord_link,
-            "https://discord.gg/S3sKsbmaSk"
-        )
+        val version = runCatching {
+            requireContext().packageManager.getPackageInfo(requireContext().packageName, 0).versionName
+        }.getOrNull() ?: "?"
+        binding.aboutVersion.text = getString(R.string.about_version_line, version)
+
+        binding.aboutUpdateButton.setOnClickListener {
+            Toast.makeText(requireContext(),
+                getString(R.string.about_update_toast, version), Toast.LENGTH_LONG).show()
+            runCatching {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(APK_URL)))
+            }.onFailure {
+                Toast.makeText(requireContext(), APK_URL, Toast.LENGTH_LONG).show()
+            }
+        }
+
+        htmlLinks(binding.aboutLineageLink, R.string.about_lineage_link, UPSTREAM_URL)
     }
 
     /**

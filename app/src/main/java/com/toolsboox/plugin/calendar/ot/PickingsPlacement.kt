@@ -29,8 +29,14 @@ import java.util.Locale
  */
 object GramDestinations {
 
-    /** One place a gram can go: a page key, and — for the All Stars bands — which band. */
-    data class Destination(val glyph: String, val name: String, val key: String, val kind: String = "")
+    /** One place a gram can go: a page key, and — for the All Stars bands — which band.
+     *  [date] names the day the page lives on when it is NOT the placement caller's own day —
+     *  a named note from last Tuesday is a real target now (the 08-28 ruling); null keeps the
+     *  caller's date, which is every pre-ruling call unchanged. */
+    data class Destination(
+        val glyph: String, val name: String, val key: String, val kind: String = "",
+        val date: LocalDate? = null,
+    )
 
     /** Today's handwritten Notes page — page "0", where feed notes have always landed. */
     const val NOTES_PAGE = "0"
@@ -46,7 +52,7 @@ object GramDestinations {
     /** Every making surface a gram can be sent to, on [date], in reading order. */
     fun all(context: android.content.Context, date: LocalDate = LocalDate.now()): List<Destination> {
         val out = mutableListOf(
-            Destination("◈", "Gram Picks", CalendarDayPageNotes.GRAM_PICKS),
+            Destination("◈", "All Picks", CalendarDayPageNotes.GRAM_PICKS),
             Destination("📝", "Today's notes", NOTES_PAGE),
         )
         for (b in PickingsStore.list(context, date)) {
@@ -57,7 +63,7 @@ object GramDestinations {
         for (p in CalendarDayPageIntake.kinds) {
             out.add(Destination("★", "All Stars · ${p.title}", CalendarDayPageIntake.INTAKE_PAGE, p.kindKey))
         }
-        out.add(Destination("🔬", "Synthesize", "synthesize"))
+        out.add(Destination("❖", "Synthesize", "synthesize"))
         return out
     }
 
@@ -77,7 +83,7 @@ object GramDestinations {
      */
     fun inbox(context: android.content.Context, date: LocalDate = LocalDate.now()): Destination =
         all(context, date).firstOrNull { it.key == CalendarDayPageNotes.GRAM_PICKS }
-            ?: Destination("◈", "Gram Picks", CalendarDayPageNotes.GRAM_PICKS)
+            ?: Destination("◈", "All Picks", CalendarDayPageNotes.GRAM_PICKS)
 
     /**
      * Where the last gram was deliberately placed, if that place still exists on [date] — used to
@@ -85,11 +91,11 @@ object GramDestinations {
      * than to today's notes: with nothing remembered, the honest first offer is the pile you sort.
      */
     fun last(context: android.content.Context, date: LocalDate = LocalDate.now()): Destination {
-        val prefs = context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
-        val key = prefs.getString(KEY_LAST, CalendarDayPageNotes.GRAM_PICKS) ?: CalendarDayPageNotes.GRAM_PICKS
-        val kind = prefs.getString(KEY_LAST_KIND, "") ?: ""
-        val list = all(context, date)
-        return list.firstOrNull { it.key == key && it.kind == kind } ?: inbox(context, date)
+        // THE RULING (Michael, 08-28): "things don't get sent to 'pickings' anymore — when you
+        // save a pick it goes to All Picks AND it can be sent to a note." A remembered board or
+        // band coerces to the inbox — the pref keys stay (iOS reads them; a downgrade still
+        // reads them), the coercion is display-only, like the folded quick-note slots.
+        return inbox(context, date)
     }
 
     /** Record a choice — called by the chooser, so the next capture learns from the last one. */
@@ -116,48 +122,141 @@ object GramDestinations {
     }
 
     /**
-     * The one chooser every "send this gram to…" runs through: the remembered destination first,
+     * The one chooser every "send this pick to…" runs through: the remembered destination first,
      * then the whole vocabulary, then "＋ New pickings…". Choosing is what teaches the memory —
      * the destination is already remembered by the time [onPick] runs.
      *
      * [fragment] is optional so MainActivity-hosted flows could reuse the list; when present, the
-     * new-board name dialog is guarded (a name being typed is work — a stray touch outside must
-     * not throw it away).
+     * chooser itself goes through [ScreenFragment.showModal] (over an ink-capable surface an
+     * unrouted popover leaves the hardware pen armed underneath and the stylus's taps go to the
+     * ink — the freeze), and the new-board name dialog is guarded (a name being typed is work —
+     * a stray touch outside must not throw it away).
      */
     fun choose(
         context: android.content.Context,
         date: LocalDate = LocalDate.now(),
-        title: String = "Send this gram to",
+        title: String = "Send this pick to",
         fragment: ScreenFragment? = null,
+        /** Backed out with no destination (Cancel, back, a tap outside — at any step), once. A Pick
+         *  sheet's adds that were on their way onto this card are kept by it (merge-addpick #4). */
+        onNone: (() -> Unit)? = null,
         onPick: (Destination) -> Unit
     ) {
-        val choices = ordered(context, date)
-        val labels = (choices.map { "${it.glyph}  ${it.name}" } + "＋  New pickings…").toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
+        if (onNone != null) {
+            val once = java.util.concurrent.atomic.AtomicBoolean(false)
+            val chosen: (Destination) -> Unit = { d -> if (once.compareAndSet(false, true)) onPick(d) }
+            val none: () -> Unit = { if (once.compareAndSet(false, true)) onNone() }
+            return chooseSteps(context, date, title, fragment, none, chosen)
+        }
+        chooseSteps(context, date, title, fragment, null, onPick)
+    }
+
+    /** Show [dialog] (through the fragment's modal door when there is one) and run [onGone] when it
+     *  closes without [moved] having been set — the step was backed out of. */
+    private fun showStep(fragment: ScreenFragment?, dialog: androidx.appcompat.app.AlertDialog,
+                         moved: java.util.concurrent.atomic.AtomicBoolean, onGone: (() -> Unit)?) {
+        val gone = { if (!moved.get()) onGone?.invoke() }
+        when {
+            fragment != null && onGone != null -> fragment.showModal(dialog) { gone() }
+            fragment != null -> fragment.showModal(dialog)
+            else -> { if (onGone != null) dialog.setOnDismissListener { gone() }; dialog.show() }
+        }
+    }
+
+    private fun chooseSteps(
+        context: android.content.Context,
+        date: LocalDate,
+        title: String,
+        fragment: ScreenFragment?,
+        onNone: (() -> Unit)?,
+        onPick: (Destination) -> Unit
+    ) {
+        val moved = java.util.concurrent.atomic.AtomicBoolean(false)
+        // TWO ACTS, NOT A DIRECTORY (Michael, 08-28): a saved pick goes to ALL PICKS, and it can
+        // be SENT TO A NOTE — a board IS a note wearing pickings paper (boards-are-paper), so one
+        // note picker covers today's note, boards, and named notes. The All Stars bands and
+        // Synthesize left this chooser: the register is the starred rail's landing, not a filing
+        // cabinet, and Synthesize has its own verbs.
+        val rows = arrayOf("\u25c8  All Picks", "\u2712  To a note\u2026")
+        val chooser = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
             .setTitle(title)
-            .setItems(labels) { _, which ->
-                if (which < choices.size) {
-                    val d = choices[which]
+            .setItems(rows) { _, which ->
+                moved.set(true)
+                if (which == 0) {
+                    val d = inbox(context, date)
                     remember(context, d)
                     onPick(d)
-                } else {
-                    val input = android.widget.EditText(context).apply { hint = "Pickings name"; setSingleLine() }
+                } else chooseNote(context, date, fragment, onNone, onPick)
+            }.setNegativeButton(android.R.string.cancel, null).create()
+        showStep(fragment, chooser, moved, onNone)
+    }
+
+    /**
+     * The note picker — every note a pick can land on, recents-first: today's note, today's
+     * boards, then named notes across time (the Notebook's families; the global ink indexes plus
+     * the board registry's filename walk — never a content scan), capped so the dialog stays a
+     * dialog. "\uff0b New board\u2026" keeps the old mint. Choosing a note is a decision about
+     * THIS pick — it deliberately teaches no memory ([inbox]'s rule: memory never routes).
+     */
+    private fun chooseNote(
+        context: android.content.Context,
+        date: LocalDate,
+        fragment: ScreenFragment?,
+        onNone: (() -> Unit)?,
+        onPick: (Destination) -> Unit
+    ) {
+        val moved = java.util.concurrent.atomic.AtomicBoolean(false)
+        val targets = mutableListOf(Destination("\u2712", "Today's note", NOTES_PAGE, date = date))
+        for (b in PickingsStore.list(context, date)) {
+            val name = if (b.key == PickingsStore.DEFAULT_KEY) "Today's Pickings"
+            else b.name.ifBlank { "Pickings" }
+            targets.add(Destination("\u275d", name, b.key, date = date))
+        }
+        val docs = LedgerDocuments
+        val named = mutableListOf<Destination>()
+        for (surface in listOf(docs.WRITE, docs.GRID, docs.JOT)) {
+            runCatching { docs.forSurface(context, surface, date) }.getOrDefault(emptyList())
+                .filter { it.named }
+                .forEach { named.add(Destination("\u2712", it.title, it.key, date = it.date)) }
+        }
+        runCatching {
+            PickingsStore.dates(context).sortedDescending().take(30).forEach { d ->
+                if (d == date) return@forEach
+                PickingsStore.listSaved(context, d).filter { it.name.isNotBlank() }.forEach {
+                    named.add(Destination("\u275d", it.name, it.key, date = d))
+                }
+            }
+        }
+        targets.addAll(named.sortedByDescending { it.date }.take(12))
+        val labels = (targets.map { "${it.glyph}  ${it.name}" } + "\uff0b  New pickings note\u2026").toTypedArray()
+        val picker = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
+            .setTitle("To a note")
+            .setItems(labels) { _, which ->
+                moved.set(true)
+                if (which < targets.size) onPick(targets[which])
+                else {
+                    val created = java.util.concurrent.atomic.AtomicBoolean(false)
+                    val input = android.widget.EditText(context).apply { hint = "Name (blank = today's)"; setSingleLine() }
+                    // The share card shows this with no fragment (no showModal): guard it here (C9).
+                    com.toolsboox.ui.share.OwnProcessText.guard(input)
                     val pad = (16 * context.resources.displayMetrics.density).toInt()
                     val box = android.widget.LinearLayout(context).apply {
                         orientation = android.widget.LinearLayout.VERTICAL
                         setPadding(pad, pad / 2, pad, 0); addView(input)
                     }
                     val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
-                        .setTitle("New pickings").setView(box)
+                        .setTitle("New pickings note").setView(box)
                         .setPositiveButton("Create") { _, _ ->
+                            created.set(true)
                             val page = PickingsStore.add(context, date, input.text.toString().trim())
-                            val d = Destination("❝", page.name, page.key)
-                            remember(context, d)
-                            onPick(d)
+                            onPick(Destination("\u275d", page.name, page.key, date = date))
                         }.setNegativeButton(android.R.string.cancel, null).create()
-                    if (fragment != null) fragment.showGuardedModal(dialog) else dialog.show()
+                    // A name being typed is work: an outside touch never closes it (showGuardedModal's rule).
+                    if (fragment != null) dialog.setCanceledOnTouchOutside(false)
+                    showStep(fragment, dialog, created, onNone)
                 }
-            }.setNegativeButton(android.R.string.cancel, null).show()
+            }.setNegativeButton(android.R.string.cancel, null).create()
+        showStep(fragment, picker, moved, onNone)
     }
 }
 
@@ -188,12 +287,34 @@ object PickingsPlacement {
         val date: String = ""
     )
 
-    fun place(
-        service: CalendarDayService, root: File, bitmap: Bitmap, date: LocalDate, pageKey: String,
-        sourceLink: String = "", sourceLabel: String = "", media: MediaRef? = null,
-        treatment: Boolean = true, cardText: String = "", sourceFeed: String = "",
-        intakeKind: String = ""
-    ) {
+    /**
+     * A laid-out face's slots as the STORED image sees them (add-to-pick pin §3: per-mille of the
+     * face the element shows): through the fit to [MAX_DIM] and, with [treatment], the card's paper
+     * and tape margins ([CardTreatment.cardInsets]) — so a tap maps the same on both apps whatever
+     * each bakes around its face.
+     */
+    fun storedSlots(layout: PickFaceLayout.Layout, treatment: Boolean): List<com.toolsboox.da.FaceSlot> {
+        val longest = maxOf(layout.w, layout.h)
+        val r = if (longest > MAX_DIM) MAX_DIM.toFloat() / longest else 1f
+        val fw = if (longest > MAX_DIM) (layout.w * r).toInt().coerceAtLeast(1) else layout.w
+        val fh = if (longest > MAX_DIM) (layout.h * r).toInt().coerceAtLeast(1) else layout.h
+        val sx = fw.toFloat() / layout.w; val sy = fh.toFloat() / layout.h
+        val (side, overhang) = if (treatment) CardTreatment.cardInsets(fw) else 0f to 0f
+        val outW = if (treatment) (fw + side * 2 + overhang * 2).toInt() else fw
+        val outH = if (treatment) (fh + side * 2 + overhang).toInt() else fh
+        val off = overhang + side
+        fun pm(v: Float, total: Int) = if (total <= 0) 0 else Math.round(v * 1000f / total).coerceIn(0, 1000)
+        return layout.slots.map { s ->
+            val x = off + s.box.x * sx; val y = off + s.box.y * sy
+            com.toolsboox.da.FaceSlot(s.kind.key, s.id,
+                listOf(pm(x, outW), pm(y, outH), pm(s.box.w * sx, outW), pm(s.box.h * sy, outH)))
+        }
+    }
+
+    /** A face fitted to [MAX_DIM], dressed ([CardTreatment]) and encoded — what a placed card
+     *  stores — with its pixel size. Shared by [place] and [reface], so a card re-drawn in place
+     *  wears exactly what a new one would. */
+    fun encodeFace(bitmap: Bitmap, treatment: Boolean = true): Triple<String, Int, Int> {
         val longest = maxOf(bitmap.width, bitmap.height)
         val fitted = if (longest > MAX_DIM) {
             val r = MAX_DIM.toFloat() / longest
@@ -207,7 +328,93 @@ object PickingsPlacement {
         // below so the frame is inside the card's own aspect ratio.
         val scaled = if (treatment) CardTreatment.card(fitted) else fitted
         val baos = ByteArrayOutputStream(); scaled.compress(Bitmap.CompressFormat.PNG, 100, baos)
-        val base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        return Triple(Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP), scaled.width, scaled.height)
+    }
+
+    /**
+     * RE-DRAW A PLACED CARD IN PLACE — same element, same id, same spot, same width; a new face (and
+     * its new height), a fresh timestamp so the day merge keeps this copy (the element union is
+     * newer-timestamp-wins). Michael 2026-10-12: a note added to an article highlight "goes onto the
+     * SAME pick/card — never a second card; edits never add cards". [media] makes it an A/V card
+     * (a voice or video note on the highlight). False when the card is not on [date] any more
+     * (removed, tombstoned) or [date] isn't on this device — and then nothing is added back. THROWS
+     * [CalendarDayService.UnreadableDayException] when [date]'s page is there but won't read
+     * ([CalendarDayService.loadToEdit]): the card may well be on it, so that is not "gone".
+     */
+    fun reface(
+        service: CalendarDayService, root: File, date: LocalDate, elementId: String, face: Bitmap,
+        media: MediaRef? = null, cardText: String? = null,
+        /** The new face's tappable places ([storedSlots]); empty clears them, null leaves them. */
+        faceSlots: List<com.toolsboox.da.FaceSlot>? = null,
+        /** More to write on the card's day in the SAME locked save — the highlight's clips onto that
+         *  day's A/V list (merge-addpick review #8). Runs only when the card is there. */
+        alsoOnDay: ((com.toolsboox.plugin.calendar.da.v2.CalendarDay) -> Unit)? = null,
+    ): Boolean = DayLocks.withDay(date) {
+        val day = service.loadToEdit(root, date) ?: return@withDay false
+        val e = day.imageElements.firstOrNull { it.elementId.toString().equals(elementId, ignoreCase = true) }
+            ?: return@withDay false
+        val (base64, w, h) = encodeFace(face, treatment = true)
+        e.data = base64
+        e.dataRef = ""
+        e.edgeBaked = true
+        e.height = e.width * h / w.coerceAtLeast(1)
+        e.timestamp = System.currentTimeMillis()
+        if (cardText != null) e.cardText = cardText
+        if (faceSlots != null) e.faceSlots = faceSlots.ifEmpty { null }
+        if (media != null) {
+            e.mediaKind = media.kind; e.attachmentId = media.attachmentId; e.mediaUrl = media.url
+            e.durationMs = media.durationMs; e.mediaTitle = media.title; e.mediaDate = media.date
+        }
+        alsoOnDay?.invoke(day)
+        service.save(root, date, day)
+        true
+    }
+
+    /**
+     * [reface] on the first of [days] that holds the card — its own day first, then the days a
+     * clock that crossed midnight may have put it on ([ReadingEventEdit.candidateDays]). The day it
+     * was re-drawn on, or null when none of them holds it. A neighbour that won't read is skipped;
+     * when the card was on none of them and the FIRST day (the card's own) won't read, that day's
+     * [CalendarDayService.UnreadableDayException] is thrown — the card is most likely there, so
+     * that is a refusal for the caller to say, never "the card is gone".
+     */
+    fun refaceNear(
+        service: CalendarDayService, root: File, days: List<LocalDate>, elementId: String, face: Bitmap,
+        media: MediaRef? = null, cardText: String? = null,
+        /** The new face's tappable places, as [reface] takes them (add-to-pick pin §3). */
+        faceSlots: List<com.toolsboox.da.FaceSlot>? = null,
+        /** More to write on the day the card is found on, in its save ([reface]). */
+        alsoOnDay: ((com.toolsboox.plugin.calendar.da.v2.CalendarDay) -> Unit)? = null,
+    ): LocalDate? {
+        var refused: CalendarDayService.UnreadableDayException? = null
+        for ((i, d) in days.withIndex()) {
+            try {
+                if (reface(service, root, d, elementId, face, media, cardText, faceSlots, alsoOnDay)) return d
+            } catch (e: CalendarDayService.UnreadableDayException) {
+                if (i == 0) refused = e
+            }
+        }
+        refused?.let { throw it }
+        return null
+    }
+
+    fun place(
+        service: CalendarDayService, root: File, bitmap: Bitmap, date: LocalDate, pageKey: String,
+        sourceLink: String = "", sourceLabel: String = "", media: MediaRef? = null,
+        treatment: Boolean = true, cardText: String = "", sourceFeed: String = "",
+        intakeKind: String = "",
+        /** The card's id, when the caller must point at it (an article highlight's one pick). */
+        elementId: java.util.UUID? = null,
+        /** More to write on the SAME day in the SAME locked save (the highlight's Log line). */
+        alsoOnDay: ((com.toolsboox.plugin.calendar.da.v2.CalendarDay) -> Unit)? = null,
+        /** Only onto [date] as it already stands when [date] isn't today ([ReadingEventEdit.loadForWrite]
+         *  — an article highlight's card placed late on its own old day must never mint that day
+         *  fresh, review 2026-10-12 #2). Throws when it can't, so a caller's runCatching sees it. */
+        pastDayMustExist: Boolean = false,
+        /** The face's tappable places ([storedSlots]) — add-to-pick pin §3. */
+        faceSlots: List<com.toolsboox.da.FaceSlot>? = null,
+    ) {
+        val (base64, faceW, faceH) = encodeFace(bitmap, treatment)
         // All Stars sizes its own arrivals: the register's twelve-slot shelf IS the half-size
         // Michael asked for ("grams added to all stars should be 1/2 the size they currently are
         // when added so they don't have to overlap") — [CalendarDayPageIntake.arrivalFrame] fits
@@ -215,12 +422,25 @@ object PickingsPlacement {
         // other board keeps the natural card width; existing elements are untouched — this only
         // sizes what lands from now on, and a landed card is still yours to resize like any other.
         val isIntakeArrival = pageKey == CalendarDayPageIntake.INTAKE_PAGE && intakeKind.isNotBlank()
-        val w = (CANVAS_W * 0.42f).coerceAtMost(scaled.width.toFloat())
-        val h = w * scaled.height / scaled.width
+        // Gram Picks sizes its own arrivals, the way All Stars does ("grams are too big when
+        // placed on gram picks", 08-15). At the boards' 0.42 width the three-across stagger
+        // physically overflows the page — column three starts at x=1300 on a 1404 canvas — so
+        // cards coerced back and piled up. 0.29 is the width at which three columns and their
+        // margins actually fit (2·60 edge + 2·30 gap + 3·w ≤ 1404). Boards keep the natural
+        // card width; existing elements are untouched; a landed card is still yours to resize.
+        val gramPicksArrival = pageKey.substringBefore('#') == CalendarDayPageNotes.GRAM_PICKS
+        val w = (CANVAS_W * (if (gramPicksArrival) 0.29f else 0.42f)).coerceAtMost(faceW.toFloat())
+        val h = w * faceH / faceW
         // Load→mutate→save under the day lock: placements arrive from raw threads (placeAsync)
         // and race the open day page's per-pen-up save; interleaved writers drop each other's items.
         DayLocks.withDay(date) {
-            val day = service.load(root, date, null, Locale.getDefault())
+            // A day file that won't read throws UnreadableDayException here: every caller runs this
+            // inside a runCatching whose failure branch says "couldn't" — never a fresh day + this
+            // one card saved over the real file. A past day that isn't on this device is not minted
+            // for a late card (pastDayMustExist) and throws too.
+            val day = if (pastDayMustExist) ReadingEventEdit.loadForWriteOrThrow(service, root, date)
+                ?: throw IllegalStateException("$date isn't on this device — not placed")
+            else service.loadForWriteOrThrow(root, date, null, Locale.getDefault())
             val count = day.imageElements.count { it.page == pageKey }        // grid-stagger new cards
             // ALL STARS lands each arrival inside the band for its kind, so the register organises
             // itself without anyone filing anything — and the card is an ordinary element from that
@@ -245,6 +465,7 @@ object PickingsPlacement {
             val y = bandSlot?.top
                 ?: (yBase + (count / 3) * (h + 30f)).coerceIn(0f, (CANVAS_H - h).coerceAtLeast(0f))
             day.imageElements.add(ImageElement(
+                elementId = elementId ?: java.util.UUID.randomUUID(),
                 x = x, y = y, width = placedW, height = placedH, data = base64, page = pageKey,
                 sourceLink = sourceLink, sourceLabel = sourceLabel,
                 mediaKind = media?.kind ?: "",
@@ -256,7 +477,9 @@ object PickingsPlacement {
                 cardText = cardText, sourceFeed = sourceFeed, intakeKind = intakeKind,
                 // The one-decoration contract: this card already wears its CardTreatment in its own
                 // pixels, so a render-time edge (iOS GramEdge) must stand down for it.
-                edgeBaked = treatment))
+                edgeBaked = treatment,
+                faceSlots = faceSlots?.ifEmpty { null }))
+            alsoOnDay?.invoke(day)
             service.save(root, date, day)
         }
     }
@@ -281,7 +504,7 @@ object PickingsPlacement {
         // memory every quick-capture path reads. Gram Picks leads whenever there is no memory to
         // honour: you no longer have to decide what a gram is FOR at the moment you grab it, which
         // is the moment you know least.
-        GramDestinations.choose(ctx, date, "Send this gram to", fragment) { d ->
+        GramDestinations.choose(ctx, date, "Send this pick to", fragment) { d ->
             placeAsync(
                 fragment, service, root, bitmaps, date, d.key, d.name,
                 sourceLink, sourceLabel, media, cardText, sourceFeed, intakeKind = d.kind
@@ -296,7 +519,7 @@ object PickingsPlacement {
     ) {
         Thread {
             for (b in bitmaps) runCatching { place(service, root, b, date, key, sourceLink, sourceLabel, media, cardText = cardText, sourceFeed = sourceFeed, intakeKind = intakeKind) }
-            val what = if (bitmaps.size > 1) "${bitmaps.size} grams" else "Placed"
+            val what = if (bitmaps.size > 1) "${bitmaps.size} picks" else "Placed"
             // Offer the trip rather than taking it. You were mid-something on the page you
             // circled from, and the usual next move is to put another thing on the same board —
             // so staying is the right default and going is one tap.
@@ -307,6 +530,10 @@ object PickingsPlacement {
                         com.google.android.material.snackbar.Snackbar.LENGTH_LONG
                     ).setAction("Go to it") {
                         com.toolsboox.plugin.calendar.CalendarNavigator.toDayNote(fragment, date, key)
+                    }.apply {
+                        // Kept off an ink pad (the compose screen's 🃏, 2026-10-11): above the
+                        // anchor, never in the palm zone where a pen tap is a stroke.
+                        fragment.snackAnchor?.let { setAnchorView(it) }
                     }.show()
                 }
             }

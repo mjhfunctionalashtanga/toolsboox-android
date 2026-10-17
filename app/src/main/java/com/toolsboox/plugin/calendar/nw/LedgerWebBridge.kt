@@ -288,6 +288,48 @@ object LedgerCommunityBridge {
      * [cfg] targets a specific site (a space id only means anything on its own site, so the caller
      * that knows the space knows the site); null = the active one, as ever.
      */
+    /**
+     * A NEW POST into a space — typed words, handwriting as a picture, or both (Michael, 09-11:
+     * "messages sent from Correspondence to Fluent Community spaces… with handwriting"). The same
+     * `/community/gram` route the picks use: text alone, ink alone, or both; deduped on the id.
+     * Blocking — IO.
+     */
+    fun postToSpace(
+        context: Context, text: String, png: ByteArray?, title: String, spaceId: Long, cfg: Config? = null,
+    ): String {
+        val c = cfg ?: config(context)
+        if (!c.ready) return "Community bridge not configured"
+        val words = text.trim()
+        if (words.isBlank() && png == null) return "Nothing to post"
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("space_id", spaceId.toString())
+            .addFormDataPart("note_uuid", "post-" + java.util.UUID.randomUUID().toString().lowercase())
+            .apply {
+                if (title.isNotBlank()) addFormDataPart("title", title)
+                if (words.isNotBlank()) addFormDataPart("text", words)
+                if (png != null) addFormDataPart("png", "post.png", png.toRequestBody("image/png".toMediaType()))
+            }
+            .build()
+        return try {
+            val req = Request.Builder()
+                .url("${c.site}/wp-json/ledgr/v1/community/gram")
+                .post(body)
+                .header("Authorization", Credentials.basic(c.user, c.pass))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val raw = resp.body?.string() ?: ""
+                if (resp.isSuccessful && raw.contains("feed_id")) "Posted to the space"
+                else {
+                    val msg = try { JSONObject(raw).optString("message") } catch (e: Exception) { "" }
+                    if (msg.isNotBlank()) msg else "Post failed (${resp.code})"
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "community post failed")
+            "Network error"
+        }
+    }
+
     fun postGram(
         context: Context, pngBase64: String, title: String, noteUuid: String, spaceId: Long,
         provenance: String? = null, provUrl: String? = null, cfg: Config? = null,

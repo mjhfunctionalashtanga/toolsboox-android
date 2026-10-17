@@ -94,8 +94,9 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         // empty, which is precisely why the Day Skipper appeared to skip it.
         setupActionRail(
             view.findViewById(R.id.semantic_rail), "missed_rhizomes",
+            // Today's steps, said out loud: this surface has no day of its own to keep.
             actions = { com.toolsboox.plugin.calendar.ot.RitualWalk.stepItems(
-                this, com.toolsboox.plugin.calendar.ot.RitualWalk.MISSED) }
+                this, com.toolsboox.plugin.calendar.ot.RitualWalk.MISSED, java.time.LocalDate.now()) }
         )
         load()
     }
@@ -200,7 +201,7 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         val actions = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(10), 0, 0)
         }
-        actions.addView(actionButton("⁂ Rhizome") { openRhizome(f) })
+        actions.addView(actionButton("🕸 Rhizome") { openRhizome(f) })
         actions.addView(actionButton("📖 Read") { openEntry(f) })
         actions.addView(View(ctx).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })
         actions.addView(actionButton(if (f.id in picked) "✓ Picked" else "⚗ Make picking") { makePicking(f) })
@@ -215,9 +216,9 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
      *  that asks its medium, and the permanent removal. */
     private fun holdMenu(f: MissedFind) {
         showIconMenu(f.entryTitle.take(80), listOf(
-            "⁂  Pick — make it a gram" to { pickAsGram(f) },
+            "⁂  Pick it — a card for your Pickings" to { pickAsGram(f) },
             "⚗  Make picking" to { makePicking(f) },
-            "⁂  Rhizome" to { openRhizome(f) },
+            "🕸  Rhizome" to { openRhizome(f) },
             "📖  Read" to { openEntry(f) },
             "🗑  Remove from corpus" to { removeFromCorpus(f) }
         ))
@@ -277,9 +278,12 @@ class MissedRhizomesFragment @Inject constructor() : ScreenFragment() {
         val today = LocalDate.now()
         picked.add(f.id)
         render()
-        // One-tap verb on a list row — no chooser, the shared gram memory routes the card (Gram
-        // Picks when the remembered place no longer exists today) and the message names the landing.
-        val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.inbox(ctx, today)
+        // "Make picking" MEANS a picking. The inbox rule ("a captured gram always lands on Gram
+        // Picks, not negotiable") governs QUIET captures; a tap on a verb that names its
+        // destination is what that same canon calls "a decision about that gram" — and the 08-16
+        // page called the inbox landing wrong outright: "It should be a picking."
+        val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.Destination(
+            "❝", "Today's Pickings", PickingsStore.DEFAULT_KEY)
         lifecycleScope.launch(Dispatchers.IO) {
             runCatching {
                 val card = QuoteCardRenderer.render(

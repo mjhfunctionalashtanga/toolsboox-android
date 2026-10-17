@@ -36,14 +36,18 @@ object LedgerTaskSync {
             .build()
     }
 
+    // Opening EncryptedSharedPreferences is a Keystore round-trip (tens to hundreds of ms, and a
+    // known ANR on Boox when the Keystore daemon is slow); it was paid on every push (audit 09-10).
+    @Volatile private var prefsCache: android.content.SharedPreferences? = null
+
     private fun creds(context: Context): Triple<String, String, String>? {
         return try {
-            val prefs = EncryptedSharedPreferences.create(
-                context, "ultrabridge_encrypted_prefs",
-                MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
+            val prefs = prefsCache ?: EncryptedSharedPreferences.create(
+                context.applicationContext, "ultrabridge_encrypted_prefs",
+                MasterKey.Builder(context.applicationContext).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-            )
+            ).also { prefsCache = it }
             val url = prefs.getString("ultrabridge_webdav_url", "") ?: ""
             val user = prefs.getString("ultrabridge_webdav_user", "") ?: ""
             val pass = prefs.getString("ultrabridge_webdav_pass", "") ?: ""

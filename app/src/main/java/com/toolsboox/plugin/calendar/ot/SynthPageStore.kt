@@ -8,7 +8,10 @@ import java.io.File
 import java.time.LocalDate
 
 /** One Synthesize page: its note-page [key], display [name], and the [date] it lives on. */
-data class SynthPage(val key: String, var name: String, val date: LocalDate)
+// The Saber folder label rides every row (Michael, 09-02) — "" = unfiled. Additive and
+// tolerant on both forks THE SAME DAY: either fork rewriting this index without the field
+// would strip every filing — which is why BOTH write sites and BOTH read sites carry it.
+data class SynthPage(val key: String, var name: String, val date: LocalDate, var folder: String = "")
 
 /**
  * Registry of named Synthesize pages.
@@ -47,7 +50,7 @@ object SynthPageStore {
             (0 until arr.length()).mapNotNull {
                 val o = arr.getJSONObject(it)
                 val d = runCatching { LocalDate.parse(o.optString("date")) }.getOrNull() ?: return@mapNotNull null
-                SynthPage(o.optString("key"), o.optString("name"), d)
+                SynthPage(o.optString("key"), o.optString("name"), d, o.optString("folder"))
             }.toMutableList()
         }.getOrDefault(mutableListOf())
     }
@@ -56,19 +59,30 @@ object SynthPageStore {
         runCatching {
             val arr = JSONArray()
             for (p in pages) arr.put(JSONObject()
-                .put("key", p.key).put("name", p.name).put("date", p.date.toString()))
+                .put("key", p.key).put("name", p.name).put("date", p.date.toString())
+                .put("folder", p.folder))
             file(context).writeText(arr.toString())
         }.onFailure { Timber.w(it, "synth index save failed") }
     }
 
-    /** Start a new topic page, homed on [date] (today by default). */
-    fun add(context: Context, name: String, date: LocalDate = LocalDate.now()): SynthPage {
+    /** Start a new topic page, homed on [date] (today by default). [key] is chosen by a caller that
+     *  wrote the page before naming it (❖ Synthesize this list picks it at ask time, so a reply that
+     *  lands after a kill lands under the same key) — and a key already listed is simply returned. */
+    fun add(context: Context, name: String, date: LocalDate = LocalDate.now(),
+            key: String = "synthesize-${System.currentTimeMillis()}"): SynthPage {
         val pages = list(context)
-        val page = SynthPage("synthesize-${System.currentTimeMillis()}",
-            name.ifBlank { "Synthesis ${pages.size + 1}" }, date)
+        pages.firstOrNull { it.key == key }?.let { return it }
+        val page = SynthPage(key,
+            name.ifBlank { LedgerDefaultName.forDate(date, pages.map { it.name }) }, date)
         pages.add(0, page); save(context, pages)
         sync(context)
         return page
+    }
+
+    /** File (or unfile) a topic page — key-scoped, like everything in this index. */
+    fun setFolder(context: Context, key: String, folder: String) {
+        val pages = list(context)
+        pages.firstOrNull { it.key == key }?.let { it.folder = folder; save(context, pages); sync(context) }
     }
 
     fun rename(context: Context, key: String, name: String) {
@@ -113,7 +127,7 @@ object SynthPageStore {
                         val o = arr.getJSONObject(i); val k = o.optString("key")
                         val d = runCatching { LocalDate.parse(o.optString("date")) }.getOrNull()
                         if (k.isNotBlank() && d != null && !byKey.containsKey(k))
-                            byKey[k] = SynthPage(k, o.optString("name"), d)
+                            byKey[k] = SynthPage(k, o.optString("name"), d, o.optString("folder"))
                     }
                 }
                 byKey.values.toMutableList()
@@ -122,7 +136,8 @@ object SynthPageStore {
             if (merged.map { it.key } != local.map { it.key }) save(context, merged)
             val arr = JSONArray()
             for (p in merged) arr.put(JSONObject()
-                .put("key", p.key).put("name", p.name).put("date", p.date.toString()))
+                .put("key", p.key).put("name", p.name).put("date", p.date.toString())
+                .put("folder", p.folder))
             com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.push(context, remotePath(), arr.toString())
         }
     }

@@ -89,7 +89,8 @@ object PickingsStore {
     /** Create a new named board and return it. */
     fun add(context: Context, date: LocalDate, name: String): PickingPage {
         val pages = list(context, date)
-        val page = PickingPage("pickings-${System.currentTimeMillis()}", name.ifBlank { "Pickings ${pages.size + 1}" })
+        val page = PickingPage("pickings-${System.currentTimeMillis()}",
+            name.ifBlank { LedgerDefaultName.forDate(date, pages.map { it.name }) })
         pages.add(page); save(context, date, pages)
         sync(context, date)
         return page

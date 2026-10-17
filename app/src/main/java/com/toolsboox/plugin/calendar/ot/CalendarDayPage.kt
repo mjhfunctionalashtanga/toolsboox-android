@@ -17,7 +17,6 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.time.format.FormatStyle
 
 /**
  * Create daily template of calendar plugin.
@@ -25,6 +24,16 @@ import java.time.format.FormatStyle
  * @author <a href="mailto:gabor.auth@toolsboox.com">Gábor AUTH</a>
  */
 class CalendarDayPage {
+
+    /** A recent note (or the doodle) rendered small — handed in by the fragment, which owns
+     *  renderPageBitmap — then drawn into its zone and made tappable. */
+    data class DashThumb(val pageKey: String, val bitmap: android.graphics.Bitmap?, val title: String = "")
+
+    /** A page-region hit target on the dashboard — the PickingsCover idiom: recorded at draw
+     *  time in canvas space, hit-tested on a finger tap, never a View. */
+    data class DashHit(val rect: android.graphics.RectF, val kind: Kind, val pageKey: String = "") {
+        enum class Kind { NOTE, DOODLE, TASK_PROMOTE, MEMO_PROMOTE, BOOK }
+    }
 
     companion object {
         // Cell width
@@ -38,6 +47,70 @@ class CalendarDayPage {
 
         // Top offset
         private const val to = (1872.0f - 35 * ceh) / 2.0f
+
+        // ── Right-column dashboard (the today page IS the schedule page; CORRECTION 3, 2026-08-23) ──
+        // "They're meant to be part of the page, not laid on top of the page." The dashboard is DRAWN
+        // INTO this template — dividing lines, zone labels, note-mini bitmaps, the doodle preview —
+        // never floating Views. ONE source of truth here for the draw and the tap hit-rects (the pane
+        // is pixels; a second guess at its layout would drift). Square corners throughout — plain
+        // drawRect/drawLine, so nothing is rounded ("I do not like the rounded edges").
+        //
+        // The LEFT column stays the schedule grid (lo..lo+cew). The RIGHT column is split EXACTLY
+        // 50/50 vertically — deliberate, so the column lifts out as a widget later:
+        //   TOP 50%:    Tasks (write-by-hand) over a Memo strip (write-by-hand).
+        //   BOTTOM 50%: three recent-note thumbnails, then a landscape-ratio Doodle area.
+        private val rcL = lo + cew + 50.0f              // right column left edge  (715)
+        private val rcR = lo + 2 * cew + 50.0f          // right column right edge (1360)
+        private val rcT = to                             // top of the content band (61)
+        private val rcB = to + 35 * ceh                  // bottom of the content band (1811)
+        private val rcMid = (rcT + rcB) / 2.0f           // the load-bearing 50/50 line
+        private val memoTop = rcMid - 5 * ceh            // Memo = its label bar + ~4 writing lines
+        // A thin strip along the BOTTOM of the Tasks write region carries the weather forecast + the
+        // moon phase (Michael 08-23: "the weather forecast on there, as well as the moon … at the
+        // bottom of tasks, no new label"). It sits UNDER the handwriting lines, still inside the
+        // Tasks zone, so the hand keeps the top of the region: the ruled guide stops above it and
+        // [tasksWriteRect] ends at [tasksStripTop], so a promote never gathers the strip as if it
+        // were a jotted task. No label of its own — it reads as the page's own quiet almanac.
+        private val tasksStripH = ceh * 1.4f
+        private val tasksStripTop = memoTop - tasksStripH
+        private val doodleAreaH = (rcR - rcL) * 0.55f    // wider-than-tall: the 6" landscape tile
+        private val doodleLabelTop = rcB - ceh - doodleAreaH
+        private val thumbsTop = rcMid + ceh + 10.0f
+        private val thumbsBottom = doodleLabelTop - 10.0f
+
+        private val dashBitmapPaint = android.graphics.Paint().apply {
+            isFilterBitmap = true; isAntiAlias = true
+        }
+
+        @Volatile
+        private var dashHits: List<DashHit> = emptyList()
+
+        /** The Tasks / Memo writing regions in canvas space, so a promote can gather the strokes
+         *  jotted inside them — "Tasks is meant to be a place to write by hand." */
+        @Volatile
+        var tasksWriteRect: android.graphics.RectF? = null
+            private set
+
+        @Volatile
+        var memoWriteRect: android.graphics.RectF? = null
+            private set
+
+        /** The Doodle region — an inkable area of the page (you draw on it directly). */
+        @Volatile
+        var doodleWriteRect: android.graphics.RectF? = null
+            private set
+
+        /** The dashboard hit target under a canvas-space point, or null. */
+        fun dashHitAt(x: Float, y: Float): DashHit? = dashHits.firstOrNull { it.rect.contains(x, y) }
+
+        /** Forget the dashboard's recorded rects — called when a note page is drawn, so a stale
+         *  rectangle can't send a tap on some other page off to a zone (the PickingsCover.clear rule). */
+        fun clearDashHits() {
+            dashHits = emptyList()
+            tasksWriteRect = null
+            memoWriteRect = null
+            doodleWriteRect = null
+        }
 
         /**
          * Process touch event on the calendar page and navigate to the view of calendar.
@@ -73,13 +146,23 @@ class CalendarDayPage {
                     return true
                 }
 
+                // THE SCHEDULE FACE JOINS THE WALK (Michael, 2026-08-23: "when I slide with my
+                // finger from today it goes to all stars, then gram pics, then todays note").
+                //
+                // It never did. Left/right stepped DAYS — which is right, this is the calendar, and
+                // that stays — but the vertical pair did its own thing: down went to the week, and
+                // up was hardcoded to "pickings", a page that is not even a station any more since
+                // the 08-23 ruling made Pickings a template. So Today was the one surface where a
+                // swipe meant something different from everywhere else, and the walk could only be
+                // entered from inside it. Both directions now go through the SAME two functions the
+                // note pages use, which is what makes the gesture mean one thing across the day.
                 OnGestureListener.UTD -> {
-                    CalendarNavigator.toWeekPage(fragment, localDate, locale)
+                    fragment.ritualStepBack()
                     return true
                 }
 
                 OnGestureListener.DTU -> {
-                    CalendarNavigator.toDayNote(fragment, localDate, "pickings")
+                    fragment.ritualStepForward()
                     return true
                 }
             }
@@ -137,17 +220,15 @@ class CalendarDayPage {
          * @param canvas the canvas
          * @param calendarDay data class
          * @param calendarEvents the list of calendar events
-         * @param openTasks what earlier days left undone (today only; empty when cold or on
-         *   other days) — drawn as ghost rows in the Tasks section's free rows, never persisted
+         * @param recentNotes the three most-recent note pages, rendered small (dashboard Notes zone)
+         * @param doodle the standing daily doodle page, rendered small (dashboard Doodle zone)
          */
         fun drawPage(
             context: Context, canvas: Canvas, calendarDay: CalendarDay, calendarEvents: List<CalendarEvent>,
-            openTasks: List<OpenTasks.Open> = emptyList()
+            recentNotes: List<DashThumb> = emptyList(), doodle: DashThumb? = null,
+            recordHits: Boolean = true
         ) {
             val schedulesText = context.getString(R.string.calendar_day_schedules)
-            val tasksText = context.getString(R.string.calendar_day_tasks)
-            val allDayText = context.getString(R.string.calendar_day_all_day)
-            val locale = calendarDay.locale
 
             canvas.drawRect(0.0f, 0.0f, 1404.0f, 1872.0f, Creator.fillWhite)
 
@@ -213,47 +294,6 @@ class CalendarDayPage {
                 }
             }
 
-            val notesTitle: MutableList<String> = mutableListOf()
-            val notesLeft: MutableList<String> = mutableListOf()
-            val notesRight: MutableList<String> = mutableListOf()
-
-            calendarDay.readingProgress.take(8).forEach {
-                if (it.authors == null) notesTitle.add(it.title)
-                else notesTitle.add("${it.authors}: ${it.title}")
-
-                notesLeft.add(it.progress ?: "-")
-                notesRight.add(DateFormat.getTimeFormat(context).format(it.lastAccess))
-            }
-
-            if (notesTitle.size < 8) {
-                outside.take(8 - notesTitle.size).forEach {
-                    notesTitle.add(it.title)
-                    if (it.allDay) {
-                        notesLeft.add(allDayText)
-                        notesRight.add("")
-                    } else {
-                        val startLocalDate = Instant.ofEpochMilli(it.startDate).atZone(ZoneId.systemDefault()).toLocalDateTime()
-                        val endLocalDate = Instant.ofEpochMilli(it.endDate).atZone(ZoneId.systemDefault()).toLocalDateTime()
-                        val startDate = startLocalDate.atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofLocalizedTime(FormatStyle.MEDIUM))
-                        val endDate = endLocalDate.atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofLocalizedTime(FormatStyle.MEDIUM))
-
-                        notesLeft.add(startDate)
-                        notesRight.add(endDate)
-                    }
-                }
-            }
-
-            // These rows hold the day's FACTS — reading progress and outside events — and nothing
-            // else. The Quick Wins fill retired on Michael's ruling (2026-08-10): a standing
-            // guess about what matters had no place on the page ("surfaces that guess are the
-            // dead ones"); the wins' machinery survives for the ⚡ surface, the widget, and the
-            // schedule-occasioned prep it will feed instead.
-            val notesCalsText = if (outside.isEmpty()) {
-                context.getString(R.string.calendar_day_reading_events)
-            } else {
-                context.getString(R.string.calendar_day_reading_events_count).format(outside.size)
-            }
-
             // Schedules grid
             canvas.drawLine(lo, to + ceh, lo + cew, to + ceh, Creator.lineDefaultBlack)
             for (i in 1..34) {
@@ -291,166 +331,204 @@ class CalendarDayPage {
                 drawEventLane(canvas, startHour, laneFull, 120.0f, cew - 120.0f)
             }
 
-            // Tasks title
-            canvas.drawRect(lo + cew + 50.0f, to, lo + 2 * cew + 50.0f, to + ceh, Creator.fillGrey80)
-            canvas.drawText(tasksText, lo + cew + 60.0f, to + ceh - 10.0f, Creator.textDefaultWhite)
+            // The RIGHT column is the dashboard, DRAWN INTO this same template bitmap (part of the
+            // page, not laid on top). Tasks/Memo are write-by-hand regions; Notes/Doodle are painted
+            // minis with page-region hit-rects. No ghost rows here: Tasks is now the hand's own place
+            // to write, not a rendered row-list.
+            ghostRows = emptyList()
+            val date = LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day)
+            drawDashboardRight(context, canvas, date, recentNotes, doodle, recordHits)
+        }
 
-            // Tasks grid.
-            //
-            // SEVENTEEN rows, and it took the Roots band's five to get there. Tasks gave those rows
-            // up so the spiral and the garden doors could sit where you already look when you're
-            // deciding what to do; with the Roots band retired they come home to the thing that
-            // needed them — 240 open tasks against twelve ruled lines was the page arguing with its
-            // own contents. The band's closing rule at row 18 stays where it was, so the Quick Wins
-            // title below has not moved a pixel.
-            canvas.drawLine(lo + cew + 50.0f, to + ceh, lo + 2 * cew + 50.0f, to + ceh, Creator.lineDefaultBlack)
-            for (i in 1..17) {
-                canvas.drawLine(
-                    lo + cew + 50.0f, to + i * ceh, lo + 2 * cew + 50.0f, to + i * ceh,
-                    Creator.lineDefaultGrey50
-                )
-                if (i % 2 == 0) {
-                    canvas.drawRect(
-                        lo + cew + 50.0f, to + i * ceh, lo + 2 * cew + 50.0f, to + i * ceh + ceh,
-                        Creator.fillGrey20
-                    )
+        // ── Zone geometry for anyone who crops this page (the home-screen widgets) ─────────────
+        // ONE source of truth: the widgets used to keep a private copy of this template and a
+        // private guess at where its zones sat, and drifted for two weeks after the 08-23 rewrite
+        // (they still showed a 17-row Tasks list and a reading-progress Notes block). They now draw
+        // THIS page and crop by THESE rects.
+        /** The schedule column — label bar through the last half-hour row, with its margin. */
+        fun scheduleColumnRect() = android.graphics.RectF(0.0f, 0.0f, lo + cew + 20.0f, 1872.0f)
+        /** Right column, top half: Tasks (with the almanac strip) over Memo. */
+        fun rightTopHalfRect() = android.graphics.RectF(rcL, rcT, rcR, rcMid)
+        /** Right column, bottom half: Notes minis over the Bookshelf. */
+        fun rightBottomHalfRect() = android.graphics.RectF(rcL, rcMid, rcR, rcB)
+
+        /**
+         * The right-column dashboard, painted into the template. Two columns overall (Schedule left);
+         * the right column split EXACTLY 50/50 — TOP: Tasks + Memo write-by-hand regions; BOTTOM:
+         * three recent-note minis and a landscape-ratio Doodle area. All corners square (plain
+         * drawRect/drawLine). Records the tap hit-rects and the two writing regions so the fragment
+         * resolves finger taps (the PickingsCover idiom) and gathers promote strokes.
+         */
+        private fun drawDashboardRight(
+            context: Context, canvas: Canvas, date: LocalDate, recentNotes: List<DashThumb>, doodle: DashThumb?,
+            recordHits: Boolean = true
+        ) {
+            val tasksText = context.getString(R.string.calendar_day_tasks)
+            val hits = mutableListOf<DashHit>()
+
+            // Outer frame + the load-bearing 50/50 divider.
+            canvas.drawRect(rcL, rcT, rcR, rcB, Creator.lineDefaultBlack)
+            canvas.drawLine(rcL, rcMid, rcR, rcMid, Creator.lineDefaultBlack)
+
+            // ── TOP half: Tasks (with a weather/moon strip at its foot) over Memo ────────────────────
+            drawZoneLabel(canvas, rcT, tasksText)
+            hits.add(DashHit(promoteGlyphRect(rcT), DashHit.Kind.TASK_PROMOTE))
+            drawRuled(canvas, rcT + ceh, tasksStripTop)
+            if (recordHits) tasksWriteRect = android.graphics.RectF(rcL, rcT + ceh, rcR, tasksStripTop)
+            drawTasksWeatherMoon(context, canvas, date)
+
+            canvas.drawLine(rcL, memoTop, rcR, memoTop, Creator.lineDefaultBlack)
+            drawZoneLabel(canvas, memoTop, "Memo")
+            hits.add(DashHit(promoteGlyphRect(memoTop), DashHit.Kind.MEMO_PROMOTE))
+            drawRuled(canvas, memoTop + ceh, rcMid)
+            if (recordHits) memoWriteRect = android.graphics.RectF(rcL, memoTop + ceh, rcR, rcMid)
+
+            // ── BOTTOM half: three note minis (title BELOW each), then a landscape Doodle ─────────────
+            drawZoneLabel(canvas, rcMid, "Notes")
+            val gap = 14.0f
+            val cellW = (rcR - rcL - 4 * gap) / 3.0f
+            val titleH = ceh                                   // a line under each thumb for its name
+            for (i in 0 until 3) {
+                val cl = rcL + gap + i * (cellW + gap)
+                // The thumbnail cell leaves a title line below it.
+                val cell = android.graphics.RectF(cl, thumbsTop, cl + cellW, thumbsBottom - titleH)
+                canvas.drawRect(cell, Creator.lineDefaultGrey50)
+                val thumb = recentNotes.getOrNull(i)
+                if (thumb?.bitmap != null) {
+                    drawBitmapFit(canvas, thumb.bitmap, cell)
+                    hits.add(DashHit(cell, DashHit.Kind.NOTE, thumb.pageKey))
+                    // The note's name, centered under its thumbnail (ellipsized to the cell).
+                    val name = thumb.title.ifBlank { "" }
+                    if (name.isNotEmpty()) {
+                        val clipped = android.text.TextUtils.ellipsize(
+                            name, Creator.textSmallBlack, cellW, android.text.TextUtils.TruncateAt.END
+                        ).toString()
+                        val tw = Creator.textSmallBlack.measureText(clipped)
+                        canvas.drawText(clipped, cell.centerX() - tw / 2f, thumbsBottom - 10.0f, Creator.textSmallBlack)
+                    }
                 }
-                canvas.drawRect(
-                    lo + cew + 60.0f, to + i * ceh + 10.0f, lo + cew + 90.0f, to + i * ceh + 40.0f,
-                    Creator.lineDefaultGrey50
-                )
             }
-            canvas.drawLine(
-                lo + cew + 50.0f, to + 18 * ceh, lo + 2 * cew + 50.0f, to + 18 * ceh,
-                Creator.lineDefaultBlack
-            )
-            canvas.drawLine(
-                lo + cew + 100.0f, to + ceh, lo + cew + 100.0f, to + 18 * ceh,
-                Creator.lineDefaultBlack
-            )
+            if (recentNotes.isEmpty()) {
+                canvas.drawText("No notes yet", rcL + gap, thumbsTop + 40.0f, Creator.textSmallBlack)
+            }
 
-            // Quick Wins title (carries the outside-event count when there are any — those
-            // events still live in these rows; only the stars moved out).
-            canvas.drawRect(lo + cew + 50.0f, to + 18 * ceh, lo + 2 * cew + 50.0f, to + 19 * ceh, Creator.fillGrey80)
-            canvas.drawText(notesCalsText, lo + cew + 60.0f, to + 19 * ceh - 10.0f, Creator.textDefaultWhite)
-            // Notes grid
-            canvas.drawLine(
-                lo + cew + 50.0f,
-                to + 19 * ceh,
-                lo + 2 * cew + 50.0f,
-                to + 19 * ceh,
-                Creator.lineDefaultBlack
-            )
-            for (i in 20..35) {
-                canvas.drawLine(
-                    lo + cew + 50.0f, to + i * ceh, lo + 2 * cew + 50.0f, to + i * ceh,
-                    Creator.lineDefaultGrey50
-                )
-                if (i % 2 == 0) {
-                    canvas.drawRect(
-                        lo + cew + 50.0f, to + i * ceh, lo + 2 * cew + 50.0f, to + i * ceh + ceh,
-                        Creator.fillGrey20
-                    )
+            // BOOKSHELF (was Doodle — Michael, 09-03: "turn Doodle into a bookshelf surfacer
+            // like you did for notes above it"): the three books the hand was most recently in,
+            // as covers with titles; a tap opens the book. Doodling still has its standing page
+            // through Notes' templates — this strip surfaces the reading the way the minis
+            // surface the writing.
+            canvas.drawLine(rcL, doodleLabelTop, rcR, doodleLabelTop, Creator.lineDefaultBlack)
+            drawZoneLabel(canvas, doodleLabelTop, "Bookshelf")
+            if (recordHits) doodleWriteRect = android.graphics.RectF(rcL, doodleLabelTop + ceh, rcR, rcB)
+            runCatching {
+                val touched = com.toolsboox.plugin.reader.ui.ReaderPositionStore.lastReadTimes(context)
+                // The playhead store keys by NAME WITHOUT EXTENSION (bookNoteKey strips it),
+                // but Entry.name is the filename WITH it — so a bare containsKey(name) never
+                // matched and the zone was always empty (09-03: "bookshelf on today isn't
+                // showing covers"). Strip the extension to meet the key it was filed under.
+                fun keyOf(e: com.toolsboox.plugin.reader.ui.BookshelfSource.Entry) =
+                    e.name.substringBeforeLast('.')
+                val entries = com.toolsboox.plugin.reader.ui.BookshelfSource.list(context)
+                    .filter { touched.containsKey(keyOf(it)) }
+                    .sortedByDescending { touched[keyOf(it)] ?: 0L }
+                    .take(3)
+                val bTop = doodleLabelTop + ceh + 10.0f
+                val bBottom = rcB - titleH
+                for ((i, e) in entries.withIndex()) {
+                    val cl = rcL + gap + i * (cellW + gap)
+                    val cell = android.graphics.RectF(cl, bTop, cl + cellW, bBottom)
+                    canvas.drawRect(cell, Creator.lineDefaultGrey50)
+                    runCatching {
+                        drawBitmapFit(canvas, com.toolsboox.plugin.reader.ui.BookCovers.cover(context, e), cell)
+                    }
+                    hits.add(DashHit(cell, DashHit.Kind.BOOK, e.name))
+                    val clipped = android.text.TextUtils.ellipsize(
+                        e.title, Creator.textSmallBlack, cellW, android.text.TextUtils.TruncateAt.END
+                    ).toString()
+                    val tw = Creator.textSmallBlack.measureText(clipped)
+                    canvas.drawText(clipped, cell.centerX() - tw / 2f, rcB - 10.0f, Creator.textSmallBlack)
                 }
+                if (entries.isEmpty())
+                    canvas.drawText("Nothing mid-read yet", rcL + gap, bTop + 40.0f, Creator.textSmallBlack)
             }
-            canvas.drawLine(
-                lo + cew + 50.0f, to + 35 * ceh, lo + 2 * cew + 50.0f, to + 35 * ceh,
-                Creator.lineDefaultBlack
-            )
 
-            // Weather + moon — a subtle line, then a compact hour-by-hour temperature sparkline,
-            // right below the Notes & Other events bar.
-            val wmDate = java.time.LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day)
+            if (recordHits) dashHits = hits
+        }
+
+        /** A dashboard zone label bar: grey fill + white text + a drawn "→" promote glyph at its
+         *  right end (the tap affordance the fragment maps to [DashHit.Kind.TASK_PROMOTE] /
+         *  [DashHit.Kind.MEMO_PROMOTE]). Square corners. */
+        private fun drawZoneLabel(canvas: Canvas, top: Float, text: String) {
+            canvas.drawRect(rcL, top, rcR, top + ceh, Creator.fillGrey80)
+            canvas.drawText(text, rcL + 12.0f, top + ceh - 12.0f, Creator.textDefaultWhite)
+            canvas.drawText("→", rcR - ceh + 12.0f, top + ceh - 12.0f, Creator.textDefaultWhite)
+        }
+
+        /** The "→" promote hit-rect at the right end of a zone's label bar. */
+        private fun promoteGlyphRect(top: Float): android.graphics.RectF =
+            android.graphics.RectF(rcR - ceh, top, rcR, top + ceh)
+
+        /** The weather forecast + moon phase, tucked along the bottom of the Tasks region — no zone
+         *  label of its own (Michael 08-23), a quiet strip UNDER the handwriting lines. Reuses
+         *  [WeatherMoon]'s already-fetched cache (refreshed on resume, never on this draw path): the
+         *  summary line — current glyph + temp, the day's high/low, precip, and the moon phase, or
+         *  moon-only on a day that isn't today / when offline — over a compact hour-by-hour
+         *  temperature sparkline for the day (drawn only when a forecast is actually cached). */
+        private fun drawTasksWeatherMoon(context: Context, canvas: Canvas, date: LocalDate) {
+            // A faint rule fences the strip off from the writing lines above it.
+            canvas.drawLine(rcL, tasksStripTop, rcR, tasksStripTop, Creator.lineDefaultGrey50)
+
+            val padL = rcL + 12.0f
+            val padR = rcR - 12.0f
+            // The summary line: weather (today, if cached) then the moon; moon-only otherwise.
             Creator.drawEllipsizedText(
-                canvas, WeatherMoon.summary(context, wmDate),
-                Creator.textSmallBlack, lo + cew + 60.0f, to + 20 * ceh - 12.0f, cew
+                canvas, WeatherMoon.summary(context, date), Creator.textSmallBlack,
+                padL, tasksStripTop + 28.0f, padR - padL
             )
-            val temps = WeatherMoon.hourly(context, wmDate)
+
+            // The day's hourly temperatures as a compact sparkline in the lower band. Empty ⇒ nothing
+            // drawn, exactly as a day with no cached forecast should read.
+            val temps = WeatherMoon.hourly(context, date)
             if (temps.size >= 2) {
-                val x0 = lo + cew + 60.0f
-                val x1 = lo + 2 * cew + 40.0f
-                val yBot = to + 21 * ceh - 6.0f
-                val yTop = to + 20 * ceh + 10.0f
-                val minT = temps.minOrNull() ?: 0.0f
-                val range = ((temps.maxOrNull() ?: 0.0f) - minT).coerceAtLeast(1.0f)
-                val n = temps.size
-                fun px(i: Int) = x0 + (x1 - x0) * i / (n - 1)
-                fun py(t: Float) = yBot - (t - minT) / range * (yBot - yTop)
-                for (i in 1 until n) {
-                    canvas.drawLine(px(i - 1), py(temps[i - 1]), px(i), py(temps[i]), Creator.lineDefaultBlack)
+                val lo = temps.minOrNull() ?: return
+                val hi = temps.maxOrNull() ?: return
+                val span = (hi - lo).takeIf { it > 0.5f } ?: 1.0f
+                val top = tasksStripTop + 36.0f
+                val bottom = memoTop - 8.0f
+                val stepX = (padR - padL) / (temps.size - 1)
+                var px = padL
+                var py = bottom - (temps[0] - lo) / span * (bottom - top)
+                for (i in 1 until temps.size) {
+                    val x = padL + i * stepX
+                    val y = bottom - (temps[i] - lo) / span * (bottom - top)
+                    canvas.drawLine(px, py, x, y, Creator.lineDefaultGrey50)
+                    px = x; py = y
                 }
-                // Dot the current hour.
-                val nowH = java.time.LocalTime.now().hour.coerceIn(0, n - 1)
-                val dot = android.graphics.Paint().apply {
-                    color = android.graphics.Color.BLACK
-                    style = android.graphics.Paint.Style.FILL
-                    isAntiAlias = true
-                }
-                canvas.drawCircle(px(nowH), py(temps[nowH]), 6.0f, dot)
             }
+        }
 
-            // Panel rows (shifted one slot down to sit under the weather/moon line): reading
-            // progress, then outside events.
-            for (i in 0..6) {
-                if (i < notesTitle.size) {
-                    val textX = lo + cew + 60.0f
-                    Creator.drawEllipsizedText(
-                        canvas, notesTitle[i], Creator.textDefaultBlack,
-                        textX, to + (22 + i * 2) * ceh - 10.0f, cew - (textX - lo - cew - 60.0f)
-                    )
-                    canvas.drawText(
-                        notesLeft[i], textX, to + (23 + i * 2) * ceh - 10.0f,
-                        Creator.textSmallBlack
-                    )
-                    canvas.drawText(
-                        notesRight[i], lo + cew + 40.0f + cew, to + (23 + i * 2) * ceh - 10.0f,
-                        Creator.textSmallBlackRight
-                    )
-                }
+        /** Faint ruled guide lines through a write-by-hand region, so the hand knows where to jot. */
+        private fun drawRuled(canvas: Canvas, top: Float, bottom: Float) {
+            var y = top + ceh
+            while (y < bottom - 1.0f) {
+                canvas.drawLine(rcL, y, rcR, y, Creator.lineDefaultGrey50)
+                y += ceh
             }
+        }
 
-            // Still-open ghosts: what earlier days left undone, DRAWN into the Tasks section's
-            // free rows — never written. Carry-over used to stamp these into the day file as
-            // typed text boxes every morning (linked back to their items by matching words);
-            // now the page is paper again and "still open" is a question the render answers.
-            // Grey so it reads as the page's murmur, not the hand's ink; the rect of each row
-            // is recorded so a tap can mark it done or open its own day.
-            val recorded = mutableListOf<GhostRow>()
-            if (openTasks.isNotEmpty()) {
-                val free = LedgerTaskCarryOver.freeRows(context, calendarDay)
-                val sinceFmt = DateTimeFormatter.ofPattern("MMM d")
-                // The block explains itself before it speaks: one caption row, consumed from the
-                // same free-row budget so the first ghost can't draw over it. Ghosts start at
-                // free[1] — when the page is so full that only one free row exists, the caption
-                // yields to nothing (there are no ghost rows visible to explain) and the single
-                // row goes to the first ghost as before.
-                var ghostSlotBase = 0
-                if (free.size >= 2) {
-                    val capRow = free[0]
-                    val capY = to + (capRow + 1) * ceh
-                    canvas.drawText(
-                        "· still open from earlier days — tap to act",
-                        lo + cew + 110.0f, capY + ceh - 15.0f, ghostCaption
-                    )
-                    ghostSlotBase = 1
-                }
-                for ((slot, open) in openTasks.withIndex()) {
-                    val row = free.getOrNull(slot + ghostSlotBase) ?: break
-                    val topY = to + (row + 1) * ceh
-                    Creator.drawEllipsizedText(
-                        canvas, "· ${open.item.text}", ghostText,
-                        lo + cew + 110.0f, topY + ceh - 15.0f, cew - 260.0f
-                    )
-                    canvas.drawText(
-                        "since ${open.sourceDay.format(sinceFmt)}",
-                        lo + 2 * cew + 40.0f, topY + ceh - 15.0f, ghostSince
-                    )
-                    recorded.add(GhostRow(open, android.graphics.RectF(
-                        lo + cew + 50.0f, topY, lo + 2 * cew + 50.0f, topY + ceh
-                    )))
-                }
-            }
-            ghostRows = recorded
+        /** Draw [bmp] fitted (aspect-preserving, centred) inside [rect] with a small inset. */
+        private fun drawBitmapFit(canvas: Canvas, bmp: android.graphics.Bitmap, rect: android.graphics.RectF) {
+            if (bmp.width <= 0 || bmp.height <= 0) return
+            val pad = 8.0f
+            val availW = rect.width() - 2 * pad
+            val availH = rect.height() - 2 * pad
+            if (availW <= 0 || availH <= 0) return
+            val s = minOf(availW / bmp.width, availH / bmp.height)
+            val w = bmp.width * s
+            val h = bmp.height * s
+            val dl = rect.left + (rect.width() - w) / 2
+            val dt = rect.top + (rect.height() - h) / 2
+            canvas.drawBitmap(bmp, null, android.graphics.RectF(dl, dt, dl + w, dt + h), dashBitmapPaint)
         }
 
         private fun drawEventLane(canvas: Canvas, startHour: Int, lane: MutableList<CalendarEvent>, llo: Float, lw: Float) {

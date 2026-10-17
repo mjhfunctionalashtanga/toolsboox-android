@@ -28,7 +28,10 @@ object VisionOcr {
     private val json = "application/json".toMediaType()
 
     private const val PROMPT =
-        "This image is a handwritten note. Transcribe the handwriting exactly as written. " +
+        "This image is a handwritten note in ENGLISH (Latin script). Transcribe the handwriting " +
+            "exactly as written. Never transcribe into any other script: if marks resemble another " +
+            "script's characters, they are pen artifacts or misplaced strokes, not writing — " +
+            "transcribe only what reads as Latin-script text. " +
             "Reply with ONLY the transcription text — no quotation marks, no commentary, no labels. " +
             "If nothing is legible, reply with an empty line."
 
@@ -223,21 +226,55 @@ object VisionOcr {
         }
     }
 
-    /** Returns the transcription, or null on error / no key. */
+    /** WHY the last [recognize] returned null, in a sentence a status line can show — the
+     *  09-14 B6 report ("it still comes up couldn't read the selection") had the reason only in
+     *  logcat, on a device with no cable. Null after a success. */
+    @Volatile var lastFailure: String? = null
+
+    private fun failureText(provider: String, code: Int, body: String): String {
+        val msg = runCatching {
+            val o = JSONObject(body)
+            o.optJSONObject("error")?.optString("message")?.ifBlank { null }
+        }.getOrNull() ?: body.take(120)
+        return "$provider $code: ${msg.take(160)}"
+    }
+
+    /** Returns the transcription, or null on error / no key (see [lastFailure] for the why).
+     *  A model the API no longer knows (404 naming the model) is retried once on the
+     *  provider's default — a stale model id in Settings must not make every lasso illegible. */
     fun recognize(bitmap: Bitmap, provider: String, apiKey: String, model: String): String? {
-        if (apiKey.isBlank()) return null
+        if (apiKey.isBlank()) { lastFailure = "no API key"; return null }
         val png = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
         val b64 = Base64.encodeToString(png, Base64.NO_WRAP)
-        val req = if (provider == OPENAI) openAi(b64, model, apiKey) else anthropic(b64, model, apiKey)
-        return try {
-            client.newCall(req).execute().use { resp ->
-                val body = resp.body?.string().orEmpty()
-                if (!resp.isSuccessful) { Timber.w("VisionOcr %s error %d: %s", provider, resp.code, body.take(300)); return null }
-                (if (provider == OPENAI) parseOpenAi(body) else parseAnthropic(body))?.trim()?.ifBlank { null }
+        fun once(m: String): Pair<String?, Int> {
+            val req = if (provider == OPENAI) openAi(b64, m, apiKey) else anthropic(b64, m, apiKey)
+            return try {
+                client.newCall(req).execute().use { resp ->
+                    val body = resp.body?.string().orEmpty()
+                    if (!resp.isSuccessful) {
+                        Timber.w("VisionOcr %s error %d: %s", provider, resp.code, body.take(300))
+                        lastFailure = failureText(provider, resp.code, body)
+                        return null to resp.code
+                    }
+                    val text = (if (provider == OPENAI) parseOpenAi(body) else parseAnthropic(body))?.trim()?.ifBlank { null }
+                    lastFailure = if (text == null) "$provider answered with no text" else null
+                    text to resp.code
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "VisionOcr request failed")
+                lastFailure = "network: ${e.javaClass.simpleName}${e.message?.let { " — ${it.take(100)}" } ?: ""}"
+                null to -1
             }
-        } catch (e: Exception) {
-            Timber.w(e, "VisionOcr request failed"); null
         }
+        val (text, code) = once(model)
+        if (text != null) return text
+        val fallback = if (provider == OPENAI) "gpt-4o" else "claude-sonnet-5"
+        if (code == 404 && model != fallback && (lastFailure?.contains("model", ignoreCase = true) == true)) {
+            Timber.w("VisionOcr: model '%s' unknown to %s — retrying on %s", model, provider, fallback)
+            val (again, _) = once(fallback)
+            if (again != null) { lastFailure = null; return again }
+        }
+        return null
     }
 
     private fun anthropic(b64: String, model: String, apiKey: String, prompt: String = PROMPT): Request {

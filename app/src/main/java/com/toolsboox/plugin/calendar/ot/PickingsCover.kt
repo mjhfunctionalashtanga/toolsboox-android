@@ -229,7 +229,7 @@ object PickingsCover {
             color = Color.argb(140, 0, 0, 0); textAlign = Paint.Align.CENTER; textSize = 22f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.ITALIC); isAntiAlias = true
         }
-        canvas.drawText("recent pick boards land here", rect.centerX(), rect.centerY() - 6f, hint)
+        canvas.drawText("recent pickings notes land here", rect.centerX(), rect.centerY() - 6f, hint)
         canvas.drawText("circle ink → ❝ Picking, or name a new board", rect.centerX(), rect.centerY() + 26f, hint)
     }
 
@@ -288,7 +288,7 @@ object PickingsCover {
         val metaText =
             if (r.sameDay) {
                 val count = when {
-                    images.isNotEmpty() -> "${images.size} gram" + (if (images.size == 1) "" else "s")
+                    images.isNotEmpty() -> "${images.size} pick" + (if (images.size == 1) "" else "s")
                     strokes.isNotEmpty() -> "${strokes.size} strokes"
                     else -> "today" // the face already says "nothing picked yet"
                 }

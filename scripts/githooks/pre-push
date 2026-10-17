@@ -1,0 +1,1491 @@
+#!/usr/bin/env bash
+# Ledgable push guard.
+#
+# Runs before every `git push` (once turned on with --install) and stops the
+# push when one of the commits about to leave this machine contains something
+# that looks like a secret (keys, tokens, passwords) or personal data (real
+# email addresses, card digits, phone numbers in test files).
+#
+# It reads only what is new in this push: the lines each commit adds, the names
+# of files it adds or renames, readable text inside binary files it adds, its
+# commit message, and the message of any annotated tag being pushed. It never
+# prints the matched text, only the file, the commit and the line number.
+#
+#   scripts/githooks/pre-push --install            turn it on for every worktree of this repository
+#   scripts/githooks/pre-push --status             is it on here?
+#   scripts/githooks/pre-push --scan <revisions>   check without pushing
+#   scripts/githooks/pre-push --scan --strict ...  the same, with no "already public" passes
+#   scripts/githooks/pre-push --add-fingerprint    add a known secret's fingerprint
+#   scripts/githooks/pre-push --allow <commit|*> <kind|*> [<path>]   let one finding through
+#   LEDGABLE_PUSH_ALLOW=email git push ...         let every finding of these kinds through
+#   LEDGABLE_PUSH_OVERRIDE=1 git push ...          push anyway (loud)
+#
+# python3 is used when present (full checks). Without it a smaller set of
+# checks runs in awk. See README.md next to this file.
+
+set -u
+
+HOOK_DIR=$(cd "$(dirname "$0")" && pwd)
+SELF="$HOOK_DIR/$(basename "$0")"
+FP_NAME=known-secret-fingerprints             # the old place, next to this file (still read)
+SHARED_FP_NAME=ledgable-secret-fingerprints   # in the repository's shared git folder
+ALLOW_NAME=ledgable-push-allow                # findings you let through, same folder
+SNAPSHOT_NAME=ledgable-push-guard             # a copy of this file, same folder
+LAUNCHER_MARK=ledgable-push-guard-launcher
+KINDS="private_key aws_key google_key google_oauth stripe_key github_token slack_token anthropic_key
+openai_key service_token jwt assigned_secret php_secret_constant random_secret_value bearer basic_auth
+url_credentials wp_app_password fingerprint email email_in_file_name card phone private_file_name"
+
+say() { printf '%s\n' "$*" >&2; }
+
+is_zero() { case "${1:-}" in ''|*[!0]*) return 1 ;; *) return 0 ;; esac; }
+
+common_dir() {
+  # The repository's shared git folder: the same for the main checkout and every worktree.
+  local d
+  d=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && [ -n "$d" ] && { printf '%s\n' "$d"; return 0; }
+  d=$(git rev-parse --git-common-dir 2>/dev/null) && [ -n "$d" ] && (cd "$d" 2>/dev/null && pwd)
+}
+
+main_checkout() {
+  # The main working tree of this repository (shared by all worktrees).
+  local common
+  common=$(common_dir) || return 0
+  case "$common" in */.git) printf '%s\n' "${common%/.git}" ;; esac
+}
+
+fingerprint_files() {
+  local seen="" f main common top
+  common=$(common_dir)
+  main=$(main_checkout)
+  top=$(git rev-parse --show-toplevel 2>/dev/null || :)
+  for f in "${common:+$common/$SHARED_FP_NAME}" \
+           "$HOOK_DIR/$FP_NAME" \
+           "${top:+$top/scripts/githooks/$FP_NAME}" \
+           "${main:+$main/scripts/githooks/$FP_NAME}" \
+           "${LEDGABLE_PUSH_FINGERPRINTS:-}"; do
+    [ -n "$f" ] && [ -f "$f" ] || continue
+    case "$seen" in *"|$f|"*) continue ;; esac
+    seen="$seen|$f|"
+    printf '%s\n' "$f"
+  done
+}
+
+sha256_of_stdin() {
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 | awk '{print $NF}'
+  elif command -v python3 >/dev/null 2>&1; then python3 -c 'import sys,hashlib;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+  else return 1
+  fi
+}
+
+add_fingerprint() {
+  local common file secret fp
+  common=$(common_dir)
+  # Inside the shared git folder the list is read by every worktree and can never be committed.
+  if [ -n "$common" ]; then file="$common/$SHARED_FP_NAME"; else file="$HOOK_DIR/$FP_NAME"; fi
+  if [ ! -t 0 ]; then
+    say "Run this in a terminal: it asks for the secret without showing it."
+    exit 2
+  fi
+  printf 'Paste the secret (it will not be shown), then press Enter: ' >&2
+  IFS= read -rs secret
+  printf '\n' >&2
+  if [ "${#secret}" -lt 20 ] || [ "${#secret}" -gt 80 ]; then
+    say "Note: only values 20 to 80 characters long are compared; this one is ${#secret}."
+  fi
+  fp=$(printf '%s' "$secret" | sha256_of_stdin) || { say "No sha256 tool found (shasum, sha256sum, openssl or python3)."; exit 2; }
+  secret=""
+  if [ -f "$file" ] && grep -qx "$fp" "$file" 2>/dev/null; then
+    say "Already on the list: $file"
+    exit 0
+  fi
+  (umask 077; printf '%s\n' "$fp" >> "$file") || { say "Could not write $file"; exit 2; }
+  say "Added one fingerprint to $file"
+  if [ -z "$common" ] && ! git -C "$HOOK_DIR" check-ignore -q "$file" 2>/dev/null; then
+    say "WARNING: $file is not ignored by git. Add 'scripts/githooks/$FP_NAME' to .gitignore before committing."
+  fi
+  exit 0
+}
+
+write_launcher() {
+  cat <<EOF
+#!/bin/sh
+# $LAUNCHER_MARK: written by scripts/githooks/pre-push --install (run it again to refresh).
+# Every worktree of this repository pushes through this file. It runs the push guard
+# from the worktree's own scripts/githooks/ folder, or else the copy kept in this git
+# folder. If neither is there the push is stopped: it is never let through unchecked.
+top=\$(git rev-parse --show-toplevel 2>/dev/null)
+common=\$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+for g in "\${top:+\$top/scripts/githooks/pre-push}" "\${common:+\$common/$SNAPSHOT_NAME}"; do
+  if [ -n "\$g" ] && [ -f "\$g" ]; then exec bash "\$g" "\$@"; fi
+done
+echo "" >&2
+echo "Push stopped: the push guard is missing (no scripts/githooks/pre-push here and no copy in \${common:-the git folder})." >&2
+echo "Nothing was sent. Put it back by running scripts/githooks/pre-push --install from a checkout that has it," >&2
+echo "or push once with: LEDGABLE_PUSH_OVERRIDE=1 git push ..." >&2
+[ "\${LEDGABLE_PUSH_OVERRIDE:-}" = 1 ] && exit 0
+exit 1
+EOF
+}
+
+install_guard() {
+  local common hooks launcher snap hp lhp tmp
+  common=$(common_dir)
+  [ -n "$common" ] || { say "push guard: run --install inside the repository."; exit 2; }
+  hooks="$common/hooks"; launcher="$hooks/pre-push"; snap="$common/$SNAPSHOT_NAME"
+  if [ -e "$launcher" ] && ! grep -q "$LAUNCHER_MARK" "$launcher" 2>/dev/null; then
+    say "push guard: $launcher already exists and is not the guard's launcher."
+    say "Move it aside (or fold it in by hand), then run --install again. Nothing was changed."
+    exit 2
+  fi
+  # The old way (core.hooksPath pointing at a scripts/githooks folder) let pushes through
+  # unchecked whenever that folder was missing; take it out.
+  lhp=$(git config --local --get core.hooksPath 2>/dev/null || :)
+  case "${lhp%/}" in
+    */scripts/githooks|scripts/githooks) ;;
+    *) lhp="" ;;
+  esac
+  hp=$(git config --get core.hooksPath 2>/dev/null || :)
+  if [ -n "$hp" ] && [ "$hp" != "$lhp" ]; then
+    say "push guard: core.hooksPath is set to $hp, so git never looks in $hooks."
+    say "Remove that setting (git config --unset core.hooksPath, at the level where it is set), then run --install again."
+    say "Nothing was changed."
+    exit 2
+  fi
+  if [ -n "$lhp" ]; then
+    git config --local --unset-all core.hooksPath && say "Removed the old core.hooksPath setting ($lhp)."
+    hp=$(git config --get core.hooksPath 2>/dev/null || :)
+    if [ -n "$hp" ]; then
+      say "push guard: core.hooksPath is also set to $hp at another level, so git never looks in $hooks."
+      say "Remove that setting too, then run --install again."
+      exit 2
+    fi
+  fi
+  mkdir -p "$hooks" || { say "push guard: could not make $hooks"; exit 2; }
+  if [ "$SELF" != "$snap" ]; then
+    tmp="$snap.tmp.$$"
+    if ! { cp "$SELF" "$tmp" && chmod 755 "$tmp" && mv -f "$tmp" "$snap"; }; then
+      rm -f "$tmp"; say "push guard: could not write $snap"; exit 2
+    fi
+  fi
+  tmp="$launcher.tmp.$$"
+  if ! { write_launcher > "$tmp" && chmod 755 "$tmp" && mv -f "$tmp" "$launcher"; }; then
+    rm -f "$tmp"; say "push guard: could not write $launcher"; exit 2
+  fi
+  say "Push guard is on for every worktree of this repository."
+  say "  runs before each push:   $launcher"
+  say "  copy used when a worktree has no scripts/githooks/: $snap (refreshed by --install)"
+  say "  your known-secrets list: $common/$SHARED_FP_NAME"
+  exit 0
+}
+
+status_guard() {
+  local common where hp top used n=0 a=0 c f on=1
+  common=$(common_dir)
+  [ -n "$common" ] || { say "push guard: not inside a git repository."; exit 2; }
+  hp=$(git config --get core.hooksPath 2>/dev/null || :)
+  where=$(git rev-parse --path-format=absolute --git-path hooks/pre-push 2>/dev/null || git rev-parse --git-path hooks/pre-push)
+  [ -n "$hp" ] && say "core.hooksPath is set ($hp), so git looks for the hook there."
+  if [ -f "$where" ] && grep -q "$LAUNCHER_MARK" "$where" 2>/dev/null; then
+    top=$(git rev-parse --show-toplevel 2>/dev/null || :)
+    if [ -n "$top" ] && [ -f "$top/scripts/githooks/pre-push" ]; then used="$top/scripts/githooks/pre-push"
+    elif [ -f "$common/$SNAPSHOT_NAME" ]; then used="$common/$SNAPSHOT_NAME"
+    else used=""; fi
+    if [ -n "$used" ]; then say "On: pushes from here are checked by $used"
+    else say "On, but the guard itself is missing here, so pushes from here are stopped. Run --install again."; on=0; fi
+  elif [ -f "$where" ]; then
+    say "Not the guard: git runs $where before a push. Run scripts/githooks/pre-push --install to see what to do."; on=0
+  else
+    say "Off: git finds no pre-push hook ($where), so pushes are not checked."
+    say "Turn it on with: scripts/githooks/pre-push --install"; on=0
+  fi
+  while IFS= read -r f; do
+    c=$(grep -cE '^[[:space:]]*[0-9a-fA-F]{64}' "$f" 2>/dev/null)
+    n=$((n + ${c:-0}))
+  done < <(fingerprint_files)
+  [ -f "$common/$ALLOW_NAME" ] && a=$(grep -cvE '^[[:space:]]*(#|$)' "$common/$ALLOW_NAME" 2>/dev/null || :)
+  say "Known-secrets list: ${n:-0} fingerprint(s). Allow list: ${a:-0} line(s) ($common/$ALLOW_NAME)."
+  [ "$on" = 1 ]; exit $?
+}
+
+allow_add() {
+  local c=${1:-} k=${2:-} p=${3:-*} common file
+  common=$(common_dir)
+  [ -n "$common" ] || { say "push guard: run --allow inside the repository."; exit 2; }
+  file="$common/$ALLOW_NAME"
+  c=$(printf '%s' "$c" | tr 'A-F' 'a-f')
+  case "$c" in
+    '*') ;;
+    *) printf '%s' "$c" | grep -Eq '^[0-9a-f]{7,64}$' || { say "usage: pre-push --allow <commit (7+ characters) or *> <kind or *> [<path, * wildcards allowed>]"; exit 2; } ;;
+  esac
+  case " $(printf '%s' "$KINDS" | tr '\n' ' ') * " in
+    *" $k "*) ;;
+    *) say "push guard: unknown kind \"$k\". Kinds are shown in [brackets] in the guard's report:"; say "  $(printf '%s' "$KINDS" | tr '\n' ' ')"; exit 2 ;;
+  esac
+  printf '%s %s %s\n' "$c" "$k" "$p" >> "$file" || { say "Could not write $file"; exit 2; }
+  say "Added to $file:  $c $k $p"
+  exit 0
+}
+
+usage() {
+  cat >&2 <<'EOF'
+Ledgable push guard
+
+  Turn it on (once per repository):  scripts/githooks/pre-push --install
+  Is it on here?                     scripts/githooks/pre-push --status
+  Check without pushing:             scripts/githooks/pre-push --scan HEAD --not --remotes
+                                     scripts/githooks/pre-push --scan origin/main..HEAD
+  Before making a repository public: scripts/githooks/pre-push --scan --strict --all
+  Add a known secret:                scripts/githooks/pre-push --add-fingerprint
+  Let one finding through:           scripts/githooks/pre-push --allow <commit> <kind> [<path>]
+  Let a kind through, once:          LEDGABLE_PUSH_ALLOW=email git push ...
+  Push anyway, once:                 LEDGABLE_PUSH_OVERRIDE=1 git push ...
+EOF
+}
+
+# --------------------------------------------------------------------------
+# Full scanner (python3). Reads the commit list, writes one hit per line:
+#   path <TAB> commit <TAB> line-number (0 = file name / message, -1 = inside a binary file) <TAB> rule
+# --------------------------------------------------------------------------
+IFS= read -r -d '' PY_SCANNER <<'PYEOF' || :
+import sys, os, re, math, hashlib, subprocess, collections
+
+commits_file, hits_file, tips_file, public_file, tags_file = sys.argv[1:6]
+fp_files = [f for f in sys.argv[6:] if f]
+
+def read_list(path):
+    try:
+        with open(path, encoding='utf-8', errors='replace') as fh:
+            return [t.strip() for t in fh if t.strip()]
+    except OSError:
+        return []
+
+SHA_RX = re.compile(r'[0-9a-f]{40,64}')
+# Commits already on the remote (its main branch, the branch being pushed to).
+# An email address that is already published there is not news; it is let through.
+PUBLIC_TIPS = [t for t in read_list(tips_file) if SHA_RX.fullmatch(t)]
+# Addresses that are out already or go up anyway: your user.email, and the author and
+# committer addresses of the commits being pushed and of those already on the remote.
+PUBLIC_EMAILS = {t.lower() for t in read_list(public_file) if '@' in t}
+# Annotated tags being pushed: their messages are read too.
+TAGS = [t for t in read_list(tags_file) if SHA_RX.fullmatch(t)]
+
+# ---------------------------------------------------------------- fingerprints
+FINGERPRINTS = set()
+for f in fp_files:
+    try:
+        with open(f, encoding='utf-8', errors='replace') as fh:
+            for n, raw in enumerate(fh, 1):
+                s = raw.strip()
+                if not s or s.startswith('#'):
+                    continue
+                s = s.split()[0].lower()
+                if re.fullmatch(r'[0-9a-f]{64}', s):
+                    FINGERPRINTS.add(s)
+                else:
+                    sys.stderr.write('push guard: line %d of %s is not a sha256 fingerprint '
+                                     '(if it is a raw secret, replace it with its fingerprint)\n' % (n, f))
+    except OSError:
+        pass
+
+# ---------------------------------------------------------------- helpers
+def entropy(s):
+    if not s:
+        return 0.0
+    c = collections.Counter(s)
+    n = float(len(s))
+    return -sum(v / n * math.log(v / n, 2) for v in c.values())
+
+PLACEHOLDER_EXACT = {
+    'null', 'none', 'nil', 'undefined', 'true', 'false', 'password', 'passwd', 'secret',
+    'apikey', 'api_key', 'api-key', 'token', 'string', 'test', 'testing', 'demo', 'admin',
+    'default', 'empty', 'unset', 'required', 'optional', 'anything', 'unused', 'ollama',
+    'lm-studio', 'lmstudio', 'not-needed', 'not_needed', 'notneeded', 'no-key', 'nokey',
+}
+PLACEHOLDER_PARTS = (
+    'changeme', 'change_me', 'change-me', 'replace', 'your', 'example', 'sample',
+    'placeholder', 'dummy', 'fake', 'redacted', 'xxxx', '****', '....', '<', '>',
+    '{{', '}}', '${', '$(', '%s', '%@', '%d', '%(', '\\(', 'todo', 'tbd', 'insert_',
+    'not-a-real', 'not_a_real', 'notreal', 'secret-here', 'key-here', 'token-here',
+)
+NAMEISH_WORDS = re.compile(r'(pass|secret|key|token|pref|setting|field|label|hint|title|name|auth|cred|cache|store|header|param|column|meta)', re.I)
+
+def is_placeholder(v):
+    s = v.strip()
+    if len(s) < 6:
+        return True
+    l = s.lower()
+    if l in PLACEHOLDER_EXACT:
+        return True
+    if any(p in l for p in PLACEHOLDER_PARTS):
+        return True
+    if s[0] in '$%{[(@#':
+        return True
+    if re.fullmatch(r'[xX*\u2022.\-_0#=]+', s) or len(set(s)) <= 2:
+        return True
+    if re.search(r'\s', s):                      # prose / UI text
+        return True
+    if '://' in s:                               # a URL (credentials in URLs have their own rule)
+        return True
+    if re.fullmatch(r'[A-Z][A-Z0-9_]*', s) and '_' in s:          # ENV_VAR_NAME
+        return True
+    if re.fullmatch(r'[a-z][a-z0-9]*(?:[_.\-:/][a-z0-9]+)*', s) and NAMEISH_WORDS.search(s):
+        return True                              # a settings/meta key name such as "imap_password"
+    if re.fullmatch(r'[a-z]+(?:[A-Z][a-z0-9]*)+', s) and NAMEISH_WORDS.search(s):
+        return True                              # camelCase identifier
+    if re.match(r'(R\.string|BuildConfig|getString|System\.getenv|process\.env|os\.environ|ENV\[|env\(|getenv|Keychain|UserDefaults|NSLocalizedString)', s):
+        return True
+    if re.fullmatch(r'/?(?:[a-z0-9_.\-]+/)+[a-z0-9_.\-]*', s) and re.search(r'[a-z]{3,}', s):
+        return True                              # a file path such as scripts/githooks/pre-push
+    if not re.search(r'\d', s) and re.fullmatch(r'[a-z_./=:\-]+', s) and NAMEISH_WORDS.search(s):
+        return True                              # setting names strung together: /secret=/api_key=
+    return False
+
+def looks_secret(v, min_len):
+    """A literal that could plausibly be a real credential."""
+    if len(v) < min_len or is_placeholder(v):
+        return False
+    has_digit = any(c.isdigit() for c in v)
+    has_alpha = any(c.isalpha() for c in v)
+    has_sym = any((not c.isalnum()) for c in v)
+    if not has_alpha and not has_sym:            # only digits: an id, a number
+        return False
+    if re.fullmatch(r'[A-Za-z]+', v):            # a plain word or CamelCase name
+        return False
+    if re.fullmatch(r'[A-Za-z_.\-]+', v) and not re.search(r'[A-Z].*[a-z].*[A-Z]|[a-z][A-Z][a-z]*[A-Z]', v):
+        return False                             # word_with_separators
+    return (has_digit and has_alpha) or (has_sym and has_alpha and len(v) >= 12)
+
+HEX_ONLY = re.compile(r'[0-9a-f]+|[0-9A-F]+')
+
+def ascending_run(v, n=8):
+    """0123456789, abcdefgh: a test pattern, not a key."""
+    run = 1
+    for a, b in zip(v, v[1:]):
+        run = run + 1 if ord(b) - ord(a) == 1 else 1
+        if run >= n:
+            return True
+    return False
+
+def identifier_like(v):
+    """Names strung together with separators: reader_v2_font_size_2024, synthesize-1760284800000."""
+    parts = [p for p in re.split(r'[_\-.:/#@]+', v) if p]
+    if len(parts) < 2:
+        return False
+    wordish = sum(len(p) for p in parts       # words, and plain numbers such as a timestamp
+                  if re.fullmatch(r'[a-z]{2,}\d{0,4}|[A-Z]{2,}\d{0,4}|[A-Z][a-z]+\d{0,4}|v?\d+', p))
+    return wordish >= sum(len(p) for p in parts) * 0.6
+
+def random_looking(v, min_len=32):
+    if len(v) < min_len or is_placeholder(v):
+        return False
+    if not re.fullmatch(r'[A-Za-z0-9+/=_\-.~!@#$%^&*]+', v):
+        return False
+    if not any(c.isalpha() for c in v):
+        return False
+    if ascending_run(v):
+        return False
+    e = entropy(v)
+    n = len(v)
+    if HEX_ONLY.fullmatch(v):
+        # Hex has only 16 symbols, so a truly random hex key scores well below a
+        # mixed-case one of the same length: judge it against random hex.
+        if not any(c.isdigit() for c in v):
+            return False
+        return e >= (2.9 if n >= 32 else 2.5)
+    if identifier_like(v):
+        return False
+    digits = sum(c.isdigit() for c in v)
+    if digits >= max(3, n // 16):
+        return e >= (3.5 if n >= 24 else 3.3)
+    # Few or no digits: a random mixed-case token still has a very even spread of
+    # characters, while long names and identifiers (camelCase, snake_case) do not.
+    if not (any(c.isupper() for c in v) and any(c.islower() for c in v)):
+        return False
+    wordy = sum(len(w) for w in re.findall(r'[A-Z]?[a-z]{3,}', v))
+    if wordy >= n * 0.5:
+        return False
+    return e >= min(4.4, math.log(n, 2) - 0.85)
+
+SALT_WORDS = re.compile(r'(?i)(your|unique phrase|example|sample|changeme|change me|replace|placeholder|dummy|fake|xxxx|put |here|todo)')
+
+def php_secret_value(v):
+    """A define()/const literal of 20+ characters that could be a real secret.
+    WordPress salts can contain spaces and <>{} so they get their own test."""
+    if len(v) < 20:
+        return False
+    if looks_secret(v, 20) and entropy(v) >= 3.0:
+        return True
+    if SALT_WORDS.search(v):
+        return False
+    words = re.findall(r'[A-Za-z]{3,}', v)
+    if len(words) >= 3 and sum(len(w) for w in words) >= len(v) * 0.6:
+        return False                             # a sentence
+    classes = sum(bool(re.search(rx, v)) for rx in (r'[a-z]', r'[A-Z]', r'\d', r'[^\w\s]'))
+    return classes >= 3 and entropy(v) >= 4.2
+
+QUOTED = re.compile(r"'((?:[^'\\\n]|\\.)*)'|\"((?:[^\"\\\n]|\\.)*)\"|`((?:[^`\\\n]|\\.)*)`")
+
+def quoted_literals(line):
+    for m in QUOTED.finditer(line):
+        g = m.group(1) if m.group(1) is not None else (m.group(2) if m.group(2) is not None else m.group(3))
+        yield g
+
+CONFIG_EXT = {'.env', '.properties', '.ini', '.cfg', '.conf', '.toml', '.yml', '.yaml', '.sh',
+              '.bash', '.zsh', '.txt', '.md', '.netrc', '.xcconfig', '.htaccess', ''}
+
+BACKUP_SUFFIX = re.compile(r'(?:\.(?:bak|backup|orig|old|save|saved|copy|tmp|swp|prev|\d+)|~)+$', re.I)
+
+def ext_of(path):
+    base = BACKUP_SUFFIX.sub('', os.path.basename(path)) or os.path.basename(path)
+    if base.startswith('.env'):
+        return '.env'
+    root, ext = os.path.splitext(base)
+    if not ext and base.startswith('.'):
+        return base
+    return ext.lower()
+
+# ---------------------------------------------------------------- rules
+TOKEN_RULES = [
+    ('private_key', re.compile(r'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----')),
+    ('aws_key',     re.compile(r'(?<![A-Z0-9])(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![0-9A-Z])')),
+    ('google_key',  re.compile(r'(?<![\w-])AIza[0-9A-Za-z_\-]{35}(?![\w-])')),
+    ('google_oauth', re.compile(r'(?<![\w-])(?:GOCSPX-[0-9A-Za-z_\-]{20,}|ya29\.[0-9A-Za-z_\-]{20,}|1//0[0-9A-Za-z_\-]{30,})')),
+    ('stripe_key',  re.compile(r'(?<![\w])(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{16,}|(?<![\w])whsec_[0-9A-Za-z]{20,}')),
+    ('github_token', re.compile(r'(?<![\w])(?:gh[pousr]_[0-9A-Za-z]{36,}|github_pat_[0-9A-Za-z_]{40,})')),
+    ('slack_token', re.compile(r'(?<![\w])xox[abposr]-[0-9A-Za-z\-]{10,}|hooks\.slack\.com/services/T[0-9A-Z]{6,}/B[0-9A-Z]{6,}/[0-9A-Za-z]{20,}')),
+    ('anthropic_key', re.compile(r'(?<![\w-])sk-ant-[0-9A-Za-z_\-]{20,}')),
+    ('openai_key',  re.compile(r'(?<![\w-])sk-(?!ant-)(?:proj-|svcacct-|admin-)?(?=[0-9A-Za-z_\-]*[0-9])[0-9A-Za-z_\-]{32,}')),
+    ('service_token', re.compile(r'(?<![\w])(?:SG\.[0-9A-Za-z_\-]{16,}\.[0-9A-Za-z_\-]{16,}|npm_[0-9A-Za-z]{36}|hf_[0-9A-Za-z]{34,}|glpat-[0-9A-Za-z_\-]{20,}|SK[0-9a-f]{32}|key-[0-9a-f]{32})(?![\w])')),
+    ('jwt',         re.compile(r'(?<![\w-])eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}')),
+]
+
+ASSIGN_NAME = re.compile(
+    r'(?i)(?P<pre>[?&])?(?P<name>[A-Za-z0-9_.\-]*(?:password|passwd|passphrase|secret|api[_\-]?key|apikey|access[_\-]?key|private[_\-]?key|client[_\-]?secret)[A-Za-z0-9_.\-]*)'
+    r'["\'\]]?\s*(?::\s*[A-Za-z_][\w<>?.\[\], ]*?\s*(?==))?(?P<op>:=|=>|===?|!==?|=|:)')
+
+SECRETISH_NAME = re.compile(r'(?i)(key|secret|token|passw|pwd|credential|salt|signature)')
+# A name that ends in one of these is a secret's own name (INTAKE_KEY, mfKey, authToken):
+# a shorter random value is enough there.
+STRONG_NAME = re.compile(r'(?i)(?:key|secret|token|passw(?:or)?d|pwd|passphrase|credentials?|salt)s?$')
+SECRETISH_LINE = re.compile(r'(?i)(secret|token|passw|api[_\-]?key|apikey|private[_\-]?key|access[_\-]?key|credential|signing[_\-]?key|x-mf-|mf[_\-]?key|intake|["\']key["\']|(?:^|[?&\s\-])key=)')
+ENTROPY_ASSIGN = re.compile(
+    r'(?P<name>[A-Za-z0-9_.\-]+)["\'\]]?\s*(?::\s*[A-Za-z_][\w<>?.]*\s*(?==))?(?:=>|:=|=|:)\s*[@rbuf]{0,2}(?P<q>["\'`])(?P<val>[^"\'`\s]{20,})(?P=q)')
+# The same without quotes: shell and settings files, URLs (?key=...), headers (X-MF-Key: ...).
+UNQUOTED_ASSIGN = re.compile(
+    r'(?P<name>[A-Za-z0-9_.\-]+)\]?[ \t]*(?:=>|:=|=|:)[ \t]*(?P<val>[A-Za-z0-9+/=_\-.~]{20,})(?![A-Za-z0-9+/=_\-.~(\[{])')
+# Android string resources and other XML: <string name="mf_intake_key">value</string>
+XML_TEXT = re.compile(r'<(?P<tag>[A-Za-z_][\w:.\-]*)(?P<attrs>\s[^<>]*)?>\s*(?P<val>[^<>\s]{20,})\s*</(?P=tag)\s*>')
+# Info.plist: <key>Name</key> then <string>value</string>, on one line or the next
+PLIST_KEY = re.compile(r'<key>\s*(?P<name>[^<>]{1,80}?)\s*</key>')
+PLIST_STRING = re.compile(r'<string>\s*(?P<val>[^<>\s]{20,})\s*</string>')
+# adb shell am broadcast ... --es mf_key 'value'
+ADB_EXTRA = re.compile(r'(?:^|\s)(?:--es|-e)\s+(?P<name>[\w.\-]+)\s+(?P<q>[\'"]?)(?P<val>[^\s\'"]{20,})(?P=q)')
+
+PHP_DEFINE = re.compile(r'(?i)\bdefine\s*\(\s*([\'"])(?P<name>\w*(?:SECRET|KEY|TOKEN|PASSWORD|PASSWD)\w*)\1\s*,\s*(?P<q>[\'"])(?P<val>[^\'"]{20,})(?P=q)')
+PHP_CONST = re.compile(r'(?i)\bconst\s+(?P<name>\w*(?:SECRET|KEY|TOKEN|PASSWORD|PASSWD)\w*)\s*=\s*(?P<q>[\'"])(?P<val>[^\'"]{20,})(?P=q)')
+
+BEARER = re.compile(r'(?i)\bbearer\s+(?P<tok>[A-Za-z0-9\-._~+/]{20,}=*)')
+BASIC = re.compile(r'(?i)authorization[\'"]?\s*[:=,]\s*[\'"]?\s*basic\s+(?P<tok>[A-Za-z0-9+/]{12,}={0,2})')
+URL_CRED = re.compile(r'(?i)\b[a-z][a-z0-9+.\-]{1,15}://(?P<u>[^\s/:@\'"<>()]+):(?P<p>[^\s/@\'"<>()]{4,})@[A-Za-z0-9.\-]+')
+WP_APP_PW = re.compile(r'(?<![\w ])(?P<pw>[A-Za-z0-9]{4}(?: [A-Za-z0-9]{4}){5})(?![\w])')
+
+EMAIL = re.compile(r'(?<![\w.%+\-])(?P<local>[A-Za-z0-9][A-Za-z0-9._%+\-]*)@(?P<dom>(?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?\.)+(?P<tld>[A-Za-z]{2,24}))(?![\w\-])')
+FILE_EXT_TLDS = set('png jpg jpeg gif webp svg pdf js mjs cjs css kt kts java swift xml json html htm md txt zip '
+                    'mp3 mp4 m4a m4b wav ttf otf woff woff2 ico heic mov so aar jar gradle plist strings xib '
+                    'storyboard sh py php rb go rs ts tsx jsx lock yaml yml csv epub cbz cbr bin dat db sqlite '
+                    'log tmp bak gz tgz tar map wasm properties toml ini cfg conf'.split())
+CODE_LABELS = {'this', 'super', 'return', 'break', 'continue', 'label', 'loop', 'outer'}
+TRAILER = re.compile(r'^\s*[A-Za-z][\w-]*-by\s*:\s', re.I)
+
+CARD = [
+    re.compile(r'(?i)\b(?:ending|ends)\s+(?:in|with)\s*:?\s*\d{4}\b'),
+    re.compile(r'(?<![\w*\u2022\u25cf])(?:[*\u2022\u25cf]{3,}|[xX]{4}|(?:&bull;|&#8226;|&#x2022;){3,})[\s\-]?\d{4}\b(?!\*)'),
+    re.compile(r'(?i)\blast\s+(?:4|four)(?:\s+digits)?\s*(?:of\s+\w+\s*)?[:#\-]?\s*\d{4}\b'),
+]
+PHONE_EXT = {'.eml', '.json', '.txt', '.vcf', '.ics'}
+PHONE = [
+    re.compile(r'(?<![\w.+\-/:])(?:\+?1[\s.\-]?)?\(?(?P<area>[2-9]\d{2})\)?[\s.\-](?P<ex>\d{3})[\s.\-]\d{4}(?![\w\-])'),
+    re.compile(r'(?<![\w+])\+[1-9]\d{9,14}(?!\d)'),
+    re.compile(r'(?<![\w+])\+[1-9]\d{0,2}[\s.\-]\(?\d{1,4}\)?(?:[\s.\-]\d{2,5}){2,4}(?!\d)'),
+]
+
+SENSITIVE_BASENAMES = {
+    'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', '.netrc', '.htpasswd', '.pgpass',
+    'local.properties', 'keystore.properties', 'credentials.json', 'google-services.json',
+    'googleservice-info.plist', 'known-secret-fingerprints', 'ledgable-secret-fingerprints',
+}
+SENSITIVE_EXT = {'.pem', '.key', '.p12', '.pfx', '.jks', '.keystore', '.ppk', '.p8',
+                 '.mobileprovision', '.provisionprofile', '.kdbx',
+                 # saved app data: databases, archives and browser network logs can hold anything
+                 '.db', '.db3', '.sqlite', '.sqlite3', '.realm', '.har', '.zip'}
+
+TRIGGER = re.compile(r'(?i)(@|-----BEGIN|AKIA|ASIA|AIza|GOCSPX|ya29\.|1//0|sk_|rk_|whsec_|gh[pousr]_|github_pat|xox|hooks\.slack|sk-|SG\.|npm_|hf_|glpat|key-|SK[0-9a-f]|eyJ|pass|secret|key|token|pwd|bearer|basic|://|ending|ends|last|\*\*\*|xxxx|\u2022|\u25cf|&bull;|&#8226;|&#x2022;|cred|salt|signature|x-mf|intake)')
+
+hits = []
+seen = set()
+
+def hit(path, sha, line, rule):
+    k = (path, sha, line, rule)
+    if k not in seen:
+        seen.add(k)
+        hits.append(k)
+
+REAL_SHORT_DOMAINS = {'x.com', 'q.com', 'i.ua'}
+
+def email_allowed(local, dom, line, kind):
+    a = (local + '@' + dom).lower()
+    d = dom.lower()
+    if a == 'noreply@anthropic.com':
+        return True
+    if a in PUBLIC_EMAILS:
+        return True
+    if d == 'users.noreply.github.com' or d.endswith('.users.noreply.github.com'):
+        return True
+    if d in ('example.com', 'example.org', 'example.net') or d.endswith(('.example.com', '.example.org', '.example.net')):
+        return True
+    if d.rsplit('.', 1)[-1] in ('test', 'example', 'invalid', 'localhost', 'local'):
+        return True
+    if kind == 'msg' and TRAILER.match(line):    # Co-Authored-By: in a commit message
+        return True
+    return False
+
+MSGID_LINE = re.compile(r'^\s*(?:message-id|in-reply-to|references|resent-message-id|x-message-id)\s*:', re.I)
+
+def not_a_mailbox(local, dom):
+    """Shapes that look like an address but cannot reach a person."""
+    d = dom.lower()
+    labels = d.split('.')
+    if d == 'mail.gmail.com':                    # the host part of Gmail message ids
+        return True
+    if len(local) >= 24 and sum(c.isdigit() for c in local) >= 3 and entropy(local) >= 4.0:
+        return True                              # a random message id, not a name
+    if len(labels) == 2 and len(labels[0]) == 1 and (d not in REAL_SHORT_DOMAINS or len(local) <= 2):
+        return True                              # a@x.org, b@y.com, s@x.com: made up for a test
+    if d in ('gmail.com', 'googlemail.com') and len(local.split('+')[0].replace('.', '')) < 6:
+        return True                              # Gmail names are at least 6 letters long
+    return False
+
+EMAIL_HITS = collections.OrderedDict()   # (path, sha, line, rule) -> addresses (kept in memory only)
+
+def check_emails(text, path, sha, ln, rule='email', kind='file'):
+    if MSGID_LINE.match(text):
+        return
+    found = set()
+    for m in EMAIL.finditer(text):
+        local, dom, tld = m.group('local'), m.group('dom'), m.group('tld')
+        if tld.lower() in FILE_EXT_TLDS:
+            continue
+        if local.lower() in CODE_LABELS:
+            continue
+        if re.search(r'[a-z][A-Z]', tld):        # camelCase: a code label like this@Foo.bar
+            continue
+        end = m.end()
+        if end < len(text) and text[end] == ':' and local.lower() == 'git':
+            continue                             # git@github.com:owner/repo
+        if email_allowed(local, dom, text, kind) or not_a_mailbox(local, dom):
+            continue
+        found.add((local + '@' + dom).lower())
+    if found:
+        EMAIL_HITS.setdefault((path, sha, ln, rule), set()).update(found)
+
+def settle_emails():
+    """Keep an email finding unless every address on that line is already
+    published on the remote. One `git grep` over the remote's tips answers it."""
+    public = set()
+    wanted = sorted(set().union(*EMAIL_HITS.values())) if EMAIL_HITS else []
+    if wanted and PUBLIC_TIPS:
+        try:
+            p = subprocess.run(['git', 'grep', '-I', '-i', '-w', '-o', '-h', '-F', '--no-color', '-f', '-']
+                               + PUBLIC_TIPS + ['--'],
+                               input='\n'.join(wanted).encode('utf-8'),
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            if p.returncode in (0, 1):
+                public = {s.strip().lower() for s in p.stdout.decode('utf-8', 'replace').splitlines()}
+        except OSError:
+            public = set()
+    for (path, sha, ln, rule), addrs in EMAIL_HITS.items():
+        if not addrs <= public:
+            hit(path, sha, ln, rule)
+
+def candidates(line):
+    out = set()
+    s = line.strip()
+    if 20 <= len(s) <= 80:
+        out.add(s)
+    for rx in (r'[A-Za-z0-9_\-]+', r'[A-Za-z0-9_\-+/=.~]+', r'[^\s\'"`]+'):
+        for m in re.finditer(rx, line):
+            t = m.group(0)
+            for u in (t, t.strip('([{<,;:)]}>.'), re.split(r'[=:]', t)[-1].strip('([{<,;:)]}>.')):
+                if 20 <= len(u) <= 80:
+                    out.add(u)
+    for g in quoted_literals(line):
+        if 20 <= len(g) <= 80:
+            out.add(g)
+    return out
+
+def fingerprinted(text):
+    for c in candidates(text):
+        if hashlib.sha256(c.encode('utf-8', 'surrogateescape')).hexdigest() in FINGERPRINTS:
+            return True
+    return False
+
+def check_text(text, path, sha, ln, kind, prev_key=None):
+    """kind: 'file' (an added line of path) or 'msg' (a commit or tag message line).
+    prev_key: the plist <key> name on the line just before, if any."""
+    if FINGERPRINTS and fingerprinted(text):
+        hit(path, sha, ln, 'fingerprint')
+    ext = ext_of(path) if kind == 'file' else '.txt'
+    if ext in PHONE_EXT and kind == 'file':
+        for rx in PHONE:
+            m = None
+            for m in rx.finditer(text):
+                if 'ex' in rx.groupindex and m.group('ex') == '555':
+                    continue                     # 555 numbers are the made-up kind
+                digits = re.sub(r'\D', '', m.group(0))
+                if 10 <= len(digits) <= 15:
+                    hit(path, sha, ln, 'phone')
+                    break
+    if not TRIGGER.search(text) and not prev_key:
+        return
+    token_hit = False
+    for rule, rx in TOKEN_RULES:
+        if rx.search(text):
+            hit(path, sha, ln, rule)
+            token_hit = True
+    if '@' in text:
+        check_emails(text, path, sha, ln, kind=kind)
+    for rx in CARD:
+        if rx.search(text):
+            hit(path, sha, ln, 'card')
+            break
+    if not token_hit:
+        rule = generic_secret(text, ext, kind, prev_key)
+        if rule:
+            hit(path, sha, ln, rule)
+
+def min_len_for(name):
+    return 20 if STRONG_NAME.search(name.strip('-_.')) else 32
+
+def generic_secret(text, ext, kind, prev_key=None):
+    """The first secret-shaped thing on the line that has no fixed prefix, or None."""
+    for m in URL_CRED.finditer(text):
+        if looks_secret(m.group('p'), 6):
+            return 'url_credentials'
+    for m in BEARER.finditer(text):
+        t = m.group('tok')
+        if any(c.isdigit() for c in t) and any(c.isalpha() for c in t) and not is_placeholder(t):
+            return 'bearer'
+    for m in BASIC.finditer(text):
+        if not is_placeholder(m.group('tok')):
+            return 'basic_auth'
+    for m in WP_APP_PW.finditer(text):
+        pw = m.group('pw')
+        if re.search(r'[A-Z]', pw) and re.search(r'[a-z]', pw) and re.search(r'\d', pw):
+            return 'wp_app_password'
+    for rx in (PHP_DEFINE, PHP_CONST):
+        for m in rx.finditer(text):
+            if php_secret_value(m.group('val')):
+                return 'php_secret_constant'
+    # random-looking values given to a key/secret/token/password name, quoted or not
+    for rx in (ENTROPY_ASSIGN, UNQUOTED_ASSIGN):
+        for m in rx.finditer(text):
+            name = m.group('name')
+            if SECRETISH_NAME.search(name) and random_looking(m.group('val'), min_len_for(name)):
+                return 'random_secret_value'
+    for m in ADB_EXTRA.finditer(text):
+        if SECRETISH_NAME.search(m.group('name')) and random_looking(m.group('val'), 20):
+            return 'random_secret_value'
+    if '<' in text:
+        for m in XML_TEXT.finditer(text):
+            if m.group('tag').lower() != 'key' and SECRETISH_NAME.search(m.group('tag') + ' ' + (m.group('attrs') or '')) \
+                    and random_looking(m.group('val'), 20):
+                return 'random_secret_value'
+        for m in PLIST_STRING.finditer(text):
+            before = list(PLIST_KEY.finditer(text, 0, m.start()))
+            name = before[-1].group('name') if before else prev_key
+            if name and SECRETISH_NAME.search(name) and random_looking(m.group('val'), 20):
+                return 'random_secret_value'
+    # ...or written on the same line as one
+    if SECRETISH_LINE.search(text):
+        for g in quoted_literals(text):
+            if random_looking(g):
+                return 'random_secret_value'
+    # password= / secret= / api_key= with a real-looking value
+    for m in ASSIGN_NAME.finditer(text):
+        op = m.group('op')
+        if op in ('==', '===', '!=', '!=='):
+            continue
+        r = text[m.end():].lstrip()
+        r = re.sub(r'^[@rbuf]{1,2}(?=["\'`])', '', r)
+        val = None
+        if r[:1] in ('"', "'", '`'):
+            q = r[0]
+            end = r.find(q, 1)
+            val = r[1:end] if end > 0 else r[1:]
+        elif m.group('pre') or ext in CONFIG_EXT or kind == 'msg':
+            mm = re.match(r'[^\s,;\'"`)\]}<>&#]+', r)
+            val = mm.group(0) if mm else None
+            if val and '(' in val:
+                val = None                       # code (a function call), not a value
+        if val and looks_secret(val, 6):
+            return 'assigned_secret'
+        # In a real settings file a plain-word password is still a password.
+        if val and ext in PLAIN_CONFIG_EXT and len(val) >= 8 and re.fullmatch(r'[A-Za-z]+', val) \
+                and not is_placeholder(val) and not NAMEISH_WORDS.search(val):
+            return 'assigned_secret'
+    return None
+
+PLAIN_CONFIG_EXT = {'.env', '.properties', '.ini', '.cfg', '.conf', '.toml', '.yml', '.yaml',
+                    '.netrc', '.xcconfig'}
+
+def check_name(path, sha):
+    base = os.path.basename(path)
+    lb = BACKUP_SUFFIX.sub('', base.lower()) or base.lower()   # local.properties.bak is still private
+    ext = os.path.splitext(lb)[1]
+    bad = False
+    if lb in SENSITIVE_BASENAMES or ext in SENSITIVE_EXT:
+        bad = True
+    elif re.fullmatch(r'.+\.(db|db3|sqlite3?)-(wal|shm|journal)', lb):
+        bad = True
+    elif re.fullmatch(r'\.env(\..+)?', lb) and not re.search(r'\.(example|sample|template|dist|defaults)$', lb):
+        bad = True
+    elif re.fullmatch(r'secrets?\.(json|ya?ml|properties|env|txt|plist|xcconfig|toml|ini)', lb):
+        bad = True
+    elif re.fullmatch(r'(client_secret|service[-_]account)[\w.\-]*\.json', lb):
+        bad = True
+    if bad:
+        hit(path, sha, 0, 'private_file_name')
+    check_emails(path, path, sha, 0, rule='email_in_file_name', kind='name')
+
+# ---------------------------------------------------------------- binary files
+BINARY_LIMIT = 64 * 1024 * 1024
+PRINTABLE = re.compile(rb'[\x20-\x7e]{16,}')
+# a quick first look for the token beginnings, so a large binary is read in about a second
+TOKEN_PREFIX = re.compile(r'AKIA|ASIA|ABIA|ACCA|AIza|GOCSPX-|ya29\.|1//0|[sr]k_(?:live|test)_|whsec_|gh[pousr]_|github_pat_|'
+                          r'xox[abposr]-|hooks\.slack\.com|sk-|SG\.|npm_|hf_|glpat-|SK[0-9a-f]{32}|key-[0-9a-f]{32}|eyJ|-----BEGIN')
+
+def blob_findings(data):
+    found = []
+    listed = False
+    for m in PRINTABLE.finditer(data):
+        t = m.group(0).decode('ascii')
+        if TOKEN_PREFIX.search(t):
+            for rule, rx in TOKEN_RULES:
+                if rule not in found and rx.search(t):
+                    found.append(rule)
+        if FINGERPRINTS and not listed and fingerprinted(t):
+            listed = True
+            found.append('fingerprint')
+    return found
+
+def scan_binaries(binaries):
+    """Binary files the commits add or change: their readable text is checked for
+    the fixed-beginning tokens and your known-secrets list (line -1 in the report).
+    Each distinct file content is read once, through one git process."""
+    if not binaries:
+        return
+    specs = ''.join('%s:%s\n' % (s, p) for s, p in binaries)
+    try:
+        chk = subprocess.run(['git', 'cat-file', '--batch-check=%(objectname) %(objecttype) %(objectsize)'],
+                             input=specs.encode('utf-8', 'surrogateescape'),
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError:
+        return
+    todo = collections.OrderedDict()             # content id -> the (commit, path) places holding it
+    for (sha, path), row in zip(binaries, chk.stdout.decode('utf-8', 'replace').splitlines()):
+        parts = row.split()
+        if len(parts) == 3 and parts[1] == 'blob' and parts[2].isdigit() and int(parts[2]) <= BINARY_LIMIT:
+            todo.setdefault(parts[0], []).append((sha, path))
+    if not todo:
+        return
+    try:
+        cat = subprocess.Popen(['git', 'cat-file', '--batch'], stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError:
+        return
+    try:
+        for oid, places in todo.items():
+            cat.stdin.write((oid + '\n').encode('ascii'))
+            cat.stdin.flush()
+            head = cat.stdout.readline().split()
+            if len(head) != 3 or not head[2].isdigit():
+                continue                         # "<id> missing"
+            data = cat.stdout.read(int(head[2]))
+            cat.stdout.read(1)                   # the newline after each object
+            for rule in blob_findings(data):
+                for sha, path in places:
+                    hit(path, sha, -1, rule)
+    finally:
+        try:
+            cat.stdin.close()
+        except OSError:
+            pass
+        cat.wait()
+
+# ---------------------------------------------------------------- tag messages
+def scan_tags():
+    for t in TAGS:
+        try:
+            p = subprocess.run(['git', 'cat-file', 'tag', t], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError:
+            continue
+        if p.returncode != 0:
+            continue
+        parts = p.stdout.decode('utf-8', 'replace').split('\n\n', 1)
+        for line in (parts[1] if len(parts) > 1 else '').splitlines():
+            if re.match(r'-----BEGIN [A-Z ]*SIGNATURE-----', line):
+                break
+            if line.strip():
+                check_text(line, '(tag message)', t, 0, 'msg')
+
+# ---------------------------------------------------------------- git stream
+def unquote_path(p):
+    p = p.strip()
+    if len(p) >= 2 and p[0] == '"' and p[-1] == '"':
+        body = p[1:-1]
+        try:
+            return body.encode('latin-1', 'backslashreplace').decode('unicode_escape').encode('latin-1').decode('utf-8', 'replace')
+        except Exception:
+            return body
+    return p
+
+def header_path(s):
+    # "a/P b/P" -> P (same path both sides, the common case incl. new files)
+    if s.startswith('"'):
+        parts = re.findall(r'"(?:[^"\\]|\\.)*"|\S+', s)
+        if len(parts) >= 2:
+            return re.sub(r'^b/', '', unquote_path(parts[-1]))
+    n = len(s)
+    if (n - 5) % 2 == 0:
+        L = (n - 5) // 2
+        if s[:2] == 'a/' and s[2 + L:5 + L] == ' b/' and s[2:2 + L] == s[5 + L:]:
+            return s[2:2 + L]
+    i = s.rfind(' b/')
+    return s[i + 3:] if i >= 0 else s
+
+def clean(p):
+    return p.replace('\t', ' ').replace('\n', ' ')
+
+cmd = ['git', '-c', 'core.quotePath=false', '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false',
+       'log', '--no-walk', '--stdin', '--no-color', '--no-ext-diff', '--no-textconv', '--root',
+       '--encoding=UTF-8', '--src-prefix=a/', '--dst-prefix=b/', '-M', '--cc', '-U0',
+       '--format=%x00%x00%H%n%B%x00']
+
+rc = 0
+binaries = []
+if os.path.getsize(commits_file) > 0:
+    with open(commits_file, 'rb') as fin:
+        proc = subprocess.Popen(cmd, stdin=fin, stdout=subprocess.PIPE)
+
+    sha = None
+    in_msg = False
+    cur = None
+    new_name = False
+    in_hunk = False
+    npar = 1
+    lineno = 0
+    last = (None, None, -1, None)            # the added line before: (commit, path, line, plist key)
+
+    def flush_file():
+        global cur, new_name
+        if cur is not None and new_name and sha:
+            check_name(clean(cur), sha)
+        cur = None
+        new_name = False
+
+    for raw in proc.stdout:
+        line = raw.decode('utf-8', 'replace').rstrip('\n').rstrip('\r')
+        if line.startswith('\x00\x00'):
+            flush_file()
+            sha = line[2:].strip()
+            in_msg, in_hunk = True, False
+            continue
+        if in_msg:
+            done = '\x00' in line
+            text = line.split('\x00', 1)[0]
+            if text.strip():
+                check_text(text, '(commit message)', sha, 0, 'msg')
+            if done:
+                in_msg = False
+            continue
+        if line.startswith('diff --git '):
+            flush_file()
+            cur = header_path(line[len('diff --git '):])
+            in_hunk, npar = False, 1
+            continue
+        if line.startswith('diff --cc ') or line.startswith('diff --combined '):
+            flush_file()
+            cur = unquote_path(line.split(' ', 2)[2])
+            in_hunk, npar = False, 2
+            continue
+        if cur is None:
+            continue
+        if line.startswith('@@'):
+            at = len(line) - len(line.lstrip('@'))
+            npar = max(1, at - 1)
+            m = re.search(r' \+(\d+)', line)
+            lineno = int(m.group(1)) if m else 0
+            in_hunk = True
+            continue
+        if not in_hunk:
+            if line.startswith('+++ '):
+                p = line[4:]
+                if p.strip() != '/dev/null':
+                    cur = re.sub(r'^b/', '', unquote_path(p))
+            elif line.startswith('rename to ') or line.startswith('copy to '):
+                cur = unquote_path(line.split(' ', 2)[2])
+                new_name = True
+            elif line.startswith('new file mode'):
+                new_name = True
+            elif line.startswith('Binary files ') and line.endswith(' differ') \
+                    and not line.endswith(' and /dev/null differ'):
+                binaries.append((sha, clean(cur)))
+            continue
+        if line.startswith('\\'):
+            continue
+        prefix, content = line[:npar], line[npar:]
+        if '-' in prefix:
+            continue
+        if prefix == '+' * npar:
+            p = clean(cur)
+            ctx = last[3] if last[:3] == (sha, p, lineno - 1) else None
+            check_text(content, p, sha, lineno, 'file', ctx)
+            keys = list(PLIST_KEY.finditer(content))
+            key = keys[-1].group('name') if keys and '<string' not in content[keys[-1].end():] else None
+            last = (sha, p, lineno, key)
+        lineno += 1
+
+    flush_file()
+    rc = proc.wait()
+scan_binaries(binaries)
+scan_tags()
+settle_emails()
+with open(hits_file, 'w', encoding='utf-8') as out:
+    for p, s, l, r in hits:
+        out.write('%s\t%s\t%d\t%s\n' % (p, s, l, r))
+sys.exit(0 if rc == 0 else 3)
+PYEOF
+
+# --------------------------------------------------------------------------
+# Basic scanner (awk) for machines without python3. Same output format.
+# Covers: private keys, the common token prefixes, PHP secret constants,
+# random-looking values given to or next to key/secret/token/password names,
+# Bearer tokens, web addresses with passwords, email addresses, card digits,
+# phone numbers in .eml/.json/.txt files, private file names, commit and tag
+# messages. Fingerprints use perl or shasum.
+# --------------------------------------------------------------------------
+tag_stream() {
+  # Each annotated tag's message, framed like a commit message (\001\002 marks a tag).
+  local t
+  while IFS= read -r t; do
+    [ -n "$t" ] || continue
+    printf '\001\002%s\n' "$t"
+    git cat-file tag "$t" 2>/dev/null | awk 'p && /^-----BEGIN [A-Z ]*SIGNATURE-----/ { exit } p { print } /^$/ { p = 1 }'
+    printf '\001\n'
+  done < "$1"
+}
+
+awk_scan() {
+  local commits=$1 hits=$2 tips=$3 public=$4 tags=$5
+  shift 5
+  {
+    if [ -s "$commits" ]; then
+      git -c core.quotePath=false -c diff.noprefix=false log --no-walk --stdin --no-color --no-ext-diff \
+          --no-textconv --root --encoding=UTF-8 --src-prefix=a/ --dst-prefix=b/ -M --cc -U0 \
+          '--format=%x01%x01%H%n%B%x01' < "$commits" || exit 3
+    fi
+    tag_stream "$tags"
+  } |
+  LC_ALL=C awk -v hits="$hits" -v emf="$hits.emails" -v toks="$hits.tokens" -v wanttoks="$#" -v pubf="$public" '
+  function hit(path, line, rule,   k) { k = path SUBSEP sha SUBSEP line SUBSEP rule; if (k in seen) return; seen[k]=1; gsub(/\t/, " ", path); printf "%s\t%s\t%d\t%s\n", path, sha, line, rule > hits }
+  # re is a string here: a /regex/ passed to a function would be matched against $0 first.
+  function longrun(s, re, n,   t) { t = s; while (match(t, re)) { if (RLENGTH >= n) return 1; t = substr(t, RSTART + RLENGTH) } return 0 }
+  function digits_in(s,   t) { t = s; return gsub(/[0-9]/, "", t) }
+  function entropy(s,   n, i, k, e) { n = length(s); if (n == 0) return 0; split("", cnt); for (i = 1; i <= n; i++) cnt[substr(s, i, 1)]++; e = 0; for (k in cnt) e -= (cnt[k] / n) * log(cnt[k] / n) / log(2); return e }
+  function ascending(s,   i, run, a, b) { run = 1; for (i = 2; i <= length(s); i++) { a = index(ORD, substr(s, i - 1, 1)); b = index(ORD, substr(s, i, 1)); if (a > 0 && b == a + 1) { if (++run >= 8) return 1 } else run = 1 } return 0 }
+  function placeholder(v,   l) {
+    l = tolower(v)
+    if (length(v) < 6) return 1
+    if (l ~ /(changeme|change_me|replace|your|example|sample|placeholder|dummy|fake|redacted|xxxx|\*\*\*\*|<|>|\{\{|\$\{|\$\(|%s|todo)/) return 1
+    if (v ~ /^[$%{[(@#]/) return 1
+    if (v ~ /[ \t]/) return 1
+    if (v ~ /:\/\//) return 1
+    if (v ~ /^[A-Z][A-Z0-9_]*$/ && v ~ /_/) return 1
+    if (v ~ /^[A-Za-z]+$/) return 1
+    if (v ~ /^[a-z0-9_.:\/-]+$/ && l ~ /(pass|secret|key|token|pref|setting|field|label|hint|title|name|auth|cred|cache|meta)/) return 1
+    return 0
+  }
+  # names strung together with separators: reader_v2_font_size_2024, synthesize-1760284800000
+  function identlike(v,   n, i, a, w, tot) {
+    n = split(v, a, /[_.:\/#@-]+/); if (n < 2) return 0
+    w = 0; tot = 0
+    for (i = 1; i <= n; i++) { tot += length(a[i]); if (a[i] ~ /^([a-z][a-z]+|[A-Z][A-Z]+|[A-Z][a-z]+)[0-9]?[0-9]?[0-9]?[0-9]?$/ || a[i] ~ /^v?[0-9]+$/) w += length(a[i]) }
+    return tot > 0 && w >= tot * 0.6
+  }
+  function randomish(v, minlen,   n, e) {
+    n = length(v)
+    if (n < minlen || v !~ /^[A-Za-z0-9+\/=_.~-]+$/ || v !~ /[A-Za-z]/ || v !~ /[0-9]/ || placeholder(v) || ascending(v)) return 0
+    e = entropy(v)
+    if (v ~ /^[0-9a-f]+$/ || v ~ /^[0-9A-F]+$/) return e >= (n >= 32 ? 2.9 : 2.5)   # hex: judged against random hex
+    if (identlike(v) || digits_in(v) < 3) return 0
+    return e >= (n >= 24 ? 3.5 : 3.3)
+  }
+  function quoted_random(s,   t, v) {
+    t = s
+    while (match(t, /["\047][^"\047 ]+["\047]/)) { v = substr(t, RSTART + 1, RLENGTH - 2); if (randomish(v, 32)) return 1; t = substr(t, RSTART + RLENGTH) }
+    return 0
+  }
+  # name = value, name: value, "name": "value", quoted or not, where the name holds key/secret/token...
+  function assigned_random(s,   t, tl, v, nm) {
+    t = s; tl = tolower(s)
+    while (match(tl, /[a-z0-9_.-]*(key|secret|token|passw|pwd|credential|salt|signature)[a-z0-9_.-]*[]"\047]?[ \t]*(=>|:=|=|:)[ \t]*["\047`]?[a-z0-9+\/=_.~-]+/)) {
+      v = substr(t, RSTART, RLENGTH); t = substr(t, RSTART + RLENGTH); tl = substr(tl, RSTART + RLENGTH)
+      nm = tolower(v); sub(/[]"\047]?[ \t]*(=>|:=|=|:).*$/, "", nm)
+      sub(/^[^=:]*(=>|:=|=|:)[ \t]*["\047`]?/, "", v)
+      if (randomish(v, (nm ~ /(key|secret|token|passw(or)?d|pwd|passphrase|credentials?|salt)s?$/) ? 20 : 32)) return 1
+    }
+    return 0
+  }
+  function email_ok(e, line, kind,   l, d, tld, loc) {
+    l = tolower(e); d = l; sub(/^[^@]*@/, "", d); tld = d; sub(/^.*\./, "", tld)
+    if (l == "noreply@anthropic.com") return 1
+    if (l in pub) return 1
+    if (d == "users.noreply.github.com" || d ~ /\.users\.noreply\.github\.com$/) return 1
+    if (d ~ /(^|\.)example\.(com|org|net)$/) return 1
+    if (tld ~ /^(test|example|invalid|localhost|local)$/) return 1
+    if (tld ~ /^(png|jpg|jpeg|gif|webp|svg|pdf|js|mjs|css|kt|kts|java|swift|xml|json|html|htm|md|txt|zip|mp3|mp4|m4a|wav|ttf|otf|woff|woff2|ico|heic|mov|so|aar|jar|gradle|plist|strings|sh|py|php|rb|go|rs|ts|tsx|jsx|lock|yaml|yml|csv|epub|cbz|bin|db|log|map|properties|toml)$/) return 1
+    if (l ~ /^(this|super|return|break|continue|label|loop|outer)@/) return 1
+    if (e ~ /@.*\.[a-z]+[A-Z]/) return 1
+    if (kind == "msg" && tolower(line) ~ /^[ \t]*[a-z][a-z0-9-]*-by[ \t]*:/) return 1
+    if (tolower(line) ~ /^[ \t]*(message-id|in-reply-to|references|resent-message-id|x-message-id)[ \t]*:/) return 1
+    loc = l; sub(/@.*$/, "", loc)
+    if (d == "mail.gmail.com" || (d ~ /^[a-z]\.[a-z]+$/ && (d !~ /^(x\.com|q\.com|i\.ua)$/ || length(loc) <= 2))) return 1
+    if (length(loc) >= 24 && digits_in(loc) >= 3) return 1
+    if (d == "gmail.com" || d == "googlemail.com") { sub(/\+.*$/, "", loc); gsub(/\./, "", loc); if (length(loc) < 6) return 1 }
+    return 0
+  }
+  function emails(s, path, line, rule, kind,   t, e, bad, p) {
+    t = s
+    while (match(t, /[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z][A-Za-z]+/)) {
+      e = substr(t, RSTART, RLENGTH); t = substr(t, RSTART + RLENGTH)
+      if (e ~ /^git@/ && substr(t, 1, 1) == ":") continue
+      if (!email_ok(e, s, kind)) { bad = 1; p = path; gsub(/\t/, " ", p); printf "%s\t%s\t%d\t%s\t%s\n", p, sha, line, rule, tolower(e) > emf }
+    }
+    if (bad) hit(path, line, rule)
+  }
+  function sensitive_name(path,   b) {
+    b = tolower(path); sub(/^.*\//, "", b)
+    while (b ~ /(\.(bak|backup|orig|old|save|saved|copy|tmp|swp|prev|[0-9]+)|~)$/) sub(/(\.(bak|backup|orig|old|save|saved|copy|tmp|swp|prev|[0-9]+)|~)$/, "", b)
+    if (b ~ /^(id_rsa|id_dsa|id_ecdsa|id_ed25519|\.netrc|\.htpasswd|\.pgpass|local\.properties|keystore\.properties|credentials\.json|google-services\.json|googleservice-info\.plist|known-secret-fingerprints|ledgable-secret-fingerprints)$/) return 1
+    if (b ~ /\.(pem|key|p12|pfx|jks|keystore|ppk|p8|mobileprovision|provisionprofile|kdbx|db|db3|sqlite|sqlite3|realm|har|zip)$/) return 1
+    if (b ~ /\.(db|db3|sqlite3?)-(wal|shm|journal)$/) return 1
+    if (b ~ /^\.env(\..+)?$/ && b !~ /\.(example|sample|template|dist|defaults)$/) return 1
+    if (b ~ /^secrets?\.(json|ya?ml|properties|env|txt|plist|xcconfig|toml|ini)$/) return 1
+    return 0
+  }
+  function check(s, path, line, kind,   l, ext, t, v, sec) {
+    if (wanttoks > 0) { t = s; while (match(t, /[^ \t"\047`]+/)) { v = substr(t, RSTART, RLENGTH); t = substr(t, RSTART + RLENGTH); gsub(/^[[({<,;:]+/, "", v); gsub(/[])}>,;.:]+$/, "", v); if (length(v) >= 20 && length(v) <= 80) print path "\t" sha "\t" line "\t" v > toks; sub(/^.*[=:]/, "", v); if (length(v) >= 20 && length(v) <= 80) print path "\t" sha "\t" line "\t" v > toks } }
+    l = tolower(s)
+    ext = tolower(path); sub(/^.*\//, "", ext); if (ext ~ /\./) sub(/^.*\./, ".", ext); else ext = ""
+    if (kind == "file" && ext ~ /^\.(eml|json|txt|vcf|ics)$/) {
+      if (s ~ /(^|[^0-9A-Za-z.+\/:-])(\+?1[ .-]?)?\(?[2-9][0-9][0-9]\)?[ .-][0-9][0-9][0-9][ .-][0-9][0-9][0-9][0-9]([^0-9A-Za-z-]|$)/ && s !~ /[ .-]555[ .-][0-9][0-9][0-9][0-9]/) hit(path, line, "phone")
+      else if (longrun(s, "[+][1-9][0-9]+", 11)) hit(path, line, "phone")
+    }
+    sec = 0
+    if (s ~ /-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY/) { hit(path, line, "private_key"); sec = 1 }
+    if (longrun(s, "(AKIA|ASIA)[0-9A-Z]+", 20)) { hit(path, line, "aws_key"); sec = 1 }
+    if (longrun(s, "AIza[0-9A-Za-z_-]+", 39)) { hit(path, line, "google_key"); sec = 1 }
+    if (longrun(s, "GOCSPX-[0-9A-Za-z_-]+", 27) || longrun(s, "ya29[.][0-9A-Za-z_-]+", 25)) { hit(path, line, "google_oauth"); sec = 1 }
+    if (longrun(s, "(sk|rk)_(live|test)_[0-9A-Za-z]+", 24) || longrun(s, "whsec_[0-9A-Za-z]+", 26)) { hit(path, line, "stripe_key"); sec = 1 }
+    if (longrun(s, "gh[pousr]_[0-9A-Za-z]+", 40) || longrun(s, "github_pat_[0-9A-Za-z_]+", 50)) { hit(path, line, "github_token"); sec = 1 }
+    if (longrun(s, "xox[abposr]-[0-9A-Za-z-]+", 15) || s ~ /hooks\.slack\.com\/services\/T[0-9A-Z]+\/B[0-9A-Z]+\/[0-9A-Za-z]+/) { hit(path, line, "slack_token"); sec = 1 }
+    if (longrun(s, "sk-ant-[0-9A-Za-z_-]+", 27)) { hit(path, line, "anthropic_key"); sec = 1 }
+    else if (longrun(s, "sk-(proj-|svcacct-|admin-)?[0-9A-Za-z_-]*[0-9][0-9A-Za-z_-]*", 35)) { hit(path, line, "openai_key"); sec = 1 }
+    if (longrun(s, "eyJ[A-Za-z0-9_-]+[.]eyJ[A-Za-z0-9_-]+[.][A-Za-z0-9_-]+", 40)) { hit(path, line, "jwt"); sec = 1 }
+    if (index(s, "@") > 0) emails(s, path, line, "email", kind)
+    if (l ~ /(ending|ends)[ \t]+(in|with)[ \t]*:?[ \t]*[0-9][0-9][0-9][0-9]([^0-9]|$)/ || s ~ /(\*\*\*|xxxx|XXXX|&bull;&bull;&bull;)[ -]?[0-9][0-9][0-9][0-9]([^0-9*]|$)/) hit(path, line, "card")
+    if (sec) return
+    if (match(s, /[A-Za-z][A-Za-z0-9+.-]*:\/\/[^ \/:@"\047<>()]+:[^ \/@"\047<>()]+@[A-Za-z0-9.-]+/)) { v = substr(s, RSTART, RLENGTH); sub(/^[^:]*:\/\/[^:]*:/, "", v); sub(/@[^@]*$/, "", v); if (!placeholder(v) && v ~ /[0-9]/) { hit(path, line, "url_credentials"); return } }
+    if (match(l, /bearer[ \t]+[a-z0-9._~+\/-]+/)) { v = substr(s, RSTART, RLENGTH); sub(/^[A-Za-z]+[ \t]+/, "", v); if (length(v) >= 20 && v ~ /[0-9]/ && !placeholder(v)) { hit(path, line, "bearer"); return } }
+    if (l ~ /(define[ \t]*\([ \t]*["\047][a-z0-9_]*(secret|key|token|password|passwd)[a-z0-9_]*["\047][ \t]*,|const[ \t]+[a-z0-9_]*(secret|key|token|password|passwd)[a-z0-9_]*[ \t]*=)/ && match(s, /["\047][^"\047 ]+["\047][ \t]*\)?[ \t]*;/)) { v = substr(s, RSTART + 1, RLENGTH); sub(/["\047][ \t]*\)?[ \t]*;$/, "", v); if (length(v) >= 20 && v ~ /[0-9]/ && v ~ /[A-Za-z]/ && !placeholder(v)) { hit(path, line, "php_secret_constant"); return } }
+    if (assigned_random(s)) { hit(path, line, "random_secret_value"); return }
+    if (l ~ /(secret|token|passw|api[_-]?key|apikey|private[_-]?key|access[_-]?key|credential|x-mf-|mf[_-]?key|intake|["\047]key["\047]|(^|[?& -])key=)/ && quoted_random(s)) { hit(path, line, "random_secret_value"); return }
+    if (match(l, /(password|passwd|secret|api[_-]?key|apikey)[a-z0-9_.-]*["\047]?[ \t]*(=>|=|:)[ \t]*["\047][^"\047]+["\047]/)) { v = substr(s, RSTART, RLENGTH); sub(/^[^"\047]*["\047]?[ \t]*(=>|=|:)[ \t]*["\047]/, "", v); sub(/["\047]$/, "", v); if (v ~ /[0-9]/ && v ~ /[A-Za-z]/ && !placeholder(v) && l !~ /==/) hit(path, line, "assigned_secret") }
+  }
+  BEGIN {
+    sha = ""; inmsg = 0; cur = ""; newname = 0; inhunk = 0; npar = 1
+    ORD = "0123456789abcdefghijklmnopqrstuvwxyz"
+    if (pubf != "") while ((getline a < pubf) > 0) pub[tolower(a)] = 1
+  }
+  function flush() { if (cur != "" && newname && sha != "") { if (sensitive_name(cur)) hit(cur, 0, "private_file_name"); emails(cur, cur, 0, "email_in_file_name", "name") } cur = ""; newname = 0 }
+  {
+    sub(/\r$/, "")
+    if (substr($0, 1, 2) == "\001\001") { flush(); sha = substr($0, 3); inmsg = 1; msgpath = "(commit message)"; inhunk = 0; next }
+    if (substr($0, 1, 2) == "\001\002") { flush(); sha = substr($0, 3); inmsg = 1; msgpath = "(tag message)"; inhunk = 0; next }
+    if (inmsg) { t = $0; done = index(t, "\001"); if (done) t = substr(t, 1, done - 1); if (t ~ /[^ \t]/) check(t, msgpath, 0, "msg"); if (done) inmsg = 0; next }
+    if (substr($0, 1, 11) == "diff --git ") { flush(); s = substr($0, 12); n = length(s); L = (n - 5) / 2; if (L == int(L) && substr(s, 3, L) == substr(s, L + 6)) cur = substr(s, 3, L); else { cur = s; sub(/^.* b\//, "", cur) } inhunk = 0; npar = 1; next }
+    if (substr($0, 1, 10) == "diff --cc ") { flush(); cur = substr($0, 11); inhunk = 0; npar = 2; next }
+    if (cur == "") next
+    if (substr($0, 1, 2) == "@@") { m = $0; at = 0; while (substr(m, at + 1, 1) == "@") at++; npar = at - 1; if (npar < 1) npar = 1; ln = 0; if (match(m, / \+[0-9]+/)) ln = substr(m, RSTART + 2, RLENGTH - 2) + 0; inhunk = 1; next }
+    if (!inhunk) {
+      if (substr($0, 1, 4) == "+++ ") { p = substr($0, 5); if (p != "/dev/null") { sub(/^b\//, "", p); cur = p } }
+      else if (substr($0, 1, 10) == "rename to ") { cur = substr($0, 11); newname = 1 }
+      else if (substr($0, 1, 8) == "copy to ") { cur = substr($0, 9); newname = 1 }
+      else if (substr($0, 1, 13) == "new file mode") newname = 1
+      next
+    }
+    if (substr($0, 1, 1) == "\\") next
+    pre = substr($0, 1, npar)
+    if (index(pre, "-") > 0) next
+    allplus = pre; gsub(/\+/, "", allplus)
+    if (allplus == "") check(substr($0, npar + 1), cur, ln, "file")
+    ln++
+  }
+  END { flush() }
+  ' || return 3
+  if [ "$#" -gt 0 ] && [ -s "$hits.tokens" ]; then
+    local fps
+    fps=$(cat "$@" 2>/dev/null | sed 's/#.*//' | tr 'A-F' 'a-f' | grep -oE '^[[:space:]]*[0-9a-f]{64}' | tr -d '[:space:]\r' | sort -u)
+    if [ -n "$fps" ]; then
+      # one hash per distinct token; perl (always on macOS) is fast, shasum is the slow fallback
+      if command -v perl >/dev/null 2>&1; then
+        printf '%s\n' "$fps" > "$hits.fps"
+        perl -MDigest::SHA=sha256_hex -ne 'BEGIN{open F,"<",$ARGV[0];while(<F>){chomp;$f{$_}=1}close F;shift @ARGV} chomp; @x=split /\t/,$_,4; print "$x[0]\t$x[1]\t$x[2]\tfingerprint\n" if $f{sha256_hex($x[3])}' "$hits.fps" "$hits.tokens" >> "$hits"
+      else
+        while IFS="$(printf '\t')" read -r p s l v; do
+          h=$(printf '%s' "$v" | sha256_of_stdin)
+          case "$fps" in *"$h"*) printf '%s\t%s\t%s\tfingerprint\n' "$p" "$s" "$l" >> "$hits" ;; esac
+        done < "$hits.tokens"
+      fi
+    fi
+  fi
+  # An address already published on the remote is let through (same as the full scanner).
+  if [ -s "$hits.emails" ] && [ -s "$tips" ]; then
+    cut -f5 "$hits.emails" | sort -u |
+      git grep -I -i -w -o -h -F --no-color -f - $(cat "$tips") -- 2>/dev/null |
+      tr 'A-Z' 'a-z' | sort -u > "$hits.public"
+    awk -F '\t' '
+      FILENAME == ARGV[1] { pub[$0] = 1; next }
+      FILENAME == ARGV[2] { k = $1 FS $2 FS $3 FS $4; listed[k] = 1; if (!($5 in pub)) keep[k] = 1; next }
+      { k = $1 FS $2 FS $3 FS $4; if ((k in listed) && !(k in keep)) next; print }
+    ' "$hits.public" "$hits.emails" "$hits" > "$hits.kept" && mv "$hits.kept" "$hits"
+  fi
+  rm -f "$hits.tokens" "$hits.fps" "$hits.emails" "$hits.public"
+  return 0
+}
+
+# --------------------------------------------------------------------------
+# Allow list: findings you have looked at and decided may go up.
+#   LEDGABLE_PUSH_ALLOW=email,card      every finding of those kinds, this push only
+#   <git folder>/ledgable-push-allow    lines "<commit|*> <kind|*> [<path>]", path may use * wildcards
+# Moves the matching findings from the hits file to the allowed file.
+# --------------------------------------------------------------------------
+apply_allow() {
+  local hits=$1 allowed=$2 file=$3 kinds p s l r ok wc wk wp tab
+  tab=$(printf '\t')
+  kinds=",$(printf '%s' "${LEDGABLE_PUSH_ALLOW:-}" | tr -d ' '),"
+  : > "$allowed"
+  if [ "$kinds" = ",," ] && [ ! -s "$file" ]; then return 0; fi
+  : > "$hits.kept"
+  while IFS="$tab" read -r p s l r; do
+    ok=0
+    case "$kinds" in *",$r,"*) ok=1 ;; esac
+    if [ "$ok" = 0 ] && [ -s "$file" ]; then
+      while read -r wc wk wp; do
+        case "$wc" in ''|'#'*) continue ;; esac
+        case "$wk" in '*'|"$r") ;; *) continue ;; esac
+        case "$wc" in '*') ;; *) case "$s" in "$wc"*) ;; *) continue ;; esac ;; esac
+        case "$p" in ${wp:-*}) ok=1; break ;; esac
+      done < "$file"
+    fi
+    if [ "$ok" = 1 ]; then printf '%s\t%s\t%s\t%s\n' "$p" "$s" "$l" "$r" >> "$allowed"
+    else printf '%s\t%s\t%s\t%s\n' "$p" "$s" "$l" "$r" >> "$hits.kept"; fi
+  done < "$hits"
+  mv -f "$hits.kept" "$hits"
+}
+
+# --------------------------------------------------------------------------
+# Report: group by file, then commit; never prints the matched text. A path
+# part that holds an email address is withheld too.
+# --------------------------------------------------------------------------
+report() {
+  local hits=$1 dates=$2
+  awk -F '\t' -v dates="$dates" '
+  # A path part holds an address when it is one (a folder "someone@example.com") or is one
+  # with a file extension on the end (that address, then ".eml"); icon@2x.png is not one.
+  function holds_email(c,   x, ext) {
+    x = c; ext = ""
+    if (match(x, /\.[A-Za-z0-9]+$/)) { ext = tolower(substr(x, RSTART + 1)); x = substr(x, 1, RSTART - 1) }
+    if (x ~ /[A-Za-z0-9._%+-]@[A-Za-z0-9-]*[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)*\.[A-Za-z][A-Za-z]+$/) return 1
+    return c ~ /[A-Za-z0-9._%+-]@[A-Za-z0-9-]*[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)*\.[A-Za-z][A-Za-z]+$/ && !(ext in FILEEXT)
+  }
+  function shown(p,   n, i, a, out) {
+    n = split(p, a, "/"); out = ""
+    for (i = 1; i <= n; i++) {
+      if (holds_email(a[i])) a[i] = (i == n ? "(file name withheld: it holds an email address)" : "(folder name withheld: it holds an email address)")
+      out = out (i > 1 ? "/" : "") a[i]
+    }
+    return out
+  }
+  BEGIN {
+    while ((getline l < dates) > 0) { split(l, d, " "); when[d[1]] = d[2] }
+    split("png jpg jpeg gif webp svg pdf heic mov mp3 mp4 m4a wav json xml txt md kt kts java swift html css js ts eml ics vcf zip db log plist strings", fe, " ")
+    for (e in fe) FILEEXT[fe[e]] = 1
+    L["private_key"] = "a private key"
+    L["aws_key"] = "an Amazon (AWS) access key"
+    L["google_key"] = "a Google API key"
+    L["google_oauth"] = "a Google sign-in secret or token"
+    L["stripe_key"] = "a Stripe secret key"
+    L["github_token"] = "a GitHub token"
+    L["slack_token"] = "a Slack token or webhook"
+    L["anthropic_key"] = "an Anthropic API key"
+    L["openai_key"] = "an OpenAI-style API key"
+    L["service_token"] = "a service API token (SendGrid, npm, Hugging Face, GitLab, Twilio, Mailgun)"
+    L["jwt"] = "a signed login token (JWT)"
+    L["assigned_secret"] = "a password, secret or API key typed into the file"
+    L["php_secret_constant"] = "a PHP constant holding a secret-looking value"
+    L["random_secret_value"] = "a long random-looking value next to a key/secret/token/password name"
+    L["bearer"] = "a Bearer login token"
+    L["basic_auth"] = "a Basic-auth login"
+    L["url_credentials"] = "a web address with a password in it"
+    L["wp_app_password"] = "a WordPress application password"
+    L["fingerprint"] = "a value on your known-secrets list"
+    L["email"] = "a real email address"
+    L["email_in_file_name"] = "an email address in the file name"
+    L["card"] = "card digits (\"ending in\" or \"****\" followed by four digits)"
+    L["phone"] = "a phone number in a test/data file"
+    L["private_file_name"] = "a file that is usually private (key, keystore, .env, local settings, saved app data)"
+  }
+  {
+    path = $1; sha = $2; ln = $3 + 0; rule = $4
+    if (!(path in P)) { P[path] = 1; po[++np] = path }
+    k = path SUBSEP sha SUBSEP rule
+    if (!(k in K)) { K[k] = 1; ko[++nk] = k; cnt[k] = 0; lines[k] = ""; inside[k] = 0 }
+    if (ln > 0) { cnt[k]++; if (cnt[k] <= 6) lines[k] = lines[k] (lines[k] == "" ? "" : ", ") ln }
+    else if (ln < 0) inside[k] = 1
+    total++
+  }
+  END {
+    for (i = 1; i <= np; i++) {
+      printf "\n  %s\n", shown(po[i])
+      for (j = 1; j <= nk; j++) {
+        split(ko[j], f, SUBSEP)
+        if (f[1] != po[i]) continue
+        where = ""
+        if (cnt[ko[j]] == 1) where = "line " lines[ko[j]] ": "
+        else if (cnt[ko[j]] > 1) where = "lines " lines[ko[j]] (cnt[ko[j]] > 6 ? " (+" (cnt[ko[j]] - 6) " more)" : "") ": "
+        else if (inside[ko[j]]) where = "inside the file (readable text in a binary file): "
+        else if (f[1] == "(commit message)" || f[1] == "(tag message)") where = ""
+        else where = "file name: "
+        label = (f[3] in L) ? L[f[3]] : f[3]
+        printf "      commit %s %s  %s%s [%s]\n", substr(f[2], 1, 10), (f[2] in when ? "(" when[f[2]] ")" : ""), where, label, f[3]
+      }
+    }
+  }' "$hits" >&2
+}
+
+# --------------------------------------------------------------------------
+# main
+# --------------------------------------------------------------------------
+MODE=hook
+STRICT=0
+case "${1:-}" in
+  --scan) MODE=scan; shift; if [ "${1:-}" = --strict ]; then STRICT=1; shift; fi ;;
+  --install) install_guard ;;
+  --status) status_guard ;;
+  --allow) shift; allow_add "$@" ;;
+  --add-fingerprint) add_fingerprint ;;
+  -h|--help) usage; exit 0 ;;
+esac
+
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/ledgable-push-guard.XXXXXX") || { say "push guard: cannot make a temp folder"; exit 2; }
+trap 'rm -rf "$TMP"' EXIT
+: > "$TMP/commits"
+: > "$TMP/tags"
+: > "$TMP/tips"
+: > "$TMP/public"
+
+fail_closed() {
+  say ""
+  say "Push stopped: the push guard could not work out what is being pushed ($1)."
+  say "Nothing was sent. To push anyway: LEDGABLE_PUSH_OVERRIDE=1 git push ..."
+  [ "${LEDGABLE_PUSH_OVERRIDE:-}" = 1 ] && exit 0
+  exit 1
+}
+
+remote_main_tip() {
+  # The commit at the remote's default branch, as last fetched.
+  local r=$1 ref
+  for ref in "refs/remotes/$r/HEAD" "refs/remotes/$r/main" "refs/remotes/$r/master"; do
+    git rev-parse -q --verify "$ref^{commit}" 2>/dev/null && return 0
+  done
+  return 0
+}
+
+collect_tags() {
+  # An annotated tag (or a tag of a tag) being pushed: its message is read too.
+  local o=$1 i=0
+  while [ "$i" -lt 8 ] && [ "$(git cat-file -t "$o" 2>/dev/null)" = tag ]; do
+    printf '%s\n' "$o" >> "$TMP/tags"
+    o=$(git cat-file tag "$o" 2>/dev/null | sed -n '1s/^object //p')
+    [ -n "$o" ] || return 0
+    i=$((i + 1))
+  done
+  return 0
+}
+
+if [ "$MODE" = scan ]; then
+  [ "$#" -gt 0 ] || { usage; exit 2; }
+  git rev-list "$@" > "$TMP/commits" || { say "push guard: git rev-list could not read: $*"; exit 2; }
+  for a in "$@"; do
+    case "$a" in
+      --all|--tags) git for-each-ref --format='%(objecttype) %(objectname)' refs/tags |
+                      awk '$1 == "tag" { print $2 }' | while IFS= read -r t; do collect_tags "$t"; done ;;
+      -*|^*|*..*) ;;
+      *) collect_tags "$(git rev-parse -q --verify "$a" 2>/dev/null || :)" ;;
+    esac
+  done
+  if [ "$STRICT" != 1 ]; then
+    for r in $(git remote 2>/dev/null); do remote_main_tip "$r" >> "$TMP/tips"; done
+  fi
+else
+  # git runs the hook as: pre-push <remote name> <remote url>, refs on stdin.
+  PUSH_REMOTE=${1:-}
+  if [ -n "$PUSH_REMOTE" ] && git config --get "remote.$PUSH_REMOTE.url" >/dev/null 2>&1; then
+    remote_main_tip "$PUSH_REMOTE" >> "$TMP/tips"
+  fi
+  while read -r lref lsha rref rsha; do
+    [ -n "${lsha:-}" ] || continue
+    is_zero "$lsha" && continue                       # deleting a remote branch: nothing to check
+    [ "$lsha" = "${rsha:-}" ] || collect_tags "$lsha"
+    # Only commits that leave this machine with this push: not on the branch being
+    # updated and not on any remote branch already (those are public already).
+    if is_zero "${rsha:-0}" || ! git cat-file -e "$rsha^{commit}" 2>/dev/null; then
+      git rev-list "$lsha" --not --remotes >> "$TMP/commits" || fail_closed "unreadable $lref"
+    else
+      printf '%s\n' "$rsha" >> "$TMP/tips"
+      git rev-list "$lsha" "^$rsha" --not --remotes >> "$TMP/commits" || fail_closed "unreadable $lref"
+    fi
+  done
+fi
+for f in tips commits tags; do
+  awk 'NF && !seen[$0]++' "$TMP/$f" > "$TMP/$f.u" && mv "$TMP/$f.u" "$TMP/$f"
+done
+NCOMMITS=$(wc -l < "$TMP/commits" | tr -d ' ')
+NTAGS=$(wc -l < "$TMP/tags" | tr -d ' ')
+if [ "$NCOMMITS" -eq 0 ] && [ "$NTAGS" -eq 0 ]; then
+  [ "$MODE" = scan ] && say "push guard: no commits in that range."
+  exit 0
+fi
+CHECKED="$NCOMMITS commit(s)"
+[ "$NTAGS" -gt 0 ] && CHECKED="$CHECKED and $NTAGS tag message(s)"
+
+# Addresses that are out already or go up anyway with these commits: yours (user.email)
+# and the author/committer addresses on the remote and on the commits being pushed.
+if [ "$STRICT" != 1 ]; then
+  git config --get user.email >> "$TMP/public" 2>/dev/null || :
+  if [ -s "$TMP/tips" ]; then
+    # shellcheck disable=SC2046
+    git log --format='%ae%n%ce' $(cat "$TMP/tips") >> "$TMP/public" 2>/dev/null || :
+  fi
+  if [ -s "$TMP/commits" ]; then
+    git log --no-walk --stdin --format='%ae%n%ce' < "$TMP/commits" >> "$TMP/public" 2>/dev/null || :
+  fi
+  tr 'A-Z' 'a-z' < "$TMP/public" | awk 'index($0, "@") && !seen[$0]++' > "$TMP/public.u" && mv "$TMP/public.u" "$TMP/public"
+fi
+
+FPS=()
+while IFS= read -r f; do FPS+=("$f"); done < <(fingerprint_files)
+
+find_python() {
+  # GUI git apps often run hooks without /opt/homebrew/bin on PATH: look there too.
+  local p
+  for p in "$(command -v python3 2>/dev/null || :)" /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+    [ -n "$p" ] && [ -x "$p" ] || continue
+    "$p" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 6) else 1)' >/dev/null 2>&1 && { printf '%s\n' "$p"; return 0; }
+  done
+  return 1
+}
+
+: > "$TMP/hits"
+ENGINE=full
+PY=""
+[ "${LEDGABLE_GUARD_NO_PYTHON:-}" = 1 ] || PY=$(find_python || :)
+if [ -n "$PY" ]; then
+  "$PY" -c "$PY_SCANNER" "$TMP/commits" "$TMP/hits" "$TMP/tips" "$TMP/public" "$TMP/tags" ${FPS[@]+"${FPS[@]}"} ||
+    fail_closed "the scanner stopped with an error"
+else
+  ENGINE=basic
+  awk_scan "$TMP/commits" "$TMP/hits" "$TMP/tips" "$TMP/public" "$TMP/tags" ${FPS[@]+"${FPS[@]}"} ||
+    fail_closed "the scanner stopped with an error"
+fi
+
+NOTE=""
+[ "$ENGINE" = basic ] && NOTE=" (basic checks only: python3 not found)"
+
+COMMON=$(common_dir)
+ALLOW_FILE="${COMMON:+$COMMON/$ALLOW_NAME}"
+apply_allow "$TMP/hits" "$TMP/allowed" "${ALLOW_FILE:-/dev/null}"
+NALLOWED=$(cut -f1,2,4 "$TMP/allowed" | sort -u | wc -l | tr -d ' ')
+allowed_note() {
+  [ "$NALLOWED" -gt 0 ] || return 0
+  say "($NALLOWED finding(s) let through by ${LEDGABLE_PUSH_ALLOW:+LEDGABLE_PUSH_ALLOW=$LEDGABLE_PUSH_ALLOW or }your allow list${ALLOW_FILE:+, $ALLOW_FILE}.)"
+}
+
+if [ ! -s "$TMP/hits" ]; then
+  if [ "$MODE" = scan ]; then say "push guard: checked $CHECKED$NOTE: nothing private found."; allowed_note
+  elif [ "$NALLOWED" -gt 0 ]; then allowed_note; fi
+  exit 0
+fi
+
+cut -f2 "$TMP/hits" | awk '!s[$0]++' | git log --no-walk --stdin --format='%H %ad' --date=short > "$TMP/dates" 2>/dev/null || : > "$TMP/dates"
+NHITS=$(cut -f1,2,4 "$TMP/hits" | sort -u | wc -l | tr -d ' ')
+NFILES=$(cut -f1 "$TMP/hits" | sort -u | wc -l | tr -d ' ')
+
+if [ "$MODE" = scan ]; then
+  say ""
+  say "Push guard dry run: $CHECKED checked$NOTE, $NHITS finding(s) in $NFILES place(s)."
+  say "(Nothing was pushed. Only file names, commits and line numbers are shown.)"
+  report "$TMP/hits" "$TMP/dates"
+  say ""
+  allowed_note
+  exit 1
+fi
+
+if [ "${LEDGABLE_PUSH_OVERRIDE:-}" = 1 ]; then
+  say ""
+  say "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  say "!!  LEDGABLE_PUSH_OVERRIDE=1 -- PUSHING ANYWAY. The guard found $NHITS"
+  say "!!  thing(s) that look private, and they are going up now:"
+  say "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  report "$TMP/hits" "$TMP/dates"
+  say ""
+  say "!!  Override used. If any of that was a real secret, change it now."
+  say "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  say ""
+  exit 0
+fi
+
+say ""
+say "========================================================================"
+say "  Push stopped: something private would go up with these commits."
+say "========================================================================"
+say "Checked $CHECKED$NOTE. Nothing has been sent."
+report "$TMP/hits" "$TMP/dates"
+say ""
+allowed_note
+say "What to do:"
+say "  * Take it out of that commit (or swap in a made-up example such as"
+say "    someone@example.com), then push again. Removing it in a later commit"
+say "    is not enough: the earlier commit still carries it."
+say "  * Looked at it and it may go up (your own address, say)? Let that one"
+say "    finding through, using the commit and the [kind] shown above:"
+say "        scripts/githooks/pre-push --allow <commit> <kind> [<path>]"
+say "  * See what a range holds without pushing:"
+say "        scripts/githooks/pre-push --scan HEAD --not --remotes"
+say "  * Sure all of it is fine? Push once with:  LEDGABLE_PUSH_OVERRIDE=1 git push ..."
+say ""
+exit 1

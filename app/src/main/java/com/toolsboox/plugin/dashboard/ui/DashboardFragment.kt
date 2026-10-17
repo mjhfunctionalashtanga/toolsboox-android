@@ -101,14 +101,9 @@ class DashboardFragment @Inject constructor() : ScreenFragment() {
             layoutManager = GridLayoutManager(this@DashboardFragment.requireContext(), 4)
         }
 
-        val calendarStartActionId = when (sharedPreferences.getInt("calendarStartView", 0)) {
-            0 -> R.id.action_to_calendar_day
-            1 -> R.id.action_to_calendar_week
-            2 -> R.id.action_to_calendar_month
-            3 -> R.id.action_to_calendar_quarter
-            4 -> R.id.action_to_calendar_year
-            else -> R.id.action_to_calendar_day
-        }
+        // The day page, always — the "Start view" dropdown this read retired with Settings' IA
+        // pass (09-10); its default was the day page, and that default is now simply the rule.
+        val calendarStartActionId = R.id.action_to_calendar_day
 
         val androidId = Settings.Secure.getString(requireContext().contentResolver, Settings.Secure.ANDROID_ID)
         sharedPreferences.edit().putString("androidId", androidId).apply()

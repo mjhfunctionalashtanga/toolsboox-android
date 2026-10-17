@@ -30,8 +30,12 @@ import com.toolsboox.plugin.calendar.nw.SiteStore
  */
 object SitesSettingsDialog {
 
-    /** Open the list of sites. [onChanged] fires whenever the active site or the list changes. */
-    fun show(context: Context, onChanged: () -> Unit = {}) {
+    /** Open the list of sites. [onChanged] fires whenever the active site or the list changes.
+     *  [present] is how every dialog in this flow reaches the screen — a fragment caller MUST
+     *  pass its showModal, or the Onyx raw ink session keeps the stylus and taps never arrive
+     *  ("touching 'sites' popup with stylus freezes the popup", 08-17 page — the same
+     *  guarded-dialog class as the Synthesize picker). */
+    fun show(context: Context, present: (AlertDialog) -> Unit = { it.show() }, onChanged: () -> Unit = {}) {
         val ctx = ModalScale.wrap(context)
         val sites = SiteStore.all(context)
         val activeId = SiteStore.activeId(context)
@@ -42,19 +46,51 @@ object SitesSettingsDialog {
             "$mark${s.display}$sub"
         }.toMutableList()
         labels.add("+  Add site")
+        // ledgable.cc/pair prints a pairing string; pasting it here does the whole editor in one go.
+        labels.add("⧉  Paste a pairing string")
+        // THE WAY BACK. `seedKnownSites` runs once behind a flag, so a deleted site can never
+        // return on its own — see [SiteStore.reseedKnownSites]. Non-destructive by construction:
+        // it only adds a URL the list does not already hold, so pressing it twice does nothing the
+        // first press didn't.
+        labels.add("↺  Restore my known sites")
 
-        AlertDialog.Builder(ctx)
+        val dialog = AlertDialog.Builder(ctx)
             .setTitle("Sites")
             .setItems(labels.toTypedArray()) { _, which ->
-                if (which < sites.size) editor(context, sites[which], onChanged)
-                else editor(context, LedgerSite(), onChanged)
+                when {
+                    which < sites.size -> editor(context, sites[which], present, onChanged)
+                    which == sites.size -> editor(context, LedgerSite(), present, onChanged)
+                    which == sites.size + 1 -> {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                        val text = cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                        val added = com.toolsboox.plugin.calendar.nw.PairLink.apply(context, text)
+                        Toast.makeText(context,
+                            if (added != null) "Site added: $added (active)"
+                            else "The clipboard doesn't hold a pairing string — copy it from ledgable.cc/pair first",
+                            Toast.LENGTH_LONG).show()
+                        onChanged(); show(context, present, onChanged)
+                    }
+                    else -> {
+                        val before = SiteStore.all(context).size
+                        SiteStore.reseedKnownSites(context)
+                        val added = SiteStore.all(context).size - before
+                        Toast.makeText(context,
+                            if (added > 0) "Restored $added site(s)" else "Nothing to restore — they're all here",
+                            Toast.LENGTH_SHORT).show()
+                        onChanged(); show(context, present, onChanged)
+                    }
+                }
             }
             .setNegativeButton("Close", null)
-            .show()
+            .create()
+        present(dialog)
     }
 
     /** Edit (or create) one site: URL, login, application password, default board, portal slugs. */
-    private fun editor(context: Context, site: LedgerSite, onChanged: () -> Unit) {
+    private fun editor(
+        context: Context, site: LedgerSite,
+        present: (AlertDialog) -> Unit = { it.show() }, onChanged: () -> Unit,
+    ) {
         val ctx = ModalScale.wrap(context)
         val dp = context.resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
@@ -65,7 +101,7 @@ object SitesSettingsDialog {
                 orientation = LinearLayout.VERTICAL
                 setPadding(0, px(10), 0, 0)
                 addView(TextView(ctx).apply {
-                    text = label; textSize = 12f; setTextColor(0xFF8A8A8A.toInt()); letterSpacing = 0.06f
+                    text = label; textSize = 12f; setTextColor(0xFF444444.toInt()); letterSpacing = 0.06f
                 })
             }
             val edit = EditText(ctx).apply {
@@ -104,7 +140,7 @@ object SitesSettingsDialog {
             text = "The portal fields are the path each front-facing page lives at on your site " +
                 "(e.g. “portal”, “booking”). Leave blank to use the defaults. Create an application " +
                 "password in WordPress → Users → Profile → Application Passwords."
-            textSize = 12f; setTextColor(0xFF8A8A8A.toInt()); setLineSpacing(0f, 1.2f)
+            textSize = 12f; setTextColor(0xFF444444.toInt()); setLineSpacing(0f, 1.2f)
             setPadding(0, px(14), 0, px(2))
         })
 
@@ -129,15 +165,15 @@ object SitesSettingsDialog {
         val deleteBtn = if (existing) Button(ctx).apply {
             text = "Delete site"
             setOnClickListener {
-                AlertDialog.Builder(ctx)
+                present(AlertDialog.Builder(ctx)
                     .setMessage("Delete “${site.display}”?")
                     .setPositiveButton("Delete") { _, _ ->
                         SiteStore.delete(context, site.id)
                         Toast.makeText(context, "Site deleted", Toast.LENGTH_SHORT).show()
-                        onChanged(); show(context, onChanged)
+                        onChanged(); show(context, present, onChanged)
                     }
                     .setNegativeButton("Cancel", null)
-                    .show()
+                    .create())
             }
         } else null
         deleteBtn?.let { col.addView(it, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = px(16) }) }
@@ -155,29 +191,57 @@ object SitesSettingsDialog {
             .setNegativeButton("Cancel", null)
             .create()
 
-        dialog.setOnShowListener {
+        // A whole site's credentials mid-edit are work — a stray touch outside must not throw
+        // them away. Cancel and the back gesture remain the ways out. (Set directly: this object
+        // only has a Context, so it can't route through ScreenFragment.showGuardedModal.) Set
+        // BEFORE presenting: after `show()` it is too late to matter.
+        dialog.setCanceledOnTouchOutside(false)
+
+        // THE BUTTONS ARE WIRED AFTER THE DIALOG IS SHOWN, NOT IN AN OnShowListener.
+        //
+        // This is the whole of Michael's "adding a site doesn't work" (08-31). These handlers used
+        // to be attached inside `dialog.setOnShowListener { … }` — and `present` is
+        // `ScreenFragment.showModal`, whose first act is `dialog.setOnShowListener { onModalShown() }`.
+        // A dialog holds ONE show-listener: the modal bookkeeping replaced this one, the click
+        // handlers were never attached, and both buttons fell back to AlertDialog's default —
+        // dismiss and do nothing. You typed a site, pressed Save, the dialog closed, and nothing
+        // was written, on every build since the day `present` started routing through showModal.
+        //
+        // `getButton` returns null before the dialog is shown, which is why the listener existed at
+        // all; presenting FIRST and wiring after is the version that survives a host which needs
+        // the show-listener for itself. `LedgerItemsFragment` documents the same trap from the
+        // other side ("which showGuardedModal would replace") and dodged it; this dialog did not.
+        present(dialog)
+        run {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val s = collect()
                 if (s.url.isBlank()) { Toast.makeText(context, "A site needs a URL", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
                 val firstEver = SiteStore.all(context).isEmpty()
-                savePass(s.id); SiteStore.upsert(context, s)   // password first — upsert re-activates with it
+                savePass(s.id)                                   // password first — upsert re-activates with it
+                // A SAVE THAT DIDN'T SAVE MUST NOT SAY "Saved". The store's write is guarded and
+                // reports now (it used to be a bare `apply()` whose failure surfaced on another
+                // thread long after this dialog closed) — so the toast tells the truth, and the
+                // dialog STAYS OPEN on failure with the typing still in it.
+                if (!SiteStore.upsert(context, s)) {
+                    Toast.makeText(context, "Couldn't save that site — nothing was written.", Toast.LENGTH_LONG).show()
+                    return@setOnClickListener
+                }
                 if (firstEver) SiteStore.activate(context, s.id)   // the first site you add becomes active
                 Toast.makeText(context, "Saved", Toast.LENGTH_SHORT).show()
-                onChanged(); dialog.dismiss(); show(context, onChanged)
+                onChanged(); dialog.dismiss(); show(context, present, onChanged)
             }
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
                 val s = collect()
                 if (s.url.isBlank()) { Toast.makeText(context, "A site needs a URL", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-                savePass(s.id); SiteStore.upsert(context, s)   // password first — upsert re-activates with it
+                savePass(s.id)
+                if (!SiteStore.upsert(context, s)) {
+                    Toast.makeText(context, "Couldn't save that site — nothing was written.", Toast.LENGTH_LONG).show()
+                    return@setOnClickListener
+                }
                 SiteStore.activate(context, s.id)
                 Toast.makeText(context, "Now using ${s.display}", Toast.LENGTH_SHORT).show()
-                onChanged(); dialog.dismiss(); show(context, onChanged)
+                onChanged(); dialog.dismiss(); show(context, present, onChanged)
             }
         }
-        // A whole site's credentials mid-edit are work — a stray touch outside must not throw
-        // them away. Cancel and the back gesture remain the ways out. (Set directly: this object
-        // only has a Context, so it can't route through ScreenFragment.showGuardedModal.)
-        dialog.setCanceledOnTouchOutside(false)
-        dialog.show()
     }
 }

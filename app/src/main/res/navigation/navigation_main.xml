@@ -51,9 +51,21 @@
             android:id="@+id/action_to_feeds"
             app:destination="@id/FeedsFragment"/>
 
+    <!-- 📧 THE MAIL'S OWN ROOM (Michael 2026-10-11: "You can move mail ... out of incoming"):
+         the same FeedsFragment class fixed on the mail lens by its room argument, with its own
+         remembered place (MailPlace). Every Mail door — Hub, Sections, widgets, Correspondence,
+         the gram router, the ↩ chip — comes through here; Feeds is RSS only. -->
+    <action
+            android:id="@+id/action_to_mail"
+            app:destination="@id/MailFragment"/>
+
     <action
             android:id="@+id/action_to_reading_log"
             app:destination="@id/ReadingLogFragment"/>
+
+    <action
+            android:id="@+id/action_to_year_in_ledger"
+            app:destination="@id/YearInLedgerFragment"/>
 
     <action
             android:id="@+id/action_to_notes_tags"
@@ -203,6 +215,20 @@
     </fragment>
 
     <fragment
+            android:id="@+id/MailFragment"
+            android:name="com.toolsboox.plugin.feeds.ui.FeedsFragment"
+            android:label="MailFragment"
+            tools:layout="@layout/fragment_feeds">
+        <argument android:name="room" app:argType="string" android:defaultValue="mail"/>
+
+        <action
+                android:id="@+id/action_to_dashboard"
+                app:destination="@id/DashboardFragment"
+                app:popUpTo="@id/DashboardFragment"
+                app:popUpToInclusive="true"/>
+    </fragment>
+
+    <fragment
             android:id="@+id/FeedArticleFragment"
             android:name="com.toolsboox.plugin.feeds.ui.FeedArticleFragment"
             android:label="FeedArticleFragment"
@@ -319,8 +345,8 @@
 
     <!-- Standalone compose — mail that isn't a reply. Arrives blank (The Mail lens's ✎ rail
          action) or prefilled (a "write that email" quick win, a contact page) via the three
-         arguments. The inbox itself has no fragment here any more: mail's one home is the feeds
-         pane's 📧 The Mail lens, reached through action_to_feeds with FeedSelection saying mail. -->
+         arguments. The inbox itself is the MailFragment destination above — the feeds
+         pane's class in its mail room, reached through action_to_mail. -->
     <fragment
             android:id="@+id/MailComposeFragment"
             android:name="com.toolsboox.plugin.mail.ui.MailComposeFragment"
@@ -343,6 +369,13 @@
                 app:popUpTo="@id/CalendarDayFragment"
                 app:popUpToInclusive="true"/>
     </fragment>
+
+    <!-- 📊 Your year in the Ledger — the review page (rides the semantic-surface frame). -->
+    <fragment
+            android:id="@+id/YearInLedgerFragment"
+            android:name="com.toolsboox.plugin.calendar.ui.YearInLedgerFragment"
+            android:label="YearInLedgerFragment"
+            tools:layout="@layout/fragment_semantic_surface"/>
 
     <fragment
             android:id="@+id/NotesTagsFragment"

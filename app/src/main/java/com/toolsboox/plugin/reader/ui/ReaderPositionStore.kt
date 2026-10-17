@@ -37,6 +37,15 @@ object ReaderPositionStore {
             }
         }.onFailure { Timber.w(it, "reader positions save failed") }.let {}
 
+    /** Every book with a saved position, name → last-read millis — the Continue tracker's
+     *  raw material (newest ts = where the hand last was, per series). */
+    fun lastReadTimes(context: Context): Map<String, Long> {
+        val o = read(context)
+        val out = mutableMapOf<String, Long>()
+        for (k in o.keys()) o.optJSONObject(k)?.optLong("ts")?.let { if (it > 0) out[k] = it }
+        return out
+    }
+
     /** The saved CFI for [book], or null. */
     fun get(context: Context, book: String): String? =
         read(context).optJSONObject(book)?.optString("cfi")?.takeIf { it.isNotBlank() }

@@ -21,12 +21,15 @@ import javax.inject.Inject
  *
  * @author <a href="mailto:gabor.auth@toolsboox.com">Gábor AUTH</a>
  */
-class CalendarYearService @Inject constructor() {
+class CalendarYearService @Inject constructor(
     /**
-     * The Moshi instance.
+     * The Moshi instance — a constructor value, as on CalendarDayService (2026-10-12): a field-
+     * injected `lateinit` let `CalendarYearService()` compile anywhere and fail every decode, and
+     * this service's load QUARANTINES a file it cannot decode — a bare instance would have
+     * renamed real files aside.
      */
-    @Inject
-    lateinit var moshi: Moshi
+    val moshi: Moshi,
+) {
 
     /**
      * Returns with the sync item of the data class.
@@ -48,16 +51,22 @@ class CalendarYearService @Inject constructor() {
      */
     fun fromSyncItem(calendarSyncItem: CalendarSyncItem): CalendarYear? {
         if (!calendarSyncItem.baseName.startsWith("year-")) return null
+        // A sync item can reach here with no content (unreadable local file, failed cloud
+        // download) — degrade to null so the sync skips the item instead of crashing the
+        // app from a background thread. Malformed JSON degrades the same way.
+        val json = calendarSyncItem.json ?: return null
 
-        when (calendarSyncItem.version) {
-            "v1" -> {
-                moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarYear::class.java)
-                    .fromJson(calendarSyncItem.json!!)?.let { return CalendarYear.convert(it) }
-            }
+        runCatching {
+            when (calendarSyncItem.version) {
+                "v1" -> {
+                    moshi.adapter(com.toolsboox.plugin.calendar.da.v1.CalendarYear::class.java)
+                        .fromJson(json)?.let { return CalendarYear.convert(it) }
+                }
 
-            "v2" -> {
-                moshi.adapter(CalendarYear::class.java)
-                    .fromJson(calendarSyncItem.json!!)?.let { return it }
+                "v2" -> {
+                    moshi.adapter(CalendarYear::class.java)
+                        .fromJson(json)?.let { return it }
+                }
             }
         }
 

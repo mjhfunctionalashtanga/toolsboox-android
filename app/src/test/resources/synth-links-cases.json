@@ -1,0 +1,1272 @@
+{
+ "version": 1,
+ "about": "SynthSources golden cases (synth-list-links-design.md \u00a79). Android: app/src/test/resources/synth-links-cases.json; iOS: Tests/LedgerCoreTests/Fixtures/synth-links-cases.json; the same bytes, pinned by SHA-256 in both suites. Generators: see 'generators'.",
+ "generators": "items {repeat,title,feed,blurb,link,entryIdBase}: N items, {n} = 1-based index, entryId = entryIdBase + n (0 when entryIdBase is 0 or absent). string {unit,times}: unit repeated.",
+ "constants": {
+  "budget": 9000,
+  "headerReserve": 80,
+  "maxItems": 40,
+  "titleCap": 160,
+  "feedCap": 60,
+  "blurbCap": 220,
+  "labelCap": 56,
+  "rowCap": 48,
+  "nameCap": 60,
+  "pickCap": 520,
+  "faceLines": 14,
+  "untitled": "Untitled",
+  "instruction": "Each source in the material is numbered. When a point comes from a source, cite it right there as [n], e.g. [3] or [2][5]. Use only the numbers given. Never invent a source, title, number or link, and don't end with a list of sources or links: Ledgable adds them."
+ },
+ "normalize": [
+  {
+   "in": "  Why\tthe\u00a0count \n matters  ",
+   "out": "Why the count matters"
+  },
+  {
+   "in": "a\u2003\u2003b\u3000c\u205fd\u202fe\u2028f\u2029g",
+   "out": "a b c d e f g"
+  },
+  {
+   "in": "zero\u200bwidth stays",
+   "out": "zero\u200bwidth stays"
+  },
+  {
+   "in": "line\r\nbreak\u000bvt\fff",
+   "out": "line break vt ff"
+  },
+  {
+   "in": "",
+   "out": ""
+  },
+  {
+   "in": " \t\u00a0 ",
+   "out": ""
+  },
+  {
+   "in": "\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67 family\u2009of\u200athree",
+   "out": "\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67 family of three"
+  }
+ ],
+ "material": [
+  {
+   "name": "three plain rows",
+   "header": "Feeds",
+   "items": [
+    {
+     "title": "Why the count matters",
+     "feed": "Ashtanga Notes",
+     "blurb": "The count is the practice's metronome.",
+     "link": "https://ashtanga.tech/why-count/",
+     "entryId": 4211
+    },
+    {
+     "title": "Breath first",
+     "feed": "",
+     "blurb": "",
+     "link": "  https://example.com/breath  ",
+     "entryId": 0
+    },
+    {
+     "title": "Bandhas, again",
+     "feed": "Yoga Weekly",
+     "blurb": "Mula,\tuddiyana\u00a0and the rest.",
+     "link": "https://example.com/bandhas?utm_source=x",
+     "entryId": -98
+    }
+   ],
+   "sent": 3,
+   "shown": 3,
+   "text": "SOURCES \u2014 Feeds \u00b7 3 of 3\n[1] Why the count matters \u2014 Ashtanga Notes\nThe count is the practice's metronome.\n\n[2] Breath first\n\n[3] Bandhas, again \u2014 Yoga Weekly\nMula, uddiyana and the rest."
+  },
+  {
+   "name": "nbsp tab emoji and angle titles",
+   "header": "Starred",
+   "items": [
+    {
+     "title": "\u00a0Tabs\tand\u00a0NBSP\u2003between\u3000words ",
+     "feed": "Feed\u00a0One",
+     "blurb": "  x  ",
+     "link": "https://a.example/1",
+     "entryId": 1
+    },
+    {
+     "title": "\ud83e\uddd8\u200d\u2640\ufe0f Morning practice \ud83d\udc4b\ud83c\udffd",
+     "feed": "\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67 Family",
+     "blurb": "Emoji \ud83d\udd25 blurb",
+     "link": "https://a.example/2",
+     "entryId": 2
+    },
+    {
+     "title": "When <b>bold</b> > plain",
+     "feed": "Feeds <html>",
+     "blurb": "A <tag> in a blurb stays",
+     "link": "https://a.example/3",
+     "entryId": 3
+    },
+    {
+     "title": "   ",
+     "feed": "No title here",
+     "blurb": "",
+     "link": "https://a.example/4",
+     "entryId": 0
+    }
+   ],
+   "sent": 4,
+   "shown": 4,
+   "text": "SOURCES \u2014 Starred \u00b7 4 of 4\n[1] Tabs and NBSP between words \u2014 Feed One\nx\n\n[2] \ud83e\uddd8\u200d\u2640\ufe0f Morning practice \ud83d\udc4b\ud83c\udffd \u2014 \ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67 Family\nEmoji \ud83d\udd25 blurb\n\n[3] When \u2039b\u203abold\u2039/b\u203a \u203a plain \u2014 Feeds \u2039html\u203a\nA <tag> in a blurb stays\n\n[4] Untitled \u2014 No title here"
+  },
+  {
+   "name": "caps cut with an ellipsis",
+   "header": "Feeds",
+   "items": [
+    {
+     "title": {
+      "unit": "T",
+      "times": 200
+     },
+     "feed": {
+      "unit": "F",
+      "times": 75
+     },
+     "blurb": {
+      "unit": "b",
+      "times": 300
+     },
+     "link": "https://a.example/long",
+     "entryId": 7
+    },
+    {
+     "title": {
+      "unit": "\ud83d\ude00",
+      "times": 161
+     },
+     "feed": {
+      "unit": "\u00e9",
+      "times": 60
+     },
+     "blurb": {
+      "unit": "\ud83d\ude00",
+      "times": 221
+     },
+     "link": "https://a.example/emoji",
+     "entryId": 8
+    }
+   ],
+   "sent": 2,
+   "shown": 2,
+   "text": "SOURCES \u2014 Feeds \u00b7 2 of 2\n[1] TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT\u2026 \u2014 FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF\u2026\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\u2026\n\n[2] \ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\u2026 \u2014 \u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\n\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\u2026"
+  },
+  {
+   "name": "a 41st item is ignored",
+   "header": "Feeds",
+   "items": {
+    "repeat": 41,
+    "title": "Piece {n}",
+    "feed": "Feed {n}",
+    "blurb": "Blurb {n}.",
+    "link": "https://example.com/piece/{n}",
+    "entryIdBase": 5000
+   },
+   "sent": 40,
+   "shown": 40,
+   "text": "SOURCES \u2014 Feeds \u00b7 40 of 40\n[1] Piece 1 \u2014 Feed 1\nBlurb 1.\n\n[2] Piece 2 \u2014 Feed 2\nBlurb 2.\n\n[3] Piece 3 \u2014 Feed 3\nBlurb 3.\n\n[4] Piece 4 \u2014 Feed 4\nBlurb 4.\n\n[5] Piece 5 \u2014 Feed 5\nBlurb 5.\n\n[6] Piece 6 \u2014 Feed 6\nBlurb 6.\n\n[7] Piece 7 \u2014 Feed 7\nBlurb 7.\n\n[8] Piece 8 \u2014 Feed 8\nBlurb 8.\n\n[9] Piece 9 \u2014 Feed 9\nBlurb 9.\n\n[10] Piece 10 \u2014 Feed 10\nBlurb 10.\n\n[11] Piece 11 \u2014 Feed 11\nBlurb 11.\n\n[12] Piece 12 \u2014 Feed 12\nBlurb 12.\n\n[13] Piece 13 \u2014 Feed 13\nBlurb 13.\n\n[14] Piece 14 \u2014 Feed 14\nBlurb 14.\n\n[15] Piece 15 \u2014 Feed 15\nBlurb 15.\n\n[16] Piece 16 \u2014 Feed 16\nBlurb 16.\n\n[17] Piece 17 \u2014 Feed 17\nBlurb 17.\n\n[18] Piece 18 \u2014 Feed 18\nBlurb 18.\n\n[19] Piece 19 \u2014 Feed 19\nBlurb 19.\n\n[20] Piece 20 \u2014 Feed 20\nBlurb 20.\n\n[21] Piece 21 \u2014 Feed 21\nBlurb 21.\n\n[22] Piece 22 \u2014 Feed 22\nBlurb 22.\n\n[23] Piece 23 \u2014 Feed 23\nBlurb 23.\n\n[24] Piece 24 \u2014 Feed 24\nBlurb 24.\n\n[25] Piece 25 \u2014 Feed 25\nBlurb 25.\n\n[26] Piece 26 \u2014 Feed 26\nBlurb 26.\n\n[27] Piece 27 \u2014 Feed 27\nBlurb 27.\n\n[28] Piece 28 \u2014 Feed 28\nBlurb 28.\n\n[29] Piece 29 \u2014 Feed 29\nBlurb 29.\n\n[30] Piece 30 \u2014 Feed 30\nBlurb 30.\n\n[31] Piece 31 \u2014 Feed 31\nBlurb 31.\n\n[32] Piece 32 \u2014 Feed 32\nBlurb 32.\n\n[33] Piece 33 \u2014 Feed 33\nBlurb 33.\n\n[34] Piece 34 \u2014 Feed 34\nBlurb 34.\n\n[35] Piece 35 \u2014 Feed 35\nBlurb 35.\n\n[36] Piece 36 \u2014 Feed 36\nBlurb 36.\n\n[37] Piece 37 \u2014 Feed 37\nBlurb 37.\n\n[38] Piece 38 \u2014 Feed 38\nBlurb 38.\n\n[39] Piece 39 \u2014 Feed 39\nBlurb 39.\n\n[40] Piece 40 \u2014 Feed 40\nBlurb 40."
+  },
+  {
+   "name": "the budget squeeze caps every blurb evenly",
+   "header": "Feeds",
+   "items": {
+    "repeat": 40,
+    "title": "Practice note {n}: what the count asks of you",
+    "feed": "Ashtanga Notes",
+    "blurb": "The count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly to hold it, and students disagree with their teachers. {n}",
+    "link": "https://example.com/n/{n}",
+    "entryIdBase": 100
+   },
+   "sent": 40,
+   "shown": 40,
+   "text": "SOURCES \u2014 Feeds \u00b7 40 of 40\n[1] Practice note 1: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[2] Practice note 2: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[3] Practice note 3: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[4] Practice note 4: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[5] Practice note 5: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[6] Practice note 6: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[7] Practice note 7: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[8] Practice note 8: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[9] Practice note 9: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[10] Practice note 10: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[11] Practice note 11: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[12] Practice note 12: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[13] Practice note 13: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[14] Practice note 14: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[15] Practice note 15: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[16] Practice note 16: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[17] Practice note 17: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[18] Practice note 18: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[19] Practice note 19: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[20] Practice note 20: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[21] Practice note 21: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[22] Practice note 22: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[23] Practice note 23: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[24] Practice note 24: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[25] Practice note 25: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[26] Practice note 26: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[27] Practice note 27: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[28] Practice note 28: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[29] Practice note 29: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[30] Practice note 30: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[31] Practice note 31: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[32] Practice note 32: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[33] Practice note 33: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[34] Practice note 34: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[35] Practice note 35: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[36] Practice note 36: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[37] Practice note 37: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[38] Practice note 38: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[39] Practice note 39: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026\n\n[40] Practice note 40: what the count asks of you \u2014 Ashtanga Notes\nThe count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly \u2026"
+  },
+  {
+   "name": "titles alone overflow: blurbs go, the tail drops",
+   "header": "Feeds",
+   "items": {
+    "repeat": 40,
+    "title": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number {n} of the set, still going on",
+    "feed": "Ashtanga Notes from the Shala, Weekly Edition, Feed No. {n} Long",
+    "blurb": "The count is the practice's metronome: one breath, one movement, nine vinyasas into the pose and the same nine out. Teachers disagree about how strictly to hold it, and students disagree with their teachers. {n}",
+    "link": "https://example.com/long/{n}",
+    "entryIdBase": 0
+   },
+   "sent": 38,
+   "shown": 40,
+   "text": "SOURCES \u2014 Feeds \u00b7 38 of 40\n[1] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 1 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 1 L\u2026\n\n[2] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 2 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 2 L\u2026\n\n[3] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 3 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 3 L\u2026\n\n[4] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 4 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 4 L\u2026\n\n[5] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 5 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 5 L\u2026\n\n[6] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 6 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 6 L\u2026\n\n[7] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 7 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 7 L\u2026\n\n[8] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 8 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 8 L\u2026\n\n[9] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 9 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 9 L\u2026\n\n[10] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 10 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 10 \u2026\n\n[11] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 11 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 11 \u2026\n\n[12] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 12 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 12 \u2026\n\n[13] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 13 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 13 \u2026\n\n[14] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 14 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 14 \u2026\n\n[15] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 15 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 15 \u2026\n\n[16] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 16 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 16 \u2026\n\n[17] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 17 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 17 \u2026\n\n[18] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 18 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 18 \u2026\n\n[19] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 19 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 19 \u2026\n\n[20] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 20 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 20 \u2026\n\n[21] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 21 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 21 \u2026\n\n[22] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 22 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 22 \u2026\n\n[23] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 23 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 23 \u2026\n\n[24] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 24 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 24 \u2026\n\n[25] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 25 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 25 \u2026\n\n[26] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 26 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 26 \u2026\n\n[27] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 27 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 27 \u2026\n\n[28] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 28 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 28 \u2026\n\n[29] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 29 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 29 \u2026\n\n[30] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 30 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 30 \u2026\n\n[31] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 31 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 31 \u2026\n\n[32] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 32 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 32 \u2026\n\n[33] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 33 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 33 \u2026\n\n[34] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 34 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 34 \u2026\n\n[35] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 35 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 35 \u2026\n\n[36] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 36 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 36 \u2026\n\n[37] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 37 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 37 \u2026\n\n[38] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 38 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 38 \u2026"
+  },
+  {
+   "name": "mail",
+   "header": "Mail \u00b7 Inbox",
+   "items": [
+    {
+     "title": "Re: Thursday's class",
+     "feed": "Elaine",
+     "blurb": "See you at 7 \u2014 bring the strap.",
+     "link": "mail://<CAF+abc def@mail.gmail.com>",
+     "entryId": 0
+    },
+    {
+     "title": "",
+     "feed": "james@example.com",
+     "blurb": "No subject on this one",
+     "link": "mail://acct:2:uid:991",
+     "entryId": 0
+    }
+   ],
+   "sent": 2,
+   "shown": 2,
+   "text": "SOURCES \u2014 Mail \u00b7 Inbox \u00b7 2 of 2\n[1] Re: Thursday's class \u2014 Elaine\nSee you at 7 \u2014 bring the strap.\n\n[2] Untitled \u2014 james@example.com\nNo subject on this one"
+  },
+  {
+   "name": "one item",
+   "header": "The Listen",
+   "items": [
+    {
+     "title": "Episode 12: The count",
+     "feed": "Shala Radio",
+     "blurb": "We talk about counting.",
+     "link": "https://pod.example/ep12",
+     "entryId": 912
+    }
+   ],
+   "sent": 1,
+   "shown": 1,
+   "text": "SOURCES \u2014 The Listen \u00b7 1 of 1\n[1] Episode 12: The count \u2014 Shala Radio\nWe talk about counting."
+  },
+  {
+   "name": "nothing",
+   "header": "Feeds",
+   "items": [],
+   "sent": 0,
+   "shown": 0,
+   "text": ""
+  }
+ ],
+ "articleMaterial": [
+  {
+   "label": "This article",
+   "title": "Why the count matters",
+   "feed": "Ashtanga Notes",
+   "text": "The count is the practice's metronome.\n\nIt keeps the breath honest.\n\n\tAnd the mind, mostly.  ",
+   "out": "SOURCES \u2014 This article \u00b7 1 of 1\n[1] Why the count matters \u2014 Ashtanga Notes\n\nThe count is the practice's metronome. It keeps the breath honest. And the mind, mostly."
+  },
+  {
+   "label": "Selection",
+   "title": "Why <the> count matters",
+   "feed": "",
+   "text": "  one breath,\u00a0one movement  ",
+   "out": "SOURCES \u2014 Selection \u00b7 1 of 1\n[1] Why \u2039the\u203a count matters\n\none breath, one movement"
+  },
+  {
+   "label": "This article",
+   "title": "A long one",
+   "feed": "Feed",
+   "text": {
+    "unit": "Breath and count. ",
+    "times": 600
+   },
+   "out": "SOURCES \u2014 This article \u00b7 1 of 1\n[1] A long one \u2014 Feed\n\nBreath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Breath and count. Brea\u2026"
+  }
+ ],
+ "find": [
+  {
+   "text": "As [2, 41] shows, nothing else.",
+   "sent": 40,
+   "out": [
+    2
+   ]
+  },
+  {
+   "text": "The count [50] matters.",
+   "sent": 40,
+   "out": []
+  },
+  {
+   "text": "Read [2\u20134] then [7-9].",
+   "sent": 40,
+   "out": [
+    2,
+    3,
+    4,
+    7,
+    8,
+    9
+   ]
+  },
+  {
+   "text": "Backwards [4\u20132] and wide [2\u201320] and exact [1\u201310].",
+   "sent": 40,
+   "out": [
+    4,
+    2,
+    20,
+    1,
+    3,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+   ]
+  },
+  {
+   "text": "From [notes \u00b7 Oct 3] and [3] and [tag \u00b7 2026-10-12].",
+   "sent": 5,
+   "out": [
+    3
+   ]
+  },
+  {
+   "text": "Twice [3][3][9].",
+   "sent": 9,
+   "out": [
+    3,
+    9
+   ]
+  },
+  {
+   "text": "[0] and [05] and [123] and [\u0663].",
+   "sent": 9,
+   "out": [
+    5
+   ]
+  },
+  {
+   "text": "Spaced [2 , 3] and [2,  3] and [ 4].",
+   "sent": 9,
+   "out": [
+    2,
+    3
+   ]
+  },
+  {
+   "text": "Mixed [2, 41, 3] and chain [1-3-5].",
+   "sent": 40,
+   "out": [
+    2,
+    3,
+    1,
+    4,
+    5
+   ]
+  },
+  {
+   "text": "[50] leads, foo [50] [60] bar, end [70]",
+   "sent": 40,
+   "out": []
+  },
+  {
+   "text": "No marks at all.",
+   "sent": 3,
+   "out": []
+  },
+  {
+   "text": "Repeats [5] [1] [5] [2].",
+   "sent": 5,
+   "out": [
+    5,
+    1,
+    2
+   ]
+  }
+ ],
+ "clean": [
+  {
+   "text": "As [2, 41] shows, nothing else.",
+   "sent": 40,
+   "out": "As [2] shows, nothing else."
+  },
+  {
+   "text": "The count [50] matters.",
+   "sent": 40,
+   "out": "The count matters."
+  },
+  {
+   "text": "Read [2\u20134] then [7-9].",
+   "sent": 40,
+   "out": "Read [2\u20134] then [7-9]."
+  },
+  {
+   "text": "Backwards [4\u20132] and wide [2\u201320] and exact [1\u201310].",
+   "sent": 40,
+   "out": "Backwards [4\u20132] and wide [2\u201320] and exact [1\u201310]."
+  },
+  {
+   "text": "From [notes \u00b7 Oct 3] and [3] and [tag \u00b7 2026-10-12].",
+   "sent": 5,
+   "out": "From [notes \u00b7 Oct 3] and [3] and [tag \u00b7 2026-10-12]."
+  },
+  {
+   "text": "Twice [3][3][9].",
+   "sent": 9,
+   "out": "Twice [3][3][9]."
+  },
+  {
+   "text": "[0] and [05] and [123] and [\u0663].",
+   "sent": 9,
+   "out": " and [05] and [123] and [\u0663]."
+  },
+  {
+   "text": "Spaced [2 , 3] and [2,  3] and [ 4].",
+   "sent": 9,
+   "out": "Spaced [2 , 3] and [2,  3] and [ 4]."
+  },
+  {
+   "text": "Mixed [2, 41, 3] and chain [1-3-5].",
+   "sent": 40,
+   "out": "Mixed [2, 3] and chain [1-3-5]."
+  },
+  {
+   "text": "[50] leads, foo [50] [60] bar, end [70]",
+   "sent": 40,
+   "out": " leads, foo bar, end"
+  },
+  {
+   "text": "No marks at all.",
+   "sent": 3,
+   "out": "No marks at all."
+  },
+  {
+   "text": "Repeats [5] [1] [5] [2].",
+   "sent": 5,
+   "out": "Repeats [5] [1] [5] [2]."
+  }
+ ],
+ "strip": [
+  {
+   "in": "As [1] says, and [2\u20134] agrees [tag \u00b7 date].",
+   "out": "As says, and agrees [tag \u00b7 date]."
+  },
+  {
+   "in": "[9] Leading and trailing [10]",
+   "out": " Leading and trailing"
+  },
+  {
+   "in": "Nothing to strip.",
+   "out": "Nothing to strip."
+  },
+  {
+   "in": "Glued[3]to words[4].",
+   "out": "Gluedto words."
+  }
+ ],
+ "pickText": [
+  {
+   "in": "Themes [1] run deep [2].",
+   "out": "\u2756 Themes run deep."
+  },
+  {
+   "in": "  \n\u00a0Spaces round [3] it \t ",
+   "out": "\u2756 Spaces round it"
+  },
+  {
+   "in": {
+    "unit": "Long answer [1] ",
+    "times": 60
+   },
+   "out": "\u2756 Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long answer Long"
+  }
+ ],
+ "sourcesCard": [
+  {
+   "scope": "Feeds",
+   "shown": 4,
+   "noneCited": false,
+   "items": [
+    {
+     "title": "Why the count matters",
+     "feed": "Ashtanga Notes",
+     "blurb": "b",
+     "link": "https://ashtanga.tech/why-count/",
+     "entryId": 4211
+    },
+    {
+     "title": "Breath first",
+     "feed": "",
+     "blurb": "",
+     "link": "https://example.com/breath",
+     "entryId": 0
+    },
+    {
+     "title": "A letter",
+     "feed": "Elaine",
+     "blurb": "",
+     "link": "mail://<CAF+abc def@mail.gmail.com>",
+     "entryId": 0
+    },
+    {
+     "title": "No link at all",
+     "feed": "Somewhere",
+     "blurb": "",
+     "link": "",
+     "entryId": 55
+    }
+   ],
+   "face": "Sources \u00b7 Feeds \u00b7 4 of 4\n[1] Why the count matters \u2014 Ashtanga Notes\n[2] Breath first\n[3] A letter \u2014 Elaine\n[4] No link at all \u2014 Somewhere",
+   "cardText": "[1] Why the count matters \u2014 Ashtanga Notes <https://ashtanga.tech/why-count/> #4211\n[2] Breath first <https://example.com/breath>\n[3] A letter \u2014 Elaine <mail://%3CCAF+abc%20def@mail.gmail.com%3E>\n[4] No link at all \u2014 Somewhere"
+  },
+  {
+   "scope": "Starred",
+   "shown": 40,
+   "noneCited": true,
+   "items": {
+    "repeat": 16,
+    "title": "Piece {n}",
+    "feed": "Feed {n}",
+    "link": "https://example.com/p {n}%20x",
+    "entryIdBase": 7000
+   },
+   "face": "Sources \u00b7 Starred \u00b7 16 of 40 \u00b7 none cited by number\n[1] Piece 1 \u2014 Feed 1\n[2] Piece 2 \u2014 Feed 2\n[3] Piece 3 \u2014 Feed 3\n[4] Piece 4 \u2014 Feed 4\n[5] Piece 5 \u2014 Feed 5\n[6] Piece 6 \u2014 Feed 6\n[7] Piece 7 \u2014 Feed 7\n[8] Piece 8 \u2014 Feed 8\n[9] Piece 9 \u2014 Feed 9\n[10] Piece 10 \u2014 Feed 10\n[11] Piece 11 \u2014 Feed 11\n[12] Piece 12 \u2014 Feed 12\n[13] Piece 13 \u2014 Feed 13\n[14] Piece 14 \u2014 Feed 14\n+ 2 more \u2014 tap for all",
+   "cardText": "[1] Piece 1 \u2014 Feed 1 <https://example.com/p%201%2520x> #7001\n[2] Piece 2 \u2014 Feed 2 <https://example.com/p%202%2520x> #7002\n[3] Piece 3 \u2014 Feed 3 <https://example.com/p%203%2520x> #7003\n[4] Piece 4 \u2014 Feed 4 <https://example.com/p%204%2520x> #7004\n[5] Piece 5 \u2014 Feed 5 <https://example.com/p%205%2520x> #7005\n[6] Piece 6 \u2014 Feed 6 <https://example.com/p%206%2520x> #7006\n[7] Piece 7 \u2014 Feed 7 <https://example.com/p%207%2520x> #7007\n[8] Piece 8 \u2014 Feed 8 <https://example.com/p%208%2520x> #7008\n[9] Piece 9 \u2014 Feed 9 <https://example.com/p%209%2520x> #7009\n[10] Piece 10 \u2014 Feed 10 <https://example.com/p%2010%2520x> #7010\n[11] Piece 11 \u2014 Feed 11 <https://example.com/p%2011%2520x> #7011\n[12] Piece 12 \u2014 Feed 12 <https://example.com/p%2012%2520x> #7012\n[13] Piece 13 \u2014 Feed 13 <https://example.com/p%2013%2520x> #7013\n[14] Piece 14 \u2014 Feed 14 <https://example.com/p%2014%2520x> #7014\n[15] Piece 15 \u2014 Feed 15 <https://example.com/p%2015%2520x> #7015\n[16] Piece 16 \u2014 Feed 16 <https://example.com/p%2016%2520x> #7016"
+  },
+  {
+   "scope": "Feeds",
+   "shown": 15,
+   "noneCited": false,
+   "items": {
+    "repeat": 15,
+    "title": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number {n} of the set, still going on",
+    "feed": "Ashtanga Notes from the Shala, Weekly Edition, Feed No. {n} Long",
+    "link": "https://example.com/long/{n}",
+    "entryIdBase": 300
+   },
+   "face": "Sources \u00b7 Feeds \u00b7 15 of 15\n[1] A very long headline about breath, bandhas \u2026\n[2] A very long headline about breath, bandhas \u2026\n[3] A very long headline about breath, bandhas \u2026\n[4] A very long headline about breath, bandhas \u2026\n[5] A very long headline about breath, bandhas \u2026\n[6] A very long headline about breath, bandhas \u2026\n[7] A very long headline about breath, bandhas \u2026\n[8] A very long headline about breath, bandhas \u2026\n[9] A very long headline about breath, bandhas \u2026\n[10] A very long headline about breath, bandhas\u2026\n[11] A very long headline about breath, bandhas\u2026\n[12] A very long headline about breath, bandhas\u2026\n[13] A very long headline about breath, bandhas\u2026\n[14] A very long headline about breath, bandhas\u2026\n+ 1 more \u2014 tap for all",
+   "cardText": "[1] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 1 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 1 L\u2026 <https://example.com/long/1> #301\n[2] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 2 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 2 L\u2026 <https://example.com/long/2> #302\n[3] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 3 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 3 L\u2026 <https://example.com/long/3> #303\n[4] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 4 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 4 L\u2026 <https://example.com/long/4> #304\n[5] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 5 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 5 L\u2026 <https://example.com/long/5> #305\n[6] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 6 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 6 L\u2026 <https://example.com/long/6> #306\n[7] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 7 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 7 L\u2026 <https://example.com/long/7> #307\n[8] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 8 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 8 L\u2026 <https://example.com/long/8> #308\n[9] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 9 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 9 L\u2026 <https://example.com/long/9> #309\n[10] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 10 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 10 \u2026 <https://example.com/long/10> #310\n[11] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 11 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 11 \u2026 <https://example.com/long/11> #311\n[12] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 12 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 12 \u2026 <https://example.com/long/12> #312\n[13] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 13 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 13 \u2026 <https://example.com/long/13> #313\n[14] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 14 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 14 \u2026 <https://example.com/long/14> #314\n[15] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 15 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 15 \u2026 <https://example.com/long/15> #315"
+  },
+  {
+   "scope": "Starred",
+   "shown": 3,
+   "noneCited": false,
+   "items": [
+    {
+     "title": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+     "feed": "",
+     "blurb": "",
+     "link": "https://a.example/e44",
+     "entryId": 1
+    },
+    {
+     "title": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+     "feed": "",
+     "blurb": "",
+     "link": "https://a.example/e45",
+     "entryId": 2
+    },
+    {
+     "title": "Just past the cap, counted in code points",
+     "feed": "Ok",
+     "blurb": "",
+     "link": "",
+     "entryId": 0
+    }
+   ],
+   "face": "Sources \u00b7 Starred \u00b7 3 of 3\n[1] \ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\n[2] \ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\u2026\n[3] Just past the cap, counted in code points \u2014\u2026",
+   "cardText": "[1] \ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00 <https://a.example/e44> #1\n[2] \ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00 <https://a.example/e45> #2\n[3] Just past the cap, counted in code points \u2014 Ok"
+  }
+ ],
+ "parseSources": [
+  {
+   "in": "[1] Why the count matters \u2014 Ashtanga Notes <https://ashtanga.tech/why-count/> #4211\n[2] Breath first <https://example.com/breath>\nnot a source line\n[3] A letter \u2014 Elaine <mail://%3CCAF+abc%20def@mail.gmail.com%3E>\n[4] No link at all \u2014 Somewhere\n[5] Huge id <https://x.example/5> #99999999999999999999\n[6] Max id <https://x.example/6> #9223372036854775807\n[7] Title with #hash and \u2039angles\u203a <https://x.example/7?a=1#frag> #12\n[123] three digits <https://x.example/no>\n[8]missing space\n[9] Lowercase escape <https://x.example/%3c%2525>",
+   "out": [
+    {
+     "n": 1,
+     "text": "Why the count matters \u2014 Ashtanga Notes",
+     "link": "https://ashtanga.tech/why-count/",
+     "entryId": 4211
+    },
+    {
+     "n": 2,
+     "text": "Breath first",
+     "link": "https://example.com/breath",
+     "entryId": 0
+    },
+    {
+     "n": 3,
+     "text": "A letter \u2014 Elaine",
+     "link": "mail://<CAF+abc def@mail.gmail.com>",
+     "entryId": 0
+    },
+    {
+     "n": 4,
+     "text": "No link at all \u2014 Somewhere",
+     "link": "",
+     "entryId": 0
+    },
+    {
+     "n": 5,
+     "text": "Huge id <https://x.example/5> #99999999999999999999",
+     "link": "",
+     "entryId": 0
+    },
+    {
+     "n": 6,
+     "text": "Max id",
+     "link": "https://x.example/6",
+     "entryId": 9223372036854775807
+    },
+    {
+     "n": 7,
+     "text": "Title with #hash and \u2039angles\u203a",
+     "link": "https://x.example/7?a=1#frag",
+     "entryId": 12
+    },
+    {
+     "n": 9,
+     "text": "Lowercase escape",
+     "link": "https://x.example/%3c%25",
+     "entryId": 0
+    }
+   ]
+  },
+  {
+   "in": "[1] Why the count matters \u2014 Ashtanga Notes <https://ashtanga.tech/why-count/> #4211\n[2] Breath first <https://example.com/breath>\n[3] A letter \u2014 Elaine <mail://%3CCAF+abc%20def@mail.gmail.com%3E>\n[4] No link at all \u2014 Somewhere",
+   "out": [
+    {
+     "n": 1,
+     "text": "Why the count matters \u2014 Ashtanga Notes",
+     "link": "https://ashtanga.tech/why-count/",
+     "entryId": 4211
+    },
+    {
+     "n": 2,
+     "text": "Breath first",
+     "link": "https://example.com/breath",
+     "entryId": 0
+    },
+    {
+     "n": 3,
+     "text": "A letter \u2014 Elaine",
+     "link": "mail://<CAF+abc def@mail.gmail.com>",
+     "entryId": 0
+    },
+    {
+     "n": 4,
+     "text": "No link at all \u2014 Somewhere",
+     "link": "",
+     "entryId": 0
+    }
+   ]
+  },
+  {
+   "in": "[1] Piece 1 \u2014 Feed 1 <https://example.com/p%201%2520x> #7001\n[2] Piece 2 \u2014 Feed 2 <https://example.com/p%202%2520x> #7002\n[3] Piece 3 \u2014 Feed 3 <https://example.com/p%203%2520x> #7003\n[4] Piece 4 \u2014 Feed 4 <https://example.com/p%204%2520x> #7004\n[5] Piece 5 \u2014 Feed 5 <https://example.com/p%205%2520x> #7005\n[6] Piece 6 \u2014 Feed 6 <https://example.com/p%206%2520x> #7006\n[7] Piece 7 \u2014 Feed 7 <https://example.com/p%207%2520x> #7007\n[8] Piece 8 \u2014 Feed 8 <https://example.com/p%208%2520x> #7008\n[9] Piece 9 \u2014 Feed 9 <https://example.com/p%209%2520x> #7009\n[10] Piece 10 \u2014 Feed 10 <https://example.com/p%2010%2520x> #7010\n[11] Piece 11 \u2014 Feed 11 <https://example.com/p%2011%2520x> #7011\n[12] Piece 12 \u2014 Feed 12 <https://example.com/p%2012%2520x> #7012\n[13] Piece 13 \u2014 Feed 13 <https://example.com/p%2013%2520x> #7013\n[14] Piece 14 \u2014 Feed 14 <https://example.com/p%2014%2520x> #7014\n[15] Piece 15 \u2014 Feed 15 <https://example.com/p%2015%2520x> #7015\n[16] Piece 16 \u2014 Feed 16 <https://example.com/p%2016%2520x> #7016",
+   "out": [
+    {
+     "n": 1,
+     "text": "Piece 1 \u2014 Feed 1",
+     "link": "https://example.com/p 1%20x",
+     "entryId": 7001
+    },
+    {
+     "n": 2,
+     "text": "Piece 2 \u2014 Feed 2",
+     "link": "https://example.com/p 2%20x",
+     "entryId": 7002
+    },
+    {
+     "n": 3,
+     "text": "Piece 3 \u2014 Feed 3",
+     "link": "https://example.com/p 3%20x",
+     "entryId": 7003
+    },
+    {
+     "n": 4,
+     "text": "Piece 4 \u2014 Feed 4",
+     "link": "https://example.com/p 4%20x",
+     "entryId": 7004
+    },
+    {
+     "n": 5,
+     "text": "Piece 5 \u2014 Feed 5",
+     "link": "https://example.com/p 5%20x",
+     "entryId": 7005
+    },
+    {
+     "n": 6,
+     "text": "Piece 6 \u2014 Feed 6",
+     "link": "https://example.com/p 6%20x",
+     "entryId": 7006
+    },
+    {
+     "n": 7,
+     "text": "Piece 7 \u2014 Feed 7",
+     "link": "https://example.com/p 7%20x",
+     "entryId": 7007
+    },
+    {
+     "n": 8,
+     "text": "Piece 8 \u2014 Feed 8",
+     "link": "https://example.com/p 8%20x",
+     "entryId": 7008
+    },
+    {
+     "n": 9,
+     "text": "Piece 9 \u2014 Feed 9",
+     "link": "https://example.com/p 9%20x",
+     "entryId": 7009
+    },
+    {
+     "n": 10,
+     "text": "Piece 10 \u2014 Feed 10",
+     "link": "https://example.com/p 10%20x",
+     "entryId": 7010
+    },
+    {
+     "n": 11,
+     "text": "Piece 11 \u2014 Feed 11",
+     "link": "https://example.com/p 11%20x",
+     "entryId": 7011
+    },
+    {
+     "n": 12,
+     "text": "Piece 12 \u2014 Feed 12",
+     "link": "https://example.com/p 12%20x",
+     "entryId": 7012
+    },
+    {
+     "n": 13,
+     "text": "Piece 13 \u2014 Feed 13",
+     "link": "https://example.com/p 13%20x",
+     "entryId": 7013
+    },
+    {
+     "n": 14,
+     "text": "Piece 14 \u2014 Feed 14",
+     "link": "https://example.com/p 14%20x",
+     "entryId": 7014
+    },
+    {
+     "n": 15,
+     "text": "Piece 15 \u2014 Feed 15",
+     "link": "https://example.com/p 15%20x",
+     "entryId": 7015
+    },
+    {
+     "n": 16,
+     "text": "Piece 16 \u2014 Feed 16",
+     "link": "https://example.com/p 16%20x",
+     "entryId": 7016
+    }
+   ]
+  },
+  {
+   "in": "[1] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 1 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 1 L\u2026 <https://example.com/long/1> #301\n[2] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 2 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 2 L\u2026 <https://example.com/long/2> #302\n[3] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 3 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 3 L\u2026 <https://example.com/long/3> #303\n[4] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 4 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 4 L\u2026 <https://example.com/long/4> #304\n[5] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 5 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 5 L\u2026 <https://example.com/long/5> #305\n[6] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 6 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 6 L\u2026 <https://example.com/long/6> #306\n[7] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 7 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 7 L\u2026 <https://example.com/long/7> #307\n[8] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 8 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 8 L\u2026 <https://example.com/long/8> #308\n[9] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 9 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 9 L\u2026 <https://example.com/long/9> #309\n[10] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 10 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 10 \u2026 <https://example.com/long/10> #310\n[11] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 11 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 11 \u2026 <https://example.com/long/11> #311\n[12] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 12 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 12 \u2026 <https://example.com/long/12> #312\n[13] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 13 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 13 \u2026 <https://example.com/long/13> #313\n[14] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 14 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 14 \u2026 <https://example.com/long/14> #314\n[15] A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 15 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 15 \u2026 <https://example.com/long/15> #315",
+   "out": [
+    {
+     "n": 1,
+     "text": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 1 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 1 L\u2026",
+     "link": "https://example.com/long/1",
+     "entryId": 301
+    },
+    {
+     "n": 2,
+     "text": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 2 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 2 L\u2026",
+     "link": "https://example.com/long/2",
+     "entryId": 302
+    },
+    {
+     "n": 3,
+     "text": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 3 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 3 L\u2026",
+     "link": "https://example.com/long/3",
+     "entryId": 303
+    },
+    {
+     "n": 4,
+     "text": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 4 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 4 L\u2026",
+     "link": "https://example.com/long/4",
+     "entryId": 304
+    },
+    {
+     "n": 5,
+     "text": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 5 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 5 L\u2026",
+     "link": "https://example.com/long/5",
+     "entryId": 305
+    },
+    {
+     "n": 6,
+     "text": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 6 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 6 L\u2026",
+     "link": "https://example.com/long/6",
+     "entryId": 306
+    },
+    {
+     "n": 7,
+     "text": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 7 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 7 L\u2026",
+     "link": "https://example.com/long/7",
+     "entryId": 307
+    },
+    {
+     "n": 8,
+     "text": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 8 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 8 L\u2026",
+     "link": "https://example.com/long/8",
+     "entryId": 308
+    },
+    {
+     "n": 9,
+     "text": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 9 of the set, \u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 9 L\u2026",
+     "link": "https://example.com/long/9",
+     "entryId": 309
+    },
+    {
+     "n": 10,
+     "text": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 10 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 10 \u2026",
+     "link": "https://example.com/long/10",
+     "entryId": 310
+    },
+    {
+     "n": 11,
+     "text": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 11 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 11 \u2026",
+     "link": "https://example.com/long/11",
+     "entryId": 311
+    },
+    {
+     "n": 12,
+     "text": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 12 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 12 \u2026",
+     "link": "https://example.com/long/12",
+     "entryId": 312
+    },
+    {
+     "n": 13,
+     "text": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 13 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 13 \u2026",
+     "link": "https://example.com/long/13",
+     "entryId": 313
+    },
+    {
+     "n": 14,
+     "text": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 14 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 14 \u2026",
+     "link": "https://example.com/long/14",
+     "entryId": 314
+    },
+    {
+     "n": 15,
+     "text": "A very long headline about breath, bandhas and the count that keeps going well past the point where any sub-editor would have stopped it, number 15 of the set,\u2026 \u2014 Ashtanga Notes from the Shala, Weekly Edition, Feed No. 15 \u2026",
+     "link": "https://example.com/long/15",
+     "entryId": 315
+    }
+   ]
+  },
+  {
+   "in": "[1] \ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00 <https://a.example/e44> #1\n[2] \ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00 <https://a.example/e45> #2\n[3] Just past the cap, counted in code points \u2014 Ok",
+   "out": [
+    {
+     "n": 1,
+     "text": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+     "link": "https://a.example/e44",
+     "entryId": 1
+    },
+    {
+     "n": 2,
+     "text": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+     "link": "https://a.example/e45",
+     "entryId": 2
+    },
+    {
+     "n": 3,
+     "text": "Just past the cap, counted in code points \u2014 Ok",
+     "link": "",
+     "entryId": 0
+    }
+   ]
+  }
+ ],
+ "links": [
+  {
+   "raw": "mail://<CAF+abc def@mail.gmail.com>",
+   "encoded": "mail://%3CCAF+abc%20def@mail.gmail.com%3E"
+  },
+  {
+   "raw": "https://example.com/a%20b?q=1",
+   "encoded": "https://example.com/a%2520b?q=1"
+  },
+  {
+   "raw": "https://example.com/plain",
+   "encoded": "https://example.com/plain"
+  },
+  {
+   "raw": "weird\nline <and> 100%",
+   "encoded": "weird%0Aline%20%3Cand%3E%20100%25"
+  },
+  {
+   "raw": "",
+   "encoded": ""
+  }
+ ],
+ "decodeLink": [
+  {
+   "in": "%3c%3e%0a",
+   "out": "%3c%3e%0a"
+  },
+  {
+   "in": "%2520",
+   "out": "%20"
+  },
+  {
+   "in": "%25",
+   "out": "%"
+  },
+  {
+   "in": "%",
+   "out": "%"
+  },
+  {
+   "in": "%2",
+   "out": "%2"
+  },
+  {
+   "in": "abc%3Cdef",
+   "out": "abc<def"
+  }
+ ],
+ "pageName": [
+  {
+   "engine": "Themes",
+   "scope": "Starred",
+   "out": "Themes \u00b7 Starred"
+  },
+  {
+   "engine": "Themes",
+   "scope": "Mail \u00b7 Inbox",
+   "out": "Themes \u00b7 Mail \u00b7 Inbox"
+  },
+  {
+   "engine": "  Themes\t",
+   "scope": " Why the count\u00a0matters ",
+   "out": "Themes \u00b7 Why the count matters"
+  },
+  {
+   "engine": "Themes",
+   "scope": {
+    "unit": "x",
+    "times": 51
+   },
+   "out": "Themes \u00b7 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+   "engine": "Themes",
+   "scope": {
+    "unit": "x",
+    "times": 52
+   },
+   "out": "Themes \u00b7 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u2026"
+  },
+  {
+   "engine": "Contrarian reading",
+   "scope": "\ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67 The family feed and everything else in it",
+   "out": "Contrarian reading \u00b7 \ud83d\udc69\u200d\ud83d\udc69\u200d\ud83d\udc67 The family feed and everything e\u2026"
+  },
+  {
+   "engine": "\u2756  Synthesize",
+   "scope": "Starred",
+   "out": "Synthesize \u00b7 Starred"
+  },
+  {
+   "engine": "?  3 Questions",
+   "scope": "Feeds",
+   "out": "3 Questions \u00b7 Feeds"
+  },
+  {
+   "engine": "\u270e  Writing Prompt",
+   "scope": "Why the count matters",
+   "out": "Writing Prompt \u00b7 Why the count matters"
+  },
+  {
+   "engine": " \ud83e\uddd8\u200d\u2640\ufe0f \u00c9clair \u2014 calm",
+   "scope": "Later",
+   "out": "\u00c9clair \u2014 calm \u00b7 Later"
+  },
+  {
+   "engine": "\u2756",
+   "scope": "Starred",
+   "out": "\u2756 \u00b7 Starred"
+  }
+ ],
+ "role": [
+  {
+   "label": "\u2756 The Correspondent",
+   "out": "reply"
+  },
+  {
+   "label": "\u27e1 The Correspondent",
+   "out": "reply"
+  },
+  {
+   "label": "Sources \u00b7 Feeds",
+   "out": "sources"
+  },
+  {
+   "label": "Sources\u00b7Feeds",
+   "out": "other"
+  },
+  {
+   "label": "[3] Why the count matters",
+   "out": "source:3"
+  },
+  {
+   "label": "[12] x",
+   "out": "source:12"
+  },
+  {
+   "label": "[123] x",
+   "out": "other"
+  },
+  {
+   "label": "[3]x",
+   "out": "other"
+  },
+  {
+   "label": "\u2756 Themes \u00b7 Starred",
+   "out": "other"
+  },
+  {
+   "label": "",
+   "out": "other"
+  },
+  {
+   "label": "Sources \u00b7 ",
+   "out": "sources"
+  }
+ ],
+ "rows": {
+  "sources": "[1] Why the count matters \u2014 Ashtanga Notes <https://ashtanga.tech/why-count/> #4211\n[2] Breath first <https://example.com/breath>\n[3] A much longer title that will not fit in a menu row at all \u2014 Some Feed <https://x.example/3>\n[9] Nine <https://x.example/9>",
+  "cases": [
+   {
+    "role": "reply",
+    "text": "Twice [3][3][9], and [4] which isn't there, and [2].",
+    "out": [
+     "\u2197 [3] A much longer title that will not fit in \u2026",
+     "\u2197 [9] Nine",
+     "\u2197 [2] Breath first"
+    ]
+   },
+   {
+    "role": "reply",
+    "text": "Nothing cited.",
+    "out": []
+   },
+   {
+    "role": "sources",
+    "text": "",
+    "out": [
+     "\u2197 [1] Why the count matters \u2014 Ashtanga Notes",
+     "\u2197 [2] Breath first",
+     "\u2197 [3] A much longer title that will not fit in \u2026",
+     "\u2197 [9] Nine"
+    ]
+   },
+   {
+    "role": "source:3",
+    "text": "",
+    "out": [
+     "\u2197 [3] A much longer title that will not fit in \u2026"
+    ]
+   },
+   {
+    "role": "source:5",
+    "text": "",
+    "out": []
+   },
+   {
+    "role": "other",
+    "text": "[1]",
+    "out": []
+   }
+  ]
+ },
+ "sourceCard": [
+  {
+   "n": 1,
+   "item": {
+    "title": "Why the count matters",
+    "feed": "Ashtanga Notes",
+    "blurb": "The count is the practice's metronome."
+   },
+   "out": {
+    "label": "[1] Why the count matters",
+    "cardText": "[1] Why the count matters \u2014 Ashtanga Notes\nThe count is the practice's metronome."
+   }
+  },
+  {
+   "n": 12,
+   "item": {
+    "title": "A title long enough that the card label has to be cut short",
+    "feed": "",
+    "blurb": ""
+   },
+   "out": {
+    "label": "[12] A title long enough that the card label has to be \u2026",
+    "cardText": "[12] A title long enough that the card label has to be cut short"
+   }
+  }
+ ],
+ "seedTurn": [
+  {
+   "kind": "feeds",
+   "scope": "Feeds",
+   "items": [
+    {
+     "title": "Why the count matters",
+     "feed": "Ashtanga Notes"
+    },
+    {
+     "title": "Breath first",
+     "feed": ""
+    }
+   ],
+   "out": "\u2756 Synthesize this list \u2014 Feeds \u00b7 2 articles\n[1] Why the count matters \u2014 Ashtanga Notes\n[2] Breath first"
+  },
+  {
+   "kind": "mail",
+   "scope": "Mail \u00b7 Inbox",
+   "items": [
+    {
+     "title": "Re: Thursday",
+     "feed": "Elaine"
+    }
+   ],
+   "out": "\u2756 Synthesize this list \u2014 Mail \u00b7 Inbox \u00b7 1 letter\n[1] Re: Thursday \u2014 Elaine"
+  },
+  {
+   "kind": "episodes",
+   "scope": "The Listen",
+   "items": [
+    {
+     "title": "Ep 1",
+     "feed": "Show"
+    },
+    {
+     "title": "Ep 2",
+     "feed": "Show"
+    }
+   ],
+   "out": "\u2756 Synthesize these episodes \u2014 The Listen \u00b7 2 episodes\n[1] Ep 1 \u2014 Show\n[2] Ep 2 \u2014 Show"
+  },
+  {
+   "kind": "article",
+   "scope": "Why the count matters",
+   "items": [
+    {
+     "title": "Why the count matters",
+     "feed": "Ashtanga Notes"
+    }
+   ],
+   "out": "\u2756 Synthesize this article \u2014 Why the count matters \u00b7 1 article\n[1] Why the count matters \u2014 Ashtanga Notes"
+  }
+ ],
+ "followUpBlock": [
+  {
+   "in": "[1] Why the count matters \u2014 Ashtanga Notes <https://ashtanga.tech/why-count/> #4211\n[2] Breath first <https://example.com/breath>\n[3] A much longer title that will not fit in a menu row at all \u2014 Some Feed <https://x.example/3>\n[9] Nine <https://x.example/9>",
+   "out": "SOURCES \u2014 This page\n[1] Why the count matters \u2014 Ashtanga Notes\n[2] Breath first\n[3] A much longer title that will not fit in a menu row at all \u2014 Some Feed\n[9] Nine\n\nEach source in the material is numbered. When a point comes from a source, cite it right there as [n], e.g. [3] or [2][5]. Use only the numbers given. Never invent a source, title, number or link, and don't end with a list of sources or links: Ledgable adds them."
+  }
+ ],
+ "words": {
+  "picker": {
+   "feeds": "\u2756 Synthesize this list",
+   "mail": "\u2756 Synthesize this list",
+   "episodes": "\u2756 Synthesize these episodes",
+   "article": "\u2756 Synthesize this article"
+  },
+  "reading": [
+   {
+    "kind": "feeds",
+    "sent": 23,
+    "shown": 23,
+    "out": "\u2756 Reading 23 articles\u2026"
+   },
+   {
+    "kind": "feeds",
+    "sent": 31,
+    "shown": 40,
+    "out": "\u2756 Reading 31 of 40 articles\u2026"
+   },
+   {
+    "kind": "feeds",
+    "sent": 1,
+    "shown": 1,
+    "out": "\u2756 Reading 1 article\u2026"
+   },
+   {
+    "kind": "mail",
+    "sent": 12,
+    "shown": 12,
+    "out": "\u2756 Reading 12 letters\u2026"
+   },
+   {
+    "kind": "mail",
+    "sent": 1,
+    "shown": 1,
+    "out": "\u2756 Reading 1 letter\u2026"
+   },
+   {
+    "kind": "episodes",
+    "sent": 8,
+    "shown": 8,
+    "out": "\u2756 Reading 8 episodes\u2026"
+   },
+   {
+    "kind": "episodes",
+    "sent": 3,
+    "shown": 9,
+    "out": "\u2756 Reading 3 of 9 episodes\u2026"
+   },
+   {
+    "kind": "article",
+    "sent": 1,
+    "shown": 1,
+    "out": "\u2756 Reading this article\u2026"
+   }
+  ],
+  "writingBack": "\u2756 Writing back\u2026",
+  "busy": "\u2756 Already writing back\u2026",
+  "goToIt": "Go to it",
+  "tryAgain": "Try again",
+  "emptyList": "Nothing on this list to synthesize.",
+  "noArticleText": "Nothing to synthesize yet \u2014 the article's text hasn't loaded.",
+  "noKey": "Add your AI key in Ask my Ledger settings",
+  "timeout": "\u2756 No reply after 2 minutes. Nothing was made.",
+  "emptyReply": "\u2756 The reply came back empty. Nothing was made.",
+  "noneCited": " \u00b7 none cited by number",
+  "articleWontLoad": "Can't load this article right now.",
+  "ready": [
+   {
+    "in": "Themes \u00b7 Starred",
+    "out": "\u2756 Ready: Themes \u00b7 Starred"
+   }
+  ],
+  "couldntReach": [
+   {
+    "in": "Bad key.",
+    "out": "\u2756 Couldn't reach the engine: Bad key. Nothing was made."
+   },
+   {
+    "in": "timed out",
+    "out": "\u2756 Couldn't reach the engine: timed out. Nothing was made."
+   },
+   {
+    "in": " The server said no... ",
+    "out": "\u2756 Couldn't reach the engine: The server said no. Nothing was made."
+   }
+  ],
+  "couldntSave": [
+   {
+    "in": "disk full",
+    "out": "\u2756 Couldn't save the page: disk full."
+   },
+   {
+    "in": "No space.",
+    "out": "\u2756 Couldn't save the page: No space."
+   }
+  ],
+  "killed": [
+   {
+    "in": "Themes \u00b7 Starred",
+    "out": "\u2756 Themes \u00b7 Starred didn't finish \u2014 the app closed mid-run. Run it again from the list."
+   }
+  ]
+ }
+}

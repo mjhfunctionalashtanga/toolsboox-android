@@ -31,6 +31,7 @@ object FeedCache {
                 put("category", e.category ?: JSONObject.NULL)
                 put("enclosureImage", e.enclosureImage ?: JSONObject.NULL)
                 put("enclosureAudio", e.enclosureAudio ?: JSONObject.NULL)
+                put("enclosureVideo", e.enclosureVideo ?: JSONObject.NULL)
                 put("feedUrl", e.feedUrl ?: JSONObject.NULL)
             })
         }
@@ -51,6 +52,7 @@ object FeedCache {
                 category = o.opt("category")?.takeIf { it is String } as String?,
                 enclosureImage = o.opt("enclosureImage")?.takeIf { it is String } as String?,
                 enclosureAudio = o.opt("enclosureAudio")?.takeIf { it is String } as String?,
+                enclosureVideo = o.opt("enclosureVideo")?.takeIf { it is String } as String?,
                 feedUrl = o.opt("feedUrl")?.takeIf { it is String } as String?
             )
         }
@@ -97,6 +99,44 @@ object FeedCache {
     fun loadContent(context: Context, id: Long): String? = runCatching {
         val f = contentFile(context, id); if (f.exists()) f.readText() else null
     }.getOrNull()
+
+    // MARK: - Offline article images (the Handy News Reader lift, 09-02)
+
+    /** An article-body image ON DISK, keyed like the thumbnails. HNR's lesson: "once updated,
+     *  there is no need of additional loading anything" — a prefetched article that still
+     *  reaches for the network to draw its pictures is not offline. */
+    fun imageFile(context: Context, url: String): File =
+        File(dir(context), "img-${sha1(url)}")
+
+    private val IMG_SRC = Regex("""<img[^>]+src=["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE)
+
+    /** Fetch (at most [cap]) of [html]'s images into the cache. Quietly best-effort, size-capped
+     *  per image — a hero picture is reading material, a 12MB panorama is not. */
+    fun cacheArticleImages(context: Context, html: String, cap: Int = 8, maxBytes: Int = 1_500_000) {
+        IMG_SRC.findAll(html).map { it.groupValues[1] }.distinct().take(cap).forEach { url ->
+            val f = imageFile(context, url)
+            if (f.exists()) return@forEach
+            runCatching {
+                val conn = java.net.URL(url).openConnection().apply {
+                    connectTimeout = 10_000; readTimeout = 15_000
+                }
+                conn.getInputStream().use { ins ->
+                    val bytes = ins.readBytes()
+                    if (bytes.size in 1..maxBytes) f.writeBytes(bytes)
+                }
+            }
+        }
+    }
+
+    /** Rewrite [html]'s image sources to their local copies where one exists — the render-time
+     *  half: the stored HTML keeps its real URLs (truthful, re-cacheable), the WebView gets the
+     *  file that is already here. Untouched when nothing is cached. */
+    fun withLocalImages(context: Context, html: String): String =
+        IMG_SRC.replace(html) { m ->
+            val url = m.groupValues[1]
+            val f = imageFile(context, url)
+            if (f.exists()) m.value.replace(url, android.net.Uri.fromFile(f).toString()) else m.value
+        }
 
     // MARK: - Podcast sidecars (chapters + transcript pointers, per entry)
 
@@ -145,7 +185,8 @@ object FeedCache {
     fun prune(context: Context) = runCatching {
         val files = dir(context).listFiles { f ->
             f.name.startsWith("content-") || f.name.startsWith("pod-") ||
-                f.name.startsWith("transcript-") || f.name.startsWith("thumb-")
+                f.name.startsWith("transcript-") || f.name.startsWith("thumb-") ||
+                f.name.startsWith("img-")
         } ?: return@runCatching
         val cutoff = System.currentTimeMillis() - MAX_AGE_DAYS * 24 * 3600 * 1000
         val sorted = files.sortedBy { it.lastModified() }

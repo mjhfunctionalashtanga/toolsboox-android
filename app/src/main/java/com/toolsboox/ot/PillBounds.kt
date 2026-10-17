@@ -59,4 +59,19 @@ object PillBounds {
         val hi = (parentSize - handleEnd).toFloat()     // handle flush to the far edge
         return if (lo <= hi) lo..hi else hi..lo
     }
+
+    /**
+     * [range], kept clear of a band at either edge — the bottom pill on an ink page stays off the
+     * tuck panel's column (Michael 2026-10-11: the pill must keep clear of the rail). [avoidStart]
+     * and [avoidEnd] are the px the column holds at the start and end edges of the parent. When
+     * the free band between them can't hold the pill, the plain [range] answers — a pill that
+     * cannot be clear of the column must at least stay on screen.
+     */
+    fun rangeAvoiding(
+        start: Int, end: Int, parentSize: Int, avoidStart: Int, avoidEnd: Int
+    ): ClosedFloatingPointRange<Float> {
+        val lo = (maxOf(avoidStart, 0) - start).toFloat()
+        val hi = (parentSize - maxOf(avoidEnd, 0) - end).toFloat()
+        return if (lo <= hi) lo..hi else range(start, end, parentSize)
+    }
 }

@@ -43,7 +43,7 @@
     <!-- Assign a rolodex contact -->
     <ImageButton
         android:id="@+id/li_assignee"
-        android:background="?attr/selectableItemBackgroundBorderless"
+        android:background="@drawable/eink_press_bg"
         android:scaleType="fitCenter"
         android:padding="6dp"
         android:src="@drawable/ic_person"
@@ -54,7 +54,7 @@
     <!-- Per-item Ink/Text toggle -->
     <ImageButton
         android:id="@+id/li_toggle"
-        android:background="?attr/selectableItemBackgroundBorderless"
+        android:background="@drawable/eink_press_bg"
         android:scaleType="fitCenter"
         android:padding="8dp"
         android:contentDescription="@string/ledger_items_toggle"

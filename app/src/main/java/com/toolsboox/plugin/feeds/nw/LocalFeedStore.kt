@@ -8,8 +8,16 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.abs
 
-/** A local (no-server) feed subscription. */
-data class LocalSub(val id: Long, val url: String, val title: String)
+/** A local (no-server) feed subscription. [updated]/[deletedAt] are the merge clock — the
+ *  subscription list is a SYNCED SIDECAR now (09-03: "what about syncing between devices when
+ *  it doesn't get added to miniflux — not everyone will have miniflux"): `local-feeds.json` at
+ *  the hub root, id-union, newest-updated wins, tombstones survive, both platforms one file. */
+data class LocalSub(
+    val id: Long, val url: String, val title: String,
+    val updated: Long = 0L, val deletedAt: Long = 0L,
+) {
+    val isDeleted: Boolean get() = deletedAt > 0L
+}
 
 /**
  * Local Feeds (Android parity of the iOS LocalFeedStore) — subscribe to a feed URL with NO
@@ -27,16 +35,58 @@ object LocalFeedStore {
     private fun idFor(url: String): Long = -(abs(url.hashCode().toLong()) % 1_000_000_000L) - 1000L
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    fun subscriptions(ctx: Context): List<LocalSub> {
+    private const val SYNC_PATH = "local-feeds.json"
+
+    /** Live subscriptions — tombstones filtered here so every existing caller stays honest. */
+    fun subscriptions(ctx: Context): List<LocalSub> = allSubs(ctx).filter { !it.isDeleted }
+
+    private fun allSubs(ctx: Context): List<LocalSub> {
         val arr = JSONArray(prefs(ctx).getString("subs", "[]") ?: "[]")
         return (0 until arr.length()).map { arr.getJSONObject(it) }
-            .map { LocalSub(it.getLong("id"), it.getString("url"), it.getString("title")) }
+            .map {
+                LocalSub(it.getLong("id"), it.getString("url"), it.getString("title"),
+                    it.optLong("updated", 0L), it.optLong("deletedAt", 0L))
+            }
     }
 
     private fun saveSubs(ctx: Context, subs: List<LocalSub>) {
         val arr = JSONArray()
-        subs.forEach { arr.put(JSONObject().put("id", it.id).put("url", it.url).put("title", it.title)) }
+        subs.forEach {
+            arr.put(JSONObject().put("id", it.id).put("url", it.url).put("title", it.title)
+                .put("updated", it.updated).put("deletedAt", it.deletedAt))
+        }
         prefs(ctx).edit().putString("subs", arr.toString()).apply()
+    }
+
+    /** The round trip: pull `local-feeds.json`, id-union (newest [LocalSub.updated] wins,
+     *  tombstones survive), save, push — the ListenStateStore pattern on the same one-thread
+     *  sidecar executor. Rides the feed screen's load and the background fetch tick. */
+    fun sync(ctx: Context, onMerged: ((List<LocalSub>) -> Unit)? = null) {
+        com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.background {
+            val local = allSubs(ctx)
+            val remoteText = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.pull(ctx, SYNC_PATH)
+            val merged = if (remoteText.isNullOrBlank()) local else {
+                val rArr = runCatching { JSONArray(remoteText) }.getOrDefault(JSONArray())
+                val remote = (0 until rArr.length()).map { rArr.getJSONObject(it) }.map {
+                    LocalSub(it.getLong("id"), it.getString("url"), it.getString("title"),
+                        it.optLong("updated", 0L), it.optLong("deletedAt", 0L))
+                }
+                // BY URL, not id: the two platforms derive different local ids from the same
+                // URL (Java hashCode vs FNV) — the address is the identity on the wire, and
+                // each platform re-derives its own id on read.
+                (local + remote).groupBy { it.url }
+                    .map { (_, versions) -> versions.maxByOrNull { it.updated }!! }
+                    .map { it.copy(id = idFor(it.url)) }
+            }
+            saveSubs(ctx, merged)
+            val out = JSONArray()
+            merged.forEach {
+                out.put(JSONObject().put("id", it.id).put("url", it.url).put("title", it.title)
+                    .put("updated", it.updated).put("deletedAt", it.deletedAt))
+            }
+            com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.push(ctx, SYNC_PATH, out.toString())
+            onMerged?.invoke(merged.filter { !it.isDeleted })
+        }
     }
 
     /** Fetch + parse (validating), store with title. null = not a feed. */
@@ -46,12 +96,21 @@ object LocalFeedStore {
         val id = idFor(clean)
         val subs = subscriptions(ctx).toMutableList()
         subs.firstOrNull { it.id == id }?.let { return it }
-        val sub = LocalSub(id, clean, feed.title.ifBlank { clean })
-        subs.add(sub); saveSubs(ctx, subs)
+        val sub = LocalSub(id, clean, feed.title.ifBlank { clean },
+            updated = System.currentTimeMillis())
+        subs.add(sub); saveSubs(ctx, allSubs(ctx).filter { it.id != id } + sub)
+        sync(ctx)   // a subscription made anywhere appears everywhere
         return sub
     }
 
-    fun remove(ctx: Context, id: Long) = saveSubs(ctx, subscriptions(ctx).filter { it.id != id })
+    /** Remove = TOMBSTONE, so the delete syncs instead of the other device resurrecting it. */
+    fun remove(ctx: Context, id: Long) {
+        val now = System.currentTimeMillis()
+        saveSubs(ctx, allSubs(ctx).map {
+            if (it.id == id) it.copy(deletedAt = now, updated = now) else it
+        })
+        sync(ctx)
+    }
 
     fun importOpml(ctx: Context, urls: List<String>): Int {
         var n = 0
@@ -87,6 +146,13 @@ object LocalFeedStore {
         val out = mutableListOf<FeedEntry>()
         for (s in subs) {
             val feed = fetch(s.url) ?: continue
+            // The show's cover, from this same parse (10-12): remembered for every surface that
+            // names the show, and the picture of each EPISODE that carries none of its own. Only
+            // a feed with audio in it is a show (review 10-12): a WordPress blog ships its 32px
+            // site icon as the channel <image>, and every text post wore it as a blurry thumbnail.
+            val isShow = feed.items.any { it.enclosureAudio.isNotBlank() }
+            if (isShow) ShowCovers.remember(ctx, s.url, s.title, feed.imageUrl)
+            val cover = feed.imageUrl.takeIf { isShow && it.startsWith("http") }
             for (it in feed.items) {
                 val link = it.link.ifBlank { it.guid }
                 if (link.isBlank()) continue
@@ -97,7 +163,8 @@ object LocalFeedStore {
                     publishedAt = it.date, starred = star.contains(link), category = "local",
                     // The podcast layer: episode file + art straight from the parse, and the
                     // sub's own URL so FeedChapters can walk back to the 2.0 tags.
-                    enclosureImage = it.enclosureImage.ifBlank { null },
+                    enclosureImage = it.enclosureImage.ifBlank { null }
+                        ?: (if (it.enclosureAudio.isNotBlank()) cover else null),
                     enclosureAudio = it.enclosureAudio.ifBlank { null },
                     feedUrl = s.url
                 ))

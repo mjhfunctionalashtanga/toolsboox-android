@@ -99,7 +99,10 @@ object SettingsBackup {
     private val secretFields = setOf(
         "webdav.pass", "opds.pass", "miniflux.token", "feeds.secret", "support.pass",
         "books.pass", "ttsOpenAI.key", "ai.key", "ai.anthropicKey", "ai.openaiKey",
-        "laterFeed.token", "bridgeBoards.pass", "bridgeCommunity.pass", "bridgeBluesky.secret"
+        "laterFeed.token", "bridgeBoards.pass", "bridgeCommunity.pass", "bridgeBluesky.secret",
+        // Android-only (the iPad has no MichaelFilter intake). Safe across forks: an iPad import
+        // ignores a section it has no map for, so the key is neither stored nor re-exported there.
+        "michaelFilter.key"
     )
 
     /** True when a backup carries the envelope — ask BEFORE importing, so the UI can prompt. */
@@ -267,7 +270,13 @@ object SettingsBackup {
         // ledgr-fb-bridge — community site (FluentCommunity)
         Field("bridgeCommunity", "url", "ledgr_bridge_prefs", true, "communitySite"),
         Field("bridgeCommunity", "user", "ledgr_bridge_prefs", true, "communityUser"),
-        Field("bridgeCommunity", "pass", "ledgr_bridge_prefs", true, "communityPass")
+        Field("bridgeCommunity", "pass", "ledgr_bridge_prefs", true, "communityPass"),
+        // MichaelFilter — the reading-pipeline key, a Settings connector (MichaelFilterConnector).
+        Field(
+            "michaelFilter", "key",
+            com.toolsboox.plugin.michaelfilter.nw.MichaelFilterConnector.KEY_PREFS, true,
+            com.toolsboox.plugin.michaelfilter.nw.MichaelFilterConnector.KEY_PREF
+        )
     )
 
     private fun isHandled(section: String, field: String) =
@@ -438,6 +447,12 @@ object SettingsBackup {
 
         editors.values.forEach { it.apply() }
         applied.addAll(appliedSections)
+
+        // A restored MichaelFilter key is a key change like any other: the connected flag follows
+        // it, a stale "turned down" clears, and whatever the queue was holding is sent.
+        if ("michaelFilter" in appliedSections) runCatching {
+            com.toolsboox.plugin.michaelfilter.nw.MichaelFilterConnector.keyChanged(context)
+        }.onFailure { Timber.w("michaelFilter key import follow-up failed: ${it.javaClass.simpleName}") }
 
         // Multi-site "Sites" system: ACTUALLY ingest each site into SiteStore (create-or-update by id,
         // its password into the encrypted per-site key, then honour `activeSite`) instead of dropping

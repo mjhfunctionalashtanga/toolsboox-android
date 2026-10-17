@@ -94,6 +94,28 @@ No markdown beyond the two headings and the dashes. No preamble, no closing rema
      * "harvest what the gram itself holds" — with the same test the harvest itself will apply,
      * instead of the row promising a link flow that [run] would then quietly fail to deliver.
      */
+    /**
+     * WHY A HARVEST DIDN'T LAND — because "The harvest came back empty" was five different
+     * failures wearing one sentence, on a device with no adb.
+     *
+     * Michael, 2026-08-23: "attempts at getting grams harvested and topics harvest from a gram
+     * came back empty." Five paths reached that message — no AI key, the page would not fetch, the
+     * page had no readable text, the model errored, and the model genuinely found nothing — and
+     * they want opposite responses from him. One of them he can fix in Settings in ten seconds;
+     * another means the harvest worked perfectly and the article simply had nothing quotable in it.
+     * Telling him they are the same thing is what made this unfixable rather than merely broken.
+     *
+     * The B6 is not on adb — HE is the log reader here (the same reasoning the Bigme backend uses
+     * when it announces its chosen path out loud), so the reason has to arrive on the glass.
+     */
+    sealed class Outcome {
+        data class Ok(val note: LedgerDocuments.NewNote) : Outcome()
+        /** [reason] is written to be READ BY HIM, not by a developer: it says what to do next. */
+        data class Failed(val reason: String) : Outcome()
+
+        val noteOrNull: LedgerDocuments.NewNote? get() = (this as? Ok)?.note
+    }
+
     fun harvestableLink(sourceLink: String): String? {
         val link = sourceLink.trim()
         return if (link.startsWith("http://") || link.startsWith("https://")) link else null
@@ -113,13 +135,18 @@ No markdown beyond the two headings and the dashes. No preamble, no closing rema
         url: String,
         title: String = "",
         date: LocalDate = LocalDate.now(),
-    ): LedgerDocuments.NewNote? {
+    ): Outcome {
         // Creds first, before a fetch is spent on a harvest that cannot run anyway.
-        com.toolsboox.plugin.chat.nw.AiCreds.get(context) ?: return null
+        com.toolsboox.plugin.chat.nw.AiCreds.get(context)
+            ?: return Outcome.Failed("No AI key yet — add one in Ask my Ledger settings.")
         // The page's own text is what gets harvested — handing the model a bare URL would invite
         // it to answer from memory of the site, which is exactly the fabrication this guards.
-        val text = runCatching { com.toolsboox.ot.HtmlText.toPlain(fetch(url)) }.getOrNull()
-        if (text.isNullOrBlank()) return null
+        val fetched = runCatching { fetch(url) }
+        if (fetched.isFailure)
+            return Outcome.Failed("Couldn't reach that page — check the link or your connection.")
+        val text = runCatching { com.toolsboox.ot.HtmlText.toPlain(fetched.getOrNull().orEmpty()) }.getOrNull()
+        if (text.isNullOrBlank())
+            return Outcome.Failed("That page had no readable text — it may be a video, a login wall, or all script.")
         return runText(
             context, service, root, text,
             sourceLink = url,
@@ -152,16 +179,24 @@ No markdown beyond the two headings and the dashes. No preamble, no closing rema
         sourceLink: String = "",
         title: String = "",
         date: LocalDate = LocalDate.now(),
-    ): LedgerDocuments.NewNote? {
-        if (text.isBlank()) return null
-        val creds = com.toolsboox.plugin.chat.nw.AiCreds.get(context) ?: return null
+    ): Outcome {
+        if (text.isBlank())
+            return Outcome.Failed("There were no words to harvest — this pick carries no text or caption.")
+        val creds = com.toolsboox.plugin.chat.nw.AiCreds.get(context)
+            ?: return Outcome.Failed("No AI key yet — add one in Ask my Ledger settings.")
         val (provider, key, model) = creds
         val result = com.toolsboox.plugin.chat.nw.LedgerChatService()
             .run(provider, key, model, PROMPT, text.take(24_000))
-        val answer = (result as? com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok)?.answer
-            ?: return null
+        val answer = when (result) {
+            is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok -> result.answer
+            is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Err ->
+                // The model's own words, verbatim: a bad key, a rate limit and an outage all land
+                // here and read completely differently once you can see which one it was.
+                return Outcome.Failed("The model said: ${result.message}")
+        }
         val harvest = parse(answer)
-        if (harvest.notes.isEmpty() && harvest.quotes.isEmpty()) return null
+        if (harvest.notes.isEmpty() && harvest.quotes.isEmpty())
+            return Outcome.Failed("Nothing quotable came back — the harvest ran, the text just had no notes or quotes in it.")
 
         val name = title.ifBlank { "Gram" }
         // A ref is IDENTITY (what edges point at) and must be distinct per node even when there is
@@ -181,10 +216,25 @@ No markdown beyond the two headings and the dashes. No preamble, no closing rema
                 ref = "$refBase#note$i", label = n, link = sourceLink, sourceLabel = name, kind = "✎",
             )
         }
-        return GramComposer.compose(
-            context, service, root,
-            LedgerDocuments.PICKINGS, "Harvest · $name",
-            nodes, emptyList(), GramComposer.Layout.GRID, date,
+        val attempt = runCatching {
+            GramComposer.compose(
+                context, service, root,
+                LedgerDocuments.PICKINGS, "Harvest · $name",
+                nodes, emptyList(), GramComposer.Layout.GRID, date,
+            )
+        }
+        val note = attempt.getOrNull()
+        // The harvest itself worked; only the WRITE failed. Saying so separates "the model gave me
+        // nothing" from "I could not make the page", which are different problems with different
+        // fixes and were previously the same silent null. A day page that won't read is its own
+        // answer — "check storage" sent him looking for a disk problem that wasn't there.
+        if (note != null) return Outcome.Ok(note)
+        val failure = attempt.exceptionOrNull()
+        return Outcome.Failed(
+            (failure as? com.toolsboox.plugin.calendar.fi.CalendarDayService.UnreadableDayException)
+                ?.let { "Harvested, but ${it.whichPage} won't read, so no board was made." }
+                ?: failure?.let { "Harvested, but the board couldn't be written: ${it.message ?: it::class.simpleName}" }
+                ?: "Harvested, but the board couldn't be written — check storage."
         )
     }
 

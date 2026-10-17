@@ -10,6 +10,12 @@ plugins {
 android {
     compileSdk 36
 
+    // The Seeneva balloon model must stay UNCOMPRESSED in the APK — TFLite memory-maps it,
+    // and a deflated asset can't be mapped (runtime throws on open).
+    aaptOptions {
+        noCompress 'tflite'
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -27,12 +33,10 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
 
-        // The intake secret is read from local.properties (git-ignored) rather than hard-coded in
-        // source, so it isn't in the repo. Falls back to blank when unset.
-        def props = new Properties()
-        def lp = rootProject.file("local.properties")
-        if (lp.exists()) lp.withInputStream { props.load(it) }
-        buildConfigField "String", "INTAKE_KEY", "\"${props.getProperty('INTAKE_KEY', '')}\""
+        // No connector key is compiled into any build. The MichaelFilter intake key used to be read
+        // from local.properties into BuildConfig.INTAKE_KEY, which put one secret into every APK;
+        // it is now a Settings field (MichaelFilterConnector), and a debug build can be handed one
+        // over adb (src/debug — ConnectorKeyReceiver). Keep secrets out of this file.
     }
 
     applicationVariants.configureEach {
@@ -47,6 +51,7 @@ android {
     buildFeatures {
         viewBinding = true
         buildConfig = true
+        aidl = true   // the Boox HWR (MyScript) service binding — see ot/OnyxHwr.kt
     }
 
     ext {
@@ -146,8 +151,14 @@ android {
 dependencies {
     // Commons
     implementation 'com.jakewharton.timber:timber:5.0.1'
+    // LiteRT (TensorFlow Lite) — runs the lifted Seeneva YOLOv4-tiny at comic-import time
+    // (background balloon indexing; never at page-turn). See BalloonIndex.kt.
+    implementation 'org.tensorflow:tensorflow-lite:2.14.0'
     // HTML allowlist-cleaning for feed/article content before it reaches a JS-enabled WebView
     implementation 'org.jsoup:jsoup:1.17.2'
+    // ── Mihon extension runtime (the keiyoushi sub-project, 09-02) ──
+    // The ABI current keiyoushi extension APKs link against (extensions-lib 1.5): RxJava 1
+    // for the deprecated fetch* signatures, Injekt as the registry they pull NetworkHelper/
 
     // Google clients and libraries
     implementation 'com.android.billingclient:billing:8.0.0'

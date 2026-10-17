@@ -12,11 +12,9 @@ import android.text.format.DateFormat
 import com.squareup.moshi.Moshi
 import com.toolsboox.R
 import com.toolsboox.da.Stroke
-import com.toolsboox.ot.DateJsonAdapter
-import com.toolsboox.ot.LocaleJsonAdapter
-import com.toolsboox.ot.UUIDJsonAdapter
 import com.toolsboox.plugin.calendar.da.v1.CalendarEvent
 import com.toolsboox.plugin.calendar.da.v2.CalendarDay
+import com.toolsboox.plugin.calendar.ot.CalendarDayPage
 import java.io.File
 import java.io.FileReader
 import java.time.Instant
@@ -41,7 +39,9 @@ object WidgetRenderer {
     enum class Mode { FULL, SCHEDULE, TASKS_NOTES }
 
     fun render(context: Context, date: LocalDate, widthDp: Int, heightDp: Int, mode: Mode): Bitmap {
+        // A day with no file yet is still today's page — blank ruling, live events, the almanac.
         val calendarDay = loadCalendarDay(context, date)
+            ?: CalendarDay(date.year, date.monthValue, date.dayOfMonth, startHour = null)
         val events = loadCalendarEvents(context, date)
         // THE DAY, THEN THE SETTING, NEVER A LITERAL. This was `?: 5`, which meant a widget could
         // print a grid at 5am beside a day page printing the same handwriting at 7 — and the two
@@ -51,12 +51,17 @@ object WidgetRenderer {
         val fullBitmap = Bitmap.createBitmap(CW.toInt(), CH.toInt(), Bitmap.Config.ARGB_8888)
         val fullCanvas = Canvas(fullBitmap)
 
-        drawTemplate(context, fullCanvas, calendarDay, events, startHour)
-
-        if (calendarDay != null) {
-            val strokes = calendarDay.calendarStrokes[CalendarDay.DEFAULT_STYLE] ?: emptyList()
-            drawStrokes(fullCanvas, strokes)
-        }
+        // THE PAGE ITSELF (09-04). The widgets kept a private copy of the day template and went
+        // stale the moment the page changed — after the 08-23 dashboard rewrite the home screen
+        // still showed a 17-row checkbox Tasks list and a reading-progress "Notes" block the page
+        // no longer had. Now the widget draws exactly what the app draws: the schedule grid, and
+        // the right-column dashboard (Tasks + almanac, Memo, three note minis, Bookshelf), with
+        // recordHits=false so a background render never overwrites the live page's tap targets.
+        CalendarDayPage.drawPage(
+            context, fullCanvas, calendarDay, events,
+            recentNotes = noteMinis(context, calendarDay), doodle = null, recordHits = false
+        )
+        drawStrokes(fullCanvas, calendarDay.calendarStrokes[CalendarDay.DEFAULT_STYLE] ?: emptyList())
 
         val cropped = when (mode) {
             Mode.FULL -> fullBitmap
@@ -92,6 +97,45 @@ object WidgetRenderer {
     }
 
     /**
+     * The dashboard's three Notes minis, the way the fragment builds them but with no fragment:
+     * the day's dated-note pages in [DatedNote] order (doodle excluded), each drawn at full page
+     * size — the notes template, then its grams, then its ink — and scaled to the mini width.
+     * A blank day has none, and the zone says "No notes yet" exactly as the page does.
+     */
+    private fun noteMinis(context: Context, day: CalendarDay): List<CalendarDayPage.DashThumb> {
+        val doodle = com.toolsboox.plugin.calendar.ot.DatedNote.DOODLE
+        val keys: Collection<String> =
+            day.noteStrokes.filterValues { it.isNotEmpty() }.keys + day.imageElements.map { it.page }
+        val pages = com.toolsboox.plugin.calendar.ot.DatedNote.order(keys, null)
+            .filterNot { it == doodle }.takeLast(3)
+        if (pages.isEmpty()) return emptyList()
+        // The fragment reads the template from the app's MAIN prefs (its injected SharedPreferences).
+        val template = context.getSharedPreferences("MAIN", Context.MODE_PRIVATE).getInt("calendarNoteTemplate", 0)
+        return pages.map { key ->
+            val bmp = runCatching {
+                val full = Bitmap.createBitmap(CW.toInt(), CH.toInt(), Bitmap.Config.ARGB_8888)
+                val c = Canvas(full)
+                com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.drawPage(context, c, day, template, key)
+                com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.drawImageElements(
+                    c, day.imageElements.filter { it.page == key }, context)
+                drawStrokes(c, day.noteStrokes[key] ?: emptyList())
+                val mini = Bitmap.createScaledBitmap(full, 320, (CH * 320f / CW).roundToInt(), true)
+                if (mini !== full) full.recycle()
+                mini
+            }.getOrNull()
+            CalendarDayPage.DashThumb(key, bmp, noteTitle(key))
+        }
+    }
+
+    /** The fragment's dashNoteTitle, verbatim: "Page n" for numeric pages, else the document label. */
+    private fun noteTitle(pageKey: String): String {
+        val docs = com.toolsboox.plugin.calendar.ot.LedgerDocuments
+        pageKey.toIntOrNull()?.let { return "Page ${it + 1}" }
+        return runCatching { docs.label(docs.surfaceOf(pageKey) ?: pageKey) }.getOrNull()
+            ?: pageKey.substringBefore('-').replaceFirstChar { it.uppercase() }
+    }
+
+    /**
      * Schedule widget: morning on the left, afternoon on the right — the column folded on the
      * 1:00pm gridline OF THIS DAY'S GRID. The fold row used to be the literal 17 ("1:00pm"),
      * which is only 1pm when startHour is 5; the day's startHour is dynamic now
@@ -105,8 +149,9 @@ object WidgetRenderer {
      */
     private fun compositeSchedule(fullBitmap: Bitmap, startHour: Int): Bitmap {
         val splitY = (to + ScheduleSplit.splitRow(startHour) * ceh).toInt()
-        val xLeft = 0
-        val xRight = (lo + cew + 20f).toInt() // 685
+        val col = CalendarDayPage.scheduleColumnRect()
+        val xLeft = col.left.toInt()
+        val xRight = col.right.toInt()
         val halfW = xRight - xLeft
 
         val topH = splitY
@@ -118,63 +163,40 @@ object WidgetRenderer {
         canvas.drawColor(Color.WHITE)
 
         // Left: morning (header + everything before the fold)
-        canvas.drawBitmap(
-            fullBitmap,
-            Rect(xLeft, 0, xRight, topH),
-            Rect(0, 0, halfW, topH),
-            null
-        )
-
+        canvas.drawBitmap(fullBitmap, Rect(xLeft, 0, xRight, topH), Rect(0, 0, halfW, topH), null)
         // Right: afternoon (the fold onwards, through the column's bottom border)
-        canvas.drawBitmap(
-            fullBitmap,
-            Rect(xLeft, splitY, xRight, CH.toInt()),
-            Rect(halfW, 0, halfW * 2, botH),
-            null
-        )
-
+        canvas.drawBitmap(fullBitmap, Rect(xLeft, splitY, xRight, CH.toInt()), Rect(halfW, 0, halfW * 2, botH), null)
         return out
     }
 
     /**
-     * Tasks/Notes widget: Tasks on the left, Notes on the right (originally stacked vertically).
+     * Tasks/Notes widget: the page's right column, its two halves side by side — Tasks (with the
+     * almanac strip) + Memo on the left, Notes minis + Bookshelf on the right. The page split the
+     * column EXACTLY 50/50 "so the column lifts out as a widget later"; this is that later.
      */
     private fun compositeTasksNotes(fullBitmap: Bitmap): Bitmap {
-        val tasksTop = to.toInt()                       // 61
-        val tasksBot = (to + 17 * ceh).toInt()          // 911
-        val notesTop = (to + 18 * ceh).toInt()          // 961
-        val notesBot = (to + 35 * ceh).toInt()          // 1811
-        val xLeft = (lo + cew + 30f).toInt()            // 695
-        val xRight = (lo + 2 * cew + 70f).toInt()       // 1380
-
-        val halfW = xRight - xLeft
-        val halfH = tasksBot - tasksTop  // 850
+        val top = CalendarDayPage.rightTopHalfRect()
+        val bot = CalendarDayPage.rightBottomHalfRect()
+        val pad = 6
+        val halfW = top.width().toInt() + 2 * pad
+        val halfH = maxOf(top.height(), bot.height()).toInt() + 2 * pad
 
         val out = Bitmap.createBitmap(halfW * 2, halfH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
         canvas.drawColor(Color.WHITE)
 
-        canvas.drawBitmap(
-            fullBitmap,
-            Rect(xLeft, tasksTop, xRight, tasksBot),
-            Rect(0, 0, halfW, halfH),
-            null
-        )
-
-        canvas.drawBitmap(
-            fullBitmap,
-            Rect(xLeft, notesTop, xRight, notesBot),
-            Rect(halfW, 0, halfW * 2, halfH),
-            null
-        )
-
+        fun blit(r: RectF, dstLeft: Int) {
+            val src = Rect(r.left.toInt() - pad, r.top.toInt() - pad, r.right.toInt() + pad, r.bottom.toInt() + pad)
+            canvas.drawBitmap(fullBitmap, src, Rect(dstLeft, 0, dstLeft + src.width(), src.height()), null)
+        }
+        blit(top, 0)
+        blit(bot, halfW)
         return out
     }
 
     // ---- Data loading ----
 
-    private fun buildMoshi(): Moshi = Moshi.Builder()
-        .add(LocaleJsonAdapter()).add(DateJsonAdapter()).add(UUIDJsonAdapter()).build()
+    private fun buildMoshi(): Moshi = com.toolsboox.ot.LedgerMoshi.standard()
 
     fun loadCalendarDay(context: Context, date: LocalDate): CalendarDay? {
         val rootPath = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -260,178 +282,6 @@ object WidgetRenderer {
         return events
     }
 
-    // ---- Template drawing ----
-
-    fun drawTemplate(
-        context: Context, canvas: Canvas, calendarDay: CalendarDay?,
-        events: List<CalendarEvent>, startHour: Int
-    ) {
-        canvas.drawRect(0f, 0f, CW, CH, fillWhite)
-
-        // --- Left column: Schedules ---
-        canvas.drawRect(lo, to, lo + cew, to + ceh, fillGrey80)
-        canvas.drawText(context.getString(R.string.calendar_day_schedules), lo + 10f, to + ceh - 10f, textDefaultWhite)
-
-        canvas.drawLine(lo, to + ceh, lo + cew, to + ceh, lineBlack)
-        for (i in 1..34) {
-            if (i % 2 == 1) {
-                canvas.drawLine(lo, to + i * ceh, lo + cew, to + i * ceh, lineGrey50)
-                canvas.drawText(":00", lo + 115f, to + 35f + i * ceh, textSmallRight)
-                if (startHour > -1) {
-                    val localTime = LocalTime.of(i / 2 + startHour, 0)
-                    if (DateFormat.is24HourFormat(context)) {
-                        val hourText = localTime.format(DateTimeFormatter.ofPattern("HH"))
-                        canvas.drawText(hourText, lo + 40f, to + 20f + (i + 1) * ceh, text60Center)
-                    } else {
-                        val hourText = localTime.format(DateTimeFormatter.ofPattern("h"))
-                        val ampmText = localTime.format(DateTimeFormatter.ofPattern("a"))
-                        canvas.drawText(hourText, lo + 70f, to + 40f + i * ceh, textDefaultRight)
-                        canvas.drawText(ampmText, lo + 70f, to + 30f + (i + 1) * ceh, textDefaultRight)
-                    }
-                }
-            } else {
-                canvas.drawLine(lo + 80f, to + i * ceh, lo + cew, to + i * ceh, lineGrey50)
-                canvas.drawRect(lo + 80f, to + i * ceh, lo + cew, to + i * ceh + ceh, fillGrey20)
-                canvas.drawText(":30", lo + 115f, to + 35f + i * ceh, textSmallRight)
-            }
-        }
-        canvas.drawLine(lo, to + 35 * ceh, lo + cew, to + 35 * ceh, lineBlack)
-        canvas.drawLine(lo + 120f, to + ceh, lo + 120f, to + 35 * ceh, lineBlack)
-
-        if (calendarDay != null && calendarDay.hasLanes && startHour >= 0) {
-            // Events that fall inside the visible schedule window.
-            val timed = events.filter { event ->
-                if (event.allDay) return@filter false
-                val s = Instant.ofEpochMilli(event.startDate).atZone(ZoneId.systemDefault()).toLocalDateTime()
-                if (s.hour * 60 + s.minute < startHour * 60) return@filter false
-                val e = Instant.ofEpochMilli(event.endDate).atZone(ZoneId.systemDefault()).toLocalDateTime()
-                if (e.hour * 60 + e.minute > (startHour + 17) * 60) return@filter false
-                true
-            }
-
-            // An event takes the full column width unless it actually shares its time
-            // with another event. Only genuinely overlapping events are split into two
-            // half-width lanes; previously every event was drawn at half width, leaving
-            // the right half of the schedule empty for non-overlapping events.
-            val solo = mutableListOf<CalendarEvent>()
-            val laneOne = mutableListOf<CalendarEvent>()
-            val laneTwo = mutableListOf<CalendarEvent>()
-            for (event in timed) {
-                val hasNeighbor = timed.any { it !== event && overlaps(event, listOf(it)) }
-                if (!hasNeighbor) {
-                    solo.add(event)
-                } else if (overlaps(event, laneOne)) {
-                    if (!overlaps(event, laneTwo)) laneTwo.add(event)
-                } else {
-                    laneOne.add(event)
-                }
-            }
-
-            val fullW = cew - 120f
-            val halfW = fullW / 2
-            if (solo.isNotEmpty()) drawEventLane(canvas, startHour, solo, 120f, fullW)
-            if (laneOne.isNotEmpty()) drawEventLane(canvas, startHour, laneOne, 120f, halfW)
-            if (laneTwo.isNotEmpty()) drawEventLane(canvas, startHour, laneTwo, 120f + halfW, halfW)
-        }
-
-        // --- Right column: Tasks ---
-        canvas.drawRect(lo + cew + 50f, to, lo + 2 * cew + 50f, to + ceh, fillGrey80)
-        canvas.drawText(context.getString(R.string.calendar_day_tasks), lo + cew + 60f, to + ceh - 10f, textDefaultWhite)
-
-        canvas.drawLine(lo + cew + 50f, to + ceh, lo + 2 * cew + 50f, to + ceh, lineBlack)
-        // Seventeen rows, mirroring the page (see CalendarDayPage). The widget used to stop at
-        // twelve and hand rows 13–18 to a Roots band: the spiral's pick, rotating on read, because
-        // it was "the one thing on this surface that changes on its own". That band is retired on
-        // the page and it goes here with it — a home screen showing a line the page no longer shows,
-        // fed by a ring nothing fills any more, would have gone stale in silence.
-        for (i in 1..17) {
-            canvas.drawLine(lo + cew + 50f, to + i * ceh, lo + 2 * cew + 50f, to + i * ceh, lineGrey50)
-            if (i % 2 == 0) {
-                canvas.drawRect(lo + cew + 50f, to + i * ceh, lo + 2 * cew + 50f, to + i * ceh + ceh, fillGrey20)
-            }
-            canvas.drawRect(lo + cew + 60f, to + i * ceh + 10f, lo + cew + 90f, to + i * ceh + 40f, lineGrey50)
-        }
-        canvas.drawLine(lo + cew + 50f, to + 18 * ceh, lo + 2 * cew + 50f, to + 18 * ceh, lineBlack)
-        canvas.drawLine(lo + cew + 100f, to + ceh, lo + cew + 100f, to + 18 * ceh, lineBlack)
-
-        // --- Right column: Notes ---
-        val readingProgress = calendarDay?.readingProgress ?: emptyList()
-        val outsideEvents = events.filter { it.allDay || calendarDay?.hasLanes != true }
-
-        val notesLabel = if (outsideEvents.isEmpty()) {
-            context.getString(R.string.calendar_day_notes)
-        } else {
-            context.getString(R.string.calendar_day_notes_events).format(outsideEvents.size)
-        }
-        canvas.drawRect(lo + cew + 50f, to + 18 * ceh, lo + 2 * cew + 50f, to + 19 * ceh, fillGrey80)
-        canvas.drawText(notesLabel, lo + cew + 60f, to + 19 * ceh - 10f, textDefaultWhite)
-
-        canvas.drawLine(lo + cew + 50f, to + 19 * ceh, lo + 2 * cew + 50f, to + 19 * ceh, lineBlack)
-        for (i in 20..35) {
-            canvas.drawLine(lo + cew + 50f, to + i * ceh, lo + 2 * cew + 50f, to + i * ceh, lineGrey50)
-            if (i % 2 == 0) {
-                canvas.drawRect(lo + cew + 50f, to + i * ceh, lo + 2 * cew + 50f, to + i * ceh + ceh, fillGrey20)
-            }
-        }
-        canvas.drawLine(lo + cew + 50f, to + 35 * ceh, lo + 2 * cew + 50f, to + 35 * ceh, lineBlack)
-
-        val notesTitle = mutableListOf<String>()
-        val notesLeft = mutableListOf<String>()
-        val notesRight = mutableListOf<String>()
-
-        readingProgress.take(8).forEach {
-            if (it.authors == null) notesTitle.add(it.title)
-            else notesTitle.add("${it.authors}: ${it.title}")
-            notesLeft.add(it.progress ?: "-")
-            notesRight.add(DateFormat.getTimeFormat(context).format(it.lastAccess))
-        }
-
-        if (notesTitle.size < 8) {
-            outsideEvents.take(8 - notesTitle.size).forEach { ev ->
-                notesTitle.add(ev.title)
-                if (ev.allDay) {
-                    notesLeft.add(context.getString(R.string.calendar_day_all_day))
-                    notesRight.add("")
-                } else {
-                    val s = Instant.ofEpochMilli(ev.startDate).atZone(ZoneId.systemDefault()).toLocalDateTime()
-                    val e = Instant.ofEpochMilli(ev.endDate).atZone(ZoneId.systemDefault()).toLocalDateTime()
-                    notesLeft.add(s.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.MEDIUM)))
-                    notesRight.add(e.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.MEDIUM)))
-                }
-            }
-        }
-
-        for (i in 0..7) {
-            if (i < notesTitle.size) {
-                val ellipsized = TextUtils.ellipsize(notesTitle[i], textDefaultBlack, cew, TextUtils.TruncateAt.END).toString()
-                canvas.drawText(ellipsized, lo + cew + 60f, to + (20 + i * 2) * ceh - 10f, textDefaultBlack)
-                canvas.drawText(notesLeft[i], lo + cew + 60f, to + (21 + i * 2) * ceh - 10f, textSmall)
-                canvas.drawText(notesRight[i], lo + cew + 40f + cew, to + (21 + i * 2) * ceh - 10f, textSmallRight)
-            }
-        }
-    }
-
-    private fun drawEventLane(canvas: Canvas, startHour: Int, lane: List<CalendarEvent>, llo: Float, lw: Float) {
-        for (event in lane) {
-            val s = Instant.ofEpochMilli(event.startDate).atZone(ZoneId.systemDefault()).toLocalDateTime()
-            val e = Instant.ofEpochMilli(event.endDate).atZone(ZoneId.systemDefault()).toLocalDateTime()
-            val cehs = (s.hour * 60 + s.minute - startHour * 60) / 30f * ceh + ceh
-            val cehe = (e.hour * 60 + e.minute - startHour * 60) / 30f * ceh + ceh
-            canvas.drawRect(lo + llo + 5f, to + cehs, lo + llo + lw - 5f, to + cehe, fillGrey10)
-            canvas.drawRect(lo + llo + 5f, to + cehs, lo + llo + lw - 5f, to + cehe, lineBlack)
-            val ellipsized = TextUtils.ellipsize(event.title, textSmall, lw - 20f, TextUtils.TruncateAt.END).toString()
-            canvas.drawText(ellipsized, lo + llo + 15f, to + cehs + ceh * 0.66f - 10f, textSmall)
-        }
-    }
-
-    private fun overlaps(event: CalendarEvent, lane: List<CalendarEvent>): Boolean {
-        for (e in lane) {
-            if (event.startDate in e.startDate..<e.endDate) return true
-            if (e.startDate in event.startDate..<event.endDate) return true
-        }
-        return false
-    }
-
     fun drawStrokes(canvas: Canvas, strokes: List<Stroke>) {
         val paint = Paint().apply {
             isAntiAlias = true
@@ -464,44 +314,5 @@ object WidgetRenderer {
             }
             canvas.drawPath(path, paint)
         }
-    }
-
-    // ---- Paint objects ----
-
-    private val fillWhite = Paint().apply {
-        color = Color.WHITE; style = Paint.Style.FILL_AND_STROKE; strokeWidth = 1f
-    }
-    private val fillGrey10 = Paint().apply {
-        color = Color.argb(255, 230, 230, 230); style = Paint.Style.FILL_AND_STROKE; strokeWidth = 1f
-    }
-    private val fillGrey20 = Paint().apply {
-        color = Color.argb(20, 128, 128, 128); style = Paint.Style.FILL_AND_STROKE; strokeWidth = 1f
-    }
-    private val fillGrey80 = Paint().apply {
-        color = Color.argb(204, 128, 128, 128); style = Paint.Style.FILL_AND_STROKE; strokeWidth = 1f
-    }
-    private val lineBlack = Paint().apply {
-        color = Color.BLACK; strokeWidth = 2f; style = Paint.Style.STROKE
-    }
-    private val lineGrey50 = Paint().apply {
-        color = Color.argb(128, 128, 128, 128); strokeWidth = 2f; style = Paint.Style.STROKE
-    }
-    private val text60Center = TextPaint().apply {
-        color = Color.BLACK; textAlign = Paint.Align.CENTER; textSize = 60f; typeface = Typeface.DEFAULT
-    }
-    val textDefaultBlack = TextPaint().apply {
-        color = Color.BLACK; textSize = 40f; typeface = Typeface.DEFAULT_BOLD
-    }
-    private val textDefaultRight = TextPaint().apply {
-        color = Color.BLACK; textAlign = Paint.Align.RIGHT; textSize = 40f; typeface = Typeface.DEFAULT_BOLD
-    }
-    private val textDefaultWhite = TextPaint().apply {
-        color = Color.WHITE; textSize = 40f; typeface = Typeface.DEFAULT_BOLD
-    }
-    private val textSmall = TextPaint().apply {
-        color = Color.BLACK; textSize = 25f; typeface = Typeface.DEFAULT
-    }
-    private val textSmallRight = TextPaint().apply {
-        color = Color.BLACK; textAlign = Paint.Align.RIGHT; textSize = 25f; typeface = Typeface.DEFAULT
     }
 }

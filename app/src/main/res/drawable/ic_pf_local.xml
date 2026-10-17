@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Local Feeds: feeds this device reads itself — the antenna (iOS antenna.radiowaves.left.and.right).
+     One panel face family (review 2026-10-11, F5; Michael: "Icons lack design language"): the ink
+     tools' geometry — 256 grid, 16-unit round strokes, outline at rest. Drawn for the room panes'
+     rows (Michael 2026-10-12: monochrome glyphs only — no colour emoji in the Feeds or Mail pane). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="256" android:viewportHeight="256"
+    android:tint="#000000">
+    <path android:pathData="M128,128V224"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+    <path android:pathData="M94,70A48,48 0 0,0 94,138M162,70A48,48 0 0,1 162,138"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+    <path android:pathData="M66,42A88,88 0 0,0 66,166M190,42A88,88 0 0,1 190,166"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+    <path android:pathData="M112,104a16,16 0 1,0 32,0a16,16 0 1,0 -32,0Z" android:fillColor="#FF000000"/>
+</vector>

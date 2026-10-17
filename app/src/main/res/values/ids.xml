@@ -17,4 +17,7 @@
          configChanges), so "fresh XML on recreation" never happens and the constraints
          must be put back by hand when returning to a single column. -->
     <item name="tag_toolbar_xml_lp" type="id" />
+    <!-- Marks a floating, draggable pill: a finger landing on it near the left edge is moving the
+         pill, never the left edge's swipe back (LeftEdgeCatcher; Michael 2026-10-12). -->
+    <item name="tag_edge_stand_aside" type="id" />
 </resources>

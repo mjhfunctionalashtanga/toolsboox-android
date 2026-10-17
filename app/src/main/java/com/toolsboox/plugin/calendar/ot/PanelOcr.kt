@@ -59,8 +59,11 @@ object PanelOcr {
 
     /** Printed/image OCR of a bitmap (ML Kit text-recognition, bundled Latin model). */
     suspend fun recognizeImage(bitmap: Bitmap): String = try {
-        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-        recognizer.process(InputImage.fromBitmap(bitmap, 0)).await().text.trim()
+        // CLOSED after the read (comics slice 2, Michael 2026-10-11): every "Read this aloud"
+        // used to leave a native recogniser behind.
+        TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS).use { recognizer ->
+            recognizer.process(InputImage.fromBitmap(bitmap, 0)).await().text.trim()
+        }
     } catch (e: Exception) {
         Timber.w(e, "PanelOcr: image recognition failed")
         ""

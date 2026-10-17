@@ -3,7 +3,9 @@ package com.toolsboox.plugin.reader.ui
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
+import timber.log.Timber
 import java.io.File
 
 /**
@@ -34,6 +36,11 @@ import java.io.File
  * confines the SAF-ness to this object.
  */
 object BookshelfSource {
+    /** Set at the start of [list] so [walkTree] can query without threading a context through
+     *  every recursion. Application context only — this object outlives any fragment. */
+    @Volatile
+    private var appContext: Context? = null
+
 
     private const val PREFS = "ledger_reader_prefs"
     private const val KEY_TREE = "books_tree_uri"
@@ -49,8 +56,61 @@ object BookshelfSource {
         /** Set when the entry lives behind a declared tree — resolved on open. */
         val uri: Uri?,
     ) {
-        val title: String get() = name.substringBeforeLast('.', name)
+        /**
+         * WHAT THE SHELF CALLS THIS BOOK — the filename, made readable.
+         *
+         * Michael, 2026-08-24: "make sure the names of the books and whatnot all make sense since
+         * the file names are just strings of numbers and pounds etc." A shelf built by pointing at
+         * folders shows whatever the downloader named the file, and downloaders name files for
+         * themselves: mihon appends a short hex hash to keep two chapters with the same title
+         * apart, and library exporters append a numeric id for the same reason. Neither is anything
+         * a reader wants to see, and on a comics shelf it is on every single row.
+         *
+         * Three passes, each conservative enough to be safe on a library nobody has curated:
+         *
+         *  1. Drop the extension.
+         *  2. Drop a TRAILING `_<hex>` or `_<digits>` — mihon's `_58d1c1`, an exporter's `_1335`.
+         *     Trailing only, and only after an underscore, so a title that genuinely ends in a
+         *     number ("Volume 3", "1984") is untouched.
+         *  3. Turn `_ ` back into `: `. Filenames cannot contain a colon, so every downloader
+         *     substitutes something; underscore-then-space is the common one, and it is what makes
+         *     "Fluke_ Chance, Chaos, and Why" read as the title it actually is. A lone underscore
+         *     with no space after it is left alone — that one is usually a real word separator.
+         *
+         * The FILE is untouched. This is a display name; [name] remains the identity everything
+         * else keys on (covers, opens, the fleet manifest), so nothing here can make two devices
+         * disagree about which book is which.
+         */
+        val title: String get() = displayTitle(name, folder)
+
         val extension: String get() = name.substringAfterLast('.', "").lowercase()
+    }
+
+    /**
+     * The display-name cleaner, callable on ANY book name — a shelf [Entry]'s, or a fleet
+     * ghost's ([com.toolsboox.plugin.calendar.da.v2.LibraryBook.name]). The ghost tiles used
+     * to print the raw filename, hash and all, which is precisely the row a reader meets when
+     * the book ISN'T here yet — the one place the name has to carry everything.
+     */
+    fun displayTitle(name: String, folder: String = ""): String {
+        val stem = name.substringBeforeLast('.', name)
+        val unhashed = stem.replace(Regex("""_(?:[0-9a-fA-F]{6,}|\d{1,6})$"""), "")
+        val clean = unhashed.replace("_ ", ": ").replace(Regex("""\s{2,}"""), " ").trim()
+            .ifBlank { stem }
+        // A CHAPTER'S OWN NAME often says nothing — "#102", "(2024 – Part 3)", "012" — because
+        // the series lived in the FOLDER and the downloader never repeated it. When the cleaned
+        // name carries no letters (or almost nothing), the series leaf joins it: "Uncanny
+        // X-Force · #102" reads as a book where "#102" reads as a mistake ("the comics still
+        // show their title as a hashtag and a numeral").
+        val saysNothing = clean.length <= 4 || !clean.any { it.isLetter() }
+        if (saysNothing && folder.isNotBlank()) {
+            val leaf = folder.substringAfterLast('/')
+                // mihon's source dir wraps the language in parens — "ReadAllComics (EN)" is a
+                // catalogue, not a series; skip up one level when the leaf looks like that.
+                .ifBlank { folder }
+            if (leaf.isNotBlank()) return "$leaf · $clean"
+        }
+        return clean
     }
 
     /** The app's own directory — the shelf when nothing has been declared. */
@@ -114,21 +174,49 @@ object BookshelfSource {
     /**
      * Everything on the shelf, newest first.
      *
-     * [maxDepth] bounds the walk. A declared folder can be anything — pointed at the storage root
-     * it would be an unbounded recursive scan behind the UI thread of an e-ink device — and three
-     * levels is deep enough for the way a library is actually arranged (Author/Series/Book).
+     * [maxDepth] bounds the walk. A declared folder can be anything — pointed at the storage root it
+     * would be an unbounded recursive scan behind the UI thread of an e-ink device — so it is capped
+     * rather than free.
+     *
+     * FIVE, not three (2026-08-24). Three was chosen for "the way a library is actually arranged
+     * (Author/Series/Book)", which was true of the ebooks folder and wrong about everything else on
+     * his device. Verified over adb on the Palma: mihon downloads to
+     * `Books/Mihon/downloads/<Source>/<Series>/<Chapter>.cbz`, and his shelf was declared at
+     * `Books/ebooks` — a SIBLING of `Books/Mihon`, so 159 comics across 21 series were invisible.
+     *
+     * Re-pointing at `Books` did not fix that on its own, which is the part worth writing down:
+     * from `Books` a chapter sits five levels down, and a three-deep walk stops one directory short
+     * — it would list the SERIES folders and none of their contents, which reads as an empty shelf
+     * rather than as a walk that gave up. Five reaches it, and leaves headroom for the
+     * Author/Series/Volume shape too.
+     *
+     * The cost is bounded and small: the walk reads names and sizes, never contents, and SAF's
+     * `listFiles` is the expensive part — a couple of dozen extra queries for a library this shape,
+     * paid once per shelf load.
      */
-    fun list(context: Context, maxDepth: Int = 3): List<Entry> {
+    fun list(context: Context, maxDepth: Int = 5): List<Entry> {
+        appContext = context.applicationContext
         val tree = declaredTree(context)
         val out = mutableListOf<Entry>()
         if (tree == null) {
             walkFiles(defaultDir(context), "", maxDepth, out)
         } else {
-            val root = DocumentFile.fromTreeUri(context, tree)
-            if (root != null) walkTree(root, "", maxDepth, out)
+            val rootId = runCatching { DocumentsContract.getTreeDocumentId(tree) }.getOrNull()
+            if (rootId != null) walkTree(tree, rootId, "", maxDepth, out)
         }
         return out.sortedByDescending { it.lastModified }
     }
+
+    /**
+     * Delete a book's file — an app-directory file or, behind a declared tree, the SAF document.
+     * ONLY ever called from a person's own answer on THIS device ("Finished — delete", "Delete
+     * from this device", "Delete my copy too"); no merge, tombstone or pass reaches here.
+     */
+    fun delete(context: Context, entry: Entry): Boolean = runCatching {
+        entry.file?.let { return@runCatching it.delete() || !it.exists() }
+        val uri = entry.uri ?: return@runCatching false
+        android.provider.DocumentsContract.deleteDocument(context.contentResolver, uri)
+    }.onFailure { Timber.w(it, "shelf delete failed for ${entry.folder}/${entry.name}") }.getOrDefault(false)
 
     /** The subfolders that hold books, for the shelf's folder rows. */
     fun folders(entries: List<Entry>): List<String> =
@@ -138,35 +226,87 @@ object BookshelfSource {
         val kids = dir.listFiles() ?: return
         for (f in kids) {
             if (f.isDirectory) {
-                if (depth > 0) walkFiles(f, if (prefix.isEmpty()) f.name else "$prefix/${f.name}", depth - 1, out)
+                // Dot folders are never the library: `.stversions` (Syncthing's version graveyard)
+                // declared nine ghost "books" fleet-wide (09-13); `.thumbnails`, `.part` dirs, the same.
+                if (depth > 0 && !f.name.startsWith(".")) walkFiles(f, if (prefix.isEmpty()) f.name else "$prefix/${f.name}", depth - 1, out)
             } else if (isBook(f.name)) {
                 out += Entry(f.name, prefix, f.length(), f.lastModified(), f, null)
             }
         }
     }
 
-    private fun walkTree(dir: DocumentFile, prefix: String, depth: Int, out: MutableList<Entry>) {
-        for (d in dir.listFiles()) {
-            val name = d.name ?: continue
-            if (d.isDirectory) {
-                if (depth > 0) walkTree(d, if (prefix.isEmpty()) name else "$prefix/$name", depth - 1, out)
-            } else if (isBook(name)) {
-                out += Entry(name, prefix, d.length(), d.lastModified(), null, d.uri)
+    /**
+     * Walk a declared tree with ONE QUERY PER DIRECTORY.
+     *
+     * This used to use `DocumentFile.listFiles()` and then read `name`, `length` and `lastModified`
+     * off each child — and every one of those four things is a SEPARATE ContentResolver round trip.
+     * On his library that is roughly two thousand queries, and the shelf took FORTY-FIVE SECONDS
+     * to appear. It was never the walk's shape that was wrong; it was that DocumentFile makes one
+     * cheap-looking property access cost an IPC.
+     *
+     * `buildChildDocumentsUriUsingTree` + a single projection asks for all of it at once: one
+     * cursor per directory, every column already in hand. Same tree, same result, ~84 queries
+     * instead of ~2000.
+     *
+     * (`DocumentFile` is still the right thing for the ROOT — it is what turns a tree URI into
+     * something with a document id — but not for the walk.)
+     */
+    /**
+     * Walk a declared tree with ONE QUERY PER DIRECTORY, recursing on DOCUMENT IDS.
+     *
+     * Two things were wrong before, and they compounded:
+     *
+     * 1. It used `DocumentFile.listFiles()` and then read `name`, `length` and `lastModified` off
+     *    each child — every one of those four is a SEPARATE ContentResolver round trip. Listing his
+     *    494 files cost roughly two thousand IPCs, and the shelf took forty-five seconds.
+     *
+     * 2. My first attempt at the fix recursed by wrapping each child in
+     *    `DocumentFile.fromTreeUri(ctx, childDocumentUri)` — WHICH RE-ROOTS AT THE TREE. Every
+     *    "child" directory therefore listed the tree ROOT again, so the walk did five times the
+     *    work and produced a listing whose prefixes were nonsense; a shelf opened from a fresh
+     *    fragment could come back EMPTY. `fromTreeUri` takes a tree URI; a document URI is not one,
+     *    and it fails by returning the wrong thing rather than null.
+     *
+     * The recursion now carries `(treeUri, documentId)` and never builds a DocumentFile at all:
+     * one cursor per directory, every column in hand, child ids straight from that cursor.
+     */
+    private fun walkTree(treeUri: Uri, docId: String, prefix: String, depth: Int, out: MutableList<Entry>) {
+        val ctx = appContext ?: return
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
+        val projection = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+        )
+        val dirs = mutableListOf<Pair<String, String>>()   // (childDocId, name)
+        runCatching {
+            ctx.contentResolver.query(children, projection, null, null, null)?.use { c ->
+                while (c.moveToNext()) {
+                    val id = c.getString(0) ?: continue
+                    val name = c.getString(1) ?: continue
+                    if (c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) {
+                        dirs += id to name
+                    } else if (isBook(name)) {
+                        out += Entry(
+                            name, prefix,
+                            if (c.isNull(3)) 0L else c.getLong(3),
+                            if (c.isNull(4)) 0L else c.getLong(4),
+                            null,
+                            DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
+                        )
+                    }
+                }
             }
+        }.onFailure { Timber.w(it, "shelf walk failed under '$prefix'") }
+        // Recurse AFTER the cursor is closed — a nested query while one is open is what makes some
+        // providers stall.
+        if (depth > 0) for ((id, name) in dirs) {
+            if (name.startsWith(".")) continue   // `.stversions` and kin — see walkFiles
+            walkTree(treeUri, id, if (prefix.isEmpty()) name else "$prefix/$name", depth - 1, out)
         }
     }
-
-    /**
-     * Write a new book ONTO THE SHELF, wherever the shelf currently is.
-     *
-     * This has to follow the declaration or the feature is a lie: download a book while a Syncthing
-     * folder is declared, write it into app storage, and it does not appear on the shelf you are
-     * looking at. The book would exist and be invisible, which is the worst of the three possible
-     * outcomes.
-     *
-     * Returns whether it landed. Streams rather than buffering — a book is tens of megabytes and
-     * this runs on a device with little to spare.
-     */
     fun writeInto(context: Context, filename: String, body: (java.io.OutputStream) -> Unit): Boolean =
         writeInto(context, "", filename, body)
 

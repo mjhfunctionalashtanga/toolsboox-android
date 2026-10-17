@@ -245,7 +245,9 @@ object NotebotRegistry {
                 )
                 val saved = runCatching {
                     com.toolsboox.plugin.calendar.ot.DayLocks.withDay(date) {
-                        val day = calendarDayService.load(root, date, null, Locale.getDefault())
+                        // A day that won't read throws → "Couldn't save the task" below, never a
+                        // fresh day + this task saved over it.
+                        val day = calendarDayService.loadForWriteOrThrow(root, date, null, Locale.getDefault())
                         day.ledgerItems.add(item)
                         calendarDayService.save(root, date, day)
                     }
@@ -317,8 +319,8 @@ object NotebotRegistry {
                         sourceLabel = title.ifBlank { "Ask my Ledger" }, cardText = text,
                         intakeKind = dest.kind)
                 }.isSuccess
-                if (placed) "Saved gram" + (if (title.isBlank()) "" else " \"$title\"") + " onto ${dest.name}."
-                else "Couldn't place the gram — nothing was saved."
+                if (placed) "Saved pick" + (if (title.isBlank()) "" else " \"$title\"") + " onto ${dest.name}."
+                else "Couldn't place the pick — nothing was saved."
             }
         },
     )
@@ -407,11 +409,17 @@ object NotebotRegistry {
     ): String {
         val today = LocalDate.now()
         val lines = mutableListOf("TODAY $today")
-        val day = runCatching {
-            calendarDayService.load(root, today, null, Locale.getDefault())
-        }.getOrNull() ?: return "Couldn't read today's Ledger page."
+        // No file yet is an empty plan; a file that won't read is said as such, not as "no tasks".
+        val day = when (val r = runCatching { calendarDayService.read(root, today) }.getOrNull()) {
+            is com.toolsboox.plugin.calendar.fi.CalendarDayService.DayRead.Loaded -> r.day
+            is com.toolsboox.plugin.calendar.fi.CalendarDayService.DayRead.Missing ->
+                calendarDayService.loadForDisplay(root, today, null, Locale.getDefault())
+            else -> return "Couldn't read today's Ledger page."
+        }
         val tasks = day.ledgerItems.filter {
-            it.kind == com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK && it.text.isNotBlank()
+            // A PROPOSED candidate is not a live task (offer-never-mint) — it stays off today's plan
+            // until it's promoted off the Proposed shelf.
+            it.kind == com.toolsboox.plugin.calendar.da.v2.LedgerItem.Kind.TASK && !it.proposed && it.text.isNotBlank()
         }
         if (tasks.isEmpty()) lines += "No tasks on today's page."
         else {

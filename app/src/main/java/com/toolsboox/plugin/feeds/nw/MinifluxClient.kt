@@ -97,6 +97,24 @@ class MinifluxClient @Inject constructor() {
         }
     }
 
+    /** GET /v1/entries/{id} — ONE entry by its server id (❖ a Synthesize page's source card, when the
+     *  piece has aged out of every list on this device; [com.toolsboox.plugin.feeds.ot.ArticleOpen]). */
+    fun getEntry(baseUrl: String, token: String, id: Long): Result<FeedEntry> {
+        if (baseUrl.isBlank() || token.isBlank() || id <= 0) return Result.Err("No Miniflux entry $id")
+        return try {
+            val req = Request.Builder().url("${normalize(baseUrl)}/v1/entries/$id")
+                .addHeader("X-Auth-Token", token).get().build()
+            client.newCall(req).execute().use { resp ->
+                val body = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) return Result.Err("Miniflux error ${resp.code}")
+                val one = JSONObject().put("entries", JSONArray().put(JSONObject(body))).toString()
+                parseEntries(one).firstOrNull()?.let { Result.Ok(it) } ?: Result.Err("Miniflux entry $id unreadable")
+            }
+        } catch (e: Exception) {
+            Result.Err("Network error: ${e.message}")
+        }
+    }
+
     /** PUT /v1/entries/{id}/bookmark — toggles starred. */
     fun toggleStar(baseUrl: String, token: String, id: Long): Result<Unit> =
         put("${normalize(baseUrl)}/v1/entries/$id/bookmark", token, "")
@@ -241,6 +259,13 @@ class MinifluxClient @Inject constructor() {
                     .firstOrNull { it.optString("mime_type").startsWith("audio", true) }
                     ?.optString("url")?.ifBlank { null }
             }
+            // First VIDEO enclosure → the downloadable file for a Watch entry (his R2 pulls ride
+            // here, exactly as podcast episodes ride the audio one).
+            val enclosureVideo = encs?.let { arr ->
+                (0 until arr.length()).asSequence().mapNotNull { arr.optJSONObject(it) }
+                    .firstOrNull { it.optString("mime_type").startsWith("video", true) }
+                    ?.optString("url")?.ifBlank { null }
+            }
             // Transcript enclosure (RSS podcast:transcript) when Miniflux happens to surface one —
             // VTT/SRT by mime, or a .vtt/.srt URL. Best-effort (often stripped; see feedUrl note).
             val enclosureTranscript = encs?.let { arr ->
@@ -266,6 +291,7 @@ class MinifluxClient @Inject constructor() {
                 category = feed?.optJSONObject("category")?.optString("title")?.ifBlank { null },
                 enclosureImage = enclosureImage,
                 enclosureAudio = enclosureAudio,
+                enclosureVideo = enclosureVideo,
                 enclosureTranscript = enclosureTranscript,
                 // The feed's XML address — the way back to the Podcasting 2.0 tags
                 // (chapters/transcripts) the Miniflux API itself never surfaces.

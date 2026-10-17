@@ -67,23 +67,42 @@ object ShareTextParser {
             .toList()
     }
 
+    /** Video hosts → 📺 The Watch. The Boox's copy of the iPad's FeedNoteGram.kind(for:) table. */
+    private val WATCH_HOSTS = listOf(
+        "youtube.com", "youtu.be", "vimeo.com", "twitch.tv", "dailymotion.com", "rumble.com"
+    )
+
+    /** Podcast/audio hosts → 🎧 The Listen. */
+    private val LISTEN_HOSTS = listOf(
+        "spotify.com", "podcasts.apple.com", "podcasts.google.com", "overcast.fm",
+        "pocketcasts.com", "pca.st", "soundcloud.com", "castro.fm", "podbean.com", "castbox.fm"
+    )
+
+    /** A direct media file says what it is louder than its host does. */
+    private val AUDIO_EXTENSIONS = listOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav", ".flac")
+    private val VIDEO_EXTENSIONS = listOf(".mp4", ".m4v", ".mov", ".webm", ".mkv")
+
     /**
-     * Infer the intake kind (read|listen|watch) from the URL host.
+     * Infer the intake kind (read|listen|watch) from the URL — the lane a ⏳ Later save lands in
+     * without ever asking, so a saved item knows whether it reads, plays, or watches. Host table
+     * first (the known video/podcast services), then the file extension (a shared enclosure or a
+     * direct media link carries no telling host), then a "/podcast" path segment for episode
+     * pages on ordinary sites. Everything else reads.
      *
      * @param url the URL
      * @return the kind
      */
     fun inferKind(url: String?): String {
         if (url == null) return "read"
-        val host = runCatching { URI(url).host }.getOrNull()?.lowercase() ?: return "read"
+        val uri = runCatching { URI(url) }.getOrNull() ?: return "read"
+        val host = uri.host?.lowercase() ?: return "read"
+        val path = uri.path?.lowercase().orEmpty()
         return when {
-            host.contains("youtube.com") || host.contains("youtu.be") ||
-                host.contains("vimeo.com") -> "watch"
-
-            host.contains("spotify.com") || host.contains("podcasts.apple.com") ||
-                host.contains("podcasts.google.com") || host.contains("overcast.fm") ||
-                host.contains("pocketcasts.com") || host.contains("pca.st") -> "listen"
-
+            WATCH_HOSTS.any { host.contains(it) } -> "watch"
+            LISTEN_HOSTS.any { host.contains(it) } -> "listen"
+            AUDIO_EXTENSIONS.any { path.endsWith(it) } -> "listen"
+            VIDEO_EXTENSIONS.any { path.endsWith(it) } -> "watch"
+            path.contains("/podcast") -> "listen"
             else -> "read"
         }
     }

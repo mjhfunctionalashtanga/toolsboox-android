@@ -227,4 +227,56 @@ object BlueskyReply {
             ReplyResult(false, false, "Network error")
         }
     }
+
+    /**
+     * Share ONE gram to Bluesky — the card's PNG as the image, [text] (reviewed in the composer)
+     * as the post, [link] carried so the VPS can facet it. Same queue shape as [reply]: the site
+     * (mu-plugin `mjh-bsky-gram.php`) stages it, the VPS posts it within ten minutes, and
+     * [gramId] is the idempotency key so a re-tap can never mint two posts. The SOURCE gate
+     * (feed grams only — not email, not book) lives at the menu that offers this, where the
+     * refusal can say why; by the time this runs the share is allowed.
+     *
+     * JSON rather than multipart: the mu-plugin route takes `image_b64` (a card PNG is a few
+     * hundred KB, not a scan), and base64 is what the element already holds. Blocking — IO.
+     */
+    fun shareGram(
+        context: Context, text: String, imageB64: String,
+        alt: String, link: String, gramId: String,
+    ): ReplyResult {
+        val c = config(context)
+        if (!c.ready) return ReplyResult(false, false, "Bluesky bridge not configured")
+        val trimmed = text.trim()
+        if (trimmed.isBlank() && imageB64.isBlank()) return ReplyResult(false, false, "Nothing to share")
+        val n = graphemes(trimmed)
+        if (n > MAX_GRAPHEMES) return ReplyResult(false, false, "Too long — $n of $MAX_GRAPHEMES")
+
+        val payload = JSONObject()
+            .put("text", trimmed)
+            .put("image_b64", imageB64)
+            .put("alt", alt)
+            .put("link", link)
+            .put("gram_id", gramId)
+        return try {
+            val req = Request.Builder()
+                .url("${c.base}/bsky-gram")
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                .header("X-MF-Secret", c.secret)
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val raw = resp.body?.string().orEmpty()
+                val o = runCatching { JSONObject(raw) }.getOrNull()
+                if (resp.isSuccessful && o?.optBoolean("ok", false) == true) {
+                    val dup = o.optBoolean("duplicate", false)
+                    ReplyResult(true, dup,
+                        if (dup) "Already shared" else "Queued — on Bluesky within 10 min")
+                } else {
+                    val msg = o?.optString("message").orEmpty()
+                    ReplyResult(false, false, msg.ifBlank { "Share failed (${resp.code})" })
+                }
+            }
+        } catch (e: Exception) {
+            Timber.w(e, "bsky gram share failed")
+            ReplyResult(false, false, "Network error")
+        }
+    }
 }

@@ -304,6 +304,13 @@ class LedgerRhizomeFragment @Inject constructor() : ScreenFragment() {
                 if (page == "default") CalendarNavigator.toDayPage(this, date)
                 else CalendarNavigator.toDayNote(this, date, page)
             }
+            // A `[[link]]` target (or an iPad text note's own id) OPENS THE NOTE (Michael
+            // 2026-10-11: "The links aren't quite working yet") — it fell to "can't open" here,
+            // the Map showing Collider joined to a page and refusing to go to Collider. The body is
+            // taken off the raw address, not ref.body: parse splits on the last '#', and a note
+            // can be named "C# notes". An owed link lands on a page that mentions it, else says so.
+            ref.scheme == LedgerUri.SCHEME_NOTE ->
+                com.toolsboox.plugin.feeds.ui.followNoteLink(this, other.substringAfter("://"))
             ref.scheme == LedgerUri.SCHEME_CONTACT ->
                 findNavController().navigate(R.id.action_to_rolodex)
             ref.scheme == LedgerUri.SCHEME_TASK ->
@@ -311,10 +318,13 @@ class LedgerRhizomeFragment @Inject constructor() : ScreenFragment() {
             // A tag's "thing itself" IS its rhizome — the mini-map of its pages and related tags —
             // so tapping one walks there rather than trying to open a page a tag doesn't have.
             ref.isTag -> walkTo(other, label)
-            ref.isWeb -> runCatching {
-                startActivity(android.content.Intent(
-                    android.content.Intent.ACTION_VIEW, android.net.Uri.parse(other)))
-            }.onFailure { showMessage(getString(R.string.rhizome_cannot_open, label), binding.root) }
+            // A web page, a web:// object (what the site reader tags), a letter or a book opens
+            // INSIDE Ledgable, exactly as the same object does from a tag's "Also tagged" row —
+            // web in the in-pane reader, not the outside browser (Michael 2026-10-11: web-link
+            // cards open in "Ledgable"; review of dbe1a38d). One router, so the two can't drift.
+            ref.isWeb || ref.scheme == "web" || ref.scheme == LedgerUri.SCHEME_EMAIL ||
+                ref.scheme == "mail" || ref.scheme == LedgerUri.SCHEME_BOOK ->
+                com.toolsboox.plugin.feeds.ui.openTaggedObject(this, other, label)
             else -> showMessage(getString(R.string.rhizome_cannot_open, label), binding.root)
         }
     }

@@ -55,10 +55,13 @@ object AvPoster {
         return "%d:%02d".format(total / 60, total % 60)
     }
 
-    /** The clip's first readable frame, letterboxed onto the poster with a play mark over it. */
-    private fun videoPoster(file: File, durationMs: Int, title: String): Bitmap? {
+    /**
+     * The clip's first readable frame, bare — the pick face's video tile draws its own ▶ over it
+     * (add-to-pick pin §4: "ADOPT AvPoster's frame grab, made internal"). Null when no frame reads.
+     */
+    internal fun firstFrame(file: File): Bitmap? {
         val mmr = MediaMetadataRetriever()
-        val frame = try {
+        return try {
             mmr.setDataSource(file.absolutePath)
             mmr.getFrameAtTime(0) ?: mmr.frameAtTimeFallback()
         } catch (e: Exception) {
@@ -66,8 +69,11 @@ object AvPoster {
         } finally {
             runCatching { mmr.release() }
         }
+    }
 
-        val src = frame ?: return null
+    /** The clip's first readable frame, letterboxed onto the poster with a play mark over it. */
+    private fun videoPoster(file: File, durationMs: Int, title: String): Bitmap? {
+        val src = firstFrame(file) ?: return null
         val out = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
         canvas.drawColor(Color.WHITE)

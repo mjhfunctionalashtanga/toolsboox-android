@@ -15,12 +15,16 @@
         android:layout_width="14dp"
         android:layout_height="match_parent"/>
 
+    <!-- The page. In full screen (the one panel language, Michael 2026-10-11) the [⛶] pill stands
+         in its top-left corner. -->
     <FrameLayout
+        android:id="@+id/reader_page"
         android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="1">
 
-    <WebView
+    <!-- SelectionMenuWebView, no handler: hides Ledgable's own text door on every prepare (C9, 2026-10-10). -->
+    <com.toolsboox.plugin.feeds.ot.SelectionMenuWebView
         android:id="@+id/reader_web"
         android:layout_width="match_parent"
         android:layout_height="match_parent"/>
@@ -60,7 +64,8 @@
          220dp band swallowed every touch in the lower third — links couldn't pop their
          save-to-Later/gram menu, text couldn't be selected, highlights couldn't start there.
          Corners are the smallest defensible patch; the center stays live for the content.
-         Toggled in ☰ → Reading. -->
+         Toggled in ☰ → Reading. A COMIC hides them (2026-10-11): they swallowed its swipes and
+         pans, so the comic's page routes the same taps itself (ReaderFragment.setupTapZones). -->
     <LinearLayout
         android:id="@+id/tap_zones"
         android:orientation="horizontal"
@@ -93,25 +98,25 @@
             android:scaleType="fitCenter" android:src="@drawable/ic_grip" android:contentDescription="@null"/>
         <ImageButton android:id="@+id/today_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_today"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/go_to_title"/>
         <ImageButton android:id="@+id/goto_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_menu"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/go_to_title"/>
         <ImageButton android:id="@+id/open_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_wrench"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_controls"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/reader_controls"/>
         <ImageButton android:id="@+id/prev_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_left"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/reader_prev"/>
         <ImageButton android:id="@+id/highlight_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_pencil"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_highlight"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/reader_highlight"/>
         <ImageButton android:id="@+id/next_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_right"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/reader_next"/>
         <ImageButton android:id="@+id/settings_button" android:layout_width="@dimen/ledger_pill_button" android:layout_height="@dimen/ledger_pill_button"
             android:padding="11dp" android:scaleType="fitCenter" android:src="@drawable/ic_text_size"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_aa"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/reader_aa"/>
     </LinearLayout>
 
     </FrameLayout>

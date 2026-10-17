@@ -9,3 +9,7 @@ local.properties
 keystore.jks
 .DS_Store
 **/.DS_Store
+
+# Push guard: your private list of secret fingerprints (see scripts/githooks/README.md)
+scripts/githooks/known-secret-fingerprints
+!scripts/githooks/README.md

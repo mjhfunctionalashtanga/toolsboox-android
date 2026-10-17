@@ -16,8 +16,9 @@ import java.util.UUID
  * to the same result no matter which transport ran.
  *
  * Ink/text/images union by stable id with erase tombstones honoured (a stroke/element erased on either
- * device stays erased); reading events / A/V grams / tasks union by id; tracker values take the newer
- * side per key. The merge time is stamped fresh so both sides re-store the identical result and stop
+ * device stays erased); reading events / A/V grams / tasks union by id (reading events and A/V grams
+ * honour the element tombstones too, and a reading event's newer `updatedAt` wins); tracker values
+ * take the newer side per key. The merge time is stamped fresh so both sides re-store the identical result and stop
  * diverging.
  *
  * Known limitation (same as before): a union can't tell "never had this stroke" from "erased it with no
@@ -41,6 +42,25 @@ import java.util.UUID
  * rule and its four guards there.
  */
 object CalendarDayMerger {
+
+    /**
+     * The Log lines a day file really holds: [lines] less every one whose id is in
+     * [deletedElementIds] (any case — iOS writes upper-case ids).
+     *
+     * The merge below already drops a removed line, but a file can still carry a line BESIDE its own
+     * tombstone: a day merged by a build that predates line tombstones (the Boox fleet on -195, iOS
+     * before 248) unions the line back and keeps the marker, and the WebDAV pull installs a day this
+     * device never had straight from those bytes. So every decode of a day applies this too
+     * ([CalendarDayService.load], the Log and corpus slices) — the Log, its search, the corpus (Ask,
+     * Missed Connections, the Map), Your Year and the Reply-with-Log picker never show a highlight
+     * that was removed (design critique #2, Michael 2026-10-12: removing the highlight removes its
+     * line). The same instance comes back when nothing is dead, so the common path allocates nothing.
+     */
+    fun liveLines(lines: List<ReadingEvent>, deletedElementIds: Collection<String>): List<ReadingEvent> {
+        if (lines.isEmpty() || deletedElementIds.isEmpty()) return lines
+        val dead = deletedElementIds.mapTo(HashSet(deletedElementIds.size * 2)) { it.lowercase() }
+        return if (lines.none { it.id.lowercase() in dead }) lines else lines.filter { it.id.lowercase() !in dead }
+    }
 
     fun merge(a: CalendarDay, b: CalendarDay): CalendarDay {
         val newer = if ((a.updated?.time ?: 0L) >= (b.updated?.time ?: 0L)) a else b
@@ -117,10 +137,21 @@ object CalendarDayMerger {
 
         // Newer side first, first-seen wins — same winner AND order as the Swift merger,
         // so both platforms produce byte-identical output from the same two inputs.
+        //
+        // A LOG LINE REMOVED STAYS REMOVED, AN EDITED ONE STAYS EDITED (design critique #2, Michael
+        // 2026-10-12 — the article highlight's Log line is edited in place and removed with its
+        // highlight). Lines now honour the element tombstones, exactly as the A/V grams below
+        // always have (the existing marker, reused — removing a line records its id there; see
+        // ReadingEventEdit); and a line that carries [ReadingEvent.updatedAt] keeps its NEWER copy
+        // whichever whole day is newer. Lines without it (everything written before) tie at 0 and
+        // keep the old first-seen rule, so nothing already merged changes.
         merged.readingEvents = LinkedHashMap<String, ReadingEvent>().apply {
-            newer.readingEvents.forEach { putIfAbsent(it.id, it) }
-            older.readingEvents.forEach { putIfAbsent(it.id, it) }
-        }.values.toMutableList()
+            for (e in newer.readingEvents + older.readingEvents) {
+                if (e.id.lowercase() in elementTombstones) continue
+                val held = get(e.id)
+                if (held == null || (e.updatedAt?.time ?: 0L) > (held.updatedAt?.time ?: 0L)) put(e.id, e)
+            }
+        }.values.map { unionAttachments(it, newer.readingEvents, older.readingEvents, elementTombstones) }.toMutableList()
         // A/V grams honour element tombstones (Swift parity) — a deleted gram stays deleted.
         merged.avGrams = LinkedHashMap<String, Attachment>().apply {
             newer.avGrams.forEach { if (it.id.lowercase() !in elementTombstones) putIfAbsent(it.id, it) }
@@ -136,10 +167,22 @@ object CalendarDayMerger {
         // "to-dos keep reappearing" bug. `done` has no per-item clock to arbitrate by, so OR it
         // across both copies of an id; both platforms apply this identically so convergence holds.
         val doneAnywhere = (newer.ledgerItems + older.ledgerItems).filter { it.done }.map { it.id }.toSet()
+        // `proposed` is MONOTONIC toward PROMOTED (parity with `done`, the offer-never-mint ruling).
+        // Promotion is the ASK — a deliberate one-tap act on the Proposed shelf — so a stale device
+        // that still holds the candidate must not slide a task the reader already promoted back onto
+        // the shelf, the same "to-dos keep reappearing" failure `done` guards. Once ANY copy of an id
+        // is a live task (proposed=false), it stays one. There is no reverse act (nothing re-proposes
+        // an item), so this only ever HONORS a promotion, never hides a candidate never promoted.
+        val promotedAnywhere = (newer.ledgerItems + older.ledgerItems).filter { !it.proposed }.map { it.id }.toSet()
         merged.ledgerItems = LinkedHashMap<String, LedgerItem>().apply {
             newer.ledgerItems.forEach { if (it.id.lowercase() !in itemTombstones && it.id.lowercase() !in elementTombstones) putIfAbsent(it.id, it) }
             older.ledgerItems.forEach { if (it.id.lowercase() !in itemTombstones && it.id.lowercase() !in elementTombstones) putIfAbsent(it.id, it) }
-        }.values.map { if (it.id in doneAnywhere && !it.done) it.copy(done = true) else it }.toMutableList()
+        }.values.map {
+            var r = it
+            if (r.id in doneAnywhere && !r.done) r = r.copy(done = true)
+            if (r.id in promotedAnywhere && r.proposed) r = r.copy(proposed = false)
+            r
+        }.toMutableList()
 
         val values = LinkedHashMap<String, Map<String, Float?>>()
         values.putAll(older.calendarValues)
@@ -152,6 +195,51 @@ object CalendarDayMerger {
         // With max(), merging is idempotent — identical content converges and sync goes quiet.
         merged.updated = Date(maxOf(a.updated?.time ?: 0L, b.updated?.time ?: 0L))
         return merged
+    }
+
+    /**
+     * WHAT RIDES ON A LINE IS POOLED, NOT RACED (add-to-pick pin §3): a line is last-write-wins by
+     * `updatedAt`, so a photo added to a highlight on the iPhone and a voice note added on the B6
+     * before either synced would lose one of them. The winner keeps its own attachments, in order,
+     * then gains every other copy's that it lacks (newer day's copy first) — an attachment taken off
+     * the pick ("Remove from this pick…" tombstones it in `deletedElementIds` as [attachmentTombstone])
+     * never comes back from either side. The same instance comes back when nothing changes (Swift
+     * parity: `CalendarDayMerger.swift`, the same order, the same tombstone rule).
+     */
+    private fun unionAttachments(
+        winner: ReadingEvent, a: List<ReadingEvent>, b: List<ReadingEvent>, dead: Set<String>
+    ): ReadingEvent {
+        val own = winner.attachments.orEmpty()
+        val byId = LinkedHashMap<String, Attachment>()
+        own.forEach { if (!isAttachmentTombstoned(it.id, dead)) byId.putIfAbsent(it.id, it) }
+        for (copy in a + b) {
+            if (copy.id != winner.id || copy === winner) continue
+            copy.attachments?.forEach { if (!isAttachmentTombstoned(it.id, dead)) byId.putIfAbsent(it.id, it) }
+        }
+        val pooled = byId.values.toList()
+        if (pooled == own) return winner
+        return winner.copy(attachments = if (pooled.isEmpty() && winner.attachments == null) null else pooled.toMutableList())
+    }
+
+    /**
+     * THE MARKER AN ATTACHMENT TAKEN OFF ITS LINE LEAVES in `deletedElementIds` — `att:<id>`, lower-
+     * cased, the one form BOTH apps write (review 2026-10-16 #1: Android wrote the bare id, iOS
+     * `att:<id>`, and each merger honoured only its own, so a removal made on one device came back
+     * from the other's older copy of the line). Prefixed, so it never names an element, a line or an
+     * A/V gram of the same id. iOS `CalendarDayMerger.attachmentTombstone`.
+     */
+    fun attachmentTombstone(id: String): String = "att:" + id.lowercase()
+
+    /**
+     * Is attachment [id] taken off its line? Either form counts — `att:<id>` and the bare id (the
+     * first Android builds of "＋ Add to this pick" wrote it, and an A/V gram removed from that day
+     * leaves it) — exactly as iOS `isAttachmentTombstoned` reads them, so the two mergers keep and
+     * drop the same attachments. [dead] is lower-cased (the merge's element set); ids match
+     * case-blind (iOS UUIDs are upper-case).
+     */
+    fun isAttachmentTombstoned(id: String, dead: Set<String>): Boolean {
+        val low = id.lowercase()
+        return "att:$low" in dead || low in dead
     }
 
     /**

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Back 30: skip back thirty seconds (iOS gobackward.30).
+     One panel face family (review 2026-10-11, F5; Michael: "Icons lack design language"): the ink
+     tools' geometry — 256 grid, 16-unit round strokes, outline at rest; a filled face only for an
+     ON state (Star). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="256" android:viewportHeight="256"
+    android:tint="#000000">
+    <path android:pathData="M72,104H24V56M67.6,192A88,88 0 1,0 65.8,65.8L24,104"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+    <path android:pathData="M98,106.4A16.0,16.0 0 1,1 114.0,132.0A16.0,16.0 0 1,1 98,157.6M140,114.0V150.0a14.0,14.0 0 0,0 28,0V114.0a14.0,14.0 0 0,0 -28,0Z"
+        android:strokeColor="#FF000000" android:strokeWidth="12"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+</vector>

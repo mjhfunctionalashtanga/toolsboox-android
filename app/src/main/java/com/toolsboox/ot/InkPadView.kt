@@ -14,9 +14,13 @@ import android.view.View
  * message, a card comment, a booking note, the ✍ Handwriting annotation. [InkMount] is its
  * counterpart for ink that is SHOWN.
  *
- * Deliberately a plain [View] with plain [Canvas] drawing rather than the Onyx note engine: a
- * real surface composites to the panel through its own window, which doesn't survive being put
- * inside a dialog. This one is small, predictable, and works everywhere.
+ * A plain [View] with plain [Canvas] drawing for the RECORD of the ink (a SurfaceView composites
+ * through its own window, which doesn't survive a dialog) — but the LIVE stroke is the Boox pen
+ * engine's: [TouchHelper] raw drawing is opened over this view's own rect, so the nib lays ink
+ * on the panel at hardware speed exactly as the notes page does, and the software path only
+ * re-bakes the finished stroke (Michael, 09-12: "the surface is much slower" than the notes
+ * pages). Where the engine is absent (finger, Viwoods, a failed create) the software path
+ * refreshes only the new segment's box in the fast waveform instead of the whole pad.
  *
  * Each stroke carries its own colour, width and nib, so undo and the colour toolbar behave the
  * way they do on a creation page. Beyond freehand ink the pad also takes PLACED TEXT (typed or
@@ -24,7 +28,169 @@ import android.view.View
  * page surface's eraser/stylus vocabulary, scaled to a pad (Michael: "can that be made to look
  * more like our current eraser/stylus design").
  */
-class InkPadView(context: Context) : View(context) {
+class InkPadView(context: Context) : android.widget.FrameLayout(context) {
+
+    init { setWillNotDraw(false) }
+
+    // ── PEN PAUSES (Michael 2026-10-11, the one compose screen): a chooser, the keyboard or a
+    // suggestion list over the pad must get the pen, not the ink engine — the Bigme daemon hands
+    // out pen events by the pad's bounds, not by what is on top. Each reason is named so two can
+    // overlap; the pen comes back when the last one lets go. A touch while paused draws nothing
+    // and tells the host ([onTouchWhilePaused]), so "put the pen on the page" can drop the keyboard.
+    private val penPauses = mutableSetOf<String>()
+    /** The pad's own pause: the rest of a touch that landed while paused (see [onTouchEvent]). */
+    private val PAUSE_GESTURE = "gesture"
+    val penPaused: Boolean get() = penPauses.isNotEmpty()
+    var onTouchWhilePaused: (() -> Unit)? = null
+
+    /**
+     * May the pad hold an ink client right now? The host's lifecycle gate (Michael 2026-10-11:
+     * one client, never one bound after the screen paused — the -304 lesson): a pad whose screen
+     * is in the background, or whose page is hidden, must not attach. Default: always.
+     */
+    var inkAllowed: () -> Boolean = { true }
+
+    fun pausePen(reason: String, paused: Boolean) {
+        val was = penPauses.isNotEmpty()
+        if (paused) penPauses.add(reason) else penPauses.remove(reason)
+        val now = penPauses.isNotEmpty()
+        if (was == now) return
+        // A stroke caught by the pause ends where it is — its UP will never come.
+        if (now && current != null) { current = null; rawStroke = false; strokeBox = null; invalidate() }
+        runCatching { bigme?.setInputEnabled(!now) }
+        syncRawPen()
+    }
+
+    /** Let go of the ink engines (the screen paused, or the page went out of sight). */
+    fun releaseInk() {
+        penPauses.remove(PAUSE_GESTURE)   // a swallowed touch whose UP never came must not outlive it
+        closeRawFully()
+        detachBigme()
+    }
+
+    /** Take them back — only when the pad is on screen with a size and the host allows it. */
+    fun reclaimInk() {
+        if (!isAttachedToWindow || width <= 0 || height <= 0 || !inkAllowed()) return
+        if (raw == null) raw = try { com.onyx.android.sdk.pen.TouchHelper.create(this, rawCallback) } catch (_: Throwable) { null }
+        openRaw()
+        attachBigmeIfAvailable()
+    }
+
+    // ── BIGME (09-13, "fast ink pads on Bigme dialogs"): the pad is a plain View, and on a
+    // Bigme the plain path is the slow one — every sample a software invalidate. So on Bigme
+    // hardware the pad grows a transparent SurfaceView on top and hands it to the vendor's
+    // handwriting daemon (BigmeFastInk, the notes page's own engine): the daemon paints the
+    // live line at the panel's speed, its pen events come back as synthesized stylus
+    // MotionEvents into the SAME stroke path the software pad keeps, and on pen-up the pad's
+    // record is mirrored onto the overlay (syncOverlay) so the baked ink replaces the live line.
+    private var bigme: BigmeFastInk? = null
+    private var bigmeOverlay: android.view.SurfaceView? = null
+    private var bigmeStroke = false
+    private var bigmeDispatching = false
+
+    private fun attachBigmeIfAvailable() {
+        if (bigme != null || !BigmeFastInk.isAvailable || width <= 0 || height <= 0 || !inkAllowed()) return
+        // ONE CLIENT (Michael 2026-10-11): an attach already on its way is the only one — two
+        // quick layouts used to add two overlays and bind two clients to one pad.
+        if (bigmeOverlay != null) return
+        val overlay = android.view.SurfaceView(context).apply {
+            setZOrderOnTop(true)
+            holder.setFormat(android.graphics.PixelFormat.TRANSLUCENT)
+            isClickable = false; isFocusable = false
+        }
+        addView(overlay, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        bigmeOverlay = overlay
+        overlay.post {
+            // A pad put back into a window (a page turned back to) attaches before its fresh
+            // overlay is laid out, and the daemon refuses a 0×0 connect — which used to leave
+            // that page on the slow software pen for good. Bind once the overlay has its size.
+            if (overlay.width > 0 && overlay.height > 0) bindBigme(overlay)
+            else overlay.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+                override fun onLayoutChange(v: View, l: Int, t: Int, r: Int, b: Int, oldL: Int, oldT: Int, oldR: Int, oldB: Int) {
+                    if (v.width <= 0 || v.height <= 0) return
+                    v.removeOnLayoutChangeListener(this)
+                    v.post { bindBigme(overlay) }
+                }
+            })
+        }
+    }
+
+    private fun bindBigme(overlay: android.view.SurfaceView) {
+        // The pad may have let go while this waited (a page turn, a pause, a resize): a client
+        // bound now would be a second one, or one over nothing.
+        if (bigmeOverlay !== overlay || !overlay.isAttachedToWindow || !inkAllowed()) {
+            if (bigmeOverlay === overlay) { runCatching { removeView(overlay) }; bigmeOverlay = null }
+            return
+        }
+        val ink = BigmeFastInk()
+        val ok = ink.attach(
+            overlay,
+            segmentWidth = { _, _ -> penWidth.coerceAtLeast(1.5f) },
+            liveDrawAllowed = { !eraseMode && pendingText == null && pendingShape == null },
+        ) { a, x, y, p, _ -> onBigmePen(a, x, y, p) }
+        bigme = if (ok) ink else null
+        if (!ok) { removeView(overlay); bigmeOverlay = null }
+        if (ok && penPauses.isNotEmpty()) runCatching { ink.setInputEnabled(false) }
+        // A pad coming back with writing on it (a page turned back to, a re-sync) gives the
+        // fresh client its truth once — the same forced mirror a pen-up makes.
+        if (ok && ops.isNotEmpty()) mirrorOntoBigme()
+        timber.log.Timber.i("InkPadView Bigme attach: %s", ink.status)
+    }
+
+    /**
+     * THE PAD CHANGED SIZE UNDER ITS CLIENT (rotation, a row above it appearing). The daemon
+     * was connected at the old size and never follows on its own (Michael 2026-10-11 plan, B6
+     * risk: "the pad connects once and doesn't re-sync when it changes size"), so its pen would
+     * land in the wrong place. Re-bind at the new size the way the notes page does — detach, then
+     * attach (both silent seams) — and never under a live stroke.
+     */
+    private fun resyncBigme() {
+        if (current != null) {
+            postDelayed({ if (bigme?.matchesDimensions(width, height) == false) resyncBigme() }, 300L)
+            return
+        }
+        detachBigme()
+        attachBigmeIfAvailable()
+    }
+
+    private fun onBigmePen(action: Int, x: Float, y: Float, pressure: Float) {
+        val mAction = when (action) {
+            BigmeFastInk.ACTION_DOWN -> MotionEvent.ACTION_DOWN
+            BigmeFastInk.ACTION_MOVE -> MotionEvent.ACTION_MOVE
+            BigmeFastInk.ACTION_UP, BigmeFastInk.ACTION_LEAVE -> MotionEvent.ACTION_UP
+            else -> return
+        }
+        post {
+            val now = android.os.SystemClock.uptimeMillis()
+            val props = MotionEvent.PointerProperties().apply { id = 0; toolType = MotionEvent.TOOL_TYPE_STYLUS }
+            val coords = MotionEvent.PointerCoords().apply { this.x = x; this.y = y; this.pressure = pressure.coerceIn(0f, 1f) }
+            val ev = MotionEvent.obtain(now, now, mAction, 1, arrayOf(props), arrayOf(coords),
+                0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_STYLUS, 0)
+            bigmeDispatching = true
+            try { onTouchEvent(ev) } finally { bigmeDispatching = false; ev.recycle() }
+            if (mAction == MotionEvent.ACTION_UP) mirrorOntoBigme()
+        }
+    }
+
+    /** The pad's record, onto the daemon's overlay — the bake that replaces the live line. */
+    private fun mirrorOntoBigme() {
+        val ink = bigme ?: return
+        if (width <= 0 || height <= 0) return
+        runCatching {
+            val bmp = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+            val c = Canvas(bmp)
+            c.drawColor(android.graphics.Color.WHITE)
+            onDraw(c)
+            ink.syncOverlay(bmp, android.graphics.Matrix(), force = true)
+        }
+    }
+
+    private fun detachBigme() {
+        runCatching { bigme?.detach() }
+        bigme = null
+        bigmeOverlay?.let { runCatching { removeView(it) } }
+        bigmeOverlay = null
+    }
 
     private class Stroke(val path: Path, val color: Int, val strokeWidth: Float,
                          val calligraphy: Boolean = false,
@@ -43,29 +209,51 @@ class InkPadView(context: Context) : View(context) {
     private val ops = mutableListOf<Op>()
     private var current: Path? = null
 
+    /** The Boox pen engine's live preview over this pad — null off Boox or when create fails. */
+    private var raw: com.onyx.android.sdk.pen.TouchHelper? = null
+    private var rawOpen = false
+    /** True while a stylus stroke is being previewed by the engine: the software path must not
+     *  repaint the region mid-stroke (each repaint wipes the overlay ink) — it re-bakes on up. */
+    private var rawStroke = false
+    /** The box the stroke in progress has touched, padded — the region to refresh. */
+    private var strokeBox: android.graphics.RectF? = null
+
     var penColor: Int = Color.BLACK
+        set(v) { field = v; syncRawPen() }
 
     /** View-px. The [WIDTHS] ladder is in design units (drawn at the Boox's ~2.5 density), so
      *  the default scales like the rest of the pad's geometry — unscaled it was a hairline that
      *  anti-aliased to grey mush on a dense screen. */
     var penWidth: Float = 4f * resources.displayMetrics.density / 2.5f
+        set(v) { field = v; syncRawPen() }
 
     /** Calligraphy nib: strokes lay down a broad 45° edge instead of a round point — the same
      *  ballpoint-vs-calligraphy choice the page pen holds, emulated with offset passes because
      *  a dialog pad has no pressure engine. */
     var calligraphyMode: Boolean = false
+        set(v) { field = v; syncRawPen() }
 
     /** Stroke eraser: while on, touches delete whole strokes (and placed text) they cross
      *  instead of drawing. */
     var eraseMode: Boolean = false
+        set(v) { field = v; syncRawPen() }
+
+    /**
+     * Optional STATIONERY painted under the ink — ruled lines, a letterhead — drawn identically
+     * on screen and into [render], so the surface you write on is the surface the reader
+     * receives. Null = the plain pad.
+     */
+    var stationery: ((Canvas, Int, Int) -> Unit)? = null
 
     /** Armed text: the next tap sets this string down where the finger lands, then disarms.
      *  Fed by the pen bar's Ⓣ (typed) and ⎘ (clipboard) buttons. */
     var pendingText: String? = null
+        set(v) { field = v; syncRawPen() }
 
     /** Armed shape (one of [SHAPE_BOX], [SHAPE_ROUND], [SHAPE_LINE], [SHAPE_ARROW]) — the next
      *  drag draws it corner-to-corner, live, and commits it as an ordinary erasable stroke. */
     var pendingShape: String? = null
+        set(v) { field = v; syncRawPen() }
     private var shapeStartX = 0f
     private var shapeStartY = 0f
 
@@ -90,7 +278,144 @@ class InkPadView(context: Context) : View(context) {
         typeface = android.graphics.Typeface.SERIF
     }
 
+    private val rawCallback = object : com.onyx.android.sdk.pen.RawInputCallback() {
+        override fun onPenActive(touchPoint: com.onyx.android.sdk.data.note.TouchPoint) {}
+        override fun onPenUpRefresh(refreshRect: android.graphics.RectF) {}
+        override fun onBeginRawDrawing(b: Boolean, touchPoint: com.onyx.android.sdk.data.note.TouchPoint) {}
+        override fun onEndRawDrawing(b: Boolean, touchPoint: com.onyx.android.sdk.data.note.TouchPoint) {}
+        override fun onRawDrawingTouchPointMoveReceived(touchPoint: com.onyx.android.sdk.data.note.TouchPoint) {}
+        override fun onRawDrawingTouchPointListReceived(touchPointList: com.onyx.android.sdk.pen.data.TouchPointList) {}
+        override fun onBeginRawErasing(b: Boolean, touchPoint: com.onyx.android.sdk.data.note.TouchPoint) {}
+        override fun onEndRawErasing(b: Boolean, touchPoint: com.onyx.android.sdk.data.note.TouchPoint) {}
+        override fun onRawErasingTouchPointMoveReceived(touchPoint: com.onyx.android.sdk.data.note.TouchPoint) {}
+        override fun onRawErasingTouchPointListReceived(touchPointList: com.onyx.android.sdk.pen.data.TouchPointList) {}
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        // The engine is created against THIS view; its limit rect is set once the pad has a size.
+        // Off Boox (or when the SDK is inert) create throws or returns a dead helper — either way
+        // the software path stands, as it always has.
+        if (raw == null) raw = try { com.onyx.android.sdk.pen.TouchHelper.create(this, rawCallback) } catch (_: Throwable) { null }
+        if (width > 0 && height > 0) { openRaw(); attachBigmeIfAvailable() }
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w > 0 && h > 0) {
+            openRaw()
+            val ink = bigme
+            if (ink != null && !ink.matchesDimensions(w, h)) resyncBigme() else attachBigmeIfAvailable()
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        closeRawFully()
+        detachBigme()
+        super.onDetachedFromWindow()
+    }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        if (visibility != View.VISIBLE) closeRawFully()
+    }
+
+    /**
+     * THE STRANDED STROKE (Michael, 09-03 → 09-13, the Palma: a small ink crescent sitting on
+     * top of the rail's ☰, in no day file, surviving page turns and the day page's own GC
+     * repaint). A pad's TouchHelper renders the pen's live line into the hardware raw layer; a
+     * pad that went away with that helper merely closed — no render-disable, no post-enable,
+     * no full repaint — could leave its last mark on the panel above every view that came
+     * after. So a pad leaves the way the notes surface leaves: render off, closed, the panel
+     * handed back, one full refresh.
+     */
+    private fun closeRawFully() {
+        val th = raw ?: return
+        try { th.setRawDrawingEnabled(false) } catch (_: Throwable) {}
+        try { th.isRawDrawingRenderEnabled = false } catch (_: Throwable) {}
+        try { th.closeRawDrawing() } catch (_: Throwable) {}
+        rawOpen = false; raw = null
+        try { com.onyx.android.sdk.api.device.epd.EpdController.enablePost(this, 1) } catch (_: Throwable) {}
+        try { com.onyx.android.sdk.api.device.epd.EpdController.repaintEveryThing(com.onyx.android.sdk.api.device.epd.UpdateMode.GC) } catch (_: Throwable) {}
+    }
+
+    private fun openRaw() {
+        val th = raw ?: return
+        // The Boox engine keeps the host's gate too (Michael 2026-10-11): a hidden page (Text
+        // only) put back into a window must not open a raw region over the typed body.
+        if (!inkAllowed()) return
+        try {
+            if (rawOpen) th.closeRawDrawing()
+            th.setLimitRect(android.graphics.Rect(0, 0, width, height), emptyList())
+                .setStrokeWidth(penWidth).openRawDrawing()
+            // Finger keeps its ordinary dispatch — the pad takes finger ink through onTouchEvent.
+            th.enableFingerTouch(true)
+            rawOpen = true
+            syncRawPen()
+        } catch (_: Throwable) { rawOpen = false }
+    }
+
+    /** The engine wears the pad's pen — colour, width, nib — and steps aside while a tool that
+     *  isn't ink (eraser, placed text, a shape) is armed, so those strokes reach the software path. */
+    private fun syncRawPen() {
+        val th = raw ?: return
+        if (!rawOpen) return
+        try {
+            th.setStrokeColor(penColor)
+            th.setStrokeWidth(penWidth)
+            th.setStrokeStyle(if (calligraphyMode) com.onyx.android.sdk.pen.TouchHelper.STROKE_STYLE_FOUNTAIN
+                              else com.onyx.android.sdk.pen.TouchHelper.STROKE_STYLE_PENCIL)
+            th.setRawDrawingEnabled(!eraseMode && pendingText == null && pendingShape == null && penPauses.isEmpty())
+        } catch (_: Throwable) {}
+    }
+
+    private fun rawPreviewing(event: MotionEvent): Boolean =
+        (rawOpen || bigmeDispatching) && event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS &&
+            !eraseMode && pendingText == null && pendingShape == null
+
+    /** Grow the stroke's box by the segment just added, padded for the nib (and the calligraphy sweep). */
+    private fun growBox(x: Float, y: Float) {
+        val pad = penWidth * 2f + (if (calligraphyMode) penWidth * 1.8f else 0f) + 4f
+        val b = strokeBox ?: android.graphics.RectF(x, y, x, y).also { strokeBox = it }
+        b.union(x - pad, y - pad, x + pad, y + pad)
+    }
+
+    /** Refresh just [box] on the panel — the fast waveform while the pen moves, a grey pass once
+     *  it lifts — instead of the whole pad on every sample. */
+    private fun refreshBox(box: android.graphics.RectF, penUp: Boolean) {
+        val l = box.left.toInt().coerceAtLeast(0); val t = box.top.toInt().coerceAtLeast(0)
+        val r = box.right.toInt().coerceAtMost(width); val btm = box.bottom.toInt().coerceAtMost(height)
+        if (r <= l || btm <= t) { invalidate(); return }
+        invalidate(l, t, r, btm)
+        try {
+            com.onyx.android.sdk.api.device.epd.EpdController.invalidate(
+                this, l, t, r, btm,
+                if (penUp) com.onyx.android.sdk.api.device.epd.UpdateMode.GU
+                else com.onyx.android.sdk.api.device.epd.UpdateMode.DU)
+        } catch (_: Throwable) {}
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        // Paused (a chooser, the keyboard, a suggestion list): nothing is drawn; the touch is the
+        // host's cue that the hand has come back to the page.
+        if (penPauses.isNotEmpty()) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    // THE TOUCH THAT ASKS FOR THE PEN BACK IS SWALLOWED WHOLE (2026-10-11 review):
+                    // the host drops the keyboard on this DOWN and lifts its pause, and the pen
+                    // used to come back mid-touch — the daemon / raw engine painting a tail no
+                    // stroke recorded, a ghost until the next refresh. Held until this UP.
+                    penPauses.add(PAUSE_GESTURE)
+                    onTouchWhilePaused?.invoke()
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> pausePen(PAUSE_GESTURE, false)
+            }
+            return true
+        }
+        // With the Bigme daemon attached the pen reaches the pad ONLY through it; the system's
+        // own stylus events for the same touch would draw every stroke twice.
+        if (bigme != null && !bigmeDispatching && event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS &&
+            !eraseMode && pendingText == null && pendingShape == null) return true
         if (eraseMode) {
             if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_MOVE) {
                 eraseAt(event.x, event.y)
@@ -124,24 +449,44 @@ class InkPadView(context: Context) : View(context) {
             return true
         }
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN ->
+            MotionEvent.ACTION_DOWN -> {
                 current = Path().also {
                     it.moveTo(event.x, event.y)
                     ops.add(Op.Ink(Stroke(it, penColor, penWidth, calligraphyMode)
                         .apply { points.add(event.x to event.y) }))
                 }
+                rawStroke = rawPreviewing(event)
+                strokeBox = null; growBox(event.x, event.y)
+                if (!rawStroke) refreshBox(strokeBox!!, penUp = false)
+            }
             // Every batched sample, smoothed — one point per dispatched event with straight
             // lineTo segments is the "sloppy pen": see [InkSmoothing].
             MotionEvent.ACTION_MOVE -> {
                 val s = if (current != null) (ops.lastOrNull() as? Op.Ink)?.stroke else null
                 if (s != null) {
+                    val before = s.points.size
                     InkSmoothing.appendMotion(event, s.points)
                     InkSmoothing.rebuild(s.points, s.path)
+                    val seg = android.graphics.RectF()
+                    for (i in (before - 1).coerceAtLeast(0) until s.points.size) {
+                        val (x, y) = s.points[i]; growBox(x, y)
+                        val pad = penWidth * 2f + (if (s.calligraphy) penWidth * 1.8f else 0f) + 4f
+                        if (seg.isEmpty && i == (before - 1).coerceAtLeast(0)) seg.set(x - pad, y - pad, x + pad, y + pad)
+                        else seg.union(x - pad, y - pad, x + pad, y + pad)
+                    }
+                    // Hardware preview: the engine is drawing this stroke; a repaint here would
+                    // wipe it. Software: only the segment's box, in the fast waveform.
+                    if (!rawStroke && !seg.isEmpty) refreshBox(seg, penUp = false)
                 }
             }
-            MotionEvent.ACTION_UP -> current = null
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                current = null
+                // Re-bake: the whole stroke's box is repainted once from the record, replacing
+                // the engine's overlay with the pad's own ink (a grey pass, so it settles clean).
+                strokeBox?.let { refreshBox(it, penUp = true) } ?: invalidate()
+                rawStroke = false; strokeBox = null
+            }
         }
-        invalidate()
         return true
     }
 
@@ -202,6 +547,7 @@ class InkPadView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        stationery?.invoke(canvas, width, height)
         drawOps(canvas)
     }
 
@@ -283,6 +629,7 @@ class InkPadView(context: Context) : View(context) {
         val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         c.drawColor(Color.WHITE)
+        stationery?.invoke(c, width, height)
         drawOps(c)
         return bmp
     }
@@ -333,6 +680,17 @@ class InkPadView(context: Context) : View(context) {
             pad.penColor = AnnotationPen.color(context)
             pad.calligraphyMode = AnnotationPen.calligraphy(context)
 
+            // THE PAGE'S OWN GLYPHS (Michael, 09-12: "the glyphs don't match up") — the same
+            // drawables the notes page toolbar wears, at bar size: undo, pen, text, paste, eraser.
+            fun iconBtn(res: Int, desc: String, onTap: () -> Unit) = android.widget.ImageView(context).apply {
+                setImageResource(res); contentDescription = desc
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                layoutParams = android.widget.LinearLayout.LayoutParams(px(34), px(34))
+                setPadding(px(5), px(5), px(5), px(5))
+                setColorFilter(Color.BLACK)
+                setOnClickListener { onTap() }
+            }
+
             fun swatch(color: Int): android.widget.TextView {
                 lateinit var tv: android.widget.TextView
                 tv = android.widget.TextView(context).apply {
@@ -355,10 +713,7 @@ class InkPadView(context: Context) : View(context) {
                 return tv
             }
 
-            bar.addView(android.widget.TextView(context).apply {
-                text = "↶"; textSize = 20f; setTextColor(ACCENT); setPadding(px(4), 0, px(10), 0)
-                setOnClickListener { pad.undo() }
-            })
+            bar.addView(iconBtn(com.toolsboox.R.drawable.ic_toolbar_undo, "Undo") { pad.undo() })
             bar.addView(swatch(Color.BLACK))
             bar.addView(swatch(Color.parseColor(RED)))
             bar.addView(swatch(Color.parseColor(BLUE)))
@@ -369,14 +724,11 @@ class InkPadView(context: Context) : View(context) {
 
             var widthIdx = AnnotationPen.widthIndex(context).coerceIn(0, WIDTHS.size - 1)
             pad.penWidth = WIDTHS[widthIdx] * dp / 2.5f
-            bar.addView(android.widget.TextView(context).apply {
-                text = "✒"; textSize = 16f; setTextColor(ACCENT); setPadding(px(6), 0, px(4), 0)
-                // Design units → view px, the same density/2.5 the pad's other geometry wears.
-                setOnClickListener {
-                    widthIdx = (widthIdx + 1) % WIDTHS.size
-                    pad.penWidth = WIDTHS[widthIdx] * dp / 2.5f
-                    AnnotationPen.setWidthIndex(context, widthIdx)
-                }
+            // Design units → view px, the same density/2.5 the pad's other geometry wears.
+            bar.addView(iconBtn(com.toolsboox.R.drawable.ic_toolbar_pen, "Pen width") {
+                widthIdx = (widthIdx + 1) % WIDTHS.size
+                pad.penWidth = WIDTHS[widthIdx] * dp / 2.5f
+                AnnotationPen.setWidthIndex(context, widthIdx)
             })
 
             // 🖋 the calligraphy nib — a mode, not a one-shot, so it stays down until tapped off.
@@ -393,9 +745,8 @@ class InkPadView(context: Context) : View(context) {
 
             // Ⓣ typed text → the next tap places it. The prompt is the page's text-box idea at
             // pad scale; placement by tap keeps the choice with the hand, not a dialog.
-            val textBtn = android.widget.TextView(context).apply {
-                text = " Ⓣ "; textSize = 15f; setTextColor(ACCENT); setPadding(px(5), px(2), px(5), px(2))
-                setOnClickListener {
+            val textBtn = iconBtn(com.toolsboox.R.drawable.ic_toolbar_text, "Text") {
+                run {
                     val input = android.widget.EditText(context).apply { hint = "Text — then tap the pad to place it" }
                     androidx.appcompat.app.AlertDialog.Builder(ModalScale.wrap(context))
                         .setTitle("Text")
@@ -406,15 +757,18 @@ class InkPadView(context: Context) : View(context) {
                             refreshArmed(); d.dismiss()
                         }
                         .setNegativeButton(android.R.string.cancel, null)
+                        // The pen belongs to this prompt while it's up (Michael 2026-10-11:
+                        // pen paused under choosers) — its OK sits over the pad's bounds.
+                        .setOnDismissListener { pad.pausePen("text", false) }
                         .show()
+                    pad.pausePen("text", true)
                 }
             }
             bar.addView(textBtn)
 
             // ⎘ paste — whatever text the clipboard holds, placed by the next tap.
-            val pasteBtn = android.widget.TextView(context).apply {
-                text = " ⎘ "; textSize = 15f; setTextColor(ACCENT); setPadding(px(5), px(2), px(5), px(2))
-                setOnClickListener {
+            val pasteBtn = iconBtn(com.toolsboox.R.drawable.ic_toolbar_paste, "Paste") {
+                run {
                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                     val t = cm.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
                     if (t.isEmpty()) {
@@ -445,21 +799,21 @@ class InkPadView(context: Context) : View(context) {
             bar.addView(shapeBtn)
 
             // Stroke eraser: inverted while armed, the pressed-state grammar the page tools use.
-            val eraseBtn = android.widget.TextView(context).apply {
-                text = " ◨ "; textSize = 15f; setTextColor(ACCENT); setPadding(px(6), px(2), px(6), px(2))
-                setOnClickListener {
-                    pad.eraseMode = !pad.eraseMode
-                    pad.calligraphyMode = false
-                    pad.pendingText = null; pad.pendingShape = null
-                    refreshArmed()
-                }
+            val eraseBtn = iconBtn(com.toolsboox.R.drawable.ic_toolbar_eraser, "Eraser") {
+                pad.eraseMode = !pad.eraseMode
+                pad.calligraphyMode = false
+                pad.pendingText = null; pad.pendingShape = null
+                refreshArmed()
             }
             bar.addView(eraseBtn)
 
             refreshArmed = {
-                fun dress(v: android.widget.TextView, armed: Boolean) {
-                    if (armed) { v.setBackgroundColor(0xFF000000.toInt()); v.setTextColor(Color.WHITE) }
-                    else { v.setBackgroundColor(0x00000000); v.setTextColor(ACCENT) }
+                fun dress(v: View, armed: Boolean) {
+                    v.setBackgroundColor(if (armed) 0xFF000000.toInt() else 0x00000000)
+                    when (v) {
+                        is android.widget.TextView -> v.setTextColor(if (armed) Color.WHITE else ACCENT)
+                        is android.widget.ImageView -> v.setColorFilter(if (armed) Color.WHITE else Color.BLACK)
+                    }
                 }
                 dress(calligBtn, pad.calligraphyMode)
                 dress(textBtn, pad.pendingText != null)

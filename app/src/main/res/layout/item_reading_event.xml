@@ -58,6 +58,34 @@
         android:paddingTop="6dp"
         android:layout_width="match_parent" android:layout_height="wrap_content"/>
 
+    <!-- The typed note, under the passage (add-to-pick pin §6). -->
+    <TextView
+        android:id="@+id/event_note"
+        android:textSize="14sp"
+        android:textStyle="italic"
+        android:textColor="#555555"
+        android:maxLines="4"
+        android:ellipsize="end"
+        android:paddingStart="26dp"
+        android:paddingTop="4dp"
+        android:visibility="gone"
+        android:layout_width="match_parent" android:layout_height="wrap_content"/>
+
+    <!-- What rides on the line: photos and handwriting, a video's ▶, a voice note's ▶ Play. -->
+    <HorizontalScrollView
+        android:id="@+id/event_strip_scroll"
+        android:visibility="gone"
+        android:scrollbars="none"
+        android:paddingStart="26dp"
+        android:paddingTop="8dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content">
+        <LinearLayout
+            android:id="@+id/event_strip"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+    </HorizontalScrollView>
+
     <ImageView
         android:id="@+id/event_thumb"
         android:layout_width="wrap_content"

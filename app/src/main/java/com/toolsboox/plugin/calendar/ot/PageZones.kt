@@ -93,10 +93,21 @@ object PageZones {
             PageZone("image1", "Image 1", RectF(80f, 1280f, 680f, 1780f), ZoneKind.IMAGE),
             PageZone("image2", "Image 2", RectF(724f, 1280f, 1324f, 1780f), ZoneKind.IMAGE),
         )
-        // A numbered page is paper. Anything else named (intake, write, synthesize) has its own
-        // pipeline that already produces text, so OCR'ing it would double-count.
-        else -> if (notePage.toIntOrNull() != null) WHOLE_PAGE else emptyList()
+        // A numbered page is paper. So are GRID and JOT — the daily pad, every named document and
+        // every sub-page ("grid", "grid#1", "grid-1753", "sketch-1753#2"): no layout, no pipeline of
+        // their own, so until 2026-10-11 handwritten #tags and [[links]] on a named note were read
+        // on NEITHER device (Michael: "tags aren't complete"). PARITY: iOS PageZones still returns
+        // no zones for .notes, .grid and .sketch — it has to adopt these same four [bands] (a
+        // stroke belongs to the band its middle falls in). Anything else named (intake, write,
+        // synthesize) has its own pipeline that already produces text, so OCR'ing it would double-count; Lines
+        // (write) keeps its own title/tags strip on iOS and nothing here.
+        else -> if (isPaper(notePage)) WHOLE_PAGE else emptyList()
     }
+
+    /** Whether [notePage] is PAPER — read whole, in bands: a numbered Notes page, or any Grid or
+     *  Jot page (daily pad, named document, sub-page). */
+    fun isPaper(notePage: String): Boolean =
+        notePage.toIntOrNull() != null || GridPageStore.isMine(notePage) || JotPageStore.isMine(notePage)
 }
 
 /** Captured section values per note-page + day: filesDir/page-sections/{pageKey}-{date}.json. */

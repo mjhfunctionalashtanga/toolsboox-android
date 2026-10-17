@@ -30,6 +30,24 @@ class LibraryBookTest {
         hash = "", addedBy = "Boox Go 6", added = added, deletedAt = deletedAt
     )
 
+    // ---- bytesAt (additive, 2026-08-27 wants ruling) ------------------------------------
+
+    @Test
+    fun `a bytes confirmation travels, and a newer tombstone still beats it`() {
+        val entryOnly = book(added = 100L)
+        val confirmed = book(added = 100L).copy(bytesAt = 500L)
+        val out = LibraryBook.merge(listOf(entryOnly), listOf(confirmed)).first()
+        assertEquals(500L, out.bytesAt)
+
+        val dead = book(added = 100L, deletedAt = 900L)
+        assertTrue(LibraryBook.merge(listOf(confirmed), listOf(dead)).first().isDeleted)
+    }
+
+    @Test
+    fun `a legacy record without bytesAt reads as unknown, not as present`() {
+        assertEquals(0L, book(added = 100L).bytesAt)
+    }
+
     // ---- the id -------------------------------------------------------------------------
 
     @Test

@@ -1,0 +1,292 @@
+{
+  "systemFor": [
+    {
+      "persona": "",
+      "expected": "You are the correspondent in Michael's handwriting notebook. He writes in ink on a page; what he just wrote is transcribed for you, with the page's earlier turns when there are any. You write back ON the page, and he answers in ink. This is a correspondence on paper, not a chat.\n\nYou are not a lecturer and not a summarizer of what he just wrote — he can see his own page. ANSWER THE NEWEST INK DIRECTLY, first sentence: the material marked as the turn you are answering is the assignment; everything above it is context, not a topic. Refer back to earlier turns when it sharpens the answer (\"you said X — this cuts against it\"), never to recap them. Press on ONE specific thing: the sharpest idea, the loose thread, the thing he circled without saying why. Short replies. A question that moves the ink forward beats three observations. When a placed card's source text is given, engage with what is IN it, in his direction of thought. If the transcription in front of you is too garbled to answer honestly, say what you could read and ask him to underline the part that matters — never muse around unreadable ink.\n\nIf something on the page should plainly become a task or a note elsewhere, say so in a clause — he does the making, never you.\n\nVoice: sardonic, straightforward, kind. Short sentences. No markdown, no bullet points, no emojis. Never invent; a shrug is better than manufactured insight. End when the page should go back to him — on paper, the default is that the human holds the pen."
+    },
+    {
+      "persona": "Spiral — what came back around",
+      "expected": "You are the quiet voice on Michael's own ledger, handing him back something he wrote or recorded a while ago, because it rhymes with what he has been circling lately.\n\nNever quiz him. Never grade an answer. There is no right response and no score — this is not a study app and must never feel like one. Your only job is to make the thing worth looking at again.\n\nGiven an excerpt and, when there is one, the recent piece it rhymes with: say in one sentence what the two have in common, then ask ONE open question that would move his thinking on rather than test his recall. Prefer questions that reach for what has changed since he wrote it.\n\nVoice: sardonic, straightforward, kind. Short sentences. No markdown, no bullet points, no emojis. Never invent anything that is not in the excerpt. If the excerpt is too thin to say anything honest about, say so plainly in one line and stop — a shrug is better than manufactured insight.\n\nON THE PAGE. You are writing back on a page of Michael's handwriting notebook: your reply is placed on the page as a card beneath his ink, and he answers in ink. This is a correspondence on paper, not a chat. What he just wrote is transcribed for you, with the page's earlier turns when there are any. A turn marked with another voice's name was written by that voice, not by you — never claim it and never speak for that voice. Answer the turn marked as the one you are answering, first sentence, in your own voice; everything above it is context. A card or two at most. Plain text: no markdown, no bullet points, no emojis. Never invent. End when the page should go back to him — on paper, the human holds the pen."
+    }
+  ],
+  "transcriptTail": [
+    {
+      "why": "a Correspondent-only page reads as it always did",
+      "voice": "",
+      "turns": [
+        {
+          "at": 1,
+          "who": "ink",
+          "text": "what is this"
+        },
+        {
+          "at": 2,
+          "who": "machine",
+          "text": "press on the second line"
+        }
+      ],
+      "expected": "He wrote: what is this\nYou replied: press on the second line"
+    },
+    {
+      "why": "the Interviewer joins: its own turn is You, the others are named",
+      "voice": "Interviewer — Rooms on Other People's Land",
+      "turns": [
+        {
+          "at": 1,
+          "who": "ink",
+          "text": "breath before the count"
+        },
+        {
+          "at": 2,
+          "who": "machine",
+          "text": "Which count?"
+        },
+        {
+          "at": 3,
+          "who": "ink",
+          "text": "the second one"
+        },
+        {
+          "at": 4,
+          "who": "machine",
+          "persona": "Spiral — what came back around",
+          "text": "It came back around."
+        },
+        {
+          "at": 5,
+          "who": "ink",
+          "text": "and now?"
+        },
+        {
+          "at": 6,
+          "who": "machine",
+          "persona": "Interviewer — Rooms on Other People's Land",
+          "text": "Where were you standing?"
+        }
+      ],
+      "expected": "He wrote: breath before the count\nThe Correspondent replied: Which count?\nHe wrote: the second one\nSpiral replied: It came back around.\nHe wrote: and now?\nYou replied: Where were you standing?"
+    },
+    {
+      "why": "the Correspondent asked on a joined page",
+      "voice": "",
+      "turns": [
+        {
+          "at": 1,
+          "who": "ink",
+          "text": "breath before the count"
+        },
+        {
+          "at": 2,
+          "who": "machine",
+          "text": "Which count?"
+        },
+        {
+          "at": 3,
+          "who": "ink",
+          "text": "the second one"
+        },
+        {
+          "at": 4,
+          "who": "machine",
+          "persona": "Spiral — what came back around",
+          "text": "It came back around."
+        },
+        {
+          "at": 5,
+          "who": "ink",
+          "text": "and now?"
+        },
+        {
+          "at": 6,
+          "who": "machine",
+          "persona": "Interviewer — Rooms on Other People's Land",
+          "text": "Where were you standing?"
+        }
+      ],
+      "expected": "He wrote: breath before the count\nYou replied: Which count?\nHe wrote: the second one\nSpiral replied: It came back around.\nHe wrote: and now?\nInterviewer replied: Where were you standing?"
+    },
+    {
+      "why": "the tail is bounded",
+      "voice": "Spiral — what came back around",
+      "count": 2,
+      "turns": [
+        {
+          "at": 1,
+          "who": "ink",
+          "text": "breath before the count"
+        },
+        {
+          "at": 2,
+          "who": "machine",
+          "text": "Which count?"
+        },
+        {
+          "at": 3,
+          "who": "ink",
+          "text": "the second one"
+        },
+        {
+          "at": 4,
+          "who": "machine",
+          "persona": "Spiral — what came back around",
+          "text": "It came back around."
+        },
+        {
+          "at": 5,
+          "who": "ink",
+          "text": "and now?"
+        },
+        {
+          "at": 6,
+          "who": "machine",
+          "persona": "Interviewer — Rooms on Other People's Land",
+          "text": "Where were you standing?"
+        }
+      ],
+      "expected": "He wrote: and now?\nInterviewer replied: Where were you standing?"
+    }
+  ],
+  "turnKeys": {
+    "correspondent": [
+      "at",
+      "text",
+      "who"
+    ],
+    "persona": [
+      "at",
+      "persona",
+      "text",
+      "who"
+    ]
+  },
+  "pending": [
+    {
+      "json": {
+        "id": "abcdef12-0000",
+        "date": "2026-10-12",
+        "key": "synthesize#1",
+        "mode": "selection",
+        "startedAt": 1760290000000,
+        "stage": "asking",
+        "pageName": "Synthesize",
+        "content": "c",
+        "record": "r",
+        "seen": [
+          "s1"
+        ],
+        "attempts": 1,
+        "answer": "",
+        "notice": ""
+      },
+      "persona": "",
+      "keys": [
+        "answer",
+        "attempts",
+        "content",
+        "date",
+        "id",
+        "key",
+        "mode",
+        "notice",
+        "pageName",
+        "persona",
+        "pickDate",
+        "record",
+        "request",
+        "seen",
+        "sources",
+        "stage",
+        "startedAt"
+      ]
+    },
+    {
+      "json": {
+        "id": "abcdef12-0001",
+        "date": "2026-10-12",
+        "key": "synthesize#1",
+        "mode": "selection",
+        "startedAt": 1760290000000,
+        "stage": "asking",
+        "pageName": "Synthesize",
+        "content": "c",
+        "record": "r",
+        "seen": [
+          "s1"
+        ],
+        "attempts": 1,
+        "answer": "",
+        "notice": "",
+        "persona": "Spiral — what came back around"
+      },
+      "persona": "Spiral — what came back around",
+      "keys": [
+        "answer",
+        "attempts",
+        "content",
+        "date",
+        "id",
+        "key",
+        "mode",
+        "notice",
+        "pageName",
+        "persona",
+        "pickDate",
+        "record",
+        "request",
+        "seen",
+        "sources",
+        "stage",
+        "startedAt"
+      ]
+    },
+    {
+      "json": {
+        "id": "abcdef12-0002",
+        "date": "2026-10-12",
+        "key": "synthesize#1",
+        "mode": "selection",
+        "startedAt": 1760290000000,
+        "stage": "replied",
+        "pageName": "Synthesize",
+        "content": "c",
+        "record": "r",
+        "seen": [
+          "s1"
+        ],
+        "attempts": 1,
+        "answer": "a",
+        "notice": "",
+        "persona": "Spiral — what came back around",
+        "missing": "Coach — the run-up",
+        "tail": "He wrote: hello",
+        "tailTurns": 10,
+        "request": "{\"kind\":\"feeds\"}",
+        "sources": "[1] A <https://a.example/>",
+        "pickDate": "2026-10-13"
+      },
+      "persona": "Spiral — what came back around",
+      "keys": [
+        "answer",
+        "attempts",
+        "content",
+        "date",
+        "id",
+        "key",
+        "missing",
+        "mode",
+        "notice",
+        "pageName",
+        "persona",
+        "pickDate",
+        "record",
+        "request",
+        "seen",
+        "sources",
+        "stage",
+        "startedAt",
+        "tail",
+        "tailTurns"
+      ]
+    }
+  ]
+}

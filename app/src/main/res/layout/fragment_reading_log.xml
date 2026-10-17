@@ -36,7 +36,7 @@
         <ImageButton
             android:id="@+id/goto_button"
             android:src="@drawable/ic_menu"
-            android:background="?attr/selectableItemBackgroundBorderless"
+            android:background="@drawable/eink_press_bg"
             android:scaleType="fitCenter" android:padding="3dp"
             android:layout_marginEnd="4dp"
             android:contentDescription="@string/go_to_title"
@@ -139,20 +139,20 @@
             android:layout_width="wrap_content" android:layout_height="44dp"/>
         <ImageButton android:id="@+id/gram_button" android:layout_width="44dp" android:layout_height="44dp"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_add"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/gram_capture_title"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/gram_capture_title"/>
         <ImageButton android:id="@+id/export_button" android:layout_width="44dp" android:layout_height="44dp"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_share"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reading_log_export"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/reading_log_export"/>
         <!-- Nav group on the far right: ‹up · ☀ today/menu · down›. -->
         <ImageButton android:id="@+id/reading_page_up" android:layout_width="46dp" android:layout_height="44dp"
             android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_up"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_prev"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/reader_prev"/>
         <ImageButton android:id="@+id/reading_goto" android:layout_width="46dp" android:layout_height="44dp"
             android:padding="10dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_today"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/go_to_title"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/go_to_title"/>
         <ImageButton android:id="@+id/reading_page_down" android:layout_width="46dp" android:layout_height="44dp"
             android:padding="9dp" android:scaleType="fitCenter" android:src="@drawable/ic_nav_down"
-            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/reader_next"/>
+            android:background="@drawable/eink_press_bg" android:contentDescription="@string/reader_next"/>
     </LinearLayout>
 
 </FrameLayout>

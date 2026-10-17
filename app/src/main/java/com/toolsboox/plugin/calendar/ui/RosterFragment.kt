@@ -170,7 +170,7 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
             val loc = Locale.getDefault()
             val anchor = date
             val (day, pat) = withContext(Dispatchers.IO) {
-                val cd = runCatching { calendarDayService.load(root, anchor, null, loc) }.getOrNull()
+                val cd = runCatching { calendarDayService.loadForDisplay(root, anchor, null, loc) }.getOrNull()
                     ?: com.toolsboox.plugin.calendar.da.v2.CalendarDay(
                         anchor.year, anchor.monthValue, anchor.dayOfMonth, startHour = null)
                 cd to runCatching { calendarPatternService.load(root, anchor, loc) }.getOrNull()
@@ -291,20 +291,54 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
 
     private fun renderLoading() {
         content.removeAllViews()
+        siteChip()?.let { content.addView(it) }
         content.addView(TextView(requireContext()).apply {
             text = "Loading…"; setTextColor(Color.parseColor("#666666"))
             setPadding(px(20), px(24), px(20), px(20))
         })
     }
 
+    /**
+     * THE SITE CHIP — "🌐 site ▾" at the top of the roster (Michael, 09-14: "the event attendees
+     * section does not give me an easy way to switch sites"): the Messages chip's grammar, the
+     * iOS roster's SiteAffinityChip twin. Hidden with a single configured site. Switching here
+     * re-points THIS surface only (SiteAffinity, ROSTER); every other surface stays put.
+     */
+    private fun siteChip(): View? {
+        val ctx = context ?: return null
+        val sites = com.toolsboox.plugin.calendar.nw.SiteStore.all(ctx)
+        if (sites.size < 2) return null
+        val current = rosterSite()
+        return TextView(ctx).apply {
+            text = "🌐  ${current?.display ?: "Choose a site"}   ▾"
+            textSize = 14f; setTextColor(Color.parseColor("#2F6F96"))
+            setPadding(px(20), px(8), px(20), px(4))
+            setOnClickListener {
+                val labels = sites.map { it.display }.toTypedArray()
+                val cur = sites.indexOfFirst { it.id == current?.id }.coerceAtLeast(0)
+                androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                    .setTitle("Event attendees on…")
+                    .setSingleChoiceItems(labels, cur) { d, which ->
+                        d.dismiss()
+                        com.toolsboox.plugin.calendar.nw.SiteAffinity.remember(
+                            ctx, com.toolsboox.plugin.calendar.nw.SiteRouting.ROSTER, sites[which].id)
+                        load()
+                    }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+            }
+        }
+    }
+
     private fun render() {
         val ctx = requireContext()
         content.removeAllViews()
+        siteChip()?.let { content.addView(it) }
         if (attendees.isEmpty()) {
             content.addView(TextView(ctx).apply {
                 text = if (wideWindow())
-                    "Nobody's booked in this $navPeriod, or the site bridge isn't reachable."
-                else "Nobody's booked on $dateStr, or the site bridge isn't reachable."
+                    "Nobody's booked in this $navPeriod, or the site isn't answering."
+                else "Nobody's booked on $dateStr, or the site isn't answering."
                 setTextColor(Color.parseColor("#666666")); textSize = 15f
                 setPadding(px(20), px(24), px(20), px(20))
             })
@@ -612,16 +646,19 @@ class RosterFragment @Inject constructor() : ScreenFragment() {
     private fun persistGramToToday(att: Attachment) {
         val ctx = requireContext()
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
+            val ok = withContext(Dispatchers.IO) {
                 runCatching {
                     val root = com.toolsboox.ot.LedgerPaths.documentsRoot(ctx)
                     val today = LocalDate.now()
-                    val day = calendarDayService.load(root, today, null, Locale.getDefault())
-                    day.avGrams.add(att)
-                    calendarDayService.save(root, today, day)
-                }
+                    com.toolsboox.plugin.calendar.ot.DayLocks.withDay(today) {
+                        // Throws rather than save a fresh day over a today-file that won't read.
+                        val day = calendarDayService.loadForWriteOrThrow(root, today, null, Locale.getDefault())
+                        day.avGrams.add(att)
+                        calendarDayService.save(root, today, day)
+                    }
+                }.onFailure { timber.log.Timber.w(it, "roster: A/V gram not written to today") }.isSuccess
             }
-            if (isAdded) toast("Recorded")
+            if (isAdded) toast(if (ok) "Recorded" else "Recorded, but today's page won't read — not added to it")
         }
     }
 

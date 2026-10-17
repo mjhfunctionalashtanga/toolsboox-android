@@ -23,6 +23,9 @@ import java.time.LocalDate
  * Non-URL text in the Educate Me panel is valid on its own and is sent as a
  * text-only submission. Delivered markers on the data class prevent
  * re-enqueueing unchanged content; the server additionally dedups by URL.
+ * Dispatch only happens when MichaelFilter is connected (a key saved in Settings — see
+ * [MichaelFilterConnector]); without one, filing still saves everything locally and nothing is
+ * queued for MichaelFilter. (The Later List feed [publish] is a separate send, not gated here.)
  */
 /**
  * Canonical form of a URL for tombstone matching: whitespace trimmed, fragment dropped, trailing
@@ -284,13 +287,30 @@ object IntakePageStore {
         // this, a link he removed months ago could never be filed again — the merge would quietly
         // drop it on the next sync and the row would just never appear.
         LaterRemovals.forget(context, url)
-        val entry = listOfNotNull(title?.trim()?.takeIf { it.isNotEmpty() }, url.trim()).joinToString(" — ")
-        val existing = data.typedFor(kind).trim()
-        data.setTypedFor(kind, if (existing.isEmpty()) entry else "$existing\n$entry")
+        // Same lane, same day, same URL: don't append the line twice. A double-tapped share (or a
+        // feed save repeated after the toast faded) used to mint duplicate lines the row builder
+        // then had to dedup on every load. The meta refresh and the rest still run — a second
+        // filing may carry the excerpt/image the first one lacked.
+        val already = ShareTextParser.extractUrls(data.typedFor(kind))
+            .any { canonUrl(it) == canonUrl(url) }
+        if (!already) {
+            val entry = listOfNotNull(title?.trim()?.takeIf { it.isNotEmpty() }, url.trim()).joinToString(" — ")
+            val existing = data.typedFor(kind).trim()
+            data.setTypedFor(kind, if (existing.isEmpty()) entry else "$existing\n$entry")
+        }
         writeMeta(data, url, title, excerpt, image)
         save(context, date, data)
         dispatch(context, date, data)
-        publish(context, kind, url, title ?: "")
+        // LATER MEANS HAVING IT (Michael, 09-19: "if I add a video or podcast to later list… it
+        // should download"). Every Later filing of an audio or video item — a row, the player, a
+        // share from another app — is an ASK: recorded on the synced listen state so every device
+        // fetches its copy, downloaded here at once when the URL is itself a media file, and
+        // otherwise queued until a feed entry supplies the enclosure (LaterMedia.fulfilWanted
+        // back-fills it) or, for a watch page, until the server has made a file of it.
+        if (kind == "listen" || kind == "watch") runCatching {
+            com.toolsboox.plugin.feeds.nw.LaterMedia.askForLater(context, url, title.orEmpty(), image)
+        }
+        if (!already) publish(context, kind, url, title ?: "")
         cacheArticle(context, url)
         if (excerpt.isNullOrBlank() && image.isNullOrBlank()) fetchLinkMeta(context, date, url)
     }
@@ -378,14 +398,28 @@ object IntakePageStore {
         if (!url.startsWith("http")) return
         Thread {
             runCatching {
+                // REDDIT (Michael, 09-13: "when I add a Reddit link to save for later it doesn't
+                // bring up anything except a message bubble image"): reddit.com hands a non-browser
+                // a wall — a page titled "Reddit" with no og: tags at all, or a head so bloated
+                // with inline CSS that the tags sit past any sane snapshot — and its og:image, when
+                // one comes, is the generic snoo balloon. The post's own Atom feed (<post url>.rss)
+                // answers plainly: title, body, author, and the media thumbnail. Share links
+                // (/r/x/s/…) redirect to the post first.
+                RedditCard.fetch(okHttp, url)?.let { card ->
+                    val data = load(context, date)
+                    writeMeta(data, url, card.title, card.excerpt, card.image)
+                    save(context, date, data)
+                    return@Thread
+                }
                 val req = okhttp3.Request.Builder().url(url)
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 11) LedgerReader/1.0")
                     .get().build()
                 okHttp.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@Thread
-                    // The og: tags live in <head>; the first 64K is plenty and keeps this light.
+                    // The og: tags live in <head>. 512K, not 64K: the modern giants (Reddit,
+                    // Substack) inline hundreds of KB of CSS before the first <meta>.
                     val head = resp.body?.source()?.let { s ->
-                        s.request(65536); s.buffer.snapshot().utf8()
+                        s.request(524288); s.buffer.snapshot().utf8()
                     }.orEmpty()
                     fun og(prop: String): String? =
                         Regex("""<meta[^>]+(?:property|name)=["']og:$prop["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
@@ -394,7 +428,8 @@ object IntakePageStore {
                                 .find(head)?.groupValues?.get(1)
                     val title = og("title")
                     val desc = og("description")
-                    val image = og("image")
+                    // A site's generic logo is not a picture of the page — no card wants it.
+                    val image = og("image")?.takeUnless { RedditCard.isGenericImage(it) }
                     if (title.isNullOrBlank() && desc.isNullOrBlank() && image.isNullOrBlank()) return@Thread
                     val decoded = fun(s: String?): String? = s?.let {
                         android.text.Html.fromHtml(it, android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim()
@@ -419,9 +454,22 @@ object IntakePageStore {
     private fun articleCacheFile(context: Context, url: String): File =
         File(articleCacheDir(context), com.toolsboox.ot.CryptoUtils.md5Hash(url.trim().toByteArray()) + ".html")
 
-    /** The cached readable copy of a filed link, or null when never fetched. */
-    fun cachedArticle(context: Context, url: String): String? =
-        articleCacheFile(context, url).takeIf { it.exists() }?.readText()?.takeIf { it.isNotBlank() }
+    /** A readable article is kilobytes. Anything past this is not an article — a video or an
+     *  archive that answered a link with the wrong content type — and reading it whole killed
+     *  the app (09-14, B6: OutOfMemoryError on a 134 MB "article" while the Later list loaded). */
+    private const val ARTICLE_CACHE_MAX_BYTES = 4L * 1024 * 1024
+
+    /** The cached readable copy of a filed link, or null when never fetched. An oversized
+     *  cache file is deleted, not read — see [ARTICLE_CACHE_MAX_BYTES]. */
+    fun cachedArticle(context: Context, url: String): String? {
+        val f = articleCacheFile(context, url)
+        if (!f.exists()) return null
+        if (f.length() > ARTICLE_CACHE_MAX_BYTES) {
+            timber.log.Timber.w("later cache: dropping %d-byte non-article for %s", f.length(), url)
+            f.delete(); return null
+        }
+        return runCatching { f.readText() }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
 
     /** Fetch + readability-strip the page in the background and cache it (idempotent). */
     fun cacheArticle(context: Context, url: String) {
@@ -430,12 +478,30 @@ object IntakePageStore {
         if (file.exists()) return
         Thread {
             runCatching {
+                // Reddit's HTML is a wall to us (see fetchLinkMeta); the post's Atom feed carries
+                // the body, so the reader gets the post itself, not a "Reddit" login page.
+                RedditCard.fetch(okHttp, url)?.let { card ->
+                    if (card.bodyHtml.isNotBlank()) {
+                        file.writeText("<h1>${android.text.Html.escapeHtml(card.title.orEmpty())}</h1>" +
+                            (card.image?.let { "<p><img src=\"$it\" alt=\"\"></p>" } ?: "") + card.bodyHtml)
+                        return@Thread
+                    }
+                }
                 val req = okhttp3.Request.Builder().url(url)
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 11) LedgerReader/1.0")
                     .get().build()
                 okHttp.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@Thread
-                    var html = resp.body?.string().orEmpty()
+                    val rb = resp.body ?: return@Thread
+                    // Only text may become an article, and only a bounded amount of it: a link
+                    // that answers with a video or a zip is not cached at all, and a page bigger
+                    // than the cap is cut off rather than read whole (the 09-14 OOM).
+                    val ct = rb.contentType()
+                    if (ct != null && ct.type != "text" && !(ct.type == "application" && (ct.subtype.contains("html") || ct.subtype.contains("xml")))) return@Thread
+                    if (rb.contentLength() > ARTICLE_CACHE_MAX_BYTES) return@Thread
+                    val src = rb.source()
+                    val bounded = !src.request(ARTICLE_CACHE_MAX_BYTES + 1)
+                    var html = if (bounded) src.readUtf8() else src.buffer.readUtf8(ARTICLE_CACHE_MAX_BYTES)
                     html = html
                         .replace(Regex("(?is)<script.*?</script>"), "")
                         .replace(Regex("(?is)<style.*?</style>"), "")
@@ -514,6 +580,12 @@ object IntakePageStore {
      * @return the number of newly enqueued submissions
      */
     fun dispatch(context: Context, date: LocalDate, data: IntakePageData): Int {
+        // MichaelFilter is a Settings connector: with no key saved, nothing is queued for it. The
+        // filing itself (the Later List line, the day page) is already saved by the caller and is
+        // untouched. The delivered markers stay unset, so if a key is saved later the same day the
+        // next dispatch of this page still sends today's links.
+        if (!MichaelFilterConnector.isConnected(context)) return 0
+
         var enqueued = 0
 
         for ((kindKey, _) in PANELS) {

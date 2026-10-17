@@ -1,0 +1,81 @@
+{
+  "about": "The day-file guard's words, one table for both apps (2026-10-16 review of the guard merge, items 1, 6 and 9). A refusal is \"Couldn't <doing> — <page> won't read\", the page named from the day that refused (Android CalendarDayService.refusal / iOS DayFileWords.couldnt). Android runs these in DayGuardWordsGoldenTest; iOS runs the same cases. Strings compare exactly.",
+  "synth": [
+    {
+      "fn": "replyKept",
+      "place": "Synthesize",
+      "day": "2020-01-02",
+      "expected": "❖ Couldn't write back on Synthesize — the Jan 2, 2020 page won't read. The reply is kept; it lands once the page reads."
+    },
+    {
+      "fn": "replyKept",
+      "place": "Hip hinge · page 2",
+      "day": "2020-01-02",
+      "expected": "❖ Couldn't write back on Hip hinge · page 2 — the Jan 2, 2020 page won't read. The reply is kept; it lands once the page reads."
+    },
+    {
+      "fn": "citedCardsKept",
+      "day": "2020-01-02",
+      "expected": "❖ Couldn't add the cited cards — the Jan 2, 2020 page won't read. They're kept and land once it does."
+    },
+    {
+      "fn": "driveByRefused",
+      "day": "2020-01-02",
+      "expected": "❖ Couldn't write back — the Jan 2, 2020 page won't read"
+    }
+  ],
+  "marks": [
+    {
+      "site": "highlight",
+      "expected": "Couldn't write on today — its page won't read"
+    },
+    {
+      "site": "logLine",
+      "doing": "log it",
+      "day": "2020-01-02",
+      "expected": "Couldn't log it — the Jan 2, 2020 page won't read"
+    },
+    {
+      "site": "changeLine",
+      "doing": "change the line",
+      "day": "2020-01-02",
+      "expected": "Couldn't change the line — the Jan 2, 2020 page won't read"
+    },
+    {
+      "site": "changePick",
+      "doing": "change the pick",
+      "day": "2020-01-02",
+      "expected": "Couldn't change the pick — the Jan 2, 2020 page won't read"
+    },
+    {
+      "site": "lineOff",
+      "doing": "take the line off",
+      "day": "2020-01-02",
+      "expected": "Couldn't take the line off — the Jan 2, 2020 page won't read"
+    },
+    {
+      "site": "pickOff",
+      "doing": "take the pick off",
+      "day": "2020-01-02",
+      "expected": "Couldn't take the pick off — the Jan 2, 2020 page won't read"
+    },
+    {
+      "site": "copyToTodaysNote",
+      "doing": "put it on today's note",
+      "day": "2020-01-02",
+      "expected": "Couldn't put it on today's note — the Jan 2, 2020 page won't read"
+    }
+  ],
+  "replies": [
+    {
+      "site": "logBasket",
+      "expected": "Couldn't write on today — its page won't read"
+    },
+    {
+      "site": "starReply",
+      "doing": "keep the reply",
+      "day": "2020-01-02",
+      "expected": "Couldn't keep the reply — the Jan 2, 2020 page won't read"
+    }
+  ]
+}

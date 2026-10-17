@@ -72,6 +72,9 @@ object LedgerSendExport {
         val surface: String = "Ledger",
         val date: java.time.LocalDate? = null,
         val pageKey: String? = null,
+        /** The page's element-carried provenance — its grams' `sourceLink` doors. A Gram Picks
+         *  page has no text; this list IS its citation list (see [LedgerProvenance.of]). */
+        val links: List<String> = emptyList(),
     )
 
     /**
@@ -80,6 +83,15 @@ object LedgerSendExport {
      * carrying reply provenance, whose whole reason to exist is "↩ Send as reply to <sender>";
      * offering seven destinations first would bury the door the piece was minted for.
      */
+    /** The page's TEXT-side doors — Ask · Plain text · Markdown · Linked PDF — as rows another
+     *  sheet can seat (the notes room's one verb sheet does, 09-13). */
+    fun fileRows(fragment: ScreenFragment, payload: Payload): List<Pair<String, () -> Unit>> = listOf(
+        "🔎  Ask my Ledger about this" to { askAboutThis(fragment, payload) },
+        "📝  Plain text" to { sharePlainText(fragment, payload) },
+        "📄  Markdown file" to { shareMarkdownFile(fragment, payload) },
+        "🔗  Linked PDF" to { shareLinkedPdf(fragment, payload) },
+    )
+
     fun show(fragment: ScreenFragment, payload: Payload, lead: List<Pair<String, () -> Unit>> = emptyList()) {
         val ctx = fragment.requireContext()
         val boards = LedgerWebBridge.config(ctx)
@@ -100,16 +112,13 @@ object LedgerSendExport {
         // That last one is the point. A handwritten page becomes askable, which is a thing no other
         // route into Ask can do: every other caller of the bridge starts from a text selection that
         // was already text.
-        rows.add("🔎  Ask my Ledger about this" to { askAboutThis(fragment, payload) })
-        rows.add("📝  Plain text" to { sharePlainText(fragment, payload) })
         // The text sibling of PNG and Linked PDF: a real `.md` on disk rather than EXTRA_TEXT.
         // "Plain text" hands the words to the chooser as an extra, which most destinations paste
         // into a body with no name attached — fine for a message, useless for filing. A file
         // arrives as the page, named after it, which is the whole point of exporting one. (The
         // iPad's Text Notes has had this and its making surfaces had not; now both have both.)
-        rows.add("📄  Markdown file" to { shareMarkdownFile(fragment, payload) })
+        rows.addAll(fileRows(fragment, payload))
         rows.add("🖼  PNG" to { sharePng(fragment, payload) })
-        rows.add("🔗  Linked PDF" to { shareLinkedPdf(fragment, payload) })
 
         // The three site destinations need creds. Offering a row that can only ever say "not
         // configured" is how a menu teaches you to distrust it, so they appear only when they work.
@@ -415,7 +424,7 @@ object LedgerSendExport {
                 tagged = !wantsSyndication || tags.isNotEmpty()
                 WPPublish.save(ctx, WPPublish.Draft(
                     title = payload.title.ifBlank { "Untitled" },
-                    content = htmlBody(text),
+                    content = htmlBody(text) + sourcesHtml(payload, text),
                     status = if (publish) "publish" else "draft",
                     tags = tags,
                     featuredMedia = media,
@@ -476,6 +485,25 @@ object LedgerSendExport {
      * unless something makes it a link. The same job the PDF's annotations do, in the medium that
      * has an easier answer for it.
      */
+    /**
+     * The post's provenance as HTML — every door the page carries, its grams' `sourceLink`s first,
+     * then any link the text itself holds. UNCAPPED, unlike the picture stamp's eight: the stamp
+     * is a caption under an image, but a published page can afford its full citation list, and a
+     * Gram Picks publish is nothing BUT this list ("does it link out to all of the provenance?" —
+     * the 08-15 page). Empty string when the page has no doors, so ordinary posts are untouched.
+     */
+    private fun sourcesHtml(payload: Payload, text: String): String {
+        val textLinks = Regex("""https?://\S+""").findAll(text)
+            .map { it.value.trimEnd('.', ',', ')', ']', '>', ';', '"', '\'') }.toList()
+        val links = (payload.links + textLinks).filter { it.startsWith("http") }.distinct()
+        if (links.isEmpty()) return ""
+        val items = links.joinToString("") {
+            val safe = it.replace("&", "&amp;").replace("\"", "&quot;")
+            "<li><a href=\"$safe\">$safe</a></li>"
+        }
+        return "\n<h3>Sources</h3>\n<ul>$items</ul>"
+    }
+
     private fun htmlBody(text: String): String {
         if (text.isBlank()) return ""
         val linked = Regex("""https?://\S+""").replace(text) { m ->
@@ -527,7 +555,8 @@ object LedgerSendExport {
      *  a handwritten page through the vision model twice for one export. */
     private fun provenanceOf(context: Context, payload: Payload, text: String): LedgerProvenance.Stamp =
         LedgerProvenance.of(
-            context, payload.surface, payload.date, payload.pageKey, payload.title, text
+            context, payload.surface, payload.date, payload.pageKey, payload.title, text,
+            elementLinks = payload.links
         )
 
     /**

@@ -130,7 +130,7 @@ class SemanticNavBar(
             val root = documentsRoot()
             val loc = Locale.getDefault()
             val (day, pat) = withContext(Dispatchers.IO) {
-                val cd = runCatching { dayService.load(root, anchor, null, loc) }.getOrNull()
+                val cd = runCatching { dayService.loadForDisplay(root, anchor, null, loc) }.getOrNull()
                     ?: CalendarDay(anchor.year, anchor.monthValue, anchor.dayOfMonth, startHour = null)
                 cd to runCatching { patternService.load(root, anchor, loc) }.getOrNull()
             }

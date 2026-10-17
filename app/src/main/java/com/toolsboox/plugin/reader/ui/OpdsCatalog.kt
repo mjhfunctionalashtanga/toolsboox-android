@@ -77,11 +77,19 @@ object OpdsCatalog {
         }
     }
 
-    data class Feed(val title: String, val entries: List<Entry>)
+    /** [searchTemplate]: the catalog's OpenSearch template (`…/search/{searchTerms}`) when it offers
+     *  one at the feed level — Calibre and Komga both do. Null = filter what is on screen. */
+    data class Feed(val title: String, val entries: List<Entry>, val searchTemplate: String? = null)
 
     // ── Settings ──────────────────────────────────────────────────────────────────────────────
 
     data class Config(val url: String, val user: String, val pass: String)
+
+    /** Put a scheme on an address that has none — see [config] for why this exists. */
+    fun withScheme(url: String): String {
+        val u = url.trim()
+        return if (u.isBlank() || u.contains("://")) u else "https://$u"
+    }
 
     private fun prefs(context: Context) =
         androidx.security.crypto.EncryptedSharedPreferences.create(
@@ -112,7 +120,18 @@ object OpdsCatalog {
             .ifBlank { carried?.optString("url").orEmpty().trim() }
         if (url.isBlank()) return@runCatching null
         Config(
-            url,
+            // A CATALOG ADDRESS TYPED THE WAY A PERSON TYPES ONE.
+            //
+            // Michael, 2026-08-24: the globe "says 'no protocol for books.mjh.yoga'". That message
+            // comes from java.net.URL, which refuses anything without a scheme — and nobody types
+            // "https://" into a field that is asking for their own server. The address was saved
+            // exactly as entered and only failed later, at the fetch, with a Java exception for a
+            // sentence.
+            //
+            // https, not http: this is a credentialed catalog (user + password ride the same
+            // config), and quietly defaulting a login to cleartext would be the wrong guess to make
+            // on someone's behalf. A catalog that genuinely needs http can still say so by typing it.
+            withScheme(url),
             p.getString("opds_user", "").orEmpty().ifBlank { carried?.optString("user").orEmpty() },
             p.getString("opds_pass", "").orEmpty().ifBlank { carried?.optString("pass").orEmpty() },
         )
@@ -128,7 +147,10 @@ object OpdsCatalog {
     fun save(context: Context, url: String, user: String, pass: String) {
         runCatching {
             prefs(context).edit()
-                .putString("opds_url", url.trim())
+                // Normalised on the way IN as well, so the saved value and the fetched value are
+                // the same string — otherwise the settings field shows one address and the
+                // catalog uses another.
+                .putString("opds_url", withScheme(url))
                 .putString("opds_user", user.trim())
                 .putString("opds_pass", pass)
                 .apply()
@@ -185,7 +207,22 @@ object OpdsCatalog {
                 404 -> throw OpdsException("The catalog had nothing at that address.")
                 else -> throw OpdsException("The catalog answered ${conn.responseCode}.")
             }
-            return conn.inputStream.use { parse(it) }
+            // A 200 is not yet a catalog. A wrong sign-in doesn't always 401: Calibre-Web
+            // REDIRECTS to its login page, redirects are followed, and the login page is a
+            // 200 of HTML — which the XML parser then reported as "At line 1, column 91:
+            // not well formed, invalid token" (Michael's 08-17 #OPDS note, verbatim). Sniff
+            // the head: a catalog opens with XML; a page of HTML gets the fixable sentence.
+            val bytes = conn.inputStream.use { it.readBytes() }
+            val head = String(bytes, 0, minOf(bytes.size, 200), Charsets.UTF_8)
+                .trimStart('﻿', ' ', '\n', '\r', '\t').lowercase()
+            if (!head.startsWith("<?xml") && !head.startsWith("<feed")) {
+                throw OpdsException(
+                    if ("<html" in head || "<!doctype" in head)
+                        "That address answered with a web page (probably its sign-in screen) — " +
+                            "check the username and password, and that the URL ends with /opds."
+                    else "That address didn't answer with a catalog — check the URL.")
+            }
+            return bytes.inputStream().use { parse(it) }
         } finally {
             runCatching { conn.disconnect() }
         }
@@ -255,6 +292,7 @@ object OpdsCatalog {
         var inAuthor = false
         var id = ""; var title = ""; var author = ""; var summary = ""
         var links = mutableListOf<Link>()
+        var searchTemplate: String? = null
         val text = StringBuilder()
 
         val handler = object : DefaultHandler() {
@@ -274,6 +312,10 @@ object OpdsCatalog {
                         if (!href.isNullOrBlank()) {
                             links += Link(a.getValue("rel"), href, a.getValue("type"))
                         }
+                    } else {
+                        // A feed-level search link: the template form is what we can use directly.
+                        val href = a.getValue("href").orEmpty()
+                        if ((a.getValue("rel") ?: "").contains("search") && href.contains("{searchTerms}")) searchTemplate = href
                     }
                 }
             }
@@ -314,7 +356,7 @@ object OpdsCatalog {
             runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
         }.newSAXParser().parse(input, handler)
 
-        return Feed(feedTitle, entries)
+        return Feed(feedTitle, entries, searchTemplate)
     }
 
     /** Calibre-Web puts HTML in `content`; the shelf shows one plain line. */

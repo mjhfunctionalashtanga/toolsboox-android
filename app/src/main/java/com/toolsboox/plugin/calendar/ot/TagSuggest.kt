@@ -48,7 +48,7 @@ object TagSuggest {
                     "is OCR'd handwriting and may contain recognition errors — read past them. Tag " +
                     "it for the threads running through it, the way you'd label a page you meant to " +
                     "find again. Ignore dates, times, and to-do scaffolding."
-                is Board -> "This is a Pickings board named “$name” — a collection of quotes, " +
+                is Board -> "This is a Pickings note named “$name” — a collection of quotes, " +
                     "clippings and images the reader gathered together. Tag what the COLLECTION is " +
                     "about, the thread that made these belong side by side. Do not tag individual items."
                 is Note -> "This is a written note titled “$title”. Tag it for its subject — what the " +

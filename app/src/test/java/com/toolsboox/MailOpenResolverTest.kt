@@ -59,4 +59,16 @@ class MailOpenResolverTest {
         val two = held + "acct:android-b:uid:4711"
         assertEquals("acct:android-b:uid:4711", MailOpenResolver.resolve("acct:android-b:uid:4711", two))
     }
+
+    @Test
+    fun `a Junk letter and an Inbox letter never stand in for each other`() {
+        // Junk uids number the Junk folder, Inbox uids the INBOX: the same digits are unrelated
+        // letters (review 2026-10-11), so the tail only matches within its own kind.
+        val withJunk = held + "junk:android-a:uid:777"
+        assertNull(MailOpenResolver.resolve("junk:ipad-x:uid:4711", held))
+        assertNull(MailOpenResolver.resolve("acct:ipad-x:uid:777", withJunk))
+        // Junk to Junk still finds it across the two devices' account spellings (iOS's ids).
+        assertEquals("junk:android-a:uid:777", MailOpenResolver.resolve("junk:ipad-x:uid:777", withJunk))
+        assertEquals("junk:android-a:uid:777", MailOpenResolver.resolve("junk:android-a:uid:777", withJunk))
+    }
 }

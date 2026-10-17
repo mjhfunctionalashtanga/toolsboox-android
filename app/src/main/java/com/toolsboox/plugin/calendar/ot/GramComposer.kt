@@ -90,8 +90,15 @@ object GramComposer {
      * so a composed page is indistinguishable from one you started by hand, appears in the
      * directory, and can be renamed, untitled or forgotten like any other.
      *
-     * Returns null when the template is not one of the page templates, or when there is nothing to
-     * compose. Callers show their own message; composing an empty page would just be litter.
+     * Returns null when the template is not one of the page templates, when there is nothing to
+     * compose, or when the note could not be minted. Callers show their own message; composing an
+     * empty page would just be litter.
+     *
+     * THROWS [CalendarDayService.UnreadableDayException] when the day file is there but won't read:
+     * nothing is written and no board is minted (see the lock below). A throw, not a null, so the
+     * callers' existing failure paths carry the real reason — the null used to come out the other
+     * end as "check storage" or "couldn't start a board", and [CalendarDayService.refusal] turns
+     * this into the sentence to show.
      */
     fun compose(
         context: Context,
@@ -108,7 +115,6 @@ object GramComposer {
         // Text notes have no canvas to place anything on — composing into one would silently drop
         // every gram and connector. A caller asking for that has made a mistake worth failing on.
         if (template == LedgerDocuments.TEXT_NOTES) return null
-        val note = LedgerDocuments.startNote(context, template, title, date) ?: return null
 
         val placed = placements(nodes, layout)
         val byRef = placed.associateBy { it.node.ref }
@@ -116,60 +122,84 @@ object GramComposer {
         // Load → mutate → save under the day lock, exactly like gram placement: a compose is a
         // multi-element write and the open page saves on every pen-up, so an unlocked writer here
         // would interleave with it and lose objects.
-        DayLocks.withDay(date) {
-            val day = service.load(root, date, null, Locale.getDefault())
-            val stamp = System.currentTimeMillis()
-
-            // Connectors go down FIRST so the grams sit on top of them — a line that crosses over
-            // a card reads as a scribble, a line that runs under it reads as an attachment.
-            val ink = day.noteStrokes[note.key].orEmpty().toMutableList()
-            for (edge in edges) {
-                val a = byRef[edge.from] ?: continue
-                val b = byRef[edge.to] ?: continue
-                ink += connector(a, b, stamp)
-                if (edge.label.isNotBlank()) {
-                    day.textElements += TextElement(
-                        x = (a.cx + b.cx) / 2f - 90f, y = (a.cy + b.cy) / 2f - 16f,
-                        width = 180f, height = 34f, text = edge.label,
-                        fontSize = 19f, pageKey = note.key, timestamp = stamp,
-                    )
-                }
+        //
+        // The board is minted INSIDE the lock, after the day has read: a day file that won't read
+        // refuses the compose (loadForWriteOrThrow throws), and minting first used to leave an empty
+        // "Pickings 3" / "Jot 2" in the directory every time the compose then failed (the -322
+        // harvests, whose bare service could read no day). A save that throws takes its board with
+        // it where the store can forget one.
+        return DayLocks.withDay(date) compose@{
+            val day = service.loadForWriteOrThrow(root, date, null, Locale.getDefault())
+            val note = LedgerDocuments.startNote(context, template, title, date) ?: return@compose null
+            try {
+                writeInto(day, note, placed, byRef, edges, layout)
+                day.updated = java.util.Date()
+                service.save(root, date, day)
+            } catch (t: Throwable) {
+                if (LedgerDocuments.canDelete(template))
+                    runCatching { LedgerDocuments.forget(context, template, note.key, note.date) }
+                throw t
             }
-            day.noteStrokes[note.key] = ink
-
-            for ((i, p) in placed.withIndex()) {
-                val bmp = p.node.image ?: card(p.node, p.w.toInt(), p.h.toInt(), layout)
-                val baos = ByteArrayOutputStream()
-                bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
-                day.imageElements += ImageElement(
-                    elementId = UUID.randomUUID(), timestamp = stamp,
-                    x = p.x, y = p.y, width = p.w, height = p.h,
-                    // Inline base64 on the way in; the day's save path externalizes anything over
-                    // the 64 KiB threshold into `media/` (LedgerMedia.externalizeDay). Drawn cards
-                    // are a few KB and stay inline, which is what we want for something that is
-                    // regenerable — no reason to grow the media store with rendered labels.
-                    data = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP),
-                    page = note.key,
-                    // The provenance, and the reason any of this is worth doing — blank for a
-                    // node that never had an address.
-                    sourceLink = p.node.link,
-                    sourceLabel = p.node.sourceLabel.ifBlank { p.node.label },
-                    rotation = p.rotation,
-                    z = i,
-                )
-                day.textElements += TextElement(
-                    x = p.x, y = p.y + p.h + 6f, width = p.w, height = if (p.node.note.isBlank()) 40f else 72f,
-                    text = if (p.node.note.isBlank()) p.node.label else "${p.node.label}\n${p.node.note}",
-                    fontSize = 22f, pageKey = note.key, timestamp = stamp,
-                    // Web links stay intact here even though the on-canvas text soft-wraps them.
-                    sourceUrl = p.node.link.takeIf { it.startsWith("http") },
-                )
-            }
-
-            day.updated = java.util.Date()
-            service.save(root, date, day)
+            note
         }
-        return note
+    }
+
+    /** The compose's writes into [day] under [note]'s key — connectors first, then the cards. */
+    private fun writeInto(
+        day: com.toolsboox.plugin.calendar.da.v2.CalendarDay,
+        note: LedgerDocuments.NewNote,
+        placed: List<Spot>,
+        byRef: Map<String, Spot>,
+        edges: List<Edge>,
+        layout: Layout,
+    ) {
+        val stamp = System.currentTimeMillis()
+
+        // Connectors go down FIRST so the grams sit on top of them — a line that crosses over
+        // a card reads as a scribble, a line that runs under it reads as an attachment.
+        val ink = day.noteStrokes[note.key].orEmpty().toMutableList()
+        for (edge in edges) {
+            val a = byRef[edge.from] ?: continue
+            val b = byRef[edge.to] ?: continue
+            ink += connector(a, b, stamp)
+            if (edge.label.isNotBlank()) {
+                day.textElements += TextElement(
+                    x = (a.cx + b.cx) / 2f - 90f, y = (a.cy + b.cy) / 2f - 16f,
+                    width = 180f, height = 34f, text = edge.label,
+                    fontSize = 19f, pageKey = note.key, timestamp = stamp,
+                )
+            }
+        }
+        day.noteStrokes[note.key] = ink
+
+        for ((i, p) in placed.withIndex()) {
+            val bmp = p.node.image ?: card(p.node, p.w.toInt(), p.h.toInt(), layout)
+            val baos = ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
+            day.imageElements += ImageElement(
+                elementId = UUID.randomUUID(), timestamp = stamp,
+                x = p.x, y = p.y, width = p.w, height = p.h,
+                // Inline base64 on the way in; the day's save path externalizes anything over
+                // the 64 KiB threshold into `media/` (LedgerMedia.externalizeDay). Drawn cards
+                // are a few KB and stay inline, which is what we want for something that is
+                // regenerable — no reason to grow the media store with rendered labels.
+                data = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP),
+                page = note.key,
+                // The provenance, and the reason any of this is worth doing — blank for a
+                // node that never had an address.
+                sourceLink = p.node.link,
+                sourceLabel = p.node.sourceLabel.ifBlank { p.node.label },
+                rotation = p.rotation,
+                z = i,
+            )
+            day.textElements += TextElement(
+                x = p.x, y = p.y + p.h + 6f, width = p.w, height = if (p.node.note.isBlank()) 40f else 72f,
+                text = if (p.node.note.isBlank()) p.node.label else "${p.node.label}\n${p.node.note}",
+                fontSize = 22f, pageKey = note.key, timestamp = stamp,
+                // Web links stay intact here even though the on-canvas text soft-wraps them.
+                sourceUrl = p.node.link.takeIf { it.startsWith("http") },
+            )
+        }
     }
 
     // ── Layout ────────────────────────────────────────────────────────────────────────────────

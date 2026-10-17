@@ -6,6 +6,11 @@
     <cache-path name="cards" path="cards/"/>
     <!-- Markdown/CSV highlight & annotation exports handed to the share sheet. -->
     <cache-path name="exports" path="exports/"/>
+    <!-- Mail attachments carved on tap-to-view, opened via ACTION_VIEW / shared onward. -->
+    <cache-path name="mail-att" path="mail-att/"/>
+    <!-- Shared images copied off the sender's grant by the send-from-any-app card (2026-10-10),
+         handed to MainActivity for "On this page…" and ⋯ More. -->
+    <cache-path name="share-in" path="share-in/"/>
     <!-- Photo/voice annotation + A/V-gram media (opened full-screen from History). -->
     <external-files-path name="attachments" path="Documents/attachments/"/>
 </paths>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- An account: the at sign (iOS at), drawn in the family's stroke rather than set in a font, so
+     its weight is every other face's.
+     One panel face family (review 2026-10-11, F5; Michael: "Icons lack design language"): the ink
+     tools' geometry — 256 grid, 16-unit round strokes, outline at rest. Drawn for the room panes'
+     rows (Michael 2026-10-12: monochrome glyphs only — no colour emoji in the Feeds or Mail pane). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="256" android:viewportHeight="256"
+    android:tint="#000000">
+    <path android:pathData="M92,128a36,36 0 1,0 72,0a36,36 0 1,0 -72,0Z"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+    <path android:pathData="M164,92V144c0,20 12,32 30,32c20,0 30,-20 30,-48c0,-53 -43,-96 -96,-96c-53,0 -96,43 -96,96c0,53 43,96 96,96c22,0 40,-6 56,-18"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+</vector>

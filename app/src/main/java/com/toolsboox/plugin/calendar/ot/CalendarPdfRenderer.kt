@@ -191,27 +191,78 @@ object CalendarPdfRenderer {
         }
     }
 
+    // The nib/marker formulas mirror SurfaceFragment's live bake (drawStrokePath and friends) and
+    // must keep in step with it — a rendered card is a picture of the page, and a calligraphy line
+    // that re-renders ballpoint here is how a gram pick stops looking like what was drawn.
+    private const val MARKER_WIDTH_FACTOR = 2.2f
+    private const val MARKER_ALPHA = 165
+    private const val CALLIGRAPHY_MIN_FACTOR = 0.18f
+    private const val CALLIGRAPHY_MAX_FACTOR = 2.8f
+    private const val CALLIGRAPHY_NIB_ANGLE_DEG = 45f
+
     /**
-     * Draw a single stroke as a path on the canvas.
+     * Draw a single stroke as a path on the canvas, honoring the stroke's own ink style —
+     * calligraphy's directional nib, fountain's pressure swell, marker's wide translucent band.
      * Pressure (StrokePoint.p) modulates the stroke width for a more natural look.
      */
     private fun drawStroke(canvas: Canvas, basePaint: Paint, stroke: Stroke) {
         val points = stroke.strokePoints
         if (points.size < 2) return
 
+        when (stroke.inkStyle) {
+            Stroke.STYLE_CALLIGRAPHY -> {
+                val paint = Paint(basePaint).apply { color = stroke.color }
+                val nibRad = CALLIGRAPHY_NIB_ANGLE_DEG * (Math.PI.toFloat() / 180f)
+                for (i in 0 until points.size - 1) {
+                    val a = points[i]
+                    val b = points[i + 1]
+                    val angle = kotlin.math.atan2(b.y - a.y, b.x - a.x)
+                    val across = kotlin.math.abs(kotlin.math.sin(angle - nibRad))
+                    val factor = CALLIGRAPHY_MIN_FACTOR +
+                        (CALLIGRAPHY_MAX_FACTOR - CALLIGRAPHY_MIN_FACTOR) * across
+                    val pAvg = ((a.p + b.p) / 2f).coerceIn(0f, 1f)
+                    paint.strokeWidth = (stroke.strokeWidth * factor * (0.8f + 0.4f * pAvg)).coerceAtLeast(1f)
+                    canvas.drawLine(a.x, a.y, b.x, b.y, paint)
+                }
+            }
+            Stroke.STYLE_FOUNTAIN -> {
+                val paint = Paint(basePaint).apply { color = stroke.color }
+                for (i in 0 until points.size - 1) {
+                    val a = points[i]
+                    val b = points[i + 1]
+                    val pAvg = ((a.p + b.p) / 2f).coerceIn(0f, 1f)
+                    paint.strokeWidth = (stroke.strokeWidth * (0.55f + 0.9f * pAvg)).coerceAtLeast(1f)
+                    canvas.drawLine(a.x, a.y, b.x, b.y, paint)
+                }
+            }
+            Stroke.STYLE_MARKER -> {
+                val paint = Paint(basePaint).apply {
+                    color = if (Color.alpha(stroke.color) < 255) stroke.color
+                    else Color.argb(
+                        MARKER_ALPHA,
+                        Color.red(stroke.color), Color.green(stroke.color), Color.blue(stroke.color))
+                    strokeWidth = stroke.strokeWidth * MARKER_WIDTH_FACTOR
+                }
+                canvas.drawPath(polyline(points), paint)
+            }
+            else -> {
+                val avgPressure = points.map { it.p }.average().toFloat().coerceIn(0.1f, 2.0f)
+                val paint = Paint(basePaint).apply {
+                    color = stroke.color
+                    strokeWidth = stroke.strokeWidth * avgPressure
+                }
+                canvas.drawPath(polyline(points), paint)
+            }
+        }
+    }
+
+    private fun polyline(points: List<com.toolsboox.da.StrokePoint>): Path {
         val path = Path()
         path.moveTo(points[0].x, points[0].y)
         for (i in 1 until points.size) {
             path.lineTo(points[i].x, points[i].y)
         }
-
-        val avgPressure = points.map { it.p }.average().toFloat().coerceIn(0.1f, 2.0f)
-        val paint = Paint(basePaint).apply {
-            color = stroke.color
-            strokeWidth = stroke.strokeWidth * avgPressure
-        }
-
-        canvas.drawPath(path, paint)
+        return path
     }
 
     /**
@@ -286,7 +337,8 @@ object CalendarPdfRenderer {
         return bmp
     }
 
-    private fun drawImageElements(
+    /** Public since 09-04: the day-page widgets paint note minis with it (no fragment there). */
+    fun drawImageElements(
         canvas: Canvas, imageElements: List<ImageElement>, context: android.content.Context? = null
     ) {
         if (imageElements.isEmpty()) return

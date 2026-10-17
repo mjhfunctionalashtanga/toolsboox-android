@@ -12,7 +12,7 @@
     <string name="widget_feed_list_description">Scrollable feed headlines — small thumbnail, title, source and age; each row opens its article</string>
     <string name="widget_mail_list_description">Scrollable inbox — starred first; each row opens its letter</string>
     <string name="widget_task_check_description">Scrollable open tasks with real checkboxes — check one off from the home screen; each row opens its day</string>
-    <string name="widget_daily_pile_description">Everything today gathered — tasks, events, birthdays, grams</string>
+    <string name="widget_daily_pile_description">Everything today gathered — tasks, events, birthdays, picks</string>
     <string name="widget_task_list_description">Today\'s open tasks as checkbox rows, plus the next event</string>
     <string name="widget_all_stars_description">Today\'s stars by band — Read, Watch, Listen, Books, Email</string>
     <string name="widget_blog_description">One tap to write or schedule a blog post</string>
@@ -27,26 +27,26 @@
     <string name="calendar_settings_rotation_landscape_cw">Landscape — clockwise (top tilts right)</string>
     <string name="calendar_settings_rotation_reverse_portrait">Reverse portrait (upside down)</string>
     <string name="calendar_settings_rotation_landscape_ccw">Landscape — counter-clockwise (top tilts left)</string>
-    <string name="widget_full_label">Ledger Full Page</string>
-    <string name="widget_schedule_label">Ledger Schedule</string>
-    <string name="widget_tasks_notes_label">Ledger Tasks &amp; Notes</string>
-    <string name="widget_mail_label">Ledger Mail</string>
-    <string name="widget_feed_label">Ledger Feed</string>
-    <string name="widget_feed_list_label">Ledger Feed List</string>
+    <string name="widget_full_label">Ledgable Full Page</string>
+    <string name="widget_schedule_label">Ledgable Schedule</string>
+    <string name="widget_tasks_notes_label">Ledgable Tasks &amp; Notes</string>
+    <string name="widget_mail_label">Ledgable Mail</string>
+    <string name="widget_feed_label">Ledgable Feed</string>
+    <string name="widget_feed_list_label">Ledgable Feed List</string>
     <string name="widget_feed_list_header">⧉ Feed</string>
     <string name="widget_feed_list_empty">Feed all caught up</string>
-    <string name="widget_mail_list_label">Ledger Mail List</string>
+    <string name="widget_mail_list_label">Ledgable Mail List</string>
     <string name="widget_mail_list_header">✉ Mail</string>
     <string name="widget_mail_list_empty">Inbox clear</string>
-    <string name="widget_task_check_label">Ledger Task Checklist</string>
+    <string name="widget_task_check_label">Ledgable Task Checklist</string>
     <string name="widget_task_check_header">⚡ Tasks</string>
     <string name="widget_task_check_empty">No open tasks</string>
     <string name="widget_task_check_box">☐</string>
-    <string name="widget_daily_pile_label">Ledger Daily Pile</string>
-    <string name="widget_task_list_label">Ledger Task List</string>
-    <string name="widget_all_stars_label">Ledger All Stars</string>
-    <string name="widget_blog_label">Ledger Blog</string>
-    <string name="widget_roster_label">Ledger Event Attendees</string>
+    <string name="widget_daily_pile_label">Ledgable Daily Pile</string>
+    <string name="widget_task_list_label">Ledgable Task List</string>
+    <string name="widget_all_stars_label">Ledgable All Stars</string>
+    <string name="widget_blog_label">Ledgable Blog</string>
+    <string name="widget_roster_label">Ledgable Event Attendees</string>
 
     <string name="validation_field_required">This field is required</string>
     <plurals name="validation_field_too_long">
@@ -97,6 +97,16 @@
 
     <!-- Strings related to about plugin -->
     <string name="about_title">About</string>
+    <string name="about_app_title">Ledgable</string>
+    <string name="about_version_line">Version %1$s</string>
+    <string name="about_update_button">⬇ Download the latest build</string>
+    <string name="about_update_hint">Opens the fleet\'s build address in the browser. When the download finishes, tap it and the installer upgrades in place — nothing on the device is lost.</string>
+    <string name="about_lineage_title">Lineage</string>
+    <string name="about_lineage_message">Ledgable grew from Gábor AUTH\'s open-source Toolsboox project for Boox devices — the fork\'s history carries his work in every file.</string>
+    <string name="about_lineage_link">Upstream:</string>
+    <string name="about_update_toast">You\'re on %1$s — downloading the latest…</string>
+    <!-- Upstream About strings, no longer shown: retained ONLY because locale files still carry
+         their translations and AAPT2 refuses a translation with no default. Do not re-use. -->
     <string name="about_about_me_title">About me</string>
     <string name="about_about_me_message">My name is Gábor AUTH, I\'m an Android developer, and I\'m developing this application to the Onxy Boox devices! :)</string>
     <string name="about_about_me_link">Link:</string>
@@ -143,12 +153,6 @@
     <string name="calendar_google_drive_sync_button_upload">Upload</string>
 
     <string name="calendar_settings_title">Settings</string>
-    <string name="calendar_settings_select_start_view_text">Select the start view of the Calendar:</string>
-    <string name="calendar_settings_start_view_year">Yearly planner</string>
-    <string name="calendar_settings_start_view_quarter">Quarterly planner</string>
-    <string name="calendar_settings_start_view_month">Monthly planner</string>
-    <string name="calendar_settings_start_view_week">Weekly planner</string>
-    <string name="calendar_settings_start_view_day">Daily planner</string>
     <string name="calendar_settings_select_locale_text">Select the locale of the Calendar:</string>
     <string name="calendar_settings_first_day_of_the_week_text">Start day of the week:</string>
     <string name="calendar_settings_first_day_of_the_week_value">Monday</string>
@@ -158,7 +162,7 @@
     <string name="calendar_settings_week_number_of_last_day_value">W52</string>
     <string name="calendar_settings_select_start_hour_text">Select the start hour of daily view:</string>
     <string name="calendar_settings_select_start_hour_empty">Leave empty</string>
-    <string name="calendar_settings_select_note_template_text">Select the template of the notes:</string>
+    <string name="calendar_settings_select_note_template_text">Default template for new pages:</string>
     <string name="calendar_settings_select_note_template_lines">Lines</string>
     <string name="calendar_settings_select_note_template_grid">Grid</string>
     <string name="calendar_settings_button_shortcut">Create shortcut</string>
@@ -172,20 +176,22 @@
          which squares on a planner page are drawn as already-written-on. -->
     <string name="calendar_settings_button_pattern_sync">Rebuild the day marks (3 years)</string>
     <string name="calendar_settings_button_notification_categories">🔔 Notification categories…</string>
+    <string name="calendar_settings_button_update_apk">⬇ Update Ledgable — download the latest build</string>
+    <string name="calendar_settings_button_diagnostics">🩺 Diagnostics…</string>
+    <string name="diagnostics_copy">Copy report</string>
+    <string name="diagnostics_share">Share report…</string>
+    <string name="diagnostics_clear">Clear</string>
     <string name="calendar_settings_pattern_sync_done">Calendar marks updated</string>
-    <!-- "Export backup" / "Import backup" read as a pair and are not one. This button zips ONLY
-         Documents/calendar into the Downloads folder; the restore button below unpacks a FULL
-         ledger zip (every day page, contact, board, clipping, plus the settings JSON) made by the
-         long-press on Export settings. Two different archives, so two labels that say which. -->
+    <!-- Two different archives, so two labels that say which. The whole-ledger pair zips every
+         day page, contact, board, clipping plus the settings JSON to a file you pick, and reads
+         one back; "the calendar only" zips just Documents/calendar into Downloads. -->
+    <string name="calendar_settings_button_backup_full">Back up the whole ledger (.zip)…</string>
+    <string name="calendar_settings_button_restore">Restore a full ledger backup (.zip)…</string>
     <string name="calendar_settings_button_backup">Export the calendar only → Downloads</string>
     <string name="calendar_settings_backup_done">Calendar backup exported to the Downloads</string>
-    <string name="calendar_settings_button_restore">Restore a full ledger backup (.zip)…</string>
     <string name="calendar_settings_button_export_settings">Export settings</string>
     <string name="calendar_settings_button_import_settings">Import settings</string>
     <string name="calendar_settings_restore_done">Calendar backup imported from the Downloads</string>
-    <!-- The full-ledger zip is on a LONG-PRESS of the two settings buttons, which is unfindable
-         without being told. Said out loud rather than left as folklore. -->
-    <string name="calendar_settings_backup_gesture_hint">Hold either button above for the whole ledger instead of just the settings: hold Export to write a dated .zip of every page, hold Import to read one back.</string>
     <!-- The names/structure pair. The hint has one job the labels can't do: say what the file does
          NOT contain, so it is never mistaken for a full backup. Names and pages live in different
          files (indexes vs. day JSON), which is invisible from the outside and matters entirely. -->
@@ -207,44 +213,56 @@
          Worker renders each calendar group to a PDF and PUTs it to a WebDAV host — nothing is
          subscribed to, nothing is read back. Named for the two things you can actually see: PDFs,
          on a WebDAV server. -->
-    <string name="calendar_settings_ultrabridge_title">WEBDAV  ·  a PDF of every planner page</string>
+    <string name="calendar_settings_ultrabridge_title">SYNC BETWEEN DEVICES  ·  day pages, notes &amp; planner PDFs</string>
     <string name="calendar_settings_ultrabridge_enable">Upload planner PDFs to my WebDAV server</string>
     <string name="calendar_settings_ultrabridge_url_hint">WebDAV URL</string>
     <string name="calendar_settings_ultrabridge_user_hint">Username</string>
     <string name="calendar_settings_ultrabridge_pass_hint">Password</string>
     <string name="calendar_settings_ultrabridge_enabled_toast">WebDAV PDF upload enabled</string>
     <string name="calendar_settings_ultrabridge_disabled_toast">WebDAV PDF upload disabled</string>
-    <string name="calendar_settings_ultrabridge_missing_fields">Please fill in all WebDAV fields</string>
+    <!-- The upload switch refuses to turn on while a WebDAV box is blank, and says WHICH one —
+         %1$s is that box's own hint (URL / Username / Password). It replaced a whole-page "fill in
+         all WebDAV fields" that aborted Save after the other sections had already written. -->
+    <string name="calendar_settings_ultrabridge_missing_field">Fill in the WebDAV %1$s first — then this can turn on.</string>
 
     <!-- The backend seam (design step D): one sync logic, two transports. The note carries the
          no-migration ruling in the user's own language — it is the sentence that stops a switch
          from feeling like a move. -->
-    <string name="calendar_settings_sync_backend_label">Sync backend</string>
+    <string name="calendar_settings_sync_backend_label">Sync through</string>
     <string name="calendar_settings_sync_backend_webdav">WebDAV</string>
     <string name="calendar_settings_sync_backend_drive">Google Drive</string>
-    <string name="calendar_settings_sync_backend_note">Your ledger stays where it is — switching backends doesn\'t move anything. New syncs go to the backend chosen here. Google Drive keeps everything in a visible "Ledger" folder of the connected Google account.</string>
+    <string name="calendar_settings_sync_backend_note">Your ledger stays where it is — switching doesn\'t move anything. New syncs go to the place chosen here. Google Drive keeps everything in a visible "Ledger" folder of the connected Google account.</string>
+    <string name="calendar_settings_mail_label">MAIL  ·  accounts &amp; fetching</string>
+    <string name="calendar_settings_button_mail_accounts">✉ Mail accounts…</string>
+    <string name="calendar_settings_mail_as_sent">Open letters as sent (rendered), not reflowed</string>
+    <string name="calendar_settings_mail_pictures">Load pictures in letters</string>
+    <string name="calendar_settings_books_label">BOOKS  ·  catalogs &amp; audiobooks</string>
+    <string name="calendar_settings_button_audiobookshelf">🎧 Audiobookshelf…</string>
+    <string name="calendar_settings_button_storage">🗄 Storage — downloaded audio…</string>
+    <string name="calendar_settings_button_book_catalog">📚 Book catalog (OPDS)…</string>
+    <string name="calendar_settings_ask_label">ASK MY LEDGER  ·  AI key, model &amp; handwriting</string>
+    <string name="calendar_settings_button_ask">Ask my Ledger — API key &amp; model…</string>
     <string name="calendar_settings_sync_backend_drive_no_account">Google Drive selected, but no Google account is connected yet — use Connect under GOOGLE CALENDAR below.</string>
 
     <string name="calendar_settings_gcal_title">GOOGLE CALENDAR  ·  events you make in Ledger</string>
     <string name="calendar_settings_gcal_enable">Add events to Google Calendar</string>
-    <string name="calendar_settings_capture_label">HANDWRITING  ·  turning ink into text</string>
-    <string name="calendar_settings_capture_enable">Read this page when I leave it (vision OCR, uses credits)</string>
+    <string name="calendar_settings_capture_enable">Read this page when I leave it — handwritten #tags, [[links]] and sections (vision OCR, uses credits)</string>
     <!-- Repurposed as the HINT under the extract switch. Its old value, "On-device extract", was a
          title for a setting that does not extract anything by itself: ledgerAutoExtractEnabled has
          exactly one reader in the whole app — CalendarDayFragment's wrench menu, where it decides
          whether the manual "Extract tasks & events" tool is listed. Nothing runs automatically. -->
     <string name="calendar_settings_extract_title">On-device ink OCR, rougher than the vision pass above and doing the same job — this only puts the manual tool back in the wrench. Nothing runs on its own.</string>
     <string name="calendar_settings_extract_enable">Also list “Extract tasks &amp; events” in the page wrench</string>
-    <string name="calendar_settings_community_label">YOUR SITES  ·  WordPress, community &amp; boards</string>
+    <string name="calendar_settings_community_label">SITES  ·  WordPress, community &amp; boards</string>
     <string name="calendar_settings_button_manage_sites">Manage sites…</string>
-    <string name="calendar_settings_community_enable">Edit the active-site bridge here (advanced)</string>
+    <string name="calendar_settings_michaelfilter_label">MICHAELFILTER  ·  your reading pipeline</string>
+    <string name="calendar_settings_michaelfilter_hint">MichaelFilter — your reading pipeline. Paste your key to send links there.</string>
+    <string name="calendar_settings_michaelfilter_key_hint">MichaelFilter key</string>
     <string name="calendar_settings_gcal_id_hint">Calendar (primary, or an ID)</string>
     <string name="calendar_settings_gcal_connect">Connect Google Calendar</string>
     <string name="calendar_settings_gcal_connected_toast">Google Calendar connected</string>
     <string name="calendar_settings_gcal_connect_failed_toast">Couldn\'t connect Google Calendar</string>
 
-    <string name="calendar_settings_button_save">Save</string>
-    <string name="calendar_settings_button_back">Back</string>
 
     <string name="calendar_drawing_toolbar_touch">Touch</string>
     <string name="calendar_drawing_toolbar_pen">Pen</string>
@@ -422,7 +440,8 @@
     <string name="go_group_ledger">Ledger</string>
     <string name="dashboard_item_reader_title">Reader</string>
     <string name="dashboard_item_feeds_title">Feed\nLedger</string>
-    <string name="ledger_share_target_title">Ledger</string>
+    <!-- The share-sheet identity. Michael says "Ledgable" — the label says what he says. -->
+    <string name="ledger_share_target_title">Ledgable</string>
     <string name="ledger_share_file_title">File this link</string>
     <string name="ledger_share_drop_on_page">✍️  Drop on page</string>
     <string name="ledger_share_filed">Filed to %s</string>
@@ -458,7 +477,7 @@
     <string name="feeds_open_external_failed">Couldn\'t open this link.</string>
     <string name="feeds_no_prev">No previous article.</string>
     <string name="feeds_next_article">Next article</string>
-    <string name="feeds_prev_article">Last article</string>
+    <string name="feeds_prev_article">Previous article</string>
     <!-- Find within the open piece (article or letter) — see FeedsFragment.showArticleFind. -->
     <string name="feeds_find">Find in this piece</string>
     <string name="feeds_find_hint">Find in this piece</string>
@@ -518,7 +537,7 @@
     <string name="ledger_extract_unreadable">Couldn\'t read that selection.</string>
     <string name="ledger_extract_added">Added %1$s: %2$s</string>
     <string name="ledger_selection_title">Create from selection</string>
-    <string name="ledger_ai_key_needed">Add your Ask-my-Ledger API key in Settings first.</string>
+    <string name="ledger_ai_key_needed">Add your AI key first — Settings › Ask my Ledger.</string>
     <string name="ledger_educate_looking_up">Looking it up…</string>
     <string name="ledger_selection_create">Create…</string>
     <string name="ledger_selection_add_to">Add to…</string>
@@ -542,19 +561,22 @@
     <string name="rhizome_title">🕸  Its rhizome</string>
     <string name="map_title">🗺  Map</string>
     <string name="map_menu">Draw…</string>
-    <string name="calendar_settings_calendar_label">PLANNER PAGES  ·  what opens, and how it\'s ruled</string>
+    <!-- Was "PLANNER PAGES · what opens, and how it's ruled" while a Start view dropdown led the
+         section; that row retired and the handwriting switch joined, so the heading names the
+         thing itself — the same section the iOS app calls Day page. -->
+    <string name="calendar_settings_calendar_label">DAY PAGE  ·  start hour, ruling, weeks &amp; handwriting</string>
     <!-- Was "BACKUP &amp; DATA" and held the Legibility button, the shortcut maker and the mark
          rebuilder alongside the archives — four unrelated errands under one word. Now it means the
          archives only; the rest moved to sections named for what they do. -->
     <string name="calendar_settings_data_label">BACKUP &amp; TRANSFER  ·  moving this ledger about</string>
     <!-- The first section, because it is the one you open Settings to reach. -->
-    <string name="calendar_settings_look_label">LEGIBILITY  ·  size, font, theme, light &amp; dark</string>
+    <string name="calendar_settings_look_label">LOOK  ·  size, font, theme, light &amp; dark</string>
     <string name="calendar_settings_device_label">THIS DEVICE  ·  shortcut &amp; upkeep</string>
     <!-- Prefix for the one-line read-out of what the chosen locale implies (start day, first and
          last week number). Six stacked TextViews made a read-out look like four more settings. -->
     <string name="calendar_settings_locale_summary">Weeks:</string>
     <string name="map_drawing">drawing…</string>
-    <string name="map_needs_key">Add your AI key in Settings to ask for a map.</string>
+    <string name="map_needs_key">Add your AI key (Settings › Ask my Ledger) to ask for a map.</string>
     <string name="map_nothing_to_map">Nothing to map yet.</string>
     <string name="map_empty">Nothing is connected yet. Connect a few things and the map draws itself.</string>
     <string name="map_hint">Your ledger as connections — tap a node to walk, hold to pick or open it.</string>
@@ -577,7 +599,7 @@
     <string name="feeds_article_parse">Reader view</string>
 
     <!-- Shared annotation capture (books + feeds). -->
-    <string name="reader_capture_title">Add annotation</string>
+    <string name="reader_capture_title">Highlight + note</string>
     <string name="reader_capture_highlight_note">Highlight &amp; note</string>
     <string name="reader_capture_note">Add a note</string>
     <string name="reader_capture_photo">📷  Take a picture</string>
@@ -620,13 +642,13 @@
     <string name="webhook_key_hint">API key (optional)</string>
     <string name="webhook_saved">Saved webhook “%s”.</string>
     <string name="webhook_invalid">Need a name and an http(s) URL.</string>
-    <string name="reader_aa">Aa</string>
+    <!-- Aa Type (Michael, 2026-10-11): the reader's Aa seat opens the Aa Type panel. -->
+    <string name="reader_aa">Aa Type</string>
+    <string name="aa_type">Aa Type</string>
     <string name="reader_read_aloud">Read aloud</string>
     <string name="reader_controls">Screen controls</string>
-    <string name="reader_settings_title">Reading</string>
     <string name="reader_font_smaller">A −</string>
     <string name="reader_font_larger">A +</string>
-    <string name="reader_theme">Theme: %1$s</string>
     <string name="reader_shelf_title">Your books</string>
     <string name="reader_import_new">Import a book…</string>
     <string name="reader_import_failed">Couldn\'t open that book — try importing it again.</string>
@@ -722,4 +744,6 @@
     <!--string name="placeholder_384">But you must explain to you how all this mistaken idea of denouncing pleasure and praising pain was born and I will give you a complete account of the system, and expound the actual teachings of the great explorer of the truth, the master-builder of human happiness. No one rejects, dislikes, or avoids pleasure itself, because it is pleasure, but because those who do not know how to</string-->
     <!--string name="placeholder_512">But you must explain to you how all this mistaken idea of denouncing pleasure and praising pain was born and I will give you a complete account of the system, and expound the actual teachings of the great explorer of the truth, the master-builder of human happiness. No one rejects, dislikes, or avoids pleasure itself, because it is pleasure, but because those who do not know how to pursue pleasure rationally encounter consequences that are extremely painful. Nor again is there anyone who loves or pursues or</string-->
     <string name="surface_page_export_message">Exported as %s</string>
+    <string name="widget_doors_label">Ledger Doors</string>
+    <string name="widget_doors_description">Continue · The Mail · Read · Watch · Listen · All notes · New note — one tap each.</string>
 </resources>

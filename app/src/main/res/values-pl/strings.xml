@@ -150,17 +150,9 @@ Strings related to dashboard fragment -->
     <string name="calendar_settings_week_number_of_first_day_value">"T1"</string>
     <string name="calendar_settings_week_number_of_last_day_text">"Numer tygodnia ostatniego dnia:"</string>
     <string name="calendar_settings_week_number_of_last_day_value">"T52"</string>
-    <string name="calendar_settings_button_save">"Zapisz"</string>
-    <string name="calendar_settings_button_back">"Powrót"</string>
     <string name="calendar_drawing_toolbar_pen">"Długopis"</string>
     <string name="calendar_drawing_toolbar_eraser">"Gumka"</string>
     <string name="calendar_drawing_toolbar_settings">"Ustawienia"</string>
-    <string name="calendar_settings_select_start_view_text">"Wybierz początkowy widok kalendarza:"</string>
-    <string name="calendar_settings_start_view_year">"Planer roczny"</string>
-    <string name="calendar_settings_start_view_quarter">"Planer kwartalny"</string>
-    <string name="calendar_settings_start_view_month">"Planer miesięczny"</string>
-    <string name="calendar_settings_start_view_week">"Planer tygodniowy"</string>
-    <string name="calendar_settings_start_view_day">"Planer dzienny"</string>
     <string name="calendar_settings_button_backup">"Eksportuj kopię zapasową"</string>
     <string name="calendar_settings_backup_done">"Kopia zapasowa kalendarza została wyeksportowana do Downloads"</string>
     <string name="about_this_translation_contributors_title">"Współautorzy niniejszego tłumaczenia"</string>

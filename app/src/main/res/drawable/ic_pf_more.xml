@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- More: the wrench — settings and rare verbs (iOS wrench).
+     One panel face family (review 2026-10-11, F5; Michael: "Icons lack design language"): the ink
+     tools' geometry — 256 grid, 16-unit round strokes, outline at rest; a filled face only for an
+     ON state (Star). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="256" android:viewportHeight="256"
+    android:tint="#000000">
+    <path android:pathData="M226.8,69A8,8 0 0,0 214,66.1L173.6,103.3L156.4,99.6L152.7,82.4L189.9,42.1A8,8 0 0,0 187,29.2A72,72 0 0,0 94,124.9L33.8,177A32,32 0 0,0 79,222.2L131.1,162A72,72 0 0,0 226.8,69Z"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+</vector>

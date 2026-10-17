@@ -29,7 +29,7 @@ object CacheJanitor {
 
     private fun sweep(context: Context) {
         // Short-lived render/temp caches: gone after a week.
-        for (name in listOf("camera", "cards", "exports")) {
+        for (name in listOf("camera", "cards", "exports", "share-in")) {
             ageSweep(File(context.cacheDir, name), days = 7)
         }
         // Readable article copies (Later List offline cache): re-fetchable on open.

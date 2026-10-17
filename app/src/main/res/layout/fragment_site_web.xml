@@ -1,11 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- A horizontal row so The Net's tucked action rail sits IN THE LAYOUT FLOW beside the page
+     (Michael, 09-03: "the net doesn't have the tuck panel…"), the Correspondence idiom. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="horizontal"
+    android:background="#FFFFFF"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/site_web_rail"
+        android:layout_width="14dp"
+        android:layout_height="match_parent"/>
+
+<!-- A frame round the page column so the header's [⛶] pill can float and be dragged anywhere over
+     the page, as on the Feeds list and the shelf (Michael 2026-10-12: "Parity here, please. They
+     should move"). -->
+<FrameLayout
+    android:layout_width="0dp"
+    android:layout_weight="1"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF">
+
+<LinearLayout
     android:orientation="vertical"
     android:background="#FFFFFF"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
+    <!-- The header row: ‹ Back · title · ✕ Close (on The Net its Reload and 🔖 left for the panel's
+         Refresh and Piles seats, Michael 2026-10-11). In full screen the [⛶] pill takes its
+         leading end. -->
     <LinearLayout
+        android:id="@+id/site_web_header"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingHorizontal="10dp"
@@ -34,6 +60,18 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"/>
+
+        <!-- 🔖 The Net's launcher (browser mode only): bookmarks, the Later List loaded in
+             THIS reader, and the Read/Watch/Listen doors — less jumping around. -->
+        <TextView
+            android:id="@+id/site_web_marks"
+            android:text="🔖"
+            android:textSize="20sp"
+            android:textColor="#000000"
+            android:padding="8dp"
+            android:visibility="gone"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
 
         <TextView
             android:id="@+id/site_web_reload"
@@ -69,7 +107,8 @@
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <WebView
+        <!-- SelectionMenuWebView, no handler: hides Ledgable's own text door on every prepare (C9, 2026-10-10). -->
+        <com.toolsboox.plugin.feeds.ot.SelectionMenuWebView
             android:id="@+id/site_web_view"
             android:layout_width="match_parent"
             android:layout_height="match_parent"/>
@@ -86,5 +125,9 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"/>
     </FrameLayout>
+
+</LinearLayout>
+
+</FrameLayout>
 
 </LinearLayout>

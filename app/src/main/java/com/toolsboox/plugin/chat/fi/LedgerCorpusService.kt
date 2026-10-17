@@ -164,6 +164,25 @@ class LedgerCorpusService @Inject constructor(
                 ?.filter { it.isFile && it.name.startsWith("notes-") && it.name.endsWith(".json") }
                 ?.forEach { f -> out += cached(f, live) { noteSnippets(f) } }
         }
+        if (Section.MAIL in scope) {
+            // The inbox's durable pile — subject + snippet per letter, capped (Michael, 08-23:
+            // "does it have access to the feeds (email, rss, book)? It should."). Books rode the
+            // reading events and FEED below reads the article cache; mail was the missing lane.
+            runCatching {
+                com.toolsboox.plugin.mail.InboxStore.messages(context).take(60).forEach { m ->
+                    val text = listOf(m.subject, m.snippet).filter { it.isNotBlank() }
+                        .joinToString(" \u2014 ")
+                    if (text.isNotBlank()) {
+                        val who = m.fromName.ifBlank { m.fromEmail }
+                        val date = java.util.Date(m.date)
+                        out += CorpusSnippet(
+                            Section.MAIL, date, m.subject.ifBlank { "Mail" }, who, text,
+                            cite(date, "mail", who),
+                        )
+                    }
+                }
+            }
+        }
         if (Section.FEED in scope) {
             // FULL feed articles from the offline cache (list-*.json metadata + content-<id>.html
             // parsed text) — Ask can now read what you read, not just what you annotated. Cached
@@ -391,7 +410,7 @@ class LedgerCorpusService @Inject constructor(
         if (Section.MEDIA in scope) {
             for (a in avGrams) {
                 out += CorpusSnippet(
-                    section = Section.MEDIA, date = a.date ?: dayDate, title = "A/V gram",
+                    section = Section.MEDIA, date = a.date ?: dayDate, title = "A/V pick",
                     source = a.kind.name.lowercase(), text = "[${a.kind.name.lowercase()}] ${a.filename}",
                     citation = cite(a.date ?: dayDate, "a/v", a.filename)
                 )

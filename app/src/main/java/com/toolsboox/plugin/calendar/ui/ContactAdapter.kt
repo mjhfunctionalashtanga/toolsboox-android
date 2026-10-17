@@ -36,14 +36,17 @@ class ContactAdapter(
         holder.name.text = c.name.ifBlank { "Unnamed" }
         holder.sub.text = listOf(c.org, c.email, c.phone).firstOrNull { it.isNotBlank() } ?: ""
 
-        val bmp = if (c.avatarData.isNotBlank()) {
-            runCatching {
-                val bytes = Base64.decode(c.avatarData, Base64.DEFAULT)
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            }.getOrNull()
-        } else null
-        if (bmp != null) holder.avatar.setImageBitmap(bmp)
-        else holder.avatar.setImageResource(R.drawable.ic_calendar_today)
+        // Avatars: base64 → bitmap off the main thread, one decode per contact (audit 09-10).
+        val avatarKey = if (c.avatarData.isNotBlank()) c.id + ":" + c.avatarData.length else null
+        holder.avatar.tag = avatarKey
+        val cached = avatarKey?.let { AvatarCache.get(it) }
+        if (cached != null) holder.avatar.setImageBitmap(cached)
+        else {
+            holder.avatar.setImageResource(R.drawable.ic_calendar_today)
+            if (avatarKey != null) AvatarCache.load(avatarKey, c.avatarData) { bmp ->
+                if (bmp != null && holder.avatar.tag == avatarKey) holder.avatar.setImageBitmap(bmp)
+            }
+        }
 
         holder.itemView.setOnClickListener { onClick(c) }
     }
@@ -51,5 +54,24 @@ class ContactAdapter(
     fun submit(list: List<Contact>) {
         items = list
         notifyDataSetChanged()
+    }
+}
+
+private object AvatarCache {
+    private val lru = android.util.LruCache<String, android.graphics.Bitmap>(64)
+    private val io = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
+    fun get(key: String): android.graphics.Bitmap? = lru.get(key)
+
+    fun load(key: String, base64: String, onReady: (android.graphics.Bitmap?) -> Unit) {
+        io.execute {
+            val bmp = runCatching {
+                val bytes = Base64.decode(base64, Base64.DEFAULT)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }.getOrNull()
+            if (bmp != null) lru.put(key, bmp)
+            main.post { onReady(bmp) }
+        }
     }
 }

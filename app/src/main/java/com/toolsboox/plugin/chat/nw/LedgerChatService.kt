@@ -18,7 +18,11 @@ class LedgerChatService @Inject constructor() {
 
     sealed class Result {
         data class Ok(val answer: String) : Result()
-        data class Err(val message: String) : Result()
+        /** No reply. [lostConnection] = no response at all because the connection dropped or never
+         *  came up; [timedOut] = the socket's own timeout; neither = a response came back without a
+         *  usable reply (an HTTP error, an unreadable body). A ❖ summon re-asks by that difference
+         *  ([com.toolsboox.plugin.calendar.ot.SynthPending.reasks]). */
+        data class Err(val message: String, val lostConnection: Boolean = false, val timedOut: Boolean = false) : Result()
     }
 
     private val client = OkHttpClient.Builder()
@@ -71,7 +75,7 @@ class LedgerChatService @Inject constructor() {
                 Result.Ok(if (provider == OPENAI) parseOpenAi(text) else parseAnthropic(text))
             }
         } catch (e: Exception) {
-            Result.Err("Network error: ${e.message}")
+            Result.Err("Network error: ${e.message}", lostConnection(e), e is java.io.InterruptedIOException)
         }
     }
 
@@ -103,7 +107,7 @@ class LedgerChatService @Inject constructor() {
                 Result.Ok(if (provider == OPENAI) parseOpenAi(text) else parseAnthropic(text))
             }
         } catch (e: Exception) {
-            Result.Err("Network error: ${e.message}")
+            Result.Err("Network error: ${e.message}", lostConnection(e), e is java.io.InterruptedIOException)
         }
     }
 
@@ -123,9 +127,15 @@ class LedgerChatService @Inject constructor() {
                 Result.Ok(if (provider == OPENAI) parseOpenAi(body) else parseAnthropic(body))
             }
         } catch (e: Exception) {
-            Result.Err("Network error: ${e.message}")
+            Result.Err("Network error: ${e.message}", lostConnection(e), e is java.io.InterruptedIOException)
         }
     }
+
+    /** A dropped or absent connection (reset, aborted as the screen slept, no route/DNS on wake) —
+     *  as opposed to a timeout (SocketTimeoutException / OkHttp's InterruptedIOException "timeout")
+     *  or a parse failure on a reply that did come back. */
+    private fun lostConnection(e: Exception): Boolean =
+        e is java.io.IOException && e !is java.io.InterruptedIOException
 
     private fun anthropicRequest(apiKey: String, model: String, system: String, question: String): Request {
         val body = JSONObject()

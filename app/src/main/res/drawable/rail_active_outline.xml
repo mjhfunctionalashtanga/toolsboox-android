@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The rail's live tool: a 2dp black outline round the whole cell, caption bold (plan v6 §2.7,
+     Michael 2026-10-10). No fill — a grey wash dithers on e-ink; the outline reads at full strength. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@android:color/transparent"/>
+    <stroke android:width="2dp" android:color="#000000"/>
+    <corners android:radius="6dp"/>
+</shape>

@@ -234,7 +234,7 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         val date = runCatching { java.time.LocalDate.parse(dateStr) }.getOrNull() ?: return
         val ctx = requireContext()
         val day = runCatching {
-            calendarDayService.load(documentsRoot(), date, null, java.util.Locale.getDefault())
+            calendarDayService.loadForDisplay(documentsRoot(), date, null, java.util.Locale.getDefault())
         }.getOrNull() ?: return
 
         val adj = HashMap<String, MutableList<String>>()
@@ -678,16 +678,22 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             .map { GramComposer.Edge(it.parent, it.uri) }
         val title = "Map · " + (labels[focus] ?: LedgerUri.describe(focus))
         Thread {
-            val note = runCatching {
+            val attempt = runCatching {
                 GramComposer.compose(
                     requireContext(), calendarDayService, documentsRoot(),
                     LedgerDocuments.GRID, title, nodes, edges, GramComposer.Layout.GRID,
                 )
-            }.getOrNull()
+            }
+            val note = attempt.getOrNull()
             runCatching {
                 requireActivity().runOnUiThread {
-                    if (note == null) showMessage("Could not save the map", binding.root)
-                    else showMessage("Saved to Grid Notes · ${note.name}", binding.root)
+                    if (note != null) showMessage("Saved to Grid Notes · ${note.name}", binding.root)
+                    // A day that won't read says so; anything else keeps the plain sentence.
+                    else showMessage(
+                        com.toolsboox.plugin.calendar.fi.CalendarDayService.refusal(attempt.exceptionOrNull(), "save the map")
+                            ?: "Could not save the map",
+                        binding.root
+                    )
                 }
             }
         }.start()
@@ -844,14 +850,14 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
         if (uri == SEED_BED) return
         val label = labels[uri] ?: LedgerUri.describe(uri)
         showIconMenu(label.take(80), listOf(
-            "⁂  Pick — make it a gram" to {
+            "⁂  Pick it — a card for your Pickings" to {
                 com.toolsboox.plugin.feeds.ot.FeedNoteGram.showForItem(
                     this, calendarDayService, documentsRoot(),
                     itemText = label.take(600), originLabel = "from your map",
                     sourceUrl = uri
                 ) { kind, sink -> captureAvGramDirect(kind, sink) }
             },
-            "⁂  Open rhizome" to { openRhizome(uri) }
+            "🕸  Open rhizome" to { openRhizome(uri) }
         ))
     }
 
@@ -880,13 +886,13 @@ class LedgerMapFragment @Inject constructor() : ScreenFragment() {
             weaveOt.isItem(uri) -> {
                 val snip = weaveOt.itemIndexOf(uri)?.let { w.snippets.getOrNull(it) } ?: return
                 showIconMenu(snip.text.take(80), listOf(
-                    "⁂  Pick — make it a gram" to {
+                    "⁂  Pick it — a card for your Pickings" to {
                         com.toolsboox.plugin.feeds.ot.FeedNoteGram.showForItem(
                             this, calendarDayService, documentsRoot(),
                             itemText = snip.text.take(600), originLabel = "from your map"
                         ) { kind, sink -> captureAvGramDirect(kind, sink) }
                     },
-                    "⁂  Open rhizome" to {
+                    "🕸  Open rhizome" to {
                         val day = snip.date.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate()
                         findNavController().navigate(
                             R.id.action_to_ledger_rhizome,

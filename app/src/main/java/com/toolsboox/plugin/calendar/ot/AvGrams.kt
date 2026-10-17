@@ -42,13 +42,15 @@ object AvGrams {
 
         val isVideo = att.kind == Attachment.Kind.VIDEO
         val name = title.ifBlank {
-            (if (isVideo) "🎥 Video gram · " else "🎤 Audio gram · ") + date
+            (if (isVideo) "🎥 Video pick · " else "🎤 Audio pick · ") + date
         }
 
         // The day first: even if the poster fails, the recording must not be left as a loose
         // blob with nothing in the ledger pointing at it.
+        // A day file that won't read is never written over: the attachment stays a loose blob (it
+        // is still on disk, and the card below refuses the same way and returns false).
         runCatching {
-            val day = service.load(root, date, null, Locale.getDefault())
+            val day = service.loadForWrite(root, date, null, Locale.getDefault()) ?: return@runCatching
             if (day.avGrams.none { it.id == att.id }) {
                 day.avGrams.add(att)
                 service.save(root, date, day)
@@ -62,7 +64,7 @@ object AvGrams {
                 service, root, poster, date, pageKey,
                 sourceLink = sourceLink,
                 sourceLabel = sourceLabel.ifBlank {
-                    (if (isVideo) "🎥 Video gram · " else "🎤 Audio gram · ") + date
+                    (if (isVideo) "🎥 Video pick · " else "🎤 Audio pick · ") + date
                 },
                 media = PickingsPlacement.MediaRef(
                     kind = if (isVideo) "video" else "audio",

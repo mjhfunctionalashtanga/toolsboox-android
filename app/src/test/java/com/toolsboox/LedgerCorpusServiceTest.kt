@@ -32,7 +32,7 @@ class LedgerCorpusServiceTest {
     private fun service(filesDir: File = Files.createTempDirectory("corpus-files").toFile()): LedgerCorpusService {
         val moshi = Moshi.Builder()
             .add(LocaleJsonAdapter()).add(DateJsonAdapter()).add(UUIDJsonAdapter()).build()
-        val cds = CalendarDayService().apply { this.moshi = moshi }
+        val cds = CalendarDayService(moshi)
         return LedgerCorpusService(cds, FilesDirContext(filesDir))
     }
 

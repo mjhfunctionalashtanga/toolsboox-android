@@ -89,27 +89,59 @@ object SiteStore {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     ).also { cached = it }
 
+    /**
+     * READ PER-ENTRY, NOT ALL-OR-NOTHING. One unreadable row used to cost the whole list: the
+     * catch returned `emptyList()`, and because [upsert] builds the list it saves FROM this one,
+     * the very next site you added would write a list of exactly one and take every other site
+     * with it. A store whose read failure silently destroys data on the next write is worse than
+     * one that refuses to read at all, so a bad row is now skipped and named, and its neighbours
+     * survive it.
+     */
     fun all(context: Context): List<LedgerSite> = try {
         val raw = prefs(context).getString(KEY_SITES, "") ?: ""
         if (raw.isBlank()) emptyList()
-        else JSONArray(raw).let { arr -> (0 until arr.length()).map { LedgerSite.fromJson(arr.getJSONObject(it)) } }
+        else {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { i ->
+                runCatching { LedgerSite.fromJson(arr.getJSONObject(i)) }
+                    .onFailure { Timber.w(it, "sites: row $i unreadable — skipped, the rest kept") }
+                    .getOrNull()
+            }
+        }
     } catch (e: Exception) {
         Timber.w(e, "sites read failed")
         emptyList()
     }
 
-    fun save(context: Context, sites: List<LedgerSite>) {
+    /**
+     * Writes are LOUD where reads are quiet, and deliberately so. A read that fails can fall back
+     * to "no sites configured" and let the screen say so; a write that fails has thrown away
+     * something the person just typed, and the one thing it must not do is look like it worked.
+     *
+     * It used to have no guard at all, so an encrypted-store failure propagated out of the Save
+     * button's click listener — no toast, no log, the dialog sitting there as though nothing had
+     * been pressed. Returns whether the write landed, so the caller can say.
+     */
+    fun save(context: Context, sites: List<LedgerSite>): Boolean = runCatching {
         val arr = JSONArray()
         sites.forEach { arr.put(it.toJson()) }
-        prefs(context).edit().putString(KEY_SITES, arr.toString()).apply()
-    }
+        // commit(), not apply(): apply() is fire-and-forget, so a failure inside the encrypted
+        // store surfaces on a background thread long after the dialog has closed — which is
+        // exactly how a save comes to look successful and not be.
+        val ok = prefs(context).edit().putString(KEY_SITES, arr.toString()).commit()
+        if (!ok) Timber.w("sites: the store refused the write (${sites.size} sites)")
+        ok
+    }.onFailure { Timber.w(it, "sites save failed") }.getOrDefault(false)
 
-    fun upsert(context: Context, s: LedgerSite) {
+    /** Add or replace one site. Returns whether the write actually landed — the caller has just
+     *  taken a URL and a password from someone and must not report success on a failed store. */
+    fun upsert(context: Context, s: LedgerSite): Boolean {
         val list = all(context).toMutableList()
         val i = list.indexOfFirst { it.id == s.id }
         if (i >= 0) list[i] = s else list.add(s)
-        save(context, list)
+        if (!save(context, list)) return false
         if (activeId(context) == s.id) activate(context, s.id)   // keep live creds in step with an edit
+        return true
     }
 
     fun delete(context: Context, id: String) {
@@ -196,6 +228,21 @@ object SiteStore {
      * Runs once (a boolean flag), non-destructively (never touches a site already present).
      * Makes ashtanga.tech active if nothing is active yet. Mirrors iOS `seedKnownSites`.
      */
+    /**
+     * Put the known sites back, whatever the seeder already thinks it has done.
+     *
+     * The seeder runs once behind a flag, which is right for a first launch and wrong as the only
+     * route: delete a site and it is gone for good, because the one thing that knew its URL has
+     * already marked itself finished. Michael, 08-31: "the yoga club was broken I deleted it and
+     * now can't add it back." This is the way back that did not exist — it lowers the flag and
+     * re-seeds, and since seeding never touches a site already present by URL, running it is safe
+     * however many times you press it.
+     */
+    fun reseedKnownSites(context: Context) {
+        prefs(context).edit().putBoolean(KEY_SEEDED, false).apply()
+        seedKnownSites(context)
+    }
+
     fun seedKnownSites(context: Context) {
         val p = prefs(context)
         if (p.getBoolean(KEY_SEEDED, false)) return

@@ -138,7 +138,9 @@ class TaskChecklistRemoteViewsFactory(private val context: Context) : RemoteView
         val day = WidgetRenderer.loadCalendarDay(context, today)
         val dead = (day?.deletedItemIds.orEmpty() + day?.deletedElementIds.orEmpty()).toSet()
         val tasks = day?.ledgerItems.orEmpty()
-            .filter { it.kind == LedgerItem.Kind.TASK && it.text.isNotBlank() && it.id !in dead }
+            // A PROPOSED candidate is not a live task (offer-never-mint) — never a checklist row; it
+            // waits on the Proposed shelf in the app.
+            .filter { it.kind == LedgerItem.Kind.TASK && !it.proposed && it.text.isNotBlank() && it.id !in dead }
         tasks.filter { !it.done && it.stage != "done" && "$today|${it.id}" !in pendingDone }
             .forEach { out.add(TaskRow(today, it.id, it.text, null)) }
 
@@ -147,15 +149,9 @@ class TaskChecklistRemoteViewsFactory(private val context: Context) : RemoteView
         val said = HashSet<String>()
         tasks.forEach { said.add(LedgerTaskDedupe.key(it.text)) }
 
-        // The lookback: the widget-process wiring for the slim decode, exactly as
-        // ListWidgetRenderer.renderTasks builds it.
-        val svc = com.toolsboox.plugin.calendar.fi.CalendarDayService().apply {
-            moshi = com.squareup.moshi.Moshi.Builder()
-                .add(com.toolsboox.ot.LocaleJsonAdapter())
-                .add(com.toolsboox.ot.DateJsonAdapter())
-                .add(com.toolsboox.ot.UUIDJsonAdapter())
-                .build()
-        }
+        // The lookback: the slim decode through the one factory outside Hilt, exactly as
+        // ListWidgetRenderer.renderTasks gets it.
+        val svc = com.toolsboox.plugin.calendar.fi.CalendarDayService.standalone(context)
         val root = com.toolsboox.ot.LedgerPaths.documentsRoot(context)
         val sinceFmt = DateTimeFormatter.ofPattern("MMM d")
         var d = today.minusDays(1)
@@ -170,7 +166,7 @@ class TaskChecklistRemoteViewsFactory(private val context: Context) : RemoteView
             val f = File(File(root, "calendar/$y/$m"), "day-$y-$m-$dd-v2.json")
             if (f.exists()) {
                 for (it in runCatching { svc.loadLedgerItems(f) }.getOrNull().orEmpty()) {
-                    if (it.kind != LedgerItem.Kind.TASK || it.done || it.stage == "done" || it.text.isBlank()) continue
+                    if (it.kind != LedgerItem.Kind.TASK || it.done || it.proposed || it.stage == "done" || it.text.isBlank()) continue
                     if ("$d|${it.id}" in pendingDone) continue
                     if (!said.add(LedgerTaskDedupe.key(it.text))) continue
                     if (!divided) {

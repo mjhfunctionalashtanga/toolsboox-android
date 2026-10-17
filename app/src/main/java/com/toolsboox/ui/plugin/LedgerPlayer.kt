@@ -2,7 +2,6 @@ package com.toolsboox.ui.plugin
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
@@ -42,10 +41,17 @@ object LedgerPlayer {
         val feedTitle: String,
         val url: String,
         val imageUrl: String?,
-        val excerpt: String = ""
+        val excerpt: String = "",
+        /** The audio ENCLOSURE (not [url], which is the episode page) — recorded on the
+         *  playhead so ▶ Continue can resume on any device without the feed list. */
+        val enclosureUrl: String = ""
     )
 
     var capture: Capture? = null; private set
+    /** The BOOK being read aloud (its shelf name) — the transport title's way back to the reader
+     *  (09-13: "…and that be the case in reader for books and rss"). Letters and articles ride
+     *  [capture] (a letter's url is its mail:// address). */
+    var readingBook: String? = null
 
     // ---- Listen state (the synced playhead) ------------------------------------------------
 
@@ -78,15 +84,26 @@ object LedgerPlayer {
     /** Note the current playhead into [ListenStateStore] (no-op for untracked tracks). The
      *  position/duration are read on the caller's thread while [media] is still alive; the file
      *  write rides the sidecar executor so the heartbeat never does IO on main. */
+    /** Whoever started the track may ride the heartbeat: (positionMs, durationMs, final) — `final`
+     *  on stop. Audiobookshelf's session sync lives here; cleared with the session. */
+    var progressHook: ((Long, Long, Boolean) -> Unit)? = null
+    /** True only inside [stop] — a pause also records with sync=true, and Audiobookshelf must not
+     *  close its session on a pause (audit 09-11). */
+    @Volatile private var stopping = false
+
     private fun recordListen(sync: Boolean) {
         val ctx = appContext ?: return
         val id = listenId ?: return
         val m = media ?: return
         val pos = runCatching { m.currentPosition }.getOrDefault(0).toLong()
         val dur = runCatching { m.duration }.getOrDefault(0).toLong()
+        if (pos > 0L) progressHook?.let { h -> runCatching { h(pos, dur, stopping) } }
         if (pos <= 0L) return
+        val enc = capture?.enclosureUrl.orEmpty()
+        val cap = capture
         com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.background {
-            com.toolsboox.plugin.calendar.ot.ListenStateStore.record(ctx, id, pos, dur, sync)
+            com.toolsboox.plugin.calendar.ot.ListenStateStore.record(ctx, id, pos, dur, sync, enc,
+                title = cap?.title.orEmpty(), show = cap?.feedTitle.orEmpty(), artworkUrl = cap?.imageUrl.orEmpty())
         }
     }
 
@@ -94,6 +111,81 @@ object LedgerPlayer {
      *  (chapter/transcript resolves racing the network) can tell "still my track" from
      *  "the listener moved on" and lose quietly. */
     var session: Long = 0L; private set
+
+    // ---- Sleep timer (the AntennaPod lift, 09-02) --------------------------------------------
+
+    /** Minutes until sleep; 0 = off, -1 = end of episode (finish this one, then stop). */
+    val sleepModes = listOf(0, 15, 30, 45, -1)
+    var sleepMode: Int = 0; private set
+    private var sleepAt: Long = 0L
+    private val sleepRunnable = Runnable {
+        // Fell due: pause (never stop — the playhead and the card stay, exactly where a woken
+        // listener wants to resume from) and disarm.
+        if (media?.isPlaying == true) toggle()
+        sleepMode = 0; sleepAt = 0L
+        notifyChange()
+    }
+
+    /** Cycle Off → 15m → 30m → 45m → end of episode → Off; returns the new label. */
+    fun cycleSleep(): String {
+        val next = sleepModes[(sleepModes.indexOf(sleepMode) + 1) % sleepModes.size]
+        sleepMode = next
+        main.removeCallbacks(sleepRunnable)
+        sleepAt = if (next > 0) System.currentTimeMillis() + next * 60_000L else 0L
+        if (next > 0) main.postDelayed(sleepRunnable, next * 60_000L)
+        notifyChange()
+        return sleepLabel() ?: "Off"
+    }
+
+    /** The chip's face: null when off, "14m" counting down, "end" for end-of-episode. */
+    fun sleepLabel(): String? = when {
+        sleepMode == -1 -> "end"
+        sleepMode > 0 && sleepAt > 0L ->
+            "${(((sleepAt - System.currentTimeMillis()).coerceAtLeast(0L) + 59_999L) / 60_000L)}m"
+        else -> null
+    }
+
+    // ---- Per-show tuning (the Podcast Republic lift, 09-02) -----------------------------------
+
+    /** A show you always play at ×1.5; a show whose first 45s are always the same jingle.
+     *  Keyed by feed title in `ledger_player` prefs as JSON — small, local, per-device. */
+    data class ShowTuning(val speed: Float?, val introSec: Int)
+
+    private fun tuningMap(ctx: Context): org.json.JSONObject =
+        runCatching { org.json.JSONObject(ctx.getSharedPreferences("ledger_player", 0)
+            .getString("show_tuning", "{}").orEmpty()) }.getOrDefault(org.json.JSONObject())
+
+    fun showTuning(ctx: Context, feed: String): ShowTuning? {
+        val o = tuningMap(ctx).optJSONObject(feed) ?: return null
+        val sp = o.optDouble("speed", 0.0).toFloat().takeIf { it > 0f }
+        val intro = o.optInt("introSec", 0)
+        return if (sp == null && intro <= 0) null else ShowTuning(sp, intro)
+    }
+
+    fun setShowTuning(ctx: Context, feed: String, speed: Float?, introSec: Int) {
+        val map = tuningMap(ctx)
+        if (speed == null && introSec <= 0) map.remove(feed)
+        else map.put(feed, org.json.JSONObject().apply {
+            if (speed != null) put("speed", speed.toDouble())
+            if (introSec > 0) put("introSec", introSec)
+        })
+        ctx.getSharedPreferences("ledger_player", 0).edit()
+            .putString("show_tuning", map.toString()).apply()
+    }
+
+    // ---- Up next (the lens IS the queue) ------------------------------------------------------
+
+    /** What plays when this track runs off the end — armed by whoever started playback with the
+     *  next unheard episode of the same lens, AntennaPod's queue without a queue screen. Cleared
+     *  on every manual start/stop ([newSession]); an end-of-episode sleep timer outranks it. */
+    var upNextTitle: String? = null; private set
+    private var upNextRunner: (() -> Unit)? = null
+
+    fun setUpNext(title: String?, run: (() -> Unit)?) {
+        upNextTitle = title?.takeIf { it.isNotBlank() && run != null }
+        upNextRunner = run
+        notifyChange()
+    }
 
     /** Chapters for the CURRENT item (Podcasting 2.0 tag or description timestamps — one shape,
      *  see FeedChapters). Set by whoever started playback once resolved; empty = plain track. */
@@ -145,7 +237,7 @@ object LedgerPlayer {
     /** Whoever is showing transport controls listens here so they track the real playback state.
      *  A list, not a single slot: the drawer's inline Now Playing card and the modal can both be
      *  alive at once, and neither should silently unhook the other. */
-    private val listeners = mutableListOf<() -> Unit>()
+    private val listeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
     fun addListener(l: () -> Unit) { listeners += l }
     fun removeListener(l: () -> Unit) { listeners -= l }
     private fun notifyChange() { listeners.toList().forEach { it() } }
@@ -156,6 +248,9 @@ object LedgerPlayer {
             .any { name.lowercase().endsWith(it) }
 
     val isActive: Boolean get() = tts?.isActive == true || media != null
+
+    /** Whether the live backend is the speech engine (the transport's TTS-only chrome keys off this). */
+    val isTtsBacked: Boolean get() = media == null && tts?.isActive == true
     /** Unified "audible right now" — TTS speaking OR the audio track running. Drives the ▶/⏸ glyph. */
     val isPlaying: Boolean get() = tts?.isSpeaking == true || media?.isPlaying == true
     val isSpeaking: Boolean get() = tts?.isSpeaking == true
@@ -172,6 +267,17 @@ object LedgerPlayer {
     val durationMs: Int get() = media?.let { m -> runCatching { m.duration }.getOrDefault(0) } ?: 0
     val ttsChunkIndex: Int get() = tts?.chunkIndex ?: 0
     val ttsChunkCount: Int get() = tts?.chunkCount ?: 0
+    /** Minutes of speech left, estimated from the characters still to be spoken at the current
+     *  rate (~900 chars/min at 1× is where Android's engines land for English prose). */
+    val ttsMinutesLeft: Int get() {
+        val chars = tts?.remainingChars ?: return 0
+        return kotlin.math.ceil(chars / (900.0 * speed.coerceAtLeast(0.5f))).toInt()
+    }
+
+    /** TTS seek by chunk (the bar's tap/drag on read-aloud; audio seeks by [seekTo]). */
+    fun ttsSeekTo(chunk: Int) {
+        tts?.seekTo(chunk); notifyChange()
+    }
 
     /** Absolute seek (audio only — TTS moves in chunks via [skipForward]/[skipBack]). */
     fun seekTo(ms: Int) {
@@ -183,21 +289,37 @@ object LedgerPlayer {
 
     private fun engine(context: Context): LedgerTts =
         tts ?: LedgerTts(context.applicationContext).also { e ->
+            e.onSentence = { s -> onFollowSentence?.invoke(s) }
             e.onStateChange = { main.post { notifyChange() } }
             tts = e
         }
 
     /** Start reading [text] aloud (TTS backend), tagging it with metadata for the control modal. */
-    fun start(context: Context, title: String?, subtitle: String?, imageUrl: String?, text: String) {
+    fun start(context: Context, title: String?, subtitle: String?, imageUrl: String?, text: String,
+              capture: Capture? = null) {
         stopMedia()
         newSession()
+        // The article being read aloud IS a capturable source (09-13: "when I click on the title
+        // of the now playing item I want it to take me to the rss feed and show the read along
+        // highlight") — the title's door back to the piece needs its URL.
+        this.capture = capture
         this.title = title?.takeIf { it.isNotBlank() }
         this.subtitle = subtitle?.takeIf { it.isNotBlank() }
         this.image = null
-        loadImage(imageUrl)
+        loadImage(context, imageUrl)
         engine(context).apply { speak(text); setRate(speed) }   // carry the chosen speed to the new read
+        // The lifecycle anchor, for TTS too (Michael's ruling, 08-30, reversing -55's choice:
+        // "the reader TTS doesn't bring up a podcast-like control but should"): read-aloud gets
+        // the same foreground service + MediaSession as real audio — notification transport,
+        // hardware keys, survival across backgrounding. toggle() already speaks TTS.
+        appContext = context.applicationContext
+        appContext?.let { LedgerPlayerService.start(it) }
         notifyChange()
     }
+
+    /** Follow-along relay — the engine's sentence callback, surfaced for whichever reading
+     *  surface is showing the text (the reader wires it while its page is the one being read). */
+    var onFollowSentence: ((String) -> Unit)? = null
 
     /** Play a real audio file/stream (podcast enclosure, voice memo) through the same transport.
      *  [capture] is the episode's capturable identity — pass it and the transport grows its ★ and
@@ -213,8 +335,12 @@ object LedgerPlayer {
         this.subtitle = subtitle?.takeIf { it.isNotBlank() }
         this.image = null
         appContext = context.applicationContext
+        if (!speedLoaded) {
+            speedLoaded = true
+            speed = context.getSharedPreferences("ledger_player", 0).getFloat("speed", 1.0f)
+        }
         listenId = capture?.url?.takeIf { it.isNotBlank() }
-        loadImage(imageUrl)
+        loadImage(context, imageUrl)
         // Resume in two phases, the reader's own restore pattern (restoreReadingPosition):
         // start INSTANTLY from the local spot, then re-seek once the sidecar pull merges if
         // another device's playhead turns out to be newer. The heartbeat deliberately does not
@@ -224,17 +350,36 @@ object LedgerPlayer {
         val local = listenId?.let {
             com.toolsboox.plugin.calendar.ot.ListenStateStore.get(context, it)
         }
+        // Started with no picture, but the fleet already named one (another device played it and
+        // wrote its cover into the synced record): the transport draws that (10-12).
+        if (imageUrl.isNullOrBlank()) adoptArt(local?.artworkUrl)
         val resumeMs = com.toolsboox.plugin.calendar.da.v2.ListenState.resumePointMs(local)
         runCatching {
             media = android.media.MediaPlayer().apply {
+                // A backgrounded e-ink device sleeps its CPU with a vengeance; the partial wake
+                // lock (held only while playing — MediaPlayer manages it) plus the foreground
+                // service below are what let an episode outlive the screen and the app both.
+                setWakeMode(context, android.os.PowerManager.PARTIAL_WAKE_LOCK)
                 setDataSource(source)
                 setOnPreparedListener { mp ->
-                    runCatching { mp.playbackParams = mp.playbackParams.setSpeed(speed) }  // carry chosen speed
+                    // The show's own tuning outranks the global speed for this session — and an
+                    // intro skip fires only on a FRESH start (a resume already cleared the jingle).
+                    val tuning = capture?.feedTitle?.takeIf { it.isNotBlank() }
+                        ?.let { showTuning(context, it) }
+                    runCatching { mp.playbackParams = mp.playbackParams.setSpeed(tuning?.speed ?: speed) }
+                    if (resumeMs <= 0 && (tuning?.introSec ?: 0) > 0)
+                        runCatching { mp.seekTo(tuning!!.introSec * 1000) }
                     // Jump back to where the listener left off — but only when the jump is worth
                     // making (>10s in, not into the outro of a finished episode): resumePointMs
                     // answers 0 for both of those, and a finished episode restarts from the top.
                     if (resumeMs > 0) runCatching { mp.seekTo(resumeMs.toInt()) }
-                    mp.start(); main.post { notifyChange() }
+                    mp.start()
+                    // The lifecycle anchor: foreground service + MediaSession, for exactly as
+                    // long as real audio runs (Michael, 08-30: "leaving the app and coming back
+                    // can stop the playback"). TTS read-aloud deliberately stays unanchored —
+                    // it reads the page you are on.
+                    appContext?.let { LedgerPlayerService.start(it) }
+                    main.post { notifyChange() }
                 }
                 setOnCompletionListener { mp ->
                     // Ran off the end: heard, whatever the last heartbeat said. Record it at the
@@ -242,14 +387,26 @@ object LedgerPlayer {
                     // "done" is the one fact every device wants promptly, it is what the Listen
                     // lens's unheard filters read. Captured from [mp] directly because stopMedia()
                     // is about to release the player.
-                    val ctx = appContext; val id = listenId
+                    val ctx = appContext; val id = listenId; val capSnapshot = capture
                     val dur = runCatching { mp.duration }.getOrDefault(0).toLong()
                     if (ctx != null && id != null && dur > 0) {
                         com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.background {
-                            com.toolsboox.plugin.calendar.ot.ListenStateStore.record(ctx, id, dur, dur, sync = true)
+                            com.toolsboox.plugin.calendar.ot.ListenStateStore.record(ctx, id, dur, dur, sync = true,
+                            audioUrl = capSnapshot?.enclosureUrl.orEmpty(),
+                            title = capSnapshot?.title.orEmpty(), show = capSnapshot?.feedTitle.orEmpty(),
+                            artworkUrl = capSnapshot?.imageUrl.orEmpty())
                         }
                     }
-                    stopMedia(); main.post { notifyChange() }
+                    stopMedia()
+                    // The lens is the queue: run straight into the next unheard episode —
+                    // unless the sleep timer was set to "end of episode", which outranks it.
+                    val advance = upNextRunner
+                    if (sleepMode == -1) {
+                        sleepMode = 0; sleepAt = 0L
+                    } else if (advance != null) {
+                        main.post { advance() }
+                    }
+                    main.post { notifyChange() }
                 }
                 setOnErrorListener { _, _, _ -> stopMedia(); main.post { notifyChange() }; true }
                 prepareAsync()
@@ -306,6 +463,7 @@ object LedgerPlayer {
     val speeds = listOf(0.8f, 1.0f, 1.25f, 1.5f, 2.0f)
     var speed: Float = 1.0f
         private set
+    private var speedLoaded = false
 
     /** Cycle to the next speed and apply it to whichever engine is live; returns the new speed. */
     fun cycleSpeed(): Float {
@@ -316,6 +474,8 @@ object LedgerPlayer {
 
     fun setSpeed(s: Float) {
         speed = s
+        // The chosen speed is a fact about the listener, not the session — it survives restarts.
+        appContext?.getSharedPreferences("ledger_player", 0)?.edit()?.putFloat("speed", s)?.apply()
         media?.let { m ->
             runCatching {
                 val wasPlaying = m.isPlaying
@@ -348,7 +508,8 @@ object LedgerPlayer {
         // Before the player is released: stop is the strongest punctuation there is, and the
         // whole point of the listen sidecar is that the position at THIS moment reaches the
         // device you pick the episode up on.
-        recordListen(sync = true)
+        stopping = true
+        try { recordListen(sync = true) } finally { stopping = false }
         tts?.stop()
         stopMedia()
         newSession()
@@ -359,129 +520,116 @@ object LedgerPlayer {
     /** New track (or silence): whatever chapter/transcript state belonged to the last one is
      *  stale now, and any in-flight resolve for it must find a different session number. */
     private fun newSession() {
+        upNextTitle = null; upNextRunner = null
+        readingBook = null
         session++
         chapters = emptyList()
         transcriptProvider = null
         capture = null
         listenId = null
+        progressHook = null
     }
 
     private fun stopMedia() {
         main.removeCallbacks(heartbeat)
+        val had = media != null
         media?.let { runCatching { it.stop() }; runCatching { it.release() } }
         media = null
+        // The anchor exists exactly as long as the audio does.
+        if (had) appContext?.let { LedgerPlayerService.stop(it) }
     }
 
-    private fun loadImage(url: String?) {
-        if (url.isNullOrBlank()) return
-        Thread {
-            val bmp = runCatching {
-                java.net.URL(url).openStream().use { BitmapFactory.decodeStream(it) }
-            }.onFailure { Timber.w(it, "player image load failed") }.getOrNull()
-            if (bmp != null) main.post { image = bmp; notifyChange() }
-        }.apply { isDaemon = true }.start()
+    /** The transport's picture, through the feed's thumbnail cache (10-12): the network at stage
+     *  size, spilled to disk, so the art is there offline next time — it used to be a raw fetch
+     *  on every play, so an offline episode played with no picture. A late answer for a track
+     *  the listener already left loses quietly (the [session] contract). */
+    private fun loadImage(context: Context, url: String?) {
+        if (url.isNullOrBlank() || !url.startsWith("http")) return
+        val cache = com.toolsboox.plugin.feeds.ui.FeedThumbCache
+        cache.get(url)?.takeIf { maxOf(it.width, it.height) >= cache.STAGE_SIDE * 3 / 4 }?.let { image = it; return }
+        val started = session
+        cache.load(context, url, diskFirst = false, side = cache.STAGE_SIDE) { bmp ->
+            if (bmp != null && session == started) { image = bmp; notifyChange() }
+        }
+    }
+
+    /**
+     * The playing episode's picture, learned after it started (10-12) — the show's cover, found by
+     * the play-time feed read when the episode carries no art of its own. Fills a BLANK — or
+     * replaces [over], a stand-in the starter used for want of better (an image from the show
+     * notes, which the show's cover outranks); any other art the starter handed in stays. The
+     * capture is what the heartbeat writes, so from the next beat the synced ListenState names
+     * the cover and the other devices draw it.
+     */
+    fun adoptArt(url: String?, over: String? = null) {
+        val u = url?.takeIf { it.startsWith("http") } ?: return
+        val cap = capture ?: return
+        val had = cap.imageUrl
+        val replacing = !had.isNullOrBlank() && had == over && had != u
+        if (!had.isNullOrBlank() && !replacing) return
+        capture = cap.copy(imageUrl = u)
+        if (image == null || replacing) appContext?.let { loadImage(it, u) }
+        notifyChange()
+    }
+
+    /**
+     * Go to the playing episode's own entry — the title's door (see [showModal]).
+     *
+     * Resolved by URL against the feed cache rather than held as an object, because the transport
+     * OUTLIVES the list it was started from: you press play, walk to the day page, and the adapter
+     * that had the entry is long gone. The cache is what still knows.
+     *
+     * Routes through `FeedSelection.pendingInPaneEntry` — the same channel a gram's "Go to source"
+     * uses — so the episode lands in the in-pane reader with its paging and its star rather than in
+     * a second reader that would have to learn all of that again. A URL the cache no longer holds
+     * says so instead of opening something adjacent, which on a transport would be the worst kind
+     * of wrong: you would be reading one thing while hearing another.
+     */
+    private fun openPlayingEntry(fragment: androidx.fragment.app.Fragment, url: String) {
+        val ctx = fragment.context ?: return
+        val entry = runCatching {
+            com.toolsboox.plugin.feeds.nw.FeedCache.loadFreshestEntries(ctx)
+                .firstOrNull { it.url.isNotBlank() && it.url == url }
+        }.getOrNull()
+        if (entry == null) {
+            android.widget.Toast.makeText(
+                ctx, "That episode has aged out of the feed.", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        com.toolsboox.plugin.feeds.ui.FeedSelection.pendingInPaneEntry = entry
+        com.toolsboox.plugin.feeds.ui.FeedSelection.mode = "feed"
+        com.toolsboox.plugin.feeds.ui.FeedSelection.kind = entry.kind
+        com.toolsboox.plugin.feeds.ui.FeedSelection.filterFeedTitle = null
+        runCatching {
+            androidx.navigation.fragment.NavHostFragment.findNavController(fragment)
+                .navigate(com.toolsboox.R.id.action_to_feeds)
+        }
     }
 
     // ---- Control modal ---------------------------------------------------------------------
 
     /** Show the transport modal (featured image + title/source + ⏮ ⏯ ⏭ ⏹). Reachable from the
      *  Ledger directory's "▶ Now Playing" entry, so it works from any surface. */
-    fun showModal(context: Context) {
-        val dm = context.resources.displayMetrics
-        val pad = (20 * dm.density).toInt()
-
-        val art = ImageView(context).apply {
-            adjustViewBounds = true
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            image?.let { setImageBitmap(it) }
-            visibility = if (image != null) View.VISIBLE else View.GONE
-        }
-        val titleView = TextView(context).apply {
-            text = title ?: "Now playing"
-            textSize = 18f; setTypeface(typeface, Typeface.BOLD)
-            gravity = Gravity.CENTER
-        }
-        val subView = TextView(context).apply {
-            text = subtitle ?: ""
-            textSize = 14f; gravity = Gravity.CENTER
-            visibility = if (subtitle.isNullOrBlank()) View.GONE else View.VISIBLE
-        }
-
-        fun controlButton(glyph: String) = Button(context).apply {
-            text = glyph; textSize = 17f; isAllCaps = false
-            setPadding(0, 0, 0, 0); minWidth = 0; minimumWidth = 0
-        }
-        // Row 1: ⏮30  ⏪10  ⏯  ⏩10  ⏭30
-        val back30 = controlButton("⏮30")
-        val back10 = controlButton("⏪10")
-        val playPause = controlButton(if (isPlaying) "⏸" else "▶")
-        val fwd10 = controlButton("10⏩")
-        val fwd30 = controlButton("30⏭")
-        val controls = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
-            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            addView(back30, lp); addView(back10, LinearLayout.LayoutParams(lp))
-            addView(playPause, LinearLayout.LayoutParams(lp))
-            addView(fwd10, LinearLayout.LayoutParams(lp)); addView(fwd30, LinearLayout.LayoutParams(lp))
-        }
-        // Row 2: speed · ★ · 📝 · stop. The ★ and 📝 live ON the player because for a playing
-        // podcast the player IS the surface — the Listen flow never opens the article pane where
-        // the reader's star/note buttons sit, so capture has to be reachable from the transport
-        // itself: listening → one tap → captured → keep listening. They only appear when the
-        // track carries a capturable identity ([capture]); TTS read-aloud stays speed·stop.
-        val speedBtn = controlButton("${speed}×")
-        val starBtn = controlButton("★")
-        val noteBtn = controlButton("📝")
-        val stopBtn = controlButton("⏹ Stop")
-        val controls2 = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
-            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            addView(speedBtn, lp)
-            if (capture != null) {
-                addView(starBtn, LinearLayout.LayoutParams(lp))
-                addView(noteBtn, LinearLayout.LayoutParams(lp))
-            }
-            addView(stopBtn, LinearLayout.LayoutParams(lp))
-        }
-
-        val container = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad / 2, pad, 0)
-            addView(art, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, (dm.heightPixels * 0.32f).toInt()))
-            addView(titleView); addView(subView)
-            addView(controls, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = pad })
-            addView(controls2, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = pad / 2 })
-        }
-
-        val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
-            .setView(container)
+    fun showModal(context: Context, fragment: androidx.fragment.app.Fragment? = null) {
+        // ONE PLAYER, ONE FACE (Michael, 08-30: "the one in the RSS feeds is the better
+        // version, but it should be in the tuck panel"): the modal is now just a SEAT for
+        // [com.toolsboox.plugin.feeds.ui.NowPlayingCard] — the drawer's transport, with its
+        // drag-to-seek bar, chapter line, capture chips and e-ink tick discipline — plus the
+        // artwork the wider stage has room for. The bespoke five-button UI this replaces is
+        // retired; its unique goods (art, the title-door, ★/📝) all ride the card now.
+        var modalRef: android.app.AlertDialog? = null
+        val card = com.toolsboox.plugin.feeds.ui.NowPlayingCard.build(
+            context,
+            navHost = fragment,
+            onNavigate = { modalRef?.dismiss() },
+            showArt = true,
+            startUnfolded = true,
+        ) { modalRef?.dismiss() }
+        val dialog = android.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
+            .setView(card)
             .setNegativeButton("Close", null)
             .create()
-
-        // Keep the modal in sync with real playback while it's open.
-        val refresh = {
-            playPause.text = if (isPlaying) "⏸" else "▶"
-            speedBtn.text = "${speed}×"
-            image?.let { art.setImageBitmap(it); art.visibility = View.VISIBLE }
-        }
-        back30.setOnClickListener { skipBack(30); refresh() }
-        back10.setOnClickListener { skipBack(10); refresh() }
-        playPause.setOnClickListener { toggle(); refresh() }
-        fwd10.setOnClickListener { skipForward(10); refresh() }
-        fwd30.setOnClickListener { skipForward(30); refresh() }
-        speedBtn.setOnClickListener { cycleSpeed(); refresh() }
-        starBtn.setOnClickListener { LedgerPlayerCapture.starNow(context) }
-        noteBtn.setOnClickListener { LedgerPlayerCapture.annotateNow(context) }
-        stopBtn.setOnClickListener { stop(); dialog.dismiss() }
-
-        val listener = { main.post { refresh() }; Unit }
-        addListener(listener)
-        dialog.setOnDismissListener { removeListener(listener) }
+        modalRef = dialog
         dialog.show()
     }
 }

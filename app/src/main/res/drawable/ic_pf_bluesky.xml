@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Bluesky: the timeline read like a feed — the butterfly, drawn in outline (iOS has no SF butterfly: a template image).
+     One panel face family (review 2026-10-11, F5; Michael: "Icons lack design language"): the ink
+     tools' geometry — 256 grid, 16-unit round strokes, outline at rest. Drawn for the room panes'
+     rows (Michael 2026-10-12: monochrome glyphs only — no colour emoji in the Feeds or Mail pane). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="256" android:viewportHeight="256"
+    android:tint="#000000">
+    <path android:pathData="M128,124C112,88 72,44 44,48C24,51 26,92 40,118C52,140 80,148 104,142C78,154 66,180 82,198C98,216 122,196 128,164"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+    <path android:pathData="M128,124C144,88 184,44 212,48C232,51 230,92 216,118C204,140 176,148 152,142C178,154 190,180 174,198C158,216 134,196 128,164"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+</vector>

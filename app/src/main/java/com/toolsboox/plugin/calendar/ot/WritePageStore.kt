@@ -8,7 +8,10 @@ import java.io.File
 import java.time.LocalDate
 
 /** One Write document: its note-page [key], display [name], and the [date] it was started on. */
-data class WritePage(val key: String, var name: String, val date: LocalDate)
+// The Saber folder label rides every row (Michael, 09-02) — "" = unfiled. Additive and
+// tolerant on both forks THE SAME DAY: either fork rewriting this index without the field
+// would strip every filing — which is why BOTH write sites and BOTH read sites carry it.
+data class WritePage(val key: String, var name: String, val date: LocalDate, var folder: String = "")
 
 /**
  * Registry of Write documents — the store Write never had.
@@ -70,7 +73,7 @@ object WritePageStore {
             (0 until arr.length()).mapNotNull {
                 val o = arr.getJSONObject(it)
                 val d = runCatching { LocalDate.parse(o.optString("date")) }.getOrNull() ?: return@mapNotNull null
-                WritePage(o.optString("key"), o.optString("name"), d)
+                WritePage(o.optString("key"), o.optString("name"), d, o.optString("folder"))
             }.toMutableList()
         }.getOrDefault(mutableListOf())
     }
@@ -82,7 +85,8 @@ object WritePageStore {
         runCatching {
             val arr = JSONArray()
             for (p in pages) arr.put(JSONObject()
-                .put("key", p.key).put("name", p.name).put("date", p.date.toString()))
+                .put("key", p.key).put("name", p.name).put("date", p.date.toString())
+                .put("folder", p.folder))
             file(context).writeText(arr.toString())
         }.onFailure { Timber.w(it, "write index save failed") }
     }
@@ -91,7 +95,7 @@ object WritePageStore {
     fun add(context: Context, name: String, date: LocalDate = LocalDate.now()): WritePage {
         val pages = list(context)
         val page = WritePage("write-${System.currentTimeMillis()}",
-            name.ifBlank { "Writing ${pages.count { it.key != DEFAULT_KEY } + 1}" }, date)
+            name.ifBlank { LedgerDefaultName.forDate(date, pages.map { it.name }) }, date)
         pages.add(0, page); save(context, pages)
         sync(context)
         return page
@@ -102,6 +106,14 @@ object WritePageStore {
      * note): renaming the 21st's Write page must not rename the 22nd's. Naming a daily page for the
      * first time INSERTS its entry — the index holds only the days you bothered to title.
      */
+    /** File (or unfile, folder="") a page under a Saber folder — same matching rule as rename,
+     *  and only for entries that already exist: filing is a property of a note, never a mint. */
+    fun setFolder(context: Context, key: String, folder: String, date: LocalDate) {
+        val pages = list(context)
+        pages.firstOrNull { it.key == key && (key != DEFAULT_KEY || it.date == date) }
+            ?.let { it.folder = folder; save(context, pages); sync(context) }
+    }
+
     fun rename(context: Context, key: String, name: String, date: LocalDate) {
         val pages = list(context)
         val existing = pages.firstOrNull { it.key == key && (key != DEFAULT_KEY || it.date == date) }
@@ -169,7 +181,7 @@ object WritePageStore {
                         val o = arr.getJSONObject(i); val k = o.optString("key")
                         val d = runCatching { LocalDate.parse(o.optString("date")) }.getOrNull()
                         if (k.isNotBlank() && d != null && !byId.containsKey("$k|$d"))
-                            byId["$k|$d"] = WritePage(k, o.optString("name"), d)
+                            byId["$k|$d"] = WritePage(k, o.optString("name"), d, o.optString("folder"))
                     }
                 }
                 byId.values.toMutableList()
@@ -181,7 +193,8 @@ object WritePageStore {
             if (merged.map { idOf(it) } != local.map { idOf(it) }) save(context, merged)
             val arr = JSONArray()
             for (p in merged) arr.put(JSONObject()
-                .put("key", p.key).put("name", p.name).put("date", p.date.toString()))
+                .put("key", p.key).put("name", p.name).put("date", p.date.toString())
+                .put("folder", p.folder))
             com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.push(context, remotePath(), arr.toString())
         }
     }

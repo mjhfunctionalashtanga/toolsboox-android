@@ -40,7 +40,7 @@ object SemanticCards {
     }
 
     /**
-     * One action chip: the tappable verb on a card's bottom strip ("⁂ Rhizome", "🌿 Pick").
+     * One action chip: the tappable verb on a card's bottom strip ("🕸 Rhizome", "🌿 Pick").
      * Keeps the soft 7%-black fill for LCD warmth, but the 1dp solid black stroke is what
      * makes it survive monochrome.
      */

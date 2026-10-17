@@ -7,7 +7,9 @@ package com.toolsboox.ot
  * directory row has (rows are plain label→action pairs; there is no id to hang state on).
  * But emoji and spacing are styling, not identity — a re-glyphed icon or a respaced label must
  * not orphan the remembered state — so only letters and digits survive into the slug and every
- * run of anything else collapses to a single underscore.
+ * run of anything else collapses to a single underscore. A leading "The" is dressing too:
+ * "📧  Mail" became "📧  The Mail" (Michael 2026-10-11: "The Mail" everywhere), and his open
+ * mailbox fold must not snap shut over an article.
  */
 object HubSubFold {
 
@@ -17,6 +19,7 @@ object HubSubFold {
             .joinToString("")
             .trim()
             .replace(Regex("\\s+"), "_")
+            .removePrefix("the_")
         return "hub_sub_open_$slug"
     }
 }

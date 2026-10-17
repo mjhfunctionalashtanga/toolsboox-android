@@ -32,6 +32,7 @@ import android.view.SurfaceView
 import android.view.View
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
@@ -95,7 +96,61 @@ abstract class SurfaceFragment : ScreenFragment() {
         const val CANVAS_WIDTH = 1404
         const val CANVAS_HEIGHT = 1872
         const val MIN_ZOOM = 1.0f
-        const val MAX_ZOOM = 4.0f
+        /**
+         * THE ZOOM CEILING, AS A MULTIPLE OF THE REST (Michael 2026-10-12, iPhone: "I want these to
+         * work at 8x zoom with no loss of clarity. Heck, 16x zoom would be meaningful."): the box,
+         * ＋ and the pinch all reach 16× the page's RESTING posture — portrait's whole page (zoom 1
+         * over the fit, so 16 over the fit) and landscape's width-fill alike (B6 1333×969 rests at
+         * 1.834 over the fit, so 29.3) — iOS ZoomBox's maxFactor × rest, the same number on both
+         * apps. [com.toolsboox.ot.InkViewport.ceiling] turns it into a zoom over the fit. History:
+         * 4 → 8 (the today Doodle box) → 16× the rest.
+         */
+        const val MAX_ZOOM = 16.0f
+
+        /** A pinch or pan whose lift never reached the surface's handler settles this long after
+         *  the last event the handler saw ([viewGestureWatchdog]) — unless a finger is still known
+         *  to be down, when [com.toolsboox.ot.ZoomClarity.GESTURE_HOLD_MS] of quiet is asked first. */
+        private const val VIEW_GESTURE_WATCHDOG_MS = 600L
+
+        /** The Zoom seat's name on every ink rail — its hold-toast and its [com.toolsboox.ot.TuckPanel.markOn] key. */
+        val ZOOM_SEAT: String = com.toolsboox.ot.PanelSeats.Seat.ZOOM.voice
+
+        /** The armed Zoom seat's spoken name — what its tap does then (iOS's zoomSeatName, word for word). */
+        private const val ZOOM_ARMED_NAME = "Zoom box — drag over the page, or tap to put it away"
+
+        /** The Zoom box's frame pace while it is dragged (the software lasso's 120ms) — e-ink
+         *  partials at touch rate lag and smear (review 2026-10-12). */
+        private const val MARQUEE_FRAME_MS = 120L
+
+        /** How long after the last resize-seam firing the place anchor stays armed. */
+        private const val PLACE_ANCHOR_SETTLE_MS = 700L
+
+        /** How long the surface must hold still before the Bigme daemon is (re)attached —
+         *  rotation relayout fires surfaceChanged repeatedly with intermediate sizes. */
+        private const val BIGME_REATTACH_SETTLE_MS = 700L
+
+        /** "Same stroke heard again" radius for bracket dedup, in view px² — HAND-sized.
+         *  Reusing the garbage-jump radius (¼ of the screen) here is what welded
+         *  consecutive strokes into phantom straight lines. */
+        private const val BIGME_WELD_RADIUS_SQ = 48f * 48f
+
+        /** A press-and-release inside an exclude view counts as its click within this. */
+        private const val BIGME_TAP_SLOP_SQ = 32f * 32f
+
+        /** …and as its HOLD when the pen stayed down this long — the bottom pill's own 550ms. */
+        private const val BIGME_HOLD_MS = 550L
+
+        /** Canvas px per physical mm on the device the gesture floors were tuned on
+         *  (the Tab8 at zoom 1) — the denominator of [gestureScale]. */
+        private const val GESTURE_REFERENCE_PX_PER_MM = 8.94f
+
+        /** Daemon silent this long while the swallow guard eats raw input = wedged or
+         *  dead daemon; detach and let the software pen take over. */
+        private const val BIGME_DAEMON_SILENT_MS = 3000L
+
+        /** …and this many raw events must have been eaten in that silence — silence
+         *  alone is just an idle pause. */
+        private const val BIGME_WATCHDOG_RAW_EVENTS = 40
 
         /**
          * Debounce window for re-applying the Onyx raw-drawing limit rect after a
@@ -153,6 +208,20 @@ abstract class SurfaceFragment : ScreenFragment() {
         private const val GESTURE_SCRIBBLE_MIN_REVERSALS = 4   // minimum direction reversals; eased 6→4 — these two are the
                                                                // zig-zag signal, loosened for reliable firing; the length
                                                                // ratio above still guards against normal writing.
+
+        // Strikethrough-to-delete (guards absorbed from mokke, MIT): one flat straight
+        // line drawn through the middle of settled ink deletes the words it crosses.
+        // The disambiguation battery is what makes it shippable — each guard kills a
+        // real false-positive class: age kills t-crossbars (you cross a t you JUST
+        // wrote), span kills short dashes, the center band kills underlines (they sit
+        // below the ink, not through it), flat+straight kills everything cursive.
+        private const val GESTURE_STRIKE_MIN_WIDTH = 90f       // canvas px (~1 cm) of horizontal travel
+        private const val GESTURE_STRIKE_MAX_HEIGHT_RATIO = 0.3f  // must be flat: height < this × width
+        private const val GESTURE_STRIKE_MAX_PATH_RATIO = 1.3f // must be straight: path ≤ this × bbox diagonal
+        private const val GESTURE_STRIKE_MIN_AGE_MS = 1500L    // only settled ink is a target
+        private const val GESTURE_STRIKE_MIN_SPAN_FRAC = 0.6f  // must span ≥ this of the target ink's width
+        private const val GESTURE_STRIKE_CENTER_BAND = 0.35f   // gesture centre within this × target height of its middle
+        private const val GESTURE_STRIKE_BAND_PAD = 40f        // vertical reach when collecting target strokes (canvas px)
 
         /**
          * Calligraphy nib width as a multiple of the base stroke width, scaled by pen
@@ -240,6 +309,948 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** Strokes that fell inside the lasso polygon. */
     private var selectedStrokes = mutableListOf<Stroke>()
 
+    /** The lasso's live selection, read-only — the ⟡ Synth glyph asks "is a selection standing?"
+     *  so a summon can honor circled ink without the menu trip. Empty when nothing is selected. */
+    fun currentLassoSelection(): List<Stroke> =
+        // Gate on hasSelection, not just list contents: the pen can resume over a DISSOLVING
+        // selection whose stroke list lingers, and a ⟡ summon reading that stale circle
+        // re-answers old ink forever ("Synth doesn't recognize second set of strokes").
+        if (hasSelection) selectedStrokes.toList() else emptyList()
+
+    /** The lasso is armed or holding a selection — the rail boxes Lasso only while this is
+     *  true, so a tap that toggles it OFF doesn't re-box it (plan v6 S1.0b, 2026-10-10). */
+    protected fun lassoArmed(): Boolean = selectionMode || hasSelection
+
+    /** A verb CONSUMED the selection (the ⟡ summon took the circle as its ask): dissolve it
+     *  so the ink un-highlights and the NEXT summon reads the page's delta, not the old ring. */
+    fun clearLassoSelection() {
+        if (!hasSelection && !selectionMode) return
+        exitSelectionMode()
+        applyStrokes(strokes, true)
+    }
+
+    /** The ELEMENTS a region holds — the lasso captures cards as well as ink (Michael, 08-30:
+     *  "we'll also need multi-select with the lasso"). Intersection test against the region's
+     *  bounds; the caller says which page. */
+    protected fun elementsInRegion(page: String, region: android.graphics.RectF): List<ImageElement> =
+        imageElements.filter {
+            it.page == page && android.graphics.RectF.intersects(
+                region, android.graphics.RectF(it.x, it.y, it.x + it.width, it.y + it.height))
+        }
+
+    /** Canvas-space bounds of the last CLOSED lasso loop — the region of truth for element
+     *  capture. The selected INK's own bounds miss cards that sit inside the loop but outside
+     *  the ink's box (the field bug: "lasso doesn't seem to work on grams"); the loop is what
+     *  the finger actually said. Overwritten at every commit, never cleared mid-menu (the
+     *  selection menu reads it AFTER exitSelectionMode has run). */
+    protected var lastLassoBounds: RectF? = null
+
+    /** Running union (canvas space) of everywhere the current selection has painted —
+     *  box, chips, handles, the toolbar-lasso polygon, every drag frame. The Bigme GU16
+     *  mirror can only darken, so this trail is exactly the region that must be scrubbed
+     *  to truth when the selection ends (the "ghosts when I move stuff" leak). */
+    private var selDirtyCanvas: RectF? = null
+
+    /** An element-only lasso closed: no ink inside the loop, but cards under it. The day
+     *  subclass opens the selection menu over those cards and answers true; the base answers
+     *  false, and the loop falls back to ink / the nothing-selected toast. */
+    protected open fun onLassoElementsOnly(bounds: RectF): Boolean = false
+
+    // --- Zoom to a box (Michael 2026-10-12: "Add a zoom button with marquee zoom to the tuck panels
+    // for places like today notes all picks all stars write panels etc") ---
+    //
+    // The ink rail's Zoom seat. TAP repeats its LAST CHOICE (Michael 2026-10-12: "We can make the
+    // zoom button the last used option for one click zoom in / out adjustments. Or zoom to box :)"),
+    // and its face says which; HOLD: Zoom box · Zoom + · Zoom −, the pick becoming the tap,
+    // remembered on this device. Zoom to fit left the menu — the double-tap is the way back.
+    //  - Zoom box: a one-shot box — the next drag, finger or pen, draws a dashed box instead of ink
+    //    (no stroke, no undo step), and on lift the page zooms so the box fills the surface, centred;
+    //    the tool you held comes back. A drag under [MarqueeZoom.MIN_DRAG_DP] zooms nothing. A
+    //    one-shot that ends itself, never a mode (feedback_ledger_no_modes_hold_to_act); a tap on the
+    //    armed seat, a tool, Back, a pinch, a page change or a pause takes it back.
+    //  - Zoom + / Zoom −: 10% more or less about the middle of what you see, − stopping at the rest,
+    //    one repaint a step ([zoomStep]).
+    // While the page is magnified past its rest the seat is boxed. The maths: [com.toolsboox.ot.MarqueeZoom].
+
+    /** The box is armed: the next drag draws it. Read on the B6 daemon's binder thread (the live
+     *  ink gate in [doBigmeAttach]), hence volatile. */
+    @Volatile private var marqueeArmed = false
+    /** A box is being drawn — from ([marqueeStartX], [marqueeStartY]) to the end, surface px. */
+    private var marqueeDragging = false
+    /** A finger draws it (else the pen). */
+    private var marqueeByFinger = false
+    /** The box is the B6 daemon's pen stream's (else the view's own touch stream). */
+    private var marqueeByDaemon = false
+    /** The pointer drawing it, by its id in its own stream. */
+    private var marqueePointerId = 0
+    private var marqueeStartX = 0f
+    private var marqueeStartY = 0f
+    private var marqueeEndX = 0f
+    private var marqueeEndY = 0f
+
+    /**
+     * The touch streams the box has taken, swallowed WHOLE to their lift (review 2026-10-12): every
+     * DOWN that lands while the box is armed — the box's own, a palm under it, a pen that took it
+     * over — is the box's, and so is the rest of its stream, even after the box has zoomed. A tail
+     * let through would reach the ink path with no DOWN, and its UP alone lays a dot and an undo
+     * step (onEndDrawing). Two streams at most: the view's own (fingers, and the pen everywhere but
+     * the B6) and the B6 daemon's pen ([bigmeDispatching]).
+     */
+    private var marqueeEatsView = false
+    /** Read on the daemon's binder thread too (the live-ink gate), hence volatile. */
+    @Volatile private var marqueeEatsDaemon = false
+
+    /** The box as last painted into the surface (surface px, stroke pad included) — the next
+     *  frame's dirty rect takes it back. Null = nothing of the box on the surface. */
+    private var marqueePainted: RectF? = null
+    private var marqueeLastPaintMs = 0L
+
+    /** The box's dashed line, black and a touch heavier than the lasso's: it has to read on e-ink
+     *  mid-drag. */
+    private val marqueePaint by lazy {
+        val d = resources.displayMetrics.density
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            color = Color.BLACK
+            strokeWidth = (1.5f * d).coerceAtLeast(2f)
+            pathEffect = DashPathEffect(floatArrayOf(8f * d, 6f * d), 0f)
+        }
+    }
+
+    /** Back while the box is armed puts the box away and nothing else — the left edge's ladder
+     *  never opens the Hub over a box that began at the edge (review 2026-10-12; iOS stands its
+     *  edge strip down while armed). Enabled only while armed; above the ladder ([addOwnBackCallback]). */
+    private var marqueeBack: androidx.activity.OnBackPressedCallback? = null
+    private var marqueeBackView: View? = null
+
+    /** The box is armed, or a stream it took hasn't lifted yet — the day page keeps its finger
+     *  long-press off the drag that draws it. */
+    protected fun marqueeLive(): Boolean = marqueeArmed || marqueeEatsView
+
+    /** The Zoom seat, the same on every ink rail (the day page and the almanac pages): directly
+     *  after Redo, in the pens block (panel-design-language §1 B; [com.toolsboox.ot.PanelSeats.Seat.ZOOM]),
+     *  wearing its last choice from the first frame ([syncZoomSeat] keeps it so). */
+    protected fun zoomSeatItem(): com.toolsboox.ot.TuckPanel.Item {
+        val choice = zoomChoice()
+        return com.toolsboox.ot.PanelFaces.item(com.toolsboox.ot.PanelSeats.Seat.ZOOM,
+            name = ZOOM_SEAT, caption = choice.caption, iconRes = com.toolsboox.ot.PanelFaces.zoomFace(choice),
+            longPress = { showZoomHold() }) { zoomSeatTapped() }
+    }
+
+    /** The seat's last choice as this page last read it — what it keeps wearing while detached. */
+    private var zoomChoiceRead: com.toolsboox.ot.MarqueeZoom.Choice? = null
+
+    /** The seat's last choice on this device ([com.toolsboox.ot.MarqueeZoom.CHOICE_KEY]), read fresh
+     *  each time — the preferences are in memory — so a page waiting in the back stack wears a pick
+     *  made on another page when it comes back. */
+    private fun zoomChoice(): com.toolsboox.ot.MarqueeZoom.Choice {
+        val prefs = context?.getSharedPreferences("ledger_widgets", 0)
+            ?: return zoomChoiceRead ?: com.toolsboox.ot.MarqueeZoom.Choice.BOX
+        return com.toolsboox.ot.MarqueeZoom.choiceFor(prefs.getString(com.toolsboox.ot.MarqueeZoom.CHOICE_KEY, null))
+            .also { zoomChoiceRead = it }
+    }
+
+    /** TAP on Zoom: the armed box put away, else the last choice again ([com.toolsboox.ot.MarqueeZoom.tap]). */
+    private fun zoomSeatTapped() {
+        when (com.toolsboox.ot.MarqueeZoom.tap(marqueeArmed, zoomChoice())) {
+            com.toolsboox.ot.MarqueeZoom.Tap.DISARM -> endMarquee(deferRawResume = false)
+            com.toolsboox.ot.MarqueeZoom.Tap.ARM -> armMarquee()
+            com.toolsboox.ot.MarqueeZoom.Tap.IN -> zoomStep(inward = true)
+            com.toolsboox.ot.MarqueeZoom.Tap.OUT -> zoomStep(inward = false)
+        }
+    }
+
+    /** HOLD on Zoom names it and offers its three (Michael 2026-10-12) — iOS's order and words, the
+     *  one the tap repeats now ticked ✓ (never by colour alone). A pick becomes the tap and runs once
+     *  ([pickZoom]). All three always, so the menu keeps its shape and the ✓ its row (review
+     *  2026-10-12): ＋ at the ceiling and − at the whole page would do nothing — iOS greys those
+     *  rows; a GoItem has no grey, so the row says where it stopped and its tap only says so, the
+     *  choice left as it was ([com.toolsboox.ot.MarqueeZoom.holdRow]). */
+    private fun showZoomHold() {
+        val now = zoomChoice()
+        val rows = com.toolsboox.ot.MarqueeZoom.Choice.entries.map { c ->
+            val glyph = when (c) {
+                com.toolsboox.ot.MarqueeZoom.Choice.BOX -> "⬚"
+                com.toolsboox.ot.MarqueeZoom.Choice.IN -> "＋"
+                com.toolsboox.ot.MarqueeZoom.Choice.OUT -> "−"
+            }
+            val moves = zoomChoiceMoves(c)
+            GoItem(glyph, com.toolsboox.ot.MarqueeZoom.holdRow(c, chosen = c == now, moves = moves)) {
+                val stopped = if (moves) null else com.toolsboox.ot.MarqueeZoom.stoppedSay(c)
+                if (stopped == null) pickZoom(c)
+                else runCatching { Toast.makeText(requireContext(), stopped, Toast.LENGTH_SHORT).show() }
+            }
+        }
+        showGoModal(listOf(ZOOM_SEAT to rows), anchorTop = false, anchorEnd = railOnRightSide())
+    }
+
+    /** Would [choice] move the page now ([com.toolsboox.ot.MarqueeZoom.moves])? The box always can.
+     *  Before the surface is measured nothing is known, so nothing dims (no face drawn faint for one
+     *  frame and then redrawn — an extra e-ink update on the B6). */
+    private fun zoomChoiceMoves(choice: com.toolsboox.ot.MarqueeZoom.Choice): Boolean {
+        val sw = surfaceSize.width().toFloat()
+        val sh = surfaceSize.height().toFloat()
+        if (sw <= 0f || sh <= 0f) return true
+        val rest = com.toolsboox.ot.InkViewport.restFit(sw, sh, landscapeFitsWholePage()).zoom
+        return com.toolsboox.ot.MarqueeZoom.moves(choice, zoomScale, rest,
+            com.toolsboox.ot.InkViewport.ceiling(rest))
+    }
+
+    /** The zoom ceiling on this surface as it stands: 16× its resting posture
+     *  ([com.toolsboox.ot.InkViewport.ceiling]) — the pinch's, the box's and ＋'s one limit.
+     *  Before the surface is measured, the bare [MAX_ZOOM] over the fit. */
+    private fun zoomCeiling(): Float {
+        val sw = surfaceSize.width().toFloat()
+        val sh = surfaceSize.height().toFloat()
+        if (sw <= 0f || sh <= 0f) return MAX_ZOOM
+        return com.toolsboox.ot.InkViewport.ceiling(
+            com.toolsboox.ot.InkViewport.restFit(sw, sh, landscapeFitsWholePage()).zoom)
+    }
+
+    /** A pick from the hold: it becomes the tap, remembered on this device, the seat's face follows,
+     *  and it runs once — the bottom pill corner's rule (BottomPill.choose). A step puts an armed
+     *  box away first: one zoom at a time. */
+    private fun pickZoom(choice: com.toolsboox.ot.MarqueeZoom.Choice) {
+        if (choice != zoomChoice()) {
+            zoomChoiceRead = choice
+            context?.getSharedPreferences("ledger_widgets", 0)?.edit()
+                ?.putString(com.toolsboox.ot.MarqueeZoom.CHOICE_KEY, choice.key)?.apply()
+            syncZoomSeat()
+        }
+        when (choice) {
+            com.toolsboox.ot.MarqueeZoom.Choice.BOX -> armMarquee()
+            com.toolsboox.ot.MarqueeZoom.Choice.IN -> { endMarquee(deferRawResume = false); zoomStep(inward = true) }
+            com.toolsboox.ot.MarqueeZoom.Choice.OUT -> { endMarquee(deferRawResume = false); zoomStep(inward = false) }
+        }
+    }
+
+    /** Arm the box. The Onyx pen parks exactly as the lasso parks it (raw ink off, the limit rect
+     *  left as it is — [inkSuppressed] keeps every re-apply from waking it); the B6 daemon keeps
+     *  hearing the pen but lays no live ink ([doBigmeAttach]'s gate), so the box is the app's alone. */
+    private fun armMarquee() {
+        if (marqueeArmed) return
+        marqueeArmed = true
+        marqueeDragging = false
+        syncRawInkToSelectionMenu()
+        syncZoomSeat()
+        armMarqueeBack(true)
+        // The armed seat's only other sign — iOS shows a capsule while armed (parity review
+        // 2026-10-12); in full screen the seat isn't even on the glass.
+        runCatching { Toast.makeText(requireContext(), "Drag a box to zoom", Toast.LENGTH_SHORT).show() }
+    }
+
+    private fun armMarqueeBack(on: Boolean) {
+        if (on) {
+            val v = getView() ?: return
+            if (marqueeBackView !== v || marqueeBack == null) {
+                val cb = object : androidx.activity.OnBackPressedCallback(false) {
+                    override fun handleOnBackPressed() { endMarquee(deferRawResume = true) }
+                }
+                runCatching { addOwnBackCallback(cb) }.onSuccess {
+                    marqueeBack = cb
+                    marqueeBackView = v
+                }
+            }
+        }
+        marqueeBack?.isEnabled = on
+    }
+
+    /** The box stands down: its frame off the surface, the seat follows the page. The pen is the
+     *  caller's — every tool path that lands here re-syncs the hardware pen right after. */
+    private fun dropMarquee() {
+        if (!marqueeArmed && !marqueeDragging) return
+        marqueeArmed = false
+        marqueeDragging = false
+        eraseMarqueeBox()
+        syncZoomSeat()
+        armMarqueeBack(false)
+    }
+
+    /** The box is done (drawn, slipped, or taken back): the tool you held comes back. A lift defers
+     *  the pen's return past itself ([scheduleRawInkResume]) — the CUT lesson: a pen woken under a
+     *  contact still in flight paints a dot. */
+    private fun endMarquee(deferRawResume: Boolean) {
+        val wasArmed = marqueeArmed || marqueeDragging
+        dropMarquee()
+        if (!wasArmed) return
+        if (deferRawResume) scheduleRawInkResume() else syncRawInkToSelectionMenu()
+    }
+
+    private fun isPenTool(tool: Int) =
+        tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER
+
+    /** The box starts (or starts over) under pointer [index] of [ev]. */
+    private fun startMarqueeBox(ev: MotionEvent, index: Int, daemon: Boolean) {
+        marqueeDragging = true
+        marqueeByFinger = !isPenTool(ev.getToolType(index))
+        marqueeByDaemon = daemon
+        marqueePointerId = ev.getPointerId(index)
+        marqueeStartX = ev.getX(index); marqueeStartY = ev.getY(index)
+        marqueeEndX = marqueeStartX; marqueeEndY = marqueeStartY
+    }
+
+    /**
+     * The armed box's touch, ahead of every tool ([callback]) — and the tails of the streams it
+     * took ([marqueeEatsView]). Review 2026-10-12: while the box is armed no DOWN reaches the ink
+     * path, so a pen can never lay ink or an undo step under it.
+     *  - The first DOWN starts the box, finger or pen. THE PEN WINS: a pen landing on a finger's
+     *    box (a palm that got there first — the B6's palm and pen are separate streams; elsewhere
+     *    the pen is a second pointer in the palm's stream) starts it over as the pen's, and the
+     *    palm is swallowed from then on.
+     *  - A CANCEL is the system's, never the writer's (touch suppressed as the pen nears, a back
+     *    gesture claiming the edge): the box keeps its arming, so the pen's drag that follows is
+     *    still the box.
+     *  - A second FINGER on a finger's box is a pinch: the box stands down and the pinch has the
+     *    page (parity: iOS's box gives way to a pinch the same way).
+     *  - Samsung's held-button codes 211/213/212 are the DOWN/MOVE/UP they are (the ink path's own
+     *    table), so a held S-Pen button can't slip a DOWN past the box to the eraser.
+     */
+    private fun handleMarqueeTouch(ev: MotionEvent): Boolean {
+        val daemon = bigmeDispatching
+        val eats = if (daemon) marqueeEatsDaemon else marqueeEatsView
+        fun eat(on: Boolean) { if (daemon) marqueeEatsDaemon = on else marqueeEatsView = on }
+        val action = when (ev.action) {
+            211 -> MotionEvent.ACTION_DOWN
+            213 -> MotionEvent.ACTION_MOVE
+            212 -> MotionEvent.ACTION_UP
+            else -> ev.actionMasked
+        }
+        val boxStream = marqueeDragging && marqueeByDaemon == daemon
+        when (action) {
+            MotionEvent.ACTION_DOWN -> {
+                // A stream begins. Unarmed, it is not the box's: a stale claim on this stream goes.
+                if (!marqueeArmed) { eat(false); return false }
+                eat(true)
+                // The box starts — or the pen wins it from a palm. A palm under the pen's box (or a
+                // second pen stream) is only swallowed.
+                if (!marqueeDragging || (isPenTool(ev.getToolType(0)) && marqueeByFinger)) {
+                    startMarqueeBox(ev, 0, daemon)
+                    paintMarqueeFrame(force = true)
+                }
+                return true
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                if (!eats) return false
+                if (!marqueeArmed) return true
+                val i = ev.actionIndex
+                if (isPenTool(ev.getToolType(i))) {
+                    // The pen joins the palm's stream: it takes the box over.
+                    if (!marqueeDragging || marqueeByFinger) {
+                        startMarqueeBox(ev, i, daemon)
+                        paintMarqueeFrame(force = true)
+                    }
+                    return true
+                }
+                if (boxStream && marqueeByFinger) {
+                    // A pinch: the box stands down, the pen's return deferred past the contacts
+                    // still down. In finger-drawing the pinch was never the page's — keep eating,
+                    // or the tail's UP would lay a dot.
+                    endMarquee(deferRawResume = true)
+                    if (!touchDrawingState) { eat(false); return false }
+                }
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!eats) return false
+                if (marqueeArmed && boxStream) {
+                    val i = ev.findPointerIndex(marqueePointerId)
+                    if (i >= 0) {
+                        marqueeEndX = ev.getX(i); marqueeEndY = ev.getY(i)
+                        paintMarqueeFrame(force = false)
+                    }
+                }
+                return true
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                if (!eats) return false
+                val i = ev.actionIndex
+                if (marqueeArmed && boxStream && ev.getPointerId(i) == marqueePointerId) {
+                    marqueeEndX = ev.getX(i); marqueeEndY = ev.getY(i)
+                    commitMarquee()
+                }
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                if (!eats) return false
+                eat(false)
+                if (marqueeArmed && boxStream && ev.getPointerId(0) == marqueePointerId) {
+                    marqueeEndX = ev.x; marqueeEndY = ev.y
+                    commitMarquee()
+                }
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                if (!eats) return false
+                eat(false)
+                if (marqueeArmed && boxStream) {
+                    // Still armed: the next drag is the box.
+                    marqueeDragging = false
+                    eraseMarqueeBox()
+                }
+                return true
+            }
+        }
+        return eats
+    }
+
+    /** The lift: a box zooms the page to it, a slip zooms nothing; either way the tool comes back. */
+    private fun commitMarquee() {
+        val minPx = com.toolsboox.ot.MarqueeZoom.MIN_DRAG_DP * resources.displayMetrics.density
+        if (com.toolsboox.ot.MarqueeZoom.isBox(marqueeStartX, marqueeStartY, marqueeEndX, marqueeEndY, minPx) &&
+            zoomToSurfaceBox(com.toolsboox.ot.MarqueeZoom.box(marqueeStartX, marqueeStartY, marqueeEndX, marqueeEndY))
+        ) {
+            // The zoom's one full repaint took the box off with it: nothing left to erase.
+            marqueePainted = null
+        }
+        endMarquee(deferRawResume = true)
+    }
+
+    /**
+     * Zoom so the surface box [b] (surface px) fills the surface: mapped back onto the page through
+     * the matrix on the glass, then [com.toolsboox.ot.MarqueeZoom.landing] — [focusOnRect]'s algebra,
+     * the zoom that shows the whole box, clamped to [MIN_ZOOM]..[zoomCeiling] (16× the rest — a box
+     * of the smallest drag a slip allows asks for more than that on every surface, so a small box
+     * reaches the ceiling). A chosen posture, so the
+     * hand owns it until the next page ([zoomTakenByHand]). ONE matrix and ONE draw: the B6 pays one
+     * mirror, the box itself never reached its daemon. False = nothing landed.
+     */
+    private fun zoomToSurfaceBox(b: com.toolsboox.ot.MarqueeZoom.Box): Boolean {
+        val sw = surfaceSize.width().toFloat()
+        val sh = surfaceSize.height().toFloat()
+        if (sw <= 0f || sh <= 0f) return false
+        val r = RectF(b.left, b.top, b.right, b.bottom)
+        inverseViewMatrix.mapRect(r)
+        val base = com.toolsboox.ot.InkViewport.fitScale(sw, sh)
+        val land = com.toolsboox.ot.MarqueeZoom.landing(
+            com.toolsboox.ot.MarqueeZoom.Box(r.left, r.top, r.right, r.bottom), sw, sh, base,
+            CANVAS_WIDTH.toFloat(), CANVAS_HEIGHT.toFloat(), MIN_ZOOM, zoomCeiling()) ?: return false
+        zoomTakenByHand = true
+        handTookThePlace()
+        baseScale = base
+        zoomScale = land.zoom
+        panX = land.panX
+        panY = land.panY
+        updateTransformMatrix()
+        repaintAfterZoom()
+        return true
+    }
+
+    /**
+     * Zoom + / Zoom − (Michael 2026-10-12: "10% more or 10% less like + or -"): one [com.toolsboox.ot.MarqueeZoom.STEP]
+     * of the zoom on the glass about the middle of what you see ([com.toolsboox.ot.MarqueeZoom.stepLanding]),
+     * clamped to [the rest, [zoomCeiling]] (16× the rest) — the pinch's ceiling — and within the rest snap exactly the
+     * rest (the whole surface's, so in full screen the full-screen rest, Michael 2026-10-11). A step
+     * that moves nothing (− at the rest, ＋ at the ceiling) draws nothing. ONE matrix and ONE draw
+     * per step ([repaintAfterZoom]): the surface post and, on the B6, the one forced mirror that
+     * puts the step on the glass — no shadow rebuild, a zoom changes nothing in it. A step is a chosen
+     * posture, the hand's until the next page ([zoomTakenByHand]); one that lands on the rest hands
+     * the zoom back to the machinery, as the double-tap out does, keeping the middle where it was.
+     */
+    private fun zoomStep(inward: Boolean) {
+        val sw = surfaceSize.width().toFloat()
+        val sh = surfaceSize.height().toFloat()
+        if (sw <= 0f || sh <= 0f) return
+        val rest = com.toolsboox.ot.InkViewport.restFit(sw, sh, landscapeFitsWholePage())
+        val land = com.toolsboox.ot.MarqueeZoom.stepLanding(zoomScale, panX, panY, rest.base, rest.zoom,
+            com.toolsboox.ot.InkViewport.ceiling(rest.zoom), CANVAS_WIDTH.toFloat(), CANVAS_HEIGHT.toFloat(),
+            inward) ?: return
+        zoomTakenByHand = !land.atRest
+        handTookThePlace()
+        baseScale = rest.base
+        zoomScale = land.zoom
+        panX = land.panX
+        panY = land.panY
+        updateTransformMatrix()
+        repaintAfterZoom()
+    }
+
+    /** The one repaint after a Zoom seat's zoom (a ＋/− step or a box), a standing selection's
+     *  chrome kept. A zoom moves the matrix, never the page-space shadow, so the shadow isn't
+     *  rebuilt (review 2026-10-12: every ＋ on a heavy page re-rendered every stroke into it) —
+     *  only the B6 mirror is forced, the step's one panel refresh, as the pinch's quiet bakes are
+     *  not ([applyStrokes] forceMirror). */
+    private fun repaintAfterZoom(logZoom: Boolean = true) {
+        val t0 = System.nanoTime()
+        // The template at the zoomed resolution FIRST (a selection's drawWithSelection never asks
+        // for it): its view's frame is queued before the surface post and the forced B6 mirror,
+        // so the one panel refresh lands over the sharp template, not the magnified one with a
+        // second update after it (review of 241e9212 — measure on the B6).
+        if (sharpWanted()) ensureSharpTemplate(show = true)
+        if (hasSelection) drawWithSelection() else applyStrokes(strokes, false, forceMirror = true)
+        if (imageMode && selectedImage != null) drawImageSelection()
+        if (logZoom) logZoomSettled(t0)
+    }
+
+    // --- Sharp at every zoom (Michael 2026-10-12: "I want these to work at 8x zoom with no loss of
+    // clarity. Heck, 16x zoom would be meaningful.") — the why is [com.toolsboox.ot.ZoomClarity]. ---
+    //
+    // The surface was always vector. What wasn't: the B6 daemon's mirror (the 1404×1872 page-space
+    // shadow blitted through the matrix with no filtering — 11px stair-steps at 16×, re-pushed at
+    // every pen pause) and the template's ImageView (the same size of bitmap through imageMatrix).
+    // Settled and magnified past both, they are drawn again at the zoomed resolution: the mirror from
+    // the strokes into a view-sized buffer that the surface post shares (one vector render, not two),
+    // the template from its recorded drawing (a template of decoded pictures from its drawing run
+    // again, [drawTemplate]). Mid-gesture both stay on the page-space bitmaps, as
+    // they always were — the B6 pays its one forced mirror at the settle, nothing per frame.
+
+    /** The view the page's template shows in, MATRIX-scaled by [onTransformChanged] — where the
+     *  template at the zoomed resolution is shown. Every page today (day, week, month, quarter,
+     *  year) has one and draws through [drawTemplate]; null = never swapped. */
+    protected open fun templateView(): ImageView? = null
+
+    /**
+     * Draw the page's template so it can be drawn again at any zoom ([ensureSharpTemplate]): the
+     * Today dashboard, a notes sheet's ruling and header, All Stars' bands, at 16× as crisp as the
+     * ink on them.
+     *
+     * Two ways, by what the template paints:
+     *  - most templates are RECORDED, then played into [templateCanvas] exactly as the direct draw
+     *    was — the settle replays the recording, nothing is read or worked out again;
+     *  - [decodesPictures]: a template that decodes a picture per slot (All Stars' wider window, the
+     *    picks and stars stations — up to 36 grams) is drawn STRAIGHT into [templateCanvas] and
+     *    never recorded. A recording keeps every decoded picture it drew alive for the page's whole
+     *    life (a recycle inside a recording frees nothing — the 36-gram station held ~90 MB at rest,
+     *    review of 241e9212), and at the 2× headroom they were decoded at they were still 4–8×
+     *    magnified at 16×. Its settle runs [draw] again into the zoomed frame instead: only the
+     *    slots on the glass are decoded, each at its size there
+     *    ([com.toolsboox.ot.ZoomClarity.pictureDecodeTarget]), each freed once it is drawn.
+     *
+     * A template drawn while the sharp copy is showing redraws that copy at once (same zoom). A
+     * failing draw still lands what it drew, then throws, as the direct draw did.
+     */
+    protected fun drawTemplate(decodesPictures: Boolean = false, draw: (Canvas) -> Unit) {
+        var failure: Throwable? = null
+        if (decodesPictures) {
+            templatePicture = null
+            templateRedraw = draw
+            // A draw that throws between its own save and restore must not leave the page-space
+            // canvas carrying its matrix or clip into the next template.
+            val saved = templateCanvas.save()
+            try { draw(templateCanvas) } catch (t: Throwable) { failure = t }
+            finally { templateCanvas.restoreToCount(saved) }
+        } else {
+            templateRedraw = null
+            val pic = android.graphics.Picture()
+            val rc = pic.beginRecording(CANVAS_WIDTH, CANVAS_HEIGHT)
+            try { draw(rc) } catch (t: Throwable) { failure = t }
+            pic.endRecording()
+            templateCanvas.drawPicture(pic)
+            templatePicture = pic
+        }
+        sharpTemplateMatrix = null   // the drawn-again copy is of the template before this one
+        if (sharpTemplateShown) ensureSharpTemplate(show = true)
+        failure?.let { throw it }
+    }
+
+    /** The matrix a template view should wear for [matrix]: identity while the zoomed-resolution
+     *  template is showing (it is already drawn through [matrix]), else [matrix] itself. */
+    protected fun templateMatrixFor(matrix: Matrix): Matrix =
+        if (sharpTemplateShown && isMatrixNow(sharpTemplateMatrix)) identityMatrix else matrix
+
+    private val matrixScratch = FloatArray(9)
+    private fun matrixNow(): FloatArray = FloatArray(9).also { viewMatrix.getValues(it) }
+    private fun isMatrixNow(v: FloatArray?): Boolean {
+        if (v == null) return false
+        viewMatrix.getValues(matrixScratch)
+        return v.contentEquals(matrixScratch)
+    }
+
+    /** Draw at the zoomed resolution now: magnified past the rest and past the page bitmaps' own
+     *  resolution, and the hand off the glass. */
+    private fun sharpWanted(): Boolean = !viewGestureLive &&
+        com.toolsboox.ot.ZoomClarity.wantsSharp(baseScale * zoomScale, zoomedPastRest())
+
+    /** …and the B6 daemon is the one carrying the page to the glass. */
+    private fun bigmeSharpWanted(): Boolean = isBigmeDevice() && bigmeInk?.attached == true && sharpWanted()
+
+    /** The page window on the glass (page units) while it is magnified past 1:1 — what a redraw
+     *  needs to draw — else null (everything is drawn, as always). */
+    private fun visiblePageWindow(): RectF? {
+        if (baseScale * zoomScale <= com.toolsboox.ot.ZoomClarity.SHARP_MIN_SCALE) return null
+        val w = surfaceSize.width()
+        val h = surfaceSize.height()
+        if (w <= 0 || h <= 0) return null
+        return RectF(0f, 0f, w.toFloat(), h.toFloat()).also { inverseViewMatrix.mapRect(it) }
+    }
+
+    /** The page's content into [c] (already carrying the matrix): pictures, the strokes the [window]
+     *  can show (all of them when null), text boxes — the render [applyStrokes] has always made. */
+    private fun drawPageContent(c: Canvas, list: List<Stroke>, strokePaint: Paint, window: RectF?) {
+        renderImageElements(c)
+        for (stroke in list) {
+            if (window != null && !com.toolsboox.ot.ZoomClarity.meets(stroke.strokePoints,
+                    window.left, window.top, window.right, window.bottom,
+                    com.toolsboox.ot.ZoomClarity.strokePad(stroke.strokeWidth))) continue
+            drawStrokePath(c, strokePaint, stroke)
+        }
+        renderTextElements(c)
+    }
+
+    /**
+     * The B6 mirror's ink at the zoomed resolution: [paintContent] through the matrix into the next
+     * view-sized buffer (the other may still be on the ink thread). Null when it can't be made — the
+     * page-space shadow carries on, as before. The buffers are dropped, never recycled, so a blit
+     * still in flight never meets a dead bitmap.
+     */
+    private fun renderSharpInk(paintContent: (Canvas) -> Unit): Bitmap? {
+        val v = runCatching { provideSurfaceView() }.getOrNull() ?: return null
+        val w = v.width
+        val h = v.height
+        if (w <= 0 || h <= 0) return null
+        val i = if (sharpInkAt == 0) 1 else 0
+        // Whatever was current is of the content before this render: a render that fails below
+        // leaves NO zoomed-resolution ink, so the mirror falls back to the shadow, never stale ink.
+        sharpInkMatrix = null
+        var b = sharpInkBuf[i]
+        if (b == null || b.isRecycled || b.width != w || b.height != h) {
+            b = runCatching { Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888) }.getOrNull() ?: return null
+            sharpInkBuf[i] = b
+            sharpInkCanvas[i] = Canvas(b)
+        }
+        val c = sharpInkCanvas[i] ?: return null
+        b.eraseColor(Color.TRANSPARENT)
+        c.save()
+        c.concat(viewMatrix)
+        paintContent(c)
+        c.restore()
+        sharpInkAt = i
+        sharpInkMatrix = matrixNow()
+        sharpInkBehind = false   // drawn from the strokes as they stand
+        return b
+    }
+
+    /**
+     * The strokes the pen has written since the last bake into the frames a scrub takes as truth.
+     * A pen-up adds its stroke to [strokes] at once, but the page-space shadow and the
+     * zoomed-resolution ink only get it at the debounced bake ([commitVisualRunnable], ~700 ms
+     * after the pen pauses) — and every 1202 scrub in that window (circle-select's ring, a popup's
+     * departure, 🧹, a drag frame) drove the glass to a truth without the newest ink: it blinked
+     * out until the bake's refresh brought it back (review of 241e9212 — the shadow was as stale as
+     * the zoomed buffer, so falling back to it would only have traded sharp for stair-steps). Data
+     * only: nothing is posted, the bake still converges the panel. A standing selection keeps its
+     * own composite current ([drawWithSelection]) and is left alone.
+     */
+    private fun catchUpInkFrames() {
+        if (!shadowBehind && !sharpInkBehind) return
+        if (hasSelection || (imageMode && selectedImage != null)) return
+        val strokePaint = Paint(paint)
+        if (shadowBehind && ensureShadowCanvas()) {
+            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+            drawPageContent(canvas, strokes, strokePaint, null)
+            shadowBehind = false
+        }
+        if (sharpInkBehind) {
+            if (bigmeSharpWanted() && sharpInkNow() != null) {
+                val window = visiblePageWindow()
+                renderSharpInk { c -> drawPageContent(c, strokes, strokePaint, window) }
+            }
+            // Not current at this matrix, it is drawn afresh before anything hands it out.
+            sharpInkBehind = false
+        }
+    }
+
+    /** The zoomed-resolution ink, if it was drawn at the matrix on the glass. */
+    private fun sharpInkNow(): Bitmap? {
+        if (sharpInkAt < 0 || !isMatrixNow(sharpInkMatrix)) return null
+        return sharpInkBuf[sharpInkAt]?.takeIf { !it.isRecycled }
+    }
+
+    /** What the B6 daemon is handed — ink and template in ONE frame: the zoomed-resolution buffers
+     *  under an identity matrix while they are current, else the page-space shadow and template
+     *  through the view matrix (every shipped path). The mirror, the first-draw truth and every
+     *  1202 scrub take the same frame, so a scrub at 16× drives sharp truth, never stair-steps. */
+    private class MirrorFrame(val ink: Bitmap, val template: Bitmap?, val matrix: Matrix)
+
+    /** The zoomed-resolution template as the template view's drawable: drawn at its own pixels from
+     *  the view's origin (the view's matrix is identity while it shows), reporting the page bitmap's
+     *  intrinsic size so swapping it in and out asks for no layout pass. */
+    private class PinnedBitmapDrawable(private val bmp: Bitmap, private val w: Int, private val h: Int) :
+        android.graphics.drawable.Drawable() {
+        override fun draw(canvas: Canvas) {
+            if (!bmp.isRecycled) canvas.drawBitmap(bmp, bounds.left.toFloat(), bounds.top.toFloat(), null)
+        }
+        override fun getIntrinsicWidth(): Int = w
+        override fun getIntrinsicHeight(): Int = h
+        override fun setAlpha(alpha: Int) {}
+        override fun setColorFilter(colorFilter: ColorFilter?) {}
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
+
+    private fun mirrorFrame(): MirrorFrame? {
+        val pageTemplate = if (::templateBitmap.isInitialized && !templateBitmap.isRecycled) templateBitmap else null
+        val sharp = if (sharpWanted()) sharpInkNow() else null
+        if (sharp != null) {
+            // A template that couldn't be drawn in the zoomed frame would leave the truth white
+            // there: the whole frame falls back to page space instead.
+            val t = ensureSharpTemplate(show = false)
+            if (t != null || pageTemplate == null) return MirrorFrame(sharp, t, identityMatrix)
+        }
+        val b = bitmap?.takeIf { !it.isRecycled } ?: return null
+        return MirrorFrame(b, pageTemplate, viewMatrix)
+    }
+
+    /** [mirrorFrame] for the 1202 scrubs, which run with no shadow too (white + template then, as
+     *  they always did): (ink or null, its matrix, the template in that frame). A scrub drives the
+     *  glass to this frame as TRUTH, so it first holds the strokes written since the last bake
+     *  ([catchUpInkFrames]). */
+    private fun scrubFrame(): Triple<Bitmap?, Matrix, Bitmap?> {
+        catchUpInkFrames()
+        val f = mirrorFrame()
+        if (f != null) return Triple(f.ink, f.matrix, f.template)
+        return Triple(null, viewMatrix, if (::templateBitmap.isInitialized) templateBitmap else null)
+    }
+
+    /**
+     * The template at the zoomed resolution: its recorded drawing ([templatePicture]) played — or,
+     * for a template that decodes pictures, its drawing run again ([templateRedraw]) — through the
+     * matrix into a view-sized bitmap, clipped to the page (where the page-space bitmap showed),
+     * drawn once per matrix. Neither (a template drawn before [drawTemplate] existed) → the
+     * page-space bitmap through the matrix, filtered — no sharper than the view, so it is never
+     * SHOWN, only handed to the B6 truth in the zoomed frame. [show] swaps it into [templateView]
+     * in place of the magnified bitmap.
+     */
+    private fun ensureSharpTemplate(show: Boolean): Bitmap? {
+        if (!::templateBitmap.isInitialized || templateBitmap.isRecycled) return null
+        val sv = runCatching { provideSurfaceView() }.getOrNull() ?: return null
+        val w = sv.width
+        val h = sv.height
+        if (w <= 0 || h <= 0) return null
+        var t = sharpTemplate
+        val fits = t != null && !t.isRecycled && t.width == w && t.height == h
+        if (!fits || !isMatrixNow(sharpTemplateMatrix)) {
+            if (!fits) {
+                unshowSharpTemplate()   // never re-allocate under the view's feet
+                t = runCatching { Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888) }.getOrNull() ?: return null
+                sharpTemplate = t
+                sharpTemplateCanvas = Canvas(t)
+            }
+            val bmp = t!!
+            val c = sharpTemplateCanvas ?: return null
+            bmp.eraseColor(Color.TRANSPARENT)
+            c.save()
+            c.concat(viewMatrix)
+            c.clipRect(0f, 0f, CANVAS_WIDTH.toFloat(), CANVAS_HEIGHT.toFloat())
+            val pic = templatePicture
+            val redraw = templateRedraw
+            // A recorded bitmap gone since (a recycled thumb) fails the playback, a drawing run
+            // again can throw as its first run could: the page-space bitmap, drawn over whatever
+            // landed, is the template as the view showed it.
+            sharpTemplateVector = when {
+                pic != null -> runCatching { c.drawPicture(pic) }.isSuccess
+                redraw != null -> {
+                    val inner = c.save()
+                    val ok = runCatching { redraw(c) }.isSuccess
+                    c.restoreToCount(inner)
+                    ok
+                }
+                else -> false
+            }
+            if (!sharpTemplateVector) c.drawBitmap(templateBitmap, 0f, 0f, templateFilterPaint)
+            c.restore()
+            sharpTemplateMatrix = matrixNow()
+            if (sharpTemplateShown) {
+                if (sharpTemplateVector) templateView()?.invalidate() else unshowSharpTemplate()
+            }
+        }
+        if (show && sharpTemplateVector && !sharpTemplateShown) showSharpTemplate(t!!)
+        return t
+    }
+
+    /** The zoomed-resolution template on the template view, pinned at its own pixels — only where
+     *  the view is MATRIX-scaled and lies exactly on the surface (the frame [viewMatrix] maps to). */
+    private fun showSharpTemplate(t: Bitmap) {
+        val iv = templateView() ?: return
+        if (iv.scaleType != ImageView.ScaleType.MATRIX) return
+        val sv = runCatching { provideSurfaceView() }.getOrNull() ?: return
+        if (iv.width != sv.width || iv.height != sv.height || iv.paddingLeft != 0 || iv.paddingTop != 0) return
+        val a = IntArray(2)
+        val b = IntArray(2)
+        iv.getLocationInWindow(a)
+        sv.getLocationInWindow(b)
+        if (a[0] != b[0] || a[1] != b[1]) return
+        val d = iv.drawable
+        iv.setImageDrawable(PinnedBitmapDrawable(t,
+            d?.intrinsicWidth?.takeIf { it > 0 } ?: CANVAS_WIDTH,
+            d?.intrinsicHeight?.takeIf { it > 0 } ?: CANVAS_HEIGHT))
+        iv.imageMatrix = identityMatrix
+        sharpTemplateShown = true
+    }
+
+    /** Back to the page-space template through the live matrix — the first move of a gesture, a
+     *  resize, a pause. */
+    private fun unshowSharpTemplate() {
+        if (!sharpTemplateShown) return
+        sharpTemplateShown = false
+        val iv = templateView() ?: return
+        if (::templateBitmap.isInitialized && !templateBitmap.isRecycled) iv.setImageBitmap(templateBitmap)
+        iv.imageMatrix = viewMatrix
+    }
+
+    /** Every zoomed-resolution copy forgotten — the page left, or its pixels changed under them. */
+    private fun forgetSharp() {
+        unshowSharpTemplate()
+        sharpInkAt = -1
+        sharpInkMatrix = null
+        sharpInkBuf.fill(null)
+        sharpInkCanvas.fill(null)
+        sharpTemplate = null
+        sharpTemplateCanvas = null
+        sharpTemplateMatrix = null
+        sharpTemplateVector = false
+    }
+
+    /**
+     * The hand lifted off a pinch or a two-finger pan ([handleZoomPanTouch]): its "pan:" line, then
+     * ONE repaint at the zoomed resolution when the page is magnified — on the B6 the surface post
+     * and its one forced mirror (the Zoom seat's settle, [repaintAfterZoom]); elsewhere the ink was
+     * vector all the way, so only the template is drawn again. At the rest nothing is added.
+     * No glide: every ink device this app runs on is e-ink, where momentum frames are ghosts.
+     */
+    private fun settleViewGesture(why: String) {
+        placeAnchorHandler.removeCallbacks(viewGestureWatchdog)
+        viewGestureLive = false
+        val zoomed = panMeter.zoomed
+        if (panMeter.frames > 0) {
+            val line = panMeter.line(System.nanoTime(), glideMs = 0L)
+            Timber.i(if (why == "lift") line else "$line ($why)")
+            com.toolsboox.ot.InkTrace.log("pan", line)
+        }
+        panMeter.reset()
+        val t0 = System.nanoTime()
+        if (sharpWanted()) {
+            if (bigmeSharpWanted()) repaintAfterZoom(logZoom = false)
+            else ensureSharpTemplate(show = true)
+        }
+        if (zoomed) logZoomSettled(t0)
+    }
+
+    /** "zoom: k× settled, redraw R ms, sharp at scale S" — k over the rest, R this settle's redraw
+     *  (from [t0Ns]), S the screen px per page unit everything was drawn at. */
+    private fun logZoomSettled(t0Ns: Long) {
+        val sw = surfaceSize.width().toFloat()
+        val sh = surfaceSize.height().toFloat()
+        if (sw <= 0f || sh <= 0f) return
+        val rest = com.toolsboox.ot.InkViewport.restFit(sw, sh, landscapeFitsWholePage()).zoom
+        // Magnified past the page bitmaps, anything still on one is named (it shouldn't be).
+        val unsharp = if (!sharpWanted()) emptyList() else listOfNotNull(
+            "B6 mirror".takeIf { bigmeInk?.attached == true && sharpInkNow() == null },
+            "template".takeIf { templateView() != null && (templatePicture != null || templateRedraw != null) &&
+                !sharpTemplateShown })
+        val line = com.toolsboox.ot.ZoomClarity.zoomLine(zoomScale / rest,
+            (System.nanoTime() - t0Ns) / 1_000_000L, baseScale * zoomScale, unsharp)
+        Timber.i(line)
+        com.toolsboox.ot.InkTrace.log("zoom", line)
+    }
+
+    /** The page is magnified past its rest ([com.toolsboox.ot.MarqueeZoom.pastRest]) — the landscape
+     *  width-fill's own zoom is the rest, never "zoomed". The seat's box. */
+    private fun zoomedPastRest(): Boolean {
+        val sw = surfaceSize.width().toFloat()
+        val sh = surfaceSize.height().toFloat()
+        if (sw <= 0f || sh <= 0f) return false
+        return com.toolsboox.ot.MarqueeZoom.pastRest(zoomScale,
+            com.toolsboox.ot.InkViewport.restFit(sw, sh, landscapeFitsWholePage()).zoom)
+    }
+
+    /** The Zoom seat follows the page — boxed while its box is armed or the page is magnified, its
+     *  face its last choice (faint while that would do nothing: − at the whole page, ＋ at the
+     *  ceiling), its spoken name what the tap does now (iOS's zoomSeatName) — re-asked on every
+     *  transform; the rail restyles one cell, and only when the answer changed. */
+    protected fun syncZoomSeat() {
+        val rail = inkRail() ?: return
+        val choice = zoomChoice()
+        rail.reface(ZOOM_SEAT, com.toolsboox.ot.PanelFaces.zoomFace(choice), choice.caption,
+            spoken = if (marqueeArmed) ZOOM_ARMED_NAME else choice.spoken,
+            inPlace = choice != com.toolsboox.ot.MarqueeZoom.Choice.BOX,
+            dim = !marqueeArmed && !zoomChoiceMoves(choice),
+            holdSpoken = com.toolsboox.ot.MarqueeZoom.HOLD_SPOKEN)
+        rail.markOn(ZOOM_SEAT, com.toolsboox.ot.MarqueeZoom.seatOn(marqueeArmed, zoomedPastRest()))
+    }
+
+    /**
+     * One frame of the box, painted INTO the surface (review 2026-10-12): the surface is Z-ordered
+     * over its window and carries the picks, images, text and ink, so a box drawn anywhere under it
+     * hid behind every card on All Picks. Only the old box ∪ the new box is locked and repainted —
+     * the page's own content inside that rect, then the dashed line on top — so a frame never
+     * dirties the whole page (e-ink partials stay box-sized), and frames are paced at
+     * [MARQUEE_FRAME_MS] (the software lasso's pace) except the first and the last ([force]).
+     * Surface posts only — nothing goes to the B6 daemon (the spec's "no extra pushes").
+     */
+    private fun paintMarqueeFrame(force: Boolean) {
+        val box = if (marqueeDragging)
+            com.toolsboox.ot.MarqueeZoom.box(marqueeStartX, marqueeStartY, marqueeEndX, marqueeEndY) else null
+        paintMarqueeRegion(box, force)
+    }
+
+    private fun paintMarqueeRegion(box: com.toolsboox.ot.MarqueeZoom.Box?, force: Boolean) {
+        val sv = runCatching { provideSurfaceView() }.getOrNull() ?: return
+        if (sv.width <= 0 || sv.height <= 0) return
+        val now = SystemClock.uptimeMillis()
+        if (!force && now - marqueeLastPaintMs < MARQUEE_FRAME_MS) return
+        val pad = marqueePaint.strokeWidth + 2f
+        val next = box?.let { RectF(it.left - pad, it.top - pad, it.right + pad, it.bottom + pad) }
+        val dirtyF = RectF()
+        marqueePainted?.let { dirtyF.union(it) }
+        next?.let { dirtyF.union(it) }
+        if (dirtyF.isEmpty) { marqueePainted = next; return }
+        val dirty = Rect(
+            kotlin.math.floor(dirtyF.left).toInt().coerceAtLeast(0),
+            kotlin.math.floor(dirtyF.top).toInt().coerceAtLeast(0),
+            ceil(dirtyF.right).toInt().coerceAtMost(sv.width),
+            ceil(dirtyF.bottom).toInt().coerceAtMost(sv.height))
+        if (dirty.isEmpty) { marqueePainted = next; return }
+        val c = runCatching { sv.holder.lockCanvas(dirty) }.getOrNull() ?: return
+        try {
+            c.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+            clipOutInkPill(c)
+            c.save()
+            c.concat(viewMatrix)
+            renderImageElements(c)
+            val strokePaint = Paint(paint)
+            val selectedIds = if (hasSelection) selectedStrokes.mapTo(HashSet()) { it.strokeId } else emptySet()
+            for (stroke in strokes) {
+                drawStrokePath(c, if (stroke.strokeId in selectedIds) selectionHighlightPaint else strokePaint, stroke)
+            }
+            renderTextElements(c)
+            c.restore()
+            if (box != null) c.drawRect(box.left, box.top, box.right, box.bottom, marqueePaint)
+        } finally {
+            sv.holder.unlockCanvasAndPost(c)
+        }
+        marqueeLastPaintMs = now
+        marqueePainted = next
+    }
+
+    /** The box comes off the surface. A standing selection's (or image's) chrome under it was
+     *  painted over by the frames, so that page gets its one in-place repaint instead. */
+    private fun eraseMarqueeBox() {
+        if (marqueePainted == null) return
+        if (hasSelection || (imageMode && selectedImage != null)) {
+            marqueePainted = null
+            runCatching { repaintSurfaceInPlace() }
+            return
+        }
+        paintMarqueeRegion(null, force = true)
+    }
+
+    private fun boundsOfLoop(xs: List<Float>, ys: List<Float>): RectF? {
+        if (xs.size < 3) return null
+        return RectF(xs.min(), ys.min(), xs.max(), ys.max())
+    }
+
+    /** True when the ring FULLY CONTAINS at least one card — the element-only circle-gesture
+     *  acceptance gate. Full containment, not intersection, on purpose: a letter "o" written
+     *  on top of a big card must stay ink; only a ring drawn around the whole card summons. */
+    private fun enclosesElement(points: List<StrokePoint>): Boolean {
+        if (imageElements.isEmpty()) return false
+        val b = boundsOfLoop(points.map { it.x }, points.map { it.y }) ?: return false
+        return imageElements.any {
+            it.x >= b.left && it.y >= b.top &&
+                it.x + it.width <= b.right && it.y + it.height <= b.bottom
+        }
+    }
+
     /** Bounding box (canvas-space) of the current selection, set when the lasso closes. */
     private var selBox: RectF? = null
 
@@ -269,10 +1280,54 @@ abstract class SurfaceFragment : ScreenFragment() {
             .apply()
     }
 
-    /** Read/write the pen style (ballpoint vs calligraphy) for the floating pen picker. */
+    /** The pen is on its calligraphy nib (the width math reads it). The two-way ballpoint /
+     *  calligraphy picker that wrote it left with Michael 2026-10-11 — see [showPenChooser]. */
     protected fun penIsCalligraphy(): Boolean = calligraphyMode
-    protected fun setPenCalligraphy(on: Boolean) {
-        setPenStyle(if (on) Stroke.STYLE_CALLIGRAPHY else Stroke.STYLE_NORMAL)
+
+    /**
+     * Holding the pen — the column's Pen seat and the bottom pill's picker (Michael 2026-10-11:
+     * "unless when you long hold on the stylus, it gives you other stylus options (not just a
+     * radio button for either :P)") — opens the full chooser [showPenSettingsDialog]: every nib
+     * (ballpoint, fountain, calligraphy, marker), the widths, the colours and the highlighter,
+     * live-applied and remembered. Not armed yet, the pen is armed first — a lasso still being
+     * drawn toggled off; the eraser, text, paste or image mode left exactly as [armPen] leaves
+     * them — so the pen you choose is the one you write with. A finished selection stays up (the
+     * old two-way hold left it alone; review 2026-10-11): the chosen pen writes once it is let go.
+     * The chooser pauses the pen while it is up (onModalShown / onModalDismissed); a tap still
+     * arms or edits as before. True when the pen is the live tool, for the caller's rail box.
+     */
+    protected fun showPenChooser(): Boolean {
+        val tb = provideToolbarDrawing()
+        when {
+            hasSelection -> Unit
+            selectionMode -> tb.toolbarLasso.performClick()
+            // Text, paste and image modes keep penState true, so a pen tap would only re-open
+            // this chooser and leave them live (review 2026-10-11).
+            !penState || procrastinator || textMode || pasteMode || imageMode -> armPen()
+        }
+        showPenSettingsDialog()
+        return !hasSelection
+    }
+
+    /** The pen back in hand WITHOUT its chooser — the bottom pill's corner, out of the eraser or
+     *  the lasso (the column's Pen tap opens the chooser while the lasso keeps the pen state). */
+    protected fun pickUpPen() = armPen()
+
+    /** The pen tap's arm: every other mode (eraser, lasso, text, paste, image) let go through
+     *  [exitSelectionMode], which also restores the hardware pen and boxes Pen on the rail. */
+    private fun armPen() {
+        dropMarquee()   // picking up the pen takes an armed Zoom box back; exitSelectionMode wakes the pen
+        penState = true
+        procrastinator = false
+        textMode = false
+        exitSelectionMode()
+        applyStrokes(strokes, true)   // re-bake before the posted trail scrub reads the shadow
+        val tb = provideToolbarDrawing()
+        tb.toolbarPen.background.setTint(Color.GRAY)
+        tb.toolbarEraser.background.setTint(Color.WHITE)
+        tb.toolbarProcrastinator.background.setTint(Color.WHITE)
+        tb.toolbarLasso.background.setTint(Color.WHITE)
+        tb.toolbarText.background.setTint(Color.WHITE)
     }
 
     /** Image insert/manipulate mode (toolbar image button): select, move, resize, delete pasted images. */
@@ -306,18 +1361,57 @@ abstract class SurfaceFragment : ScreenFragment() {
     private var cropRect: RectF? = null
     private var cropStartX = 0f
     private var cropStartY = 0f
+    // FREE CROP (Michael, field, 08-27: "it gives a single crop size. I want to be able to
+    // select the crop size freely"): the first drag only PROPOSES the rectangle; corner
+    // handles then resize it freely (aspect unconstrained), the body drags it whole, and
+    // ✓ applies / ✕ abandons. No apply on a guess.
+    private var cropAdjust = false
+    private var cropHandle = -1   // 0 TL · 1 TR · 2 BR · 3 BL · 4 body-move · -1 none
+    private val cropHandleR = 56f // generous target — the 36dp finger ruling, in canvas px
+
+    private fun cropChipRects(cr: RectF): Pair<RectF, RectF> {
+        // ✓ and ✕ ride ABOVE the rectangle (the buttons-on-top rule: the writing hand rests
+        // below), sliding beneath it only when the crop hugs the top edge.
+        val w = 96f; val h = 72f; val gap = 12f
+        val above = cr.top - gap - h >= 0f
+        val y0 = if (above) cr.top - gap - h else cr.bottom + gap
+        val cxr = cr.centerX()
+        return RectF(cxr - w - gap, y0, cxr - gap, y0 + h) to
+            RectF(cxr + gap, y0, cxr + w + gap, y0 + h)
+    }
+
+    private fun hitCropHandle(cr: RectF, x: Float, y: Float): Int {
+        val corners = listOf(cr.left to cr.top, cr.right to cr.top, cr.right to cr.bottom, cr.left to cr.bottom)
+        corners.forEachIndexed { i, (cx, cy) ->
+            if (kotlin.math.abs(x - cx) <= cropHandleR && kotlin.math.abs(y - cy) <= cropHandleR) return i
+        }
+        return if (cr.contains(x, y)) 4 else -1
+    }
+
+    private fun exitCropMode() {
+        cropMode = false; cropAdjust = false; cropDragging = false; cropHandle = -1; cropRect = null
+    }
     private val imageBitmapCache = HashMap<UUID, Bitmap>()
     private val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { isFilterBitmap = true }
 
     /** Photo/file picker fallback when the clipboard has no image. Registered at construction. */
     private val imagePickLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            result.data?.data?.let { handlePickedImage(it) }
+            // More than one picture at a time (Michael, field, 08-28): a multi-select arrives as
+            // clipData; a single pick (or a gallery that ignores EXTRA_ALLOW_MULTIPLE) as data.
+            val uris = mutableListOf<Uri>()
+            result.data?.clipData?.let { clip ->
+                for (i in 0 until clip.itemCount) clip.getItemAt(i)?.uri?.let { uris.add(it) }
+            }
+            if (uris.isEmpty()) result.data?.data?.let { uris.add(it) }
+            if (uris.isNotEmpty()) handlePickedImages(uris)
         }
     }
 
-    /** Image URI waiting for the page data to finish loading before insertion. */
-    private var deferredInsertUri: Uri? = null
+    /** Image URIs waiting for the page data to finish loading before insertion. A LIST since
+     *  multi-select (08-28) — the old single slot dropped all but the last of a batch that
+     *  arrived before the page load. */
+    private val deferredInsertUris = mutableListOf<Uri>()
 
     /**
      * True when the fragment's page data is loaded enough to accept element
@@ -328,12 +1422,26 @@ abstract class SurfaceFragment : ScreenFragment() {
     open fun isPageDataReady(): Boolean = true
 
     /** Insert a picked/captured image now, or defer it until the page data is ready. */
-    private fun handlePickedImage(uri: Uri) {
-        if (isPageDataReady()) {
+    private fun handlePickedImage(uri: Uri) = handlePickedImages(listOf(uri))
+
+    /** A batch of picked images: each rides the single-image insert in order, CASCADED — every
+     *  image after the first steps down-right from the landing point so a multi-select never
+     *  stacks into what reads as one picture. */
+    private fun handlePickedImages(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        if (!isPageDataReady()) {
+            Timber.i("Page data not ready; deferring %d image insert(s)", uris.size)
+            deferredInsertUris.addAll(uris)
+            return
+        }
+        val origin = pendingPlacePoint ?: PointF(CANVAS_WIDTH / 2f, CANVAS_HEIGHT / 2f)
+        uris.forEachIndexed { i, uri ->
+            val step = 56f * i
+            pendingPlacePoint = PointF(
+                (origin.x + step).coerceIn(0f, CANVAS_WIDTH.toFloat()),
+                (origin.y + step).coerceIn(0f, CANVAS_HEIGHT.toFloat())
+            )
             insertImageFromUri(uri)
-        } else {
-            Timber.i("Page data not ready; deferring image insert")
-            deferredInsertUri = uri
         }
     }
 
@@ -381,10 +1489,11 @@ abstract class SurfaceFragment : ScreenFragment() {
             Timber.i("Completing deferred text insert (%d chars)", text.length)
             insertSharedTextBox(text, sourceUrl)
         }
-        val uri = deferredInsertUri ?: return
-        deferredInsertUri = null
-        Timber.i("Completing deferred image insert: %s", uri)
-        insertImageFromUri(uri)
+        if (deferredInsertUris.isEmpty()) return
+        val uris = deferredInsertUris.toList()
+        deferredInsertUris.clear()
+        Timber.i("Completing %d deferred image insert(s)", uris.size)
+        handlePickedImages(uris)
     }
 
     /** Where the next inserted element should land (canvas coords) — set by long-press. */
@@ -436,6 +1545,18 @@ abstract class SurfaceFragment : ScreenFragment() {
     private val undoStack = mutableListOf<CanvasSnapshot>()
     private val redoStack = mutableListOf<CanvasSnapshot>()
 
+    // ── Multi-finger tap = undo/redo (the Notable lesson, github.com/olup/notable) ────────────
+    // Two fingers tap the page: undo. Three: redo. The gesture every finger already knows from
+    // the iPad, brought to the Boox — no toolbar trip, no button hunt, and it cannot collide
+    // with anything standing: a PINCH moves the span, a PAN moves the centroid, a SWIPE scrolls,
+    // and all three disarm it; only a genuinely still, brief touch fires.
+    private var multiTapMax = 0
+    private var multiTapDownAt = 0L
+    private var multiTapCx = 0f
+    private var multiTapCy = 0f
+    private var multiTapSpan = 0f
+    private var multiTapDirty = true
+
     // --- Zoom and pan state ---
     protected var twoFingerGesture = false
     private var zoomScale = 1.0f
@@ -445,6 +1566,28 @@ abstract class SurfaceFragment : ScreenFragment() {
     // page always starts back at the width-fit default. The old cross-page zoom carry is gone
     // for the same reason — Michael: "All of the paginations should autozoom full width."
     private var zoomTakenByHand = false
+
+    /**
+     * ONE RE-ANCHOR PER RESIZE STORM (field, 08-27: "rotation is jinky still. I rotate it when
+     * zoomed and it pans all over"). A single rotation fires SEVERAL resize seams while the
+     * chrome settles — surfaceChanged (sometimes more than once, as the toolbar re-lays) and the
+     * onConfigurationChanged belt — and between firings [updateTransformMatrix]'s resting
+     * branches may rewrite the stored pan. Each firing that re-derived "where was the reader
+     * looking" from the CURRENT pan therefore walked the view a little further. So the canvas
+     * point under the surface center is captured ONCE, at the first seam of the storm, and every
+     * firing inside the settle window re-applies THAT point — idempotent however many times the
+     * seams fire and in whatever order. The window closes [PLACE_ANCHOR_SETTLE_MS] after the
+     * last firing; any HAND action (pinch, pan, double-tap, a tag landing) supersedes it at once.
+     */
+    private var placeAnchor: android.graphics.PointF? = null
+    private val placeAnchorClear = Runnable { placeAnchor = null }
+    private val placeAnchorHandler = Handler(Looper.getMainLooper())
+
+    /** A hand took the view — whatever resize storm was settling, its anchor is stale now. */
+    private fun handTookThePlace() {
+        placeAnchorHandler.removeCallbacks(placeAnchorClear)
+        placeAnchor = null
+    }
     private var panX = 0.0f
     private var panY = 0.0f
     private var baseScale = 1.0f
@@ -458,6 +1601,67 @@ abstract class SurfaceFragment : ScreenFragment() {
     private var lastFingerX = 0f
     private var lastFingerY = 0f
     private var isPanning = false
+
+    // --- Sharp at every zoom, and the pan's own record (Michael 2026-10-12: "I want these to work
+    // at 8x zoom with no loss of clarity. Heck, 16x zoom would be meaningful." / "Panning after zoom
+    // feels stilted") — see [com.toolsboox.ot.ZoomClarity]. ---
+
+    /** A pinch or a two-finger pan is moving the page: the B6 mirror and the template stay on their
+     *  page-space bitmaps (cheap, as they always were) until the hand lifts ([settleViewGesture]). */
+    private var viewGestureLive = false
+    /** This move changed the matrix: [handleZoomPanTouch] draws ONE frame for it at the end — a
+     *  pinch used to draw twice a move (its onScale, then the pan below it). */
+    private var viewFramePending = false
+    /** The gesture's frames, for its "pan:" line at the lift. */
+    private val panMeter = com.toolsboox.ot.ZoomClarity.PanMeter()
+    /** The lift that never reached this handler (a stream another layer took) still settles — but
+     *  fingers resting on the glass mid-pan are the gesture, not its end (review of 241e9212: a
+     *  pause of 600 ms with the fingers down settled mid-gesture, a forced B6 refresh and a sharp
+     *  redraw under a still hand, then a second at the real lift, the "pan:" line split in two). */
+    private val viewGestureWatchdog = Runnable { viewGestureWatchdogFired() }
+    /** A finger of the live gesture is down, as far as the events this handler saw can tell. */
+    private var viewFingersDown = false
+    /** When ([android.os.SystemClock.uptimeMillis]) this handler last saw an event of the gesture. */
+    private var viewGestureLastEventMs = 0L
+
+    private fun viewGestureWatchdogFired() {
+        if (!viewGestureLive) return
+        val wait = com.toolsboox.ot.ZoomClarity.watchdogWait(viewFingersDown,
+            android.os.SystemClock.uptimeMillis() - viewGestureLastEventMs)
+        if (wait > 0L) placeAnchorHandler.postDelayed(viewGestureWatchdog, wait)
+        else settleViewGesture("watchdog")
+    }
+
+    /** The B6 mirror's ink at the zoomed resolution: view-sized, drawn from the strokes through the
+     *  matrix — the pixels the surface shows — double-buffered, the ink thread may still be blitting
+     *  the last one. [sharpInkAt] is the current one (−1 none), [sharpInkMatrix] the matrix it was
+     *  drawn at: valid only while that is the matrix on the glass. */
+    private val sharpInkBuf = arrayOfNulls<Bitmap>(2)
+    private val sharpInkCanvas = arrayOfNulls<Canvas>(2)
+    private var sharpInkAt = -1
+    private var sharpInkMatrix: FloatArray? = null
+    /** Strokes written since the last bake are missing from the page-space shadow / from the
+     *  zoomed-resolution ink ([catchUpInkFrames]). */
+    private var shadowBehind = false
+    private var sharpInkBehind = false
+
+    /** The template drawn again at the zoomed resolution (view-sized), the matrix it was drawn at,
+     *  whether it came from the recorded drawing (else the bitmap, which is no sharper), and whether
+     *  the template view is showing it in place of the magnified page-space bitmap. */
+    private var sharpTemplate: Bitmap? = null
+    private var sharpTemplateCanvas: Canvas? = null
+    private var sharpTemplateMatrix: FloatArray? = null
+    private var sharpTemplateVector = false
+    private var sharpTemplateShown = false
+    /** The page's template as last drawn, RECORDED ([drawTemplate]) so it can be drawn again at any
+     *  scale. Null with [templateRedraw] null too = nothing to draw again from (the page-space
+     *  bitmap is all there is). */
+    private var templatePicture: android.graphics.Picture? = null
+    /** …or, for a template that decodes pictures ([drawTemplate] decodesPictures), the drawing
+     *  itself, run again at the settle — never recorded, so no decoded picture outlives its draw. */
+    private var templateRedraw: ((Canvas) -> Unit)? = null
+    private val identityMatrix = Matrix()
+    private val templateFilterPaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
     // --- Text tool state ---
     /** True while in text placement mode (next tap opens text input dialog). */
@@ -591,6 +1795,421 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     private val stylusPointList: MutableList<StrokePoint> = mutableListOf()
 
+    /** Whether the gesture currently mid-flight is an ERASE pass — remembered at ACTION_DOWN so
+     *  [commitInFlightStroke] can tell a half-written word from a half-finished erase at onPause
+     *  (the per-event `erasing` flag is long gone by then). */
+    private var inFlightErasing = false
+
+    /** Bigme hardware (e.g. the B6 Pro), detected by brand — plus the vendor's own client class,
+     *  which outlives any brand-string spelling. On these, the Onyx raw session must never be
+     *  started (see initializeSurface's Bigme branch). */
+    private fun isBigmeDevice(): Boolean =
+        Build.MANUFACTURER.contains("bigme", ignoreCase = true) ||
+            Build.BRAND.contains("bigme", ignoreCase = true) ||
+            runCatching { Class.forName("com.xrz.HandwrittenClient"); true }.getOrDefault(false)
+
+    /** Bigme fast-ink backend — non-null only when the daemon connected (see the Bigme branch
+     *  of initializeSurface). When live, the daemon consumes the pen and hands events back
+     *  through [onBigmePen]; the app's own MotionEvent stream goes quiet for the stylus. */
+    private var bigmeInk: com.toolsboox.ot.BigmeFastInk? = null
+
+    /** A Bigme stroke is mid-flight (daemon DOWN seen, no UP/LEAVE yet) — the daemon sends UP
+     *  and then LEAVE, and without this flag the LEAVE minted a second, single-point stroke. */
+    private var bigmePenDown = false
+
+    /** Last trusted pen position from the daemon, in view pixels (main thread only). Terminal
+     *  and mid-refresh events can carry garbage coordinates — commits fall back to this. */
+    private var bigmeLastX = 0f
+    private var bigmeLastY = 0f
+
+    /** True only while onBigmePen is dispatching a synthesized event into [callback] (main
+     *  thread). Lets callback tell the daemon's re-fed pen from a leaked raw MotionEvent. */
+    private var bigmeDispatching = false
+
+    /** Tap-forwarding state: the exclude view a daemon DOWN landed on (main thread). */
+    private var bigmeTapTarget: View? = null
+    private var bigmeTapDownX = 0f
+    private var bigmeTapDownY = 0f
+    private var bigmeTapDownMs = 0L
+
+    /** Raw stylus events swallowed since the daemon last spoke — the watchdog's meter. */
+    private var bigmeRawSinceDaemon = 0
+
+    /**
+     * Attach the Bigme fast path once the surface has REAL dimensions — called from
+     * surfaceChanged, the one seam that knows them. Opt-in ("bigme_fast_ink" pref), idempotent
+     * (an attached client stays), and refused outright at 0×0: the first live attempt connected
+     * the daemon before layout, it accepted the zero-sized buffer and claimed the pen — dead
+     * stylus, "That broke it". The toast still announces the outcome; the person holding the
+     * pen is the log reader.
+     */
+    /** The pending debounced daemon attach — rotation relayout fires surfaceChanged several
+     *  times with intermediate sizes, and each must supersede the last, not stack. */
+    private var bigmeReattachRunnable: Runnable? = null
+
+    private fun attachBigmeIfReady(width: Int, height: Int) {
+        val current = bigmeInk
+        if (!isBigmeDevice()) return
+        // The file trace is the B6's only readable log (adb streaming drops on this USB) —
+        // arm it before any daemon decision so the sequence is on record.
+        runCatching { com.toolsboox.ot.InkTrace.init(requireContext().applicationContext) }
+        if (!sharedPreferences.getBoolean("bigme_fast_ink", false)) {
+            // The switch must actually switch: flipping the pref off mid-session detaches
+            // (the old dimension early-return kept a disabled daemon holding the pen).
+            if (current?.attached == true) { current.detach(); bigmeInk = null }
+            return
+        }
+        // PORTRAIT-ONLY fast ink (the honest interim until the dedicated writing room):
+        // the daemon renders its canvas view-aligned but feeds input in the panel's
+        // unrotated frame, so LANDSCAPE fast ink breaks strokes and its overlay bleeds
+        // across surfaces. Portrait is where it's faithful. In landscape (or square),
+        // detach and let the reliable software pen take over — fast ink never runs
+        // rotated, so the rotation breakage cannot occur.
+        //
+        // LIFTED (Michael, 08-31: "I need lines immediately in landscape and portrait always for
+        // everything" — and, on the switch: "landscape fast ink doesn't need a toggle does it?").
+        // He is right, and the settings row that briefly existed here is gone with it: whether the
+        // pen draws under the nib is not a preference, and a switch for it is a decision nobody
+        // should be handed. Landscape fast ink is simply ON. The pref survives UNLISTED, as the
+        // escape hatch a support conversation can reach for — never as a thing to find.
+        //
+        // What the history says about the risk, so the next reader doesn't have to re-derive it:
+        // the retreat above was written 08-23 00:10, and the landscape INPUT mapping
+        // (`BigmeFastInk.panelMode`, the d1→90 / d3→270 branches) landed 08-22 21:39 — two and a
+        // half hours BEFORE it. So landscape was tried with correct input adaptation and was still
+        // called broken, which means the fault that actually survives is the second one the
+        // retreat named: the daemon overlay BLEEDING ACROSS SURFACES. Strokes landing rotated is
+        // the fault that was already fixed. If landscape misbehaves in the field, that is the
+        // half to chase, and the toggle is how you get writing again in the meantime.
+        if (width >= height && !sharedPreferences.getBoolean("bigme_fast_ink_landscape", true)) {
+            if (current?.attached == true) { current.detach(); bigmeInk = null }
+            return
+        }
+        if (current?.attached == true && current.matchesDimensions(width, height)) return
+        if (width <= 0 || height <= 0) return
+        if (!com.toolsboox.ot.BigmeFastInk.isAvailable) return
+
+        // The surface changed shape under a connected daemon (rotation). RECONNECT — the
+        // in-place updateLayout/updateRotation path was a misreading of the references:
+        // NEITHER reference app rotates a live client (both recreate the activity and
+        // attach fresh), and the daemon's buffer is allocated once at connect and cannot
+        // resize. Updating in place left a portrait buffer and portrait coordinates under
+        // a landscape view: strokes captured unrotated and appearing only at the bake,
+        // stale buffer content composited at the wrong scale (the "dual-sized" feel, the
+        // today-page reveal). Reconnect is safe now — the dead-switch retired the ghosts.
+        if (current?.attached == true) {
+            current.detach()
+            bigmeInk = null
+        }
+        val view = runCatching { provideSurfaceView() }.getOrNull() ?: return
+        bigmeReattachRunnable?.let { view.removeCallbacks(it) }
+        // STABILITY GATE (the 09-03 rotation storm): during a rotation recreate the view's
+        // height oscillates as system bars come and go (978↔933 in the trace), and every
+        // flip used to land a full connect+prime+push cycle — six attaches in seconds, the
+        // window where every corruption tonight happened. The attach now fires only after
+        // the dims have held still for a full settle window: if the view has moved since
+        // this runnable was posted, it re-arms itself instead of attaching.
+        val postedW = view.width; val postedH = view.height
+        val r = object : Runnable {
+            override fun run() {
+                bigmeReattachRunnable = null
+                if (bigmeInk?.attached == true) return
+                if (!view.isAttachedToWindow) return
+                if (view.width != postedW || view.height != postedH) {
+                    com.toolsboox.ot.InkTrace.log("daemon",
+                        "attach deferred: dims moved ${postedW}x${postedH} -> ${view.width}x${view.height}")
+                    if (view.width > 0 && view.height > 0) {
+                        attachBigmeIfReady(view.width, view.height)
+                    } else {
+                        // Mid-recreate 0-size: attachBigmeIfReady would early-return and DROP
+                        // the pending attach (dead fast-ink pen). Keep re-arming instead.
+                        bigmeReattachRunnable = this
+                        view.postDelayed(this, BIGME_REATTACH_SETTLE_MS)
+                    }
+                    return
+                }
+                doBigmeAttach(view)
+            }
+        }
+        bigmeReattachRunnable = r
+        view.postDelayed(r, BIGME_REATTACH_SETTLE_MS)
+    }
+
+    private fun doBigmeAttach(view: android.view.SurfaceView) {
+        if (view.width <= 0 || view.height <= 0) return
+        // NEVER CONNECT WHILE NOT ON SCREEN (10-10 investigation): the 700ms settle runnable,
+        // recoverMissedRotation and the config-settle post can all land AFTER onPause — client 36
+        // connected 0.87s after onPause and stayed live under the launcher/Recents (a pen hover
+        // there copies the foreign screen into the daemon's buffer: the "Recents got stuck" ghost).
+        // onResume re-attaches if this skip left the pen unconnected.
+        if (!isResumed) {
+            com.toolsboox.ot.InkTrace.log("daemon", "attach skipped: fragment not resumed (${lifecycle.currentState})")
+            return
+        }
+        val ink = com.toolsboox.ot.BigmeFastInk()
+        ink.templateProvider = { if (::templateBitmap.isInitialized) templateBitmap else null }
+        // A client that connects under open full-screen chrome is cut round it from its first write.
+        ink.chromeCutouts = inkChromeCutouts
+        val ok = ink.attach(
+            view,
+            // The live line's width, in VIEW pixels: the pen dial speaks canvas units
+            // (1404-wide design space), so scale by the view's actual width. Because the app
+            // draws the live segments itself on Bigme, the broad-nib calligraphy width can
+            // apply LIVE (per segment, from its direction) — on Onyx that drama only exists
+            // in the bake, and a uniform base-width live line reads as a hairline.
+            //
+            // THE LIVE LINE MUST MATCH THE BAKE, per nib: the standard pen bakes UNIFORM,
+            // and giving it a live pressure swell meant every pen-up visibly reshaped the
+            // stroke ("the pen then draws those strokes"). Only the fountain nib — whose
+            // bake really is pressure-variable — swells live, floored so a misread daemon
+            // can never reproduce the hairline bug.
+            segmentWidth = { angleRad, pressure ->
+                val v = runCatching { provideSurfaceView() }.getOrNull()
+                // The page's DRAWN scale — the matrix's fit × zoom, the scale the Onyx pen takes
+                // in [updateTransformMatrix] — not the view's width: ⛶'s whole-page portrait fit
+                // is height-bound (B6 0.7185, where 1072/1404 would say 0.7635 — Michael
+                // 2026-10-11), and the live line must stay the bake's width in every posture.
+                val total = baseScale * zoomScale
+                val scale = if (surfaceSize.width() > 0 && total > 0f) total
+                    else v?.width?.takeIf { it > 0 }?.let { it / 1404f } ?: 1f
+                val base = effectivePenWidth() * scale
+                val w = when {
+                    selectionMode && !hasSelection -> 2.5f * scale   // the lasso loop: a hairline, not a stroke
+                    penIsCalligraphy() -> base * calligraphyWidthFactor(angleRad)
+                    penStyle == Stroke.STYLE_FOUNTAIN -> base * (0.8f + 0.4f * pressure.coerceIn(0f, 1f))
+                    else -> base
+                }
+                w.coerceAtLeast(1.5f)
+            },
+            // Live drawing is gated by the same mode truth that pauses Onyx ink: the
+            // lasso, image mode, text mode, and menus must not paint black lines.
+            // hasSelection was MISSING from this list: once a circle-select committed
+            // (selectionMode=false, hasSelection=true) the gate reopened, and every DRAG
+            // of the selection live-painted a daemon stroke along the drag path — the
+            // core "ghosts all over when I move stuff" (09-03, seen in the -181 trace).
+            liveDrawAllowed = {
+                // THE LASSO LOOP SHOWS AS YOU DRAW IT (Michael, 09-14, B6: "when I try to lasso
+                // you can't see the lasso"): on the B6 the live line is the daemon's, and it was
+                // told to paint nothing while the lasso tool was armed — so the loop lived only on
+                // the app's surface, under the daemon's layer. A thin live line now; the mirror on
+                // lift (syncOverlay, force) repaints the region and takes it away.
+                val lassoLive = selectionMode && !hasSelection && !imageMode && !textMode && !pasteMode
+                // Zoom's box (Michael 2026-10-12) is the app's dashed chrome, never daemon ink —
+                // nor is the rest of a pen stroke the box took, should the box end under it.
+                !marqueeArmed && !marqueeEatsDaemon &&
+                    (lassoLive || (penState && !imageMode && !selectionMode && !hasSelection && !textMode && !pasteMode && !inkSuppressed))
+            },
+            liveInkMutedAt = { x, y -> bigmeFloatingControlAt(x, y) }
+        ) { a, x, y, p, t ->
+            // Identity guard, belt to the dead-switch's suspenders: only the CURRENT
+            // client's events reach capture — a ghost's never do.
+            if (bigmeInk === ink) onBigmePen(a, x, y, p, t)
+        }
+        bigmeInk = if (ok) ink else null
+        // Re-attached under a still-open dialog (pause/resume behind a modal, e.g. a permission
+        // prompt): attach() always enables input, and onModalShown's setInputEnabled(false) hit a
+        // null client. Park it; forcedResumeRunnable → resumeRawInkNow(force = true) re-enables it.
+        if (ok && modalShowing) ink.setInputEnabled(false)
+        // The per-attach diagnostics toast is GONE (Michael, 08-23: "no debug toasts
+        // everywhere") — the same words still land in the log, and the long-press on the
+        // "🖊 Bigme fast ink" Settings row remains the deliberate instruments door.
+        Timber.i("BigmeFastInk attach at %dx%d: %s", view.width, view.height, ink.status)
+    }
+
+    /**
+     * Daemon pen events → synthesized MotionEvents into the ONE capture pipeline
+     * ([callback]). Binder thread → main via post. The bracket is SIMPLE on purpose:
+     * inkit runs the same daemon with no healing at all and writes perfectly — most of
+     * the elaborate healing machinery this replaced was fighting artifacts of our own
+     * ghosts. What remains, and why:
+     *
+     *  - a DOWN while a stroke is open within WELD radius = the same stroke heard again
+     *    (dedup as a point); beyond it = a lost UP (commit the orphan at its last point,
+     *    open fresh). WELD is hand-sized — the quarter-screen radius that once served
+     *    here is what welded consecutive strokes into phantom straight lines;
+     *  - a MOVE that jumps beyond any hand's reach is garbage: dropped, re-anchored,
+     *    counted — never drawn, never split into phantom brackets;
+     *  - an UP's coordinates are used when sane, replaced by the last trusted point when
+     *    they jump. No confirmation windows, no implicit DOWNs.
+     *
+     * Taps on views that float over the surface (the pager arrows): the daemon routes
+     * pen by view bounds, not Z-order, so those taps arrive here instead of clicking.
+     * A DOWN inside an exclude view forwards the eventual tap as a real click and never
+     * touches ink.
+     */
+    private fun onBigmePen(action: Int, x: Float, y: Float, pressure: Float, tool: Int) {
+        val view = runCatching { provideSurfaceView() }.getOrNull() ?: return
+        val mAction = when (action) {
+            com.toolsboox.ot.BigmeFastInk.ACTION_DOWN -> MotionEvent.ACTION_DOWN
+            com.toolsboox.ot.BigmeFastInk.ACTION_MOVE -> MotionEvent.ACTION_MOVE
+            com.toolsboox.ot.BigmeFastInk.ACTION_UP,
+            com.toolsboox.ot.BigmeFastInk.ACTION_LEAVE -> MotionEvent.ACTION_UP
+            else -> return   // NEAR is hover — not capture
+        }
+        val toolType = when (tool) {
+            com.toolsboox.ot.BigmeFastInk.TOOL_RUBBER -> MotionEvent.TOOL_TYPE_ERASER
+            else -> MotionEvent.TOOL_TYPE_STYLUS
+        }
+        view.post { bigmeFeedOnMain(mAction, x, y, pressure, toolType) }
+    }
+
+    private fun bigmeFeedOnMain(mAction: Int, x: Float, y: Float, pressure: Float, toolType: Int) {
+        bigmeRawSinceDaemon = 0   // the daemon spoke — the watchdog's meter resets
+        fun dispatch(act: Int, px: Float, py: Float) {
+            val now = android.os.SystemClock.uptimeMillis()
+            val props = MotionEvent.PointerProperties().apply { id = 0; this.toolType = toolType }
+            val coords = MotionEvent.PointerCoords().apply {
+                this.x = px; this.y = py; this.pressure = pressure.coerceIn(0f, 1f)
+            }
+            val ev = MotionEvent.obtain(now, now, act, 1, arrayOf(props), arrayOf(coords),
+                0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_STYLUS, 0)
+            bigmeDispatching = true
+            try { callback(ev, hover = false) } finally { bigmeDispatching = false; ev.recycle() }
+        }
+
+        // Tap-forwarding for views floating over the surface (pager arrows etc.) — to the cell the
+        // pen landed on, not its container: the bottom pill floats over the page (Michael
+        // 2026-10-11), and a click on the pill's own frame (or the pager's stray-eating band) is
+        // a deliberate no-op. A pen held still on a control past the hold time is its hold (the
+        // pill's halves open their menus that way), else its tap.
+        if (mAction == MotionEvent.ACTION_DOWN) {
+            bigmeTapTarget = bigmeExcludeViewAt(x, y)?.let { bigmeClickableLeaf(it, x, y) }
+            if (bigmeTapTarget != null) {
+                bigmeTapDownX = x; bigmeTapDownY = y
+                bigmeTapDownMs = android.os.SystemClock.uptimeMillis()
+            }
+        }
+        bigmeTapTarget?.let { target ->
+            if (mAction == MotionEvent.ACTION_UP) {
+                val dx = x - bigmeTapDownX
+                val dy = y - bigmeTapDownY
+                if (dx * dx + dy * dy < BIGME_TAP_SLOP_SQ) {
+                    // The pill's hold-to-pick, by pen (Michael 2026-10-11: "still have the long
+                    // hold work on it") — the same 550ms the pill's own finger hold uses; a
+                    // control with no hold of its own still takes the tap.
+                    val held = android.os.SystemClock.uptimeMillis() - bigmeTapDownMs >= BIGME_HOLD_MS
+                    if (!held || !target.performLongClick()) target.performClick()
+                }
+                bigmeTapTarget = null
+            }
+            return   // never ink under a floating control
+        }
+
+        val jumpSq = bigmeInk?.jumpThresholdSq() ?: Float.MAX_VALUE
+        fun garbage(): Boolean {
+            val dx = x - bigmeLastX
+            val dy = y - bigmeLastY
+            return dx * dx + dy * dy > jumpSq
+        }
+        fun withinWeld(): Boolean {
+            val dx = x - bigmeLastX
+            val dy = y - bigmeLastY
+            return dx * dx + dy * dy <= BIGME_WELD_RADIUS_SQ
+        }
+        when (mAction) {
+            MotionEvent.ACTION_DOWN -> {
+                if (bigmePenDown) {
+                    if (withinWeld()) {
+                        dispatch(MotionEvent.ACTION_MOVE, x, y)
+                        bigmeLastX = x; bigmeLastY = y
+                        return
+                    }
+                    com.toolsboox.ot.InkPerf.record("pen.heal.lost_up", 0)
+                    dispatch(MotionEvent.ACTION_UP, bigmeLastX, bigmeLastY)
+                }
+                bigmePenDown = true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!bigmePenDown) return
+                if (garbage()) {
+                    com.toolsboox.ot.InkPerf.record("pen.garbage_move", 0)
+                    bigmeLastX = x; bigmeLastY = y
+                    return
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                if (!bigmePenDown) return
+                bigmePenDown = false
+                if (garbage()) {
+                    com.toolsboox.ot.InkPerf.record("pen.heal.bogus_up", 0)
+                    dispatch(MotionEvent.ACTION_UP, bigmeLastX, bigmeLastY)
+                    return
+                }
+            }
+        }
+        dispatch(mAction, x, y)
+        bigmeLastX = x; bigmeLastY = y
+    }
+
+    /** The exclude view (pager arrows etc.) under view-local point (x,y), if any. */
+    /**
+     * Is the surface point under a control floating over the page — an exclude view, or ANY
+     * visible clickable view in this window (the rail's ☰ and its buttons, the pills, the pager
+     * arrows, the quick-note button) that isn't the surface or one of its ancestors? Read on
+     * the daemon's binder thread at pen-down, so it only reads positions and never touches
+     * view state. A yes means: capture the tap, paint no live ink under it.
+     */
+    private fun bigmeFloatingControlAt(x: Float, y: Float): Boolean {
+        if (bigmeExcludeViewAt(x, y) != null) return true
+        val surface = runCatching { provideSurfaceView() }.getOrNull() ?: return false
+        val root = surface.rootView ?: return false
+        val sLoc = IntArray(2); surface.getLocationOnScreen(sLoc)
+        val sx = sLoc[0] + x; val sy = sLoc[1] + y
+        val ancestors = HashSet<View>()
+        var p: android.view.ViewParent? = surface.parent
+        while (p is View) { ancestors.add(p); p = p.parent }
+        val loc = IntArray(2)
+        fun hit(v: View): Boolean {
+            if (v === surface || v.visibility != View.VISIBLE) return false
+            v.getLocationOnScreen(loc)
+            val inside = sx >= loc[0] && sx <= loc[0] + v.width && sy >= loc[1] && sy <= loc[1] + v.height
+            if (!inside) return false
+            if (v.isClickable && v !in ancestors) return true
+            if (v is android.view.ViewGroup) for (i in 0 until v.childCount) if (hit(v.getChildAt(i))) return true
+            return false
+        }
+        return runCatching { hit(root) }.getOrDefault(false)
+    }
+
+    /** The deepest shown, clickable view inside [v] under the surface point (x,y), else [v]. */
+    private fun bigmeClickableLeaf(v: View, x: Float, y: Float): View {
+        val surface = runCatching { provideSurfaceView() }.getOrNull() ?: return v
+        val s = IntArray(2)
+        surface.getLocationOnScreen(s)
+        val sx = s[0] + x
+        val sy = s[1] + y
+        val loc = IntArray(2)
+        fun leaf(g: View): View? {
+            if (g is android.view.ViewGroup) for (i in g.childCount - 1 downTo 0) {
+                val c = g.getChildAt(i)
+                if (c.visibility != View.VISIBLE) continue
+                c.getLocationOnScreen(loc)
+                if (sx >= loc[0] && sx <= loc[0] + c.width && sy >= loc[1] && sy <= loc[1] + c.height) {
+                    leaf(c)?.let { return it }
+                }
+            }
+            return g.takeIf { it.isClickable }
+        }
+        return runCatching { leaf(v) }.getOrNull() ?: v
+    }
+
+    private fun bigmeExcludeViewAt(x: Float, y: Float): View? {
+        val surface = runCatching { provideSurfaceView() }.getOrNull() ?: return null
+        val surfaceLoc = IntArray(2)
+        surface.getLocationOnScreen(surfaceLoc)
+        val screenX = surfaceLoc[0] + x
+        val screenY = surfaceLoc[1] + y
+        val loc = IntArray(2)
+        for (v in provideExcludeViews()) {
+            if (!v.isShown) continue
+            v.getLocationOnScreen(loc)
+            if (screenX >= loc[0] && screenX <= loc[0] + v.width &&
+                screenY >= loc[1] && screenY <= loc[1] + v.height
+            ) return v
+        }
+        return null
+    }
+
     /**
      * The list of strokes.
      */
@@ -606,6 +2225,56 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     private var surfaceSize: Rect = Rect(0, 0, 0, 0)
 
+    /**
+     * THE COLUMN'S LENT ROOM — a DETECTOR, not a frame. In full screen the SurfaceView runs under
+     * the hidden column; these are the px of it the column lends, left and right, and the surface
+     * less them is the NORMAL frame (the frame the surface filled in Normal). The page no longer
+     * rests in it: since Michael's 2026-10-11 yes ("Recentering/zooming after closing the tuck
+     * panel makes sense") every posture is worked out in the whole surface, so ⛶ re-centres and
+     * fits ([refitForRoom], [com.toolsboox.ot.InkViewport]). What the room still does is tell a
+     * ⛶ resize from a turn ([homeTurned], [homeHeldAcross]): no B6 recreate, the Onyx limit rect
+     * re-armed at once, the toolbar left alone. Set with [surfaceSize], always, so the two never
+     * disagree.
+     */
+    @Volatile private var roomLeftPx = 0
+    @Volatile private var roomRightPx = 0
+
+    /** The Normal frame's width: the surface less the room the hidden column lends it. */
+    private fun homeWidthPx(): Int = (surfaceSize.width() - roomLeftPx - roomRightPx).coerceAtLeast(0)
+
+    /** The column's lent room as the surface stands now (left, right), not yet adopted. */
+    private fun viewportRoomOf(sv: View): Pair<Int, Int> = inkRail()?.borrowedRoom(sv) ?: (0 to 0)
+
+    /** Take the column's lent room from where the surface stands now — with every [surfaceSize]. */
+    private fun adoptViewportRoom(sv: View) {
+        val (l, r) = viewportRoomOf(sv)
+        roomLeftPx = l
+        roomRightPx = r
+    }
+
+    /** Did a resize to [w]×[h] turn the page? Judged on the Normal frames, before and after
+     *  ([com.toolsboox.ot.InkViewport.turned]), so a ⛶ resize is never taken for a rotation. */
+    private fun homeTurned(sv: View, prevHomeW: Int, prevH: Int, w: Int, h: Int): Boolean {
+        val (l, r) = viewportRoomOf(sv)
+        return com.toolsboox.ot.InkViewport.turned(prevHomeW, prevH, (w - l - r).coerceAtLeast(0), h)
+    }
+
+    /**
+     * A resize that only lent or took back the column's room (⛶): the Normal frame came through
+     * the same size. A detector — the page itself refits to the whole new surface
+     * ([refitForRoom]: closing re-centres and fits, opening restores the docked fit, Michael
+     * 2026-10-11) — that keeps ⛶ off the turn path and the pagination path: no width refit to the
+     * page's top, no toolbar re-lay, and the Onyx limit rect applied at once.
+     */
+    private fun homeHeldAcross(prevW: Int, prevH: Int, prevHomeW: Int, prevRoomL: Int, prevRoomR: Int,
+                               flipped: Boolean): Boolean =
+        !flipped && prevW > 0 && prevH == surfaceSize.height() && prevHomeW == homeWidthPx() &&
+            (prevRoomL != roomLeftPx || prevRoomR != roomRightPx)
+
+    /** The exclude rects the Onyx reader was last handed (null = unknown, or the whole surface
+     *  under a menu) — so a pill landing where the reader already excludes it costs no cold start. */
+    private var appliedExcludeRects: List<Rect>? = null
+
     /** Surface size for which the Onyx limit rect is currently applied (-1 = none yet). */
     private var appliedLimitWidth = -1
     private var appliedLimitHeight = -1
@@ -614,11 +2283,248 @@ abstract class SurfaceFragment : ScreenFragment() {
     private var pendingLimitWidth = 0
     private var pendingLimitHeight = 0
 
+    /** This surfaceChanged is a ROTATION — the pen's input frame must be re-armed at once rather
+     *  than on the open-page debounce. Set by the flip branch, consumed where the rect is applied. */
+    private var rotationFlipPending = false
+
+    /** The display rotation the raw frame was last armed at (Surface.ROTATION_*). −1 = never. */
+    private var appliedRotation = -1
+
+    /** The display rotation the GEOMETRY was last settled at — vendor-independent, unlike
+     *  [appliedRotation], which only advances through the Onyx limit-rect path (touchHelper
+     *  is null on Bigme, so on a B6 it stayed −1 forever and the display listener's bounce
+     *  was permanently disarmed there — half the B6 rotation disease). −1 = never. */
+    private var lastSeenRotation = -1
+
+    /** True while a missed-rotation repair is posted — the input sentinel must not stack them. */
+    @Volatile
+    private var geometryRecoveryPosted = false
+
+    /**
+     * The 180° watcher. A half-turn changes NO size and often fires NO surfaceChanged, so the
+     * aspect-based flip detection cannot see it — only the display itself says. On any rotation
+     * change, re-arm the raw frame at once (the same immediate path a visible flip takes).
+     */
+    private val displayListener = object : android.hardware.display.DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) {}
+        override fun onDisplayRemoved(displayId: Int) {}
+        override fun onDisplayChanged(displayId: Int) {
+            if (view == null || !isAdded) return
+            val sv = runCatching { provideSurfaceView() }.getOrNull() ?: return
+            val rot = runCatching { sv.display?.rotation }.getOrNull() ?: return
+            if (rot == lastSeenRotation || lastSeenRotation == -1) return
+            if (sv.width <= 0 || sv.height <= 0) return
+            // BOUNCE THE SURFACE, don't just re-arm beside it. The bug was UNRELIABLE because
+            // it is a race: whether the first stroke after a flip lands right depended on
+            // whether anything else (a menu, a page turn) happened to re-apply the pen frame
+            // first — and a same-size flip can also leave the SurfaceView's own canvas
+            // orientation ambiguous (the compositor may or may not rebuild it). Forcing the
+            // surface to recreate routes EVERY consequence of the flip — frame re-arm, shadow
+            // re-bake, daemon reattach — through the one surfaceChanged path that is already
+            // trusted, instead of patching each stale piece from the side. One blink on an
+            // explicit flip is the honest price of strokes that are never upside down.
+            Timber.i("display rotation changed to $rot — bouncing the ink surface")
+            pendingLimitWidth = sv.width
+            pendingLimitHeight = sv.height
+            sv.removeCallbacks(applyLimitRectRunnable)
+            sv.visibility = View.GONE
+            sv.post {
+                if (view != null && isAdded) sv.visibility = View.VISIBLE
+                sv.post { applyPendingLimitRect() }   // belt: re-key (w,h,rot) even if no recreate
+            }
+        }
+    }
+
     /** Coalesces rapid/duplicate surfaceChanged callbacks into a single reader reconfigure. */
     private val applyLimitRectRunnable = Runnable { applyPendingLimitRect() }
 
+    /**
+     * ROTATION'S SECOND SIGNAL (field, 08-27: "when rotated, it still appears to be using a
+     * smaller device's measurements … doesn't hit full width"). Rotation does NOT recreate the
+     * activity (manifest configChanges), so everything hangs off surfaceChanged detecting the
+     * flip — and on a rotate where that callback is skipped or arrives before layout settles,
+     * the page keeps the old shape's fit and the pen keeps the old frame. This hook is the
+     * belt: when the CONFIGURATION says the world changed, wait one layout pass, and if the
+     * surface's real size disagrees with what the fit last used, re-run the exact flip branch
+     * (size, width refit, toolbar re-lay, pen frame) from the REAL current metrics.
+     */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val sv = runCatching { provideSurfaceView() }.getOrNull() ?: return
+        // Once after the next layout pass, and again after a settle window: the B6 Pro can
+        // lay out LATE relative to this callback, so a single immediate check reads the old
+        // sizes, agrees with itself, and repairs nothing. recoverMissedRotation is idempotent —
+        // the second pass is free when the first one already ran.
+        sv.post { recoverMissedRotation("onConfigurationChanged") }
+        sv.postDelayed({ recoverMissedRotation("config settle") }, 350L)
+    }
+
+    /**
+     * THE -31 RULE, GENERALIZED AND VENDOR-INDEPENDENT (Michael, B6 Pro field: rotation "will
+     * create the strokes in another location as though the screen had been rotated into the
+     * initial position", and "can still mess up the FULL WIDTH SIZE and the stroke positions").
+     * The B6 delivers rotation differently than Onyx: with configChanges declared the activity
+     * stays, and the surfaceChanged storm that ALL the -38/-39/-40 machinery hangs off can be
+     * missed, late, or pre-layout there. So recovery is driven from signals the device DOES
+     * deliver — the onConfigurationChanged belt, the display listener, and, as the last line,
+     * a real-size disagreement check at every input entry ([geometrySentinel]). Whenever the
+     * surface's real size disagrees with the fit's last size — or a Bigme daemon is attached
+     * at stale dimensions — this runs exactly what the trusted surfaceChanged flip branch runs:
+     * daemon recreate/reattach, width refit, toolbar re-lay, pen frame re-key, chrome restore.
+     */
+    private fun recoverMissedRotation(reason: String) {
+        geometryRecoveryPosted = false
+        if (view == null || !isAdded) return
+        val sv = runCatching { provideSurfaceView() }.getOrNull() ?: return
+        val w = sv.width
+        val h = sv.height
+        if (w <= 0 || h <= 0) return
+        val ink = bigmeInk
+        val staleDaemon = ink?.attached == true && !ink.matchesDimensions(w, h)
+        if (w == surfaceSize.width() && h == surfaceSize.height() && !staleDaemon) return
+        // Never repair under a live stroke (ink speed is the first law): wait it out.
+        if (lastPoint != null) {
+            if (!geometryRecoveryPosted) {
+                geometryRecoveryPosted = true
+                sv.postDelayed({ recoverMissedRotation(reason) }, 300L)
+            }
+            return
+        }
+        Timber.i("geometry recovery ($reason): %dx%d (had %dx%d, staleDaemon=%s)",
+            w, h, surfaceSize.width(), surfaceSize.height(), staleDaemon)
+        val prevW = surfaceSize.width()
+        val prevH = surfaceSize.height()
+        val prevHomeW = homeWidthPx()
+        val prevRoomL = roomLeftPx
+        val prevRoomR = roomRightPx
+        val prevPanX = panX
+        val prevPanY = panY
+        val flipped = prevW > 0 && homeTurned(sv, prevHomeW, prevH, w, h)
+        // A real flip on the Bigme fast path is treated exactly as the trusted seam treats it:
+        // recreate — the daemon has never been asked to follow a window rotating in place.
+        if (flipped && isBigmeDevice() && sharedPreferences.getBoolean("bigme_fast_ink", false)) {
+            surfaceSize = Rect(0, 0, w, h)
+            adoptViewportRoom(sv)
+            sv.post { runCatching { requireActivity().recreate() } }
+            return
+        }
+        attachBigmeIfReady(w, h)   // detaches a stale daemon (landscape), reattaches at the real size
+        surfaceSize = Rect(0, 0, w, h)
+        adoptViewportRoom(sv)
+        pendingLimitWidth = w
+        pendingLimitHeight = h
+        if (flipped) rotationFlipPending = true
+        // A missed ⛶ resize re-centres and fits as the trusted seam does (Michael 2026-10-11) —
+        // one matrix re-lay, drawn once by the applyStrokes below — and, like that seam, leaves
+        // the toolbar alone: re-laying it would write the old column's width back and cost two
+        // more resizes, each a refit (review 2026-10-11).
+        if (homeHeldAcross(prevW, prevH, prevHomeW, prevRoomL, prevRoomR, flipped)) {
+            refitForRoom(prevW, prevH, prevPanX, prevPanY)
+        } else {
+            if (zoomTakenByHand && zoomScale > 1.01f)
+                refitZoomKeepingPlace(prevW, prevH, prevPanX, prevPanY)
+            else refitZoomToWidth()
+            applyToolbarCollapsedState(sharedPreferences.getBoolean("toolbarCollapsed", false))
+        }
+        applyPendingLimitRect()
+        lastSeenRotation = runCatching { sv.display?.rotation }.getOrNull() ?: lastSeenRotation
+        onGeometryRecovered()
+        applyStrokes(strokes, true)
+    }
+
+    /** A missed-rotation repair finished — surfaces re-assert their chrome (the day page
+     *  brings the pager pill and its ✒ Synth button back; a flip must never leave the
+     *  summon control tucked or clipped away). */
+    protected open fun onGeometryRecovered() {}
+
+    /** Two int compares per pen-down — free at rapid-draw cost — the last line of the
+     *  missed-rotation defense: a device that never sent its resize still gets caught on
+     *  the first touch. The repair itself is posted, never run inside the event. */
+    private fun geometrySentinel() {
+        if (geometryRecoveryPosted) return
+        val sv = runCatching { provideSurfaceView() }.getOrNull() ?: return
+        val w = sv.width
+        val h = sv.height
+        if (w <= 0 || h <= 0) return
+        val ink = bigmeInk
+        val staleDaemon = ink?.attached == true && !ink.matchesDimensions(w, h)
+        if (w == surfaceSize.width() && h == surfaceSize.height() && !staleDaemon) return
+        geometryRecoveryPosted = true
+        sv.post { recoverMissedRotation("input sentinel") }
+    }
+
+    /**
+     * THE NEVER-STRAND BELT for live ink — the [geometrySentinel]'s twin, and the same shape:
+     * a check so cheap it can ride the input path, a repair that is POSTED rather than run inside
+     * the event, and a worst case of one stroke rather than a session.
+     *
+     * The pause paths are individually correct and collectively leaky: four of them disable raw
+     * drawing unconditionally and re-arm it only `if (!inkSuppressed)`, while the two resume paths
+     * are both gated on `rawInkPausedForMenu` — a flag those four never set. Any interleaving that
+     * switches the pen off through one and expects it back through the other leaves it off for
+     * good, and nothing on screen says so: capture keeps working, so the ink appears at the
+     * post-pen-up bake and the page looks merely slow rather than broken.
+     *
+     * Rather than chase each interleaving, this asserts the invariant the whole family is trying
+     * to keep: WHEN NOTHING IS SUPPRESSING INK, THE PEN IS ARMED. Seated on hover and pen-up —
+     * never mid-stroke, where `setRawDrawingEnabled` toggling wipes the live overlay — so the
+     * repair lands in the gap between strokes and the next one draws under the nib.
+     *
+     * Deliberately does NOT touch `rawInkPausedForMenu`, the selection state, the Bigme daemon's
+     * attachment, or anything the rotation recovery owns. It re-arms a pen that every existing
+     * rule already says should be armed, and is inert whenever one of them says otherwise.
+     */
+    private fun armRawInkIfStranded() {
+        val th = touchHelper ?: return
+        if (modalShowing || inkSuppressed) return
+        // The same conditions the surface's own pen-state gate keeps (see the penState line):
+        // a page in image/text/paste mode is not refusing to render ink, it is not taking ink.
+        if (!penState || imageMode || textMode) return
+        if (lastPoint != null) return              // never mid-stroke
+        val sv = runCatching { provideSurfaceView() }.getOrNull() ?: return
+        sv.post {
+            if (modalShowing || inkSuppressed || lastPoint != null) return@post
+            // TWO FLAGS, AND ONLY ONE OF THEM IS EXPENSIVE.
+            //
+            // The first version of this belt guarded on `rawInkArmed` alone and was therefore
+            // blind to the fault it most needed to catch. The post-pen-up bake (see the render
+            // path) drops `isRawDrawingRenderEnabled` on EVERY lift and restores it only
+            // `if (!inkSuppressed)` — it never touches `setRawDrawingEnabled`, so the bookkeeping
+            // still read "armed" while the panel had stopped drawing under the nib. Michael, on
+            // the build that was supposed to have fixed this: "it was doing the stroke on pen up."
+            //
+            // The render flag is a plain property: asserting it costs nothing and can be done on
+            // every pass. `setRawDrawingEnabled(false)->(true)` is the one that cold-starts the
+            // native reader (seconds on the Go 6 Gen 2), so that one is still paid only when the
+            // bookkeeping says the reader is actually closed.
+            if (!th.isRawDrawingRenderEnabled) {
+                Timber.i("live ink was stranded — the render flag was off with nothing suppressing it")
+            }
+            th.isRawDrawingRenderEnabled = true
+            bigmeInk?.setInputEnabled(true)
+            if (!rawInkArmed) {
+                Timber.i("live ink was stranded — the raw reader was closed; re-opening")
+                th.setRawDrawingEnabled(true)
+                rawInkArmed = true
+            }
+        }
+    }
+
     /** Deferred full-canvas re-bake after a pen-up; see [COMMIT_VISUAL_DEBOUNCE_MS]. */
-    private val commitVisualRunnable = Runnable { applyStrokes(strokes, false) }
+    private val commitVisualRunnable = Runnable {
+        // Guarded: a deferred bake can outlive the page (the .89-era crash was this
+        // runnable firing 700ms after onPause against a dead view).
+        if (view == null || !isAdded) return@Runnable
+        runCatching {
+            // Bigme needs the full shadow rebuild (the render mirrors the shadow into
+            // the daemon overlay). The mirror CONVERGES here (one flashless GU16): a
+            // quiet blit left the page lurking invisibly in the buffer, and the live
+            // pen's partial refreshes then revealed buried ink patch by patch ("hidden
+            // strokes appear when I draw"). This bake is debounced to writing pauses
+            // and runs off-main — the conditions that made refreshes flicker are gone.
+            applyStrokes(strokes, isBigmeDevice())
+        }.onFailure { Timber.w(it, "deferred bake failed") }
+    }
 
     /**
      * Viwoods hardware-ink hand-off repaint (~900ms after pen-up, once the native overlay
@@ -695,15 +2601,218 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** The almanac page's rail, when the page has converted; re-asserted after every resume. */
     protected var almanacRail: com.toolsboox.ot.TuckPanel? = null
 
+    /** The rail that boxes this ink page's live tool — the almanac rail here; the day page
+     *  answers with its own. Read by [exitSelectionMode] to drop a stale Lasso box. */
+    protected open fun inkRail(): com.toolsboox.ot.TuckPanel? = almanacRail
+
     /** Which edge the rail (and before it, the toolbar) docks on — upstream's own side truth. */
     protected fun railOnRightSide(): Boolean =
         sharedPreferences.getString("calendarToolbarSide", "LEFT") == "RIGHT"
 
     /**
+     * An ink page's rail (plan v6 S1.2, Michael 2026-10-10): the ⛶ cell, and the corner it lends
+     * the activity's BOTTOM PILL (Michael 2026-10-11: "The one top left and the one bottom right"),
+     * wired to this page — the pill floats over the page at the foot, and the corner's picker hangs
+     * over it while open: the B6 daemon is cut round both and the Onyx reader excludes them; the
+     * picker pauses the pen the way a dialog does, and ⛶ waits while the daemon's layer is still
+     * live after a stroke. One constructor for the day page and the almanac pages.
+     */
+    protected fun newInkRail(
+        tb: ToolbarDrawingBinding,
+        surfaceKey: String,
+        sideIsLeft: () -> Boolean
+    ): com.toolsboox.ot.TuckPanel = com.toolsboox.ot.TuckPanel(
+        host = this,
+        toolbar = tb,
+        surfaceKey = surfaceKey,
+        sideIsLeft = sideIsLeft,
+        almanac = (tb.root.parent as? View)?.findViewById(R.id.navigatorImageView),
+        // A tool picked in the flyout closed it on the lift: the pen comes back at once, before
+        // the tool runs (review 2026-10-10). An outside tap closes on the DOWN: the usual 250ms.
+        onFlyout = { open, picked ->
+            when {
+                open -> onModalShown()
+                picked -> onModalDismissedAtOnce()
+                else -> onModalDismissed()
+            }
+        },
+        onChromeChanged = { onInkChromeChanged() },
+        onPillMoved = { onInkPillMoved() },
+        toggleWaitMs = { bigmeInk?.msUntilQuiet() ?: 0L }
+    ).also {
+        // The left edge's Back opens the Hub here (Michael 2026-10-12: Hub is off the rail —
+        // More's first row and this swipe have it). This page claims its surface from the system's
+        // back gesture (surfaceChanged), so on the B6 the system never sees the swipe: the
+        // activity's in-app catcher makes it, a finger flick only (MainActivity.edgeCatcher,
+        // [edgeInkView]; Michael 2026-10-12: "The b6 doesn't have the left right working for bring
+        // up the hub it seems rn"). The pen never comes into it.
+        installEdgeLadder()
+    }
+
+    /**
+     * The bottom pill came, went or moved over the page (Michael 2026-10-11: it floats at the foot
+     * now, in both states — a drag's end, the corner half arriving with the page, a rotation): hand
+     * the Onyx raw reader its new exclude rects — one limit-rect
+     * re-apply per ⛶, the cost the flyout's close already pays, and none at all when the reader
+     * already holds these rects (a page opened in full screen: its first open read the pill;
+     * review 2026-10-10). Not under a dialog (its own close restores the rects), not before the
+     * reader's first open or while a resize's re-apply is pending (each reads the rects itself) —
+     * which is every ⛶ now the surface takes the column's room (Michael 2026-10-11): the resize's
+     * one re-apply (at once, in surfaceChanged) carries the new limit AND the pill's rect, so the
+     * toggle still costs the reader one cold start, and this finds nothing left to hand it. With
+     * a stroke in flight the repaint and the re-apply wait for the lift, as the limit-rect
+     * re-apply does — never dropped. A no-op on the B6 for the reader: its daemon gets the same
+     * rects as cut-outs.
+     */
+    private fun onInkPillMoved() {
+        if (view == null || !isAdded) return
+        val v = runCatching { provideSurfaceView() }.getOrNull() ?: return
+        v.removeCallbacks(inkPillRetry)
+        // The surface's own repaints keep the pill's corner clear ([clipOutInkPill]) from now on;
+        // repaint once so that corner is emptied as the pill lands, and given back as it goes.
+        // With the B6 daemon attached only the quiet repaint runs — a buffer write with the pill
+        // already punched out, no push — never the selection redraw, which forces one.
+        val pillNow = inkRail()?.pillCutout(v)
+        if (pillNow != inkPillCutout) {
+            inkPillCutout = pillNow
+            inkPillRepaintOwed = true
+        }
+        if (lastPoint != null) {
+            v.postDelayed(inkPillRetry, LIMIT_RECT_DEBOUNCE_MS)
+            return
+        }
+        if (inkPillRepaintOwed) {
+            inkPillRepaintOwed = false
+            if (bigmeInk?.attached != true) repaintSurfaceInPlace()
+            else if (!hasSelection && selectedImage == null) applyStrokes(strokes, false)
+        }
+        if (touchHelper == null || modalShowing || appliedLimitWidth <= 0) return
+        if (v.width != appliedLimitWidth || v.height != appliedLimitHeight) return
+        if (rawExcludeRects() == appliedExcludeRects) return
+        refreshRawExcludeRects()
+    }
+
+    /** [onInkPillMoved] again once the pen lifts (a stroke was in flight when the pill moved). */
+    private val inkPillRetry = Runnable { onInkPillMoved() }
+
+    /** The pill's corner changed but its repaint still waits for the pen to lift. */
+    private var inkPillRepaintOwed = false
+
+    /** The bottom pill's rect over the surface (view pixels), or null — see [clipOutInkPill]. */
+    private var inkPillCutout: Rect? = null
+
+    /**
+     * Keep the bottom pill's spot clear in a surface repaint. The surface is Z-ordered over its
+     * window, so ink, picks or text drawn under the pill would cover it — and the pill floats over
+     * the page now (Michael 2026-10-11). In view pixels: call it before the view matrix goes on.
+     */
+    private fun clipOutInkPill(c: Canvas) {
+        inkPillCutout?.let { c.clipOutRect(it) }
+    }
+
+    /** One repaint of the surface as it stands, a live selection's overlay kept. */
+    private fun repaintSurfaceInPlace() {
+        when {
+            hasSelection -> drawWithSelection()
+            imageMode && selectedImage != null -> drawImageSelection()
+            else -> applyStrokes(strokes, false)
+        }
+    }
+
+    /** The full-screen chrome's rects over the surface as last handed to the daemon. */
+    private var inkChromeCutouts: List<Rect> = emptyList()
+
+    /** The ink rail's column state at the last chrome report (null = none yet) — a change is a ⛶
+     *  (or the page's first report, whose checks are free when the geometry already agrees). */
+    private var inkRailOpenSeen: Boolean? = null
+
+    /**
+     * The ink chrome that lies over the surface (the bottom pill, the corner's picker) came, went
+     * or moved: hand the B6 daemon its new cut-outs (plan v6 S1.2). If a forced push went up cut
+     * round it — the page changed under the flyout, an undo from it — the glass it covered is
+     * driven to truth once it has gone: one rect-scoped 1202, the house scrub, never a reconnect.
+     * The pill leaving a spot on the page (a drag's end — off the page or to another spot on it;
+     * it no longer comes and goes with ⛶, Michael 2026-10-11) is scrubbed once whether owed or not
+     * (review 2026-10-10): ink written under it reached only the daemon's buffer — quiet mirrors
+     * punch the hole but owe nothing — and whether the system refresh beats the quiet repaint that
+     * gives the spot back is a race. One small 1202 per drag, pushed around the pill's new spot.
+     */
+    private fun onInkChromeChanged() {
+        val v = runCatching { provideSurfaceView() }.getOrNull() ?: return
+        // ⛶ resizes the surface now (Michael 2026-10-11), so it gets rotation's belt (review
+        // 2026-10-11): if the resize callback is missed or late, the old matrix would draw in the
+        // new width and the daemon stay at the old size until a pen-down. Same two checks as
+        // [onConfigurationChanged]; idempotent, free when surfaceChanged already ran.
+        val openNow = inkRail()?.isOpen
+        if (openNow != null && openNow != inkRailOpenSeen) {
+            inkRailOpenSeen = openNow
+            if (surfaceSize.width() > 0) {   // never before the surface's first real size
+                v.post { recoverMissedRotation("full screen") }
+                v.postDelayed({ recoverMissedRotation("full screen settle") }, 350L)
+            }
+        }
+        val now = inkRail()?.chromeCutouts(v).orEmpty()
+        val gone = inkChromeCutouts.filter { it !in now }
+        val came = now.any { it !in inkChromeCutouts }
+        inkChromeCutouts = now
+        val ink = bigmeInk ?: return
+        ink.chromeCutouts = now
+        // Chrome just came over the page: its rect goes out of the daemon's buffer now, not at the next write.
+        if (came) ink.holdCutouts()
+        if (gone.isEmpty()) return
+        // [inkPillCutout] is still the pill's last spot here ([onInkPillMoved] runs next). Any spot
+        // the pill no longer covers is a departure — dragged off the page OR to another spot on it
+        // (review 2026-10-11: the in-page drag went to the debt check, which a quiet mirror never
+        // raises); a pill that only grew over its old spot (the corner half arriving) left nothing.
+        val pillNow = inkRail()?.pillCutout(v)
+        val pillLeft = inkPillCutout?.takeIf { it in gone && (pillNow == null || !pillNow.contains(it)) }
+        if (pillLeft != null) {
+            ink.settleCutoutDebt {}   // paid by this scrub, not by the next chrome to go
+            scrubUnderDepartedChrome(v, ink, gone, "under the pill")
+            return
+        }
+        // The debt is settled on the ink thread, behind any mirror still punching the old holes.
+        ink.settleCutoutDebt { scrubUnderDepartedChrome(v, ink, gone, "under the flyout") }
+    }
+
+    /**
+     * The ink chrome's rects in the surface's own pixels, re-read after the SURFACE moved (a ⛶
+     * resize, a rotation): the bottom pill floats still over the page (Michael 2026-10-11), so its
+     * screen spot is unchanged and nothing else would re-cut it. Handed to the daemon as a buffer
+     * punch only ([com.toolsboox.ot.BigmeFastInk.holdCutouts]) — no push; a ⛶ reattaches with
+     * these rects from its first write ([doBigmeAttach] reads [inkChromeCutouts]).
+     */
+    private fun rereadInkChromeOverSurface() {
+        val v = runCatching { provideSurfaceView() }.getOrNull() ?: return
+        inkPillCutout = inkRail()?.pillCutout(v)
+        val now = inkRail()?.chromeCutouts(v).orEmpty()
+        if (now == inkChromeCutouts) return
+        inkChromeCutouts = now
+        bigmeInk?.let { ink ->
+            ink.chromeCutouts = now
+            if (ink.attached && now.isNotEmpty()) ink.holdCutouts()
+        }
+    }
+
+    /** One rect-scoped 1202 per departed chrome rect, the house scrub — never a reconnect. */
+    private fun scrubUnderDepartedChrome(v: SurfaceView, ink: com.toolsboox.ot.BigmeFastInk, gone: List<Rect>, label: String) {
+        // Past the popup's own removal, so the scrub is the last word on that glass.
+        v.postDelayed({
+            if (bigmeInk !== ink || !ink.attached || !isResumed) return@postDelayed
+            val (page, m, template) = scrubFrame()
+            for (r in gone) {
+                val c = Rect(r)
+                c.inset(-8, -8)
+                if (c.intersect(0, 0, v.width, v.height)) ink.scrubRegion(c, page, m, template, label = label)
+            }
+        }, 120L)
+    }
+
+    /**
      * Convert an almanac page to the rail: the upstream toolbar stands down (its buttons keep
      * answering performClick — that is how the rail drives the real ink actions), the floating
-     * nav pill never comes up, and the rail carries both layers. Top cluster: ☰ Hub, then the
-     * ink tools the day rail carries. Bottom cluster: the nav pill's three actions unpacked
+     * nav pill never comes up, and the rail carries both layers. Top cluster: the wrench (☰ Hub
+     * its first row), then the ink tools the day rail carries. Bottom cluster: the nav pill's three actions unpacked
      * (↑ ↓ and the jump-to-present centre), then the toolbar's own ⇄ edge-hop.
      */
     /** The surface key the drawing rail was built with; see [penDescription]. */
@@ -712,69 +2821,101 @@ abstract class SurfaceFragment : ScreenFragment() {
     protected fun setupAlmanacRail(
         surfaceKey: String,
         isAtPresent: () -> Boolean,
+        /** Surface-specific rows appended to the wrench's Tools list — the period notes hang
+         *  their ▤ template picker here (DESIGN-period-walk-2026-08-27 §3) without every rail
+         *  growing a button most surfaces can't honour. Declared BEFORE [onHome] so the existing
+         *  trailing-lambda call sites stay exactly as they are. */
+        extraTools: List<GoItem> = emptyList(),
+        /** The page takes ink (the period's face and its notes; not a walk station, which stores
+         *  none): the bottom pill's corner offers the pen tools, as iOS's does on every page of
+         *  ink (parity, review 2026-10-11). False: ⛶ only — "pages with no pen tools". */
+        takesInk: Boolean = true,
         onHome: () -> Unit
     ): com.toolsboox.ot.TuckPanel {
         val tb = provideToolbarDrawing()
         // Held so the pen row can be re-dressed when the pen changes — the label names the current
         // nib, and rebuildActionRail needs the key this rail was built with.
         drawingRailKey = surfaceKey
-        val rail = com.toolsboox.ot.TuckPanel(
-            host = this,
-            toolbar = tb,
-            surfaceKey = surfaceKey,
-            sideIsLeft = { !railOnRightSide() }
-        )
+        val rail = newInkRail(tb, surfaceKey, sideIsLeft = { !railOnRightSide() })
         almanacRail = rail
+        // The pen tools the bottom pill's corner offers too (Michael 2026-10-11): one item each,
+        // seated in the column and in the corner, so both doors are the same action.
+        val penItem = com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_pen,
+            penDescription(), activeId = "pen", caption = "Pen",
+            // Holding the pen opens the full chooser (Michael 2026-10-11) — column and picker alike.
+            longPress = { if (showPenChooser()) rail.markActive("pen") }) {
+            tb.toolbarPen.performClick(); rail.markActive("pen")
+        }
+        val eraserItem = com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_eraser,
+            getString(R.string.calendar_drawing_toolbar_eraser), activeId = "eraser",
+            // Holding the eraser reaches clear-page — the upstream trash, which brings its
+            // own single "Are you sure?". The rail's separate trashcan was removed with the
+            // day rail's (2026-08-24): two faces for one destructive act, and this hold was
+            // always the real door.
+            longPress = { tb.toolbarTrash.performClick() }) {
+            tb.toolbarEraser.performClick(); rail.markActive("eraser")
+        }
+        val undoItem = com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_undo, "Undo") {
+            tb.toolbarUndo.performClick()
+        }
+        val redoItem = com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_redo, "Redo") {
+            tb.toolbarRedo.performClick()
+        }
+        // Zoom: one item for the column's seat and full screen's row (the pill's PenTools).
+        val zoomItem = zoomSeatItem()
         rail.setClusters(
             top = listOf(
-                // The hub door leads, wearing the ☰ face the Weeks header hamburger wore — the
-                // same accordion directory, one door instead of two.
-                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_bar_sections, "Hub") {
-                    showAccordion(
-                        com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this),
-                        anchorEnd = railOnRightSide()
-                    )
-                },
-                // THE PEN NAMES ITSELF. Michael, 2026-08-11: "pen selection should be MORE
-                // OBVIOUS." The row said "Pen" and the button carried a colour tint — which tells
-                // you the pen is selected, not WHICH pen, and the nib and width were invisible
-                // until you opened the dialog that changes them.
-                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_pen,
-                    penDescription(), activeId = "pen") {
-                    tb.toolbarPen.performClick(); rail.markActive("pen")
-                },
-                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_eraser,
-                    getString(R.string.calendar_drawing_toolbar_eraser), activeId = "eraser",
-                    // The pill precedent, kept from the day rail: holding the eraser reaches
-                    // clear-page (the upstream trash, which brings its own confirm).
-                    longPress = { tb.toolbarTrash.performClick() }) {
-                    tb.toolbarEraser.performClick(); rail.markActive("eraser")
-                },
-                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_lasso,
-                    getString(R.string.calendar_drawing_toolbar_lasso), activeId = "lasso") {
-                    tb.toolbarLasso.performClick(); rail.markActive("lasso")
-                },
-                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_undo, "Undo") {
-                    tb.toolbarUndo.performClick()
-                },
-                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_redo, "Redo") {
-                    tb.toolbarRedo.performClick()
-                },
-                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_trash,
-                    getString(R.string.eraser_clear_page)) { tb.toolbarTrash.performClick() },
+                // ☰ Hub led here, wearing the face the Weeks header hamburger wore — off every
+                // panel now (Michael 2026-10-12: "Those too."): the wrench's first row and the left
+                // edge's Back have it, and the walk's Present still opens it on a second tap.
                 // The wrench keeps the upstream buttons the rail doesn't carry as buttons —
-                // nothing the old toolbar offered goes unreachable on a converted page.
+                // nothing the old toolbar offered goes unreachable on a converted page. It is the
+                // rail's More too, its own rows only: a short column scrolls rather than folding
+                // seats in here (Michael 2026-10-10: "scrollable if there are more buttons").
+                // It leads the column, in ☰ Hub's old place, since ☰ Hub became its first row
+                // (review 2026-10-12): the touch route to the Hub where ☰ stood — on a B6 whose
+                // Back carries no edge it is the only one — and every ink tool keeps its place.
                 com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_wrench, "Quick tools") {
-                    showGoModal(listOf("Tools" to listOf(
+                    val main = activity as? com.toolsboox.ui.main.MainActivity
+                    val penShown = main?.quickNoteVisible() ?: true
+                    // ☰ Hub, the first row (Michael 2026-10-12): the touch route to the main menu.
+                    showGoModal(withHub(listOf("Tools" to listOf(
+                        // 🧹 THE PANEL, CLEANED (09-13, the crescent on the ☰): hand the panel
+                        // back from any raw layer and repaint everything once, in full.
+                        GoItem("🧹", "Clean the screen") {
+                            runCatching { com.onyx.android.sdk.api.device.epd.EpdController.enablePost(provideSurfaceView(), 1) }
+                            forceFullEpdRefresh(cleanDaemon = true)
+                        },
                         GoItem("👆", "Finger / hand") { tb.toolbarHandTouch.performClick() },
                         GoItem("⧉", "Copy selection") { tb.toolbarCopy.performClick() },
                         GoItem("⎘", "Paste") { tb.toolbarPaste.performClick() },
                         GoItem("Ⓣ", "Text box") { tb.toolbarText.performClick() },
                         GoItem("📅", "Today's day page") { tb.toolbarCalendarView.performClick() },
                         GoItem("🔄", "Rotate screen") { tb.toolbarRotate.performClick() },
+                        // Every wrench carries the quick-note toggle — the reader-only row
+                        // stranded a hidden pen on every other surface.
+                        GoItem("🖉", if (penShown) "Hide the quick-note button" else "Show the quick-note button") {
+                            main?.setQuickNoteVisible(!penShown)
+                        },
+                        // ☐ Tool labels (plan v6 S1.1, Michael 2026-10-10), as on the day page.
+                        toolLabelsRow(rail),
                         GoItem("⚙️", "Settings") { tb.toolbarSettings.performClick() }
-                    )), anchorTop = false, anchorEnd = railOnRightSide())
-                }
+                    ) + extraTools)), anchorTop = false, anchorEnd = railOnRightSide())
+                },
+                // THE PEN NAMES ITSELF. Michael, 2026-08-11: "pen selection should be MORE
+                // OBVIOUS." The row said "Pen" and the button carried a colour tint — which tells
+                // you the pen is selected, not WHICH pen, and the nib and width were invisible
+                // until you opened the dialog that changes them.
+                penItem,
+                eraserItem,
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_toolbar_lasso,
+                    getString(R.string.calendar_drawing_toolbar_lasso), activeId = "lasso") {
+                    tb.toolbarLasso.performClick(); if (lassoArmed()) rail.markActive("lasso")
+                },
+                undoItem,
+                redoItem,
+                // Zoom to a box (Michael 2026-10-12), directly after Redo — PanelSeats.Seat.ZOOM.
+                zoomItem
             ),
             bottom = listOf(
                 com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_up, "Up / previous") {
@@ -796,8 +2937,15 @@ abstract class SurfaceFragment : ScreenFragment() {
                 }
             )
         )
+        // The bottom pill's corner (Michael 2026-10-11): ⛶ · Pen · Eraser · Undo on every page that
+        // takes ink, the column's own items — the period's face included (iOS's corner offers the
+        // four on every ink page; review 2026-10-11) — and ⛶ alone on a read-only walk station.
+        rail.setPenTools(if (takesInk) com.toolsboox.ot.TuckPanel.PenTools(penItem, eraserItem, undoItem, redoItem,
+            pickUpPen = { pickUpPen(); rail.markActive("pen") }, zoom = zoomItem) else null)
         // Pen is every surface's default tool — box it from the start.
         rail.markActive("pen")
+        // …and Zoom boxed if the page already stands magnified (a rebuilt rail on a zoomed page).
+        syncZoomSeat()
         return rail
     }
 
@@ -835,9 +2983,25 @@ abstract class SurfaceFragment : ScreenFragment() {
     override fun onResume() {
         super.onResume()
 
+        // Back on screen with no daemon client (an attach skipped while paused, or a pause that
+        // didn't rebuild the surface): reconnect through the normal settle path.
+        if (isBigmeDevice() && bigmeInk?.attached != true) {
+            runCatching {
+                val sv = provideSurfaceView()
+                sv.post { if (sv.width > 0 && sv.height > 0 && bigmeInk?.attached != true) attachBigmeIfReady(sv.width, sv.height) }
+            }
+        }
+
         // The pen is (about to be) live: tell the Ultrabridge sync to hold its heavy PDF pass so it
         // can't collide with drawing and freeze the page. Cleared in onPause, where the sync fires.
         com.toolsboox.plugin.calendar.nw.UltrabridgeSyncWorker.inkSurfaceActive = true
+
+        // Watch for the rotations the size-based paths can't see (the 180° flip).
+        runCatching {
+            (requireContext().getSystemService(android.content.Context.DISPLAY_SERVICE)
+                as? android.hardware.display.DisplayManager)
+                ?.registerDisplayListener(displayListener, null)
+        }
 
         // Immersive fullscreen: hide system bars + action bar, draw into the display
         // cutout area, so the canvas truly fills the whole screen. System bars can
@@ -866,6 +3030,11 @@ abstract class SurfaceFragment : ScreenFragment() {
         initializeSurface()
         touchHelper?.setRawDrawingEnabled(true)
         touchHelper?.isRawDrawingRenderEnabled = true
+        rawInkArmed = true
+        // The Zoom seat re-dressed for a choice made on another page while this one waited (review
+        // 2026-10-12): a kept view's face and full screen's in-place flag would otherwise wear the
+        // old choice while the tap reads the new one. One cell at most; nothing when unchanged.
+        syncZoomSeat()
         // Viwoods FAST waveform is (re)activated from surfaceChanged once dimensions are known.
 
         penState = true
@@ -898,26 +3067,18 @@ abstract class SurfaceFragment : ScreenFragment() {
             provideToolbarDrawing().toolbarHandTouch.setImageResource(R.drawable.ic_toolbar_hand_touch)
 
         provideToolbarDrawing().toolbarPen.setOnClickListener {
-            if (penState && !procrastinator) {
-                showPenSettingsDialog()
-            } else {
-                penState = true
-                procrastinator = false
-                textMode = false
-                exitSelectionMode()
-                provideToolbarDrawing().toolbarPen.background.setTint(Color.GRAY)
-                provideToolbarDrawing().toolbarEraser.background.setTint(Color.WHITE)
-                provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
-                provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
-                provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
-            }
+            // Pen over an armed Zoom box (Michael 2026-10-12): the box goes and the pen is in hand —
+            // the chooser opens on the NEXT tap, as it does for a pen already held.
+            if (penState && !procrastinator && !marqueeArmed) showPenSettingsDialog() else armPen()
         }
 
         provideToolbarDrawing().toolbarEraser.setOnClickListener {
+            dropMarquee()   // the eraser takes an armed Zoom box back; exitSelectionMode re-syncs the pen
             penState = false
             procrastinator = false
             textMode = false
             exitSelectionMode()
+            applyStrokes(strokes, true)   // re-bake before the posted trail scrub reads the shadow
             provideToolbarDrawing().toolbarPen.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarEraser.background.setTint(Color.GRAY)
             provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.WHITE)
@@ -931,6 +3092,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             procrastinator = true
             textMode = false
             exitSelectionMode()
+            applyStrokes(strokes, true)   // re-bake before the posted trail scrub reads the shadow
             provideToolbarDrawing().toolbarPen.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarEraser.background.setTint(Color.WHITE)
             provideToolbarDrawing().toolbarProcrastinator.background.setTint(Color.GRAY)
@@ -940,6 +3102,7 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         // --- Lasso selection button ---
         provideToolbarDrawing().toolbarLasso.setOnClickListener {
+            dropMarquee()   // the lasso takes an armed Zoom box back; both branches re-sync the pen
             if (selectionMode || hasSelection) {
                 // Toggle off: exit selection mode
                 exitSelectionMode()
@@ -989,6 +3152,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 pasteClipboardImage()
                 return@setOnClickListener
             }
+            dropMarquee()   // paste-place takes an armed Zoom box back; the sync below re-parks the pen
             pasteMode = true
             selectionMode = false
             textMode = false
@@ -1010,6 +3174,7 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         // --- Text tool button ---
         provideToolbarDrawing().toolbarText.setOnClickListener {
+            dropMarquee()   // the text tool takes an armed Zoom box back; the sync below re-syncs the pen
             if (textMode) {
                 // Toggle off: exit text mode, return to pen
                 textMode = false
@@ -1206,6 +3371,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         // before anything paints — the same re-assert the day page makes after ITS super.onResume.
         almanacRail?.assertTakeover()
 
+        // A fresh template: nothing drawn again from the last one may stand for it.
+        forgetSharp()
+        templatePicture = null
+        templateRedraw = null
         templateBitmap = Bitmap.createBitmap(1404, 1872, Bitmap.Config.ARGB_8888)
         templateCanvas = Canvas(templateBitmap)
 
@@ -1233,6 +3402,24 @@ abstract class SurfaceFragment : ScreenFragment() {
     override fun onPause() {
         super.onPause()
 
+        runCatching {
+            (requireContext().getSystemService(android.content.Context.DISPLAY_SERVICE)
+                as? android.hardware.display.DisplayManager)
+                ?.unregisterDisplayListener(displayListener)
+        }
+
+        // An armed Zoom box dies with the visit (Michael 2026-10-12: a one-shot, never a mode left
+        // behind); the pen is onResume's to re-arm, as ever. A pause ends every touch stream, so
+        // no tail is left to swallow.
+        dropMarquee()
+        marqueeEatsView = false
+        marqueeEatsDaemon = false
+
+        // FIRST: if a stroke is mid-flight (pen down, no UP/CANCEL delivered — screen-off, call,
+        // task switch), commit it before anything below tears the capture state down. The bake
+        // further down then includes it, and the per-stroke save persists it.
+        runCatching { commitInFlightStroke() }
+
         // Pen is down / leaving the surface — release the sync so its deferred PDF pass can run
         // (the syncNow() below re-triggers it) now that it won't fight active drawing.
         com.toolsboox.plugin.calendar.nw.UltrabridgeSyncWorker.inkSurfaceActive = false
@@ -1252,6 +3439,11 @@ abstract class SurfaceFragment : ScreenFragment() {
         try {
             provideSurfaceView().removeCallbacks(applyLimitRectRunnable)
             provideSurfaceView().removeCallbacks(commitVisualRunnable)
+            // …and a menu's deferred pen resume (onModalDismissed, 250 ms): the Hub's close-and-back
+            // (Michael 2026-10-12, "two swipes back") pops this page inside that window, and the
+            // resume would re-arm a TouchHelper this pause has just closed (review 2026-10-12). The
+            // next onResume re-arms the pen itself; a pen hover re-arms it too (rawInkPausedForMenu).
+            provideSurfaceView().removeCallbacks(forcedResumeRunnable)
             // Boox: a stroke finished within the last COMMIT_VISUAL_DEBOUNCE_MS lives ONLY on the
             // hardware raw-drawing overlay until the deferred bake runs. On a fast page turn we tear
             // down before that — so bake it into the software surface NOW, or it lingers on the panel
@@ -1261,6 +3453,7 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
+        rawInkArmed = false
 
         touchHelper?.closeRawDrawing()
         // With the reader closed, force a full-screen EPD refresh so the stale hardware overlay is
@@ -1272,9 +3465,33 @@ abstract class SurfaceFragment : ScreenFragment() {
         // entry points lazily recreate via ensureShadowCanvas().
         bitmap?.recycle()
         bitmap = null
+        // A gesture cut off by the pause ends with it (its line still told); the zoomed-resolution
+        // copies go with the visit — onResume mints a fresh template, the next settle draws them.
+        placeAnchorHandler.removeCallbacks(viewGestureWatchdog)
+        if (viewGestureLive) {
+            viewGestureLive = false
+            if (panMeter.frames > 0) Timber.i(panMeter.line(System.nanoTime()) + " (pause)")
+            panMeter.reset()
+        }
+        viewFramePending = false
+        viewFingersDown = false
+        forgetSharp()
+        templatePicture = null
+        templateRedraw = null
 
         // Tear down Viwoods AutoDraw and return the panel to reading mode. No-op on Boox.
         viwoodsInk?.disable()
+
+        // And the Bigme daemon: leaving the surface must give the system its pen back — a
+        // connected client that outlives the page swallows the stylus everywhere. A pending
+        // debounced re-attach must die with it, or it re-claims the pen after we left.
+        bigmeReattachRunnable?.let { r ->
+            runCatching { provideSurfaceView().removeCallbacks(r) }
+            bigmeReattachRunnable = null
+        }
+        bigmeInk?.detach()
+        bigmeInk = null
+        bigmePenDown = false
 
         // Release the screen-on flag so the device can enter Doze when the planner is
         // backgrounded. Without this the SoC stays awake — on e-ink the frozen frame
@@ -1540,14 +3757,44 @@ abstract class SurfaceFragment : ScreenFragment() {
      * strokes" bug). Only [resumeRawInkNow] (which clears the flag) may turn it back on when true.
      */
     private val inkSuppressed: Boolean
-        get() = rawInkPausedForMenu || selectionMode || hasSelection || pasteMode
+        get() = rawInkPausedForMenu || selectionMode || hasSelection || pasteMode || marqueeArmed
+
+    /**
+     * IS THE HARDWARE PEN ACTUALLY ARMED? Bookkeeping only — every site that toggles raw drawing
+     * records what it did here, and nothing reads it but [armRawInkIfStranded].
+     *
+     * The hole it exists to close: the four "pause, re-lay, resume" paths (the two limit-rect
+     * re-applies, drawWithSelection, the post-render restore) all disable raw drawing
+     * unconditionally and re-enable it only `if (!inkSuppressed)`. When one of them lands while a
+     * lasso is live — `selectionMode` true but `rawInkPausedForMenu` still false, which is an
+     * ordinary moment, not an exotic one — the pen is switched off by a path that never set the
+     * pause flag. Then the selection ends, `syncRawInkToSelectionMenu`'s resume branch is gated on
+     * `rawInkPausedForMenu` being true, and `resumeRawInkNow` early-returns on the same flag. So
+     * nothing ever turns it back on.
+     *
+     * `setRawDrawingEnabled(false)` stops the hardware RENDERING the stroke; it does not stop the
+     * capture. The page therefore keeps taking ink perfectly and shows none of it until the
+     * post-pen-up bake — Michael, 08-31: "the pen up is when it draws the line and I need the line
+     * drawn on write of course". Dead pen, live file, no message.
+     *
+     * NOT THE WHOLE STORY, and this field is why the first fix missed: the bake path pauses only
+     * `isRawDrawingRenderEnabled`, deliberately (toggling the reader on every lift cold-starts it
+     * for seconds on the Go 6). So there is a second way to be stranded in which the reader is
+     * open, this flag reads true, and nothing draws. [armRawInkIfStranded] therefore asserts the
+     * render flag on every pass and consults this one only for the expensive half.
+     */
+    private var rawInkArmed = false
 
     private fun syncRawInkToSelectionMenu() {
-        val menuActive = hasSelection || pasteMode || selectionMode
+        // Zoom's armed box (Michael 2026-10-12) parks the pen exactly as the lasso does.
+        val menuActive = hasSelection || pasteMode || selectionMode || marqueeArmed
+        if (isBigmeDevice()) com.toolsboox.ot.InkTrace.log("sel",
+            "sync: sel=$selectionMode has=$hasSelection paste=$pasteMode zoomBox=$marqueeArmed paused=$rawInkPausedForMenu")
         if (menuActive && !rawInkPausedForMenu) {
             provideSurfaceView().removeCallbacks(resumeRawInkRunnable)   // cancel any pending resume
             touchHelper?.setRawDrawingEnabled(false)
             touchHelper?.isRawDrawingRenderEnabled = false
+            rawInkArmed = false
             rawInkPausedForMenu = true
         } else if (!menuActive && rawInkPausedForMenu) {
             resumeRawInkNow()
@@ -1568,6 +3815,11 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideSurfaceView().removeCallbacks(forcedResumeRunnable)
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
+        rawInkArmed = false
+        // Bigme's daemon holds the pen exactly the way the Onyx session does — hand it back
+        // while a dialog is up, or its taps never reach the buttons (the guarded-dialog
+        // freeze, third vendor edition).
+        bigmeInk?.setInputEnabled(false)
         // …and hand the WHOLE surface back to ordinary touch while the menu is up.
         //
         // `setRawDrawingEnabled(false)` stops the hardware RENDERING the stroke; it does not stop
@@ -1583,6 +3835,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         if (v.width > 0 && v.height > 0) {
             val whole = Rect(0, 0, v.width, v.height)
             touchHelper?.setLimitRect(whole, mutableListOf(Rect(whole)))
+            appliedExcludeRects = null
         }
         rawInkPausedForMenu = true
     }
@@ -1598,7 +3851,25 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideSurfaceView().postDelayed(forcedResumeRunnable, 250L)
     }
 
+    /**
+     * A modal closed by a tap that has already LIFTED — a tool picked in the full-screen flyout,
+     * whose click fires on the up (plan v6 S1.2; review 2026-10-10). The 250ms above guards a
+     * dismissing DOWN; here no contact is left to paint a dot, and the delay was the harm: the
+     * picked tool's own resume re-armed the Onyx pen under the whole-surface exclude, and the
+     * deferred re-apply then cold-started the reader under the first stroke. So the real limit
+     * rect goes back now, once, before the tool runs (it finds the pen already armed).
+     */
+    private fun onModalDismissedAtOnce() {
+        modalDepth = (modalDepth - 1).coerceAtLeast(0)
+        if (modalDepth > 0) return
+        provideSurfaceView().removeCallbacks(forcedResumeRunnable)
+        forcedResumeRunnable.run()
+    }
+
     private val forcedResumeRunnable = Runnable {
+        // A dismiss heard after this page paused (its message landing behind the pop): the pen is
+        // onResume's to re-arm, never a closed session's (review 2026-10-12).
+        if (!isResumed) return@Runnable
         // Put the real limit rect back before re-arming, or the pen returns with the whole
         // surface still excluded and stays dead in a quieter way.
         rawInkPausedForMenu = false
@@ -1622,9 +3893,16 @@ abstract class SurfaceFragment : ScreenFragment() {
         // and re-arming while a dialog is up is the one case that always paints on the page.
         if (modalShowing) return
         if (!rawInkPausedForMenu) return
+        // Zoom's armed box (Michael 2026-10-12): not even a forced resume (a menu's dismiss, a pen
+        // hover) wakes the Onyx pen under it, or the box would be inked. The B6 daemon's INPUT does
+        // come back — a menu took it — because the box is drawn from its pen events; its live-ink
+        // gate keeps it from laying any. The pen comes back when the box ends ([endMarquee]).
+        if (marqueeArmed) { bigmeInk?.setInputEnabled(true); return }
         if (!force && (hasSelection || pasteMode || selectionMode)) return
         touchHelper?.setRawDrawingEnabled(true)
         touchHelper?.isRawDrawingRenderEnabled = true
+        bigmeInk?.setInputEnabled(true)
+        rawInkArmed = true
         rawInkPausedForMenu = false
     }
 
@@ -1641,6 +3919,16 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     private fun exitSelectionMode(deferRawResume: Boolean = false) {
+        if (isBigmeDevice()) {
+            noteSelDirty()   // final position joins the trail
+            val trail = selDirtyCanvas
+            selDirtyCanvas = null
+            // Post, don't call: every exit path (deselect tap, chips, toolbar) repaints via
+            // applyStrokes synchronously right after this returns; the posted scrub then
+            // drives the whole trail to truth — old stroke positions, chrome, chips all lift.
+            if (trail != null) runCatching { provideSurfaceView() }.getOrNull()
+                ?.post { scrubDaemonRegion(trail, 48f) }
+        }
         selectionMode = false
         hasSelection = false
         pasteMode = false
@@ -1653,6 +3941,16 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideToolbarDrawing().toolbarLasso.background.setTint(Color.WHITE)
         provideToolbarDrawing().toolbarPaste.background.setTint(Color.WHITE)
         provideToolbarDrawing().toolbarText.background.setTint(Color.WHITE)
+        // Plan v6 S1.0b (Michael, 2026-10-10): leaving a selection takes the box off Lasso — after
+        // a chip action or a pen-circle the rail kept Lasso boxed with the pen live. Today's rail
+        // still seats Pen and Eraser, so the box goes back to the tool that is live (the lasso
+        // leaves penState true) rather than to nothing; once they leave the column (S1.4) the id
+        // matches no seat and this is markActive(null). Rail tool taps re-mark after performClick.
+        inkRail()?.markActive(when {
+            procrastinator -> null
+            penState -> "pen"
+            else -> "eraser"
+        })
         exitImageMode()
         // Restore the hardware pen. CUT defers it past the tap release so the Cut chip's own
         // ACTION_UP can't land on a re-enabled raw session and paint a dot; all other callers
@@ -1661,6 +3959,26 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     // --- Zoom / pan infrastructure ---
+
+    /**
+     * Landscape default posture, per surface. Most surfaces width-FILL in landscape and scroll
+     * down (a wide short window has no business showing a whole tall page at thumbnail size — see
+     * [refitZoomToWidth]). But a surface whose whole layout must be reachable AT ONCE — the today
+     * dashboard, where the right column's lower zones (Notes minis, Doodle) sit below the fold when
+     * the portrait sheet is width-filled — overrides this to true so landscape LETTERBOXES the whole
+     * page instead (zoom 1.0, every zone visible). Portrait is unaffected either way.
+     */
+    protected open fun landscapeFitsWholePage(): Boolean = false
+
+    /**
+     * Whether a single-finger drag PANS while zoomed on this surface (default: only when the reader
+     * opted into one-finger gestures). Two-finger pan is the palm-safe default everywhere; a surface
+     * that is routinely zoomed to reach a sub-region — the today dashboard's Doodle box needs the
+     * magnification, and its lower zones must still be scrollable to — overrides this to true so a
+     * plain one-finger drag scrolls the zoomed page instead of being swallowed (the "can't scroll
+     * anymore" report: once zoomed, the swipe path is off and two-finger pan went undiscovered).
+     */
+    protected open fun oneFingerPanWhenZoomed(): Boolean = false
 
     fun isZoomed(): Boolean = zoomScale > 1.01f
 
@@ -1673,22 +3991,73 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     /**
-     * Re-point a by-hand zoom at the page: keep the scale the reader chose, re-centre
-     * horizontally, and start at the top, which is where a page starts.
+     * The surface RESIZED OR FLIPPED under a zoom the reader took by hand — keep the zoom AND
+     * the place. The tuck rail is IN-FLOW, so opening or tucking it resizes the ink surface and
+     * lands here (field, 08-27: "when the tuck panel is closed the surface resizes back to
+     * neutral instead of staying near current zoom level"); a rotation lands here too (same day:
+     * "flipping should also keep its zoom"). The base fit re-derives from the REAL new metrics —
+     * the -31 rotation rule kept — and the reader's magnification re-applies on top, re-anchored
+     * so the canvas point that was centered stays centered; [updateTransformMatrix] then clamps
+     * the pan to the new bounds. Neutral comes back only by the reader's own hand (double-tap
+     * out) or on the next page (pagination rebuilds the fragment, and a fresh instance
+     * width-fits — the "every pagination lands at full width" ruling untouched).
      *
-     * This used to carry a zoom across page turns; pagination now lands at the width-fit instead
-     * (see surfaceChanged), so the one caller left is the relayout churn while the zoom is taken
-     * by hand — the surface resized under a posture the reader chose, and the honest response is
-     * to keep their magnification and re-aim it at the page rather than at stale coordinates.
+     * The pan algebra is [focusOnRect]'s, inverted: pan = total·(CANVAS/2 − c) ⇒
+     * c = CANVAS/2 − pan/total ([com.toolsboox.ot.InkViewport.centreOf]) — valid because
+     * [updateTransformMatrix] writes its clamp back into [panX]/[panY], so the stored pan is the
+     * drawn one. Widths are the WHOLE surface's (Michael 2026-10-11: ⛶ re-centres and fits), so on
+     * ⛶ the magnification rides on the bigger fit and the centred point stays centred.
      */
-    fun refitZoomForPage() {
-        if (!isZoomed()) return
-        panX = 0f
-        // Top of the page. Positive panY pushes content down, revealing what's above; the clamp in
-        // updateTransformMatrix trims it to the exact edge, so overshooting deliberately is safe.
-        panY = Float.MAX_VALUE / 4f
+    private fun refitZoomKeepingPlace(oldW: Int, oldH: Int, oldPanX: Float, oldPanY: Float) {
+        if (!deriveZoomKeepingPlace(oldW, oldH, oldPanX, oldPanY)) return
         updateTransformMatrix()
         applyStrokes(strokes, true)
+    }
+
+    /** [refitZoomKeepingPlace]'s posture laid into the zoom/pan fields only — no matrix, no draw —
+     *  so [refitForRoom] can re-lay and draw exactly once. False when there is no surface yet.
+     *  [overTheRest] (⛶ only) carries the magnification relative to the resting posture
+     *  ([com.toolsboox.ot.InkViewport.zoomOverRest]); a flip keeps the bare zoom as it always has. */
+    private fun deriveZoomKeepingPlace(oldW: Int, oldH: Int, oldPanX: Float, oldPanY: Float,
+                                       overTheRest: Boolean = false): Boolean {
+        val sw = surfaceSize.width().toFloat()
+        val sh = surfaceSize.height().toFloat()
+        if (sw <= 0f || sh <= 0f) return false
+        // THE STORM INVARIANT: the anchor is inverted from (old metrics, old pan) only at the
+        // FIRST seam of a resize storm; every later firing re-applies the same canvas point.
+        // Inverting fresh each time compounded, because the pan a later firing read had been
+        // rewritten (clamps, resting anchors) since the reader last put it somewhere.
+        val a = placeAnchor ?: run {
+            val oldBase = if (oldW > 0 && oldH > 0)
+                com.toolsboox.ot.InkViewport.fitScale(oldW.toFloat(), oldH.toFloat()) else 0f
+            val oldTotal = oldBase * zoomScale
+            if (oldTotal <= 0f) return deriveRestFit()
+            android.graphics.PointF(
+                com.toolsboox.ot.InkViewport.centreOf(oldPanX, oldTotal, CANVAS_WIDTH.toFloat()),
+                com.toolsboox.ot.InkViewport.centreOf(oldPanY, oldTotal, CANVAS_HEIGHT.toFloat()),
+            ).also { placeAnchor = it }
+        }
+        placeAnchorHandler.removeCallbacks(placeAnchorClear)
+        placeAnchorHandler.postDelayed(placeAnchorClear, PLACE_ANCHOR_SETTLE_MS)
+        // ⛶ (Michael 2026-10-11: the page "zooms to fill the space the panel left"): the hand's
+        // magnification rides on the RESTING posture, not the bare fit. Landscape's fit is
+        // height-bound and doesn't move on ⛶ — only its width-fill does — so a close-up kept bare
+        // (any two-finger scroll that nudged the span took the zoom by hand) left the page ~114px
+        // short of the new width (review 2026-10-11). After the anchor, which reads the old zoom.
+        if (overTheRest && oldW > 0 && oldH > 0) {
+            val fitsWhole = landscapeFitsWholePage()
+            zoomScale = com.toolsboox.ot.InkViewport.zoomOverRest(zoomScale,
+                com.toolsboox.ot.InkViewport.restFit(oldW.toFloat(), oldH.toFloat(), fitsWhole),
+                com.toolsboox.ot.InkViewport.restFit(sw, sh, fitsWhole))
+        }
+        // A flip from landscape (16× of a 1.83 width-fill = 29 over the fit) into portrait (16) keeps
+        // the close-up but never past the new posture's ceiling.
+        zoomScale = zoomScale.coerceAtMost(zoomCeiling())
+        baseScale = com.toolsboox.ot.InkViewport.fitScale(sw, sh)
+        val total = baseScale * zoomScale
+        panX = com.toolsboox.ot.InkViewport.panCentring(a.x, total, CANVAS_WIDTH.toFloat())
+        panY = com.toolsboox.ot.InkViewport.panCentring(a.y, total, CANVAS_HEIGHT.toFloat())
+        return true
     }
 
     /**
@@ -1716,24 +4085,88 @@ abstract class SurfaceFragment : ScreenFragment() {
      * [zoomTakenByHand] keeps it until the next page.
      */
     fun refitZoomToWidth() {
+        if (!deriveRestFit()) return
+        updateTransformMatrix()
+        applyStrokes(strokes, true)
+    }
+
+    /** [refitZoomToWidth]'s posture laid into the zoom/pan fields only — no matrix, no draw — so
+     *  [refitForRoom] can re-lay and draw exactly once. False when there is no surface yet. */
+    private fun deriveRestFit(): Boolean {
+        // The WHOLE surface (Michael 2026-10-11: "Recentering/zooming after closing the tuck panel
+        // makes sense"): in full screen the rest fits the room the column left too.
         val sw = surfaceSize.width().toFloat()
         val sh = surfaceSize.height().toFloat()
-        if (sw <= 0f || sh <= 0f) return
+        if (sw <= 0f || sh <= 0f) return false
+        handTookThePlace()   // the machine posture starts a fresh world; no stale storm anchor
         // The fit is the default posture, so applying it hands the zoom back to the machinery —
         // a later relayout may re-fit freely until the reader takes it by hand again.
         zoomTakenByHand = false
-        baseScale = minOf(sw / CANVAS_WIDTH.toFloat(), sh / CANVAS_HEIGHT.toFloat())
-        zoomScale = if (sw > sh) {
-            (sw / (CANVAS_WIDTH.toFloat() * baseScale)).coerceIn(MIN_ZOOM, MAX_ZOOM)
-        } else {
-            1f   // baseScale alone IS the whole canvas; magnifying past it would crop the page
-        }
+        // Landscape width-fills; otherwise baseScale alone IS the whole canvas and magnifying past
+        // it would crop the page. In landscape that is the letterbox posture
+        // ([landscapeFitsWholePage]): the whole dashboard shows at once, and — because it leaves
+        // zoom at 1.0 — a double-tap or pinch now zooms IN (width-fill left zoom > 1, so the first
+        // double-tap zoomed back OUT: the "won't zoom rotated" report). Every zone is on-screen and
+        // reachable without a scroll.
+        val fit = com.toolsboox.ot.InkViewport.restFit(sw, sh, landscapeFitsWholePage())
+        baseScale = fit.base
+        zoomScale = fit.zoom
         panX = 0f
-        // Top of the page; the clamp in updateTransformMatrix trims the deliberate overshoot
-        // to the exact edge (and to 0 in portrait, where the whole sheet already fits).
-        panY = Float.MAX_VALUE / 4f
+        // EXACTLY the top of the page — computed, not overshot. The old MAX_VALUE/4 overshoot
+        // was trimmed by the clamp, but the clamp allows the overscroll margin, so the rest
+        // landed overscrollPx BELOW the true top: the "dead space on top when rotated" (field,
+        // 08-28). (scaledHeight − sh)/2 cancels baseOffY exactly; when the page fits (portrait),
+        // it is ≤ 0 and the fits-branch pins panY to 0 as before.
+        panY = (CANVAS_HEIGHT * fit.total - sh) / 2f
+        return true
+    }
+
+    /**
+     * ⛶ (Michael 2026-10-11: "Recentering/zooming after closing the tuck panel makes sense" — his
+     * yes to "the page re-centres and zooms to fill the space the panel left; opening the panel
+     * puts it back where it was"): the surface gained or gave back only the column's room, so the
+     * page refits to the WHOLE new surface. Closing: portrait shows the whole page bigger and
+     * centred (B6 0.6816 → 0.7185, ~31.6px a side on either dock), landscape fills the new width.
+     * Opening runs the same arithmetic back to the docked fit.
+     *  - A close-up a HAND took keeps its magnification over the resting posture and the point it
+     *    had centred ([deriveZoomKeepingPlace], storm-anchored) — in landscape it grows with the
+     *    width-fill, so the page still fills the new width.
+     *  - A hand's pinch-out to the whole page (zoom ≤ 1) stays the whole page: nothing is
+     *    re-derived and [updateTransformMatrix] refits its base, as the page-turn seam does.
+     *  - Otherwise the rest re-derives ([deriveRestFit]) and, when the page is taller than the
+     *    surface, keeps the row at the top ([com.toolsboox.ot.InkViewport.panKeepingTopRow]) — a
+     *    landscape page scrolled down the day doesn't jump to its top; a page that fits (the
+     *    portrait whole-page rest) keeps the rest's own centred pan.
+     *
+     * EXACTLY ONE [updateTransformMatrix] and NO draw: each caller draws once after it
+     * (surfaceChanged's roomOnly branch, [recoverMissedRotation]), so the B6 still pays one silent
+     * detach + one settled reattach per ⛶ — its first truth draw already through this matrix, no
+     * new pushes — and Onyx one repaint.
+     */
+    private fun refitForRoom(prevW: Int, prevH: Int, prevPanX: Float, prevPanY: Float) {
+        // The pill's corner as it stands now, first (gone, or at its spot in the strip's row), so
+        // the one repaint that follows clears it or gives it back and the pill's own report finds
+        // nothing left to repaint: one surface draw per toggle.
+        inkPillCutout = inkRail()?.pillCutout(provideSurfaceView())
+        if (zoomTakenByHand) {
+            // The hand's posture is theirs (review 2026-10-11: a landscape pinch-out to the whole
+            // page fell through to the rest and came back width-filled). A close-up rides on the
+            // new rest; a whole page (zoom ≤ 1) stays whole — updateTransformMatrix refits its base.
+            if (zoomScale > 1.01f)
+                deriveZoomKeepingPlace(prevW, prevH, prevPanX, prevPanY, overTheRest = true)
+        } else {
+            val oldTotal = baseScale * zoomScale   // the matrix still on the glass
+            if (deriveRestFit()) {
+                val sh = surfaceSize.height().toFloat()
+                val total = baseScale * zoomScale
+                // Only a page taller than the surface has a top row to keep. A page that fits
+                // keeps deriveRestFit's pan, so a fit an ulp past sh can't carry the +36px
+                // portrait shift past the clamp (review 2026-10-11).
+                if (!com.toolsboox.ot.InkViewport.fits(CANVAS_HEIGHT * total, sh))
+                    panY = com.toolsboox.ot.InkViewport.panKeepingTopRow(oldTotal, prevPanY, total, sh)
+            }
+        }
         updateTransformMatrix()
-        applyStrokes(strokes, true)
     }
 
     /**
@@ -1747,11 +4180,12 @@ abstract class SurfaceFragment : ScreenFragment() {
      * for exact-glyph landing; this math is already rect-agnostic and needs no change.
      */
     fun focusOnRect(rect: RectF) {
-        val sw = surfaceSize.width().toFloat()
+        val sw = surfaceSize.width().toFloat()   // centred in the whole surface, ⛶ or not (Michael 2026-10-11)
         val sh = surfaceSize.height().toFloat()
         if (sw <= 0f || sh <= 0f || rect.width() <= 0f || rect.height() <= 0f) return
         // A deliberate landing on a mark — the relayout churn must not width-refit it away.
         zoomTakenByHand = true
+        handTookThePlace()
 
         baseScale = minOf(sw / CANVAS_WIDTH.toFloat(), sh / CANVAS_HEIGHT.toFloat())
         // Fill the height with the zone (a quarter-page band → ~4×), but cap so we neither exceed
@@ -1769,31 +4203,96 @@ abstract class SurfaceFragment : ScreenFragment() {
         applyStrokes(strokes, true)
     }
 
+    /**
+     * PAN (never zoom) so a design-space rect is on screen — the ❖ reply landing (Michael,
+     * 2026-10-12, B6 -322: "It does not put in it's write back pic"): a landscape page is
+     * width-filled and scrolled, so a reply placed below a long page's content can sit under the
+     * fold where nothing says it arrived. Already visible → nothing moves. Otherwise the rect's
+     * top comes to ~15% down the window (a rect taller than the window shows its top). The zoom
+     * is the reader's and stays; [updateTransformMatrix] clamps the pan to the page edges.
+     * Returns true when the view moved.
+     */
+    fun revealCanvasRect(rect: RectF): Boolean {
+        val sw = surfaceSize.width().toFloat()
+        val sh = surfaceSize.height().toFloat()
+        val total = baseScale * zoomScale
+        if (sw <= 0f || sh <= 0f || total <= 0f) return false
+        // The visible canvas window at the current pan: screen = c·total + base + pan.
+        val baseOffY = (sh - CANVAS_HEIGHT * total) / 2f
+        val baseOffX = centredOffX(CANVAS_WIDTH * total)
+        val winTop = (-baseOffY - panY) / total
+        val winH = sh / total
+        val winLeft = (-baseOffX - panX) / total
+        val winW = sw / total
+        val fitsV = rect.top >= winTop && rect.bottom <= winTop + winH
+        val fitsH = rect.left >= winLeft && rect.right <= winLeft + winW
+        if (fitsV && fitsH) return false
+        handTookThePlace()   // a settling resize storm must not re-anchor the view off the reply
+        if (!fitsV) {
+            val cy = (rect.top - winH * 0.15f) + winH / 2f
+            panY = total * (CANVAS_HEIGHT / 2f - cy)
+        }
+        if (!fitsH) {
+            val cx = if (rect.width() >= winW) rect.left + winW / 2f else rect.centerX()
+            panX = total * (CANVAS_WIDTH / 2f - cx)
+        }
+        updateTransformMatrix()
+        applyStrokes(strokes, true)
+        return true
+    }
+
     private fun updateTransformMatrix() {
+        // ONE FIT FRAME, THE WHOLE SURFACE (Michael 2026-10-11: "Recentering/zooming after closing
+        // the tuck panel makes sense"): the fit, the width-fill and the resting spot are worked out
+        // in the surface as it stands, so in full screen — the surface under the hidden column's
+        // room too — the page re-centres and fits the bigger frame, as Normal always fitted its own.
         val sw = surfaceSize.width().toFloat()
         val sh = surfaceSize.height().toFloat()
         if (sw <= 0f || sh <= 0f) return
 
         baseScale = minOf(sw / CANVAS_WIDTH.toFloat(), sh / CANVAS_HEIGHT.toFloat())
+
+        // THE WIDTH-FILL POSTURE IS RE-DERIVED HERE, not just in [refitZoomToWidth].
+        //
+        // [refitZoomToWidth] says of itself that "the fit is derived, never chosen" — but it only
+        // derived it ONCE, and [zoomScale] then outlived the width it was computed for. baseScale
+        // above is recomputed from the CURRENT surface on every call; zoomScale was not. Any
+        // relayout that changes the surface width WITHOUT going through a flip — the sidebar
+        // popping in and out is the one that happens constantly (CORRECTION 3: "the new parts
+        // don't pop in/out properly with the side bar — stay consistent with the sizings") — left
+        // totalScale at something that was full-width for the PREVIOUS width and is merely close
+        // for this one. That is "it doesn't appear full width when it happens in actuality":
+        // the code believed it had width-filled, and had.
+        //
+        // Re-deriving costs nothing and makes the claim true continuously. A zoom the reader took
+        // by hand is untouched — that is theirs until the next page ([zoomTakenByHand]).
+        if (!zoomTakenByHand && sw > sh && !landscapeFitsWholePage()) {
+            zoomScale = (sw / (CANVAS_WIDTH.toFloat() * baseScale)).coerceIn(MIN_ZOOM, MAX_ZOOM)
+        }
+
         val totalScale = baseScale * zoomScale
 
         val scaledWidth = CANVAS_WIDTH * totalScale
         val scaledHeight = CANVAS_HEIGHT * totalScale
-        val baseOffX = (sw - scaledWidth) / 2f
+        val baseOffX = centredOffX(scaledWidth)
         val baseOffY = (sh - scaledHeight) / 2f
 
-        if (scaledWidth > sw) {
-            val maxPan = (scaledWidth - sw) / 2f
-            panX = panX.coerceIn(-maxPan, maxPan)
-        } else {
-            panX = 0f
-        }
-        if (scaledHeight > sh) {
-            val maxPan = (scaledHeight - sh) / 2f
-            panY = panY.coerceIn(-maxPan, maxPan)
-        } else {
-            panY = 0f
-        }
+        // Overscroll applies ONLY when zoomed (page bigger than surface), so a zone near
+        // the page edge (the today Doodle box) can be panned in. When the page FITS, it
+        // stays CENTERED (pan = 0) — letting overscroll touch the resting fit shoved the
+        // whole today page half a screen down on load.
+        // A LANDSCAPE letterbox anchors at the START, not the center (field, 08-27: "when
+        // rotated to landscape, there was a lot of white space before the start of the
+        // today page") — the page reads from its leading edge and the dead space pools
+        // AFTER the content, where the eye never crosses it. Portrait keeps the centered
+        // rest: its gap is symmetric and slight, and centered is the honest resting fit.
+        // Both rests are the whole surface's, in full screen too (InkViewport.clampEdge with the
+        // surface as its own frame — the Normal clamp, with the half-pixel fit slack).
+        panX = com.toolsboox.ot.InkViewport.clampEdge(baseOffX + panX, scaledWidth, sw, 0f, sw,
+            panOverscrollPx(sw), panOverscrollPx(sw), restAtStart = sw > sh) - baseOffX
+        // Vertical: the same half-pixel fit slack as the horizontal clamp — the height-bound
+        // full-screen portrait fit lands an ulp past sh on some heights (review 2026-10-11).
+        panY = com.toolsboox.ot.InkViewport.clampCentredPan(panY, scaledHeight, sh, panOverscrollPx(sh))
 
         viewMatrix.reset()
         viewMatrix.postScale(totalScale, totalScale)
@@ -1802,8 +4301,24 @@ abstract class SurfaceFragment : ScreenFragment() {
 
         touchHelper?.setStrokeWidth(effectivePenWidth() * totalScale)
 
+        // The zoomed-resolution template is of the matrix before this one: the page-space bitmap
+        // goes back under the live matrix (the move draws it), and the settle draws it again.
+        if (sharpTemplateShown && !isMatrixNow(sharpTemplateMatrix)) unshowSharpTemplate()
         onTransformChanged(viewMatrix)
+        // The Zoom seat is boxed while the page is magnified past its rest (Michael 2026-10-12).
+        syncZoomSeat()
     }
+
+    /** Where a page [scaledWidth] wide sits at zero pan: centred in the whole surface, ⛶ or not
+     *  (Michael 2026-10-11) — the one origin every pan is measured from (the matrix, the pinch
+     *  focus, the double-tap zoom). */
+    private fun centredOffX(scaledWidth: Float): Float =
+        (surfaceSize.width() - scaledWidth) / 2f
+
+    /** Extra pan margin (px) beyond the page edge, per surface dimension — lets a zone
+     *  near the page edge reach the middle of the screen. Default 0 (edge-locked pan);
+     *  the today-page dashboard overrides it so the bottom Doodle box is reachable. */
+    protected open fun panOverscrollPx(surfaceDim: Float): Float = 0f
 
     open fun onTransformChanged(matrix: Matrix) {}
 
@@ -1816,7 +4331,47 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     fun surfaceTransform(): Matrix = Matrix(viewMatrix)
 
+    /**
+     * Pinch, pan and double-tap on the ink surface. Each move the page follows draws ONE frame here
+     * (a pinch used to draw two: its onScale, then the pan under it) and is counted for the gesture's
+     * "pan:" line; the lift settles it ([settleViewGesture]) — the zoomed resolution, and on the B6
+     * the one forced mirror, only then.
+     */
     fun handleZoomPanTouch(motionEvent: MotionEvent): Boolean {
+        val t0 = System.nanoTime()
+        val a = motionEvent.actionMasked
+        // A fresh touch while a gesture never saw its lift: that one is over.
+        if (a == MotionEvent.ACTION_DOWN && viewGestureLive) settleViewGesture("restart")
+        val handled = zoomPanTouch(motionEvent)
+        if (viewFramePending) {
+            viewFramePending = false
+            applyStrokes(strokes, false)   // the move's one frame — transform-only, no shadow rebuild
+            panMeter.frame(t0, System.nanoTime())
+        }
+        val ending = a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL
+        if (motionEvent.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER) viewFingersDown = !ending
+        if (viewGestureLive) {
+            if (ending) settleViewGesture(if (a == MotionEvent.ACTION_UP) "lift" else "cancel")
+            else {
+                // EVERY event of the gesture re-arms the watchdog, a still hand's included — only
+                // the moves that shifted the page used to (a pause with the fingers down settled).
+                viewGestureLastEventMs = android.os.SystemClock.uptimeMillis()
+                placeAnchorHandler.removeCallbacks(viewGestureWatchdog)
+                placeAnchorHandler.postDelayed(viewGestureWatchdog, VIEW_GESTURE_WATCHDOG_MS)
+            }
+        }
+        return handled
+    }
+
+    /** A pinch or a pan moved the matrix: the gesture is live (the mirror and the template stay on
+     *  their cheap page-space bitmaps) and this move owes one frame. */
+    private fun viewGestureMoved(zoomed: Boolean) {
+        viewGestureLive = true
+        if (zoomed) panMeter.zoomed = true
+        viewFramePending = true
+    }
+
+    private fun zoomPanTouch(motionEvent: MotionEvent): Boolean {
         if (motionEvent.actionMasked == MotionEvent.ACTION_DOWN) armScreenOn()   // any touch re-arms keep-awake
         if (motionEvent.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER) return false
 
@@ -1827,11 +4382,12 @@ abstract class SurfaceFragment : ScreenFragment() {
             scaleGestureDetector = ScaleGestureDetector(requireContext(), object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
                 override fun onScale(detector: ScaleGestureDetector): Boolean {
                     val oldZoom = zoomScale
-                    zoomScale = (zoomScale * detector.scaleFactor).coerceIn(MIN_ZOOM, MAX_ZOOM)
+                    zoomScale = (zoomScale * detector.scaleFactor).coerceIn(MIN_ZOOM, maxOf(zoomCeiling(), oldZoom))
                     if (zoomScale != oldZoom) {
                         // A pinch is the reader taking the zoom by hand — theirs until the next
                         // page change (see surfaceChanged's width-fit default).
                         zoomTakenByHand = true
+                        handTookThePlace()
                         val focusX = detector.focusX
                         val focusY = detector.focusY
 
@@ -1840,12 +4396,11 @@ abstract class SurfaceFragment : ScreenFragment() {
                         val canvasX = pts[0]
                         val canvasY = pts[1]
 
-                        val sw = surfaceSize.width().toFloat()
                         val sh = surfaceSize.height().toFloat()
                         val totalScale = baseScale * zoomScale
                         val scaledW = CANVAS_WIDTH * totalScale
                         val scaledH = CANVAS_HEIGHT * totalScale
-                        val baseOffX = (sw - scaledW) / 2f
+                        val baseOffX = centredOffX(scaledW)   // the matrix's own origin (Michael 2026-10-11)
                         val baseOffY = (sh - scaledH) / 2f
 
                         val newScreenX = canvasX * totalScale + baseOffX + panX
@@ -1854,7 +4409,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                         panY += focusY - newScreenY
 
                         updateTransformMatrix()
-                        applyStrokes(strokes, true)
+                        viewGestureMoved(zoomed = true)   // drawn once, after the pan below has moved too
                     }
                     return true
                 }
@@ -1879,20 +4434,27 @@ abstract class SurfaceFragment : ScreenFragment() {
                     // Either direction is a chosen posture — zooming in on a spot, or deliberately
                     // stepping out to the plain page — so both take the zoom by hand.
                     zoomTakenByHand = true
+                    handTookThePlace()
+                    val t0 = System.nanoTime()
                     if (isZoomed()) {
-                        resetZoom()
+                        // Stepping OUT lands the DERIVED rest — full width in landscape exactly
+                        // as in portrait (field, 08-28: "when rotated landscape I want full
+                        // width, just like it's full width in portrait"). resetZoom's bare 1.0
+                        // was the landscape letterbox, and because the double-tap marked the
+                        // zoom hand-taken, the width-fill re-derive never rescued it.
+                        refitZoomToWidth()
+                        logZoomSettled(t0)
                     } else {
                         val pts = floatArrayOf(e.x, e.y)
                         inverseViewMatrix.mapPoints(pts)
 
                         zoomScale = 2.0f
 
-                        val sw = surfaceSize.width().toFloat()
                         val sh = surfaceSize.height().toFloat()
                         val totalScale = baseScale * zoomScale
                         val scaledW = CANVAS_WIDTH * totalScale
                         val scaledH = CANVAS_HEIGHT * totalScale
-                        val baseOffX = (sw - scaledW) / 2f
+                        val baseOffX = centredOffX(scaledW)   // the matrix's own origin (Michael 2026-10-11)
                         val baseOffY = (sh - scaledH) / 2f
 
                         val newScreenX = pts[0] * totalScale + baseOffX
@@ -1901,7 +4463,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                         panY = e.y - newScreenY
 
                         updateTransformMatrix()
-                        applyStrokes(strokes, true)
+                        // A zoom that lands at once: its settle is now — the zoomed resolution, and
+                        // on the B6 the one forced mirror a Zoom seat step makes (it logs the line).
+                        repaintAfterZoom()
                     }
                     return true
                 }
@@ -1915,7 +4479,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         // can toggle the top toolbar button to allow single-finger panning while zoomed.
         // We only consume single-finger events for pan when actually zoomed in — at
         // zoom=1 single-finger events fall through to swipe-navigation.
-        val allowOneFingerPan = singleFingerGesturesEnabled && isZoomed()
+        val allowOneFingerPan = isZoomed() && (singleFingerGesturesEnabled || oneFingerPanWhenZoomed())
         if (motionEvent.pointerCount >= 2 || (allowOneFingerPan && motionEvent.pointerCount == 1)) {
             val cx: Float
             val cy: Float
@@ -1926,18 +4490,63 @@ abstract class SurfaceFragment : ScreenFragment() {
                 cx = motionEvent.x
                 cy = motionEvent.y
             }
+            val span = if (motionEvent.pointerCount >= 2)
+                kotlin.math.hypot(motionEvent.getX(1) - motionEvent.getX(0),
+                                  motionEvent.getY(1) - motionEvent.getY(0)) else 0f
             when (motionEvent.actionMasked) {
                 MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_DOWN -> {
                     lastFingerX = cx
                     lastFingerY = cy
                     isPanning = true
+                    if (motionEvent.pointerCount == 2) {
+                        // A fresh second finger arms the tap; a third only raises the count.
+                        multiTapMax = 2
+                        multiTapDownAt = android.os.SystemClock.uptimeMillis()
+                        multiTapCx = cx; multiTapCy = cy; multiTapSpan = span
+                        multiTapDirty = false
+                    } else if (motionEvent.pointerCount > 2 && !multiTapDirty) {
+                        multiTapMax = maxOf(multiTapMax, motionEvent.pointerCount)
+                    }
+                }
+                MotionEvent.ACTION_POINTER_UP -> {
+                    // Judged as the FIRST finger leaves: still, brief, and counted. Consuming the
+                    // verdict here (not at the final ACTION_UP) keeps the last lifting finger from
+                    // ever reading as a one-finger act to the code below this block.
+                    if (!multiTapDirty &&
+                        android.os.SystemClock.uptimeMillis() - multiTapDownAt < 280L &&
+                        kotlin.math.hypot(cx - multiTapCx, cy - multiTapCy) < 24f) {
+                        when (multiTapMax) {
+                            2 -> provideToolbarDrawing().toolbarUndo.performClick()
+                            3 -> provideToolbarDrawing().toolbarRedo.performClick()
+                        }
+                        if (multiTapMax in 2..3) gestureHaptic()
+                    }
+                    multiTapDirty = true
+                    // The pan's anchor moves to where the NEXT move measures from — the fingers
+                    // that stay. Kept on the old pair, a lift jumped the page by half the fingers'
+                    // spread (a one-finger pan carrying on, or three fingers down to two).
+                    val lifting = motionEvent.actionIndex
+                    val stay = (0 until motionEvent.pointerCount).filter { it != lifting }
+                    if (stay.size >= 2) {
+                        lastFingerX = (motionEvent.getX(stay[0]) + motionEvent.getX(stay[1])) / 2f
+                        lastFingerY = (motionEvent.getY(stay[0]) + motionEvent.getY(stay[1])) / 2f
+                    } else if (stay.size == 1) {
+                        lastFingerX = motionEvent.getX(stay[0])
+                        lastFingerY = motionEvent.getY(stay[0])
+                    }
+                    return true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    if (isPanning && isZoomed()) {
+                    if (!multiTapDirty && (kotlin.math.hypot(cx - multiTapCx, cy - multiTapCy) > 24f ||
+                            kotlin.math.abs(span - multiTapSpan) > 30f)) {
+                        multiTapDirty = true   // a pan or a pinch is speaking; the tap stands down
+                    }
+                    if (isPanning && isZoomed() && (cx != lastFingerX || cy != lastFingerY)) {
+                        handTookThePlace()   // a moving hand owns the place, not a settling storm
                         panX += cx - lastFingerX
                         panY += cy - lastFingerY
                         updateTransformMatrix()
-                        applyStrokes(strokes, true)
+                        viewGestureMoved(zoomed = false)   // one frame, drawn by handleZoomPanTouch
                     }
                     lastFingerX = cx
                     lastFingerY = cy
@@ -2023,9 +4632,18 @@ abstract class SurfaceFragment : ScreenFragment() {
      * runs for BOTH the stylus (via the drawing path) and the finger (which never enters that
      * path) — otherwise the chips only respond to the pen. Returns true if a chip was hit.
      */
+    /** The last chip tap's clock — one pen tap reaches this twice on the B6 (the daemon's
+     *  synthesized event and Android's own stylus event), and the lasso menu opened twice
+     *  ("it flashes one menu and then another", 09-14). The second within half a second is the echo. */
+    private var lastChipTapMs = 0L
+
     private fun handleSelectionChipTap(x: Float, y: Float): Boolean {
         if (!hasSelection || selectionMode) return false
         val box = selBox ?: return false
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastChipTapMs < 500L) return true
+        if (itemChipRect(box).contains(x, y) || cutChipRect(box).contains(x, y) ||
+            deleteChipRect(box).contains(x, y) || copyChipRect(box).contains(x, y)) lastChipTapMs = now
         if (itemChipRect(box).contains(x, y)) {
             val sel = selectedStrokes.toList()
             exitSelectionMode(deferRawResume = true)
@@ -2063,6 +4681,12 @@ abstract class SurfaceFragment : ScreenFragment() {
         return false
     }
 
+    // bigmeMirrorAfterChip (09-03, a forced full-view GU16 after every chip) is GONE (09-14: the
+    // gram chip "still double flashes"). exitSelectionMode already posts a 1202 scrub of the
+    // whole selection trail — chips, box, handles and any cut ink — and 1202 is the only mode
+    // that can LIFT them; the GU16 that followed could only darken, so it was a second flash
+    // that changed nothing on the glass.
+
     /** Returns which handle (if any) the canvas-space point hits. */
     private fun hitTestHandle(x: Float, y: Float, box: RectF): SelectionDrag {
         val pad = handleSize / 2f + handleHitPad
@@ -2089,20 +4713,95 @@ abstract class SurfaceFragment : ScreenFragment() {
      * Also draws the lasso polygon if points exist, plus the selection bounding box,
      * corner handles, and Cut/Copy chips once a selection has been committed.
      */
+    /** When the last live selection render ran (uptime ms) — the software throttle. */
+    private var lastSelectionRenderMs = 0L
+
+    /**
+     * The per-MOVE selection render, throttled on the SOFTWARE path: drawWithSelection is
+     * a full-page recompose, and calling it per pen sample on a device with no hardware
+     * overlay (the B6) saturated the main thread for seconds — the lasso froze, the
+     * queued events replayed after the mode had moved on, and the polygon committed as
+     * an ink stroke. Onyx renders immediately (hardware absorbs it); software renders at
+     * most one frame per interval, and every gesture's UP path still calls
+     * [drawWithSelection] directly for the exact final frame.
+     */
+    private fun drawWithSelectionLive() {
+        if (touchHelper != null) { drawWithSelection(); return }
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastSelectionRenderMs < 120L) return
+        lastSelectionRenderMs = now
+        drawWithSelection()
+        // Drag frames (-190): serialized, panel-paced 1202 drives via the ink thread —
+        // see BigmeFastInk.scrubRegionForDrag. The -185 retirement was of the fire-and-forget
+        // 120ms cadence, not of animating at all.
+        bigmeDragFrameScrub()
+    }
+
+    /** The last drag frame the GLASS was driven to (canvas space, with chip margin). Each
+     *  accepted frame drives its union with the current box so the old frame erases as the
+     *  new one paints; frames the ink thread was too busy for never reached the glass and
+     *  need no erasing. Cleared at release — the settle scrub covers the whole trail. */
+    private var lastDragFrameCanvas: RectF? = null
+
+    /** Everything drawWithSelection paints for [box], in canvas space: the box with its corner
+     *  handles, the chip row (above or below), the rotate handle, plus a pad for stroke width
+     *  and the selection highlight. This is the region a drag frame must drive. */
+    private fun selectionChromeBounds(box: RectF): RectF {
+        val pad = handleSize / 2f + handleHitPad + 24f
+        val r = RectF(box.left - pad, box.top - pad, box.right + pad, box.bottom + pad)
+        r.union(cutChipRect(box)); r.union(copyChipRect(box))
+        r.union(itemChipRect(box)); r.union(deleteChipRect(box))
+        val rc = rotateHandleCenter(box); val rr = handleSize / 2f + 4f
+        r.union(RectF(rc.x - rr, rc.y - rr, rc.x + rr, rc.y + rr))
+        r.inset(-12f, -12f)
+        return r
+    }
+
+    private fun bigmeDragFrameScrub() {
+        if (!isBigmeDevice()) return
+        val ink = bigmeInk ?: return
+        if (!ink.attached) return
+        if (selectionDrag == SelectionDrag.NONE) return
+        val box = selBox ?: return
+        // -191: the exact chrome footprint, not a 3-chip blanket margin — field 09-04: "a blur
+        // around the box as it moves… a transparency box bigger than the lassoed area" was the
+        // 1202 partial repainting ~264px of untouched paper on every side of the selection.
+        val cur = selectionChromeBounds(box)
+        val drive = RectF(cur)
+        lastDragFrameCanvas?.let { drive.union(it) }
+        val vr = RectF(drive)
+        viewMatrix.mapRect(vr)
+        val v = runCatching { provideSurfaceView() }.getOrNull() ?: return
+        val pad = 8f
+        val r = Rect(
+            (vr.left - pad).toInt().coerceAtLeast(0),
+            (vr.top - pad).toInt().coerceAtLeast(0),
+            (vr.right + pad).toInt().coerceAtMost(v.width),
+            (vr.bottom + pad).toInt().coerceAtMost(v.height))
+        if (r.width() <= 0 || r.height() <= 0) return
+        val (page, m, template) = scrubFrame()
+        val accepted = ink.scrubRegionForDrag(r, page, m, template)
+        if (accepted) lastDragFrameCanvas = cur
+    }
+
     private fun drawWithSelection() {
+        if (isBigmeDevice()) noteSelDirty()
         val lockCanvas = provideSurfaceView().holder.lockCanvas() ?: return
-
-        lockCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-
         val selectedIds = selectedStrokes.map { it.strokeId }.toSet()
 
-        lockCanvas.save()
-        lockCanvas.concat(viewMatrix)
-
-        renderImageElements(lockCanvas)
+        // ISOLATED lasso-visibility change (09-03): the whole selection composite in CANVAS space,
+        // factored so it paints the SurfaceView AND the Bigme daemon MIRROR — the only layer that
+        // reaches the e-ink panel there. Touches NOTHING in attach/detach or live ink; writing
+        // is unaffected.
+        fun paintContent(c: android.graphics.Canvas) {
+        renderImageElements(c)
         for (stroke in strokes) {
             val usePaint = if (stroke.strokeId in selectedIds) selectionHighlightPaint else paint
-            drawStrokePath(lockCanvas, usePaint, stroke)
+            // MUST target c, not lockCanvas: this lambda also paints the Bigme mirror's
+            // shadow bitmap. Hardcoding lockCanvas (re-broken by the -164 wholesale restore,
+            // re-found by the 09-04 sweep) left the shadow with CHROME BUT NO INK — and every
+            // scrub then painted that as "truth", erasing real ink off the glass.
+            drawStrokePath(c, usePaint, stroke)
         }
 
         // Draw the freehand lasso outline only while the lasso is still being drawn.
@@ -2114,14 +4813,14 @@ abstract class SurfaceFragment : ScreenFragment() {
             for (i in 1 until selectionPoints.size) {
                 lassoPath.lineTo(selectionPoints[i].x, selectionPoints[i].y)
             }
-            lockCanvas.drawPath(lassoPath, lassoPaint)
+            c.drawPath(lassoPath, lassoPaint)
         }
 
         // Selection overlay: bounding box, handles, and Cut/Copy chips
         val box = selBox
         if (hasSelection && box != null) {
             // Dashed bounding box
-            lockCanvas.drawRect(box, lassoPaint)
+            c.drawRect(box, lassoPaint)
 
             // Corner handles (filled squares with a border)
             val h = handleSize / 2f
@@ -2134,8 +4833,8 @@ abstract class SurfaceFragment : ScreenFragment() {
                 box.left to box.bottom, box.right to box.bottom,
             )
             for ((cx, cy) in corners) {
-                lockCanvas.drawRect(cx - h, cy - h, cx + h, cy + h, handleFill)
-                lockCanvas.drawRect(cx - h, cy - h, cx + h, cy + h, handleStroke)
+                c.drawRect(cx - h, cy - h, cx + h, cy + h, handleFill)
+                c.drawRect(cx - h, cy - h, cx + h, cy + h, handleStroke)
             }
 
             // Chips
@@ -2148,49 +4847,79 @@ abstract class SurfaceFragment : ScreenFragment() {
                 color = Color.BLACK; style = Paint.Style.STROKE; strokeWidth = 3f; isAntiAlias = true
             }
             for (r in listOf(cutR, copyR, itemR, deleteR)) {
-                lockCanvas.drawRoundRect(r, 12f, 12f, chipBg)
-                lockCanvas.drawRoundRect(r, 12f, 12f, chipBorder)
+                c.drawRoundRect(r, 12f, 12f, chipBg)
+                c.drawRoundRect(r, 12f, 12f, chipBorder)
             }
             // Delete chip icon = an X (drawn, like the image "Del" chip — no drawable needed).
             run {
                 val p = 20f
-                lockCanvas.drawLine(deleteR.left + p, deleteR.top + p, deleteR.right - p, deleteR.bottom - p, chipBorder)
-                lockCanvas.drawLine(deleteR.right - p, deleteR.top + p, deleteR.left + p, deleteR.bottom - p, chipBorder)
+                c.drawLine(deleteR.left + p, deleteR.top + p, deleteR.right - p, deleteR.bottom - p, chipBorder)
+                c.drawLine(deleteR.right - p, deleteR.top + p, deleteR.left + p, deleteR.bottom - p, chipBorder)
             }
             // Rotation handle — a circle below the box with a small ↻ arc.
             run {
                 val rc = rotateHandleCenter(box)
                 val rr = handleSize / 2f
-                lockCanvas.drawCircle(rc.x, rc.y, rr, handleFill)
-                lockCanvas.drawCircle(rc.x, rc.y, rr, handleStroke)
+                c.drawCircle(rc.x, rc.y, rr, handleFill)
+                c.drawCircle(rc.x, rc.y, rr, handleStroke)
                 val ar = rr * 0.5f
-                lockCanvas.drawArc(RectF(rc.x - ar, rc.y - ar, rc.x + ar, rc.y + ar), 20f, 300f, false, handleStroke)
+                c.drawArc(RectF(rc.x - ar, rc.y - ar, rc.x + ar, rc.y + ar), 20f, 300f, false, handleStroke)
             }
             // Draw icons inside chips
             val pad = 14
             val cutIcon = ResourcesCompat.getDrawable(resources, R.drawable.ic_toolbar_cut, null)
             cutIcon?.setBounds((cutR.left + pad).toInt(), (cutR.top + pad).toInt(),
                 (cutR.right - pad).toInt(), (cutR.bottom - pad).toInt())
-            cutIcon?.draw(lockCanvas)
+            cutIcon?.draw(c)
             val copyIcon = ResourcesCompat.getDrawable(resources, R.drawable.ic_toolbar_copy, null)
             copyIcon?.setBounds((copyR.left + pad).toInt(), (copyR.top + pad).toInt(),
                 (copyR.right - pad).toInt(), (copyR.bottom - pad).toInt())
-            copyIcon?.draw(lockCanvas)
+            copyIcon?.draw(c)
             // "→ item" chip (turn selection into a task/event).
             val itemIcon = ResourcesCompat.getDrawable(resources, R.drawable.ic_card, null)
             itemIcon?.setBounds((itemR.left + pad).toInt(), (itemR.top + pad).toInt(),
                 (itemR.right - pad).toInt(), (itemR.bottom - pad).toInt())
-            itemIcon?.draw(lockCanvas)
+            itemIcon?.draw(c)
         }
 
-        lockCanvas.restore()
+        }   // end paintContent
+
+        lockCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        clipOutInkPill(lockCanvas)
+        // Settled and magnified on the B6: the selection composite at the zoomed resolution, shared
+        // by the surface and the mirror (as [applyStrokes] does).
+        val sharpInk = if (bigmeSharpWanted()) renderSharpInk { c -> paintContent(c) } else null
+        if (sharpInk != null && sharpInk.width == lockCanvas.width && sharpInk.height == lockCanvas.height) {
+            lockCanvas.drawBitmap(sharpInk, 0f, 0f, null)
+        } else {
+            lockCanvas.save()
+            lockCanvas.concat(viewMatrix)
+            paintContent(lockCanvas)
+            lockCanvas.restore()
+        }
 
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
+        rawInkArmed = false
         provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
+
+        // Bigme mirror: paint the SAME content into the shadow bitmap and syncOverlay it (applies
+        // the view matrix + forces the panel refresh) — what SHOWS the lasso on the B6.
+        if (isBigmeDevice() && bigmeInk?.attached == true && ensureShadowCanvas()) {
+            val b = bitmap; val sc = canvas
+            if (b != null && sc != null) {
+                sc.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+                paintContent(sc)
+                shadowBehind = false   // every stroke as it stands, under the selection's chrome
+                val f = mirrorFrame()
+                if (f != null) bigmeInk?.syncOverlay(f.ink, f.matrix, force = true, template = { f.template })
+                else bigmeInk?.syncOverlay(b, viewMatrix, force = true)
+            }
+        }
         if (!inkSuppressed) {   // don't wake the hardware pen while a lasso/selection/menu is up
             touchHelper?.setRawDrawingEnabled(true)
             touchHelper?.isRawDrawingRenderEnabled = true
+            rawInkArmed = true
         }
     }
 
@@ -2282,6 +5011,10 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** Share the current page as one image — the day-page subclass wires it to the share sheet. */
     open fun onSharePage() {}
 
+    /** The page long-hold's "↥ Send / export…" — surfaces with the send sheet override; the base
+     *  answers with the page-image share, the door's honest minimum. */
+    protected open fun onPageSendExport() { onSharePage() }
+
     /** Auto-arrange this page's grams into a tidy 3-column masonry (shortest-column flow, width-
      *  normalised, aspect preserved) — the one-tap composition helper for a Pickings page. */
     private fun arrangeGallery() {
@@ -2315,6 +5048,66 @@ abstract class SurfaceFragment : ScreenFragment() {
         val strokePaint = Paint(paint)
         for (stroke in strokes) drawStrokePath(canvas, strokePaint, stroke)
         renderTextElements(canvas)
+        return bmp
+    }
+
+    // ─── Page-keyed rendering (the export door's compositor) ────────────────────
+    // The no-arg [renderPageBitmap] can only picture the page you are STANDING ON — its inputs are
+    // the live strokes/imageElements/textElements fields. Exporting a page selection needs any page
+    // of the loaded day pictured without navigating to it, so the two hooks below let the subclass
+    // that owns a multi-page day (CalendarDayFragment) supply a page's stored content and its
+    // template, and the compositor here stays one function for every surface.
+
+    /**
+     * The stored content of [pageKey] — its strokes and the elements filed on it — from whatever
+     * multi-page day the subclass holds, shaped as [com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.PageContent]
+     * so the PNG and PDF exports read one snapshot the same way. Null on a surface with no page
+     * store (the base), which sends [renderPageBitmap] back to the live page.
+     */
+    protected open fun providePageContent(pageKey: String): com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.PageContent? = null
+
+    /** Draw [pageKey]'s template — the sheet under the ink, at the page's own resolved choice —
+     *  into [canvas]. The base draws nothing; the day subclass routes to CalendarDayPageNotes. */
+    protected open fun drawPageTemplate(pageKey: String, canvas: Canvas) {}
+
+    /**
+     * Page-keyed sibling of [renderPageBitmap]: composite ANY page of the loaded day — white, that
+     * page's template, then its stored grams + strokes + text in the live canvas's z-order —
+     * without navigating to it. This is a RENDER path only (nothing Bigme rides through here).
+     */
+    protected fun renderPageBitmap(pageKey: String): Bitmap {
+        val content = providePageContent(pageKey) ?: return renderPageBitmap()
+        val bmp = Bitmap.createBitmap(CANVAS_WIDTH, CANVAS_HEIGHT, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        canvas.drawColor(android.graphics.Color.WHITE)
+        drawPageTemplate(pageKey, canvas)
+        // Images under, strokes over, text on top — the order [renderPageBitmap] and the PDF
+        // renderer both keep. Not [renderImageElements]/[renderTextElements], which read the live
+        // page's fields; these read the snapshot, resolving faces straight off the media store.
+        val imgPaint = Paint().apply { isAntiAlias = true; isFilterBitmap = true }
+        val ctx = context
+        for (element in content.imageElements.sortedWith(compareBy({ it.z }, { it.timestamp }))) {
+            val face = ctx?.let { com.toolsboox.ot.LedgerMedia.resolveBitmap(it, element.data, element.dataRef) }
+                ?: continue
+            val rect = RectF(element.x, element.y, element.x + element.width, element.y + element.height)
+            if (element.rotation != 0f) {
+                canvas.save()
+                canvas.rotate(element.rotation, rect.centerX(), rect.centerY())
+                canvas.drawBitmap(face, null, rect, imgPaint)
+                canvas.restore()
+            } else {
+                canvas.drawBitmap(face, null, rect, imgPaint)
+            }
+        }
+        val strokePaint = Paint(paint)
+        for (list in content.noteStrokes.values) for (stroke in list) drawStrokePath(canvas, strokePaint, stroke)
+        for (element in content.textElements) {
+            val layout = buildTextLayout(element)
+            canvas.save()
+            canvas.translate(element.x, element.y)
+            layout.draw(canvas)
+            canvas.restore()
+        }
         return bmp
     }
 
@@ -2658,6 +5451,28 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** "Synthesize group" — gather everything this element's connected group holds into a synthesis. */
     protected open fun onImageSynthesizeGroup(element: ImageElement) {}
 
+    /** "✒ Synth this…" for a held gram — the card as the correspondence's subject
+     *  (DESIGN-synthesis-claude-2026-08-30 §5). Null = the surface doesn't host the loop
+     *  and the row never renders. */
+    protected open fun imageSynthRow(element: ImageElement): LedgerContextMenu.Item? = null
+
+    /** "❖ Synth with ▸" for a held gram — the voice list (the Correspondent + his personas), then
+     *  the same summon in the voice he picks (Michael, 2026-10-12). Null where the loop isn't hosted. */
+    protected open fun imageSynthWithRow(element: ImageElement): LedgerContextMenu.Item? = null
+
+    /** "🔎 Ask about this…" for a held gram — the card's material to Ask, provenance riding
+     *  (the field's "does not have an ask option"). Null where no Ask bridge stands. */
+    protected open fun imageAskRow(element: ImageElement): LedgerContextMenu.Item? = null
+
+    /** ↗ rows that head the hold menu's knowing group — a Synthesize page's links to the articles
+     *  it drew on (synth-list-links §4; the day page answers them). None anywhere else. */
+    protected open fun imageLinkRows(element: ImageElement): List<LedgerContextMenu.Item> = emptyList()
+
+    /** "☑ Make a task…" on a held pick — the card's own words become a task, the same act the
+     *  page selection's ☑ Task performs on a whole page. Null on surfaces with no ledger to put
+     *  a task in; the day fragment overrides. */
+    protected open fun imageTaskRow(element: ImageElement): LedgerContextMenu.Item? = null
+
     private fun exitImageMode() {
         imageMode = false
         selectedImage = null
@@ -2665,9 +5480,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         textBoxDrag = false
         textBoxResize = false
         imageDrag = ImageDrag.NONE
-        cropMode = false
-        cropDragging = false
-        cropRect = null
+        exitCropMode()
     }
 
     private fun snapshotCanvas() = CanvasSnapshot(Stroke.listDeepCopy(strokes), imageElements.map { it.copy() })
@@ -2723,7 +5536,10 @@ abstract class SurfaceFragment : ScreenFragment() {
      * are guarded so a missing/incompatible picker can never crash the app.
      */
     private fun launchImagePicker() {
-        val pick = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply { type = "image/*" }
+        val pick = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
+            type = "image/*"
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        }
         try {
             imagePickLauncher.launch(pick)
             return
@@ -2733,6 +5549,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         val get = Intent(Intent.ACTION_GET_CONTENT).apply {
             type = "image/*"
             addCategory(Intent.CATEGORY_OPENABLE)
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
         }
         try {
             imagePickLauncher.launch(get)
@@ -2756,7 +5573,16 @@ abstract class SurfaceFragment : ScreenFragment() {
         return cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
     }
 
+    /**
+     * Dresses the NEXT image this surface inserts, before it lands (add-to-pick pin §2 D1 UNTIED,
+     * review 2026-10-16 #6): a card placed with "Here" from the Pick sheet carries what was added to
+     * it — its tap places, its media slot — exactly as a card sent to Pickings does. Taken once.
+     */
+    protected var dressNextInsert: ((ImageElement) -> Unit)? = null
+
     private fun insertImageFromUri(uri: Uri) {
+        val dress = dressNextInsert
+        dressNextInsert = null
         try {
             val original = decodeDownsampledImage(uri)
             if (original == null) {
@@ -2801,6 +5627,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 height = h,
                 data = base64
             )
+            dress?.let { d -> runCatching { d(element) }.onFailure { Timber.w(it, "dressing an inserted card") } }
             pushUndo()
             imageElements.add(element)
             onImageElementsChanged(imageElements)
@@ -2900,8 +5727,15 @@ abstract class SurfaceFragment : ScreenFragment() {
         }
 
         if (image != null) {
-            // All images now get the long-press menu (move/resize, transforms, layer order);
-            // grams also surface a jump-back. Move/resize is one tap in, as before.
+            // HOLD ARMS, HOLD AGAIN ASKS (Michael, 09-14: "on long hold I want a pick to become
+            // move/editable… when I long hold on a pick it'll highlight ready to move, and if I
+            // long hold a second time it'll pop out the menu"). The first hold on a pick selects
+            // it for moving — the highlight is the receipt; a hold on the pick already armed
+            // opens its menu, with Move / resize on the top row.
+            if (!(imageMode && selectedImage === image)) {
+                enterImageManipulation(image)
+                return
+            }
             showImageMenu(image, cx, cy, pressX, pressY)
             return
         }
@@ -2950,6 +5784,9 @@ abstract class SurfaceFragment : ScreenFragment() {
      */
     protected open fun resolveAvGramFile(element: ImageElement): java.io.File? = null
 
+    /** A pick's own hold rows (add-to-pick pin §1/D3) — the surfaces that hold the day supply them. */
+    protected open fun pickHoldRows(element: ImageElement): List<Pair<String, () -> Unit>> = emptyList()
+
     /**
      * [cx]/[cy] are the canvas point that was pressed, kept so that "add here" still means *here*
      * even though the press landed on a picture.
@@ -2959,71 +5796,168 @@ abstract class SurfaceFragment : ScreenFragment() {
      * for a patch of bare canvas, and on a full-bleed page there wasn't one. Making creation
      * reachable from here as well means the long press does the same thing wherever it lands.
      */
+    /** The making drawer — every verb that CHANGES the pick, folded to one door (Michael,
+     *  08-30: "shapes and cute cuts, adjust, crop, write on it, as well as move/resize should
+     *  all be under ONE thing"). S/M/L stays retired; Front/Back lives inside Adjust. */
+    private fun showImageMakeMenu(element: ImageElement, pressX: Float, pressY: Float) {
+        val rows = mutableListOf(
+            LedgerContextMenu.Item("✍ Write on it") { penEditImage(element) },
+            LedgerContextMenu.Item("✂ Crop") { enterImageManipulation(element); armCropTool() },
+            LedgerContextMenu.Item("Move / resize") { enterImageManipulation(element) },
+            LedgerContextMenu.Item("🎨 Adjust…") { showImageAdjustMenu(element, pressX, pressY) },
+            LedgerContextMenu.Item("🖼 Shapes & cute cuts…") { showShapeMenu(element, pressX, pressY) }
+        )
+        if (element.cardText.isNotBlank())
+            rows.add(LedgerContextMenu.Item("✎ Edit words…") { editImageWords(element) })
+        showLedgerMenu(pressX, pressY, "MAKE", listOf(rows))
+    }
+
     private fun showImageMenu(element: ImageElement, cx: Float, cy: Float, pressX: Float, pressY: Float) {
         if (context == null) return
         val groups = mutableListOf<List<LedgerContextMenu.Item>>()
+        // THE TOP ROW IS MOVE / EDIT (Michael, 09-14): the two things a held pick most often wants.
+        groups.add(listOf(
+            LedgerContextMenu.Item("✥ Move / resize") { enterImageManipulation(element) },
+            LedgerContextMenu.Item("✍ Make / edit…") { showImageMakeMenu(element, pressX, pressY) }
+        ))
+        // A pick that carries what was added to it (add-to-pick pin §1/D3): play each clip on its
+        // face, and ＋ Add to this pick on a highlight's own pick. The one-clip row stays unless the
+        // face's own rows already play a clip (review 2026-10-16 #10: an older highlight pick with a
+        // media slot but no tap places lost its only play row), and ✎ Rename… always stays.
+        val pickRows = pickHoldRows(element)
+        val playsOnFace = element.faceSlots.orEmpty().any {
+            it.k == com.toolsboox.plugin.calendar.ot.PickFaceLayout.Kind.VIDEO.key ||
+                it.k == com.toolsboox.plugin.calendar.ot.PickFaceLayout.Kind.VOICE.key
+        }
+        val clipRows = mutableListOf<LedgerContextMenu.Item>()
         // An A/V gram is a picture until you ask it to play — so playing is the first thing offered.
         if (element.mediaKind == "audio" || element.mediaKind == "video") {
-            val clock = com.toolsboox.plugin.calendar.ot.AvPoster.clock(element.durationMs)
-            val label = (if (element.mediaKind == "video") "▶ Play video" else "▶ Play audio") +
-                (if (clock.isNotBlank()) " · $clock" else "")
-            groups.add(listOf(
-                LedgerContextMenu.Item(label) { playAvGram(element) },
-                LedgerContextMenu.Item("✎ Rename…") { renameAvGram(element) }
-            ))
+            if (!playsOnFace) {
+                val clock = com.toolsboox.plugin.calendar.ot.AvPoster.clock(element.durationMs)
+                val label = (if (element.mediaKind == "video") "▶ Play video" else "▶ Play audio") +
+                    (if (clock.isNotBlank()) " · $clock" else "")
+                clipRows += LedgerContextMenu.Item(label) { playAvGram(element) }
+            }
+        }
+        clipRows += pickRows.map { (label, act) -> LedgerContextMenu.Item(label) { act() } }
+        if (element.mediaKind == "audio" || element.mediaKind == "video")
+            clipRows += LedgerContextMenu.Item("✎ Rename…") { renameAvGram(element) }
+        if (clipRows.isNotEmpty()) groups.add(clipRows)
+        // A reply gram — a letter's card minted from ↩ "Draft the reply" — leads with its
+        // errand: open (minting on first use) the Write piece that answers the letter. Null
+        // for every card that isn't owed an answer.
+        com.toolsboox.plugin.mail.ui.MailVerbs.writeReplyItem(this, element.sourceLink)
+            ?.let { groups.add(listOf(it)) }
+
+        // TWO MEANINGFUL GROUPS, INVERTED from -64/-66 (Michael, 08-30, from live use: the
+        // knowing/sending verbs are the card-in-hand's COMMON acts and must all be present;
+        // making is the occasional act and folds into ONE drawer). The fold is also the fix
+        // for his "they are not there": the flat -66 menu overran the screen and the knowing
+        // group sat below an invisible ScrollView fold — shorter menu, everything visible.
+        val knowing = mutableListOf<LedgerContextMenu.Item>()
+        // ↗ The article(s) this card stands for, in Ledgable's reader — first, the card's errand.
+        knowing.addAll(imageLinkRows(element))
+        // Decoration doesn't join the graph, so it isn't offered the graph's verbs.
+        if (!element.decorative) {
+            imageSynthRow(element)?.let { knowing.add(it) }
+            imageSynthWithRow(element)?.let { knowing.add(it) }
+            imageAskRow(element)?.let { knowing.add(it) }
         }
         if (element.sourceLink.isNotBlank()) {
             val jumpLabel = "↩ Go to source" + (if (element.sourceLabel.isNotBlank()) " · ${element.sourceLabel}" else "")
-            val provenance = mutableListOf(LedgerContextMenu.Item(jumpLabel) { onImageSource(element) })
-            // A reply gram — a letter's card minted from ↩ "Draft the reply" — leads with its
-            // errand: open (minting on first use) the Write piece that answers the letter. The
-            // card is an ordinary mail gram on the wire; the intent lives in the MailReplyDrafts
-            // sidecar, so this is null for every card that isn't owed an answer.
-            com.toolsboox.plugin.mail.ui.MailVerbs.writeReplyItem(this, element.sourceLink)
-                ?.let { provenance.add(0, it) }
-            groups.add(provenance)
+            knowing.add(LedgerContextMenu.Item(jumpLabel) { onImageSource(element) })
         }
-        // The everyday things, up top: move, size, connect, where it goes.
-        groups.add(listOf(
-            LedgerContextMenu.Item("Move / resize") { enterImageManipulation(element) },
-            LedgerContextMenu.Item("⤢ Size · S / M / L") { showSizeMenu(element, pressX, pressY) },
-            LedgerContextMenu.Item("🖼 Shapes & cute cuts…") { showShapeMenu(element, pressX, pressY) }
-        ))
-        val actions = mutableListOf<LedgerContextMenu.Item>()
-        // A card that remembers its words can have them changed — the face is re-rendered from
-        // the new text, so an OCR slip or an opening line you don't want is fixable in place.
-        if (element.cardText.isNotBlank())
-            actions.add(LedgerContextMenu.Item("✎ Edit words…") { editImageWords(element) })
-        // Decoration doesn't join the graph, so it isn't offered the graph's verbs.
+        if (element.sourceFeed.isNotBlank())
+            knowing.add(LedgerContextMenu.Item("📰 Go to feed · ${element.sourceFeed}") { onImageGoToFeed(element) })
+        // Where-used walks the day files by content — it answers for ANY card, so it no longer
+        // hides behind provenance (it only showed for sourced cards; his menu was missing it).
+        knowing.add(LedgerContextMenu.Item("Where used…") { onImageWhereUsed(element) })
         if (!element.decorative) {
-            actions.add(LedgerContextMenu.Item("🔗 Connect to…") { onImageConnect(element) })
-            actions.add(LedgerContextMenu.Item("⁂ Its rhizome…") { onImageRhizome(element) })
-            actions.add(LedgerContextMenu.Item("🔬 Synthesize group…") { onImageSynthesizeGroup(element) })
+            knowing.add(LedgerContextMenu.Item("🔗 Connect to…") { onImageConnect(element) })
+            knowing.add(LedgerContextMenu.Item("🕸 Its rhizome…") { onImageRhizome(element) })
         }
-        groups.add(actions + listOf(
-            LedgerContextMenu.Item(if (element.contactId.isNullOrBlank()) "Assign to contact…" else "Contact…") {
-                pickContact { id ->
-                    element.contactId = id
-                    element.timestamp = System.currentTimeMillis()
-                    onImageElementsChanged(imageElements)
-                    applyStrokes(strokes, true)
-                }
+        // A gram is the object on a page with the least text of anything — often none — so
+        // the picker is the only way it was ever going to be nameable.
+        knowing.add(LedgerContextMenu.Item("🏷 Tag…") { onTagElement(element) })
+        knowing.add(LedgerContextMenu.Item(
+            if (element.contactId.isNullOrBlank()) "Assign to contact…" else "Contact…") {
+            pickContact { id ->
+                element.contactId = id
+                element.timestamp = System.currentTimeMillis()
+                onImageElementsChanged(imageElements)
+                applyStrokes(strokes, true)
             }
-        ))
-        // The deep drawers, folded away so the menu is short: adjust the picture, send it
-        // somewhere, add something new here. Each opens its own small menu.
-        groups.add(listOf(
-            LedgerContextMenu.Item("🎨 Adjust…") { showImageAdjustMenu(element, pressX, pressY) },
-            LedgerContextMenu.Item("↥ Send / save…") { showImageSendMenu(element, pressX, pressY) },
-            LedgerContextMenu.Item("＋ Add here…") { showImageAddMenu(cx, cy, pressX, pressY) },
-            // A gram is the object on a page with the least text of anything — often none — so
-            // the picker is the only way it was ever going to be nameable.
-            LedgerContextMenu.Item("🏷 Tag…") { onTagElement(element) }
-        ))
+        })
+        knowing.add(LedgerContextMenu.Item("↥ Send / save…") { showImageSendMenu(element, pressX, pressY) })
+        groups.add(knowing)
+
+        // "Add here" retired from THIS menu (Michael, 08-30: "feels redundant in that window") —
+        // adding-at-a-spot honestly lives on the bare-canvas long-press, which offers the same
+        // four (media / text box / intake a link / shapes). The one orphan: a spot fully covered
+        // by a picture now needs a press on open paper beside it. Only the destructive act keeps
+        // a tail — it isn't ABOUT the pick's meaning or making.
         groups.add(listOf(
             LedgerContextMenu.Item("🗑 Delete") { deleteImageElement(element) }
         ))
         showLedgerMenu(pressX, pressY, "IMAGE", groups)
+    }
+
+    /**
+     * The gram → Bluesky composer: the card rides as the image, the editable field is the post's
+     * words (prefilled from the card's own text, or its source label), and Send stages it on the
+     * michaeljoelhall.com queue — the VPS posts within ten minutes (see BlueskyReply.shareGram
+     * for why the app never talks AT Protocol itself). Guarded: the words mid-edit are work.
+     */
+    private fun shareGramOnBluesky(element: ImageElement) {
+        val ctx = context ?: return
+        // The passage, then its provenance as a line of its own — "— Title · Source" (Michael,
+        // 09-11: "share that to Bluesky with all of the provenance… my own metadata"). Trimmed
+        // under the 300-grapheme ceiling with room for the link the VPS appends.
+        val passage = element.cardText.trim()
+        val src = element.sourceLabel.trim()
+        val prefill = when {
+            passage.isBlank() -> src.take(280)
+            src.isBlank() || passage.contains(src) -> passage.take(280)
+            else -> {
+                val room = (270 - src.length - 4).coerceAtLeast(40)
+                (if (passage.length > room) passage.take(room).trimEnd() + "…" else passage) + "\n— " + src
+            }
+        }
+        val input = EditText(ctx).apply {
+            setText(prefill)
+            setSelection(prefill.length)
+            gravity = android.view.Gravity.TOP
+            setLines(5)
+            hint = "The post's words (the card rides as the picture)"
+        }
+        val dp = resources.displayMetrics.density
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), 0)
+            addView(input)
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Share on Bluesky")
+            .setView(box)
+            .setPositiveButton("Send") { _, _ ->
+                val text = input.text.toString()
+                val b64 = com.toolsboox.ot.LedgerMedia.resolveBase64(ctx, element.data, element.dataRef).orEmpty()
+                val alt = element.cardText.ifBlank { element.sourceLabel }.ifBlank { "A card from the Ledger" }
+                Toast.makeText(ctx, "Sharing…", Toast.LENGTH_SHORT).show()
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val r = com.toolsboox.plugin.calendar.nw.BlueskyReply.shareGram(
+                        requireContext().applicationContext, text, b64,
+                        alt = alt, link = element.sourceLink,
+                        gramId = element.elementId.toString().lowercase())
+                    withContext(Dispatchers.Main) {
+                        if (isAdded) Toast.makeText(requireContext(), r.message, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+            .apply { setCanceledOnTouchOutside(false) }
+        showGuardedModal(dialog)
     }
 
     /**
@@ -3074,6 +6008,20 @@ abstract class SurfaceFragment : ScreenFragment() {
     }
 
     /** Delete an image element off the page, undoably. */
+    /** Batch remove for a lasso'd SET — one undo snapshot, one redraw, callable after the
+     *  caller's own guarded confirm (the lasso menu counts what dies). */
+    protected fun deleteImageElements(elements: List<ImageElement>) {
+        if (elements.isEmpty()) return
+        pushUndo()
+        for (element in elements) {
+            imageElements.remove(element)
+            imageBitmapCache.remove(element.elementId)
+            if (selectedImage === element) selectedImage = null
+        }
+        onImageElementsChanged(imageElements)
+        applyStrokes(strokes, true)
+    }
+
     private fun deleteImageElement(element: ImageElement) {
         pushUndo()
         imageElements.remove(element)
@@ -3083,19 +6031,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         applyStrokes(strokes, true)
     }
 
-    private fun showSizeMenu(element: ImageElement, pressX: Float, pressY: Float) {
-        showLedgerMenu(pressX, pressY, "SIZE", listOf(listOf(
-            LedgerContextMenu.Item("⤢ Small") { setGramWidth(element, 380f) },
-            LedgerContextMenu.Item("⤢ Medium") { setGramWidth(element, 590f) },
-            LedgerContextMenu.Item("⤢ Large") { setGramWidth(element, 900f) }
-        )))
-    }
-
     /** Picture adjustments — the transforms and layer order, off the main menu. */
     private fun showImageAdjustMenu(element: ImageElement, pressX: Float, pressY: Float) {
         showLedgerMenu(pressX, pressY, "ADJUST", listOf(
             listOf(
-                LedgerContextMenu.Item("✎ Edit in ink") { penEditImage(element) },
                 LedgerContextMenu.Item("Flip horizontal") { transformImageElement(element) { flipBitmap(it, true) } },
                 LedgerContextMenu.Item("Flip vertical") { transformImageElement(element) { flipBitmap(it, false) } },
                 LedgerContextMenu.Item("Invert") { transformImageElement(element) { invertBitmap(it) } },
@@ -3111,26 +6050,34 @@ abstract class SurfaceFragment : ScreenFragment() {
 
     /** Where a gram can go — community, boards, the clippings library. */
     private fun showImageSendMenu(element: ImageElement, pressX: Float, pressY: Float) {
+        // Provenance rows (Go to source / Go to feed / Where used) left this drawer for the
+        // hold menu's knowing group (Michael, field, 08-30) — Send says where a pick GOES.
         val send = mutableListOf<LedgerContextMenu.Item>()
-        if (element.sourceLink.isNotBlank())
-            send.add(LedgerContextMenu.Item("↩ Go to source" +
-                (if (element.sourceLabel.isNotBlank()) " · ${element.sourceLabel}" else "")) { onImageSource(element) })
-        if (element.sourceFeed.isNotBlank())
-            send.add(LedgerContextMenu.Item("📰 Go to feed · ${element.sourceFeed}") { onImageGoToFeed(element) })
-        send.add(LedgerContextMenu.Item("Where used…") { onImageWhereUsed(element) })
-        // The onward move — what makes Gram Picks an inbox you can empty rather than a fifth place
-        // a gram accumulates. Available from every surface, not just Gram Picks: "this belongs
-        // somewhere else" is true wherever you notice it, and the previous answer was to delete the
-        // gram and re-grab it at the right destination.
+        // The onward move — what makes the pick inbox emptiable rather than a fifth place a
+        // gram accumulates: "this belongs somewhere else" is true wherever you notice it.
         send.add(LedgerContextMenu.Item("↔ Move to…") { onImageMoveTo(element) })
-        // Folded up from the old All-Stars-only hold menu, which existed because that page's grams
-        // were painted rather than real. They're real now, so these belong to the gram wherever it
-        // is: a starred card is worth a board of its own on any surface, not just on All Stars.
-        if (element.graduatedTo.isBlank())
-            send.add(LedgerContextMenu.Item("✓ Give it its own board") { onImageGraduate(element) })
-        else
-            send.add(LedgerContextMenu.Item("❝ Open its board") { onImageOpenBoard(element) })
+        // ❦ ONE GATHER DOOR (Michael's answer to DESIGN-gather-verbs #1: "one gather door").
+        // Three materials used to be three top-level rows saying "make a pickings thing" in
+        // three dialects — this gram alone (graduate), its source's words (the ❦ harvest), its
+        // topic's grams (the 🌾 harvest). One door now, and the submenu names the MATERIAL,
+        // which was the question the old labels never answered.
+        // Named for what it MAKES (the field: "gather … which is unclear").
+        send.add(LedgerContextMenu.Item("❦ Gather into a note…") { showGatherMenu(element, pressX, pressY) })
+        if (element.graduatedTo.isNotBlank())
+            send.add(LedgerContextMenu.Item("❝ Open its note") { onImageOpenBoard(element) })
+        // ➕ …and its sibling for a gathering that already EXISTS (his answer #4: "we should be
+        // able to add to an existing one") — a COPY onto a board you already keep, where ↔ Move
+        // relocates the original.
+        send.add(LedgerContextMenu.Item("➕ Add to a note…") { onImageAddToNote(element) })
         send.add(LedgerContextMenu.Item("Post to community…") { postGramToCommunity(element) })
+        // Share ONE gram to the timeline ("I think that the gram picks individually can be
+        // shared on Bluesky", 08-15). Feed/article grams only — the row appears for a gram whose
+        // source is the open web; email grams are private correspondence and book grams are
+        // copyrighted passages, and a row that would refuse is a row that shouldn't be offered
+        // (his own follow-up: "each annotation/gram from a feed → not email / not book").
+        if (element.sourceLink.startsWith("http") &&
+            com.toolsboox.plugin.calendar.nw.BlueskyReply.config(requireContext()).ready)
+            send.add(LedgerContextMenu.Item("🦋 Share on Bluesky…") { shareGramOnBluesky(element) })
         send.add(LedgerContextMenu.Item("Pin to Board…") { onImagePinToBoard(element) })
         // ❦ Harvest — the paste-a-link Pick Harvest flow with the GRAM as the key. Michael: "if I
         // don't have the link handy, I can have the gram so that it can then auto-populate." The
@@ -3140,11 +6087,10 @@ abstract class SurfaceFragment : ScreenFragment() {
         // of its face. The decision uses PickHarvest's own test (harvestableLink), so the row
         // never promises a link flow the harvester would then quietly fail to deliver on a
         // ledger:// or mail:// provenance.
-        send.add(LedgerContextMenu.Item(
-            if (com.toolsboox.plugin.calendar.ot.PickHarvest.harvestableLink(element.sourceLink) != null)
-                "❦ Harvest source to Pickings" else "❦ Harvest to Pickings"
-        ) { harvestGramToPickings(element) })
-        send.add(LedgerContextMenu.Item("Save to Clippings") {
+        // ONE clippings row (the field: "save to clippings, photo clippings … are unclear") —
+        // both saved the face to the clippings library, one of them line-arted first. The
+        // treatment is Adjust's job (🎨 → Line art), the saving is this row's: one act, one name.
+        send.add(LedgerContextMenu.Item("✂ Save to Clippings") {
             // The clippings sidecar stays base64 (out of the wire brief's scope), so a ref'd
             // face is resolved back to base64 at this seam.
             com.toolsboox.plugin.calendar.ot.ClippingsStore.add(
@@ -3154,19 +6100,12 @@ abstract class SurfaceFragment : ScreenFragment() {
                 gramId = element.gramId ?: "", sourceLink = element.sourceLink, sourceLabel = element.sourceLabel)
             Toast.makeText(requireContext(), "Saved to Clippings", Toast.LENGTH_SHORT).show()
         })
-        send.add(LedgerContextMenu.Item("Photo → Clipping") {
-            val bmp = bitmapForElement(element)
-            if (bmp != null) {
-                val baos = ByteArrayOutputStream()
-                thresholdBitmap(bmp).compress(Bitmap.CompressFormat.PNG, 100, baos)
-                com.toolsboox.plugin.calendar.ot.ClippingsStore.add(
-                    requireContext(), Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP),
-                    label = element.sourceLabel,
-                    gramId = element.gramId ?: "", sourceLink = element.sourceLink, sourceLabel = element.sourceLabel)
-                Toast.makeText(requireContext(), "Line art saved to Clippings", Toast.LENGTH_SHORT).show()
-            }
-        })
         send.add(LedgerContextMenu.Item("🎁 Export asset…") { exportGramAsset(element, pressX, pressY) })
+        // ☑ TASK, restored to the pick (Michael, field, 08-31: "the add ask task is gone from using
+        // picks and whole pages to create tasks"). Whole pages kept it — it is a verb of the page
+        // selection's dispatch sheet — but the single card lost its way to the same act, so a pick
+        // that said "do this" could only become a task by being retyped as one.
+        imageTaskRow(element)?.let { send.add(it) }
         showLedgerMenu(pressX, pressY, "SEND / SAVE", listOf(send))
     }
 
@@ -3211,16 +6150,23 @@ abstract class SurfaceFragment : ScreenFragment() {
         val title = element.mediaTitle.ifBlank { element.sourceLabel }
         showMessage("Harvesting…", provideSurfaceView())
         kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
-            val msg = if (link != null) {
-                val note = runCatching {
+            // The harvest says WHY it didn't land now (PickHarvest.Outcome) — five different
+            // failures used to arrive as one sentence, and he reads them on the glass because the
+            // B6 is not on adb. A thrown exception is a sixth, and it says its own message too.
+            val outcome: com.toolsboox.plugin.calendar.ot.PickHarvest.Outcome = if (link != null) {
+                runCatching {
                     com.toolsboox.plugin.calendar.ot.PickHarvest.run(
                         ctx,
-                        com.toolsboox.plugin.calendar.fi.CalendarDayService(),
+                        // The one factory outside Hilt — a bare CalendarDayService() (gone now)
+                        // read the day as blank and the harvest's save threw.
+                        com.toolsboox.plugin.calendar.fi.CalendarDayService.standalone(ctx),
                         com.toolsboox.ot.LedgerPaths.documentsRoot(ctx),
                         link, title,
                     )
-                }.getOrNull()
-                if (note == null) "Nothing worth keeping came back." else "Pickings · ${note.name}"
+                }.getOrElse {
+                    com.toolsboox.plugin.calendar.ot.PickHarvest.Outcome.Failed(
+                        "The harvest failed: ${it.message ?: it::class.simpleName}")
+                }
             } else {
                 // resolveBitmap directly rather than bitmapForElement: this coroutine outlives the
                 // view, and the cache it would touch belongs to the surface's thread.
@@ -3230,12 +6176,14 @@ abstract class SurfaceFragment : ScreenFragment() {
                     if (bmp != null)
                         text = com.toolsboox.plugin.calendar.ot.PanelOcr.recognizeImage(bmp).trim()
                 }
-                if (text.isBlank()) "This gram carries no text or link to harvest."
-                else {
-                    val note = runCatching {
+                if (text.isBlank()) {
+                    com.toolsboox.plugin.calendar.ot.PickHarvest.Outcome.Failed(
+                        "This pick carries no text or link to harvest.")
+                } else {
+                    runCatching {
                         com.toolsboox.plugin.calendar.ot.PickHarvest.runText(
                             ctx,
-                            com.toolsboox.plugin.calendar.fi.CalendarDayService(),
+                            com.toolsboox.plugin.calendar.fi.CalendarDayService.standalone(ctx),
                             com.toolsboox.ot.LedgerPaths.documentsRoot(ctx),
                             text,
                             // Non-http provenance (ledger://, mail://) still rides along — it is a
@@ -3243,14 +6191,135 @@ abstract class SurfaceFragment : ScreenFragment() {
                             sourceLink = element.sourceLink,
                             title = title,
                         )
-                    }.getOrNull()
-                    if (note == null) "Nothing worth keeping came back." else "Pickings · ${note.name}"
+                    }.getOrElse {
+                        com.toolsboox.plugin.calendar.ot.PickHarvest.Outcome.Failed(
+                            "The harvest failed: ${it.message ?: it::class.simpleName}")
+                    }
                 }
             }
-            runCatching {
-                requireActivity().runOnUiThread { showMessage(msg, requireView()) }
+            // The completion is the next station's door, not a toast (Michael's answer #3):
+            // ⚗ Synthesize / Open / Done. A failure now says which failure it was.
+            when (outcome) {
+                is com.toolsboox.plugin.calendar.ot.PickHarvest.Outcome.Ok ->
+                    offerGatheredNote(outcome.note.date, outcome.note.key, outcome.note.name)
+                is com.toolsboox.plugin.calendar.ot.PickHarvest.Outcome.Failed -> runCatching {
+                    requireActivity().runOnUiThread { showMessage(outcome.reason, requireView()) }
+                }
             }
         }
+    }
+
+    /**
+     * The ❦ Gather door's submenu: one row per MATERIAL. The graduate row hides once the gram
+     * has its board (the ❝ open row stands outside, in the send menu); the words row says
+     * whether it will read the SOURCE or the gram's own face, using PickHarvest's own test so
+     * the label never promises a link flow the harvester would fail to deliver.
+     */
+    private fun showGatherMenu(element: ImageElement, pressX: Float, pressY: Float) {
+        val items = mutableListOf<LedgerContextMenu.Item>()
+        if (element.graduatedTo.isBlank())
+            items.add(LedgerContextMenu.Item("✓ This pick alone → its own note…") { onImageGraduate(element) })
+        items.add(LedgerContextMenu.Item(
+            if (com.toolsboox.plugin.calendar.ot.PickHarvest.harvestableLink(element.sourceLink) != null)
+                "❦ Its source's words" else "❦ Its own words"
+        ) { harvestGramToPickings(element) })
+        items.add(LedgerContextMenu.Item("🌾 Its topic's picks…") { harvestTopicFromGram(element) })
+        showLedgerMenu(pressX, pressY, "GATHER", listOf(items))
+    }
+
+    /** ➕ Add this gram (a COPY) to an existing board/note — the day subclass owns the picker,
+     *  the way ↔ Move does. Base: no day store, no verb. */
+    protected open fun onImageAddToNote(element: ImageElement) {}
+
+    /**
+     * A gather finished and minted a note: name it, and put the NEXT STATION one tap away
+     * (Michael's answer #3 on DESIGN-gather-verbs: harvest → Synthesize, one step). ⚗ arrives
+     * on the note with the engine picker already opening (the pending-open idiom); Open just
+     * goes and stands on it. Runs on whatever thread the harvest ended on — hops to UI, and a
+     * torn-down view drops the offer rather than crashing the harvest (the toastline contract).
+     */
+    protected fun offerGatheredNote(date: java.time.LocalDate, key: String, name: String) {
+        runCatching {
+            requireActivity().runOnUiThread {
+                val ctx = context ?: return@runOnUiThread
+                androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+                    .setTitle("Pickings · $name")
+                    .setMessage("Gathered. Work it now?")
+                    .setPositiveButton("❖ Synthesize") { _, _ ->
+                        com.toolsboox.plugin.calendar.ui.CalendarDayFragment.pendingSynthPicker = true
+                        com.toolsboox.plugin.calendar.CalendarNavigator.toDayNote(this, date, key)
+                    }
+                    .setNeutralButton("Open") { _, _ ->
+                        com.toolsboox.plugin.calendar.CalendarNavigator.toDayNote(this, date, key)
+                    }
+                    .setNegativeButton("Done", null)
+                    .showModal()
+            }
+        }
+    }
+
+    /**
+     * "🌾 Harvest a topic…" — the topic prompt over [GramTopicHarvest]. The selected gram
+     * proposes the topic name (its own labels — no re-typing when they already say it) and the
+     * name is editable, because the ruling's whole shape is "the name of the pickings-templated
+     * note would just be the topic name". Guarded: a name being typed is work. Detached scope
+     * like the ❦ harvest — an LLM round-trip plus a compose must land its note even if he pages
+     * away — with the same runOnUiThread toastline delivery.
+     */
+    @kotlin.OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    private fun harvestTopicFromGram(element: ImageElement) {
+        val ctx = context ?: return
+        val appCtx = ctx.applicationContext
+        if (com.toolsboox.plugin.chat.nw.AiCreds.get(appCtx) == null) {
+            showMessage(getString(R.string.ledger_ai_key_needed), provideSurfaceView())
+            return
+        }
+        val input = EditText(ctx).apply {
+            setText(element.mediaTitle.ifBlank { element.sourceLabel }
+                .ifBlank { element.cardText.take(60) }.trim())
+            setSingleLine()
+            setSelection(text?.length ?: 0)
+            hint = "The topic"
+        }
+        val dp = resources.displayMetrics.density
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((16 * dp).toInt(), (8 * dp).toInt(), (16 * dp).toInt(), 0)
+            addView(input)
+        }
+        showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("🌾 Harvest a topic")
+            .setView(box)
+            .setPositiveButton("Harvest") { _, _ ->
+                val topic = input.text.toString().trim()
+                if (topic.isEmpty()) {
+                    Toast.makeText(ctx, "It needs a topic", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                showMessage("Harvesting \"$topic\"…", provideSurfaceView())
+                kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+                    val outcome = runCatching {
+                        com.toolsboox.plugin.calendar.ot.GramTopicHarvest.run(
+                            appCtx,
+                            com.toolsboox.plugin.calendar.fi.CalendarDayService.standalone(appCtx),
+                            com.toolsboox.ot.LedgerPaths.documentsRoot(appCtx),
+                            topic, element,
+                        )
+                    }.getOrElse {
+                        com.toolsboox.plugin.calendar.ot.PickHarvest.Outcome.Failed(
+                            "The harvest failed: ${it.message ?: it::class.simpleName}")
+                    }
+                    when (outcome) {
+                        is com.toolsboox.plugin.calendar.ot.PickHarvest.Outcome.Ok ->
+                            offerGatheredNote(outcome.note.date, outcome.note.key, outcome.note.name)
+                        is com.toolsboox.plugin.calendar.ot.PickHarvest.Outcome.Failed -> runCatching {
+                            requireActivity().runOnUiThread { showMessage(outcome.reason, requireView()) }
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .create())
     }
 
     /**
@@ -3500,6 +6569,70 @@ abstract class SurfaceFragment : ScreenFragment() {
     protected open fun onCanvasSingleTap(cx: Float, cy: Float): Boolean = false
 
     /** Pick a contact (or "None") to link a picking / note / gram to — bidirectional CRM linking. */
+    /**
+     * Put a CONTACT on the page as a pick — their name, org and details on a card, with the same
+     * quote-card face every other made card wears.
+     *
+     * Deliberately not built on [pickContact]: that one is titled "Assign to contact", offers
+     * "None" as its first row (the way you UNassign), and hands back an id for stamping onto an
+     * element. This hands back a person to place. Sharing the dialog would have meant a list whose
+     * first row does nothing here and whose title describes the other verb.
+     *
+     * The card carries `contact://<id>` as its provenance, so the placed pick knows who it is and
+     * the rhizome can walk from the person to every page they stand on.
+     */
+    private fun showContactCardPicker(cx: Float, cy: Float) {
+        val ctx = context ?: return
+        val contacts = com.toolsboox.plugin.calendar.ot.ContactStore.list(ctx)
+            .filter { it.name.isNotBlank() }
+        if (contacts.isEmpty()) {
+            Toast.makeText(ctx, "No contacts yet — add one in the rolodex first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val names = contacts.map { c ->
+            if (c.org.isNotBlank()) "${c.name} · ${c.org}" else c.name
+        }.toTypedArray()
+        showModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Contact card")
+            .setItems(names) { _, which -> placeContactCard(contacts[which], cx, cy) }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create())
+    }
+
+    /** Render one contact onto a quote-card face and place it where the press landed. */
+    private fun placeContactCard(contact: com.toolsboox.plugin.calendar.da.v2.Contact, cx: Float, cy: Float) {
+        val ctx = context ?: return
+        // The body reads as a card someone handed you: what they do under who they are, then the
+        // ways to reach them. Blank fields are absent rather than empty-labelled — a card that
+        // says "Phone:" with nothing after it is worse than one that doesn't mention phones.
+        val lines = listOfNotNull(
+            contact.org.takeIf { it.isNotBlank() },
+            contact.email.takeIf { it.isNotBlank() },
+            contact.phone.takeIf { it.isNotBlank() },
+            contact.bio.takeIf { it.isNotBlank() }?.take(180)
+        )
+        val body = lines.joinToString("\n")
+        val bmp = com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
+            body.ifBlank { contact.name }, source = contact.name, note = null, W = 1080, H = 0)
+        val baos = java.io.ByteArrayOutputStream()
+        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, baos)
+        bmp.recycle()
+        val ok = placeGramAt(
+            Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP), cx, cy,
+            sourceLink = "contact://${contact.id}",
+            sourceLabel = contact.name,
+            cardText = (contact.name + if (body.isBlank()) "" else "\n" + body))
+        if (ok) {
+            // Stamped as well as linked: `contactId` is what the CRM side reads to surface this
+            // page on the person's own timeline, and the provenance link is what the rhizome walks.
+            imageElements.lastOrNull()?.let { placed ->
+                placed.contactId = contact.id
+                onImageElementsChanged(imageElements)
+            }
+            Toast.makeText(ctx, "${contact.name} — placed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun pickContact(onPick: (String?) -> Unit) {
         val contacts = com.toolsboox.plugin.calendar.ot.ContactStore.list(requireContext())
         val names = (listOf("None") + contacts.map { it.name.ifBlank { "Unnamed" } }).toTypedArray()
@@ -3552,25 +6685,34 @@ abstract class SurfaceFragment : ScreenFragment() {
     /** The creation menu shown on a long-press over empty canvas. */
     private fun showCanvasCreationMenu(cx: Float, cy: Float, pressX: Float, pressY: Float) {
         if (context == null) return
+        // THE ROSTER IS HIS (Michael, 08-30): Text box · Add media · Clip art & shapes (one door
+        // — "clip art, simple shape are same") · Insert pick (a clipping IS a pick) · Arrange as
+        // gallery · Paste · Send/export ("share page as image is redundant to send" — it lives as
+        // the sheet's PNG verb, and as the base fallback where no sheet rides) · then the surface
+        // extras (⟡ Synth · Tag · Suggest tags). Retired by ruling: Intake-a-link (its lens/share
+        // doors remain; this menu lost its only page seat — noted in the handoff), Share page as
+        // image, and 🧹 Sweep stray lines ("redundant too" — the eraser and undo own stray ink;
+        // the batch sweep machinery stays in the codebase, unreferenced, should he ever miss it).
         showLedgerMenu(
             pressX, pressY, "ADD HERE",
             listOf(
                 listOf(
                     LedgerContextMenu.Item("Text box") { showTextInputDialog(cx, cy) },
-                    // One door for everything you can catch: photo, upload, voice, video. It used
-                    // to be two image entries here and recording hidden behind a lasso.
+                    // One door for everything you can catch: photo, upload, voice, video.
                     LedgerContextMenu.Item("Add media…") { showAddMediaMenu(cx, cy) },
-                    LedgerContextMenu.Item("🔖 Intake a link…") { onIntakeLink(cx, cy) },
-                    // Clip art before the clippings shelf: the shelf only ever holds what you cut
-                    // out yourself, so on a fresh ledger it's empty and the drawer above it isn't.
-                    LedgerContextMenu.Item("Clip art…") { showClipArtPicker(cx, cy) },
-                    LedgerContextMenu.Item("Insert clipping…") { showClippingsPicker(cx, cy) },
-                    LedgerContextMenu.Item("Simple shapes…") { showShapesPicker(cx, cy) }
+                    LedgerContextMenu.Item("Clip art & shapes…") { showClipArtPicker(cx, cy) },
+                    LedgerContextMenu.Item("Insert pick…") { showClippingsPicker(cx, cy) },
+                    // A PERSON, ON THE PAGE (Michael, field, 08-31: "there's no way to add a
+                    // contact as a gram"). The rolodex could only ever be pointed AT a card —
+                    // "Assign to contact…" tells an existing pick who it is about — and there was
+                    // no way round: no way to put the person themselves down as an object you can
+                    // move, tag, connect and write beside. This is that way round.
+                    LedgerContextMenu.Item("👤 Contact card…") { showContactCardPicker(cx, cy) }
                 ),
                 listOf(
                     LedgerContextMenu.Item("Arrange as gallery") { arrangeGallery() },
                     LedgerContextMenu.Item("Paste") { pasteUnifiedAt(cx, cy) },
-                    LedgerContextMenu.Item("Share page as image") { onSharePage() }
+                    LedgerContextMenu.Item("↥ Send / export…") { onPageSendExport() }
                 )
             ) + extraCreationGroups(cx, cy)
         )
@@ -3752,7 +6894,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             setPadding(px(12), px(8), px(12), px(8))
         }
         val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle("Clip art")
+            .setTitle("Clip art & shapes")
             .setView(android.widget.ScrollView(ctx).apply { addView(col) })
             .setNegativeButton(android.R.string.cancel, null)
             .create()
@@ -3785,6 +6927,33 @@ abstract class SurfaceFragment : ScreenFragment() {
             }
             col.addView(grid)
         }
+        // SIMPLE SHAPES ride the same door ("clip art, simple shape are same" — Michael, 08-30):
+        // one more section of the one dialog, same cells, same tap contract.
+        col.addView(android.widget.TextView(ctx).apply {
+            text = "SIMPLE SHAPES"
+            textSize = 12f; setTextColor(0xFF888888.toInt())
+            setPadding(px(4), px(10), px(4), px(4))
+        })
+        val shapeGrid = android.widget.GridLayout(ctx).apply { columnCount = cols }
+        for (shape in com.toolsboox.ot.ShapeLibrary.ALL) {
+            shapeGrid.addView(LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER
+                setPadding(px(6), px(6), px(6), px(6))
+                addView(android.widget.ImageView(ctx).apply {
+                    setImageBitmap(com.toolsboox.ot.ShapeLibrary.bitmap(shape.key, 160))
+                    adjustViewBounds = true
+                    layoutParams = LinearLayout.LayoutParams(px(52), px(52))
+                })
+                addView(android.widget.TextView(ctx).apply {
+                    text = shape.label
+                    textSize = 10f; setTextColor(0xFF666666.toInt())
+                    gravity = android.view.Gravity.CENTER
+                })
+                setOnClickListener { dialog.dismiss(); placeShapeAt(shape.key, cx, cy) }
+            })
+        }
+        col.addView(shapeGrid)
         showModal(dialog)
     }
 
@@ -3853,7 +7022,7 @@ abstract class SurfaceFragment : ScreenFragment() {
             Toast.makeText(
                 ctx,
                 com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.explainEmpty(
-                    ctx, "No clippings yet. Save a gram to your library first."),
+                    ctx, "No clippings yet. Save a pick to your library first."),
                 Toast.LENGTH_LONG
             ).show()
             return
@@ -4029,7 +7198,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                     LedgerContextMenu.Item("Move — drag it") { enterTextBoxManipulation(element) },
                     LedgerContextMenu.Item("Synthesize…") { onSynthesizeText(element) },
                     LedgerContextMenu.Item("🔗 Connect to…") { onTextConnect(element) },
-                    LedgerContextMenu.Item("⁂ Its rhizome…") { onTextRhizome(element) },
+                    LedgerContextMenu.Item("🕸 Its rhizome…") { onTextRhizome(element) },
                     LedgerContextMenu.Item(if (element.contactId.isNullOrBlank()) "Assign to contact…" else "Contact…") {
                         pickContact { id ->
                             element.contactId = id
@@ -4104,6 +7273,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 selectedStrokes = pasted.toMutableList()
                 hasSelection = true
                 selectionMode = false
+                lastLassoBounds = null   // a pasted selection has no loop — stale loop bounds must not capture cards
                 selBox = computeSelBox(selectedStrokes)
                 syncRawInkToSelectionMenu()   // keep the hardware pen paused while the selection is live
                 drawWithSelection()
@@ -4219,6 +7389,16 @@ abstract class SurfaceFragment : ScreenFragment() {
         return rects
     }
 
+    /** Arm the free crop on the current selection — shared by the in-mode chip and the hold
+     *  menu's ✂ row, so cropping is one tap from the hold, not a mode away. */
+    private fun armCropTool() {
+        cropMode = true
+        cropAdjust = false
+        cropHandle = -1
+        cropRect = null
+        Toast.makeText(requireContext(), "Drag a rectangle — pull the corners to size it, \u2713 crops", Toast.LENGTH_SHORT).show()
+    }
+
     /** Crop the selected image's bitmap to the given canvas-space rect, re-encode, and reposition. */
     private fun applyCropToImage(element: ImageElement, cropCanvas: RectF) {
         val bmp = bitmapForElement(element) ?: return
@@ -4238,6 +7418,8 @@ abstract class SurfaceFragment : ScreenFragment() {
         // The new pixels live inline; a stale media ref would be a second face for a picture
         // this element no longer is (writers never carry both — WIRE-MEDIA-BY-REFERENCE.md).
         element.dataRef = ""
+        // Nor do a pick's tap places name these pixels any more (add-to-pick pin §5).
+        element.faceSlots = null
         element.x = c.left
         element.y = c.top
         element.width = c.width()
@@ -4252,7 +7434,7 @@ abstract class SurfaceFragment : ScreenFragment() {
      * untouched — the edited gram still jumps home and still groups in "Where used".
      * Mirrors iOS PenEditView.
      */
-    private fun penEditImage(element: ImageElement) {
+    protected fun penEditImage(element: ImageElement) {
         val ctx = context ?: return
         val src = bitmapForElement(element) ?: return
         val pad = InkOverImageView(ctx, src)
@@ -4270,7 +7452,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                 android.widget.LinearLayout.LayoutParams.MATCH_PARENT, padH))
         }
         val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle("Edit in ink")
+            .setTitle("Write on it")
             .setView(box)
             .setPositiveButton("Done") { _, _ ->
                 val edited = pad.composite()
@@ -4535,7 +7717,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         // Through the guarded door — pauses the hardware pen, and a stray touch outside must not
         // throw away the title being typed.
         showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle("Name this gram")
+            .setTitle("Name this pick")
             .setView(box)
             .setPositiveButton("Save") { _, _ ->
                 pushUndo()
@@ -4570,8 +7752,9 @@ abstract class SurfaceFragment : ScreenFragment() {
         seedGramId(element)
         element.data = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
         // Same as the crop above: transformed pixels are inline pixels, and the old ref no
-        // longer names them.
+        // longer names them — nor do a pick's tap places (add-to-pick pin §5).
         element.dataRef = ""
+        element.faceSlots = null
         // A frame baked into the pixels claims the one-decoration slot (ImageElement.edgeBaked):
         // the iPad's render-time GramEdge steps aside instead of framing the frame.
         if (bakesEdge) element.edgeBaked = true
@@ -4673,6 +7856,7 @@ abstract class SurfaceFragment : ScreenFragment() {
     private fun drawImageSelection() {
         val lockCanvas = provideSurfaceView().holder.lockCanvas() ?: return
         lockCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        clipOutInkPill(lockCanvas)
         lockCanvas.save()
         lockCanvas.concat(viewMatrix)
         renderImageElements(lockCanvas)
@@ -4720,7 +7904,8 @@ abstract class SurfaceFragment : ScreenFragment() {
                     }
                 }
             }
-            // Crop rectangle overlay while cropping.
+            // Crop rectangle overlay while cropping — dashed proposal, then corner handles
+            // and the ✓ / ✕ chips once the drag has stood (the free-crop adjust state).
             val cr = cropRect
             if (cropMode && cr != null) {
                 val cropPaint = Paint().apply {
@@ -4728,6 +7913,25 @@ abstract class SurfaceFragment : ScreenFragment() {
                     pathEffect = DashPathEffect(floatArrayOf(12f, 8f), 0f); isAntiAlias = true
                 }
                 lockCanvas.drawRect(cr, cropPaint)
+                if (cropAdjust) {
+                    val hFill = Paint().apply { color = Color.WHITE; style = Paint.Style.FILL; isAntiAlias = true }
+                    val hLine = Paint().apply { color = Color.BLACK; style = Paint.Style.STROKE; strokeWidth = 3f; isAntiAlias = true }
+                    val hs = 22f
+                    listOf(cr.left to cr.top, cr.right to cr.top, cr.right to cr.bottom, cr.left to cr.bottom)
+                        .forEach { (hx, hy) ->
+                            val hr = RectF(hx - hs, hy - hs, hx + hs, hy + hs)
+                            lockCanvas.drawRect(hr, hFill); lockCanvas.drawRect(hr, hLine)
+                        }
+                    val (okChip, noChip) = cropChipRects(cr)
+                    val chipText = Paint().apply {
+                        color = Color.BLACK; textSize = 44f; isAntiAlias = true
+                        textAlign = Paint.Align.CENTER
+                    }
+                    for ((chip, glyph) in listOf(okChip to "\u2713", noChip to "\u2715")) {
+                        lockCanvas.drawRect(chip, hFill); lockCanvas.drawRect(chip, hLine)
+                        lockCanvas.drawText(glyph, chip.centerX(), chip.centerY() + 15f, chipText)
+                    }
+                }
             }
         }
         // Selected text box: dashed outline + two handles. Bottom-right reflows the words
@@ -4758,18 +7962,18 @@ abstract class SurfaceFragment : ScreenFragment() {
         // posting to the surface while the pen renderer owns it crashes the native layer.
         touchHelper?.setRawDrawingEnabled(false)
         touchHelper?.isRawDrawingRenderEnabled = false
+        rawInkArmed = false
         provideSurfaceView().holder.unlockCanvasAndPost(lockCanvas)
         if (!inkSuppressed) {   // don't wake the hardware pen while a lasso/selection/menu is up
             touchHelper?.setRawDrawingEnabled(true)
             touchHelper?.isRawDrawingRenderEnabled = true
+            rawInkArmed = true
         }
     }
 
     /**
-     * Show a text input dialog at the given canvas coordinates.
-     *
-     * @param x the x coordinate on the surface
-     * @param y the y coordinate on the surface
+     * The pen chooser: colours, widths and nibs, live-applied, with visible ways out at its top
+     * (Done, ✕) as well as a tap outside and Back. See [showPenChooser] for who opens it.
      */
     private fun showPenSettingsDialog() {
         // Last entry is the "highlighter" / transparent marker: a translucent yellow,
@@ -4979,12 +8183,91 @@ abstract class SurfaceFragment : ScreenFragment() {
         // used to); the forced resume then restores the hardware pen with the NEW settings.
         val dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setView(root).create()
         dialog.setCanceledOnTouchOutside(true)
-        dialog.setOnShowListener { onModalShown() }
+
+        // A VISIBLE WAY OUT, AT THE TOP (Michael 2026-10-11, iPhone: "Selecting Pen on the today
+        // page via long hold pulls up the pen options, and my finger can't get us out of it" —
+        // the same chooser here had no button at all: a tap outside or Back closed it, and
+        // nothing on the e-ink said so). Done rides in a header row ABOVE the swatches — a
+        // panel on a writing surface keeps its buttons on top, where the resting hand can't
+        // palm them — and closes through the same dismiss as a tap outside, so the final pick
+        // is applied and the pen comes back exactly as it always did. A click (the lift), not
+        // the down: nothing is left in contact to land on the page when the pen re-arms — so a
+        // close by Done or ✕ gives the pen back AT ONCE ([onModalDismissedAtOnce], as a flyout
+        // pick does): the 250ms guards a dismissing DOWN, and after a lift it was the harm, the
+        // deferred re-apply cold-starting the Onyx reader under the first stroke (review
+        // 2026-10-11). Tap outside and Back keep the 250ms.
+        //
+        // Done is FILLED (black, white text): the 2dp ring is how this panel marks the picked
+        // width and nib, and on grayscale e-ink a ringed Done read as one more selected option.
+        // ✕ "Close" beside it is the iOS chooser's pair (721a5f85: "Done and ✕ each a 44pt
+        // target") — one vocabulary on both apps; both sit in the top row.
+        var closedOnLift = false
+        fun closeOnLift() {
+            closedOnLift = true
+            dialog.dismiss()
+        }
+        root.addView(LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(itemMargin, 0, itemMargin, (4 * dp).toInt())
+            addView(TextView(ctx).apply {
+                text = "Pen"
+                setTextColor(Color.BLACK)
+                textSize = 17f
+                typeface = Typeface.DEFAULT_BOLD
+            })
+            addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
+            addView(TextView(ctx).apply {
+                text = "Done"
+                setTextColor(Color.WHITE)
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                minHeight = itemSize
+                minWidth = (72 * dp).toInt()
+                setPadding((16 * dp).toInt(), 0, (16 * dp).toInt(), 0)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 8f * dp
+                    setColor(Color.BLACK)
+                }
+                contentDescription = "Done, close the pen chooser"
+                setOnClickListener { closeOnLift() }
+            })
+            addView(TextView(ctx).apply {
+                text = "✕"
+                setTextColor(Color.DKGRAY)
+                textSize = 20f
+                gravity = Gravity.CENTER
+                contentDescription = "Close"
+                setOnClickListener { closeOnLift() }
+            }, LinearLayout.LayoutParams(itemSize, itemSize).apply { marginStart = itemMargin })
+        }, 0)
+
+        // The pen pauses BEFORE show(), not on its onShow (Michael 2026-10-11 follow-up). The
+        // bottom pill's picker hold on Pen closes the picker first — that dismiss posts the 250ms
+        // forced resume — then opens this chooser; on a slow B6 frame onShow could land after
+        // the resume had re-armed the pen under the dialog, and a stylus tap on a swatch inked
+        // the page behind it. `paused` keeps the depth counted once whichever runs first.
+        var paused = false
+        fun pause() {
+            if (paused) return
+            paused = true
+            onModalShown()
+        }
+        fun unpause() {
+            if (!paused) return
+            paused = false
+            if (closedOnLift) onModalDismissedAtOnce() else onModalDismissed()
+        }
+        dialog.setOnShowListener { pause() }
         dialog.setOnDismissListener {
             applyLiveSelection()
-            onModalDismissed()
+            unpause()
         }
-        dialog.show()
+        pause()
+        // No window to show in (the page is going): undo the pause, or the pen stays dead.
+        if (runCatching { dialog.show() }.isFailure) unpause()
     }
 
     private fun showTextInputDialog(x: Float, y: Float) {
@@ -5072,9 +8355,15 @@ abstract class SurfaceFragment : ScreenFragment() {
      * drawing screens override this to return their pills. Re-fed via [refreshRawExcludeRects]
      * when a pill is moved or collapsed.
      */
-    open fun provideExcludeViews(): List<View> = emptyList()
+    open fun provideExcludeViews(): List<View> = inkChromeViews()
 
-    /** Bounds of the visible exclude views, in the surface's own coordinate space. */
+    /** The ink rail's chrome over the page — the bottom pill, and the corner's picker while open
+     *  (plan v6 S1.2; Michael 2026-10-11) — for every ink page's exclude list. */
+    protected fun inkChromeViews(): List<View> = inkRail()?.chromeViews().orEmpty()
+
+    /** Bounds of the visible exclude views, in the surface's own coordinate space — clipped to
+     *  it: the bottom pill floating over the page (Michael 2026-10-11) and the picker while it
+     *  hangs open come through; a rect wholly off the limit is nothing to hand the raw reader. */
     private fun rawExcludeRects(): ArrayList<Rect> {
         val out = ArrayList<Rect>()
         val surface = provideSurfaceView()
@@ -5083,7 +8372,9 @@ abstract class SurfaceFragment : ScreenFragment() {
             if (v.visibility != View.VISIBLE || v.width == 0 || v.height == 0) continue
             val p = IntArray(2); v.getLocationOnScreen(p)
             val left = p[0] - s[0]; val top = p[1] - s[1]
-            out.add(Rect(left, top, left + v.width, top + v.height))
+            val r = Rect(left, top, left + v.width, top + v.height)
+            if (surface.width > 0 && surface.height > 0 && !r.intersect(0, 0, surface.width, surface.height)) continue
+            out.add(r)
         }
         return out
     }
@@ -5097,10 +8388,14 @@ abstract class SurfaceFragment : ScreenFragment() {
         val v = provideSurfaceView()
         if (v.width <= 0 || v.height <= 0) return
         th.setRawDrawingEnabled(false)
-        th.setLimitRect(Rect(0, 0, v.width, v.height), rawExcludeRects())
+        rawInkArmed = false
+        val excluded = rawExcludeRects()
+        th.setLimitRect(Rect(0, 0, v.width, v.height), excluded)
+        appliedExcludeRects = excluded.map { Rect(it) }
         if (!inkSuppressed) {   // limit-rect re-apply must not re-arm the pen mid-lasso
             th.setRawDrawingEnabled(true)
             th.isRawDrawingRenderEnabled = true
+            rawInkArmed = true
         }
     }
 
@@ -5136,6 +8431,23 @@ abstract class SurfaceFragment : ScreenFragment() {
                     // level, so skip it and use MotionEvent capture + software render.
                     Timber.i("Raw ink capture disabled for this screen; MotionEvent rendering path")
                     touchHelper = null
+                } else if (isBigmeDevice()) {
+                    // Bigme (the B6 Pro): the Viwoods lesson replayed on a third vendor —
+                    // TouchHelper.create() "succeeds" with no Onyx hardware behind it, stays
+                    // inert, and swallows the pen at the system level ("the stylus doesn't
+                    // write on the note but it does for the individual annotation panels").
+                    // Phase two, now built: the firmware's own com.xrz.HandwrittenClient — the
+                    // daemon draws low-latency overlay ink and hands the pen back through a
+                    // listener, which onBigmePen feeds into the one capture pipeline. A failed
+                    // attach falls back to MotionEvent + software render: 1.06.71's slow-but-
+                    // writing, never worse. The person holding the pen is the log reader here
+                    // (the B6 isn't on adb), so the chosen backend says its name out loud once.
+                    touchHelper = null
+                    // The fast path is OPT-IN ("bigme_fast_ink") and attaches from
+                    // surfaceChanged, never here: init runs before layout, and the first live
+                    // attempt connected the daemon at 0×0 — it claimed the pen and inked into
+                    // a zero-sized buffer ("That broke it"). See attachBigmeIfReady.
+                    Timber.i("Bigme device (${Build.MODEL}); software path until surfaceChanged")
                 } else try {
                     touchHelper = TouchHelper.create(provideSurfaceView(), callback)
                     Timber.i("TouchHelper created successfully on ${Build.MODEL}")
@@ -5186,7 +8498,17 @@ abstract class SurfaceFragment : ScreenFragment() {
 
                     clearSurface()
 
-                    touchHelper?.setLimitRect(limit, rawExcludeRects())?.setStrokeWidth(effectivePenWidth())?.openRawDrawing()
+                    val excluded = rawExcludeRects()
+                    touchHelper?.setLimitRect(limit, excluded)?.setStrokeWidth(effectivePenWidth())?.openRawDrawing()
+                    // A surface recreated under a lasso, a selection or an armed Zoom box: the
+                    // fresh reader must not draw live ink under it (review 2026-10-12) — the same
+                    // guard every limit-rect re-apply keeps; the pause's own resume re-arms it.
+                    if (inkSuppressed) {
+                        touchHelper?.setRawDrawingEnabled(false)
+                        touchHelper?.isRawDrawingRenderEnabled = false
+                        rawInkArmed = false
+                    }
+                    if (touchHelper != null) appliedExcludeRects = excluded.map { Rect(it) }
                     // Let FINGER touch pass through to normal Android dispatch while the
                     // raw session is open. Without this the Onyx raw input reader grabs
                     // finger input over the whole limit rect at the system level, so the
@@ -5202,18 +8524,74 @@ abstract class SurfaceFragment : ScreenFragment() {
 
                 override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
                     Timber.i("surfaceChanged: ${width}x${height}")
-                    // A screen FLIP, as opposed to the open-time relayout churn: both the old and
-                    // new sizes are real and the long axis changed sides. Rotation never recreates
-                    // the activity (manifest configChanges), so this callback is the one place the
-                    // live surface learns its shape changed.
-                    val wasPortrait = surfaceSize.width() < surfaceSize.height()
-                    val flipped = surfaceSize.width() > 0 && surfaceSize.height() > 0 &&
-                        width > 0 && height > 0 && wasPortrait != (width < height)
+                    // The OLD geometry, before anything overwrites it — the keep-your-place
+                    // refit needs the frame the reader's pan was true in.
+                    val prevW = surfaceSize.width()
+                    val prevH = surfaceSize.height()
+                    val prevHomeW = homeWidthPx()
+                    val prevRoomL = roomLeftPx
+                    val prevRoomR = roomRightPx
+                    val prevPanX = panX
+                    val prevPanY = panY
+                    // Bigme fast ink attaches HERE, not at init: init runs before layout, and
+                    // the daemon happily accepted a 0×0 buffer, claimed the pen, and inked into
+                    // nothing — Michael's toast read "daemon connected (0×0)", which was the
+                    // whole diagnosis in four characters. Real dimensions or no attach.
+                    // FLIP CHECK FIRST — before anything touches the daemon client. The
+                    // .99 field pattern (rotate once = dead pen, rotate back = sideways
+                    // writing) proved the daemon runs exactly one rotation behind: the
+                    // reattach below used to detach the client BEFORE the recreate check,
+                    // so `attached` was false and the recreate never fired — dead code
+                    // from the day it shipped.
+                    // The turn is judged on the NORMAL frame (the surface less the column's lent
+                    // room), so ⛶ on a near-square window is never read as one (review 2026-10-11).
+                    val flipped = prevW > 0 &&
+                        homeTurned(provideSurfaceView(), prevHomeW, prevH, width, height)
+                    if (flipped && isBigmeDevice() &&
+                        sharedPreferences.getBoolean("bigme_fast_ink", false)
+                    ) {
+                        // Rotation RECREATES the activity on the Bigme fast path —
+                        // inkit's exact world; a window rotating in place is a thing
+                        // the daemon has never been asked to follow.
+                        surfaceSize = Rect(0, 0, width, height)
+                        adoptViewportRoom(provideSurfaceView())
+                        provideSurfaceView().post { runCatching { requireActivity().recreate() } }
+                        return
+                    }
+                    // ⛶ lands here too since the surface takes the column's room (Michael
+                    // 2026-10-11): one size change = one silent detach + one settled attach at the
+                    // new size, whose first forced mirror is the truth draw through the matrix
+                    // refitted below (the page re-centred and fitted — no extra push).
+                    attachBigmeIfReady(width, height)
                     surfaceSize = Rect(0, 0, width, height)
-                    if (flipped) {
-                        // Re-zoom to the new width (Michael: "the rotation should zoom to match
-                        // the new rotation width zoom") — full-width fit, page top, pan reset.
-                        refitZoomToWidth()
+                    adoptViewportRoom(provideSurfaceView())
+                    // The bottom pill stays put while the surface moves under it (a ⛶ docked left
+                    // shifts the surface's origin by the slot): its rects in surface pixels move.
+                    rereadInkChromeOverSurface()
+                    lastSeenRotation = runCatching { provideSurfaceView().display?.rotation }
+                        .getOrNull() ?: lastSeenRotation
+                    if (flipped) rotationFlipPending = true
+                    val roomOnly = homeHeldAcross(prevW, prevH, prevHomeW, prevRoomL, prevRoomR, flipped)
+                    if (roomOnly) {
+                        // ⛶ (Michael 2026-10-11: "Recentering/zooming after closing the tuck panel
+                        // makes sense"): the surface gained or gave back only the column's room.
+                        // Closing re-centres the page and fits it to the whole surface, opening
+                        // restores the docked fit; a hand's zoom keeps its magnification and its
+                        // centred point, a scrolled landscape page its top row ([refitForRoom]).
+                        // ONE matrix re-lay there, ONE draw here — the truth the settled B6
+                        // reattach mirrors first.
+                        refitForRoom(prevW, prevH, prevPanX, prevPanY)
+                        applyStrokes(strokes, true)
+                    } else if (flipped) {
+                        // A flip keeps a HAND-TAKEN zoom too (Michael, 08-27: "flipping should
+                        // also keep its zoom") — the base fit recomputes for the new shape and
+                        // the reader's magnification re-applies on top, anchored to where they
+                        // were looking. The MACHINE posture still re-derives ("the rotation
+                        // should zoom to match the new rotation width zoom"): width-fill
+                        // landscape, whole-page portrait.
+                        if (zoomTakenByHand && zoomScale > 1.01f)
+                            refitZoomKeepingPlace(prevW, prevH, prevPanX, prevPanY)
+                        else refitZoomToWidth()
                         // …and re-lay the docked pen toolbar for the new height. Its column count
                         // and button size are computed from screenHeightDp at setup and nothing
                         // recreates the view on rotation, so without this the portrait column
@@ -5237,8 +8615,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                         // fires more than once as toolbars settle) keeps re-fitting to each new
                         // honest size only for as long as the posture is still the default one.
                         if (zoomTakenByHand) {
-                            updateTransformMatrix()
-                            if (zoomScale > 1.01f) refitZoomForPage()
+                            if (zoomScale > 1.01f)
+                                refitZoomKeepingPlace(prevW, prevH, prevPanX, prevPanY)
+                            else updateTransformMatrix()
                         } else {
                             refitZoomToWidth()
                         }
@@ -5318,7 +8697,32 @@ abstract class SurfaceFragment : ScreenFragment() {
                         pendingLimitWidth = width
                         pendingLimitHeight = height
                         provideSurfaceView().removeCallbacks(applyLimitRectRunnable)
-                        provideSurfaceView().postDelayed(applyLimitRectRunnable, LIMIT_RECT_DEBOUNCE_MS)
+                        // A FLIP APPLIES AT ONCE; everything else keeps the debounce.
+                        //
+                        // The debounce exists so that opening a page doesn't cold-start the pen
+                        // reader several times over (repeated surfaceChanged callbacks) — a real
+                        // cost, and none of it applies to a rotation, which happens once and is
+                        // never rapid. Waiting it out after a flip leaves the Onyx raw-input frame
+                        // PORTRAIT while the surface is already landscape, and a nib that touches
+                        // down inside that window reports coordinates in the old frame: strokes in
+                        // rotated positions. Worse, [applyPendingLimitRect] defers AGAIN whenever
+                        // the pen is down, so writing straight after a rotation — exactly what a
+                        // person does — can hold the stale frame open well past the 250ms.
+                        //
+                        // That is also why this survived "all the sorting and debugging": it is a
+                        // timing window, not a wrong formula, so it reads as intermittent and every
+                        // static reading of the geometry looks correct. It is.
+                        //
+                        // ⛶ applies at once too (review 2026-10-11): it happens once, never rapid,
+                        // and moves the surface's origin by the slot when docked left, so waiting
+                        // left the freed room outside the reader's frame. The pill is laid out in
+                        // this same pass, so the one cold start carries its exclude rect as well.
+                        if (rotationFlipPending || roomOnly) {
+                            rotationFlipPending = false
+                            applyPendingLimitRect()
+                        } else {
+                            provideSurfaceView().postDelayed(applyLimitRectRunnable, LIMIT_RECT_DEBOUNCE_MS)
+                        }
                     }
                     // On Android 10+, claim the whole SurfaceView area back from the
                     // system gesture-navigation handler. Without this, the bottom ~10%
@@ -5335,6 +8739,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                     provideSurfaceView().removeCallbacks(applyLimitRectRunnable)
                     appliedLimitWidth = -1
                     appliedLimitHeight = -1
+                    appliedRotation = -1
                     holder.removeCallback(surfaceCallback)
                     surfaceCallback = null
                 }
@@ -5356,7 +8761,14 @@ abstract class SurfaceFragment : ScreenFragment() {
         val w = pendingLimitWidth
         val h = pendingLimitHeight
         if (w <= 0 || h <= 0) return
-        if (w == appliedLimitWidth && h == appliedLimitHeight) return
+        // ROTATION IS PART OF THE FRAME, not just the size. A 180° flip (portrait ⇄
+        // reverse-portrait — the B6 turned over to put the buttons on the other side) keeps
+        // the surface's exact dimensions, so a size-only comparison saw NOTHING while the
+        // Onyx raw-input frame stayed armed in the old orientation: strokes captured upside
+        // down relative to the view, revealed only at the re-bake, and SAVED that way
+        // ("my notes got clobbered… refreshed the strokes upside down relative to the flip").
+        val rot = runCatching { provideSurfaceView().display?.rotation }.getOrNull() ?: 0
+        if (w == appliedLimitWidth && h == appliedLimitHeight && rot == appliedRotation) return
         // Never cold-start the reader while a stroke is IN FLIGHT (pen is down: lastPoint set).
         // setRawDrawingEnabled(false) mid-stroke wipes the live overlay ink — the piece being
         // written simply vanishes from under the nib and doesn't come back until the post-pen-up
@@ -5368,14 +8780,19 @@ abstract class SurfaceFragment : ScreenFragment() {
             return
         }
         th.setRawDrawingEnabled(false)
-        th.setLimitRect(Rect(0, 0, w, h), rawExcludeRects())
+        rawInkArmed = false
+        val excluded = rawExcludeRects()
+        th.setLimitRect(Rect(0, 0, w, h), excluded)
+        appliedExcludeRects = excluded.map { Rect(it) }
         if (!inkSuppressed) {   // limit-rect re-apply must not re-arm the pen mid-lasso
             th.setRawDrawingEnabled(true)
             th.isRawDrawingRenderEnabled = true
+            rawInkArmed = true
         }
         appliedLimitWidth = w
         appliedLimitHeight = h
-        Timber.i("raw limit rect applied: ${w}x${h}")
+        appliedRotation = rot
+        Timber.i("raw limit rect applied: ${w}x${h} rot=$rot")
     }
 
     /**
@@ -5414,14 +8831,31 @@ abstract class SurfaceFragment : ScreenFragment() {
         provideSurfaceView().holder.unlockCanvasAndPost(lockerCanvas)
 
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        sharpInkMatrix = null   // the zoomed-resolution ink is of the page just cleared
     }
 
     /**
      * Force a full-screen (GC) EPD refresh. Onyx-only: wipes the hardware raw-drawing overlay so a
      * just-finished stroke can't linger on the panel across a page turn. No-op / guarded elsewhere.
      */
-    fun forceFullEpdRefresh() {
+    fun forceFullEpdRefresh(cleanDaemon: Boolean = false) {
         if (viwoodsInk != null) return
+        // On the B6 the Onyx call below is a no-op and the ghosts live in the DAEMON's layer:
+        // the one thing that lifts them is a whole-view 1202 driven to truth (white + template
+        // + ink). 🧹 Clean the screen did nothing here until now (09-14: the crescent stayed).
+        // ONLY ON THE EXPLICIT 🧹 (cleanDaemon). This routine is also called by the page-load
+        // path and the pills, and from -282 to -285 every such call wrote the whole page into
+        // the daemon's commit-state — the picture it then painted over the NEXT page (the cabled
+        // trace of 09-14 showed two whole-view scrubs a second after every load, untouched).
+        if (isBigmeDevice() && cleanDaemon) {
+            val ink = bigmeInk
+            val v = runCatching { provideSurfaceView() }.getOrNull()
+            if (ink != null && ink.attached && v != null && v.width > 0 && v.height > 0) {
+                val (page, m, template) = scrubFrame()
+                ink.scrubRegion(Rect(0, 0, v.width, v.height), page, m, template, label = "clean the screen")
+                return
+            }
+        }
         try {
             EpdController.repaintEveryThing(com.onyx.android.sdk.api.device.epd.UpdateMode.GC)
         } catch (t: Throwable) {
@@ -5603,42 +9037,65 @@ abstract class SurfaceFragment : ScreenFragment() {
      *
      * When clearPage is true we wipe and re-render the shadow bitmap too (used on page
      * load, undo/redo, paste etc.). When false (e.g. routine post-stroke refresh) we
-     * skip the shadow redraw entirely — the shadow stays consistent because
-     * [convertStrokes] appends new strokes to it incrementally. This keeps the per-stroke
-     * cost on weaker devices (Palma 2 Pro) low while still committing the surface to the
-     * e-ink layer.
+     * skip the shadow redraw entirely — the strokes a pen-up adds reach the shadow at the
+     * debounced bake ([commitVisualRunnable]; [convertStrokes] no longer draws into it), and
+     * a scrub before the bake catches them up first ([catchUpInkFrames]). This keeps the
+     * per-stroke cost on weaker devices (Palma 2 Pro) low while still committing the surface
+     * to the e-ink layer.
      *
      * @param strokes the list of strokes
      * @param clearPage the clear page flag
+     * @param forceMirror force the B6 mirror's panel refresh WITHOUT rebuilding the shadow — a
+     *  transform the glass must show at once (a Zoom seat step or box), where the page-space
+     *  shadow is unchanged; a shadow that had to be recreated here is still rebuilt first.
      */
-    fun applyStrokes(strokes: List<Stroke>, clearPage: Boolean) {
+    fun applyStrokes(strokes: List<Stroke>, clearPage: Boolean, quietMirror: Boolean = false,
+                     forceMirror: Boolean = false) {
         this.strokes = strokes.toMutableList()
+        // Ground truth: how many strokes this render was HANDED (the "ms" columns carry
+        // the count). After a refresh that "loses" ink, this says whether the loss
+        // happened before the render (capture/save) or on the glass (overlay masking).
+        if (isBigmeDevice()) com.toolsboox.ot.InkPerf.record("page.strokes", strokes.size * 1_000_000L)
+        // A shadow recreated blank below must not reach the glass as a forced blank page.
+        val shadowFresh = bitmap.let { it == null || it.isRecycled }
+        // Settled at a zoom: the template at the zoomed resolution goes up BEFORE the surface post
+        // and the B6 mirror below, so a forced refresh lands over it (see [repaintAfterZoom]).
+        if (sharpWanted()) ensureSharpTemplate(show = true)
         if (!ensureShadowCanvas()) return
         val lockCanvas = provideSurfaceView().holder.lockCanvas() ?: return
 
         lockCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        clipOutInkPill(lockCanvas)
 
         val strokePaint = Paint(paint)
 
-        // Draw to screen with zoom matrix
-        lockCanvas.save()
-        lockCanvas.concat(viewMatrix)
-        renderImageElements(lockCanvas)
-        for (stroke in strokes) {
-            drawStrokePath(lockCanvas, strokePaint, stroke)
+        // Draw to screen with zoom matrix — magnified, only the strokes the glass can show (a 16×
+        // redraw is the window's strokes, not the page's). On the B6, settled and magnified, the
+        // render goes into the mirror's zoomed-resolution buffer and the surface shows that same
+        // buffer: the daemon carries the page at the glass's own resolution, never the page-space
+        // shadow's 11px stair-steps (Michael 2026-10-12: "no loss of clarity"), at one vector render.
+        val window = visiblePageWindow()
+        val sharpInk = if (bigmeSharpWanted())
+            renderSharpInk { c -> drawPageContent(c, strokes, strokePaint, window) } else null
+        if (sharpInk != null && sharpInk.width == lockCanvas.width && sharpInk.height == lockCanvas.height) {
+            lockCanvas.drawBitmap(sharpInk, 0f, 0f, null)
+        } else {
+            lockCanvas.save()
+            lockCanvas.concat(viewMatrix)
+            drawPageContent(lockCanvas, strokes, strokePaint, window)
+            lockCanvas.restore()
         }
-        renderTextElements(lockCanvas)
-        lockCanvas.restore()
 
         // Shadow canvas full rebuild only when caller explicitly wants it (page load,
         // undo/redo, paste — anything that may have removed or relocated strokes).
-        if (clearPage) {
+        if (clearPage || (forceMirror && shadowFresh)) {
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
             renderImageElements(canvas)
             for (stroke in strokes) {
                 drawStrokePath(canvas, strokePaint, stroke)
             }
             renderTextElements(canvas)
+            shadowBehind = false
         }
 
         // Commit the canvas to the surface WITHOUT closing the native pen reader. Previously
@@ -5654,6 +9111,22 @@ abstract class SurfaceFragment : ScreenFragment() {
         // inkSuppressed doc warns about — the next stylus tap on the menu painted instead of
         // tapping. resumeRawInkNow re-enables it when the pause actually ends.
         if (!inkSuppressed) touchHelper?.isRawDrawingRenderEnabled = true
+
+        // Bigme: mirror the baked page into the daemon overlay after EVERY render — the
+        // overlay is the one layer guaranteed to composite while the daemon is bound (the
+        // surface's own posts may not reach the panel), and the system e-ink refresh
+        // resets live overlay state and recomposites from this buffer. The counters
+        // proved the data path perfect (stroke.committed 5/5, page.strokes 175) while
+        // ink still vanished on the system refresh: the glass was the loss, so the
+        // overlay now CARRIES the page instead of being wiped beneath it.
+        // inkit's mirror discipline: pen-up bakes prime the buffer QUIETLY; only real
+        // content changes (page load, undo, erase, paste) force the panel refresh.
+        // The frame the daemon gets: the zoomed-resolution buffer just drawn when it is current,
+        // else the page-space shadow through the matrix, as always ([mirrorFrame]).
+        if (bigmeInk != null) mirrorFrame()?.let { f ->
+            bigmeInk?.syncOverlay(f.ink, f.matrix, force = forceMirror || (clearPage && !quietMirror),
+                template = { f.template })
+        }
     }
 
     /**
@@ -5743,6 +9216,11 @@ abstract class SurfaceFragment : ScreenFragment() {
      * The input callback of stylus events.
      */
     fun callback(motionEvent: MotionEvent, hover: Boolean): Boolean {
+        // The missed-rotation sentinel rides the pen-down — see [geometrySentinel].
+        if (!hover && motionEvent.action == MotionEvent.ACTION_DOWN) geometrySentinel()
+        // The live-ink belt rides HOVER and PEN-UP — the gaps between strokes, never inside one:
+        // re-arming mid-stroke would wipe the overlay ink being written. See [armRawInkIfStranded].
+        if (hover || motionEvent.action == MotionEvent.ACTION_UP) armRawInkIfStranded()
         if (hover) {
             val actionHoverEnter = motionEvent.action == MotionEvent.ACTION_HOVER_ENTER
             val actionHoverMove = motionEvent.action == MotionEvent.ACTION_HOVER_MOVE
@@ -5763,7 +9241,9 @@ abstract class SurfaceFragment : ScreenFragment() {
                 // Hover costs nothing and means the pen is inbound but not yet touching: the one
                 // moment when re-arming is both safe (no contact to mistake for a tap) and early
                 // enough to matter. The deferred resume is cancelled so it cannot re-park us.
-                if (rawInkPausedForMenu && !modalShowing) {
+                // Not under Zoom's armed box: it keeps the pen parked, so a forced resume per
+                // hover sample would only re-apply the limit rect over and over.
+                if (rawInkPausedForMenu && !modalShowing && !marqueeArmed) {
                     provideSurfaceView().removeCallbacks(forcedResumeRunnable)
                     forcedResumeRunnable.run()
                 }
@@ -5783,6 +9263,41 @@ abstract class SurfaceFragment : ScreenFragment() {
         val toolTypeStylus = motionEvent.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS
         val toolTypeEraser = motionEvent.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER
         val toolTypeFinger = motionEvent.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER
+
+        // Bigme fast path: while the daemon is attached it is the one source of pen
+        // truth, and raw stylus MotionEvents are hard-dropped (inkit's rule — the raw
+        // leak carries garbage coordinates, and capturing both was every phantom at
+        // once). LIVENESS ESCAPE: a daemon gone silent while we keep eating raw input
+        // is a dead pen with no recovery on a no-adb device — detach it and fall
+        // through; the software pen takes over mid-sentence. Fingers always pass.
+        if (!bigmeDispatching && (toolTypeStylus || toolTypeEraser)) {
+            val ink = bigmeInk
+            if (ink?.attached == true) {
+                // The wedge signature is RAW EVENTS FLOWING while the daemon says
+                // nothing — never mere silence (an idle pause is silent too, and the
+                // raw event often beats the daemon's by a few ms).
+                bigmeRawSinceDaemon++
+                if (bigmeRawSinceDaemon > BIGME_WATCHDOG_RAW_EVENTS &&
+                    android.os.SystemClock.uptimeMillis() - ink.lastDaemonEventMs > BIGME_DAEMON_SILENT_MS
+                ) {
+                    com.toolsboox.ot.InkPerf.record("pen.daemon_watchdog", 0)
+                    Timber.w("BigmeFastInk watchdog: raw flowing, daemon silent — detaching")
+                    ink.detach()
+                    bigmeInk = null
+                    bigmeRawSinceDaemon = 0
+                    // fall through: this very event begins software capture
+                } else {
+                    com.toolsboox.ot.InkPerf.record("pen.raw_ignored", 0)
+                    return true
+                }
+            }
+        }
+
+        // ZOOM TO A BOX (Michael 2026-10-12): the armed Zoom seat takes the next drag — finger or
+        // pen — as its box, ahead of every tool, so the box never lays ink or an undo step; the
+        // streams it took are swallowed to their lift. After the B6 raw drop above: the daemon's own
+        // events (bigmeDispatching) are the pen there.
+        if ((marqueeArmed || marqueeEatsView || marqueeEatsDaemon) && handleMarqueeTouch(motionEvent)) return true
 
         // TODO: check on other devices (stylus extra button)
         val actionDown = listOf(MotionEvent.ACTION_DOWN, 211).contains(motionEvent.action)
@@ -5909,27 +9424,71 @@ abstract class SurfaceFragment : ScreenFragment() {
                     return true
                 }
                 val sel = selectedImage
-                // Crop: drag a rectangle over the image, apply on release.
+                // FREE CROP: the drag proposes, the handles refine, ✓ applies (his 08-27 ask —
+                // the old release-applies flow gave one shot at the size).
                 if (cropMode && sel != null) {
+                    val cr0 = cropRect
                     when {
-                        // A fresh press starts the crop rectangle. The chip-tap that armed crop
-                        // mode has cropDragging=false, so its trailing move/up are ignored.
-                        actionDown -> { cropStartX = x; cropStartY = y; cropRect = RectF(x, y, x, y); cropDragging = true }
+                        actionDown -> {
+                            if (!cropAdjust || cr0 == null) {
+                                // A fresh press starts the proposal. The chip-tap that armed crop
+                                // mode has cropDragging=false, so its trailing move/up are ignored.
+                                cropStartX = x; cropStartY = y; cropRect = RectF(x, y, x, y); cropDragging = true
+                            } else {
+                                val (okChip, noChip) = cropChipRects(cr0)
+                                when {
+                                    okChip.contains(x, y) -> {
+                                        pushUndo()
+                                        applyCropToImage(sel, cr0)
+                                        onImageElementsChanged(imageElements)
+                                        exitCropMode()
+                                        applyStrokes(strokes, true)
+                                        drawImageSelection()
+                                    }
+                                    noChip.contains(x, y) -> {
+                                        exitCropMode()
+                                        applyStrokes(strokes, true)
+                                        drawImageSelection()
+                                    }
+                                    else -> {
+                                        cropHandle = hitCropHandle(cr0, x, y)
+                                        if (cropHandle >= 0) { cropStartX = x; cropStartY = y; cropDragging = true }
+                                    }
+                                }
+                            }
+                        }
                         actionMove -> if (cropDragging) {
-                            cropRect = RectF(minOf(cropStartX, x), minOf(cropStartY, y), maxOf(cropStartX, x), maxOf(cropStartY, y))
+                            if (!cropAdjust) {
+                                cropRect = RectF(minOf(cropStartX, x), minOf(cropStartY, y), maxOf(cropStartX, x), maxOf(cropStartY, y))
+                            } else if (cr0 != null) {
+                                val dx = x - cropStartX; val dy = y - cropStartY
+                                cropStartX = x; cropStartY = y
+                                val r = RectF(cr0)
+                                when (cropHandle) {
+                                    0 -> { r.left += dx; r.top += dy }
+                                    1 -> { r.right += dx; r.top += dy }
+                                    2 -> { r.right += dx; r.bottom += dy }
+                                    3 -> { r.left += dx; r.bottom += dy }
+                                    4 -> r.offset(dx, dy)
+                                }
+                                if (r.left > r.right) { val t = r.left; r.left = r.right; r.right = t
+                                    cropHandle = when (cropHandle) { 0 -> 1; 1 -> 0; 2 -> 3; 3 -> 2; else -> cropHandle } }
+                                if (r.top > r.bottom) { val t = r.top; r.top = r.bottom; r.bottom = t
+                                    cropHandle = when (cropHandle) { 0 -> 3; 3 -> 0; 1 -> 2; 2 -> 1; else -> cropHandle } }
+                                cropRect = r
+                            }
                             drawImageSelection()
                         }
                         actionUp -> if (cropDragging) {
                             cropDragging = false
                             val cr = cropRect
-                            if (cr != null && cr.width() > 12f && cr.height() > 12f) {
-                                pushUndo()
-                                applyCropToImage(sel, cr)
-                                onImageElementsChanged(imageElements)
+                            if (!cropAdjust) {
+                                if (cr != null && cr.width() > 12f && cr.height() > 12f) {
+                                    cropAdjust = true   // the proposal stands; handles take over
+                                } else {
+                                    cropRect = null     // a stray tap proposes nothing
+                                }
                             }
-                            cropMode = false
-                            cropRect = null
-                            applyStrokes(strokes, true)
                             drawImageSelection()
                         }
                     }
@@ -5951,11 +9510,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                                         onImageElementsChanged(imageElements)
                                         applyStrokes(strokes, true)
                                     }
-                                    "Crop" -> {
-                                        cropMode = true
-                                        cropRect = null
-                                        Toast.makeText(requireContext(), "Drag a rectangle over the image to crop", Toast.LENGTH_SHORT).show()
-                                    }
+                                    "Crop" -> armCropTool()
                                     "Del" -> {
                                         pushUndo()
                                         imageElements.remove(sel)
@@ -6114,6 +9669,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                     selectedStrokes = pastedStrokes.toMutableList()
                     hasSelection = true
                     selectionMode = false
+                    lastLassoBounds = null   // pasted, not looped — see the other paste site
                     selBox = computeSelBox(selectedStrokes)
                     drawWithSelection()
                     showMessage(R.string.calendar_drawing_toolbar_pasted, provideSurfaceView())
@@ -6193,7 +9749,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                             }
                         }
                         selBox = computeSelBox(selectedStrokes)
-                        drawWithSelection()
+                        drawWithSelectionLive()
                         return true
                     } else if (actionMove && selectionDrag == SelectionDrag.ROTATE) {
                         // Rotate every original point about the fixed centre by the swing angle.
@@ -6210,7 +9766,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                             }
                         }
                         selBox = computeSelBox(selectedStrokes)
-                        drawWithSelection()
+                        drawWithSelectionLive()
                         return true
                     } else if (actionMove && selectionDrag != SelectionDrag.NONE) {
                         val orig = scaleOrigBox ?: return true
@@ -6231,7 +9787,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                             }
                         }
                         selBox = computeSelBox(selectedStrokes)
-                        drawWithSelection()
+                        drawWithSelectionLive()
                         return true
                     } else if (actionUp && selectionDrag != SelectionDrag.NONE) {
                         selectionDrag = SelectionDrag.NONE
@@ -6242,6 +9798,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                         // applyStrokes wipes the bbox/handles/chips off the surface;
                         // redraw them so the selection stays visible and editable.
                         drawWithSelection()
+                        bigmeDragSettleScrub()
                         return true
                     }
                 }
@@ -6256,7 +9813,7 @@ abstract class SurfaceFragment : ScreenFragment() {
                     selectionPoints.add(PointF(x, y))
                 } else if (actionMove) {
                     selectionPoints.add(PointF(x, y))
-                    drawWithSelection()
+                    drawWithSelectionLive()
                 } else if (actionUp) {
                     selectionPoints.add(PointF(x, y))
                     // Close polygon and test strokes
@@ -6267,6 +9824,25 @@ abstract class SurfaceFragment : ScreenFragment() {
                                 selectedStrokes.add(stroke)
                             }
                         }
+                        lastLassoBounds = boundsOfLoop(
+                            selectionPoints.map { it.x }, selectionPoints.map { it.y })
+                        if (selectedStrokes.isEmpty()) {
+                            // No ink in the loop — cards under it still form a selection (the
+                            // lasso captures grams from BOTH entries, Michael 08-30 field).
+                            val lb = lastLassoBounds
+                            if (lb != null && onLassoElementsOnly(lb)) {
+                                exitSelectionMode(deferRawResume = true)
+                                applyStrokes(strokes, true)
+                                return true
+                            }
+                        }
+                        // THE LIVE LOOP COMES OFF THE GLASS AT LIFT (Michael, 09-14, B6, after -280:
+                        // "it draws the straight regular line and then if I refresh it flashes"). The
+                        // daemon's live hairline is real ink on the panel, and the forced GU16 that
+                        // paints the selection chrome below can only DARKEN — it never lifts a line.
+                        // Only a 1202 partial erases: the same scrub the circle gesture has always
+                        // run over its ring, now over the toolbar lasso's loop too.
+                        scrubCircleGhost(lastLassoBounds)
                         hasSelection = true
                         selectionMode = false
                         selBox = computeSelBox(selectedStrokes)
@@ -6282,6 +9858,7 @@ abstract class SurfaceFragment : ScreenFragment() {
 
             // --- Normal drawing / erasing path ---
             if (actionDown) {
+                inFlightErasing = erasing   // remembered for the pause-mid-stroke commit
                 onBeginDrawing(strokePoint)
             } else if (actionMove) {
                 val touchPoints = mutableListOf<StrokePoint>()
@@ -6416,9 +9993,26 @@ abstract class SurfaceFragment : ScreenFragment() {
         val n = points.size
         val xs = FloatArray(n); val ys = FloatArray(n)
         for (i in 0 until n) { xs[i] = points[i].x; ys[i] = points[i].y }
-        val r = com.toolsboox.ot.RingFit.fit(xs, ys)
+        val r = com.toolsboox.ot.RingFit.fit(xs, ys,
+            com.toolsboox.ot.RingFit.MIN_DIAGONAL * gestureScale())
         return CircleFit(r.isRing, r.sizeOk, r.closedish, r.bandFraction, r.coverageDegrees,
             r.closureOverRadius, r.diagonal)
+    }
+
+    /**
+     * Physical calibration for every ABSOLUTE gesture size (ratio guards are already
+     * scale-free). The gesture floors were tuned on the Tab8 — ~8.94 canvas px per
+     * physical mm at zoom 1 — but canvas px per mm varies wildly by device: the B6's
+     * small dense screen packs ~20 px/mm, so a handwritten "o" there is 2.2× the canvas
+     * size the floors expect, and letters start qualifying as gestures. This converts
+     * "how far the pen physically traveled" into today's canvas units — and because it
+     * divides by the live zoom, writing while zoomed in stays calibrated too.
+     */
+    private fun gestureScale(): Float {
+        val pxPerMmScreen = resources.displayMetrics.xdpi / 25.4f
+        val totalScale = (baseScale * zoomScale).coerceAtLeast(0.01f)
+        val pxPerMmCanvas = pxPerMmScreen / totalScale
+        return (pxPerMmCanvas / GESTURE_REFERENCE_PX_PER_MM).coerceIn(0.5f, 4f)
     }
 
     /** True if the ring described by [points] encircles any existing ink at all (≥1 point inside). */
@@ -6486,14 +10080,15 @@ abstract class SurfaceFragment : ScreenFragment() {
             if (ep.x < minX) minX = ep.x; if (ep.x > maxX) maxX = ep.x
             if (ep.y < minY) minY = ep.y; if (ep.y > maxY) maxY = ep.y
         }
-        minX -= 25f; minY -= 25f; maxX += 25f; maxY += 25f
+        val reach = 25f * gestureScale()
+        minX -= reach; minY -= reach; maxX += reach; maxY += reach
         val toRemove: MutableSet<UUID> = mutableSetOf()
         for (stroke in strokes) {
             var hit = false
             for (tp in stroke.strokePoints) {
                 if (tp.x < minX || tp.x > maxX || tp.y < minY || tp.y > maxY) continue
                 for (ep in points) {
-                    if (epsilon(ep.x, ep.y, tp.x, tp.y, 25.0f)) {
+                    if (epsilon(ep.x, ep.y, tp.x, tp.y, reach)) {
                         hit = true
                         break
                     }
@@ -6503,6 +10098,118 @@ abstract class SurfaceFragment : ScreenFragment() {
             if (hit) toRemove.add(stroke.strokeId)
         }
         if (toRemove.isEmpty()) return false
+        // A removed stroke can extend far past the scribble (hit at one point): the scrub
+        // region is the inflated scribble bbox UNION the full bounds of everything removed.
+        val scrub = RectF(minX, minY, maxX, maxY)
+        for (stroke in strokes) {
+            if (stroke.strokeId !in toRemove) continue
+            for (tp in stroke.strokePoints) scrub.union(tp.x, tp.y)
+        }
+        strokes.removeIf { it.strokeId in toRemove }
+        onStrokesDeleted(toRemove.toList())
+        applyStrokes(strokes, true)
+        if (isBigmeDevice()) scrubDaemonRegion(scrub, 40f)
+        onStrokeChanged(strokes)
+        return true
+    }
+
+    /**
+     * Remove the phantom straight-line strokes older builds persisted into this page: a
+     * stroke of very few points whose longest single segment is a distance no hand
+     * covers between samples. Real handwriting is dense (a hundred points to a word);
+     * the phantoms were sparse garbage — two to four points slashed across the page.
+     * Manual and page-local by design: a broom Michael swings, not an auto-deleter.
+     */
+    private fun sweepStrayLines() {
+        val threshold = 400f   // canvas px per single segment — far beyond any sampled hand
+        val strays = strokes.filter { s ->
+            if (s.strokePoints.size !in 2..4) return@filter false
+            var maxSeg = 0f
+            for (i in 1 until s.strokePoints.size) {
+                val a = s.strokePoints[i - 1]; val b = s.strokePoints[i]
+                val d = hypot(b.x - a.x, b.y - a.y)
+                if (d > maxSeg) maxSeg = d
+            }
+            maxSeg > threshold
+        }
+        if (strays.isEmpty()) {
+            Toast.makeText(requireContext(), "No stray lines on this page", Toast.LENGTH_SHORT).show()
+            return
+        }
+        pushUndo()
+        val ids = strays.map { it.strokeId }.toSet()
+        strokes.removeIf { it.strokeId in ids }
+        onStrokesDeleted(ids.toList())
+        applyStrokes(strokes, true)
+        onStrokeChanged(strokes)
+        Toast.makeText(requireContext(),
+            "Swept ${ids.size} stray line${if (ids.size == 1) "" else "s"} (undo restores)",
+            Toast.LENGTH_LONG).show()
+    }
+
+    /** Bounding box of a point list: [minX, minY, maxX, maxY]. */
+    private fun pointsBounds(points: List<StrokePoint>): FloatArray {
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        for (p in points) {
+            if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x
+            if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y
+        }
+        return floatArrayOf(minX, minY, maxX, maxY)
+    }
+
+    /** A single flat, straight, horizontal line — the SHAPE of a strikethrough. Whether it
+     *  IS one is decided against the ink it crosses (see [performStrikethroughErase]). */
+    private fun isStrikethroughGesture(points: List<StrokePoint>): Boolean {
+        if (points.size < 2) return false
+        val m = gestureMetrics(points)
+        val (minX, minY, maxX, maxY) = pointsBounds(points)
+        val w = maxX - minX
+        val h = maxY - minY
+        if (w < GESTURE_STRIKE_MIN_WIDTH * gestureScale()) return false
+        if (h >= w * GESTURE_STRIKE_MAX_HEIGHT_RATIO) return false
+        if (m.bboxDiag < 1f) return false
+        return m.pathLength <= m.bboxDiag * GESTURE_STRIKE_MAX_PATH_RATIO
+    }
+
+    /**
+     * Delete the settled ink a strikethrough crosses. Returns false (→ commit as ink) when
+     * any guard fails: no settled strokes under the line, the line doesn't span most of
+     * them, or it sits above/below their middle (an underline, not a strike).
+     */
+    private fun performStrikethroughErase(points: List<StrokePoint>): Boolean {
+        val (gMinX, gMinY, gMaxX, gMaxY) = pointsBounds(points)
+        val gCenterY = (gMinY + gMaxY) / 2f
+
+        // Target = settled strokes whose ink lies in the gesture's horizontal span and
+        // vertically near the line. Only OLD strokes count — crossing the t you are
+        // still writing must never eat the word.
+        val targets = strokes.filter { s ->
+            val endTime = s.timestamp + (s.strokePoints.lastOrNull()?.t ?: 0L)
+            if (firstPointTimestamp - endTime < GESTURE_STRIKE_MIN_AGE_MS) return@filter false
+            val (sMinX, sMinY, sMaxX, sMaxY) = pointsBounds(s.strokePoints)
+            val pad = GESTURE_STRIKE_BAND_PAD * gestureScale()
+            sMaxX >= gMinX && sMinX <= gMaxX &&
+                sMaxY >= gCenterY - pad && sMinY <= gCenterY + pad
+        }
+        if (targets.isEmpty()) return false
+
+        var tMinX = Float.MAX_VALUE; var tMaxX = -Float.MAX_VALUE
+        var tMinY = Float.MAX_VALUE; var tMaxY = -Float.MAX_VALUE
+        for (s in targets) for (p in s.strokePoints) {
+            if (p.x < tMinX) tMinX = p.x; if (p.x > tMaxX) tMaxX = p.x
+            if (p.y < tMinY) tMinY = p.y; if (p.y > tMaxY) tMaxY = p.y
+        }
+        // Must span most of the target ink's width — a short crossing is writing.
+        val targetWidth = tMaxX - tMinX
+        if (targetWidth > 0f && (gMaxX - gMinX) < targetWidth * GESTURE_STRIKE_MIN_SPAN_FRAC) return false
+        // Must pass through the target's vertical middle — an underline sits below it.
+        val targetHeight = tMaxY - tMinY
+        if (targetHeight > 0f &&
+            abs(gCenterY - (tMinY + tMaxY) / 2f) > targetHeight * GESTURE_STRIKE_CENTER_BAND
+        ) return false
+
+        val toRemove = targets.map { it.strokeId }.toSet()
         strokes.removeIf { it.strokeId in toRemove }
         onStrokesDeleted(toRemove.toList())
         applyStrokes(strokes, true)
@@ -6527,11 +10234,93 @@ abstract class SurfaceFragment : ScreenFragment() {
         } catch (_: Exception) { /* haptics are best-effort */ }
     }
 
+    /**
+     * The auto-lasso ring was drawn LIVE by the daemon (dark on the glass, in a buffer GU16
+     * can never lighten). When the ring is SWALLOWED — recognized as a lasso, never committed
+     * as ink — nothing downstream ever erases those pixels: the 09-03 field ghost ("it left
+     * the ghost of a lasso… the circle"). Scrub the loop's region to its true content with
+     * the erase-capable 1202 flush BEFORE the daemon-free zone detaches; the software renders
+     * keep it truthful from there. inkit's clearRegion, aimed at the one leak the zone had.
+     */
+    private fun scrubCircleGhost(loopBounds: RectF?) = scrubDaemonRegion(loopBounds, 32f)
+
+    /** Union the selection's current footprint (box + chip/handle margin, and the raw lasso
+     *  polygon while one is being drawn) into the trail. Called from every selection render. */
+    private fun noteSelDirty() {
+        val margin = chipSize * 3f
+        fun add(l: Float, t: Float, r: Float, b: Float) {
+            val g = RectF(l - margin, t - margin, r + margin, b + margin)
+            val d = selDirtyCanvas
+            if (d == null) selDirtyCanvas = g else d.union(g)
+        }
+        selBox?.let { add(it.left, it.top, it.right, it.bottom) }
+        if (selectionPoints.size > 1) {
+            var mnx = selectionPoints[0].x; var mxx = mnx
+            var mny = selectionPoints[0].y; var mxy = mny
+            for (pt in selectionPoints) {
+                if (pt.x < mnx) mnx = pt.x; if (pt.x > mxx) mxx = pt.x
+                if (pt.y < mny) mny = pt.y; if (pt.y > mxy) mxy = pt.y
+            }
+            add(mnx, mny, mxx, mxy)
+        }
+    }
+
+    /** Drop settle (-188): ONE scrub over the whole drag — the accumulated trail (origin,
+     *  every rendered frame, chrome) unioned with the dropped selection's final footprint — so
+     *  the origin ghost lifts AT RELEASE, not at deselect. Field 09-04: "strokes still create
+     *  ghosts when circled and then moved" — the final-footprint-only settle left the origin on
+     *  the glass (GU16 can't erase it) until a deselect that may never come before the next
+     *  move. One 1202 per release keeps the ~300ms panel cadence law. The trail restarts at
+     *  the drop, so the exit scrub covers only what happens after. */
+    private fun bigmeDragSettleScrub() {
+        if (!isBigmeDevice() || bigmeInk?.attached != true) return
+        val margin = chipSize * 3f
+        val final = selBox?.let { RectF(it.left - margin, it.top - margin, it.right + margin, it.bottom + margin) }
+            ?: return
+        val drive = RectF(final)
+        selDirtyCanvas?.let { drive.union(it) }
+        lastDragFrameCanvas?.let { drive.union(it) }
+        lastDragFrameCanvas = null
+        com.toolsboox.ot.InkTrace.log("daemon", "settle: trail+final $drive")
+        scrubDaemonRegion(drive, 8f)
+        selDirtyCanvas = RectF(final)
+    }
+
+    /** Drive [canvasRect] (canvas space) to its true content on the Bigme glass — the
+     *  guarded white+truth 1202 scrub, mapped through the CURRENT viewMatrix at call time. */
+    private fun scrubDaemonRegion(canvasRect: RectF?, pad: Float = 32f) {
+        if (canvasRect == null) return
+        val ink = bigmeInk ?: return
+        if (!ink.attached) return
+        val vr = RectF(canvasRect)
+        viewMatrix.mapRect(vr)
+        val v = runCatching { provideSurfaceView() }.getOrNull() ?: return   // never hand the daemon an unclamped flush rect
+        val r = Rect(
+            (vr.left - pad).toInt().coerceAtLeast(0),
+            (vr.top - pad).toInt().coerceAtLeast(0),
+            (vr.right + pad).toInt().coerceAtMost(v.width),
+            (vr.bottom + pad).toInt().coerceAtMost(v.height))
+        if (r.width() > 0 && r.height() > 0) {
+            val (page, m, template) = scrubFrame()
+            ink.scrubRegion(r, page, m, template)
+        }
+    }
+
     /** Turn the circle into a lasso selection of the enclosed ink. Returns false (→ commit as ink) if it enclosed nothing. */
     private fun performCircleSelect(points: List<StrokePoint>): Boolean {
         val polygon = points.map { PointF(it.x, it.y) }.toMutableList()
         val enclosed = strokes.filter { StrokeClipboard.isStrokeInsidePolygon(it, polygon) }
-        if (enclosed.isEmpty()) return false
+        val loopBounds = boundsOfLoop(points.map { it.x }, points.map { it.y })
+        if (enclosed.isEmpty()) {
+            // The ring holds no ink but wraps cards → an element lasso, not a stroke: open the
+            // menu over the cards and swallow the ring (handled = the caller drops the ink).
+            if (loopBounds != null) lastLassoBounds = loopBounds
+            val handled = loopBounds != null && onLassoElementsOnly(loopBounds)
+            if (handled) scrubCircleGhost(loopBounds)
+            return handled
+        }
+        lastLassoBounds = loopBounds
+        scrubCircleGhost(loopBounds)
         selectionPoints.clear()
         selectionPoints.addAll(polygon)
         selectedStrokes = enclosed.toMutableList()
@@ -6622,11 +10411,14 @@ abstract class SurfaceFragment : ScreenFragment() {
             return
         }
 
-        // Software live rendering for the no-Onyx path. Skipped when Viwoods hardware ink is
-        // active (the T1000 renders the live stroke natively — drawing it ourselves too would
-        // double-image). On the FAST-waveform fallback the panel is in FAST mode so these
-        // partial posts refresh quickly.
-        if (touchHelper == null && penState && viwoodsInk?.hardwareInk != true) {
+        // Software live rendering for the no-Onyx path. Skipped when Viwoods hardware ink
+        // is active, and SKIPPED WHEN THE BIGME DAEMON IS LIVE — inkit's first rule:
+        // silence while the pen is down. The daemon paints the live line; a host surface
+        // post mid-stroke fights it for the glass and poisons its latency (measured
+        // 5ms → 750ms under host UI updates at 30Hz).
+        if (touchHelper == null && penState && viwoodsInk?.hardwareInk != true &&
+            bigmeInk?.attached != true
+        ) {
             if (viwoodsInk != null) {
                 // Viwoods: render THIS batch of points immediately. The old code coalesced to one
                 // post per animation frame because each post refreshed the whole-stroke bbox and a
@@ -6681,6 +10473,7 @@ abstract class SurfaceFragment : ScreenFragment() {
         )
 
         val lockCanvas = provideSurfaceView().holder.lockCanvas(rect) ?: return
+        clipOutInkPill(lockCanvas)
         lockCanvas.save()
         lockCanvas.concat(viewMatrix)
         // Use a non-anti-aliased predraw paint: the full path is redrawn every frame, and
@@ -6741,7 +10534,21 @@ abstract class SurfaceFragment : ScreenFragment() {
         } else {
             // Always-on gestures: a deliberate circle around ink becomes a selection,
             // a scribble over ink erases it. Ambiguous marks fall through to commit as ink.
-            if (autoGesturesEnabled && !hasSelection && !selectionMode && !pasteMode && !textMode) {
+            //
+            // BIGME: classify but NEVER consume. inkit (no gesture pack) writes perfectly
+            // on the B6, which acquits the daemon and makes this layer the prime suspect
+            // for eaten letters — on a ~20 px/mm canvas the letters are 2× the size the
+            // gesture floors were tuned for, and a test page covered in old ink arms every
+            // enclosure/overlap guard: an "o" over old ink is a ring enclosing ink (lasso
+            // eats it, the next strokes DRAG the selection), a flat stroke through settled
+            // ink is a strikethrough. The counters convict or acquit without costing ink.
+            var snapScrubBounds: RectF? = null
+            val gesturesLive = autoGesturesEnabled && !hasSelection && !selectionMode && !pasteMode && !textMode
+            // Bigme classify-only gate RETIRED: the physical-mm floors are field-validated
+            // ("circle to lasso and scribble to erase are working now") — the gesture pack
+            // consumes on every device. Strikethrough stays classify-only everywhere until
+            // Michael blesses it deliberately.
+            if (gesturesLive) {
                 val gesturePoints = stylusPointList.toList()
                 if (isScribbleGesture(gesturePoints) && performScribbleErase(gesturePoints)) {
                     gestureHaptic()
@@ -6749,11 +10556,23 @@ abstract class SurfaceFragment : ScreenFragment() {
                     stylusPointList.clear()
                     return
                 }
+                // Strikethrough: disjoint from scribble by construction (a scribble packs
+                // ≥3.8× its diagonal in path; a strike is ≤1.3×) and from circles (not
+                // closed, not flat). CLASSIFY-ONLY until Michael validates it on-device:
+                // it shipped mid-firefight, and on a planner page a RULING LINE drawn
+                // through the middle of old writing satisfies every mokke guard — settled
+                // ink, spans it, crosses its middle — and would delete the row. The
+                // counter accumulates the evidence for a deliberate enablement decision.
+                if (isStrikethroughGesture(gesturePoints)) {
+                    com.toolsboox.ot.InkPerf.record("gesture.would_strike", 0)
+                }
                 val fit = classifyCircle(gesturePoints)
                 // Only pay for the enclosure scan (every point on the page) when the mark
                 // actually classifies as a ring — normal handwriting never should.
                 val enclosesOther = fit.shapeOk && enclosesOtherInk(gesturePoints)   // the real lasso safeguard
-                val accepted = enclosesOther
+                // A ring that fully wraps a CARD is also a lasso (grams lasso from both entries);
+                // full-containment keeps handwriting over a card safely classified as ink.
+                val accepted = enclosesOther || (fit.shapeOk && enclosesElement(gesturePoints))
                 if (accepted && performCircleSelect(gesturePoints)) {
                     gestureHaptic()
                     lastPoint = null
@@ -6771,6 +10590,30 @@ abstract class SurfaceFragment : ScreenFragment() {
                         "diam=${fit.diameterPx.roundToInt()}px enclosesOtherInk=${if (enclosesOtherInk(gesturePoints)) "yes" else "no"}"
                     Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
                 }
+                // ❖ SHAPE SNAP (the Notate lesson) — LAST in the gesture ladder, so every
+                // meaning the hold could already carry keeps precedence: a held ring around ink
+                // or a card is still the lasso; a scribble is still the eraser. What reaches
+                // here held-still on open paper and shaped like a line, box, triangle or ring
+                // becomes the clean version of itself. The replacement happens IN PLACE on
+                // stylusPointList before the ordinary commit below, so the stroke id, the save
+                // path, the vendors' ink paths and undo all see one perfectly normal stroke
+                // that happens to have tidy points.
+                if (com.toolsboox.ot.ShapeSnap.heldAtEnd(gesturePoints)) {
+                    com.toolsboox.ot.ShapeSnap.fit(gesturePoints)?.let { snapped ->
+                        // The daemon painted the RAW wobbly mark live; the committed stroke is
+                        // the snapped one. Remember both extents so the raw ink can be scrubbed
+                        // off the glass after the commit (GU16 alone can never lift it — the
+                        // "ghost under every snapped shape").
+                        val sb = RectF(gesturePoints[0].x, gesturePoints[0].y, gesturePoints[0].x, gesturePoints[0].y)
+                        for (gp in gesturePoints) sb.union(gp.x, gp.y)
+                        for (sp in snapped) sb.union(sp.x, sp.y)
+                        snapScrubBounds = sb
+                        stylusPointList.clear()
+                        stylusPointList.addAll(snapped)
+                        gestureHaptic()
+                        com.toolsboox.ot.InkPerf.record("gesture.shape_snap", snapped.size.toLong())
+                    }
+                }
             }
 
             val stroke = Stroke(
@@ -6779,6 +10622,10 @@ abstract class SurfaceFragment : ScreenFragment() {
             )
             strokes.add(stroke)
             strokesToAdd.add(stroke)
+            // Ground truth for the field report: every stroke that actually committed (the
+            // "ms" columns carry the point count). Compared against page.strokes after a
+            // refresh, this splits "capture lost it" from "save/render lost it" at a glance.
+            com.toolsboox.ot.InkPerf.record("stroke.committed", stylusPointList.size * 1_000_000L)
 
             // Viwoods: the T1000 overlay shows the live stroke then auto-clears ~800ms
             // after pen-up. Re-render the committed strokes to the SurfaceView just after
@@ -6813,6 +10660,13 @@ abstract class SurfaceFragment : ScreenFragment() {
             // ever saved. Committing here persists every stroke immediately, so it
             // survives a reload. convertStrokes() no-ops if there's nothing to add.
             convertStrokes()
+
+            // Snap cleanup: repaint the shadow with the committed (snapped) stroke, then lift
+            // the raw mark's ink off the glass. Ordinary strokes never enter this branch.
+            if (snapScrubBounds != null && isBigmeDevice() && bigmeInk?.attached == true) {
+                applyStrokes(strokes, true)
+                scrubDaemonRegion(snapScrubBounds, 40f)
+            }
         }
 
         if (actions.isNotEmpty() || buttons.isNotEmpty()) {
@@ -6839,6 +10693,68 @@ abstract class SurfaceFragment : ScreenFragment() {
      * real pen-up). Either way the capture state is cleared, so leftover points can never be
      * prepended to the next stroke on this or any other page.
      */
+    /**
+     * Commit whatever stroke is mid-flight — the PAUSE twin of [onCancelDrawing]. A screen-off,
+     * an incoming call, a notification shade or a task switch can take the surface away without
+     * ACTION_UP or ACTION_CANCEL ever being delivered, and the half-written stroke was silently
+     * dropped ("strokes just disappear sometimes"). The ink already on the panel is the user's
+     * writing; keep it. Erase passes and lasso selections are NOT committed — an aborted erase
+     * is an abort, and a lasso path is a question, not ink.
+     */
+    private fun commitInFlightStroke() {
+        if (!penState || selectionMode || inFlightErasing || stylusPointList.isEmpty()) return
+        pushUndo()
+        val stroke = Stroke(
+            UUID.randomUUID(), firstPointTimestamp, stylusPointList.toList(), paint.color, effectivePenWidth(),
+            penStrokeStyle()
+        )
+        strokes.add(stroke)
+        strokesToAdd.add(stroke)
+        convertStrokes()
+        lastPoint = null
+        stylusPointList.clear()
+    }
+
+    /** Finger mode (or a finger moving an element): the surface is where the finger inks, so the
+     *  left-edge catcher asks a bezel flick of a finger landing on it (Michael 2026-10-12, B6).
+     *  Finger mode itself is dormant — [touchDrawingState] has had no switch since cb260673
+     *  (2026-05-28, the hand button became the one-finger gestures toggle) — so today only a finger
+     *  moving an element (imageMode) meets the bezel bar (review of f0035e3b, 2026-10-12). */
+    override fun edgeInkView(): View? =
+        if (touchDrawingState || imageMode) runCatching { provideSurfaceView() }.getOrNull() else null
+
+    /**
+     * The left edge's flick took the finger that had begun a stroke here (Finger mode): drop that
+     * stroke, so the CANCEL the catcher sends next commits nothing ([onCancelDrawing] keeps a stroke
+     * the SYSTEM stole — this one was never meant as ink). iOS cancels the stroke the same way
+     * (LeftEdgeFlickRecognizer.cancelInkUnderWay). Dormant with Finger mode ([edgeInkView]); kept
+     * right for its return (review of f0035e3b, 2026-10-12): the page is redrawn only where
+     * something was drawn live — the software preview (its own condition, [onMoveDrawing]), the
+     * Viwoods overlay (its coalesced live post called off as [onCancelDrawing] does, without the
+     * commit) or a finger lasso's loop (dropped too). On the Bigme daemon and Onyx's pen SDK a
+     * finger draws nothing live, so nothing is redrawn and no refresh is spent before the Hub's.
+     */
+    override fun edgeDropFingerInk() {
+        if (!touchDrawingState) return
+        val stroke = stylusPointList.isNotEmpty()
+        val loop = selectionMode && !hasSelection && selectionPoints.isNotEmpty()
+        if (!stroke && !loop) return
+        Timber.i("EdgeLadder: the finger's %s under the left-edge flick dropped (%d points)",
+            if (loop) "lasso loop" else "stroke", if (loop) selectionPoints.size else stylusPointList.size)
+        val drewSoftware = stroke && touchHelper == null && penState && viwoodsInk?.hardwareInk != true &&
+            bigmeInk?.attached != true
+        val drewViwoods = stroke && viwoodsInk != null
+        if (drewViwoods) {
+            provideSurfaceView().removeCallbacks(viwoodsLivePostRunnable)
+            viwoodsLivePostScheduled = false
+            viwoodsInk?.onStrokeEnd()
+        }
+        stylusPointList.clear()
+        lastPoint = null
+        if (loop) selectionPoints.clear()
+        if (drewSoftware || drewViwoods || loop) applyStrokes(strokes, true)
+    }
+
     private fun onCancelDrawing(touchPoint: StrokePoint, erasing: Boolean) {
         Timber.i("onCancelDrawing (${touchPoint.x}/${touchPoint.y})")
         if (penState && !erasing && stylusPointList.isNotEmpty()) {
@@ -6882,7 +10798,15 @@ abstract class SurfaceFragment : ScreenFragment() {
         processStrokes(strokesToAdd)
         strokesToAdd.clear()
 
-        if (touchHelper != null) {
+        if (touchHelper != null || isBigmeDevice()) {
+            // Debounced on Bigme too — .89 rebuilt and mirrored the WHOLE page on every
+            // pen-up, on the main thread: "I saw it writing strokes slowly and then
+            // crashed". The daemon overlay keeps the live ink visible until the one
+            // deferred bake lands after the pen pauses. Until then the shadow and the
+            // zoomed-resolution ink lack these strokes; a scrub first catches them up
+            // ([catchUpInkFrames]).
+            shadowBehind = true
+            sharpInkBehind = true
             provideSurfaceView().removeCallbacks(commitVisualRunnable)
             provideSurfaceView().postDelayed(commitVisualRunnable, COMMIT_VISUAL_DEBOUNCE_MS)
         } else {

@@ -128,6 +128,9 @@ class CalendarMonthFragment @Inject constructor() : SurfaceFragment() {
      * @param strokes the actual strokes
      */
     override fun onStrokeChanged(strokes: MutableList<Stroke>) {
+        // A walk STATION never stores ink — the raw pen path arrives here regardless of the
+        // touch router, so the refusal has to stand at the save (the -29 rule, every period).
+        if (isStation(notePage)) return
         val normalizedStrokes = Stroke.listDeepCopy(strokes)
         if (notePage != null) {
             calendarMonth.noteStrokes[notePage!!] = normalizedStrokes
@@ -199,8 +202,23 @@ class CalendarMonthFragment @Inject constructor() : SurfaceFragment() {
             val rawGesture = gestureListener.onTouchEvent(gestureDetector, view, motionEvent)
             val gestureResult = if (twoFingerGesture) rawGesture else OnGestureListener.NONE
 
-            if (notePage != null) {
-                CalendarMonthPageNotes.onTouchEvent(
+            if (isStation(notePage)) {
+                // A station is read-only: gestures walk, the pen writes nothing.
+                if (motionEvent.getToolType(0) == android.view.MotionEvent.TOOL_TYPE_FINGER) {
+                    when (gestureResult) {
+                        com.toolsboox.ot.OnGestureListener.UTD -> binding.toolbarDrawing.toolbarSwipeUp.performClick()
+                        com.toolsboox.ot.OnGestureListener.DTU -> binding.toolbarDrawing.toolbarSwipeDown.performClick()
+                    }
+                }
+                true
+            } else if (notePage != null) {
+                // Page 0's up-swipe backs onto the walk (All Picks) — the walk reverses the way
+                // it came, every granularity the same (-29's rule).
+                if (notePage!!.toIntOrNull() == 0 && gestureResult == com.toolsboox.ot.OnGestureListener.UTD &&
+                    motionEvent.getToolType(0) == android.view.MotionEvent.TOOL_TYPE_FINGER) {
+                    CalendarNavigator.toMonthNote(this, currentDate, STATION_PICKS)
+                    true
+                } else CalendarMonthPageNotes.onTouchEvent(
                     view, motionEvent, gestureResult, this@CalendarMonthFragment, calendarMonth, notePage!!
                 )
             } else {
@@ -212,24 +230,46 @@ class CalendarMonthFragment @Inject constructor() : SurfaceFragment() {
 
         toolbar.toolbarPager.visibility = View.GONE
 
+        // THE MONTH WALK (DESIGN-period-walk-2026-08-27 §1): face → ALL STARS → ALL PICKS →
+        // the period's note — the daily ritual walk at this granularity, stations as read-only
+        // pointers over the period's day files.
         binding.toolbarDrawing.toolbarSwipeUp.setOnClickListener {
-            if (notePage != null) {
-                val page = notePage!!.toIntOrNull() ?: 0
-                if (page == 0) {
-                    CalendarNavigator.toMonthPage(this, currentDate, CalendarMonth.DEFAULT_STYLE)
-                } else {
-                    CalendarNavigator.toMonthNote(this, currentDate, "${page - 1}")
+            when {
+                isStation(notePage) -> {
+                    val base = notePage!!.substringBefore('#')
+                    val idx = notePage!!.substringAfter('#', "0").toIntOrNull() ?: 0
+                    when {
+                        // A paged station steps back through its own pages before leaving.
+                        idx > 0 -> CalendarNavigator.toMonthNote(this, currentDate, "$base#${idx - 1}")
+                        base == STATION_PICKS -> CalendarNavigator.toMonthNote(this, currentDate, STATION_STARS)
+                        else -> CalendarNavigator.toMonthPage(this, currentDate, CalendarMonth.DEFAULT_STYLE)
+                    }
                 }
-            } else {
-                CalendarNavigator.toQuarterPage(this, currentDate)
+                notePage != null -> {
+                    val page = notePage!!.toIntOrNull() ?: 0
+                    if (page == 0) CalendarNavigator.toMonthNote(this, currentDate, STATION_PICKS)
+                    else CalendarNavigator.toMonthNote(this, currentDate, "${page - 1}")
+                }
+                else -> CalendarNavigator.toQuarterPage(this, currentDate)
             }
         }
         binding.toolbarDrawing.toolbarSwipeDown.setOnClickListener {
-            if (notePage != null) {
-                val page = notePage!!.toIntOrNull() ?: 0
-                CalendarNavigator.toMonthNote(this, currentDate, "${page + 1}")
-            } else {
-                CalendarNavigator.toMonthNote(this, currentDate, "0")
+            when {
+                isStation(notePage) -> {
+                    val base = notePage!!.substringBefore('#')
+                    val idx = notePage!!.substringAfter('#', "0").toIntOrNull() ?: 0
+                    when {
+                        // More pages in this station (his ruling: size to content, never overlap)?
+                        idx + 1 < stationPageCount -> CalendarNavigator.toMonthNote(this, currentDate, "$base#${idx + 1}")
+                        base == STATION_STARS -> CalendarNavigator.toMonthNote(this, currentDate, STATION_PICKS)
+                        else -> CalendarNavigator.toMonthNote(this, currentDate, "0")
+                    }
+                }
+                notePage != null -> {
+                    val page = notePage!!.toIntOrNull() ?: 0
+                    CalendarNavigator.toMonthNote(this, currentDate, "${page + 1}")
+                }
+                else -> CalendarNavigator.toMonthNote(this, currentDate, STATION_STARS)
             }
         }
         binding.toolbarDrawing.toolbarCalendarView.setOnClickListener {
@@ -241,7 +281,14 @@ class CalendarMonthFragment @Inject constructor() : SurfaceFragment() {
         // ink tools and the nav pill's unpacked actions, and the pill itself never comes up.
         setupAlmanacRail(
             surfaceKey = "month",
-            isAtPresent = { val n = LocalDate.now(); currentDate.year == n.year && currentDate.month == n.month }
+            isAtPresent = { val n = LocalDate.now(); currentDate.year == n.year && currentDate.month == n.month },
+            extraTools = if (notePage?.toIntOrNull() != null) listOf(
+                GoItem("▤", "Page template…") { showPeriodTemplatePicker() }
+            ) else emptyList(),
+            // The bottom pill's corner offers the pen tools on every page that takes ink, the
+            // period's face too (parity with iOS, review 2026-10-11) — never on a walk station,
+            // which stores none: there the corner is ⛶ only.
+            takesInk = !isStation(notePage)
         ) { CalendarNavigator.toMonthPage(this, LocalDate.now(), CalendarMonth.DEFAULT_STYLE) }
 
         utils.updateToolbar(binding)
@@ -277,9 +324,14 @@ class CalendarMonthFragment @Inject constructor() : SurfaceFragment() {
     override fun onTransformChanged(matrix: Matrix) {
         if (::binding.isInitialized) {
             binding.templateImageView.scaleType = ImageView.ScaleType.MATRIX
-            binding.templateImageView.imageMatrix = matrix
+            // Identity while the template drawn again at the zoomed resolution is up (16× with no
+            // loss of clarity, Michael 2026-10-12) — it already carries the matrix.
+            binding.templateImageView.imageMatrix = templateMatrixFor(matrix)
         }
     }
+
+    /** Where the template at the zoomed resolution shows (SurfaceFragment.ensureSharpTemplate). */
+    override fun templateView(): ImageView? = if (::binding.isInitialized) binding.templateImageView else null
 
     /**
      * Reload the current page.
@@ -292,14 +344,24 @@ class CalendarMonthFragment @Inject constructor() : SurfaceFragment() {
         this.calendarPattern = calendarPattern
         updateNavigator()
 
+        if (isStation(notePage)) {
+            renderStation(notePage!!)
+            return
+        }
         if (notePage != null) {
-            val noteTemplate = sharedPreferences.getInt("calendarNoteTemplate", 0)
+            // ▤ PER PAGE (DESIGN-period-walk-2026-08-27 §3): explicit sheet wins; else the legacy
+            // global pref keeps its two meanings so pre-existing pages look unchanged.
+            val page = notePage!!.toIntOrNull() ?: 0
+            val tplStore = com.toolsboox.plugin.calendar.ot.NotePageTemplates
+            val tpl = tplStore.templateFor(requireContext(), periodAnchor(), "month#$page")
+                ?: if (sharedPreferences.getInt("calendarNoteTemplate", 0) == 1) tplStore.GRID
+                else tplStore.LINES
             val noteStrokes = calendarMonth.noteStrokes[notePage] ?: listOf()
-            CalendarMonthPageNotes.drawPage(this.requireContext(), templateCanvas, calendarMonth, noteTemplate, notePage!!)
+            drawTemplate { c -> com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.drawPeriodNotePage(c, tpl, page) }
             applyStrokes(Stroke.listDeepCopy(noteStrokes), true)
         } else {
             val calendarStrokes = calendarMonth.calendarStrokes[calendarStyle ?: CalendarMonth.DEFAULT_STYLE] ?: listOf()
-            CalendarMonthPage.drawPage(this.requireContext(), templateCanvas, calendarMonth, calendarPattern)
+            drawTemplate { c -> CalendarMonthPage.drawPage(this.requireContext(), c, calendarMonth, calendarPattern) }
             applyStrokes(Stroke.listDeepCopy(calendarStrokes), true)
         }
     }
@@ -337,5 +399,93 @@ class CalendarMonthFragment @Inject constructor() : SurfaceFragment() {
      */
     override fun hideLoading() {
         binding.mainProgress.visibility = View.INVISIBLE
+    }
+
+    /** The month's one identity for per-page templates — its first day. */
+    private fun periodAnchor(): java.time.LocalDate = java.time.LocalDate.of(currentDate.year, currentDate.monthValue, 1)
+
+    /** The ▤ picker for a period note page — plain papers only (lines · grid · dots);
+     *  pickings waits for the boards-are-paper arc. Reached from the rail wrench's Tools. */
+    private fun showPeriodTemplatePicker() {
+        val ctx = context ?: return
+        val page = notePage?.toIntOrNull() ?: return
+        val tplStore = com.toolsboox.plugin.calendar.ot.NotePageTemplates
+        val key = "month#$page"
+        val current = tplStore.templateFor(ctx, periodAnchor(), key)
+            ?: if (sharedPreferences.getInt("calendarNoteTemplate", 0) == 1) tplStore.GRID
+            else tplStore.LINES
+        val ids = listOf(tplStore.LINES, tplStore.GRID, tplStore.DOTS)
+        val labels = ids.map {
+            tplStore.glyph(it) + "  " + tplStore.label(it) + if (it == current) "  ·  here" else ""
+        }.toTypedArray()
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("Template")
+            .setItems(labels) { _, which ->
+                if (ids[which] != current) {
+                    tplStore.set(ctx, periodAnchor(), key, ids[which])
+                    CalendarNavigator.toMonthNote(this, currentDate, notePage!!)
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .create()
+        showModal(dialog)
+        dialog.window?.decorView?.let { root -> root.post { com.toolsboox.ot.LedgerFonts.applyTree(root) } }
+    }
+
+    /** How many pages the station under the pen currently holds — set by [renderStation] on
+     *  arrival, read by the skipper to know whether "down" means the next page or the next
+     *  station. One is always safe: a stale count only shortens the in-station walk. */
+    private var stationPageCount = 1
+
+    /**
+     * Draw a walk station: aggregate the month's day files (IO, on demand — never at list time)
+     * and paint the scoped register. Read-only; the touch router and onStrokeChanged both refuse
+     * ink. Only files that EXIST are loaded, newest first, capped at 62 files / 120 grams — a
+     * year is 365 candidates and parsing them all would repeat the 35-second inventory mistake;
+     * the station can't show more than the cap anyway. Per-day tombstones honoured.
+     */
+    private fun renderStation(station: String) {
+        val ctx = requireContext()
+        val label = currentDate.format(java.time.format.DateTimeFormatter.ofPattern("MMMM", locale)).uppercase(locale)
+        val dates: List<java.time.LocalDate> = (1..currentDate.lengthOfMonth()).map { d -> java.time.LocalDate.of(currentDate.year, currentDate.monthValue, d) }
+        GlobalScope.launch(Dispatchers.Main) {
+            val grams: List<com.toolsboox.da.ImageElement> = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                // The one factory outside Hilt (a bare CalendarDayService() once read every day as
+                // "corrupt" here, -322) and the one read-only gather all four stations share.
+                val svc = com.toolsboox.plugin.calendar.fi.CalendarDayService.standalone(ctx)
+                val root = com.toolsboox.ot.LedgerPaths.documentsRoot(ctx)
+                val existing = dates.sortedDescending().filter { d ->
+                    java.io.File(root, "calendar/${d.year}/${"%02d".format(d.monthValue)}/day-$d-v2.json").exists()
+                }.take(62)
+                com.toolsboox.plugin.calendar.ot.StationGrams.gather(svc, root, existing, locale, cap = 120)
+            }
+            if (!isAdded) return@launch
+            // KIND-PAGED (Michael, mid-build 08-27): the station sizes to its CONTENT — a filter
+            // page per kind for the stars (the read / the watch / the listen / the mail), capacity
+            // chunks for both stations — and the skipper steps through the pages. Overlap never.
+            val base = station.substringBefore('#')
+            val idx = station.substringAfter('#', "0").toIntOrNull() ?: 0
+            val pages = if (base == STATION_STARS)
+                com.toolsboox.plugin.calendar.ot.CalendarDayPageIntake.starsStationPages(
+                    grams.filter { el -> el.page == "intake" }, label)
+            else {
+                val picksKey = com.toolsboox.plugin.calendar.ot.CalendarDayPageNotes.GRAM_PICKS
+                com.toolsboox.plugin.calendar.ot.CalendarDayPageIntake.picksStationPages(
+                    grams.filter { el -> el.page == picksKey || el.page.startsWith("$picksKey#") }, label)
+            }
+            stationPageCount = pages.size
+            val (header, chunk) = pages[idx.coerceIn(0, pages.size - 1)]
+            drawTemplate(decodesPictures = true) { c -> com.toolsboox.plugin.calendar.ot.CalendarDayPageIntake.drawStationGrid(c, chunk, header, ctx) }
+            applyStrokes(listOf(), true)
+        }
+    }
+
+    companion object {
+        /** The walk stations' notePage keys — navigation addresses only, NEVER storage keys.
+         *  A paged station rides "#<n>" suffixes on the same addresses. */
+        const val STATION_STARS = "allstars"
+        const val STATION_PICKS = "allpicks"
+        fun isStation(p: String?): Boolean =
+            p != null && (p.substringBefore('#') == STATION_STARS || p.substringBefore('#') == STATION_PICKS)
     }
 }

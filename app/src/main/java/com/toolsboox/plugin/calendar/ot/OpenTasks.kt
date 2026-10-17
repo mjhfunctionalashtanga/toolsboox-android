@@ -61,7 +61,9 @@ object OpenTasks {
             if (file.exists()) {
                 val items = runCatching { dayService.loadLedgerItems(file) }.getOrNull().orEmpty()
                 for (it in items) {
-                    if (it.kind != LedgerItem.Kind.TASK || it.done || it.text.isBlank()) continue
+                    // A PROPOSED candidate is not a live task — it must not ghost onto today's page
+                    // (offer-never-mint). It waits on the Tasks surface's Proposed shelf instead.
+                    if (it.kind != LedgerItem.Kind.TASK || it.done || it.proposed || it.text.isBlank()) continue
                     if (it.id in idsToday) continue
                     if (!saidToday.add(LedgerTaskDedupe.key(it.text))) continue
                     out.add(Open(it, d))

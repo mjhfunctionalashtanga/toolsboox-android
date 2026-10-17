@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    DEBUG BUILDS ONLY (src/debug is not part of any release variant).
+
+    Hands a connector key to a debug build over adb, so a device on the bench can be connected
+    without typing a key on e-ink and without the key ever being compiled in. Exported so `adb shell
+    am broadcast` can reach it, but guarded by android.permission.DUMP, which the adb shell holds and
+    ordinary apps cannot — another app on the device cannot set or clear the key.
+
+    The adb command is in ConnectorKeyReceiver.kt (an XML comment cannot hold its double-dash flag).
+    An empty mf_key removes the key. The receiver logs and answers only the key's fingerprint.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <receiver
+            android:name="com.toolsboox.debug.ConnectorKeyReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="com.toolsboox.mjh.debug.SET_CONNECTOR_KEY" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

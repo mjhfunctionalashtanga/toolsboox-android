@@ -1,13 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- THE ONE COMPOSE SCREEN (Michael 2026-10-11): the typed composer and the letter pad, one page.
+     The pen writes on the pad, a finger types the body — no mode. Every tappable thing rides
+     ABOVE the pad (the palm rule): top bar, From · Stationery, To, Subject, the body, the pages
+     row and the pen bar; the pad takes the rest of the page to the bottom edge. The root takes
+     focus when the hand goes back to the page, so no field keeps the keyboard up behind it. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/mail_compose_root"
     android:orientation="vertical"
     android:background="#FFFFFF"
+    android:focusable="true"
+    android:focusableInTouchMode="true"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
     <!-- Everything actionable rides the TOP bar — the palm rule: a hand resting on the lower
-         half of an e-ink slab must never send (or lose) an email. Same plain-TextView glyph
-         idiom as the inbox header. -->
+         half of an e-ink slab must never send (or lose) an email. ➤ Send and ✕ are pinned at the
+         end; the title and the letter's doors scroll sideways on a narrow screen rather than
+         push Send off it. Send is the letter pad's big filled button (Michael, 09-07: "a big
+         send button"), kept a thumb's width from ✕. -->
     <LinearLayout
         android:orientation="horizontal"
         android:gravity="center_vertical"
@@ -16,23 +26,76 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
 
-        <TextView
-            android:id="@+id/mail_compose_title"
-            android:text="Compose"
-            android:textColor="#000000"
-            android:textStyle="bold"
-            android:textSize="18sp"
+        <HorizontalScrollView
+            android:scrollbars="none"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_weight="1"/>
+            android:layout_weight="1">
+
+            <LinearLayout
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    android:id="@+id/mail_compose_title"
+                    android:text="Compose"
+                    android:textColor="#000000"
+                    android:textStyle="bold"
+                    android:textSize="18sp"
+                    android:paddingEnd="10dp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"/>
+
+                <!-- 📎 first among the doors: every letter can carry files, and on a narrow
+                     screen a reply's two worded doors used to scroll it out of sight. -->
+                <TextView
+                    android:id="@+id/mail_compose_attach"
+                    android:text="📎"
+                    android:textSize="18sp"
+                    android:textColor="#000000"
+                    android:padding="8dp"
+                    android:contentDescription="Attach files"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"/>
+
+                <!-- 🃏 The reply's board door (was the ↩ fork's third row): the letter's reply gram
+                     onto a pickings note, to gather and sketch the answer first. Replies only. -->
+                <TextView
+                    android:id="@+id/mail_compose_pickings"
+                    android:text="🃏 Draft on pickings"
+                    android:textSize="14sp"
+                    android:textColor="#000000"
+                    android:padding="8dp"
+                    android:visibility="gone"
+                    android:contentDescription="Draft on a pickings note first"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"/>
+
+                <!-- 📝 The letter onto today's note WITHOUT sending — for a letter to yourself. -->
+                <TextView
+                    android:id="@+id/mail_compose_note"
+                    android:text="📝 Onto today's note"
+                    android:textSize="14sp"
+                    android:textColor="#000000"
+                    android:padding="8dp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"/>
+
+            </LinearLayout>
+        </HorizontalScrollView>
 
         <TextView
             android:id="@+id/mail_compose_send"
             android:text="➤ Send"
-            android:textSize="16sp"
+            android:textSize="17sp"
             android:textStyle="bold"
-            android:textColor="#000000"
-            android:padding="8dp"
+            android:textColor="#FFFFFF"
+            android:background="#000000"
+            android:paddingHorizontal="18dp"
+            android:paddingVertical="10dp"
+            android:layout_marginStart="6dp"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"/>
 
@@ -42,6 +105,7 @@
             android:textSize="20sp"
             android:textColor="#000000"
             android:padding="8dp"
+            android:layout_marginStart="16dp"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"/>
     </LinearLayout>
@@ -51,17 +115,35 @@
         android:layout_width="match_parent"
         android:layout_height="1dp"/>
 
-    <!-- The sending account. One account = a plain statement; several = a tappable chooser
-         (the ▾ appears in code). Defaults to the inbox's account filter, so a narrowed inbox
-         and its compose agree on which door the mail goes out. -->
-    <TextView
-        android:id="@+id/mail_compose_from"
-        android:textSize="13sp"
-        android:textColor="#000000"
+    <!-- From (tap = this letter only; HOLD = pin as the default) · Stationery (per account).
+         One line each, never wrapping — a From that wrapped would move the pad. -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
         android:paddingHorizontal="14dp"
         android:paddingVertical="8dp"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"/>
+        android:layout_height="wrap_content">
+
+        <TextView
+            android:id="@+id/mail_compose_from"
+            android:textSize="13sp"
+            android:textColor="#000000"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"/>
+
+        <TextView
+            android:id="@+id/mail_compose_paper"
+            android:textSize="13sp"
+            android:textColor="#000000"
+            android:singleLine="true"
+            android:paddingStart="12dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
 
     <!-- To: autocompletes from the rolodex ("Name <address>"); the address is parsed back out
          of the angle brackets at send time, so picking a person and typing a bare address both
@@ -90,8 +172,26 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"/>
 
-    <!-- The body takes the rest of the page — a writing surface, not a slot. gravity=top so the
-         first line starts where the eye does, not vertically centered in the void. -->
+    <!-- What's riding the letter. Hidden until something is; each chip is its file's name and
+         an ✕ — the attachment list IS the UI, no manager screen behind it. -->
+    <HorizontalScrollView
+        android:id="@+id/mail_compose_attach_row"
+        android:visibility="gone"
+        android:scrollbars="none"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+        <LinearLayout
+            android:id="@+id/mail_compose_attach_chips"
+            android:orientation="horizontal"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="6dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </HorizontalScrollView>
+
+    <!-- The typed body. Over the pad it keeps a fixed share of the page (it scrolls inside, so
+         typing never moves the pad); on Text only stationery it takes the whole page. gravity=top
+         so the first line starts where the eye does. -->
     <EditText
         android:id="@+id/mail_compose_body"
         android:hint="Write…"
@@ -105,4 +205,36 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"/>
+
+    <!-- The pages row (‹ n of N › ＋ Page · 🗑) and the pen bar — built in code, above the pad. -->
+    <LinearLayout
+        android:id="@+id/mail_compose_ink_tools"
+        android:orientation="vertical"
+        android:paddingHorizontal="12dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <LinearLayout
+            android:id="@+id/mail_compose_pages"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+
+        <FrameLayout
+            android:id="@+id/mail_compose_pen_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
+
+    <!-- The pad: the rest of the page. -->
+    <FrameLayout
+        android:id="@+id/mail_compose_ink"
+        android:background="#000000"
+        android:padding="1dp"
+        android:layout_marginHorizontal="12dp"
+        android:layout_marginBottom="6dp"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="3"/>
 </LinearLayout>

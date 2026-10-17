@@ -92,6 +92,15 @@ object LaterFeed {
         Triple("educate", "📧 Email", "Email"),
     )
 
+    /**
+     * A lane's word in a pane row (iOS review 2026-10-12, `FeedTree.Lane.paneWord`; Android parity
+     * 2026-10-12): "The Read" → "Read", "The Watch" → "Watch", "The Listen" → "Listen", "Email"
+     * stays. Under an open Later List the lanes wore the lenses' own names from a fold up — "The
+     * Read · The Watch · The Listen" twice in one column, told apart only by the indent. The list's
+     * own title keeps the whole name ([title]).
+     */
+    fun paneWord(plain: String): String = plain.removePrefix("The ")
+
     /** The name the list wears when narrowed to one lane; a lane says which list it belongs to
      *  first, because "The Read" alone is indistinguishable from the RSS lens of that name sitting
      *  three rows above it in the same drawer. */

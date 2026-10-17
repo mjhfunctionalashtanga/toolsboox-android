@@ -18,13 +18,7 @@ import java.util.Date
  */
 class OpenTasksTest {
 
-    private val service = CalendarDayService().apply {
-        moshi = com.squareup.moshi.Moshi.Builder()
-            .add(com.toolsboox.ot.LocaleJsonAdapter())
-            .add(com.toolsboox.ot.DateJsonAdapter())
-            .add(com.toolsboox.ot.UUIDJsonAdapter())
-            .build()
-    }
+    private val service = CalendarDayService(com.toolsboox.ot.LedgerMoshi.standard())
 
     private fun task(id: String, text: String, done: Boolean = false) = LedgerItem(
         id = id, kind = LedgerItem.Kind.TASK, text = text, date = Date(0L)

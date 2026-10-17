@@ -6,6 +6,7 @@ import com.squareup.moshi.Types
 import com.toolsboox.plugin.calendar.da.v2.LibraryBook
 import com.toolsboox.plugin.calendar.nw.HubTransport
 import com.toolsboox.plugin.calendar.nw.LedgerSidecarSync
+import com.toolsboox.plugin.calendar.nw.putBytesEnsuringFolders
 import com.toolsboox.plugin.calendar.nw.putFileCommitted
 import timber.log.Timber
 import java.io.File
@@ -44,8 +45,12 @@ import java.util.concurrent.Executors
  * (the Boox aimed at a Syncthing tree) participates READ-ONLY. Its pre-existing books get
  * manifest ENTRIES pushed up on the scan — so the fleet sees them on every shelf — but the scan
  * does not bulk-upload their bytes (a 20GB tree is Syncthing's to carry until Syncthing retires,
- * design step E), and NOTHING here ever deletes inside a declared tree: not a tombstone, not a
- * confirmation, nothing — the tree belongs to whatever put the books there. A fetch of an
+ * design step E), and NOTHING here ever deletes inside a declared tree BY ITSELF: not a
+ * tombstone, not a merge, not a pass. Since 09-13 (Michael: "we need to figure out how to delete
+ * things too, like when I finish a comic book… same with finished books") the PERSON can: a
+ * "Finished — delete everywhere" or "Delete from this device" answered on this device deletes
+ * the file wherever it sits ([deleteEverywhere], [deleteHere]); the fleet still only ever gets
+ * the question. A fetch of an
  * entry-only book quietly fails and the ghost card simply stays until the bytes exist on the hub
  * (an add that flows THROUGH the app uploads bytes even into a declared tree, because the add
  * moment holds them anyway). When Syncthing retires, the scan's entry-only branch is the one line
@@ -64,11 +69,44 @@ import java.util.concurrent.Executors
 object LibraryHub {
 
     private const val MANIFEST_PATH = "books-index.json"
+
+    /**
+     * WHERE THE LIBRARY LIVES — its own choice, apart from where the day sync goes (Michael,
+     * 09-13: "what about using Google Drive?" — the VPS holding the WebDAV hub has 3.7 GB free
+     * against a 20 GB declared library, while the planner JSON that feeds the VPS pipeline must
+     * keep riding WebDAV). "auto" = whatever the sync backend is (yesterday's behaviour);
+     * "drive" / "webdav" pin the library alone. The iOS twin is Settings › Books › Library over.
+     */
+    const val LIBRARY_BACKEND_KEY = "library_backend"   // auto | webdav | drive
+    fun libraryBackend(context: Context): String = prefs(context).getString(LIBRARY_BACKEND_KEY, "auto") ?: "auto"
+    fun setLibraryBackend(context: Context, v: String) = prefs(context).edit().putString(LIBRARY_BACKEND_KEY, v).apply()
+
+    /** The hub's transport for THIS device — the library's own choice, else the sync backend's. */
+    fun transport(context: Context): HubTransport? = when (libraryBackend(context)) {
+        "drive" -> com.toolsboox.plugin.calendar.nw.DriveHubTransport.create(context)
+        "webdav" -> LedgerSidecarSync.service(context)?.let { com.toolsboox.plugin.calendar.nw.WebDavHubTransport(it) }
+        else -> LedgerSidecarSync.transport(context)
+    }
+    private fun manifestPull(context: Context): String? =
+        if (libraryBackend(context) == "auto") LedgerSidecarSync.pull(context, MANIFEST_PATH)
+        else transport(context)?.get(MANIFEST_PATH)?.toString(Charsets.UTF_8)
+    private fun manifestPush(context: Context, text: String) {
+        if (libraryBackend(context) == "auto") LedgerSidecarSync.push(context, MANIFEST_PATH, text)
+        else transport(context)?.putBytesEnsuringFolders(MANIFEST_PATH, text.toByteArray(Charsets.UTF_8))
+    }
     private const val PREFS = "ledger_reader_prefs"
     private const val KEY_WIFI_ONLY = "library_wifi_only"
     private const val KEY_CEILING_MB = "library_size_ceiling_mb"
     private const val KEY_CARRY_PREFIX = "library_carry:"
+    /** Whether DECLARED-TREE bytes ride up to the hub: "off" (entry-only, the historical seam),
+     *  "small" (≤ the size ceiling), "all". Default off — Syncthing owns those bytes until the
+     *  person says otherwise. His ask, 2026-08-24: comics offline between devices WITHOUT
+     *  Syncthing, "this might need a settings gate for download size". This is that gate. */
+    private const val KEY_CARRY_DECLARED = "library_carry_declared"
     private const val KEY_ACKED_TOMBSTONES = "library_tombstones_acked"
+    /** Books this device's person deleted HERE ONLY — never offered back as a ghost, never
+     *  re-fetched by policy; a tap on the shelf's own fetch door un-dismisses. */
+    private const val KEY_DISMISSED_HERE = "library_dismissed_here"
 
     private val adapter = Moshi.Builder().build()
         .adapter<List<LibraryBook>>(Types.newParameterizedType(List::class.java, LibraryBook::class.java))
@@ -142,6 +180,25 @@ object LibraryHub {
     fun sizeCeilingBytes(context: Context): Long =
         prefs(context).getInt(KEY_CEILING_MB, 100).toLong() * 1024 * 1024
 
+    // DEFAULT "all" since 09-13 — Syncthing's retirement (Michael: "sync files… between all my
+    // devices — I don't wish to rely on Syncthing"): a declared tree's bytes ride up to the hub
+    // on the tick, wifi-only as ever, so the hub — not Syncthing — carries the fleet's books.
+    // The Bookshelf menu still offers Off / Small (≤ the ceiling) / All for anyone who wants less.
+    fun carryDeclared(context: Context): String =
+        prefs(context).getString(KEY_CARRY_DECLARED, "all") ?: "all"
+
+    fun setCarryDeclared(context: Context, mode: String) =
+        prefs(context).edit().putString(KEY_CARRY_DECLARED, mode).apply()
+
+    /** Should THIS declared-tree entry's bytes ride up this pass? The gate plus the same
+     *  network courtesy the fetch side keeps: wifi-only means uploads too. */
+    private fun shouldCarryDeclared(context: Context, entry: BookshelfSource.Entry): Boolean {
+        val mode = carryDeclared(context)
+        if (mode == "off") return false
+        if (wifiOnly(context) && !unmetered(context)) return false
+        return mode == "all" || entry.sizeBytes <= sizeCeilingBytes(context)
+    }
+
     fun carry(context: Context, folder: String): LibraryPolicy.Carry =
         LibraryPolicy.Carry.of(prefs(context).getString(KEY_CARRY_PREFIX + folder, null))
 
@@ -157,10 +214,86 @@ object LibraryHub {
 
     // ── What the shelf asks ───────────────────────────────────────────────────────────────────
 
-    /** Books the fleet has that this shelf doesn't — the ghost cards. Reads only the cache. */
+    /**
+     * Books the fleet has that this shelf doesn't — the ghost cards. Reads only the cache.
+     *
+     * MATCHED BY FILE, NOT BY PLACE. The manifest id is FOLDER-QUALIFIED (`ReadingState.keyFor`:
+     * folder + name + "#" + size), which is right for a stable library and wrong the moment a
+     * shelf is re-pointed: changing the declared tree from `Books/ebooks` to `Books` moves every
+     * book's folder, so every id this device itself published stops matching the same file on
+     * disk. Michael saw the result as "it's got cloud comics? weird" — comics he owns, offered
+     * back to him from the fleet, because they had moved half an inch in the path.
+     *
+     * So a manifest row is also dropped when a local file has the same NAME AND SIZE anywhere on
+     * the shelf. Name+size is what the file IS; the folder is only where it currently sits. A
+     * genuine second copy of a book in another folder was already indistinguishable from the first
+     * under this scheme, so nothing is lost by ignoring the folder here.
+     */
     fun offered(context: Context, shelf: List<BookshelfSource.Entry>): List<LibraryBook> {
         val localIds = shelf.mapTo(HashSet()) { idFor(it) }
-        return cachedManifest(context).filter { !it.isDeleted && it.id !in localIds }
+        val localFiles = shelf.mapTo(HashSet()) { "${it.name}#${it.sizeBytes}" }
+        val dismissed = dismissedHere(context)
+        return cachedManifest(context).filter {
+            !it.isDeleted && it.id !in localIds && it.id !in dismissed && "${it.name}#${it.size}" !in localFiles
+        }
+    }
+
+    fun dismissedHere(context: Context): Set<String> =
+        prefs(context).getStringSet(KEY_DISMISSED_HERE, emptySet()) ?: emptySet()
+
+    private fun setDismissedHere(context: Context, ids: Set<String>) =
+        prefs(context).edit().putStringSet(KEY_DISMISSED_HERE, ids).apply()
+
+    /**
+     * "Delete from this device" — the file goes, the library keeps the book, and this shelf
+     * stops offering it back (the fleet still holds it; a tap on any ghost door un-dismisses).
+     */
+    fun deleteHere(context: Context, entry: BookshelfSource.Entry): Boolean {
+        val id = idFor(entry)
+        val gone = BookshelfSource.delete(context, entry)
+        if (gone) setDismissedHere(context, dismissedHere(context) + id)
+        return gone
+    }
+
+    /**
+     * "Finished — delete everywhere": the file here, the bytes on the hub (this record's path and
+     * every live twin's — same hash, the re-pointed-tree double), and a tombstone for each, which
+     * on every other shelf is the "removed — keep your copy?" QUESTION, never an action. The
+     * local delete happens first and synchronously (the caller re-lists the shelf); the hub side
+     * rides the library-hub thread, quiet on failure — the next pass re-tombstones nothing, so a
+     * dropped network simply leaves bytes on the hub under a tombstoned record (the truth you can
+     * change your mind about).
+     */
+    fun deleteEverywhere(context: Context, entry: BookshelfSource.Entry, onDone: ((Boolean) -> Unit)? = null): Boolean {
+        val app = context.applicationContext
+        val id = idFor(entry)
+        val gone = BookshelfSource.delete(app, entry)
+        if (!gone) return false
+        ackKeep(app, id)   // this device answered; the tombstone must not come back as a question here
+        executor.execute {
+            val ok = runCatching {
+                val now = System.currentTimeMillis()
+                val paths = mutableListOf<String>()
+                manifestRoundTrip(app) { byId ->
+                    val self = byId[id]
+                    val hash = self?.hash.orEmpty()
+                    val twins = byId.values.filter {
+                        !it.isDeleted && (it.id == id || (hash.isNotBlank() && it.hash == hash))
+                    }
+                    if (twins.isEmpty() && self == null) byId[id] = LibraryBook(id = id, deletedAt = now, added = 0L)
+                    for (t in twins) {
+                        byId[t.id] = t.copy(deletedAt = now)
+                        if (t.bytesAt > 0L) paths += t.remotePath
+                    }
+                }
+                val svc = transport(app)
+                for (path in paths) runCatching { svc?.delete(path) }
+                    .onFailure { Timber.w(it, "LibraryHub: hub delete failed for $path") }
+                true
+            }.onFailure { Timber.w(it, "LibraryHub: deleteEverywhere failed for $id") }.getOrDefault(false)
+            onDone?.let { cb -> android.os.Handler(android.os.Looper.getMainLooper()).post { cb(ok) } }
+        }
+        return true
     }
 
     /** Books tombstoned in the manifest that this device still holds and hasn't been asked about
@@ -192,16 +325,21 @@ object LibraryHub {
         val app = context.applicationContext
         executor.execute {
             runCatching {
-                val svc = LedgerSidecarSync.transport(app) ?: return@execute
+                val svc = transport(app) ?: return@execute
                 val entry = BookshelfSource.list(app)
                     .firstOrNull { it.folder == folder && it.name == name } ?: return@execute
                 if (!uploadBook(app, svc, entry)) return@execute
+                val now = System.currentTimeMillis()
                 val record = LibraryBook(
                     id = idFor(entry), name = entry.name, folder = entry.folder,
                     size = entry.sizeBytes, hash = sha1Of(app, entry).orEmpty(),
-                    addedBy = deviceName(app), added = System.currentTimeMillis(), deletedAt = 0L
+                    addedBy = deviceName(app), added = now, deletedAt = 0L,
+                    bytesAt = now   // the upload above just proved them
                 )
                 manifestRoundTrip(app) { byId -> byId[record.id] = record }
+                // An add through the app is the ruling's opening move — "downloaded to one
+                // device, downloaded to all": the want is what makes the rest of the fleet pull.
+                BookWantsStore.want(app, record.id, deviceName(app))
             }.onFailure { Timber.w(it, "LibraryHub: pushAdded failed for $folder/$name") }
         }
     }
@@ -218,6 +356,11 @@ object LibraryHub {
     ): Boolean {
         // Upload wants a File; a declared-tree entry materialises through the same read cache the
         // reader already uses (keyed name+size, so this costs nothing on a re-push).
+        // Note whether the cache copy pre-existed: a carry-declared pass over a comics folder
+        // must not leave gigabytes behind in cache/shelf (the 141 MB cleanup, at 20× scale) —
+        // a copy minted just for this upload is deleted after it.
+        val cached = entry.uri != null &&
+            java.io.File(java.io.File(context.cacheDir, "shelf"), "${entry.sizeBytes}-${entry.name}").exists()
         val file = BookshelfSource.materialise(context, entry) ?: return false
 
         // Ensure the ancestry every time — cheap (MKCOL answers 405 for "exists"; Drive answers
@@ -230,7 +373,9 @@ object LibraryHub {
             svc.ensureFolder(prefix)
         }
 
-        return svc.putFileCommitted(prefix, entry.name, file)
+        val ok = svc.putFileCommitted(prefix, entry.name, file)
+        if (entry.uri != null && !cached) runCatching { file.delete() }
+        return ok
     }
 
     // ── Deletes ───────────────────────────────────────────────────────────────────────────────
@@ -267,7 +412,7 @@ object LibraryHub {
     private fun manifestRoundTrip(
         context: Context, mutate: ((MutableMap<String, LibraryBook>) -> Unit)? = null
     ): List<LibraryBook> {
-        val remoteText = LedgerSidecarSync.pull(context, MANIFEST_PATH)
+        val remoteText = manifestPull(context)
         val remote: List<LibraryBook> =
             if (remoteText.isNullOrBlank()) emptyList()
             else runCatching { adapter.fromJson(remoteText) }.getOrNull() ?: emptyList()
@@ -277,7 +422,7 @@ object LibraryHub {
         val merged = byId.values.toList()
         saveCache(context, merged)
         if (merged != remote) {
-            LedgerSidecarSync.push(context, MANIFEST_PATH, adapter.toJson(merged))
+            manifestPush(context, adapter.toJson(merged))
         }
         return merged
     }
@@ -311,13 +456,24 @@ object LibraryHub {
     }
 
     private fun syncPass(context: Context) {
-        val svc = LedgerSidecarSync.transport(context) ?: return
+        val svc = transport(context) ?: return
         val shelf = runCatching { BookshelfSource.list(context) }.getOrDefault(emptyList())
         val localIds = shelf.mapTo(HashSet()) { idFor(it) }
 
         // One pull for the whole pass.
         val byId = LinkedHashMap<String, LibraryBook>()
         for (b in manifestRoundTrip(context)) byId[b.id] = b
+
+        // THE WANTS — the fleet's "this should be everywhere" list (his 08-27 ruling), merged
+        // once per pass. Both loops below consult it: UP answers a want with bytes this device
+        // holds, DOWN fetches a want this device lacks.
+        val wanted = runCatching { BookWantsStore.sync(context) }.getOrDefault(emptyList())
+            .filter { !it.isDeleted }.mapTo(HashSet()) { it.id }
+
+        // The opens sidecar rides the same tick — the shelf's period band converges fleet-wide
+        // without its own worker (the 08-11 promise, kept under the 08-27 stats ruling).
+        runCatching { BookOpens.sync(context) }
+        runCatching { com.toolsboox.plugin.calendar.ot.ReadingSessionStore.sync(context) }
 
         // UP: local books the manifest has never heard of. Two grades, per the ruled seam:
         // an app-directory book carries its bytes; a declared-tree book contributes its entry
@@ -327,36 +483,104 @@ object LibraryHub {
         // person's to keep, the record is the fleet's.
         var changed = false
         val now = System.currentTimeMillis()
+        val wifiOnly = wifiOnly(context)
+        val unmetered = unmetered(context)
         for (entry in shelf) {
             val id = idFor(entry)
-            if (byId.containsKey(id)) continue
+            val known = byId[id]
+            if (known != null) {
+                // THE WANT ANSWERED FROM THE HOLDING SIDE (his 08-27 ruling). The old
+                // `containsKey → continue` meant an entry-only record could never gain bytes —
+                // the book the fleet asked for stayed a dead ghost forever. A live want for a
+                // book this shelf HOLDS whose bytes are unconfirmed rides up now, regardless of
+                // the carry-declared gate: a request is not a mirror, and the asker is the
+                // policy. Wifi courtesy still applies — this is the hourly worker, not a tap.
+                if (id in wanted && known.bytesAt == 0L && !known.isDeleted &&
+                    !(wifiOnly && !unmetered)
+                ) {
+                    if (uploadBook(context, svc, entry)) {
+                        byId[id] = known.copy(bytesAt = System.currentTimeMillis())
+                        changed = true
+                    }
+                }
+                continue
+            }
             // `file != null` means an app-directory (or plain-File) book — bytes ride up. A
-            // uri-backed entry IS the declared tree, and the scan carries its entry only.
-            val bytesCarried = if (entry.file != null) uploadBook(context, svc, entry)
-            else true   // entry-only: the seam
+            // uri-backed entry IS the declared tree; historically entry-only (Syncthing's bytes),
+            // now gated: with the carry-declared setting on, its bytes ride up too — which is
+            // what lets a mihon comic downloaded on the Palma be FETCHED on the B6 with no
+            // Syncthing anywhere in the story. The manifest entry is written either way, so an
+            // ungated book still ghosts honestly.
+            var uploads = entry.file != null || shouldCarryDeclared(context, entry) ||
+                (id in wanted && !(wifiOnly && !unmetered))
+            val hash = sha1Of(context, entry).orEmpty()
+            // ONE UPLOAD PER FILE, NOT PER PATH (09-13, "why is that 20 gigs?"): the Palma's
+            // declared tree was re-pointed once, so every Mihon comic stands in the manifest
+            // twice — `downloads/…` and `Mihon/downloads/…`, same hash — and 20 GB declared is
+            // 12 GB of files. A declared copy whose hash the hub already holds under another
+            // live record rides its ENTRY up and not its bytes; the fetch side reads those bytes
+            // through the donor ([bytesDonor]). App-directory books still carry themselves.
+            if (uploads && entry.file == null && hash.isNotBlank() &&
+                byId.values.any { !it.isDeleted && it.id != id && it.hash == hash && it.bytesAt > 0L }
+            ) uploads = false
+            val bytesCarried = if (uploads) uploadBook(context, svc, entry) else true
             if (!bytesCarried) continue   // quiet failure — the next pass retries this add whole
             byId[id] = LibraryBook(
                 id = id, name = entry.name, folder = entry.folder, size = entry.sizeBytes,
-                hash = sha1Of(context, entry).orEmpty(),
-                addedBy = deviceName(context), added = now, deletedAt = 0L
+                hash = hash,
+                addedBy = deviceName(context), added = now, deletedAt = 0L,
+                bytesAt = if (uploads) now else 0L
             )
             changed = true
         }
 
         // DOWN: manifest books this shelf lacks. LibraryPolicy judges each; only FETCH moves
         // bytes, everything else stays offered and the Bookshelf draws the ghost.
-        val wifiOnly = wifiOnly(context)
-        val unmetered = unmetered(context)
         val ceiling = sizeCeilingBytes(context)
-        for (book in byId.values) {
-            if (book.isDeleted || book.id in localIds) continue
+        // READ-AHEAD (the Mihon lift's downloads half, 09-02): the next two chapters of any
+        // series this device is mid-read in fetch themselves — the ▶ Continue walk already
+        // opens the next sibling; this makes sure it is already here when it does. Same facts
+        // as the Continue tracker (position clock + name-ordered siblings), judged here so an
+        // on-open folder still reads ahead in the one series being actively read. The wifi
+        // courtesy and the size ceiling both hold — a 280MB chapter still waits for its tap.
+        val readAhead: Set<String> = runCatching {
+            val touched = ReaderPositionStore.lastReadTimes(context)
+            val out = mutableSetOf<String>()
+            for ((_, sibs0) in byId.values.filter { !it.isDeleted }.groupBy { it.folder }) {
+                val sibs = sibs0.sortedBy { it.name.lowercase() }
+                val here = sibs.filter { touched.containsKey(it.name) }
+                    .maxByOrNull { touched[it.name] ?: 0L } ?: continue
+                val i = sibs.indexOfFirst { it.id == here.id }
+                if (i < 0) continue
+                sibs.subList((i + 1).coerceAtMost(sibs.size), (i + 3).coerceAtMost(sibs.size))
+                    .forEach { out += it.id }
+            }
+            out
+        }.getOrDefault(emptySet())
+        val dismissed = dismissedHere(context)
+        for (book in byId.values.toList()) {
+            if (book.isDeleted || book.id in localIds || book.id in dismissed) continue
+            // A WANTED book bypasses policy — carry mode and the size ceiling both — exactly as
+            // a tapped ghost does: the person asked, and the want is that ask made fleet-visible
+            // (his 08-27 ruling; the 280 MB chapter is precisely the book this is for). The
+            // wifi courtesy is the one gate kept: this is the hourly worker spending data, not
+            // a person watching a progress line.
+            val wantedHere = book.id in wanted && !(wifiOnly && !unmetered)
+            val aheadHere = book.id in readAhead && !(wifiOnly && !unmetered) && book.size <= ceiling
             val decision = LibraryPolicy.decide(
                 book.size, carry(context, book.folder), wifiOnly, unmetered, ceiling
             )
-            if (decision == LibraryPolicy.Decision.FETCH) {
+            if (wantedHere || aheadHere || decision == LibraryPolicy.Decision.FETCH) {
                 // Quiet on failure: an entry-only book (bytes not on the hub yet) or a dropped
                 // network leaves the ghost standing, which is the truthful render.
-                if (!fetchBlocking(context, svc, book)) {
+                if (fetchBlocking(context, svc, book, from = bytesDonor(book, byId.values)?.remotePath ?: book.remotePath)) {
+                    // The fetch just proved the hub holds whole bytes — confirm it for the
+                    // fleet, which is what stops another device's answering upload.
+                    if (book.bytesAt == 0L) {
+                        byId[book.id] = book.copy(bytesAt = System.currentTimeMillis())
+                        changed = true
+                    }
+                } else {
                     Timber.i("LibraryHub: ${book.id} offered — fetch didn't land this pass")
                 }
             }
@@ -365,7 +589,7 @@ object LibraryHub {
         if (changed) {
             val merged = byId.values.toList()
             saveCache(context, merged)
-            LedgerSidecarSync.push(context, MANIFEST_PATH, adapter.toJson(merged))
+            manifestPush(context, adapter.toJson(merged))
         }
     }
 
@@ -375,12 +599,24 @@ object LibraryHub {
      *  A tap bypasses policy on purpose — the person asking IS the policy. */
     fun fetch(context: Context, book: LibraryBook, onDone: (Boolean) -> Unit) {
         val app = context.applicationContext
+        if (book.id in dismissedHere(app)) setDismissedHere(app, dismissedHere(app) - book.id)
         val main = android.os.Handler(android.os.Looper.getMainLooper())
         executor.execute {
             val ok = runCatching {
-                val svc = LedgerSidecarSync.transport(app) ?: return@runCatching false
-                fetchBlocking(app, svc, book)
+                val svc = transport(app) ?: return@runCatching false
+                val from = if (book.bytesAt > 0L) book.remotePath
+                    else bytesDonor(book, cachedManifest(app))?.remotePath ?: book.remotePath
+                fetchBlocking(app, svc, book, from = from)
             }.getOrDefault(false)
+            // A landed tap proved the hub's bytes — confirm for the fleet (stops answering
+            // uploads); a needed record may predate the field, so 0 → now is the only write.
+            if (ok && book.bytesAt == 0L) runCatching {
+                manifestRoundTrip(app) { byId ->
+                    byId[book.id]?.takeIf { it.bytesAt == 0L }?.let {
+                        byId[book.id] = it.copy(bytesAt = System.currentTimeMillis())
+                    }
+                }
+            }
             main.post { onDone(ok) }
         }
     }
@@ -391,9 +627,18 @@ object LibraryHub {
      * so a truncated or corrupted transfer never exists under the book's real name. The manifest
      * already told us what the file should be; that is a stronger check than any header.
      */
+    /**
+     * The live record whose bytes the hub holds for the SAME file as [book] — same non-blank
+     * hash, confirmed bytes — when [book] itself is entry-only. The second path of a re-pointed
+     * declared tree reads through the first; nothing is uploaded twice. Null = no such twin.
+     */
+    fun bytesDonor(book: LibraryBook, all: Collection<LibraryBook>): LibraryBook? =
+        if (book.bytesAt > 0L || book.hash.isBlank()) null
+        else all.firstOrNull { !it.isDeleted && it.id != book.id && it.hash == book.hash && it.bytesAt > 0L }
+
     private fun fetchBlocking(
-        context: Context, svc: HubTransport, book: LibraryBook
-    ): Boolean = svc.getStream(book.remotePath) { input ->
+        context: Context, svc: HubTransport, book: LibraryBook, from: String = book.remotePath
+    ): Boolean = svc.getStream(from) { input ->
         val landed = BookshelfSource.writeInto(context, book.folder, book.name) { out ->
             val md = MessageDigest.getInstance("SHA-1")
             val buf = ByteArray(64 * 1024)

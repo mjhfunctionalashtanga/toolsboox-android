@@ -12,7 +12,10 @@ import java.time.LocalDate
  * started on. The same three fields, spelled the same way, that [WritePage] and [SynthPage] carry
  * and that `pages.json` is on the wire.
  */
-data class LedgerNamedPage(val key: String, var name: String, val date: LocalDate)
+// The Saber folder label rides every row (Michael, 09-02) — "" = unfiled. Additive and
+// tolerant on both forks THE SAME DAY: either fork rewriting this index without the field
+// would strip every filing — which is why BOTH write sites and BOTH read sites carry it.
+data class LedgerNamedPage(val key: String, var name: String, val date: LocalDate, var folder: String = "")
 
 /**
  * THE NAME INDEX, PARAMETERISED — the store Grid and Jot never had.
@@ -110,7 +113,7 @@ open class LedgerDocumentStore(
             (0 until arr.length()).mapNotNull {
                 val o = arr.getJSONObject(it)
                 val d = runCatching { LocalDate.parse(o.optString("date")) }.getOrNull() ?: return@mapNotNull null
-                LedgerNamedPage(o.optString("key"), o.optString("name"), d)
+                LedgerNamedPage(o.optString("key"), o.optString("name"), d, o.optString("folder"))
             }.toMutableList()
         }.getOrDefault(mutableListOf())
     }
@@ -122,7 +125,8 @@ open class LedgerDocumentStore(
         runCatching {
             val arr = JSONArray()
             for (p in pages) arr.put(JSONObject()
-                .put("key", p.key).put("name", p.name).put("date", p.date.toString()))
+                .put("key", p.key).put("name", p.name).put("date", p.date.toString())
+                .put("folder", p.folder))
             file(context).writeText(arr.toString())
         }.onFailure { Timber.w(it, "$dir index save failed") }
     }
@@ -131,7 +135,7 @@ open class LedgerDocumentStore(
     fun add(context: Context, name: String, date: LocalDate = LocalDate.now()): LedgerNamedPage {
         val pages = list(context)
         val page = LedgerNamedPage("$defaultKey-${System.currentTimeMillis()}",
-            name.ifBlank { "$fallbackName ${pages.count { it.key != defaultKey } + 1}" }, date)
+            name.ifBlank { LedgerDefaultName.forDate(date, pages.map { it.name }) }, date)
         pages.add(0, page); save(context, pages)
         sync(context)
         return page
@@ -142,6 +146,13 @@ open class LedgerDocumentStore(
      * note): titling the 21st's grid page must not title the 22nd's. Naming a daily page for the
      * first time INSERTS its entry — the index holds only the days you bothered to title.
      */
+    /** File (or unfile) a page — same matching rule as rename below. */
+    fun setFolder(context: Context, key: String, folder: String, date: LocalDate) {
+        val pages = list(context)
+        pages.firstOrNull { it.key == key && (key != defaultKey || it.date == date) }
+            ?.let { it.folder = folder; save(context, pages); sync(context) }
+    }
+
     fun rename(context: Context, key: String, name: String, date: LocalDate) {
         val pages = list(context)
         val existing = pages.firstOrNull { it.key == key && (key != defaultKey || it.date == date) }
@@ -207,7 +218,7 @@ open class LedgerDocumentStore(
                         val o = arr.getJSONObject(i); val k = o.optString("key")
                         val d = runCatching { LocalDate.parse(o.optString("date")) }.getOrNull()
                         if (k.isNotBlank() && d != null && !byId.containsKey("$k|$d"))
-                            byId["$k|$d"] = LedgerNamedPage(k, o.optString("name"), d)
+                            byId["$k|$d"] = LedgerNamedPage(k, o.optString("name"), d, o.optString("folder"))
                     }
                 }
                 byId.values.toMutableList()
@@ -219,7 +230,8 @@ open class LedgerDocumentStore(
             if (merged.map { idOf(it) } != local.map { idOf(it) }) save(context, merged)
             val arr = JSONArray()
             for (p in merged) arr.put(JSONObject()
-                .put("key", p.key).put("name", p.name).put("date", p.date.toString()))
+                .put("key", p.key).put("name", p.name).put("date", p.date.toString())
+                .put("folder", p.folder))
             com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.push(context, remotePath(), arr.toString())
         }
     }

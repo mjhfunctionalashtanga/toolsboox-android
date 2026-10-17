@@ -8,9 +8,6 @@ import androidx.security.crypto.MasterKey
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.squareup.moshi.Moshi
-import com.toolsboox.ot.DateJsonAdapter
-import com.toolsboox.ot.LocaleJsonAdapter
-import com.toolsboox.ot.UUIDJsonAdapter
 import com.toolsboox.plugin.calendar.da.v2.*
 import com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer
 import kotlinx.coroutines.Dispatchers
@@ -96,13 +93,7 @@ class UltrabridgeSyncWorker(
         /**
          * Build a Moshi instance matching the app's NetworkModule.provideMoshi().
          */
-        private fun buildMoshi(): Moshi {
-            return Moshi.Builder()
-                .add(LocaleJsonAdapter())
-                .add(DateJsonAdapter())
-                .add(UUIDJsonAdapter())
-                .build()
-        }
+        private fun buildMoshi(): Moshi = com.toolsboox.ot.LedgerMoshi.standard()
     }
 
     /**

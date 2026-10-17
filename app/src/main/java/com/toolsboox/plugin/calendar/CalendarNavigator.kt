@@ -25,6 +25,16 @@ object CalendarNavigator {
     var pendingFocusRect: android.graphics.RectF? = null
 
     /**
+     * One-shot: a design-space rect to PAN into view (never zoom) on [page] of [date]'s first render,
+     * and the words to say on arrival — the ❖ reply that flowed onto the next sub-page is brought to
+     * him rather than left on a page he has to find (Michael, 2026-10-12, B6 -322). Keyed by page, so
+     * a stale one can never move a different page; consumed once by the day fragment.
+     */
+    class Reveal(val date: LocalDate, val page: String, val rect: android.graphics.RectF, val message: String?)
+
+    var pendingReveal: Reveal? = null
+
+    /**
      * Navigate to the settings of calendar.
      *
      * @param fragment the fragment

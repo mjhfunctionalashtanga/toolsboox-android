@@ -38,9 +38,11 @@ import javax.inject.Inject
  * quarter → year widens; stepping down narrows) and the carets walk the window; the level pill
  * cycles the same ladder. The header spells out the current period and level.
  *
- * Reached from the hub (Notes → 🗓 Notes & Tags) and — the point of it — from the DAY page: on a
- * notes surface the almanac strip's Week slot opens THIS list scoped to the week instead of the
- * Week almanac (see [CalendarDayFragment]'s navigator handler + [open]).
+ * Reached from All notes' foot (Hub › Notes › All notes… › 🗓 Notes & Tags… — the B6 shape both
+ * apps share since 2026-10-11, "Name parity"), the root Directory's Notes row, and — the point of
+ * it — from the DAY page: on a notes surface the almanac strip's Week slot opens THIS list scoped to
+ * the week instead of the Week almanac (see [CalendarDayFragment]'s navigator handler + [open]).
+ * Its #tags include the other device's (LedgerTags merges the synced edges).
  */
 @AndroidEntryPoint
 class NotesTagsFragment @Inject constructor() : ScreenFragment() {
@@ -207,7 +209,7 @@ class NotesTagsFragment @Inject constructor() : ScreenFragment() {
             val root = documentsRoot()
             val loc = Locale.getDefault()
             val (day, pat) = withContext(Dispatchers.IO) {
-                val cd = runCatching { calendarDayService.load(root, anchor, null, loc) }.getOrNull()
+                val cd = runCatching { calendarDayService.loadForDisplay(root, anchor, null, loc) }.getOrNull()
                     ?: CalendarDay(anchor.year, anchor.monthValue, anchor.dayOfMonth, startHour = null)
                 val p = runCatching { calendarPatternService.load(root, anchor, loc) }.getOrNull()
                 cd to p

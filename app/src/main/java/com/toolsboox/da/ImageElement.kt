@@ -106,5 +106,11 @@ data class ImageElement(
     // gram then wears a ✓ on its corner and, on the intake page, becomes a link INTO that board
     // (where the object's further pickings accumulate) rather than opening its raw source. Empty =
     // not yet graduated. New field with a default → backward-compatible. Mirrors iOS.
-    var graduatedTo: String = ""
+    var graduatedTo: String = "",
+    // THE FACE'S TAPPABLE PLACES (add-to-pick pin §3/§5, Michael 2026-10-12: "Let the
+    // photo/video/note show on the pick."): where the photo, the video, each voice chip and the
+    // handwriting are drawn on this card's face, so a tap plays or opens THAT one. Null on every
+    // card made before (no tap regions, nothing else changes) and omitted from the JSON then.
+    // Rewritten on every re-face. Mirrors iOS.
+    var faceSlots: List<FaceSlot>? = null
 )

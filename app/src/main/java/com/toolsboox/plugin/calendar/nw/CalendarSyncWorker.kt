@@ -11,9 +11,6 @@ import com.jakewharton.retrofit2.adapter.kotlin.coroutines.CoroutineCallAdapterF
 import com.squareup.moshi.Moshi
 import com.toolsboox.ProductConstants
 import com.toolsboox.ot.CryptoUtils
-import com.toolsboox.ot.DateJsonAdapter
-import com.toolsboox.ot.LocaleJsonAdapter
-import com.toolsboox.ot.UUIDJsonAdapter
 import com.toolsboox.plugin.calendar.da.v1.CalendarSyncItem
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
@@ -47,13 +44,7 @@ class CalendarSyncWorker(
         /**
          * Build a Moshi instance matching the app's NetworkModule.provideMoshi().
          */
-        private fun buildMoshi(): Moshi {
-            return Moshi.Builder()
-                .add(LocaleJsonAdapter())
-                .add(DateJsonAdapter())
-                .add(UUIDJsonAdapter())
-                .build()
-        }
+        private fun buildMoshi(): Moshi = com.toolsboox.ot.LedgerMoshi.standard()
 
         /**
          * Build an OkHttpClient with bearer token authentication.

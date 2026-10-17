@@ -65,7 +65,7 @@ object RingFit {
 
     private val EMPTY = Result(false, false, false, 0f, 0f, 0f, 0f)
 
-    fun fit(xs: FloatArray, ys: FloatArray): Result {
+    fun fit(xs: FloatArray, ys: FloatArray, minDiagonal: Float = MIN_DIAGONAL): Result {
         val n = xs.size
         if (n < MIN_POINTS || ys.size != n) return EMPTY
 
@@ -78,7 +78,7 @@ object RingFit {
             sumX += xs[i]; sumY += ys[i]
         }
         val diagonal = hypot(maxX - minX, maxY - minY)
-        val sizeOk = diagonal >= MIN_DIAGONAL
+        val sizeOk = diagonal >= minDiagonal
         val cx = sumX / n
         val cy = sumY / n
 

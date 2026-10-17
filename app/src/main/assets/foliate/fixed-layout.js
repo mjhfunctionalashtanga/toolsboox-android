@@ -656,6 +656,11 @@ export class FixedLayout extends HTMLElement {
             : [this.#left?.element, this.#right?.element]
 
         Array.from(this.#root.children).forEach(child => {
+            // LEDGER PATCH: the scroll-container is NOT a spread frame — stamping it hidden
+            // here is what blanked vertical scroll ("a white screen but nothing happens"):
+            // any spread pass after scroll-mode init walked #root's children and hid the
+            // container the whole scrolled book lives in.
+            if (child === this.#scrollContainer) return
             const isVisible = visibleFrames.includes(child)
             Object.assign(child.style, {
                 position: isVisible ? 'relative' : 'absolute',
@@ -748,6 +753,25 @@ export class FixedLayout extends HTMLElement {
         for (const page of this.#scrollPages) {
             this.#scrollObserver.observe(page.el)
         }
+        // LEDGER PATCH: never depend on the IntersectionObserver for the first paint. IO
+        // callbacks are throttled to nothing in hidden tabs and on some e-ink WebViews, and a
+        // loader that waits on them shows an endless white skeleton ("vertical scroll creates
+        // a white screen but nothing happens"). Geometry says what is near the viewport RIGHT
+        // NOW; the observer remains as the cheap steady-state signal.
+        this.#syncScrollVisibility()
+    }
+    // LEDGER PATCH: mark pages near the viewport visible from their measured positions and
+    // schedule loads — the IO-independent path. Called at init and on scroll settle.
+    #syncScrollVisibility() {
+        if (!this.#scrollMode || !this.#scrollPages.length) return
+        const rect = this.getBoundingClientRect()
+        const pad = (rect.height || 800) * 2
+        for (const page of this.#scrollPages) {
+            const r = page.el.getBoundingClientRect()
+            const near = r.bottom > rect.top - pad && r.top < rect.bottom + pad
+            if (near) page.visible = true   // only widen; the observer may narrow later
+        }
+        this.#scheduleScrollPages()
     }
     // Load the nearest visible idle pages and evict the farthest off-screen ones,
     // honouring the concurrency and in-memory caps. Re-run whenever visibility or
@@ -784,6 +808,8 @@ export class FixedLayout extends HTMLElement {
             // Report location only after scroll settles to avoid
             // expensive React re-renders on every frame
             this.#reportScrollLocation()
+            // LEDGER PATCH: geometry-driven load scheduling — see #syncScrollVisibility.
+            this.#syncScrollVisibility()
         }, 150)
     }
     #setScrollIframeInteraction(enabled) {
@@ -1150,7 +1176,12 @@ export class FixedLayout extends HTMLElement {
         }, [{}])
     }
     #respread(spreadMode) {
-        if (this.#index === -1) return
+        // LEDGER PATCH: an attribute set BEFORE the first render must still RECORD the mode —
+        // dropping it left the default multi-page spread machinery under a book that asked for
+        // 'none', and the first paint raced it into a blank page (recovered only by a rotation's
+        // full re-render: "blank white page as soon as I open a comic… flip it around, two
+        // pages, select back, it works"). Nothing is laid out yet, so recording is the whole job.
+        if (this.#index === -1) { this.#spread(spreadMode); return }
         const section = this.book.sections[this.index]
         this.#spread(spreadMode)
         const { index } = this.getSpreadOf(section)
@@ -1442,7 +1473,12 @@ export class FixedLayout extends HTMLElement {
     }
     async next(distance) {
         if (this.#scrollMode) {
-            this.scrollBy({ top: distance || this.clientHeight, behavior: 'smooth' })
+            // LEDGER PATCH: pagination in scroll flow is a JUMP, not a glide. A smooth scroll
+            // is a smear of partial refreshes on e-ink; the tap zones / arrows / volume mean
+            // "show me the next screenful" — one instant reposition, one clean refresh. A
+            // hand ON the page still scrolls natively. 92% of the viewport, so the line you
+            // were on survives the jump as the top strip.
+            this.scrollBy({ top: distance || Math.round(this.clientHeight * 0.92), behavior: 'auto' })
             return
         }
         const s = this.rtl ? this.#goLeft() : this.#goRight()
@@ -1450,7 +1486,8 @@ export class FixedLayout extends HTMLElement {
     }
     async prev(distance) {
         if (this.#scrollMode) {
-            this.scrollBy({ top: -(distance || this.clientHeight), behavior: 'smooth' })
+            // LEDGER PATCH: same jump, backwards — see next().
+            this.scrollBy({ top: -(distance || Math.round(this.clientHeight * 0.92)), behavior: 'auto' })
             return
         }
         const s = this.rtl ? this.#goRight() : this.#goLeft()
@@ -1460,14 +1497,14 @@ export class FixedLayout extends HTMLElement {
         if (!this.#scrollMode) return
         const currentIndex = this.#getScrollIndex()
         const nextIndex = Math.min(currentIndex + 1, this.#scrollPages.length - 1)
-        this.#scrollPages[nextIndex]?.el.scrollIntoView({ behavior: 'smooth' })
+        this.#scrollPages[nextIndex]?.el.scrollIntoView({ behavior: 'auto' })
         this.#scrollCurrentIndex = nextIndex
     }
     prevSection() {
         if (!this.#scrollMode) return
         const currentIndex = this.#getScrollIndex()
         const prevIndex = Math.max(currentIndex - 1, 0)
-        this.#scrollPages[prevIndex]?.el.scrollIntoView({ behavior: 'smooth' })
+        this.#scrollPages[prevIndex]?.el.scrollIntoView({ behavior: 'auto' })
         this.#scrollCurrentIndex = prevIndex
     }
     async pan(dx, dy) {

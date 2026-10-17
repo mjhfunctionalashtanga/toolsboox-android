@@ -1,0 +1,180 @@
+Date: Tue, 8 Sep 2026 17:12:11 +0000
+From: Support at Example Studio <support@example.org>
+Message-ID: <QwZOQbTeVNg24HB2Pbquy1Bfg8y6Ec884dptTkU70@mail.example.org>
+X-Mailer: PHPMailer 7.1.1 (https://github.com/PHPMailer/PHPMailer)
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="b1=_QwZOQbTeVNg24HB2Pbquy1Bfg8y6Ec884dptTkU70"
+Content-Transfer-Encoding: 8bit
+To: owner@example.org
+Subject: New Renewal On Example Studio
+
+--b1=_QwZOQbTeVNg24HB2Pbquy1Bfg8y6Ec884dptTkU70
+Content-Type: text/plain; charset=us-ascii
+
+You got a new Renewal on your shop. Congratulations! Checkout all the details in this email. You can also go to FluentCart Dashboard to view the order details and manage it. Thank you for using FluentCart.    
+
+    
+    
+    
+        
+            
+                
+                
+                    
+                        
+                            
+                        
+                    
+                    
+                        Order Date
+                        September 8, 2026
+                    
+                    
+                        
+                            Order #                        
+                        
+                            INV-1000                        
+                    
+                
+                
+            
+                    
+    
+    
+
+
+
+    
+    
+        
+            
+    
+    
+        
+            
+                Score! A Customer Renewed Their Plan!             
+        
+    
+    
+
+
+
+    Hey There ,
+    Alex Example just renewed their subscription: Example Membership - Monthly Plan.
+
+
+
+    Subscription Renewal Summary:
+    Renewal Date: 08 Sep 2026, 15:39
+    Renewal Amount : $25.00
+    Payment Method: visa ***XXXX
+    Vendor Transaction ID: pi_example_0000
+
+
+
+
+    
+    
+        
+            
+                Want to see more details about this renewal? You can view the order details page for more information.            
+            
+                View Details
+
+--b1=_QwZOQbTeVNg24HB2Pbquy1Bfg8y6Ec884dptTkU70
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN" "http://www.w3.org/TR/REC-html40/loose.dtd">
+<html dir="ltr" lang="en" style="background-color: rgb(248, 249, 250); font-family: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';">
+<head>
+    <meta content="text/html; charset=UTF-8" http-equiv="Content-Type">
+    <meta name="x-apple-disable-message-reformatting">
+    
+</head>
+<body style="background-color: rgb(248, 249, 250); padding-top: 40px; padding-bottom: 40px; font-family: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';">
+    <div style="display:none;overflow:hidden;line-height:1px;opacity:0;max-height:0;max-width:0" data-skip-in-text="true">
+        You got a new Renewal on your shop. Congratulations! Checkout all the details in this email. You can also go to FluentCart Dashboard to view the order details and manage it. Thank you for using FluentCart.    </div>
+
+    <table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="margin-left:auto;margin-right:auto;max-width:620px;margin-bottom:20px;border: none;">
+    <tbody>
+    <tr style="width:100%">
+        <td>
+            <table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="border: none;">
+                <tbody style="width:100%">
+                <tr style="width:100%">
+                    <td style="width:60%">
+                        <h1 style="font-size:24px;font-weight:700;color:rgb(17,24,39);margin:0px">
+                            <img style="max-height: 50px" src="https://example.org/wp-content/uploads/logo-small.png" alt="example studio">
+                        </h1>
+                    </td>
+                    <td style="vertical-align: middle; width: 15%; text-align: right; border: 0;padding-right: 10px;">
+                        <p style="font-family: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; margin-bottom: 8px; line-height: 24px; white-space: nowrap; color: #94a3b8; text-align: right; margin: 0; font-size: 12px;">Order Date</p>
+                        <p style="font-family: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; margin-bottom: 8px; line-height: 24px; white-space: nowrap; font-weight: bold; color: #000; text-align: right; margin: 0; font-size: 15px;">September 8, 2026</p>
+                    </td>
+                    <td style="width:15%;text-align:right">
+                        <p style="font-family: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; margin-bottom: 8px; line-height: 24px; white-space: nowrap; color: #94a3b8; text-align: right; margin: 0; font-size: 12px;">
+                            Order #                        </p>
+                        <p style="font-family: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; margin-bottom: 8px; line-height: 24px; white-space: nowrap; font-weight: bold; color: #000; text-align: right; margin: 0; font-size: 14px;">
+                            INV-1000                        </p>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+                    </td>
+    </tr>
+    </tbody>
+</table>
+
+<table class="email_wrap" align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background-color:rgb(255,255,255);margin-left:auto;margin-right:auto;padding-left:32px;padding-right:32px;padding-top:32px;padding-bottom:32px;max-width:620px">
+    <tbody>
+    <tr style="width:100%">
+        <td>
+            <table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="text-align:center;margin-bottom:32px; background-color: #FFF3E0; padding: 20px; border-radius: 8px; border: 0px solid #D81B60;">
+    <tbody>
+    <tr>
+        <td>
+            <h1 style="color: #D81B60; font-size: 20px; margin: 0;">
+                Score! A Customer Renewed Their Plan! <img src="https://s.w.org/images/core/emoji/17.0.2/72x72/1f3c5.png" alt="🏅" class="wp-smiley" style="height: 1em; max-height: 1em;" /><img src="https://s.w.org/images/core/emoji/17.0.2/72x72/2728.png" alt="✨" class="wp-smiley" style="height: 1em; max-height: 1em;" />            </h1>
+        </td>
+    </tr>
+    </tbody>
+</table>
+
+<div class="space_bottom_30" style="display: block; width: 100%; margin-bottom: 30px;">
+    <p style="font-family: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; font-size: 14px; margin: 0px; margin-bottom: 8px; line-height: 24px;">Hey There <img src="https://s.w.org/images/core/emoji/17.0.2/72x72/1f44b.png" alt="👋" class="wp-smiley" style="height: 1em; max-height: 1em;" />,</p>
+    <p style="font-family: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; font-size: 14px; margin: 0px; margin-bottom: 8px; line-height: 24px;">Alex Example just renewed their subscription: <b>Example Membership - Monthly Plan</b>.</p>
+</div>
+
+<div class="space_bottom_30" style="display: block; width: 100%; margin-bottom: 30px;">
+    <p style="font-family: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; font-size: 14px; margin: 0px; margin-bottom: 8px; line-height: 24px;"><b>Subscription Renewal Summary:</b></p>
+    <p style="font-family: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; font-size: 14px; margin: 0px; margin-bottom: 8px; line-height: 24px;">Renewal Date: <b>08 Sep 2026, 15:39</b></p>
+    <p style="font-family: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; font-size: 14px; margin: 0px; margin-bottom: 8px; line-height: 24px;">Renewal Amount <img src="https://s.w.org/images/core/emoji/17.0.2/72x72/1f4b0.png" alt="💰" class="wp-smiley" style="height: 1em; max-height: 1em;" />: <b>$25.00</b></p>
+    <p style="font-family: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; font-size: 14px; margin: 0px; margin-bottom: 8px; line-height: 24px;">Payment Method: <b>visa ***XXXX</b></p>
+    <p style="font-family: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; font-size: 14px; margin: 0px; margin-bottom: 8px; line-height: 24px;">Vendor Transaction ID: <b>pi_example_0000</b></p>
+</div>
+
+
+<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="text-align:center;margin-bottom:32px">
+    <tbody>
+    <tr>
+        <td>
+            <p style="font-family: ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; margin: 0px; font-size: 15px; color: rgb(55,65,81); margin-bottom: 16px; line-height: 1.625; margin-top: 16px;">
+                Want to see more details about this renewal? You can view the order details page for more information.            </p>
+            <a href="https://example.org/wp-admin/admin.php?page=fluent-cart#/orders/1000/view" style="display:inline-block;background-color:rgb(15,23,42);color:rgb(255,255,255);padding-left:24px;padding-right:24px;padding-top:12px;padding-bottom:12px;border-radius:6px;font-size:14px;font-weight:600;text-decoration-line:none" target="_blank">
+                View Details            </a>
+        </td>
+    </tr>
+    </tbody>
+</table>
+        </td>
+    </tr>
+    </tbody>
+</table>
+
+</body>
+</html>
+
+
+--b1=_QwZOQbTeVNg24HB2Pbquy1Bfg8y6Ec884dptTkU70--

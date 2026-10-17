@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A Listen row's picture slot while it has no picture (the show's cover not learned yet, or a
+     show with none): a white square with a black hairline, so the ▶ still has a home. A loaded
+     cover covers it completely. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#FFFFFFFF"/>
+    <stroke android:width="1dp" android:color="#FF000000"/>
+</shape>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Settings: set up a server or an account — the gear (iOS gearshape).
+     One panel face family (review 2026-10-11, F5; Michael: "Icons lack design language"): the ink
+     tools' geometry — 256 grid, 16-unit round strokes, outline at rest. Drawn for the room panes'
+     rows (Michael 2026-10-12: monochrome glyphs only — no colour emoji in the Feeds or Mail pane). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="256" android:viewportHeight="256"
+    android:tint="#000000">
+    <path android:pathData="M109.0,54.4L111.8,31.3L144.2,31.3L147.0,54.4A76,76 0 0,1 166.6,62.5L184.9,48.2L207.8,71.1L193.5,89.4A76,76 0 0,1 201.6,109.0L224.7,111.8L224.7,144.2L201.6,147.0A76,76 0 0,1 193.5,166.6L207.8,184.9L184.9,207.8L166.6,193.5A76,76 0 0,1 147.0,201.6L144.2,224.7L111.8,224.7L109.0,201.6A76,76 0 0,1 89.4,193.5L71.1,207.8L48.2,184.9L62.5,166.6A76,76 0 0,1 54.4,147.0L31.3,144.2L31.3,111.8L54.4,109.0A76,76 0 0,1 62.5,89.4L48.2,71.1L71.1,48.2L89.4,62.5A76,76 0 0,1 109.0,54.4Z"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+    <path android:pathData="M100,128a28,28 0 1,0 56,0a28,28 0 1,0 -56,0Z"
+        android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+</vector>

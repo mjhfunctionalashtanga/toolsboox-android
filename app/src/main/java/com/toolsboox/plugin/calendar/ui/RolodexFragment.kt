@@ -270,7 +270,7 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         val rows = filtered.map { Contact(id = it.id.toString(), name = it.name, email = it.email, org = "CRM") }
         adapter.submit(rows)
         binding.emptyText.text =
-            if (crmLoading) "Loading…" else "No CRM contacts, or the site bridge isn't reachable."
+            if (crmLoading) "Loading…" else "No CRM contacts, or the site isn't answering."
         binding.emptyText.visibility = if (rows.isEmpty()) View.VISIBLE else View.GONE
     }
 
@@ -359,6 +359,8 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
         val composeRow = if (contact.email.isBlank()) null else
             label("✉  Compose email", 14f, color = 0xFF2F6F96.toInt()).apply { setPadding(0, px(8), 0, 0) }
         composeRow?.let { root.addView(it) }
+        // (The ✍ Handwritten letter row folded into ✉ — Michael 2026-10-11, Q2: the one compose
+        // screen types and takes the pen, so the two rows opened the same page.)
 
         // The universal menu's two rows, on a person like on everything else. The contact's
         // `contact://` address and their name ride as provenance, so asking about a person pulls
@@ -452,13 +454,8 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
 
         composeRow?.setOnClickListener {
             dialog.dismiss()
-            androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(
-                R.id.action_to_mail_compose,
-                androidx.core.os.bundleOf(
-                    com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_TO_EMAIL to contact.email,
-                    com.toolsboox.plugin.mail.ui.MailComposeFragment.ARG_TO_NAME to contact.name
-                )
-            )
+            com.toolsboox.plugin.mail.ui.MailComposeFragment.open(
+                this, toEmail = contact.email, toName = contact.name)
         }
 
         lifecycleScope.launch {
@@ -560,16 +557,22 @@ class RolodexFragment @Inject constructor() : ScreenFragment() {
     /** Check a task off (or back on) from the contact page — writes to its day + pushes to CalDAV. */
     private fun toggleDone(item: LedgerItem, onDone: (Boolean) -> Unit) {
         val ld = item.date.toInstant().atZone(ZoneId.of("UTC")).toLocalDate()
+        val appCtx = requireContext().applicationContext   // captured before the IO hop (audit 09-10)
         lifecycleScope.launch {
             val newState = withContext(Dispatchers.IO) {
                 val root = documentsRoot()
-                val day = calendarDayService.load(root, ld, null, Locale.getDefault())
-                val j = day.ledgerItems.indexOfFirst { it.id == item.id }
-                if (j < 0) return@withContext item.done
-                day.ledgerItems[j].done = !day.ledgerItems[j].done
-                calendarDayService.save(root, ld, day)
-                runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), day.ledgerItems[j]) }
-                day.ledgerItems[j].done
+                val toggled = com.toolsboox.plugin.calendar.ot.DayLocks.withDay(ld) {
+                    // A day that won't read is left alone — the checkbox keeps its state.
+                    val day = calendarDayService.loadForWrite(root, ld, null, Locale.getDefault())
+                        ?: return@withContext item.done
+                    val j = day.ledgerItems.indexOfFirst { it.id == item.id }
+                    if (j < 0) return@withContext item.done
+                    day.ledgerItems[j].done = !day.ledgerItems[j].done
+                    calendarDayService.save(root, ld, day)
+                    day.ledgerItems[j]
+                }
+                runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(appCtx, toggled) }
+                toggled.done
             }
             onDone(newState)
         }

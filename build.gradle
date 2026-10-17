@@ -17,8 +17,8 @@ plugins {
 
 ext {
     applicationName = 'toolboox'
-    parentVersionCode =  1_06_59_00
-    parentVersionName = '1.06.59-00'
+    parentVersionCode =  1_07_51_10
+    parentVersionName = '1.07.49-334'
 }
 
 allprojects {
@@ -29,6 +29,7 @@ allprojects {
         maven {
             url = "http://repo.boox.com/repository/maven-public/"
             allowInsecureProtocol = true
+        maven { url = "https://www.jitpack.io" }
         }
     }
 }

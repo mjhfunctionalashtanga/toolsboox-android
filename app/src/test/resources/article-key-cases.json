@@ -1,0 +1,41 @@
+{
+  "note": "ONE fixture for ArticleKey on both apps (design critique #12, Michael 2026-10-12). Copy byte-for-byte into the iOS test bundle; ArticleKeyTest (Android) and ArticleKeyTests (iOS) both read it.",
+  "clean": [
+    { "in": "https://example.com/a/b", "out": "https://example.com/a/b" },
+    { "in": "http://Example.COM/a/b/", "out": "https://example.com/a/b" },
+    { "in": "https://www.example.com/a", "out": "https://example.com/a" },
+    { "in": "https://example.com:443/a", "out": "https://example.com/a" },
+    { "in": "http://example.com:80/a", "out": "https://example.com/a" },
+    { "in": "https://example.com:8443/a", "out": "https://example.com:8443/a" },
+    { "in": "https://user:pw@example.com/a", "out": "https://example.com/a" },
+    { "in": "https://example.com./a", "out": "https://example.com/a" },
+    { "in": "https://example.com/a#section-2", "out": "https://example.com/a" },
+    { "in": "https://example.com/", "out": "https://example.com" },
+    { "in": "https://example.com", "out": "https://example.com" },
+    { "in": "https://example.com/a?", "out": "https://example.com/a" },
+    { "in": "https://example.com/%7Euser/x", "out": "https://example.com/~user/x" },
+    { "in": "https://example.com/~user/x", "out": "https://example.com/~user/x" },
+    { "in": "https://example.com/caf%c3%a9", "out": "https://example.com/caf%C3%A9" },
+    { "in": "https://example.com/caf%C3%A9", "out": "https://example.com/caf%C3%A9" },
+    { "in": "https://example.com/a%2Db", "out": "https://example.com/a-b" },
+    { "in": "https://example.com/a%2fb", "out": "https://example.com/a%2Fb" },
+    { "in": "https://bücher.example/a", "out": "https://xn--bcher-kva.example/a" },
+    { "in": "https://example.com/s?q=a+b", "out": "https://example.com/s?q=a%20b" },
+    { "in": "https://example.com/s?q=a%20b", "out": "https://example.com/s?q=a%20b" },
+    { "in": "https://example.com/s?b=2&a=1", "out": "https://example.com/s?a=1&b=2" },
+    { "in": "https://example.com/s?a=1&&b=2&", "out": "https://example.com/s?a=1&b=2" },
+    { "in": "https://example.com/p?utm_source=x&utm_medium=y&id=7", "out": "https://example.com/p?id=7" },
+    { "in": "https://example.com/p?fbclid=abc", "out": "https://example.com/p" },
+    { "in": "https://example.com/p?gclid=abc&x=1", "out": "https://example.com/p?x=1" },
+    { "in": "https://example.com/p?mc_cid=1&mc_eid=2", "out": "https://example.com/p" },
+    { "in": "https://example.com/p?_hsenc=abc&_hsmi=9", "out": "https://example.com/p" },
+    { "in": "https://example.com/p?ref=rss", "out": "https://example.com/p" },
+    { "in": "https://example.com/p?UTM_Campaign=z&k=v", "out": "https://example.com/p?k=v" },
+    { "in": "  https://example.com/p  ", "out": "https://example.com/p" },
+    { "in": "mail://inbox/123", "out": "mail://inbox/123" },
+    { "in": "ledger://pickings/2026-10-12/grampicks", "out": "ledger://pickings/2026-10-12/grampicks" }
+  ],
+  "keys": [
+    { "in": "https://example.com/a/b", "key": "a-ed1d4137647b6cd0" }
+  ]
+}

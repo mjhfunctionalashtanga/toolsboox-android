@@ -53,6 +53,78 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
     private var entry: FeedEntry? = null
     private var parsed = false
 
+    /** This piece's highlights and notes — the same controller as the Feeds pane's (Michael
+     *  2026-10-12): Highlight keeps a passage and its one gram pick; a note joins that pick; the
+     *  article's picks are drawn back on it. */
+    private val highlights: com.toolsboox.plugin.feeds.ot.ArticleHighlights by lazy {
+        com.toolsboox.plugin.feeds.ot.ArticleHighlights(
+            fragment = this, service = calendarDayService, root = { documentsRoot() },
+            web = { if (::binding.isInitialized) binding.articleWeb else null },
+            captureAv = { kind, sink -> captureAvGramDirect(kind, sink) },
+            choosePicture = { sink -> captureGalleryDirect(sink) },
+            star = { entry?.takeIf { it.id > 0 }?.let { e -> { star(e) } } },
+            switchView = { view ->
+                when (view) {
+                    com.toolsboox.plugin.reader.ui.BookNote.VIEW_READER -> if (!parsed) toggleParse()
+                    com.toolsboox.plugin.reader.ui.BookNote.VIEW_FEED -> if (parsed) toggleParse()
+                    else -> entry?.url?.takeIf { it.startsWith("http") }?.let {
+                        highlights.setView(com.toolsboox.plugin.reader.ui.BookNote.VIEW_LIVE)
+                        binding.articleWeb.loadUrl(it)
+                    }
+                }
+            },
+        )
+    }
+
+    /** Marks are an article's: a piece with a web address. */
+    private fun marksOn(e: FeedEntry?) = e != null && e.url.startsWith("http", ignoreCase = true)
+
+    /** Aa Type's "Import font…" (Michael, 2026-10-11) — registered at construction like every
+     *  launcher; the result goes to the open panel, which chooses the new face at once. */
+    private val importFont = com.toolsboox.ot.ReadingFonts.importLauncher(this) { r ->
+        aaPanel?.takeIf { it.isShowing }?.onImported(r)
+            ?: r.onSuccess { showMessage("Font added · ${it.label}") }
+                .onFailure { showMessage(it.message ?: "Couldn't add that font") }
+    }
+    private var aaPanel: com.toolsboox.ui.plugin.AaTypePanel? = null
+
+    /** Aa Type on the ARTICLE profile; changes reach this piece live, debounced (e-ink). */
+    private fun openAaType() {
+        aaPanel = com.toolsboox.ui.plugin.AaTypePanel(
+            this, com.toolsboox.ot.ReadingType.Profile.ARTICLE, importFont,
+            onChange = { p -> if (p == com.toolsboox.ot.ReadingType.Profile.ARTICLE) scheduleArticleType() },
+        ).also { it.show() }
+    }
+
+    private val applyArticleTypeLater = Runnable {
+        if (isAdded && getView() != null && ::binding.isInitialized) {
+            paintArticleGround()
+            binding.articleWeb.evaluateJavascript(com.toolsboox.ot.ReadingTypes.articleLiveJs(requireContext()), null)
+        }
+    }
+
+    private fun scheduleArticleType() {
+        if (!::binding.isInitialized) return
+        binding.articleWeb.removeCallbacks(applyArticleTypeLater)
+        binding.articleWeb.postDelayed(applyArticleTypeLater, com.toolsboox.ot.AaType.LIVE_DEBOUNCE_MS)
+    }
+
+    /** The WebView's own ground in the article's page colour — every page here is one the app
+     *  builds — so a Black page doesn't flash white between pieces (review, Michael 2026-10-11). */
+    private fun paintArticleGround() {
+        val c = com.toolsboox.ot.ReadingTypes.articleGround(requireContext())
+        if (paintedGround != c) { paintedGround = c; binding.articleWeb.setBackgroundColor(c) }
+    }
+    private var paintedGround: Int? = null
+
+    /** Every article load: the ground first, then the page. */
+    private fun loadArticle(e: FeedEntry, content: String) {
+        paintArticleGround()
+        highlights.setView(if (parsed) com.toolsboox.plugin.reader.ui.BookNote.VIEW_READER
+            else com.toolsboox.plugin.reader.ui.BookNote.VIEW_FEED)
+        binding.articleWeb.loadDataWithBaseURL(articleBaseUrl(), buildHtml(e, content), "text/html", "UTF-8", null)
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -66,15 +138,52 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
 
         // JS on so we can read the text selection for highlight-to-annotation.
         binding.articleWeb.settings.javaScriptEnabled = true
+        // The long-hold menu's verbs, as in the Feeds pane (the approved plan gave this reader
+        // them; Michael 2026-10-12): Highlight keeps the passage and its one pick, Note opens the
+        // chooser with it in hand, Search Ledger runs it through the Log's search.
+        binding.articleWeb.onSelectionAction = { verb ->
+            when (verb) {
+                com.toolsboox.plugin.feeds.ot.SelectionMenuWebView.Verb.HIGHLIGHT ->
+                    if (marksOn(entry)) highlights.highlight() else entry?.let { annotate(it) }
+                com.toolsboox.plugin.feeds.ot.SelectionMenuWebView.Verb.NOTE -> entry?.let { annotate(it) }
+                com.toolsboox.plugin.feeds.ot.SelectionMenuWebView.Verb.SEARCH ->
+                    com.toolsboox.plugin.feeds.ot.WebSelectionBridge.probe(binding.articleWeb) { sel ->
+                        val q = sel.lineSequence().firstOrNull()?.trim().orEmpty()
+                        if (q.isBlank()) return@probe
+                        com.toolsboox.plugin.calendar.ui.ReadingLogSelection.seedQuery = q
+                        androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.action_to_reading_log)
+                    }
+            }
+        }
 
         // Tapping a link opens a menu (Open / Later / Copy). HOLDING a link opens the same
         // menu (finger on the link → Save to Later List); holding plain text still falls
         // through to native selection so passages stay highlightable.
         binding.articleWeb.webViewClient = object : android.webkit.WebViewClient() {
+            override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
+                // The highlight must survive the pen-nib tap on ✍ (the Onyx collapse race —
+                // see WebSelectionBridge). This reader probed live and lost it every time.
+                com.toolsboox.plugin.feeds.ot.WebSelectionBridge.wire(view)
+                // Aa Type moved while this page was loading: bring its type block up to date. A
+                // no-op when it already is — no re-lay, no refresh (Michael 2026-10-11).
+                applyArticleTypeLater.run()
+                // The piece's highlights and gram picks, drawn back (Michael 2026-10-12).
+                if (marksOn(entry)) highlights.onPageFinished(view)
+            }
+            // The reading faces (Aa Type, Michael 2026-10-11) answer from inside the app; every
+            // other request goes on as before.
+            override fun shouldInterceptRequest(
+                view: android.webkit.WebView?, request: android.webkit.WebResourceRequest?
+            ): android.webkit.WebResourceResponse? {
+                val ctx = context ?: return null
+                return com.toolsboox.ot.ReadingFonts.intercept(ctx, request?.url)
+            }
             override fun shouldOverrideUrlLoading(
                 view: android.webkit.WebView, request: android.webkit.WebResourceRequest
             ): Boolean {
                 val url = request.url?.toString().orEmpty()
+                // A tap on a drawn highlight (article-marks.js): its chooser.
+                if (highlights.handleUrl(url)) return true
                 if (url.startsWith("http")) { showLinkMenu(url); return true }
                 // Swallow everything else rather than letting the WebView try to load it. An
                 // in-app `ledger://` link (the Bluesky reader's "Answer this" door writes one) has
@@ -110,8 +219,14 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         // long-press article menu kept as the rail item's own hold. Hidden buttons keep the one
         // wiring for anything that performClicks them.
         binding.artPill.visibility = View.GONE
-        setupActionRail(
+        // A READER OUTSIDE ITS LIST (PanelSeats.Flags.outsideList — iOS's saved-article cover, the
+        // same rule on both apps, Michael 2026-10-12): this article was opened from a gram, a link,
+        // a source — not from the Feeds list — so the left edge's Back goes back to whatever opened
+        // it, never to the list or its drawer. It keeps ☰ Hub at the head and the Feeds seat (the
+        // drawer, one tap; hold: this article's menu) while every other panel gives them up.
+        articleRail = setupActionRail(
             binding.artRail, "article",
+            keepHub = true,
             actions = { listOf(
                 com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_menu, "Feeds",
                     longPress = { showArticleMenu() }) { binding.artMenu.performClick() },
@@ -124,8 +239,18 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                 com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_reader_view, "Reader view") {
                     binding.artParse.performClick()
                 },
+                // Aa Type, one tap — beside Reader view, as the book reader's Aa seat and the iOS
+                // article rail's "Aa" (Michael 09-11: "more clearly a reader setting situation").
+                // It was only on the ☰ hold (review, Michael 2026-10-11); that row stays too.
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_text_size, getString(R.string.aa_type)) {
+                    openAaType()
+                },
                 com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_pencil, "Annotate") {
                     binding.artAnnotate.performClick()
+                },
+                // Every highlight and note on this piece (Michael 2026-10-12: "annotations").
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_pf_book_notes, "Annotations", caption = "Annotations") {
+                    if (marksOn(entry)) highlights.showAnnotations()
                 },
                 com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_nav_up2, getString(R.string.feeds_article_first)) {
                     binding.artPrev.performClick()
@@ -154,13 +279,32 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         binding.artNext.setOnClickListener { goToNeighbor(1) }
         binding.artAnnotate.setOnClickListener { entry?.let { annotate(it) } }
         setupTapZones()
+        // FULL SCREEN IN A READER LEAVES NOTHING ON THE PAGE (Michael 2026-10-12): tucked, the
+        // notes pill goes too (the strip stays — its tap opens the column, the way back); a tap in
+        // the middle of the piece brings the pill back, a page turn puts it away again
+        // ([com.toolsboox.ot.ReaderFullScreen]). The inline transport goes and comes with it
+        // (review 2026-10-12, as iOS's Now Playing does): playback carries on, the peek shows it.
+        // With the column out, that middle tap tucks it — full screen, as on the iPhone (Michael
+        // 2026-10-12: "yes"), the ✕'s own tuck (TuckPanel.readerMiddleTap).
+        articleRail?.onReaderChrome = { shown ->
+            runCatching { NowPlayingCard.away(binding.artTransport, !shown) }
+        }
+        articleRail?.reader = true
+        com.toolsboox.plugin.feeds.ot.ArticleFullScreen.wire(binding.articleWeb, { articleRail })
 
         showEntry(e)
     }
 
+    /** This article's column — a reader's ([com.toolsboox.ot.TuckPanel.reader]). */
+    private var articleRail: com.toolsboox.ot.TuckPanel? = null
+
     // --- Capy-style navigation: tap zones + volume keys, both toggle-able ---
 
     private fun navPrefs() = requireContext().getSharedPreferences("ledger_reader_nav", 0)
+
+    /** An article is read: the left edge's first Back goes back to whatever opened it (the 09-11
+     *  rule); that screen's own Back opens the Hub (Michael 2026-10-12). */
+    override val edgeReader: Boolean get() = true
 
     /** Horizontal ⇄ vertical pill, per the wrench toggle (persisted). */
     private fun applyArticlePillOrientation() {
@@ -193,6 +337,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
 
     /** Page the article a screenful — instantly (e-ink: the next part just appears, no scroll). */
     private fun pageWeb(down: Boolean) {
+        articleRail?.readerPageTurn()   // before the page moves (ReaderFullScreen)
         val step = (binding.articleWeb.height * 9 / 10).coerceAtLeast(1)
         binding.articleWeb.scrollBy(0, if (down) step else -step)
     }
@@ -202,11 +347,13 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
      * returns to the list in that mode; the Ledger sections (almanac/history/…) navigate away.
      */
     /** Link tapped in the article → Open / Add to Later / Copy (moved off long-press so holding can
-     *  select). When the held thing was an image-anchor, [imageUrl] adds the photo-gram option. */
+     *  select). When the held thing was an image-anchor, [imageUrl] adds the photo-gram option.
+     *  Through [showModal] like the note chooser — an unrouted popover over an ink-capable
+     *  surface leaves the hardware pen armed under it, and the stylus's taps go to the ink. */
     private fun showLinkMenu(url: String, imageUrl: String? = null) {
         val items = mutableListOf("🌐  Open", "🔖  Save to Later List", "📋  Copy link")
         if (imageUrl != null) items.add(com.toolsboox.plugin.feeds.ot.FeedNoteGram.photoGramLabel(requireContext()))
-        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
+        showModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(requireContext()))
             .setTitle(url)
             .setItems(items.toTypedArray()) { _, which ->
                 when (which) {
@@ -232,7 +379,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                             a?.title.orEmpty(), a?.feedTitle.orEmpty(), a?.url.orEmpty())
                     }
                 }
-            }.show()
+            }.create())
     }
 
     /** ☰ from the article: land back on the feeds list with THE feeds directory open — one
@@ -311,11 +458,20 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                     if (a.requestedOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE)
                         android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
                     else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            }
+            },
+            // The quick-note toggle rides every wrench (the reader-only row stranded it).
+            ((if ((activity as? com.toolsboox.ui.main.MainActivity)?.quickNoteVisible() != false)
+                "🖉  Hide the quick-note button" else "🖉  Show the quick-note button") to {
+                val main = activity as? com.toolsboox.ui.main.MainActivity
+                main?.setQuickNoteVisible(!(main.quickNoteVisible()))
+            })
         )
         val transcriptItems: List<Pair<String, () -> Unit>> =
             entry?.transcriptUrl?.let { url -> listOf("📄  Transcript" to { showTranscript(url) }) } ?: emptyList()
-        val all = fixed.take(1) + readItems + transcriptItems + fixed.drop(1)
+        // How the words are set (Aa Type, Michael 2026-10-11) — LAST, so every row that was here
+        // keeps its place (muscle memory); the rail's Aa Type seat is the one-tap door.
+        val typeItems: List<Pair<String, () -> Unit>> = listOf("Aa  Type…" to { openAaType() })
+        val all = fixed.take(1) + readItems + transcriptItems + fixed.drop(1) + typeItems
         showIconMenu(null, all)
     }
 
@@ -340,7 +496,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
             "(document.body && document.body.innerText) || ''"
         ) { raw ->
             val player = com.toolsboox.ui.plugin.LedgerPlayer
-            player.start(requireContext(), e?.title, e?.feedTitle?.ifBlank { null }, e?.imageUrl, unquoteJs(raw))
+            player.start(requireContext(), e?.title, e?.feedTitle?.ifBlank { null }, e?.imageUrl, com.toolsboox.plugin.feeds.ot.WebSelectionBridge.unquote(raw))
             // No popup, ever, on this surface — but the transport does arrive ON the page
             // (08-12): the inline card seats itself, seek + ¶ progress + ⏹, and stays across
             // navigation until a stop verb. The modal was the wonk; a card in the surface isn't.
@@ -385,15 +541,21 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
 
     /** Render an entry (feed content), refresh the star glyph, mark it read on the server. */
     private fun showEntry(e: FeedEntry) {
+        // A new piece is a turn: whatever the centre tap brought back goes.
+        articleRail?.readerPageTurn()
         entry = e
         parsed = false
+        highlights.open(
+            if (marksOn(e)) com.toolsboox.plugin.feeds.ot.ArticleHighlights.Article(
+                e.id, e.url, e.title, e.feedTitle, com.toolsboox.plugin.reader.ui.BookNote.VIEW_FEED) else null,
+            jumpTo = FeedSelection.pendingMarkId.also { FeedSelection.pendingMarkId = null })
         // Synthetic rows (Later/Pickings, negative ids) have no Miniflux entry to star and no
         // day-file lineage to annotate - the buttons sat there visibly dead ("for good reason",
         // as Michael put it). Dead controls hide instead.
         val real = e.id > 0
         binding.artStar.visibility = if (real) View.VISIBLE else View.GONE
         binding.artAnnotate.visibility = if (real) View.VISIBLE else View.GONE
-        binding.articleWeb.loadDataWithBaseURL(articleBaseUrl(), buildHtml(e, e.content), "text/html", "UTF-8", null)
+        loadArticle(e, e.content)
         updateStar()
         updateParse()
         // A content-less entry (opened from a Stars & Events row, where only the URL rides along)
@@ -423,7 +585,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         val e = entry ?: return
         if (parsed) {
             parsed = false
-            binding.articleWeb.loadDataWithBaseURL(articleBaseUrl(), buildHtml(e, e.content), "text/html", "UTF-8", null)
+            loadArticle(e, e.content)
             updateParse()
             return
         }
@@ -441,7 +603,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
             when (res) {
                 is MinifluxClient.Result.Ok -> {
                     parsed = true
-                    binding.articleWeb.loadDataWithBaseURL(articleBaseUrl(), buildHtml(e, res.value.ifBlank { e.content }), "text/html", "UTF-8", null)
+                    loadArticle(e, res.value.ifBlank { e.content })
                     updateParse()
                 }
                 is MinifluxClient.Result.Err -> showMessage("⚠️ " + res.message)
@@ -471,7 +633,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
             val id = m.groupValues[1]
             """<a href="https://www.youtube.com/watch?v=$id" style="display:block;text-decoration:none">
                <img src="https://img.youtube.com/vi/$id/hqdefault.jpg" style="width:100%;display:block"/>
-               <span style="display:block;padding:8px 0;font-weight:bold;color:#000">▶ Watch on YouTube</span>
+               <span style="display:block;padding:8px 0;font-weight:bold;color:inherit">▶ Watch on YouTube</span>
                </a>"""
         }
     }
@@ -483,21 +645,12 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         // thumbnail card intact. The selection bridge only reads text, so cleaning costs it nothing.
         val content = rewriteYouTubeEmbeds(ArticleSanitizer.clean(rawContent, e.url))
         val meta = listOf(e.feedTitle, e.author ?: "").filter { it.isNotBlank() }.joinToString(" · ")
+        // Face, size, spacing, width and colours are Aa Type's article profile — the same block the
+        // in-pane reader carries, so the two views finally agree (Michael 2026-10-11). This page
+        // keeps only its frame (pictures, players, code).
         return """
             <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-              html { padding: 0 44px; }
-              body { margin: 40px auto; color: #000; background: #fff;
-                     font-family: serif; font-size: 19px; line-height: 1.65;
-                     max-width: 34em; }
-              h1 { font-size: 26px; line-height: 1.25; }
-              .meta { color: #666; font-size: 14px; margin-bottom: 18px; }
-              img { max-width: 100%; height: auto; }
-              iframe { max-width: 100%; border: 0; }
-              @supports (aspect-ratio: 16 / 9) { iframe { width: 100%; height: auto; aspect-ratio: 16 / 9; } }
-              a { color: #000; }
-              pre, code { white-space: pre-wrap; }
-            </style></head><body>
+            <style>${com.toolsboox.ot.AaType.ARTICLE_FRAME_CSS}</style>${com.toolsboox.ot.AaType.articleStyleTag(com.toolsboox.ot.ReadingTypes.articleCss(requireContext()))}${if (marksOn(e)) highlights.headScript() else ""}</head><body>
             <h1>${escape(e.title)}</h1>
             <div class="meta">${escape(meta)}</div>
             $content
@@ -525,28 +678,22 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
      *  note IS a gram — [com.toolsboox.plugin.feeds.ot.FeedNoteGram] places it on today's Notes
      *  page, same shared flow as the in-pane reader. Works with no selection. */
     private fun annotate(e: FeedEntry) {
-        binding.articleWeb.evaluateJavascript(
-            "(function(){var s=window.getSelection&&window.getSelection();return s?s.toString():'';})()"
-        ) { raw ->
+        // An article's note is its highlights' chooser (ArticleHighlights, Michael 2026-10-12).
+        if (marksOn(e)) { highlights.note(); return }
+        com.toolsboox.plugin.feeds.ot.WebSelectionBridge.probe(binding.articleWeb) { sel ->
             com.toolsboox.plugin.feeds.ot.FeedNoteGram.show(
                 this, calendarDayService, documentsRoot(),
-                selection = unquoteJs(raw).trim(),
+                selection = sel,
                 articleTitle = e.title, feedTitle = e.feedTitle, articleUrl = e.url,
                 captureAv = { kind, sink -> captureAvGramDirect(kind, sink) },
                 logEvent = { excerpt, note ->
                     lifecycleScope.launch {
                         withContext(Dispatchers.IO) { logEvent(e, excerpt = excerpt, note = note) }
                     }
-                }
+                },
+                star = { star(e) }
             )
         }
-    }
-
-    /** Decode the JSON string evaluateJavascript hands back (quoted + escaped). */
-    private fun unquoteJs(raw: String): String {
-        if (raw == "null") return ""
-        return runCatching { org.json.JSONTokener(raw).nextValue() as? String }.getOrNull()
-            ?: raw.removeSurrounding("\"")
     }
 
     /** Append an article ReadingEvent (star marker, highlight passage, note, and/or media). */
@@ -557,7 +704,11 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
         try {
             val root = documentsRoot()
             val today = LocalDate.now()
-            val day = calendarDayService.load(root, today, null, Locale.getDefault())
+            // Under the day lock (design Phase 0): an unlocked load→save here could drop a card or a
+            // line another writer was saving to today at the same moment.
+            com.toolsboox.plugin.calendar.ot.DayLocks.withDay(today) {
+            // A today-file that won't read throws here (caught below) — never saved over.
+            val day = calendarDayService.loadForWriteOrThrow(root, today, null, Locale.getDefault())
             day.readingEvents.add(
                 ReadingEvent(
                     id = "art-${e.id}-${UUID.randomUUID().toString().take(8)}",
@@ -573,6 +724,7 @@ class FeedArticleFragment @Inject constructor() : ScreenFragment() {
                 )
             )
             calendarDayService.save(root, today, day)
+            }
         } catch (ex: Exception) {
             Timber.w(ex, "failed to log article event")
         }

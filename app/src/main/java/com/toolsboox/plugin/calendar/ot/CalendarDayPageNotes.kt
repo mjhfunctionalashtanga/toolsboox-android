@@ -255,6 +255,60 @@ class CalendarDayPageNotes : Creator {
         }
 
         /**
+         * ❖ WHO ANSWERS, at the top of every Synthesize page, sub-pages too (Michael, 2026-10-12:
+         * "Please put the persona at the top of the note.") — "❖ Spiral", "❖ Spiral · answering
+         * next", "❖ The Correspondent · Spiral isn't on this device" ([SynthVoice.header]).
+         *
+         * Printed in the page's top MARGIN, never on the writing area: small, on the header's
+         * baseline (to − 16 = 45), above the frame's top rule (to = 61), and LEFT-aligned right after
+         * the typed header (its measured right + 32). A synthesis draws no tag strip, so that stretch
+         * of the margin is empty — while its top-right corner is not: the floating ‹ N › pager (and
+         * its › tab) stands there over every Synthesize page (CalendarUtils.updateToolbar: 2dp under
+         * the date strip, 64dp in from the screen edge), so a right-aligned line sat under it and a
+         * finger aimed at the header turned the page instead (review of b29cabbc). Its right bound
+         * keeps clear of that corner ([VOICE_PAGER_RESERVE]) or, on page one with a written title,
+         * of the title ink ([claim] is exactly the face's width + its gutter).
+         *
+         * Too long for the room, the line steps down 25 → 19 px before anything is cut (iOS shrinks
+         * 26 → 18 for the same line); then [SynthVoiceHeader.fit] keeps the half that matters. Reply
+         * cards land at y ≥ 140 ([SynthLanding.TOP]), so nothing lands over it. The rect is recorded
+         * ([SynthVoiceHeader]) so a finger tap on it asks "Who answers next?" — padded, but never
+         * past the frame's top rule into the writing area.
+         */
+        private fun drawVoiceLine(
+            context: Context, canvas: Canvas, calendarDay: CalendarDay, notePage: String,
+            header: String, claim: Float,
+        ) {
+            val date = runCatching {
+                LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day)
+            }.getOrNull()?.toString() ?: return
+            val voice = runCatching { SynthPageVoices.voiceFor(context, date, notePage) }.getOrNull() ?: return
+            val line = SynthVoice.header(voice.persona, voice.voices, voice.missing)
+            val left = lo + Creator.textDefaultBlack.measureText(header) + 32.0f
+            val right = lo + cew - 10.0f - maxOf(claim, VOICE_PAGER_RESERVE)
+            val avail = right - left
+            if (avail < 60.0f) { SynthVoiceHeader.forget(date, notePage); return }
+            // A copy: the shared small paint is right-aligned, and is never resized for one line.
+            val paint = TextPaint(Creator.textSmallBlack).apply { textAlign = Paint.Align.LEFT }
+            val fit = SynthVoiceHeader.fit(line, voice.missing, avail) { text, size ->
+                paint.textSize = size; paint.measureText(text)
+            }
+            paint.textSize = fit.size
+            val y = to - 16.0f
+            canvas.drawText(fit.text, left, y, paint)
+            val w = paint.measureText(fit.text)
+            SynthVoiceHeader.record(date, notePage, android.graphics.RectF(left, y - fit.size, left + w, y + 8.0f), floor = to)
+        }
+
+        /**
+         * The page width the floating ‹ N › pager can cover in the margin's top-right corner, in page
+         * px: its ‹ and › (30dp each) around a label of up to "<14 characters> · n" at 13sp — about
+         * 200dp at its widest, roughly 300 page px at a Boox's page scale — plus a finger's breadth
+         * of air. The voice line stops short of it; the typical line ends far to its left anyway.
+         */
+        private const val VOICE_PAGER_RESERVE = 340.0f
+
+        /**
          * Draw the daily template of calendar plugin notes.
          *
          * @param context the context
@@ -273,6 +327,21 @@ class CalendarDayPageNotes : Creator {
                 drawGratitudePage(canvas)
                 return
             }
+            // The page's explicitly chosen template, if it has one. The template is a per-page
+            // PROPERTY now ([NotePageTemplates]): the key family still decides the store, the sync
+            // route and the chrome, but the SHEET the strokes sit on is the page's own choice. The
+            // station keys (gratitude / intake / selfexec) and the retired Synthesize renderer are
+            // deliberately outside this — legacy renderers, never offered the picker.
+            val explicit = runCatching {
+                LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day)
+            }.getOrNull()?.let { NotePageTemplates.templateFor(context, it, notePage) }
+
+            // AN IMPORTED SHEET OWNS ITS PAGE, the Gratitude rule: no NOTES chrome over someone's
+            // stationery. Bytes missing on this device → fall through to the family look —
+            // never a blank page, only yesterday's.
+            if (explicit != null && explicit.startsWith(CustomTemplates.PREFIX) &&
+                CustomTemplates.draw(context, canvas, explicit)
+            ) return
             if (PickingsStore.isPickings(notePage)) {
                 // Every Pickings board — the daily one included — is just the standard full-height
                 // page now. The daily board no longer opens on a cover band of recent-board tiles;
@@ -280,7 +349,13 @@ class CalendarDayPageNotes : Creator {
                 // the extra label + tiles only got in the way. Clearing the cover also drops any
                 // stale recorded tap zones so a rectangle can't open a board from a page with none.
                 PickingsCover.clear()
-                drawPickingsPage(canvas)
+                when (explicit) {
+                    NotePageTemplates.LINES -> drawRuledSheet(canvas)
+                    NotePageTemplates.GRID -> drawSquaredSheet(canvas)
+                    NotePageTemplates.DOTS -> drawBrainstormPage(canvas)
+                    NotePageTemplates.GRATITUDE -> drawGratitudePage(canvas)
+                    else -> drawPickingsPage(canvas)
+                }
                 return
             }
             if (notePage == "intake") {
@@ -299,15 +374,14 @@ class CalendarDayPageNotes : Creator {
                 // The shared shell that WRITE/NOTES draws below — this branch returned before it, so
                 // Synthesize was missing its header + the big page number the inline ‹ N › pager counts.
                 val synthPage = base.toIntOrNull() ?: subIndex
-                canvas.drawText(
-                    headerFor(context, base, calendarDay, "SYNTHESIZE"),
-                    lo, to - 16.0f, Creator.textDefaultBlack)
+                val header = headerFor(context, base, calendarDay, "SYNTHESIZE")
+                canvas.drawText(header, lo, to - 16.0f, Creator.textDefaultBlack)
                 canvas.drawText("${synthPage + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)
                 // A synthesis draws no tag strip (this branch returns before the block that does),
-                // so the face has the whole right-hand margin to itself and nothing to be measured
-                // against. Its return value is dropped rather than not asked for, so the two
-                // surfaces stay one call apart if a synthesis ever grows tags of its own.
-                if (synthPage == 0) drawTitleInk(context, canvas, base, calendarDay)
+                // so the face has the whole right-hand margin to itself — bar the voice line,
+                // which is measured against the face's claim.
+                val claim = if (synthPage == 0) drawTitleInk(context, canvas, base, calendarDay) else 0.0f
+                if (SynthPageStore.isSynth(base)) drawVoiceLine(context, canvas, calendarDay, notePage, header, claim)
                 return
             }
             // A NAMED grid ("grid-1753…") is a grid page — same ruled squares, same header slot.
@@ -325,8 +399,28 @@ class CalendarDayPageNotes : Creator {
                 // page and the word in the chooser are the same word by construction. (The name a
                 // document actually has is drawn in HIS casing; see [headerFor]. Only the fallback
                 // shouts, because "GRID" is a label for a kind of page and shouting it is fine.)
-                drawGridNotesPage(canvas, headerFor(
-                    context, base, calendarDay, LedgerDocuments.label(LedgerDocuments.GRID).uppercase()))
+                val header = headerFor(
+                    context, base, calendarDay, LedgerDocuments.label(LedgerDocuments.GRID).uppercase())
+                when (explicit) {
+                    // A re-templated page keeps its family chrome — the header is what the page IS,
+                    // the sheet is what it wears. Pickings is the exception: its panels own the
+                    // whole page, and a header over them would collide with the panels' own.
+                    NotePageTemplates.LINES -> {
+                        drawRuledSheet(canvas)
+                        canvas.drawText(header, lo, to - 16.0f, Creator.textDefaultBlack)
+                    }
+                    NotePageTemplates.DOTS -> {
+                        drawBrainstormPage(canvas)
+                        canvas.drawText(header, lo, to - 16.0f, Creator.textDefaultBlack)
+                    }
+                    NotePageTemplates.PICKINGS -> {
+                        PickingsCover.clear()
+                        drawPickingsPage(canvas)
+                        return
+                    }
+                    NotePageTemplates.GRATITUDE -> drawGratitudePage(canvas)
+                    else -> drawGridNotesPage(canvas, header)
+                }
                 if (subIndex == 0) drawTitleInk(context, canvas, base, calendarDay)
                 return
             }
@@ -334,7 +428,17 @@ class CalendarDayPageNotes : Creator {
                 // Jot: the same light dot grid as the synthesize whiteboard — dots stay out of the
                 // way of a drawing far better than rules or a full grid do. (Its page keys are
                 // "sketch"; see [JotPageStore] for why the label and the key disagree.)
-                drawBrainstormPage(canvas)
+                when (explicit) {
+                    NotePageTemplates.LINES -> drawRuledSheet(canvas)
+                    NotePageTemplates.GRID -> drawSquaredSheet(canvas)
+                    NotePageTemplates.PICKINGS -> {
+                        PickingsCover.clear()
+                        drawPickingsPage(canvas)
+                        return
+                    }
+                    NotePageTemplates.GRATITUDE -> drawGratitudePage(canvas)
+                    else -> drawBrainstormPage(canvas)
+                }
                 // A jot page has never carried a header, and an UNNAMED one still doesn't — the
                 // whole surface is a blank dotted sheet and stamping "JOT NOTES" across the top of
                 // every one of Michael's existing sketches to announce a feature he hasn't used
@@ -348,6 +452,27 @@ class CalendarDayPageNotes : Creator {
                 if (subIndex == 0) drawTitleInk(context, canvas, base, calendarDay)
                 return
             }
+            if (base == DatedNote.DOODLE) {
+                // The standing daily Doodle (DESIGN-homepages-2026-08-22): every day's freeform
+                // page, already waiting — dots by family ([NotePageTemplates.resolve]), because
+                // dots stay out of a drawing's way, and re-sheetable per page like any other.
+                // Its own branch rather than the shared shell at the foot: the shell stamps
+                // "NOTES" and the big page number, and a doodle is neither a note page nor
+                // page N of anything — it is the page you open just to move the pen.
+                when (explicit) {
+                    NotePageTemplates.LINES -> drawRuledSheet(canvas)
+                    NotePageTemplates.GRID -> drawSquaredSheet(canvas)
+                    NotePageTemplates.PICKINGS -> {
+                        PickingsCover.clear()
+                        drawPickingsPage(canvas)
+                        return
+                    }
+                    NotePageTemplates.GRATITUDE -> drawGratitudePage(canvas)
+                    else -> drawBrainstormPage(canvas)
+                }
+                canvas.drawText("DOODLE", lo, to - 16.0f, Creator.textDefaultBlack)
+                return
+            }
             if (base == GRAM_PICKS) {
                 // Gram Picks: the one place a gram lands, so you sort it later instead of deciding
                 // at the moment you grab it. Michael's proposal, and it answers a real complaint —
@@ -359,7 +484,11 @@ class CalendarDayPageNotes : Creator {
                 // grams are pictures, and rules would fight them. The dots give the eye somewhere
                 // to align to when you shuffle cards around by hand.
                 drawBrainstormPage(canvas)
-                canvas.drawText("GRAM PICKS", lo, to - 16.0f, Creator.textDefaultBlack)
+                // "ALL PICKS" — the stamp must say what the menus say (Michael, field, 08-27:
+                // "menu says All Picks but Gram Picks is what's printed on the surface" — one
+                // page wearing two names reads as two different pages). Display only; the
+                // "grampicks" key underneath is frozen, as everywhere in the -24 rename.
+                canvas.drawText("ALL PICKS", lo, to - 16.0f, Creator.textDefaultBlack)
                 canvas.drawText("${subIndex + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)
                 return
             }
@@ -377,7 +506,30 @@ class CalendarDayPageNotes : Creator {
             // piece of writing would have silently changed what it looked like to write on.
             val isWrite = base == "write" || WritePageStore.isWrite(base)
 
+            // Which sheet this page wears: its own choice, else write→lines, else the numeric
+            // pages' global seed (the "calendarNoteTemplate" pref, 0→lines / 1→grid — the Settings
+            // spinner is the default for new pages now, not the law for all of them). A numeric
+            // page can wear dots or a Pickings sheet too; its strokes still ride its numeric key.
+            val resolved = NotePageTemplates.resolve(explicit, notePage, template)
+            if (resolved == NotePageTemplates.PICKINGS) {
+                PickingsCover.clear()
+                drawPickingsPage(canvas)
+                return
+            }
+            if (resolved == NotePageTemplates.GRATITUDE) {
+                // Like Pickings: the sheet owns the whole page — its own two headers and the doodle
+                // box run to the margins — so it returns before the shared chrome rather than
+                // wearing a "NOTES" header and a big page number over the top of its prompts.
+                drawGratitudePage(canvas)
+                return
+            }
+
             canvas.drawRect(0.0f, 0.0f, 1404.0f, 1872.0f, Creator.fillWhite)
+
+            // Dots run the whole page, margin included, so they go down FIRST and the chrome —
+            // header, page number, tags, title ink — reads over them. Lines and grid stay inside
+            // the frame and are drawn at the foot, where they always were.
+            if (resolved == NotePageTemplates.DOTS) drawDotField(canvas)
 
             // Title in the top margin so this freeform surface reads as "NOTES" — distinct from a
             // LINES note, which shares this same ruled template.
@@ -392,10 +544,30 @@ class CalendarDayPageNotes : Creator {
             //
             // Just "NOTES" / "LINES" — the page number rides the inline ‹ N › pager next to it, so
             // "· Page N" here would double up.
+            // EVERY NOTE WEARS A NAME, AND THE DEFAULT NAME IS THE DATE (Michael, 2026-08-23:
+            // "Everything gets a name, default name being the date").
+            //
+            // This is what closed the gap he found on the device: "Writing and Notes are somehow
+            // different surfaces right now, even though the only difference is the template." They
+            // WERE different — a numbered page belongs to a DAY and had no name, while a Write page
+            // is a named piece — but since the template became a per-page property both wear the
+            // same Lines sheet, so the only thing left telling them apart was that one shouted the
+            // generic word "NOTES" and the other said what it was called. Same paper, two headers.
+            //
+            // Now they say the same KIND of thing. The day's own note is a note like any other: its
+            // name is whatever he titled it, and until he titles it, its name is its date — which is
+            // the one fact you always have about the day's page and the one you go looking by.
+            //
+            // The name is read through the WRITE daily entry deliberately: it is already date-scoped
+            // (titling the 21st must not title the 22nd), already synced, and it is already where
+            // the day's own lined page keeps its title — the two were the same note all along, which
+            // is exactly his point. Nothing is rekeyed; a numbered page's strokes stay under "0".
             canvas.drawText(
                 if (isWrite)
                     headerFor(context, base, calendarDay, LedgerDocuments.label(LedgerDocuments.WRITE).uppercase())
-                else "NOTES",
+                else
+                    headerFor(context, WritePageStore.DEFAULT_KEY, calendarDay,
+                        LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day).toString()),
                 lo, to - 16.0f, Creator.textDefaultBlack)
 
             canvas.drawText("${page + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)
@@ -407,7 +579,17 @@ class CalendarDayPageNotes : Creator {
             // share the margin instead of fighting over it.
             val inkClaim = if (page == 0 && isWrite) drawTitleInk(context, canvas, base, calendarDay) else 0.0f
             if (page == 0) {
-                val tags = LedgerTags.tagsFor(context, LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day))
+                // The DAY'S numbered pages wear the whole day's tags — that strip is the day's
+                // lightweight index, by design. A NAMED document wears only ITS OWN: a fresh
+                // note that "loaded tags at the top from earlier notes during the same day"
+                // (08-17 page) was this strip claiming the day's vocabulary for a page that
+                // hadn't written any of it.
+                val d = LocalDate.of(calendarDay.year, calendarDay.month, calendarDay.day)
+                val named = base.contains('-')   // "write-<millis>", "grid-…", "jot-…": the named stores' key shape
+                val tags = if (!named) LedgerTags.tagsFor(context, d)
+                else LedgerTags.list(context)
+                    .filter { info -> info.occurrences.any { it.first == d && it.second.substringBefore('#') == base } }
+                    .map { it.tag }
                 if (tags.isNotEmpty()) {
                     // RIGHT-aligned in the top margin: the left of this strip is now occupied by the
                     // header label AND the floating ‹ N › note pager (the almanac-nav directory), so
@@ -427,29 +609,67 @@ class CalendarDayPageNotes : Creator {
                 }
             }
 
-            if (template == 0) {
-                // Roomier rule than the 50px day-grid: real handwriting needs ~65px lines
-                // (the old spacing forced two rows per written line). Same frame, fewer rows.
-                val rows = 27
-                val rh = (35 * ceh) / rows
-                canvas.drawLine(lo, to + 0 * ceh, lo + cew, to + 0 * ceh, Creator.lineDefaultBlack)
-                for (i in 1 until rows) {
-                    canvas.drawLine(lo, to + i * rh, lo + cew, to + i * rh, Creator.lineDefaultGrey50)
-                }
-                canvas.drawLine(lo, to + 35 * ceh, lo + cew, to + 35 * ceh, Creator.lineDefaultBlack)
-            } else if (template == 1) {
-                canvas.drawLine(lo, to + 0 * ceh, lo + cew, to + 0 * ceh, Creator.lineDefaultBlack)
-                for (i in 1..34) {
-                    canvas.drawLine(lo, to + i * ceh, lo + cew, to + i * ceh, Creator.lineDefaultGrey50)
-                }
-                canvas.drawLine(lo, to + 35 * ceh, lo + cew, to + 35 * ceh, Creator.lineDefaultBlack)
-
-                canvas.drawLine(lo, to + 0 * ceh, lo, to + 35 * ceh, Creator.lineDefaultBlack)
-                for (i in 1..25) {
-                    canvas.drawLine(lo + i * 50.0f, to + 0 * ceh, lo + i * 50.0f, to + 35 * ceh, Creator.lineDefaultGrey50)
-                }
-                canvas.drawLine(lo + 26 * 50.0f, to + 0 * ceh, lo + 26 * 50.0f, to + 35 * ceh, Creator.lineDefaultBlack)
+            when (resolved) {
+                NotePageTemplates.LINES -> drawRuledRows(canvas)
+                NotePageTemplates.GRID -> drawSquaredRows(canvas)
             }
+        }
+
+        /** The ruled writing frame on its own — the shared shell's LINES sheet. */
+        private fun drawRuledRows(canvas: Canvas) {
+            // Roomier rule than the 50px day-grid: real handwriting needs ~65px lines
+            // (the old spacing forced two rows per written line). Same frame, fewer rows.
+            val rows = 27
+            val rh = (35 * ceh) / rows
+            canvas.drawLine(lo, to + 0 * ceh, lo + cew, to + 0 * ceh, Creator.lineDefaultBlack)
+            for (i in 1 until rows) {
+                canvas.drawLine(lo, to + i * rh, lo + cew, to + i * rh, Creator.lineDefaultGrey50)
+            }
+            canvas.drawLine(lo, to + 35 * ceh, lo + cew, to + 35 * ceh, Creator.lineDefaultBlack)
+        }
+
+        /** The squared frame on its own — the shared shell's GRID sheet. */
+        private fun drawSquaredRows(canvas: Canvas) {
+            canvas.drawLine(lo, to + 0 * ceh, lo + cew, to + 0 * ceh, Creator.lineDefaultBlack)
+            for (i in 1..34) {
+                canvas.drawLine(lo, to + i * ceh, lo + cew, to + i * ceh, Creator.lineDefaultGrey50)
+            }
+            canvas.drawLine(lo, to + 35 * ceh, lo + cew, to + 35 * ceh, Creator.lineDefaultBlack)
+
+            canvas.drawLine(lo, to + 0 * ceh, lo, to + 35 * ceh, Creator.lineDefaultBlack)
+            for (i in 1..25) {
+                canvas.drawLine(lo + i * 50.0f, to + 0 * ceh, lo + i * 50.0f, to + 35 * ceh, Creator.lineDefaultGrey50)
+            }
+            canvas.drawLine(lo + 26 * 50.0f, to + 0 * ceh, lo + 26 * 50.0f, to + 35 * ceh, Creator.lineDefaultBlack)
+        }
+
+        /** White sheet + the ruled frame — what a non-write page wears when its template says
+         *  lines. No header: the family branch that called this draws its own chrome, or none. */
+        /**
+         * A PERIOD note page (week/month/quarter/year) wearing a chosen sheet — the plain papers
+         * only (DESIGN-period-walk-2026-08-27 §3): lines, grid, dots. Pickings/gratitude stay off
+         * period notes until the boards-are-paper arc unifies the panel. White fill + the corner
+         * page number, then the sheet — the same furniture the week renderer always drew.
+         */
+        fun drawPeriodNotePage(canvas: Canvas, template: String, page: Int) {
+            canvas.drawRect(0.0f, 0.0f, 1404.0f, 1872.0f, Creator.fillWhite)
+            when (template) {
+                NotePageTemplates.GRID -> drawSquaredSheet(canvas)
+                NotePageTemplates.DOTS -> drawBrainstormPage(canvas)
+                else -> drawRuledSheet(canvas)
+            }
+            canvas.drawText("${page + 1}", lo + cew - 10.0f, to + 3 * ceh - 10.0f, Creator.textBigGray20Right)
+        }
+
+        private fun drawRuledSheet(canvas: Canvas) {
+            canvas.drawRect(0.0f, 0.0f, 1404.0f, 1872.0f, Creator.fillWhite)
+            drawRuledRows(canvas)
+        }
+
+        /** White sheet + the squared frame — the lines sheet's grid twin. */
+        private fun drawSquaredSheet(canvas: Canvas) {
+            canvas.drawRect(0.0f, 0.0f, 1404.0f, 1872.0f, Creator.fillWhite)
+            drawSquaredRows(canvas)
         }
 
         /**
@@ -576,6 +796,12 @@ class CalendarDayPageNotes : Creator {
          */
         private fun drawBrainstormPage(canvas: Canvas) {
             canvas.drawRect(0f, 0f, 1404f, 1872f, Creator.fillWhite)
+            drawDotField(canvas)
+        }
+
+        /** The dot field on its own, so the shared shell can lay it UNDER its chrome — the dots
+         *  run the margin too, and drawn after the header they would speckle it. */
+        private fun drawDotField(canvas: Canvas) {
             val dot = Paint().apply {
                 color = Color.argb(90, 0, 0, 0); style = Paint.Style.FILL; isAntiAlias = true
             }

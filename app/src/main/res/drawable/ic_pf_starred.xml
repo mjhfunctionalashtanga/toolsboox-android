@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Star, on: this is starred (iOS star.fill).
+     One panel face family (review 2026-10-11, F5; Michael: "Icons lack design language"): the ink
+     tools' geometry — 256 grid, 16-unit round strokes, outline at rest; a filled face only for an
+     ON state (Star). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="256" android:viewportHeight="256"
+    android:tint="#000000">
+    <path android:pathData="M128.0,30.0L153.9,98.4L226.9,101.9L169.8,147.6L189.1,218.1L128.0,178.0L66.9,218.1L86.2,147.6L29.1,101.9L102.1,98.4Z"
+        android:fillColor="#FF000000" android:strokeColor="#FF000000" android:strokeWidth="16"
+        android:strokeLineCap="round" android:strokeLineJoin="round"/>
+</vector>

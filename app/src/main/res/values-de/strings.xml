@@ -171,17 +171,9 @@ Strings related to dashboard fragment -->
     <string name="calendar_settings_week_number_of_first_day_value">"KW1"</string>
     <string name="calendar_settings_week_number_of_last_day_text">"Kalenderwoche des letzten Tages:"</string>
     <string name="calendar_settings_week_number_of_last_day_value">"KW52"</string>
-    <string name="calendar_settings_button_save">"Speichern"</string>
-    <string name="calendar_settings_button_back">"Zurück"</string>
     <string name="calendar_drawing_toolbar_pen">"Stift"</string>
     <string name="calendar_drawing_toolbar_eraser">"Radierer"</string>
     <string name="calendar_drawing_toolbar_settings">"Einstellungen"</string>
-    <string name="calendar_settings_select_start_view_text">"Wählen die Startansicht des Kalenders:"</string>
-    <string name="calendar_settings_start_view_year">"Jahresplaner"</string>
-    <string name="calendar_settings_start_view_quarter">"Vierteljahresplaner"</string>
-    <string name="calendar_settings_start_view_month">"Monatsplaner"</string>
-    <string name="calendar_settings_start_view_week">"Wochenplaner"</string>
-    <string name="calendar_settings_start_view_day">"Tagesplaner"</string>
     <string name="calendar_settings_button_backup">"Exportiere ein Backup zu den Downloads"</string>
     <string name="calendar_settings_backup_done">"Kalenderbackup in die Downloads gespeichert"</string>
     <string name="about_this_translation_contributors_title">"Mitwirkende der Übersetzung"</string>

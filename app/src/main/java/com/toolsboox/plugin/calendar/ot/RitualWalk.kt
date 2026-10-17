@@ -38,10 +38,20 @@ object RitualWalk {
         /** True when this station is a page in the day file rather than a surface of its own. */
         val isDayPage: Boolean,
     ) {
-        /** Arrive here from anywhere. */
-        fun open(fragment: ScreenFragment, date: LocalDate = LocalDate.now()) {
+        /** Arrive here on [date]. No default: a step of the walk keeps the page's own day (Michael
+         *  2026-10-11: after turning to Wednesday and walking up to All Stars and back down, "the
+         *  day page shows that day again, not today"), so every caller must say which day. */
+        fun open(fragment: ScreenFragment, date: LocalDate) {
             if (isDayPage) {
                 CalendarNavigator.toDayNote(fragment, date, key)
+                return
+            }
+            // TODAY — the schedule face itself (notePage == null), which is a page of the day but
+            // not a NOTE page, so it cannot ride toDayNote. It leads the walk (Michael, 2026-08-23:
+            // "the page skipper can go today > all stars > gram picks > todays note") because it is
+            // the surface everything else is a departure FROM: the day's own dashboard.
+            if (key == TODAY) {
+                CalendarNavigator.toDayPage(fragment, date)
                 return
             }
             // A surface station. A dead nav action must never be a silent flash — the walk is a
@@ -60,24 +70,37 @@ object RitualWalk {
     const val MISSED = "missed"
 
     /**
+     * The Today station's key — the SCHEDULE FACE, which is `notePage == null`.
+     *
+     * A sentinel rather than a page key, because null is not a map key and "" is a value the note
+     * surfaces could plausibly hand in. Nothing stores strokes under it; [Station.open] routes it
+     * to `toDayPage` and [pageKeys] deliberately excludes it, so "am I standing on a station" — a
+     * question asked with a note page in hand — can never answer yes for the face that has none.
+     */
+    const val TODAY = "\u0000today"
+
+    /**
      * The walk, in order — the same order, and the same membership, as the Daily folder.
      *
-     * Self Executive earns its place back here on Michael's instruction rather than on its usage
-     * count (4 days in 124). That is the right call and worth saying plainly: the measurement that
-     * trimmed this walk to four stations could see how often a page was WRITTEN and could not see
-     * what it was for. Self Executive is a page he keeps deliberately.
+     * Michael's 08-23 ruling collapsed it to three: "the Daily category can be All Stars, Gram
+     * Picks, Notes." Pickings and Gratitude are TEMPLATES a Notes page wears (their pages ride
+     * inside the dated note's own ‹ N › walk, so stepping into Notes steps through them); Self
+     * Executive is ELIMINATED as a destination — its history still renders wherever it exists,
+     * but nothing offers it; Quick Wins and Missed Connections were built into Ask, where a
+     * computed answer belongs. The 08-04 note about Self Executive earning its place back is
+     * superseded by this ruling.
      */
     val ALL: List<Station> = listOf(
+        Station(TODAY, "📅", "Today", isDayPage = false),
         Station("intake", "★", "All Stars", isDayPage = true),
-        Station(CalendarDayPageNotes.GRAM_PICKS, "◈", "Gram Picks", isDayPage = true),
-        Station("pickings", "❝", "Pickings", isDayPage = true),
-        Station("selfexec", "🐘", "Self Executive", isDayPage = true),
-        Station(QUICK_WINS, "⚡", "Quick Wins", isDayPage = false),
-        Station(MISSED, "✧", "Missed Connections", isDayPage = false),
-        Station("gratitude", "🙏", "Gratitude", isDayPage = true),
+        Station(CalendarDayPageNotes.GRAM_PICKS, "◈", "All Picks", isDayPage = true),
+        // "Notes", as iOS names the stop: the walk keeps the page's day now (Michael 2026-10-11),
+        // so on a Wednesday "Next · Today's Note" opened Wednesday's note (review 2026-10-11).
+        Station("0", "✒", "Notes", isDayPage = true),
     )
 
-    /** The day-page keys on the walk — what "is this page a station" asks. */
+    /** The day-page keys on the walk — what "is this page a station" asks. Today is absent by
+     *  construction: it is the face, and this question always arrives holding a note page. */
     val pageKeys: List<String> = ALL.filter { it.isDayPage }.map { it.key }
 
     fun station(key: String?): Station? = ALL.firstOrNull { it.key == key }
@@ -114,7 +137,9 @@ object RitualWalk {
     fun stepItems(
         fragment: ScreenFragment,
         stationKey: String,
-        date: LocalDate = LocalDate.now(),
+        /** The day the steps land on — no default, as [Station.open] has none (Michael 2026-10-11:
+         *  a step keeps its day). */
+        date: LocalDate,
     ): List<com.toolsboox.ot.TuckPanel.Item> {
         val back = prev(stationKey)
         val fwd = next(stationKey)

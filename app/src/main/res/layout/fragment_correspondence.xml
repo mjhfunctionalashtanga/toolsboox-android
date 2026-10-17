@@ -41,7 +41,7 @@
         <ImageButton
             android:id="@+id/correspondence_hub_button"
             android:src="@drawable/ic_bar_sections"
-            android:background="?attr/selectableItemBackgroundBorderless"
+            android:background="@drawable/eink_press_bg"
             android:scaleType="fitCenter"
             android:padding="3dp"
             android:layout_marginEnd="4dp"

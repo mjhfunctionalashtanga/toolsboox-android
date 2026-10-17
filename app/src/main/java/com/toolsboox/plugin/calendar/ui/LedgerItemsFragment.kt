@@ -78,6 +78,13 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     private var anchor: LocalDate = LocalDate.now()
     private var day: CalendarDay? = null
 
+    // ── The Proposed shelf (offer-never-mint) ────────────────────────────────────────────────────
+    // The auto-task faucets (starred EMAIL, PATHWAY/PLAN expansion) no longer mint live tasks: they
+    // drop PROPOSED candidates that wait here until a one-tap Promote. The shelf spans the WHOLE
+    // ledger (a candidate can sit on any day file — email→today, a plan step→its suggested day), so
+    // each is carried with the day whose file owns it, which is what Promote/Dismiss write back to.
+    private var proposedItems: List<Pair<LedgerItem, LocalDate>> = emptyList()
+
     // ── The columns lens ───────────────────────────────────────────────────────────────────────
     // Stage order across the board. Waiting sits between Doing and Done — the lane for work that
     // sits on someone else, which until now had nowhere to stand but "todo" (where it nagged) or
@@ -121,6 +128,8 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         }
         binding.addTaskButton.setOnClickListener { showItemEntry(LedgerItem.Kind.TASK) }
         binding.addEventButton.setOnClickListener { showItemEntry(LedgerItem.Kind.EVENT) }
+        // The Proposed shelf's door — hidden until a candidate exists, tap to review/promote/dismiss.
+        binding.proposedBar.setOnClickListener { showProposedShelf() }
 
         // Floating nav pill: ‹ up · ☀ today-then-menu · down ›.
         binding.itemsPageUp.setOnClickListener {
@@ -247,31 +256,54 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
 
     /** Remove [toDelete] from the day JSON (so they stop syncing) and their VTODOs. */
     private fun deleteItems(toDelete: List<LedgerItem>) {
+        val app = requireContext().applicationContext
         lifecycleScope.launch {
             // Local removal + tombstone only — this is the fast path the UI waits on.
-            withContext(Dispatchers.IO) {
+            val (gone, failure) = withContext(Dispatchers.IO) {
                 val root = documentsRoot()
+                val gone = mutableListOf<LedgerItem>()
+                var failure: Throwable? = null
                 // Group by source day so a filtered (period) delete saves to the right day file each.
                 toDelete.groupBy { itemSourceDay[it.id] ?: anchor }.forEach { (srcDay, group) ->
                     runCatching {
-                        val cd = calendarDayService.load(root, srcDay, null, Locale.getDefault())
-                        // Item + tombstone + the ON-PAGE face it wears, in one place — see
-                        // CalendarDay.deleteLedgerItems. Ink tasks are strokes (by strokeIds),
-                        // typed tasks are text boxes matched on their words; both are tombstoned
-                        // so neither the item nor its face returns through a sync union.
-                        cd.deleteLedgerItems(group)
-                        calendarDayService.save(root, srcDay, cd)
-                    }.onFailure { Timber.w(it, "ledger items: delete save failed") }
+                        com.toolsboox.plugin.calendar.ot.DayLocks.withDay(srcDay) {
+                            // A source day that won't read throws here (logged below) — never a
+                            // fresh day saved over it. Old source days are where the big photo days live.
+                            val cd = calendarDayService.loadForWriteOrThrow(root, srcDay, null, Locale.getDefault())
+                            // Item + tombstone + the ON-PAGE face it wears, in one place — see
+                            // CalendarDay.deleteLedgerItems. Ink tasks are strokes (by strokeIds),
+                            // typed tasks are text boxes matched on their words; both are tombstoned
+                            // so neither the item nor its face returns through a sync union.
+                            cd.deleteLedgerItems(group)
+                            calendarDayService.save(root, srcDay, cd)
+                        }
+                    }.onSuccess { gone += group }
+                        .onFailure { Timber.w(it, "ledger items: delete save failed"); if (failure == null) failure = it }
                 }
+                // The remote VTODO/event deletes go in the background (they must not block the UI)
+                // — and ONLY for the items that actually left their day file. A day that refused
+                // still holds its task; deleting the CalDAV copy anyway left the two disagreeing, the
+                // task on the page and gone from every other calendar. Launched here, before this
+                // block returns, on a scope that outlives the screen: they used to start the moment
+                // Delete was tapped, and backing out right after the local save must not drop them.
+                if (gone.isNotEmpty()) {
+                    val remote = gone.toList()
+                    kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+                        remote.forEach { runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.deleteTask(app, it) } }
+                        remote.forEach { runCatching { com.toolsboox.plugin.calendar.nw.LedgerEventSync.deleteEvent(app, it) } }
+                    }
+                }
+                gone to failure
             }
             // Refresh the list right away — don't make the user wait on the network.
             load()
-        }
-        // Fire the remote VTODO/event deletes in the background; they must not block the UI.
-        val app = requireContext().applicationContext
-        lifecycleScope.launch(Dispatchers.IO) {
-            toDelete.forEach { runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.deleteTask(app, it) } }
-            toDelete.forEach { runCatching { com.toolsboox.plugin.calendar.nw.LedgerEventSync.deleteEvent(app, it) } }
+            failure?.let {
+                if (isAdded) showMessage(
+                    com.toolsboox.plugin.calendar.fi.CalendarDayService.refusal(it, if (toDelete.size == 1) "delete it" else "delete them all")
+                        ?: "Couldn't delete that just now — it's still on its page",
+                    binding.root
+                )
+            }
         }
     }
 
@@ -280,6 +312,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
     /** Render whichever lens is up. Both stand on the [TaskWalkCache]-backed gathers, so neither
      *  re-reads a day file that hasn't changed since the last look. */
     private fun load() {
+        refreshProposedBar()
         if (columnsMode) loadColumns() else loadList()
     }
 
@@ -291,7 +324,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 itemSourceDay.clear()
                 val map = HashMap<String, Stroke>()
                 val cd: CalendarDay? = if (period == "day") {
-                    val loaded = runCatching { calendarDayService.load(root, anchor, null, Locale.getDefault()) }
+                    val loaded = runCatching { calendarDayService.loadForDisplay(root, anchor, null, Locale.getDefault()) }
                         .onFailure { Timber.w(it, "ledger items: load failed") }.getOrNull()
                     loaded?.calendarStrokes?.values?.forEach { l -> l.forEach { map[it.strokeId.toString()] = it } }
                     loaded?.noteStrokes?.values?.forEach { l -> l.forEach { map[it.strokeId.toString()] = it } }
@@ -326,8 +359,11 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             // (Range mode's `d` is synthetic with empty tombstone lists; its gather already
             // filters through loadLedgerItems.)
             val dead = ((d?.deletedItemIds ?: emptyList()) + (d?.deletedElementIds ?: emptyList())).toSet()
+            // A PROPOSED candidate (offer-never-mint) is not a live task — it is kept OFF this list
+            // and shown on the Proposed shelf (the "✎ Proposed (N)" bar) instead. Filtered here so
+            // both the day and the period-filter view hide it identically.
             val items = com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe
-                .dedupe((d?.ledgerItems ?: emptyList()).filterNot { it.id in dead })
+                .dedupe((d?.ledgerItems ?: emptyList()).filterNot { it.id in dead || it.proposed })
                 .sortedWith(
                     // Soonest first. It used to sort by `top` — where the item happens to sit on
                     // the page — which is the order you wrote things in, not the order they
@@ -453,7 +489,9 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                 val items = com.toolsboox.plugin.calendar.ot.TaskWalkCache.items(file) { f ->
                     runCatching { calendarDayService.loadLedgerItems(f) }.getOrNull() ?: emptyList()
                 }
-                items.filter { it.kind == LedgerItem.Kind.TASK }
+                // A PROPOSED candidate (offer-never-mint) has no lane on the board — it waits on the
+                // Proposed shelf until promoted.
+                items.filter { it.kind == LedgerItem.Kind.TASK && !it.proposed }
                     .forEach { out.add(it); itemSourceDay[it.id] = d }
             }
         return out.sortedByDescending { it.date.time }
@@ -595,28 +633,36 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         val root = documentsRoot()
         val boardNow = if (columnsMode) selectedBoard ?: "" else ""
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
+            val failure = withContext(Dispatchers.IO) {
                 runCatching {
                     val loc = java.util.Locale.getDefault()
-                    val cd = calendarDayService.load(root, day, null, loc)
-                    val due = java.util.Date(
-                        day.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli())
-                    val minted = accepted.map { p ->
-                        LedgerItem(
-                            id = "li-${java.util.UUID.randomUUID()}", kind = LedgerItem.Kind.TASK,
-                            text = p.cardText, date = due, source = "prep",
-                            stage = "todo", board = boardNow, contactId = p.contactId
-                        )
+                    val minted = com.toolsboox.plugin.calendar.ot.DayLocks.withDay(day) {
+                        val cd = calendarDayService.loadForWriteOrThrow(root, day, null, loc)
+                        val due = java.util.Date(
+                            day.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli())
+                        val minted = accepted.map { p ->
+                            LedgerItem(
+                                id = "li-${java.util.UUID.randomUUID()}", kind = LedgerItem.Kind.TASK,
+                                text = p.cardText, date = due, source = "prep",
+                                stage = "todo", board = boardNow, contactId = p.contactId
+                            )
+                        }
+                        cd.ledgerItems.addAll(minted)
+                        calendarDayService.save(root, day, cd)
+                        minted
                     }
-                    cd.ledgerItems.addAll(minted)
-                    calendarDayService.save(root, day, cd)
                     minted.forEach {
                         runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(appCtx, it) }
                     }
-                }
+                }.onFailure { Timber.w(it, "prep: accept save failed") }.exceptionOrNull()
             }
             if (!isAdded) return@launch
-            showMessage("${accepted.size} prep card${if (accepted.size == 1) "" else "s"} on the board.", binding.root)
+            // Said only when the cards are on the day — a refused day used to hear "on the board" too.
+            showMessage(
+                if (failure == null) "${accepted.size} prep card${if (accepted.size == 1) "" else "s"} on the board."
+                else com.toolsboox.plugin.calendar.fi.CalendarDayService.refusal(failure, "add the prep cards") ?: "Couldn't add the prep cards just now.",
+                binding.root
+            )
             load()
         }
     }
@@ -819,7 +865,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
             card.setOnLongClickListener {
                 showIconMenu(item.text.ifBlank { "Card" }.take(80), listOf(
                     "✎  Edit the words…" to { editWords(item) },
-                    "⁂  Its rhizome" to { showRhizome(item) },
+                    "🕸  Its rhizome" to { showRhizome(item) },
                     "🔎  Ask about this" to { askAboutItem(item) },
                     "🎓  Educate me" to { educateFromItem(item) },
                     "⬆  Send to web board" to { sendToWeb(item) },
@@ -1192,7 +1238,7 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
         )
         val appCtx = requireContext().applicationContext
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
+            val failure = withContext(Dispatchers.IO) {
                 runCatching {
                     // Read the ANCHOR's own file and write the item into that, rather than saving
                     // back whatever `day` is holding. With a period on the strip `day` is a
@@ -1205,18 +1251,28 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
                     // today unless the Date button said otherwise.
                     val root = documentsRoot()
                     val fileDay = if (columnsMode) due else anchor
-                    val cd = calendarDayService.load(root, fileDay, null, Locale.getDefault())
-                    cd.ledgerItems.add(item)
-                    // Tasks also land on the day page (a text box in a free Tasks row); the
-                    // scrollable list holds every task regardless, so overflow past the 16 rows
-                    // still shows there.
-                    if (kind == LedgerItem.Kind.TASK)
-                        com.toolsboox.plugin.calendar.ot.LedgerTaskCarryOver.placeTypedTask(cd, t, appCtx)
-                    calendarDayService.save(root, fileDay, cd)
+                    com.toolsboox.plugin.calendar.ot.DayLocks.withDay(fileDay) {
+                        val cd = calendarDayService.loadForWriteOrThrow(root, fileDay, null, Locale.getDefault())
+                        cd.ledgerItems.add(item)
+                        // Tasks also land on the day page (a text box in a free Tasks row); the
+                        // scrollable list holds every task regardless, so overflow past the 16 rows
+                        // still shows there.
+                        if (kind == LedgerItem.Kind.TASK)
+                            com.toolsboox.plugin.calendar.ot.LedgerTaskCarryOver.placeTypedTask(cd, t, appCtx)
+                        calendarDayService.save(root, fileDay, cd)
+                    }
                 }.onFailure { Timber.w(it, "ledger items: manual save failed") }
-                com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(appCtx, item)
-                com.toolsboox.plugin.calendar.nw.LedgerEventSync.pushEvent(appCtx, item)
+                    .exceptionOrNull()
+                    // Out to CalDAV / Google Calendar only once it is on its day — a refused day
+                    // used to leave the task live everywhere except the page it was made on.
+                    .also { if (it == null) {
+                        com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(appCtx, item)
+                        com.toolsboox.plugin.calendar.nw.LedgerEventSync.pushEvent(appCtx, item)
+                    } }
             }
+            if (failure != null && isAdded) showMessage(
+                com.toolsboox.plugin.calendar.fi.CalendarDayService.refusal(failure, "add it") ?: "Couldn't add it just now.", binding.root
+            )
             load()
         }
     }
@@ -1547,23 +1603,224 @@ class LedgerItemsFragment @Inject constructor() : ScreenFragment() {
 
     private fun persist(item: LedgerItem) {
         val srcDay = itemSourceDay[item.id] ?: anchor
+        // The app context, captured BEFORE the IO hop: the save is blocking work with no suspension
+        // point, so cancellation cannot stop the coroutine reaching the push after onDestroy, and a
+        // requireContext() there is a crash (audit 09-10; promoteProposed/dismissProposed already do this).
+        val appCtx = requireContext().applicationContext
         lifecycleScope.launch(Dispatchers.IO) {
             val root = documentsRoot()
             runCatching {
                 // Load the item's own day (may differ from the anchor when filtering a period),
                 // replace it, and save there.
-                val cd = calendarDayService.load(root, srcDay, null, Locale.getDefault())
-                val idx = cd.ledgerItems.indexOfFirst { it.id == item.id }
-                if (idx >= 0) cd.ledgerItems[idx] = item else cd.ledgerItems.add(item)
-                calendarDayService.save(root, srcDay, cd)
-            }.onFailure { Timber.w(it, "ledger items: save failed") }
-            // Re-push so an edit/done-toggle reflects in its destination (idempotent by id): tasks to
-            // CalDAV, events to Google Calendar. Each no-ops for the other kind.
-            com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(requireContext(), item)
-            com.toolsboox.plugin.calendar.nw.LedgerEventSync.pushEvent(requireContext(), item)
+                com.toolsboox.plugin.calendar.ot.DayLocks.withDay(srcDay) {
+                    val cd = calendarDayService.loadForWriteOrThrow(root, srcDay, null, Locale.getDefault())
+                    val idx = cd.ledgerItems.indexOfFirst { it.id == item.id }
+                    if (idx >= 0) cd.ledgerItems[idx] = item else cd.ledgerItems.add(item)
+                    calendarDayService.save(root, srcDay, cd)
+                }
+            }.onFailure { failure ->
+                Timber.w(failure, "ledger items: save failed")
+                // Not pushed, and the row put back to what its day file says: the edit never
+                // reached the day, so CalDAV must not get it either, and the screen must not show it.
+                withContext(Dispatchers.Main) {
+                    if (isAdded) {
+                        showMessage(com.toolsboox.plugin.calendar.fi.CalendarDayService.refusal(failure, "save that") ?: "Couldn't save that just now.", binding.root)
+                        load()
+                    }
+                }
+            }.onSuccess {
+                // Re-push so an edit/done-toggle reflects in its destination (idempotent by id): tasks
+                // to CalDAV, events to Google Calendar. Each no-ops for the other kind.
+                com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(appCtx, item)
+                com.toolsboox.plugin.calendar.nw.LedgerEventSync.pushEvent(appCtx, item)
+            }
         }
     }
 
+
+    // ── The Proposed shelf (offer-never-mint) ────────────────────────────────────────────────────
+
+    /** Walk the ledger for PROPOSED candidates — the mirror of [gatherAllTasks], filtered to the
+     *  ones waiting for a promote, each carried with the day whose file owns it. Rides the same
+     *  [TaskWalkCache] as the board walk, so a file unchanged since the last look isn't re-read. */
+    private fun gatherProposed(root: File): List<Pair<LedgerItem, LocalDate>> {
+        val calendarRoot = File(root, "calendar")
+        if (!calendarRoot.exists()) return emptyList()
+        val out = mutableListOf<Pair<LedgerItem, LocalDate>>()
+        calendarRoot.walkTopDown()
+            .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
+            .forEach { file ->
+                val d = fileDate(file.name) ?: return@forEach
+                val items = com.toolsboox.plugin.calendar.ot.TaskWalkCache.items(file) { f ->
+                    runCatching { calendarDayService.loadLedgerItems(f) }.getOrNull() ?: emptyList()
+                }
+                items.filter { it.kind == LedgerItem.Kind.TASK && it.proposed }
+                    .forEach { out.add(it to d) }
+            }
+        // Newest day first — the freshest offers on top, like the board walk.
+        return out.sortedByDescending { it.second.toEpochDay() }
+    }
+
+    /** Re-earn the shelf's contents and dress its "✎ Proposed (N)" bar — hidden when nothing waits.
+     *  Runs on every [load] (both lenses); the walk is off the main thread and cheap through the
+     *  cache. */
+    private fun refreshProposedBar() {
+        val root = documentsRoot()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val proposed = withContext(Dispatchers.IO) { runCatching { gatherProposed(root) }.getOrElse { emptyList() } }
+            if (!isAdded) return@launch
+            proposedItems = proposed
+            binding.proposedBar.text = "✎  Proposed (${proposed.size})"
+            binding.proposedBar.visibility = if (proposed.isEmpty()) View.GONE else View.VISIBLE
+        }
+    }
+
+    /**
+     * The shelf itself: every proposed candidate with a one-tap ✓ Promote and ✗ Dismiss, plus a
+     * bulk "Promote all / Dismiss all". Promotion is the ASK — nothing here becomes a task without
+     * the tap. Acts optimistically per row (the row leaves the list at once), then re-earns the
+     * bar and the surface so the promoted task appears in the live list/board and the count drops.
+     */
+    private fun showProposedShelf() {
+        val current = proposedItems
+        if (current.isEmpty()) { showMessage("Nothing proposed.", binding.root); return }
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+
+        val remaining = current.toMutableList()
+        val col = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(18), px(8), px(18), px(8))
+        }
+        val scroll = android.widget.ScrollView(ctx).apply { addView(col) }
+        lateinit var dialog: AlertDialog
+
+        fun rowView(item: LedgerItem, srcDay: LocalDate): View {
+            val row = LinearLayout(ctx).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, px(10), 0, px(10))
+            }
+            row.addView(TextView(ctx).apply {
+                text = item.text.ifBlank { "(handwritten)" }
+                textSize = 15f; setTextColor(0xFF000000.toInt())
+            })
+            // Provenance + the day it sits on, so a candidate says where it came from.
+            row.addView(TextView(ctx).apply {
+                text = listOfNotNull(
+                    item.source?.takeIf { it.isNotBlank() }?.let { "from $it" },
+                    srcDay.format(java.time.format.DateTimeFormatter.ofPattern("MMM d"))
+                ).joinToString("  ·  ")
+                textSize = 11f; setTextColor(0xFF888888.toInt()); setPadding(0, px(2), 0, px(4))
+            })
+            val actions = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+            }
+            fun act(label: String, color: Int, onTap: () -> Unit) = TextView(ctx).apply {
+                text = label; textSize = 15f; setTextColor(color)
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setPadding(0, px(4), px(28), px(4)); isClickable = true
+                setOnClickListener { onTap() }
+            }
+            fun removeRowAndMaybeClose() {
+                remaining.removeAll { it.first.id == item.id }
+                col.removeView(row)
+                if (remaining.isEmpty()) dialog.dismiss()
+            }
+            actions.addView(act("✓  Promote", 0xFF2F6F96.toInt()) {
+                promoteProposed(item, srcDay); removeRowAndMaybeClose()
+            })
+            actions.addView(act("✗  Dismiss", 0xFF9A3B3B.toInt()) {
+                dismissProposed(item, srcDay); removeRowAndMaybeClose()
+            })
+            row.addView(actions)
+            return row
+        }
+
+        for ((item, srcDay) in remaining.toList()) col.addView(rowView(item, srcDay))
+
+        dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setTitle("✎  Proposed — promote to make it a task")
+            .setView(scroll)
+            // Bulk, cheap: act on whatever still stands in the list, then close.
+            .setPositiveButton("Promote all") { _, _ ->
+                remaining.toList().forEach { (item, srcDay) -> promoteProposed(item, srcDay) }
+            }
+            .setNeutralButton("Dismiss all") { _, _ ->
+                remaining.toList().forEach { (item, srcDay) -> dismissProposed(item, srcDay) }
+            }
+            .setNegativeButton("Close", null)
+            // Nothing is thrown away by a tap outside — every act is deliberate — and the surface
+            // re-reads whenever the shelf closes, so the list/board/count reflect the promotions.
+            .setOnDismissListener { load() }
+            .create()
+        showModal(dialog)
+    }
+
+    /** Promote a candidate: clear [LedgerItem.proposed] in its own day file (it becomes a live task)
+     *  and push it to the task mirror NOW — the push withheld at creation. */
+    private fun promoteProposed(item: LedgerItem, srcDay: LocalDate) {
+        val appCtx = requireContext().applicationContext
+        lifecycleScope.launch(Dispatchers.IO) {
+            val root = documentsRoot()
+            val promoted = runCatching {
+                com.toolsboox.plugin.calendar.ot.DayLocks.withDay(srcDay) {
+                    val cd = calendarDayService.loadForWriteOrThrow(root, srcDay, null, Locale.getDefault())
+                    val idx = cd.ledgerItems.indexOfFirst { it.id == item.id }
+                    // Nothing to promote on that day → nothing to write (and nothing to push).
+                    if (idx >= 0) {
+                        cd.ledgerItems[idx].proposed = false
+                        calendarDayService.save(root, srcDay, cd)
+                    }
+                    idx >= 0
+                }
+            }.onFailure { failure ->
+                Timber.w(failure, "proposed: promote save failed")
+                // A toast, not a snackbar: this lands while the shelf dialog is still over the page.
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(appCtx,
+                        com.toolsboox.plugin.calendar.fi.CalendarDayService.refusal(failure, "promote it") ?: "Couldn't promote it just now.",
+                        android.widget.Toast.LENGTH_LONG).show()
+                }
+            }.getOrDefault(false)
+            if (!promoted) return@launch
+            item.proposed = false
+            // Now that it IS a task on its day, it may enter the live mirror (CalDAV). Idempotent by
+            // id. A refused day still holds it as proposed, so it does not go live anywhere.
+            runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(appCtx, item) }
+        }
+    }
+
+    /** Dismiss a candidate: remove it from its own day file with a tombstone (so a sync union can't
+     *  resurrect it), the same durable removal the list's delete makes. A proposed item was never
+     *  pushed live, but the remote delete is id-idempotent and harmless. */
+    private fun dismissProposed(item: LedgerItem, srcDay: LocalDate) {
+        val appCtx = requireContext().applicationContext
+        lifecycleScope.launch(Dispatchers.IO) {
+            val root = documentsRoot()
+            runCatching {
+                com.toolsboox.plugin.calendar.ot.DayLocks.withDay(srcDay) {
+                    val cd = calendarDayService.loadForWriteOrThrow(root, srcDay, null, Locale.getDefault())
+                    val target = cd.ledgerItems.firstOrNull { it.id == item.id }
+                    if (target != null) {
+                        cd.deleteLedgerItems(listOf(target))
+                        calendarDayService.save(root, srcDay, cd)
+                    }
+                }
+            }.onFailure { failure ->
+                Timber.w(failure, "proposed: dismiss save failed")
+                // The row already left the shelf; say it will be back, and why.
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(appCtx,
+                        com.toolsboox.plugin.calendar.fi.CalendarDayService.refusal(failure, "dismiss it") ?: "Couldn't dismiss it just now.",
+                        android.widget.Toast.LENGTH_LONG).show()
+                }
+            }.onSuccess {
+                runCatching { com.toolsboox.plugin.calendar.nw.LedgerTaskSync.deleteTask(appCtx, item) }
+            }
+        }
+    }
 
     override fun showLoading() {}
     override fun hideLoading() {}

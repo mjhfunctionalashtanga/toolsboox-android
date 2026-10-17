@@ -15,14 +15,23 @@ object LedgerReturn {
     var label: String? = null
         private set
 
+    /** What the ↩ chip arms just before it navigates — the source's own "open this again" (an
+     *  article to reopen, a letter in its mailbox). Held HERE, not in the destination's one-shot
+     *  channel, so only the chip turns it into a way in: set at leave time, those one-shots used
+     *  to hijack the next unrelated arrival (Michael 2026-10-11 review — a gram's Go to feed
+     *  landing in The Mail with yesterday's letter springing open). */
+    var onReturn: (() -> Unit)? = null
+        private set
+
     val isSet: Boolean get() = navActionId != 0
 
-    fun set(navActionId: Int, label: String?) {
+    fun set(navActionId: Int, label: String?, onReturn: (() -> Unit)? = null) {
         this.navActionId = navActionId
         this.label = label?.takeIf { it.isNotBlank() }
+        this.onReturn = onReturn
     }
 
-    fun clear() { navActionId = 0; label = null }
+    fun clear() { navActionId = 0; label = null; onReturn = null }
 }
 
 /**

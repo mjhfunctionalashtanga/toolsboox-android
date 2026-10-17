@@ -57,7 +57,26 @@ object ConnectionStore {
     private fun saveLocked(context: Context, connections: List<Connection>) {
         cache = runCatching { file(context).writeText(adapter.toJson(connections)); connections.toList() }
             .onFailure { Timber.w(it, "connections save failed") }.getOrNull()
+        generation++
     }
+
+    /**
+     * Bumped on every save — a local edge, a tombstone, AND a sync merge that folded another
+     * device's edges in. The derived indexes ([LedgerTags.list], [LedgerLinks]' edge view) memo
+     * against it, so a tag written on the iPad shows in the B6's Tags list after the next merge
+     * without every writer having to remember to say so (Michael 2026-10-11: "tags aren't
+     * complete"). Only ever compared for equality.
+     */
+    @Volatile
+    var generation: Long = 0L
+        private set
+
+    /**
+     * The parsed graph as it stands, NOT copied — for the read-only index builders that walk every
+     * edge once per [generation]. [loadAll] copies so a caller can edit; these callers only read.
+     */
+    internal fun snapshot(context: Context): List<Connection> =
+        synchronized(lock) { loadLocked(context) }
 
     /**
      * Join two things. Idempotent: connecting the same pair the same way twice revives the edge
@@ -130,7 +149,10 @@ object ConnectionStore {
                     val remote = runCatching { adapter.fromJson(remoteText) }.getOrNull().orEmpty()
                     Connection.merge(local, remote)
                 }
-                saveLocked(context, folded)
+                // Only a merge that MOVED something is written: an unchanged round trip used to
+                // rewrite the file anyway, and now that a save also bumps [generation] it would
+                // make every derived index rebuild after every sync for nothing.
+                if (folded != local) saveLocked(context, folded)
                 folded
             }
             LedgerSidecarSync.push(context, PATH, adapter.toJson(merged))

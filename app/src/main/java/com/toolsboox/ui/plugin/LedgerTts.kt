@@ -27,12 +27,39 @@ class LedgerTts(context: Context) {
     /** Called on the main thread when playback starts (true) or finishes/stops (false). */
     var onStateChange: ((Boolean) -> Unit)? = null
 
+    /** Follow-along: the SENTENCE currently being spoken, fired on the main thread only when it
+     *  changes. SENTENCE-level by design (Michael's option, 08-30): word-level would mean an
+     *  e-ink repaint per word and a fragile offset map across the 3500-char chunk joins; the
+     *  sentence is the honest quiet unit. Derived from [onRangeStart]'s char range within the
+     *  speaking chunk. */
+    var onSentence: ((String) -> Unit)? = null
+    private var lastSentence: String? = null
+
+    private fun sentenceAt(chunk: String, at: Int): String {
+        if (chunk.isEmpty()) return ""
+        val i = at.coerceIn(0, chunk.length - 1)
+        val enders = charArrayOf('.', '!', '?', '。')
+        var start = 0
+        for (j in i - 1 downTo 0) if (chunk[j] in enders) { start = j + 1; break }
+        var end = chunk.length
+        for (j in i until chunk.length) if (chunk[j] in enders) { end = (j + 1).coerceAtMost(chunk.length); break }
+        return chunk.substring(start, end).trim()
+    }
+
     init {
         tts = TextToSpeech(context.applicationContext) { status ->
             ready = status == TextToSpeech.SUCCESS
             if (!ready) { Timber.w("TTS init failed: %d", status); return@TextToSpeech }
             tts?.language = Locale.getDefault()
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onRangeStart(id: String?, start: Int, end: Int, frame: Int) {
+                    val j = id?.toIntOrNull() ?: return
+                    val sent = sentenceAt(chunks.getOrNull(j) ?: return, start)
+                    if (sent.isNotBlank() && sent != lastSentence) {
+                        lastSentence = sent
+                        main.post { onSentence?.invoke(sent) }
+                    }
+                }
                 override fun onStart(id: String?) {
                     id?.toIntOrNull()?.let { index = it }
                     main.post { onStateChange?.invoke(true) }
@@ -85,6 +112,18 @@ class LedgerTts(context: Context) {
     /** Progress through the current text, in engine chunks (roughly paragraphs). */
     val chunkIndex: Int get() = index
     val chunkCount: Int get() = chunks.size
+    /** Characters still to be spoken, the current chunk counted whole (the engine reports no
+     *  intra-chunk position) — the transport turns it into a "~N min left" the way a podcast's
+     *  clock does, so read-aloud says how long it is, not just which paragraph it is on. */
+    val remainingChars: Int get() = chunks.drop(index.coerceAtLeast(0)).sumOf { it.length }
+    val totalChars: Int get() = chunks.sumOf { it.length }
+
+    /** Jump to chunk [i] and keep speaking — the transport bar's tap/drag-to-seek for TTS. */
+    fun seekTo(i: Int) {
+        if (chunks.isEmpty()) return
+        paused = false
+        speakFrom(i.coerceIn(0, chunks.lastIndex))
+    }
 
     /** Set the speech rate (1.0 = normal). Applies to the next utterance; re-speaks the current
      *  chunk so the change is heard immediately while playing. */

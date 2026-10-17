@@ -45,7 +45,11 @@ object MailOpenResolver {
         if (pendingId.isBlank()) return null
         heldIds.firstOrNull { it == pendingId }?.let { return it }
         val tail = uidTail(pendingId) ?: return null
-        val matches = heldIds.filter { uidTail(it) == tail }
+        // A 🚫 Junk letter ("junk:<account>:uid:<n>", [JunkMail]) and an INBOX letter
+        // ("acct:<account>:uid:<n>") number their uids in DIFFERENT folders — a Junk uid 42 and an
+        // Inbox uid 42 are unrelated letters, so the tail only ever matches within its own kind.
+        val junk = JunkMail.isJunk(pendingId)
+        val matches = heldIds.filter { JunkMail.isJunk(it) == junk && uidTail(it) == tail }
         return if (matches.size == 1) matches[0] else null
     }
 

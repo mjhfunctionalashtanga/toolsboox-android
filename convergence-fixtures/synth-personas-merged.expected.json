@@ -1,0 +1,129 @@
+{
+  "merged": [
+    {
+      "name": "Brainstorm — what to do with this",
+      "prompt": "",
+      "at": 1760304000000,
+      "deleted": true
+    },
+    {
+      "name": "Coach",
+      "prompt": "",
+      "at": 1760302000000,
+      "deleted": true,
+      "renamedTo": "Coach — the run-up"
+    },
+    {
+      "name": "Coach — the run-up",
+      "prompt": "Run coach, second draft.",
+      "at": 1760302000000
+    },
+    {
+      "name": "Interviewer — Rooms on Other People's Land",
+      "prompt": "Edited interviewer: ask about the shala.",
+      "at": 1760304500000
+    },
+    {
+      "name": "Old Friend",
+      "prompt": "",
+      "at": 1760303000000,
+      "deleted": true
+    },
+    {
+      "name": "Only Here",
+      "prompt": "Kept from a.",
+      "at": 1760308000000
+    },
+    {
+      "name": "Only There",
+      "prompt": "Kept from b.",
+      "at": 1760309000000
+    },
+    {
+      "name": "Phoenix",
+      "prompt": "Back again.",
+      "at": 1760305000000
+    },
+    {
+      "name": "Spiral — what came back around",
+      "prompt": "",
+      "at": 0
+    },
+    {
+      "name": "Synthesize — what these make together",
+      "prompt": "",
+      "at": 0
+    },
+    {
+      "name": "Tie",
+      "prompt": "banana",
+      "at": 1760306000000
+    },
+    {
+      "name": "Tie Dead",
+      "prompt": "",
+      "at": 1760307000000,
+      "deleted": true
+    }
+  ],
+  "order": [
+    "Interviewer — Rooms on Other People's Land",
+    "Spiral — what came back around",
+    "Synthesize — what these make together",
+    "Coach — the run-up",
+    "Only Here",
+    "Only There",
+    "Phoenix",
+    "Tie"
+  ],
+  "migrate": {
+    "legacy": [
+      {
+        "name": "Spiral — what came back around",
+        "prompt": "You are the quiet voice on Michael's own ledger, handing him back something he wrote or recorded a while ago, because it rhymes with what he has been circling lately.\n\nNever quiz him. Never grade an answer. There is no right response and no score — this is not a study app and must never feel like one. Your only job is to make the thing worth looking at again.\n\nGiven an excerpt and, when there is one, the recent piece it rhymes with: say in one sentence what the two have in common, then ask ONE open question that would move his thinking on rather than test his recall. Prefer questions that reach for what has changed since he wrote it.\n\nVoice: sardonic, straightforward, kind. Short sentences. No markdown, no bullet points, no emojis. Never invent anything that is not in the excerpt. If the excerpt is too thin to say anything honest about, say so plainly in one line and stop — a shrug is better than manufactured insight."
+      },
+      {
+        "name": "Interviewer — Rooms on Other People's Land",
+        "prompt": "My own interviewer."
+      },
+      {
+        "name": "Coach",
+        "prompt": "Coach me."
+      }
+    ],
+    "seeded": [
+      "Interviewer — Rooms on Other People's Land",
+      "Spiral — what came back around",
+      "Synthesize — what these make together"
+    ],
+    "now": 1760310000000,
+    "expected": [
+      {
+        "name": "Brainstorm — what to do with this",
+        "prompt": "",
+        "at": 0
+      },
+      {
+        "name": "Coach",
+        "prompt": "Coach me.",
+        "at": 1760310000000
+      },
+      {
+        "name": "Interviewer — Rooms on Other People's Land",
+        "prompt": "My own interviewer.",
+        "at": 1760310000000
+      },
+      {
+        "name": "Spiral — what came back around",
+        "prompt": "",
+        "at": 0
+      },
+      {
+        "name": "Synthesize — what these make together",
+        "prompt": "",
+        "at": 1760310000000,
+        "deleted": true
+      }
+    ]
+  }
+}

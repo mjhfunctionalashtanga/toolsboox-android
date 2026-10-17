@@ -445,6 +445,8 @@ abstract class ScreenFragment : Fragment() {
         // because being draggable and being hideable are the same membership.
         if (floatingPills.none { it === pill }) floatingPills.add(pill)
         pill.visibility = if (pillsHidden()) View.GONE else View.VISIBLE
+        // Its drag is a move, never the left edge's swipe back (LeftEdgeCatcher; Michael 2026-10-12).
+        pill.setTag(R.id.tag_edge_stand_aside, true)
         // NOTE: keys are versioned (`_px`/`_py`). The pill redesign changed each pill's
         // anchored home, so positions saved by earlier builds are meaningless and would
         // strand a pill off-screen — discard them by not reading the old `_tx`/`_ty` keys.
@@ -659,13 +661,21 @@ abstract class ScreenFragment : Fragment() {
             .getString("calendarToolbarSide", "LEFT") == "RIGHT"
 
     /**
-     * Build a rail in a layout-provided [gutter] for a surface with no ink tools: ☰ Hub leads,
-     * the surface's own [actions] follow (whatever its nav pill or header buttons did, unpacked
-     * into icons), then the ⇄ edge-hop and the rail's own ✕. The ⇄ moves the gutter to the row's
-     * other end and flips the shared side pref, so every rail in the app hops together.
+     * Build a rail in a layout-provided [gutter] for a surface with no ink tools: More leads, the
+     * surface's own [actions] follow (whatever its nav pill or header buttons did, unpacked into
+     * icons), then the ⇄ edge-hop and the rail's own ✕. The ⇄ moves the gutter to the row's other
+     * end and flips the shared side pref, so every rail in the app hops together.
      *
-     * [hub] is the ☰ door — the shared Ledger directory unless the surface has a richer hub of
-     * its own (the day page's showLedgerHub precedent).
+     * HUB OFF THE RAIL (Michael 2026-10-12: "Those too." → "Make sure we can get to hub with back
+     * swipe in the reader or touch or something as needed" → "Awesome"): ☰ Hub led this rail; now
+     * More does, and Hub is More's first row (☐ Tool labels under it) — and the left edge's Back
+     * opens it ([installEdgeLadder], installed here). [hub] is the Hub's door — the shared Ledger
+     * directory unless the surface has a richer hub of its own.
+     *  - [ownMore]: the surface seats a More of its own among [actions] (The Mail's wrench), which
+     *    carries Hub first — no second wrench here.
+     *  - [keepHub]: a reader read OUTSIDE its list (the standalone article,
+     *    PanelSeats.Flags.outsideList): ☰ Hub keeps its seat at the head — the left edge goes back
+     *    to whatever opened the piece, never to a list — and no More is added under it.
      */
     protected fun setupActionRail(
         gutter: androidx.constraintlayout.widget.ConstraintLayout,
@@ -673,7 +683,9 @@ abstract class ScreenFragment : Fragment() {
         /** A provider, not a list: surfaces whose actions depend on state (the feed list vs an
          *  open article) re-ask it through [rebuildActionRail] and the rail re-dresses. */
         actions: () -> List<com.toolsboox.ot.TuckPanel.Item>,
-        hub: (() -> Unit)? = null
+        hub: (() -> Unit)? = null,
+        ownMore: Boolean = false,
+        keepHub: Boolean = false
     ): com.toolsboox.ot.TuckPanel {
         val rail = com.toolsboox.ot.TuckPanel(
             host = this,
@@ -693,14 +705,18 @@ abstract class ScreenFragment : Fragment() {
         }
         dock()
         fun rebuild() = rail.setClusters(
-            top = listOf(
-                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_bar_sections, "Hub") {
-                    hub?.invoke() ?: showAccordion(
-                        com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this),
-                        anchorEnd = railDockedRight()
-                    )
-                }
-            ),
+            top = when {
+                keepHub -> listOf(com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_bar_sections, "Hub") {
+                    hub?.invoke() ?: openHub()
+                })
+                ownMore -> emptyList()
+                // The shared More: ☰ Hub first, then ☐ Tool labels (the column's caption switch,
+                // as every other panel's More carries it).
+                else -> listOf(com.toolsboox.ot.PanelFaces.item(com.toolsboox.ot.PanelSeats.Seat.MORE, "More") {
+                    showGoModal(withHub(listOf("Layout" to listOf(toolLabelsRow(rail))), hub),
+                        anchorTop = true, anchorEnd = railDockedRight())
+                })
+            },
             bottom = actions() + com.toolsboox.ot.TuckPanel.Item(
                 R.drawable.ic_toolbar_switch_side, "Other side"
             ) {
@@ -712,7 +728,313 @@ abstract class ScreenFragment : Fragment() {
         )
         rebuild()
         actionRailRebuilds[surfaceKey] = { rebuild() }
+        installEdgeLadder()
         return rail
+    }
+
+    /**
+     * THE ONE PANEL LANGUAGE (Michael 2026-10-11: "The tuck panels are not working with the same
+     * design language hierarchy" → plan → "Yes"). A list or reading surface's column, built from
+     * [com.toolsboox.ot.PanelSeats] — the same seats, order and captions as iOS:
+     *  ⛶ | Today · Nib · More | the hand | the room, by kind | Side.
+     * Hub and Feeds are off the column (Michael 2026-10-12: "Those too."): the screen's More carries
+     * ☰ Hub as its first row ([withHub]) and the left edge's Back opens it ([installEdgeLadder],
+     * installed here).
+     * The frame and foot seats come with shared doors ([panelDoor]); [seat] answers the screen's
+     * own (and may override a door — return null for a frame seat to take the shared one, null for
+     * any other seat to leave it off this moment, e.g. Later on a piece already kept). The column
+     * honours the ONE side setting (`calendarToolbarSide`, the same pref every rail hops by) and
+     * carries Side last. Full screen hides the gutter and stands a [⛶] pill in [fullPillHost].
+     * [rebuildActionRail] re-asks the seats; the panel redraws only when they changed (the redress
+     * rule — no repaint, no B6 flash, for the same seats again).
+     *
+     * [dressNow] is for a surface whose dress follows its state — Feeds wears the list's dress, or
+     * the article's while a piece is open over it — re-read on every rebuild. [afterFrame] rides
+     * between the frame and the hand as a block of its own (Feeds: the player's transport while
+     * something plays — spec §1, "the player block sits directly under the frame"). The foot (Side)
+     * goes to the panel as its own block, pinned under the scroll whenever the column outruns the
+     * screen, so it is never the seat that falls off the end (review 2026-10-11, F1). [onFull]
+     * hears full screen come and go (the Net shows its header ⟳ and Piles only then, F3).
+     */
+    protected fun setupPanel(
+        gutter: androidx.constraintlayout.widget.ConstraintLayout,
+        surfaceKey: String,
+        dress: com.toolsboox.ot.PanelSeats.Dress,
+        fullPillHost: android.view.ViewGroup,
+        flags: () -> com.toolsboox.ot.PanelSeats.Flags = { com.toolsboox.ot.PanelSeats.Flags() },
+        dressNow: () -> com.toolsboox.ot.PanelSeats.Dress = { dress },
+        afterFrame: () -> List<com.toolsboox.ot.TuckPanel.Item> = { emptyList() },
+        onFull: (full: Boolean) -> Unit = {},
+        seat: (com.toolsboox.ot.PanelSeats.Seat) -> com.toolsboox.ot.TuckPanel.Item?
+    ): com.toolsboox.ot.TuckPanel {
+        val rail = com.toolsboox.ot.TuckPanel(
+            host = this,
+            toolbar = null,
+            surfaceKey = surfaceKey,
+            sideIsLeft = { !railDockedRight() },
+            onStateApplied = { _, open -> onFull(!open) },
+            gutter = gutter,
+            fullCapable = true,
+            fullPillHost = fullPillHost
+        )
+        // The gutter moves to the row's other end on a remembered RIGHT dock, before first paint —
+        // setupActionRail's mechanism (LinearLayout order is the whole of it).
+        fun dock() {
+            val row = gutter.parent as? android.widget.LinearLayout ?: return
+            val end = railDockedRight()
+            if (row.indexOfChild(gutter) == (if (end) row.childCount - 1 else 0)) return
+            row.removeView(gutter)
+            row.addView(gutter, if (end) row.childCount else 0)
+        }
+        dock()
+        fun rebuild() {
+            val layout = com.toolsboox.ot.PanelSeats.layout(
+                dressNow(), com.toolsboox.ot.PanelSeats.Platform.ANDROID, flags()) ?: return
+            fun items(block: List<com.toolsboox.ot.PanelSeats.Seat>) =
+                block.mapNotNull { s -> seat(s) ?: panelDoor(s, rail) { dock() } }
+            val body = listOf(layout.frame, layout.hand, layout.room).map { items(it) }
+            val extra = afterFrame()
+            rail.setBlocks(if (extra.isEmpty()) body else listOf(body.first(), extra) + body.drop(1),
+                foot = items(layout.foot))
+        }
+        rebuild()
+        actionRailRebuilds[surfaceKey] = { rebuild() }
+        installEdgeLadder()
+        return rail
+    }
+
+    /**
+     * The shared doors every panel wears unless its screen answers the seat itself:
+     *  - Hub: the Ledger directory (worn only by a reader outside its list now — PanelSeats).
+     *  - Today: on a reader, today's day page (spec §3, Q2: "Readers and the Net — the day page";
+     *    tap again or hold, the same).
+     *  - Notes (the nib seat; captioned and named "Notes" since Michael 2026-10-12: "In the reader
+     *    the nib should be called notes"): back to your note — the floating notes button's own
+     *    tap, whatever it is set to; hold, the notes menu (its tray).
+     *  - Feeds: the Feeds room, where you were.
+     *  - Side: the column to the other edge, every rail with it.
+     * Null for any other seat — the screen's own.
+     */
+    protected fun panelDoor(
+        s: com.toolsboox.ot.PanelSeats.Seat,
+        rail: com.toolsboox.ot.TuckPanel,
+        dock: () -> Unit
+    ): com.toolsboox.ot.TuckPanel.Item? = when (s) {
+        com.toolsboox.ot.PanelSeats.Seat.HUB -> com.toolsboox.ot.PanelFaces.item(s) { openHub() }
+        com.toolsboox.ot.PanelSeats.Seat.TODAY -> com.toolsboox.ot.PanelFaces.item(s, "Today's page",
+            longPress = { openTodaysPage() }) { openTodaysPage() }
+        com.toolsboox.ot.PanelSeats.Seat.NIB -> com.toolsboox.ot.PanelFaces.item(s,
+            longPress = { showNotesDoorMenu() }) { openNotesDoor() }
+        com.toolsboox.ot.PanelSeats.Seat.FEEDS -> com.toolsboox.ot.PanelFaces.item(s) {
+            com.toolsboox.plugin.feeds.ui.openFeedView(androidx.navigation.fragment.NavHostFragment.findNavController(this), "feed", null)
+        }
+        com.toolsboox.ot.PanelSeats.Seat.SIDE -> com.toolsboox.ot.PanelFaces.item(s) {
+            val p = requireContext().getSharedPreferences("MAIN", 0)
+            p.edit().putString("calendarToolbarSide", if (railDockedRight()) "LEFT" else "RIGHT").apply()
+            dock()
+            rail.applyState()
+        }
+        else -> null
+    }
+
+    // ── THE HUB WITHOUT A SEAT (Michael 2026-10-12) ─────────────────────────────────────────────
+    //
+    // "Those too." took ☰ Hub and the Feeds door off every panel; "Make sure we can get to hub with
+    // back swipe in the reader or touch or something as needed" → plan → "Awesome":
+    //  (1) touch — every panel's More (wrench) carries ☰ Hub as its FIRST row ([withHub]); it opens
+    //      the main menu over the page, never leaving it;
+    //  (2) the left edge's Back — [installEdgeLadder]: a reader back to its list first, a room its
+    //      pane first, everywhere else the Hub at once ([com.toolsboox.ot.EdgeLadder]).
+
+    /** The Hub over this screen — the Ledger directory, hung from the column's side. The day page
+     *  answers with its own (its recent books folded in), Feeds and The Mail with theirs. */
+    open fun openHub() {
+        if (!isAdded) return
+        showAccordion(com.toolsboox.plugin.feeds.ui.ledgerDirectoryFolders(this), anchorEnd = railDockedRight())
+    }
+
+    /** More's first row on every panel: ☰ Hub (Michael 2026-10-12). [hub] overrides the door. */
+    protected fun hubRow(hub: (() -> Unit)? = null): GoItem = GoItem("☰", "Hub") { hub?.invoke() ?: openHub() }
+
+    /** [groups] for a [showGoModal] More, with ☰ Hub as the first row, above every heading. */
+    protected fun withHub(groups: List<Pair<String, List<GoItem>>>, hub: (() -> Unit)? = null): List<Pair<String, List<GoItem>>> =
+        listOf("" to listOf(hubRow(hub))) + groups
+
+    /** The same for a [showDirectory] More (a header-less group is leaf rows). */
+    protected fun withHubRows(
+        groups: List<Pair<String, List<Pair<String, () -> Unit>>>>,
+        vararg next: Pair<String, () -> Unit>
+    ): List<Pair<String, List<Pair<String, () -> Unit>>>> =
+        listOf("" to (listOf<Pair<String, () -> Unit>>("☰  Hub" to { openHub() }) + next)) + groups
+
+    /** A screen you READ: its first left-edge Back goes back to its list or shelf (the 09-11
+     *  rule) — the book reader, the standalone article. */
+    protected open val edgeReader: Boolean get() = false
+
+    /** This screen's room pane as the ladder sees it — Feeds and The Mail answer. */
+    protected open fun edgePane(): com.toolsboox.ot.EdgeLadder.Pane = com.toolsboox.ot.EdgeLadder.Pane.NONE
+
+    /** Open the room's pane — the ladder's first rung where [edgePane] says SHUT. */
+    protected open fun openEdgePane() {}
+
+    /**
+     * The view the FINGER inks on this screen right now, or null — read by the activity's
+     * left-edge catcher at a touch-down in the edge zone ([com.toolsboox.ot.LeftEdgeCatcher];
+     * Michael 2026-10-12, the B6): landing on it, the flick must be a bezel flick, so a finger
+     * stroke out of the margin stays a stroke. The ink pages answer in Finger mode.
+     */
+    open fun edgeInkView(): View? = null
+
+    /** The left-edge flick took the finger that was writing: drop its stroke under way, so the
+     *  CANCEL the catcher hands the page commits no tick of ink. The ink pages answer. */
+    open fun edgeDropFingerInk() {}
+
+    /** The view the ladder is installed on — once per view, however many builders run. */
+    private var edgeLadderView: View? = null
+
+    /** True while the ladder itself is opening the Hub — read by [showAccordion]'s Back. */
+    private var hubByLadder = false
+
+    /** The screen's own Back callbacks ([addOwnBackCallback]) on [ownBackView]. */
+    private val ownBackCallbacks = mutableListOf<androidx.activity.OnBackPressedCallback>()
+    private var ownBackView: View? = null
+
+    /**
+     * A screen's OWN Back — close the open article, walk the web page's history. Registered
+     * through here, it always stands ABOVE the left edge's ladder whichever of the two
+     * onViewCreated reaches first: [installEdgeLadder] re-seats any registered before it (review
+     * 2026-10-12: the order was only a comment; now it is the rule).
+     */
+    protected fun addOwnBackCallback(callback: androidx.activity.OnBackPressedCallback) {
+        val v = getView()
+        if (ownBackView !== v) { ownBackCallbacks.clear(); ownBackView = v }
+        ownBackCallbacks += callback
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, callback)
+    }
+
+    /**
+     * THE LEFT EDGE'S BACK LADDER on this screen (Michael 2026-10-12; [com.toolsboox.ot.EdgeLadder]).
+     * One OnBackPressedCallback for the view's life, registered by every panel builder
+     * ([setupPanel], [setupActionRail], the ink rail) — and the screen's own Back callbacks
+     * ([addOwnBackCallback]) always stand above it, so they still come first (the open article
+     * closes, the Net goes back a page).
+     * It hears where a Back began (handleOnBackStarted → swipeEdge; a B6 probe line goes to the
+     * log on every Back, edge named), and a Back that began at the LEFT edge climbs the ladder:
+     * pane → Hub → back (the Hub's own Back closes it AND goes back one place, arming the window —
+     * Michael 2026-10-12: "Then two swipes back instead of three") → back. Every other Back —
+     * the right edge, 3-button nav, Android 11–13, a programmatic one — is passed straight on to
+     * the next callback (the nav controller, the activity), exactly as before.
+     * The left edge comes from the system where nothing claims it (the Feeds list), and from the
+     * activity's in-app catcher where the page does — every ink page (MainActivity.edgeCatcher,
+     * [com.toolsboox.ot.LeftEdgeCatcher]; Michael 2026-10-12, the B6) — the same Back either way.
+     * A screen with no panel (Settings, Mail compose, a portal on the Net…) never wore a Hub
+     * seat and keeps plain Back on every edge — on purpose (review 2026-10-12).
+     */
+    protected fun installEdgeLadder() {
+        val v = getView() ?: return
+        if (edgeLadderView === v) return
+        edgeLadderView = v
+        val ladder = object : androidx.activity.OnBackPressedCallback(true) {
+            private var edge = com.toolsboox.ot.EdgeLadder.EDGE_UNKNOWN
+
+            override fun handleOnBackStarted(backEvent: androidx.activity.BackEventCompat) {
+                edge = backEvent.swipeEdge
+            }
+
+            override fun handleOnBackCancelled() {
+                edge = com.toolsboox.ot.EdgeLadder.EDGE_UNKNOWN
+            }
+
+            override fun handleOnBackPressed() {
+                val e = edge
+                edge = com.toolsboox.ot.EdgeLadder.EDGE_UNKNOWN
+                // One swipe, one rung: a Back right after the in-app left-edge flick that is not the
+                // flick's own is the same swipe heard again (Michael 2026-10-12, the B6).
+                if (com.toolsboox.ot.EdgeLadder.isEcho(SystemClock.uptimeMillis())) {
+                    Timber.i("EdgeLadder: a Back on %s right after the left-edge flick — the same swipe, swallowed",
+                        this@ScreenFragment.javaClass.simpleName)
+                    return
+                }
+                // A reader's pane is its contents, when it has one (the book's — "Content then
+                // shelf", Michael 2026-10-12); the default NONE keeps every other reader's plain Back.
+                val pane = edgePane()
+                // Asked only inside the window, where a flick with nowhere behind it is kept (END).
+                val rung = com.toolsboox.ot.EdgeLadder.shared.swipe(SystemClock.uptimeMillis(), e, pane, edgeReader,
+                    somewhereBack = e != com.toolsboox.ot.EdgeLadder.EDGE_LEFT || hasSomewhereBack())
+                // The probe Michael's B6 needs (does Bigme's Android 14 report the edge?): one line
+                // per Back, the edge named — "unreported" is a Back that sent no BackEvent at all.
+                Timber.i("EdgeLadder: Back on %s from the %s edge, pane %s → %s%s",
+                    this@ScreenFragment.javaClass.simpleName, com.toolsboox.ot.EdgeLadder.edgeName(e), pane, rung,
+                    if (rung == com.toolsboox.ot.EdgeLadder.Rung.END) " — nothing further back, the Back is kept" else "")
+                when (rung) {
+                    // iOS's endOfTrail (review 2026-10-12): the window's flicks walk back to the page
+                    // you started on and stop there — never out of Ledgable. The next flick after the
+                    // window opens the Hub again; the right edge is still the plain Back.
+                    com.toolsboox.ot.EdgeLadder.Rung.END -> Unit
+                    com.toolsboox.ot.EdgeLadder.Rung.OPEN_PANE -> openEdgePane()
+                    // Told to the Hub's dialog ([showAccordion]), so its close arms the window even
+                    // when the dialog never hears the edge (review 2026-10-12).
+                    com.toolsboox.ot.EdgeLadder.Rung.HUB -> {
+                        hubByLadder = true
+                        try { openHub() } finally { hubByLadder = false }
+                    }
+                    com.toolsboox.ot.EdgeLadder.Rung.PLAIN,
+                    com.toolsboox.ot.EdgeLadder.Rung.BACK -> passOn()
+                }
+            }
+
+            /** Plain Back: stand aside for one dispatch, so the next callback (or the activity's
+             *  own) takes it — the dispatcher has already let go of this one. */
+            private fun passOn() {
+                val dispatcher = activity?.onBackPressedDispatcher ?: return
+                isEnabled = false
+                try { dispatcher.onBackPressed() } finally { isEnabled = true }
+            }
+        }
+        val dispatcher = requireActivity().onBackPressedDispatcher
+        dispatcher.addCallback(viewLifecycleOwner, ladder)
+        // The screen's own Back registered ahead of the ladder steps back above it: the newest
+        // callback is asked first, so remove + add re-seats it (its enabled state goes with it).
+        if (ownBackView === v) for (own in ownBackCallbacks) {
+            own.remove()
+            dispatcher.addCallback(viewLifecycleOwner, own)
+        }
+    }
+
+    /** Today's day page — the directory's ☀ Today door, its return anchor first. */
+    protected fun openTodaysPage() {
+        if (!isAdded) return
+        (this as? ReturnAnchorProvider)?.prepareReturnAnchor()
+        runCatching { androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.action_to_calendar_day) }
+    }
+
+    /** The Nib's tap: the floating notes button's own tap, so the door does exactly what that
+     *  button is set to (Notes, where you left off, by default). */
+    protected fun openNotesDoor() {
+        val button = activity?.findViewById<View>(R.id.floatNoteButton)
+        if (button != null) button.performClick()
+        else com.toolsboox.plugin.calendar.CalendarNavigator.toLastDayNote(this)
+    }
+
+    /** The Nib's hold: the notes button's own tray while it is on screen; while it is put away, the
+     *  same doors as a short list (spec §3: Notes · Text notes · Feeds · Today). */
+    protected fun showNotesDoorMenu() {
+        val button = activity?.findViewById<View>(R.id.floatNoteButton)
+        if (button != null && button.visibility == View.VISIBLE && button.isAttachedToWindow && button.width > 0) {
+            button.performLongClick()
+            return
+        }
+        val ctx = context ?: return
+        val rows = listOf<Pair<String, () -> Unit>>(
+            "Notes" to { com.toolsboox.plugin.calendar.CalendarNavigator.toLastDayNote(this) },
+            "Text notes" to { runCatching { androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.action_to_text_notes) }; Unit },
+            "Feeds" to { com.toolsboox.plugin.feeds.ui.openFeedView(androidx.navigation.fragment.NavHostFragment.findNavController(this), "feed", null) },
+            "Today" to { openTodaysPage() },
+        )
+        androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
+            .setItems(rows.map { it.first }.toTypedArray()) { _, w -> rows[w].second() }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     /** Re-ask a rail's action provider and re-dress it — for surfaces whose actions follow
@@ -812,15 +1134,19 @@ abstract class ScreenFragment : Fragment() {
         registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
             val src = pendingCameraFile
             if (ok && src != null && src.exists()) {
-                val dest = File(attachmentsDir(), "photo-${UUID.randomUUID()}.jpg")
+                // The attachment's id IS the filename's uuid (iOS's rule; review 2026-10-16 #7), so
+                // a tap place on a pick finds the file from its id alone, on either app.
+                val id = UUID.randomUUID().toString()
+                val dest = File(attachmentsDir(), "photo-$id.jpg")
                 // Only destroy the source and record the attachment when the copy actually
                 // landed — a disk-full copy failure used to delete the ONLY copy and persist
                 // an attachment pointing at a missing file (gallery import got this right).
                 if (runCatching { src.copyTo(dest, overwrite = true) }.isSuccess) {
                     src.delete()
-                    emitAttachment(Attachment(UUID.randomUUID().toString(), Attachment.Kind.PHOTO, dest.name, null, Date()))
+                    emitAttachment(Attachment(id, Attachment.Kind.PHOTO, dest.name, null, Date()))
                 } else {
-                    showMessage(R.string.reader_capture_failed)
+                    if (isPickCapture) showMessage(com.toolsboox.plugin.calendar.ot.AddToPickWords.OUT_OF_SPACE)
+                    else showMessage(R.string.reader_capture_failed)
                     captureSink = null; gramSink = null
                 }
             } else captureSink = null
@@ -830,24 +1156,104 @@ abstract class ScreenFragment : Fragment() {
     private val annMicPermLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) startVoiceRecording()
-            else { showMessage(R.string.reader_capture_mic_denied); captureSink = null; gramSink = null }
+            else {
+                if (isPickCapture) com.toolsboox.plugin.feeds.ot.AddToPick.micOff(this)
+                else showMessage(R.string.reader_capture_mic_denied)
+                captureSink = null; gramSink = null
+            }
         }
 
     private val annVideoLauncher =
-        registerForActivityResult(ActivityResultContracts.CaptureVideo()) { ok ->
-            val src = pendingVideoFile
-            if (ok && src != null && src.exists()) {
-                val dest = File(attachmentsDir(), "video-${UUID.randomUUID()}.mp4")
-                if (runCatching { src.copyTo(dest, overwrite = true) }.isSuccess) {
-                    src.delete()
-                    emitAttachment(Attachment(UUID.randomUUID().toString(), Attachment.Kind.VIDEO, dest.name, null, Date()))
+        registerForActivityResult(ActivityResultContracts.CaptureVideo()) { ok -> onAnnVideo(ok) }
+
+    /** A pick's video: the camera stops it at 3:00 (add-to-pick pin §7 — "the most a pick holds"). */
+    private val pickVideoLauncher =
+        registerForActivityResult(object : ActivityResultContracts.CaptureVideo() {
+            override fun createIntent(context: android.content.Context, input: Uri): Intent =
+                super.createIntent(context, input)
+                    .putExtra(MediaStore.EXTRA_DURATION_LIMIT, com.toolsboox.plugin.calendar.ot.AddToPickWords.VIDEO_MAX_S)
+        }) { ok -> onAnnVideo(ok) }
+
+    private fun onAnnVideo(ok: Boolean) {
+        val src = pendingVideoFile
+        pendingVideoFile = null
+        if (!(ok && src != null && src.exists())) { gramSink = null; captureSink = null; return }
+        val id = UUID.randomUUID().toString()
+        val dest = File(attachmentsDir(), "video-$id.mp4")
+        val picked = isPickCapture
+        // A take of up to 3:00 is copied, and its length read, OFF the main thread (review
+        // 2026-10-16: both ran here and risked the app freezing after a long take); what follows —
+        // the sinks, the words — is back on it.
+        Thread {
+            val copied = runCatching { src.copyTo(dest, overwrite = true) }.isSuccess
+            // Its length rides on the attachment, so the pick's ▶ pill and chip read 0:41 without
+            // opening the file again.
+            val secs = if (copied) { src.delete(); com.toolsboox.plugin.calendar.ot.AvPoster.durationMs(dest) / 1000.0 } else 0.0
+            activity?.runOnUiThread {
+                if (!isAdded) return@runOnUiThread
+                if (copied) {
+                    if (picked && secs >= com.toolsboox.plugin.calendar.ot.AddToPickWords.VIDEO_MAX_S - 1)
+                        showMessage(com.toolsboox.plugin.calendar.ot.AddToPickWords.VIDEO_CAPPED)
+                    emitAttachment(Attachment(id, Attachment.Kind.VIDEO, dest.name, secs.takeIf { it > 0 }, Date()))
                 } else {
-                    showMessage(R.string.reader_capture_failed)
+                    if (picked) showMessage(com.toolsboox.plugin.calendar.ot.AddToPickWords.OUT_OF_SPACE)
+                    else showMessage(R.string.reader_capture_failed)
                     gramSink = null; captureSink = null
                 }
-            } else { gramSink = null; captureSink = null }
-            pendingVideoFile = null
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
+    // ── "＋ Add to this pick" (add-to-pick pin §1/§7) ──────────────────────────────────────────
+
+    /** The sink a pick's capture runs through — while it is the one waiting, failures say the
+     *  pin's words and the A/V gram toast stays quiet (the pick says where it went). */
+    private var pickSink: ((Attachment) -> Unit)? = null
+    private val isPickCapture: Boolean get() = gramSink != null && gramSink === pickSink
+    /** A recording the fragment stopped on its way out (a call, the lock): its clock, for the
+     *  "kept" line. */
+    private var pickInterruptedAt: Int = -1
+
+    /**
+     * Straight to one medium for a pick — 🎤 the recorder, 📷 the camera (no take-or-upload
+     * question: 🖼 is its own row), 🖼 the library, 🎥 the camera's video (3:00 at most). No camera
+     * on this device (the B6): "No camera on this device — choose a picture instead.", then the
+     * library opens.
+     */
+    fun captureForPick(kind: com.toolsboox.plugin.feeds.ot.AddToPick.Capture, onAttachment: (Attachment) -> Unit) {
+        val sink: (Attachment) -> Unit = { att -> pickSink = null; onAttachment(att) }
+        pickSink = sink
+        gramSink = sink
+        captureSink = null
+        captureSelection = ""
+        pickInterruptedAt = -1
+        val noCamera = !requireContext().packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)
+        when (kind) {
+            com.toolsboox.plugin.feeds.ot.AddToPick.Capture.VOICE -> requestVoiceRecording()
+            com.toolsboox.plugin.feeds.ot.AddToPick.Capture.GALLERY -> annGalleryLauncher.launch("image/*")
+            com.toolsboox.plugin.feeds.ot.AddToPick.Capture.CAMERA, com.toolsboox.plugin.feeds.ot.AddToPick.Capture.VIDEO -> {
+                if (noCamera) { pickNoCamera(); return }
+                if (kind == com.toolsboox.plugin.feeds.ot.AddToPick.Capture.CAMERA) launchAnnCamera()
+                else try {
+                    val dir = File(requireContext().cacheDir, "camera").apply { mkdirs() }
+                    val vid = File(dir, "clip-${SystemClock.elapsedRealtimeNanos()}.mp4")
+                    val uri = FileProvider.getUriForFile(requireContext(), "${requireContext().packageName}.fileprovider", vid)
+                    pendingVideoFile = vid
+                    pickVideoLauncher.launch(uri)
+                } catch (e: SecurityException) {
+                    com.toolsboox.plugin.feeds.ot.AddToPick.cameraOff(this, video = true) { annGalleryLauncher.launch("image/*") }
+                } catch (e: Exception) {
+                    Timber.w(e, "pick video unavailable"); pickNoCamera()
+                }
+            }
         }
+    }
+
+    /** No camera here: say so, then the library — the pick's capture still waiting on it. */
+    private fun pickNoCamera() {
+        showMessage(com.toolsboox.plugin.calendar.ot.AddToPickWords.NO_CAMERA)
+        runCatching { annGalleryLauncher.launch("image/*") }.onFailure { gramSink = null; pickSink = null }
+    }
 
     /**
      * Capture a standalone A/V gram (a photo / voice / video note-to-self) for the day. Reuses
@@ -887,6 +1293,15 @@ abstract class ScreenFragment : Fragment() {
         }
     }
 
+    /** 🖼 Choose a picture — the gallery straight, no take-or-upload question (the article ladder's
+     *  own row, iOS's "Choose a picture"; design critique #9, Michael 2026-10-12). */
+    protected fun captureGalleryDirect(onGram: (Attachment) -> Unit) {
+        gramSink = onGram
+        captureSink = null
+        captureSelection = ""
+        annGalleryLauncher.launch("image/*")
+    }
+
     private fun launchAnnVideo() {
         try {
             val dir = File(requireContext().cacheDir, "camera").apply { mkdirs() }
@@ -908,19 +1323,41 @@ abstract class ScreenFragment : Fragment() {
     protected fun captureAnnotation(
         selection: String,
         sourceTitle: String? = null,
+        /** ★ Star it — the surface's own star ceremony; null hides the row. */
+        onStar: (() -> Unit)? = null,
+        /** 📝 Onto today's note — the surface's own "place this on the page I'm writing"; null
+         *  hides the row. */
+        onPlaceGram: (() -> Unit)? = null,
         onCapture: (String?, String?, Attachment?) -> Unit
     ) {
         captureSelection = selection
         captureSource = sourceTitle
         captureSink = onCapture
         gramSink = null
-        val noteLabel = if (selection.isNotBlank()) getString(R.string.reader_capture_highlight_note)
-        else getString(R.string.reader_capture_note)
-        val options = mutableListOf<Pair<String, () -> Unit>>(
-            "🖍  $noteLabel" to { showNoteDialog() }
-        )
+        // THE CANON (Michael, 09-10: "make sure every annotation surface has 'Save highlight'
+        // with the handwriting, audio capture, etc."): the same seven rows, in the same order,
+        // as the feed chooser (FeedNoteGram.show) — so a book, a comic panel and an article all
+        // teach one ladder. A bare highlight is a complete annotation, hence ❝ first: one tap
+        // files the passage through the sink with no note and no media.
+        val options = mutableListOf<Pair<String, () -> Unit>>()
+        if (selection.isNotBlank()) options.add("❝  Save highlight" to {
+            captureSink?.invoke(selection, null, null)
+            captureSink = null
+            showMessage("Highlight saved")
+        })
+        // Handwriting is a FIRST-CLASS way to annotate on a handwriting-forward device —
+        // the pad was only ever missing its door here. The ink lands as a photo attachment,
+        // so every surface that takes a photo annotation takes a written one.
+        options.add("✍  Handwrite a note" to { showHandwriteCapture() })
+        options.add("🎤  Record a voice note" to { requestVoiceRecording() })
+        options.add(com.toolsboox.plugin.calendar.ot.AddToPickWords.TAKE_PHOTO to { launchAnnCamera() })
+        options.add("⌨  Type a note" to { showNoteDialog() })
+        if (onStar != null) options.add("★  Star it" to { captureSink = null; onStar() })
+        if (onPlaceGram != null) options.add("📝  Onto today's note" to { captureSink = null; onPlaceGram() })
+        // The extras follow the seven rather than interleaving with them.
+        options.add(getString(R.string.reader_capture_upload) to { annGalleryLauncher.launch("image/*") })
         // A highlight can become a shareable quote card (parity with the iPad annotation composer).
-        if (selection.isNotBlank()) options.add("🃏  Create gram" to { shareQuoteCard(selection, sourceTitle) })
+        if (selection.isNotBlank()) options.add("🃏  Create pick" to { shareQuoteCard(selection, sourceTitle) })
         // Ask/Educate ride every annotation menu: a highlight (or the whole item, when blank)
         // goes to Ask with provenance, or grams onto the intake sheet's Educate Me panel.
         options.add("🔎  Ask about this" to {
@@ -933,10 +1370,101 @@ abstract class ScreenFragment : Fragment() {
                 this, text = selection.ifBlank { sourceTitle ?: "" },
                 title = sourceTitle ?: "", link = "", sourceLabel = sourceTitle ?: "")
         })
-        options.add(getString(R.string.reader_capture_photo) to { launchAnnCamera() })
-        options.add(getString(R.string.reader_capture_upload) to { annGalleryLauncher.launch("image/*") })
-        options.add(getString(R.string.reader_capture_voice) to { requestVoiceRecording() })
         showIconMenu(getString(R.string.reader_capture_title), options)
+    }
+
+    /**
+     * One capture verb, straight — no chooser in front of it. For surfaces that already asked
+     * (the reader's mark panel picks the style/verb and the mark in the same breath, so a second
+     * menu here would be the very panel the merge removed).
+     */
+    protected fun captureAnnotationVerb(
+        verb: String,
+        selection: String,
+        sourceTitle: String? = null,
+        onCapture: (String?, String?, Attachment?) -> Unit
+    ) {
+        captureSelection = selection
+        captureSource = sourceTitle
+        captureSink = onCapture
+        gramSink = null
+        when (verb) {
+            "note" -> showNoteDialog()
+            "handwrite" -> showHandwriteCapture()
+            "gram" -> shareQuoteCard(selection, sourceTitle)
+            "ask" -> com.toolsboox.plugin.calendar.ot.AskBridge.askFrom(
+                this, selection.ifBlank { null },
+                title = sourceTitle ?: "", link = "", sourceLabel = sourceTitle ?: "")
+            "educate" -> com.toolsboox.plugin.calendar.ot.AskBridge.gramToEducateMe(
+                this, text = selection.ifBlank { sourceTitle ?: "" },
+                title = sourceTitle ?: "", link = "", sourceLabel = sourceTitle ?: "")
+            "photo" -> launchAnnCamera()
+            "upload" -> annGalleryLauncher.launch("image/*")
+            "voice" -> requestVoiceRecording()
+            else -> showNoteDialog()
+        }
+    }
+
+    /**
+     * A hand-written annotation: the ink pad, rendered to a PNG, emitted through the same
+     * attachment sink every other capture uses. Buttons at the TOP, above the pad — the rule
+     * every handwriting panel follows: the writing hand rests below the pad, and dialog
+     * buttons down there get palm-tapped mid-word.
+     */
+    private fun showHandwriteCapture() {
+        val ctx = requireContext()
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val pad = com.toolsboox.ot.InkPadView(ctx)
+        val inkFrame = android.widget.FrameLayout(ctx).apply {
+            setBackgroundColor(android.graphics.Color.BLACK)
+            setPadding(px(2), px(2), px(2), px(2))
+            addView(pad, android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT, px(300)))
+        }
+        lateinit var dialog: AlertDialog
+        val cancelBtn = TextView(ctx).apply {
+            text = "CANCEL"; textSize = 15f; setTextColor(0xFF555555.toInt())
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, px(2), px(24), px(6))
+            setOnClickListener { captureSink = null; gramSink = null; dialog.dismiss() }
+        }
+        val saveBtn = TextView(ctx).apply {
+            text = "SAVE"; textSize = 15f; setTextColor(0xFF2F6F96.toInt())
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(px(24), px(2), 0, px(6))
+            setOnClickListener {
+                isEnabled = false   // first tap wins — the encode is slow enough to palm-bounce
+                val bmp = pad.render()
+                if (bmp == null) { captureSink = null; dialog.dismiss(); return@setOnClickListener }
+                val dest = File(attachmentsDir(), "photo-${UUID.randomUUID()}.png")
+                val ok = runCatching {
+                    dest.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                }.isSuccess
+                dialog.dismiss()
+                if (ok) emitAttachment(Attachment(
+                    UUID.randomUUID().toString(), Attachment.Kind.PHOTO, dest.name, null, Date()))
+                else { showMessage(R.string.reader_capture_failed); captureSink = null }
+            }
+        }
+        val topRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(cancelBtn)
+            addView(View(ctx), LinearLayout.LayoutParams(0, 1, 1f))
+            addView(saveBtn)
+        }
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(android.graphics.Color.WHITE)
+            setPadding(px(14), px(12), px(14), px(4))
+            addView(topRow)
+            addView(com.toolsboox.ot.InkPadView.penBar(ctx, pad))
+            addView(inkFrame)
+        }
+        dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx)).setView(root).create()
+        // This dialog collects work — a stray palm outside it must not cost the ink.
+        dialog.setCanceledOnTouchOutside(false)
+        showModal(dialog)
     }
 
     /** Open the shared gram studio for a highlighted passage (formats + fit), then share. */
@@ -1000,24 +1528,43 @@ abstract class ScreenFragment : Fragment() {
             )
             pendingCameraFile = photo; pendingCameraUri = uri
             annCameraLauncher.launch(uri)
+        } catch (e: SecurityException) {
+            if (isPickCapture) com.toolsboox.plugin.feeds.ot.AddToPick.cameraOff(this, video = false) { annGalleryLauncher.launch("image/*") }
+            else { showMessage(R.string.reader_capture_no_camera); captureSink = null }
         } catch (e: Exception) {
             Timber.w(e, "camera capture unavailable")
-            showMessage(R.string.reader_capture_no_camera); captureSink = null
+            if (isPickCapture) pickNoCamera()
+            else { showMessage(R.string.reader_capture_no_camera); captureSink = null }
         }
     }
 
     private fun importGalleryPhoto(uri: Uri) {
-        val dest = File(attachmentsDir(), "photo-${UUID.randomUUID()}.jpg")
+        val id = UUID.randomUUID().toString()
+        val dest = File(attachmentsDir(), "photo-$id.jpg")
         val ok = runCatching {
             requireContext().contentResolver.openInputStream(uri)!!.use { input ->
                 dest.outputStream().use { input.copyTo(it) }
             }
         }.isSuccess
-        if (ok) emitAttachment(Attachment(UUID.randomUUID().toString(), Attachment.Kind.PHOTO, dest.name, null, Date()))
-        else { showMessage(R.string.reader_capture_failed); captureSink = null }
+        if (ok) emitAttachment(Attachment(id, Attachment.Kind.PHOTO, dest.name, null, Date()))
+        else {
+            if (isPickCapture) showMessage(com.toolsboox.plugin.calendar.ot.AddToPickWords.OUT_OF_SPACE)
+            else showMessage(R.string.reader_capture_failed)
+            captureSink = null
+        }
     }
 
     private fun emitAttachment(att: Attachment) {
+        // A pick's capture says where it went itself ("Photo saved · its pick in All Picks"); a
+        // recording stopped on the way out says it was kept (add-to-pick pin §7).
+        if (isPickCapture) {
+            val sink = gramSink; gramSink = null
+            if (pickInterruptedAt >= 0) showMessage(com.toolsboox.plugin.calendar.ot.AddToPickWords.recordingStopped(
+                com.toolsboox.plugin.calendar.ot.PickFaceLayout.clock(pickInterruptedAt)))
+            pickInterruptedAt = -1
+            sink?.invoke(att)
+            return
+        }
         // A standalone A/V gram takes precedence over the annotation sink when active.
         gramSink?.let { it(att); gramSink = null; showMessage(R.string.gram_capture_saved); return }
         captureSink?.invoke(captureSelection.ifBlank { null }, null, att)
@@ -1039,13 +1586,14 @@ abstract class ScreenFragment : Fragment() {
     }
 
     private fun startVoiceRecording() {
+        val id = UUID.randomUUID().toString()
         com.toolsboox.ot.VoiceRecorder.record(
             context = requireContext(),
-            out = File(attachmentsDir(), "voice-${UUID.randomUUID()}.m4a"),
+            out = File(attachmentsDir(), "voice-$id.m4a"),
             recordingLabel = { clock -> getString(R.string.reader_capture_recording, clock) },
             stopLabel = getString(R.string.reader_capture_stop),
             onSaved = { file, seconds ->
-                emitAttachment(Attachment(UUID.randomUUID().toString(), Attachment.Kind.AUDIO, file.name, seconds, Date()))
+                emitAttachment(Attachment(id, Attachment.Kind.AUDIO, file.name, seconds, Date()))
             },
             onDiscarded = { captureSink = null; gramSink = null }
         )
@@ -1056,6 +1604,8 @@ abstract class ScreenFragment : Fragment() {
         // Recording only ends via the dialog's buttons — navigating away or backgrounding while
         // recording held the mic, kept the file growing, and leaked the dialog's window. Saving
         // on the way out keeps the memo instead of discarding it.
+        if (isPickCapture && com.toolsboox.ot.VoiceRecorder.isRecording)
+            pickInterruptedAt = com.toolsboox.ot.VoiceRecorder.elapsedSeconds
         com.toolsboox.ot.VoiceRecorder.stop(save = true)
     }
 
@@ -1240,11 +1790,21 @@ abstract class ScreenFragment : Fragment() {
      * caret at the row's end unfolds [items] — the Search·Ask·Directory row is why this exists.
      *
      * [subFolds] hangs a SECOND-level fold off a row, keyed by that row's exact label
-     * ("📧  Mail" holds the per-account rows). A map beside [items] rather than a recursive row
+     * ("🔖  Later List" holds its lanes; The Mail is a folder of its own since 2026-10-11). A map
+     * beside [items] rather than a recursive row
      * type because the ~25 call sites that build items as plain label→action pairs get to stay
      * exactly as they are — a folder opts a row in by naming it, and the sub-rows ride wherever
-     * the caller ordered the parent. An empty list is the same as no entry (mail's account rows
-     * already vanish below two accounts), so builders never need to conditionally assemble the map.
+     * the caller ordered the parent. An empty list is the same as no entry, so builders never
+     * need to conditionally assemble the map.
+     *
+     * [holds] gives a row a LONG-PRESS, keyed by label the way [subFolds] is — the chrome canon's
+     * hold-to-act ("✒ Notes": tap = today's dated note, hold = the family sheet). Accordion rows
+     * only: the find-field's flattened matches stay tap-only, because a filtered list is a list
+     * of places to go.
+     *
+     * [hold] is the same hold-to-act for a LEAF entry itself (action set, no items) — the four
+     * homepages are leaf rows, and the ✒ Notes homepage needs its family-sheet hold without
+     * having children to key a [holds] map by.
      */
     data class Folder(
         val emoji: String, val title: String,
@@ -1253,6 +1813,8 @@ abstract class ScreenFragment : Fragment() {
         val action: (() -> Unit)? = null,
         val subFolds: Map<String, List<Pair<String, () -> Unit>>> = emptyMap(),
         val field: FolderField? = null,
+        val holds: Map<String, () -> Unit> = emptyMap(),
+        val hold: (() -> Unit)? = null,
     )
 
     /**
@@ -1284,6 +1846,17 @@ abstract class ScreenFragment : Fragment() {
 
     /** One row in a [showGoModal] section/tools modal. */
     data class GoItem(val emoji: String, val label: String, val action: () -> Unit)
+
+    /** More › ☐ Tool labels (plan v6 §2.2 / S1.1, Michael 2026-10-10): flips the one global
+     *  caption switch and re-dresses [rail] — a width change, so one B6 reconnect, as a tuck. */
+    protected fun toolLabelsRow(rail: com.toolsboox.ot.TuckPanel?): GoItem {
+        val on = com.toolsboox.ot.TuckPanel.labelsOn(requireContext())
+        return GoItem(if (on) "☑" else "☐", "Tool labels") {
+            com.toolsboox.ot.TuckPanel.setLabelsOn(requireContext(), !on)
+            // A width change: it waits out the B6 layer like ⛶ does (review 2026-10-10).
+            rail?.relabelWhenQuiet()
+        }
+    }
 
     /**
      * Accessibility: the modal text scale (Small / Medium / Large, set from the feed wrench,
@@ -1326,11 +1899,15 @@ abstract class ScreenFragment : Fragment() {
         val accent = com.toolsboox.ot.LedgerTheme.accent(requireContext())
         val rowLabels = mutableListOf<TextView>()
         for ((header, items) in groups) {
-            val tv = TextView(requireContext())
-            tv.text = header.uppercase()
-            tv.setTextColor(accent); tv.textSize = 11f * textScale; tv.letterSpacing = 0.08f
-            tv.setPadding(dp(14), dp(10), dp(14), dp(2))
-            list.addView(tv)
+            // A blank heading is no heading: More's ☰ Hub row stands above every group
+            // ([withHub], Michael 2026-10-12) — the first row, not a "HUB" section of one.
+            if (header.isNotBlank()) {
+                val tv = TextView(requireContext())
+                tv.text = header.uppercase()
+                tv.setTextColor(accent); tv.textSize = 11f * textScale; tv.letterSpacing = 0.08f
+                tv.setPadding(dp(14), dp(10), dp(14), dp(2))
+                list.addView(tv)
+            }
             for (item in items) {
                 val r = layoutInflater.inflate(R.layout.item_go_to, list, false)
                 r.findViewById<TextView>(R.id.go_label).apply {
@@ -1400,6 +1977,8 @@ abstract class ScreenFragment : Fragment() {
             // ic_reader_view, so four different doors in an open accordion wore the same icon
             // and the icons stopped carrying information. Each book-ish emoji now has its own.
             "📰" to R.drawable.ic_feed, "⭐" to R.drawable.ic_starred, "📖" to R.drawable.ic_book_open,
+            // 📧 The Mail beside 📰 Feeds: both rooms' folders draw their mark as an outline.
+            "📧" to R.drawable.ic_mail,
             "📺" to R.drawable.ic_tv, "🎧" to R.drawable.ic_headphones, "🔖" to R.drawable.ic_bookmark,
             "🗂" to R.drawable.ic_folder, "🕓" to R.drawable.ic_clock, "🕘" to R.drawable.ic_clock,
             "📆" to R.drawable.ic_calendar_today, "📅" to R.drawable.ic_calendar_today,
@@ -1420,7 +1999,7 @@ abstract class ScreenFragment : Fragment() {
             // folder's History child — distinct from the 🕘/🕓 clock the folder itself wears.
             "📋" to R.drawable.ic_card, "🗃" to R.drawable.ic_clipboard, "🕰" to R.drawable.ic_history,
             "❤" to R.drawable.ic_heart, "📝" to R.drawable.ic_go_notes, "✍" to R.drawable.ic_edit,
-            "🔬" to R.drawable.ic_swap, "🧠" to R.drawable.ic_swap,
+            "🧠" to R.drawable.ic_swap,
             // Flow (the daily catch→make spine) wears the hierarchy/flow-chart glyph.
             "⤳" to R.drawable.ic_flowchart
         )
@@ -1592,11 +2171,54 @@ abstract class ScreenFragment : Fragment() {
     protected open fun onModalShown() {}
     protected open fun onModalDismissed() {}
 
+    /** Where a placement's snackbar should sit ABOVE, on a screen whose lower half is an ink pad
+     *  (the palm zone): a "Go to it" there takes a pen tap as ink. Null = the usual bottom edge. */
+    open val snackAnchor: View? get() = null
+
+    /**
+     * Present a dialog over a making surface, with the pen bookkeeping around it.
+     *
+     * ⚠ IT TAKES THE DIALOG'S SHOW-LISTENER. A dialog holds exactly one, so any listener the
+     * caller set is REPLACED here — silently, and with no way to chain (AlertDialog exposes no
+     * getter to read the old one back). A dialog that wires its buttons in `setOnShowListener`
+     * therefore arrives with them unwired and every button falling back to "dismiss and do
+     * nothing". That is not hypothetical: it is exactly how the site editor's Save button came to
+     * do nothing at all (see `SitesSettingsDialog`), and `LedgerItemsFragment` avoids
+     * `showGuardedModal` for the same reason.
+     *
+     * If you need work done when the dialog appears, present it here FIRST and do that work
+     * afterwards — by then it is showing and `getButton` returns real views.
+     */
     fun showModal(dialog: AlertDialog) {
         dialog.setOnShowListener { onModalShown() }
         dialog.setOnDismissListener { onModalDismissed() }
         dialog.show()
+        // Ledgable never offers itself in its own dialogs' selection menus (C9, 2026-10-10):
+        // MainActivity's onActionModeStarted never hears a dialog's window, so guard it here.
+        runCatching { com.toolsboox.ui.share.OwnProcessText.guardTree(dialog.window?.decorView) }
     }
+
+    /**
+     * [showModal], and [onDismiss] when the dialog goes away (after the pen's own resume). The one
+     * way to hear a modal's dismissal: [showModal] TAKES the dismiss listener too, so one set before
+     * it is replaced in silence — which is how the Pick sheet's "keep what was added" never ran
+     * (merge-addpick review #4).
+     */
+    fun showModal(dialog: AlertDialog, onDismiss: () -> Unit) {
+        showModal(dialog)
+        dialog.setOnDismissListener {
+            onModalDismissed()
+            runCatching(onDismiss).onFailure { Timber.w(it, "modal dismiss") }
+        }
+    }
+
+    /**
+     * [showModal] for a builder chain: the one-word swap for a bare `.show()`, returning the
+     * dialog just as `Builder.show()` does. Plan v6 S1.0c (Michael, 2026-10-10): no dialog over
+     * ink opens bare — a bare dialog leaves the pen live under it, the B6 freeze risk.
+     */
+    protected fun AlertDialog.Builder.showModal(): AlertDialog =
+        create().also { this@ScreenFragment.showModal(it) }
 
     /**
      * The door for every dialog that COLLECTS WORK — an ink pad, a note being typed, a voice
@@ -1633,12 +2255,78 @@ abstract class ScreenFragment : Fragment() {
      * grows from that edge, so the day rail docked right opens the hub on the right. Every
      * other door keeps the flush-left drawer.
      */
-    protected fun showAccordion(folders: List<Folder>, anchorEnd: Boolean = false) {
+    protected fun showAccordion(folders: List<Folder>, anchorEnd: Boolean = false, hub: Boolean = true,
+                                contents: Boolean = false) {
         val root = layoutInflater.inflate(R.layout.dialog_go_to, null)
         val list = root.findViewById<LinearLayout>(R.id.go_to_list)
         root.findViewById<TextView>(R.id.go_to_title).visibility = View.GONE
         val dialog = AlertDialog.Builder(requireContext()).setView(root).create()
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        // THE HUB'S OWN BACK (Michael 2026-10-12, [com.toolsboox.ot.EdgeLadder]): a Back that began
+        // at the LEFT edge closes the Hub AND goes back one place, arming the ladder — "Then two
+        // swipes back instead of three" (iPhone 247): today open → back, a room pane → Hub → back;
+        // the next left-edge Back inside three seconds goes back another place. The right edge, or
+        // a Back with no edge, only closes it, as it always did. Not for a More menu drawn by this
+        // renderer ([showDirectory]): closing one of those is no rung.
+        // A Hub the ladder opened takes any Back but a right-edge one as the rung, in case the
+        // dialog never hears the edge the page heard (review 2026-10-12) — else flicks would loop.
+        val byLadder = hubByLadder
+        if (hub) dialog.onBackPressedDispatcher.addCallback(object : androidx.activity.OnBackPressedCallback(true) {
+            private var edge = com.toolsboox.ot.EdgeLadder.EDGE_UNKNOWN
+            override fun handleOnBackStarted(backEvent: androidx.activity.BackEventCompat) {
+                edge = backEvent.swipeEdge
+            }
+            override fun handleOnBackCancelled() {
+                edge = com.toolsboox.ot.EdgeLadder.EDGE_UNKNOWN
+            }
+            override fun handleOnBackPressed() {
+                // The Hub the left-edge flick just opened hears the same swipe as a Back (should the
+                // system or xSettings make one of it): one swipe, one rung (Michael 2026-10-12, B6).
+                if (com.toolsboox.ot.EdgeLadder.isEcho(SystemClock.uptimeMillis())) {
+                    Timber.i("EdgeLadder: a Back on the Hub right after the left-edge flick — the same swipe, swallowed")
+                    edge = com.toolsboox.ot.EdgeLadder.EDGE_UNKNOWN
+                    return
+                }
+                val step = com.toolsboox.ot.EdgeLadder.shared.hubBack(SystemClock.uptimeMillis(), edge, byLadder)
+                // Nothing behind this page (the day page you started on): the Hub closes and the
+                // swipe stops there, as iOS's closeAtEnd does — a swipe that put the Hub away must
+                // never also leave Ledgable. The window is armed all the same, and a flick inside it
+                // with still nothing behind is kept too (the ladder's END, iOS's endOfTrail).
+                val back = step == com.toolsboox.ot.EdgeLadder.HubBack.CLOSE_AND_BACK && isAdded && hasSomewhereBack()
+                Timber.i("EdgeLadder: Back on the Hub from the %s edge (opened by the ladder: %s) → %s%s",
+                    com.toolsboox.ot.EdgeLadder.edgeName(edge), byLadder, step,
+                    if (step == com.toolsboox.ot.EdgeLadder.HubBack.CLOSE_AND_BACK && !back) " — nothing further back, the Hub only closes" else "")
+                edge = com.toolsboox.ot.EdgeLadder.EDGE_UNKNOWN
+                // The close lands first (synchronous on the main thread), so the Back below goes to
+                // the page: the screen's own Back first (the open article closes, the Net steps back
+                // a page), then the ladder — which passes an edgeless Back straight on — then the
+                // nav controller. One place, exactly what a plain Back on the page would do.
+                dialog.cancel()
+                if (back) activity?.onBackPressedDispatcher?.onBackPressed()
+            }
+        })
+        // A READER'S CONTENTS' OWN BACK (Michael 2026-10-12: "Content then shelf"): the book's
+        // first left-edge Back opened these contents; the second — this one, from the left edge —
+        // closes them AND goes back to the shelf. Any other Back only closes them.
+        if (contents) dialog.onBackPressedDispatcher.addCallback(object : androidx.activity.OnBackPressedCallback(true) {
+            private var edge = com.toolsboox.ot.EdgeLadder.EDGE_UNKNOWN
+            override fun handleOnBackStarted(backEvent: androidx.activity.BackEventCompat) {
+                edge = backEvent.swipeEdge
+            }
+            override fun handleOnBackCancelled() {
+                edge = com.toolsboox.ot.EdgeLadder.EDGE_UNKNOWN
+            }
+            override fun handleOnBackPressed() {
+                val back = com.toolsboox.ot.EdgeLadder.shared.contentsBack(SystemClock.uptimeMillis(), edge)
+                Timber.i("EdgeLadder: Back on the contents from the %s edge → %s",
+                    com.toolsboox.ot.EdgeLadder.edgeName(edge), if (back) "close and back to the shelf" else "close")
+                edge = com.toolsboox.ot.EdgeLadder.EDGE_UNKNOWN
+                dialog.cancel()
+                // The close lands first, then one plain Back on the page: the ladder passes an
+                // edgeless Back straight on — the nav controller, back to the shelf.
+                if (back && isAdded) activity?.onBackPressedDispatcher?.onBackPressed()
+            }
+        })
         fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
         // Unmapped glyph → carry it in the label as ENLARGED text (renders for any character,
@@ -1792,6 +2480,11 @@ abstract class ScreenFragment : Fragment() {
                 if (folder.action != null && folder.items.isEmpty()) {
                     headerLabel.text = glyphLabel(glyph, folder.title)
                     header.setOnClickListener { dialog.dismiss(); folder.action.invoke() }
+                    // Hold-to-act on the leaf itself ([Folder.hold]) — the ✒ Notes homepage's
+                    // family sheet rides here.
+                    folder.hold?.let { held ->
+                        header.setOnLongClickListener { dialog.dismiss(); held(); true }
+                    }
                     body.addView(header)
                     continue
                 }
@@ -1819,11 +2512,16 @@ abstract class ScreenFragment : Fragment() {
                     // (≈44dp with the row's height) so a fold is never a mis-tapped navigation.
                     headerLabel.text = glyphLabel(glyph, folder.title)
                     header.setOnClickListener { dialog.dismiss(); folder.action.invoke() }
+                    // A door header can carry a hold too ([Folder.hold]) — ✒ Notes' family
+                    // sheet rides the folder row now that the folder IS the door.
+                    folder.hold?.let { held ->
+                        header.setOnLongClickListener { dialog.dismiss(); held(); true }
+                    }
                     val caretBtn = TextView(requireContext()).apply {
                         text = caret()
                         textSize = ROW_SP * textScale
                         setTextColor(Color.BLACK)
-                        setPadding(dp(16), dp(6), dp(16), dp(6))
+                        setPadding(dp(12), dp(6), dp(12), dp(6))
                         setOnClickListener {
                             val show = children.visibility != View.VISIBLE
                             if (show) foldOthers(children)
@@ -1832,29 +2530,45 @@ abstract class ScreenFragment : Fragment() {
                             text = caret()
                         }
                     }
-                    (header as? LinearLayout)?.addView(caretBtn)
+                    // LEADING, not trailing (Michael, field, 08-30: "Ask and Today's accordion
+                    // arrows are on the wrong side") — every plain folder draws its caret at the
+                    // start of the row, so the door-with-caret rows do too: one drawer, one side
+                    // for every arrow. The caret keeps its own padded target; the label stays the
+                    // one-tap door.
+                    (header as? LinearLayout)?.addView(caretBtn, 0)
                     openFolds += children to {
                         children.visibility = View.GONE
                         children.background = null
                         caretBtn.text = caret()
                     }
                 } else {
-                    // Glyph LEFT of the caret, matching where the mapped drawable icons sit.
-                    fun headerText(): CharSequence =
-                        if (glyph.isEmpty()) "${caret()}  ${folder.title}"
-                        else glyphLabel(glyph, "${caret()}  ${folder.title}")
-                    headerLabel.text = headerText()
-                    header.setOnClickListener {
+                    // MATCH ASK/TODAY (Michael, field, post -67: "The accordion drop downs
+                    // don't match, but Ask and Today are better for it anyway") — every folder
+                    // row wears the door-with-caret dress: a separate leading caret with its
+                    // own padded target and a clean glyph+title label, instead of a caret glued
+                    // into the label text. A plain folder has no destination, so the whole row
+                    // still toggles — the caret is the same act, just the same look everywhere.
+                    headerLabel.text = glyphLabel(glyph, folder.title)
+                    val caretBtn = TextView(requireContext()).apply {
+                        text = caret()
+                        textSize = ROW_SP * textScale
+                        setTextColor(Color.BLACK)
+                        setPadding(dp(12), dp(6), dp(12), dp(6))
+                    }
+                    (header as? LinearLayout)?.addView(caretBtn, 0)
+                    fun toggle() {
                         val show = children.visibility != View.VISIBLE
                         if (show) foldOthers(children)
                         children.visibility = if (show) View.VISIBLE else View.GONE
                         children.background = if (show) outline else null
-                        headerLabel.text = headerText()
+                        caretBtn.text = caret()
                     }
+                    header.setOnClickListener { toggle() }
+                    caretBtn.setOnClickListener { toggle() }
                     openFolds += children to {
                         children.visibility = View.GONE
                         children.background = null
-                        headerLabel.text = headerText()
+                        caretBtn.text = caret()
                     }
                 }
                 for ((label, action) in folder.items) {
@@ -1867,6 +2581,10 @@ abstract class ScreenFragment : Fragment() {
                     scaleRowIcon(r, textScale)
                     scaleRowPadding(r, textScale)
                     r.setOnClickListener { dialog.dismiss(); action() }
+                    // Hold-to-act, where the folder declared one for this row ([Folder.holds]).
+                    folder.holds[label]?.let { held ->
+                        r.setOnLongClickListener { dialog.dismiss(); held(); true }
+                    }
                     children.addView(r)
 
                     // A row named in [Folder.subFolds] carries its own fold: the label stays the
@@ -1948,6 +2666,10 @@ abstract class ScreenFragment : Fragment() {
         dialog.setOnShowListener { onModalShown() }
         dialog.setOnDismissListener { onModalDismissed() }
         dialog.show()
+        // THE HUB CLOSES LIKE A DRAWER (Michael 2026-10-12: "When swiping right to left near the hub
+        // panel it should close it"): a finger drag toward its edge, on it or beside it. Wired once
+        // it is showing, over whatever window callback the dialog settled on.
+        if (hub) closeOnDrawerSwipe(dialog, hubOnRight = anchorEnd)
         // Wear the reader's chosen face. The rows are built programmatically, so nothing picks the
         // app font up from a layout — without this the ☰ menu that opens off the almanac nav was
         // the one surface still speaking in the system font.
@@ -1995,6 +2717,160 @@ abstract class ScreenFragment : Fragment() {
     }
 
     /**
+     * Is there a place behind this page for the Hub's close-and-back (or a flick inside the
+     * ladder's window) to go to — the screen's own Back (an open article, the Net's page trail), a
+     * nav entry behind it, or a fragment on the activity's stack? False on the day page you started
+     * on, where a plain Back leaves Ledgable.
+     */
+    private fun hasSomewhereBack(): Boolean {
+        if (ownBackView != null && ownBackView === getView() && ownBackCallbacks.any { it.isEnabled }) return true
+        val nav = runCatching { androidx.navigation.fragment.NavHostFragment.findNavController(this) }.getOrNull()
+        if (nav?.previousBackStackEntry != null) return true
+        return (activity?.supportFragmentManager?.backStackEntryCount ?: 0) > 0
+    }
+
+    /**
+     * THE HUB AS A DRAWER (Michael 2026-10-12, iPhone 247: "When swiping right to left near the hub
+     * panel it should close it"). The Hub is a dialog window hung from one edge, and a modal window
+     * takes every touch on the screen — on its rows and beside them — so its window callback sees
+     * the whole drag.
+     *
+     * CLAIMED AT THE SLOP (review 2026-10-12): the rows are full width, and Android cancels neither
+     * a tap nor a hold while the finger stays inside its view — so a short swipe ran the row under
+     * it on the lift, and a slow one (the B6's) fired its hold on the way. Now the drag is decided
+     * once, at the touch slop ([com.toolsboox.ot.EdgeLadder.drawerDrag]): toward the Hub's own edge
+     * and clearly sideways, it is the Hub's — the row gets one CANCEL there and nothing after, so
+     * no tap and no hold. It shuts on iOS's numbers (EdgeBack.HubShut): mid-drag at the distance,
+     * or on the lift past it or on a throw; released short, it does nothing (iOS springs back).
+     * A tap, a scroll of the rows, a drag away from the edge, or a drag that starts in a find field
+     * (moving the cursor) pass through untouched; a second finger on a claimed drag stops it
+     * closing. A close only — no rung, no window, no back: Back is the ladder's. E-ink: one
+     * dismiss, no animation frames; the rest of the drag reaches no window, so nothing lands on the
+     * page under it.
+     *
+     * THE LEFT EDGE'S FLICK ON THE HUB ITSELF (Michael 2026-10-12, on the B6: "The b6 doesn't have
+     * the left right working for bring up the hub it seems rn"): over an ink page the system makes
+     * no Back of a swipe in from the left edge even on this dialog (probed: Bigme's xSettings hears
+     * it, nothing more), so the Hub's own Back — close AND back a place, the ladder's rung — never
+     * came. The Hub's window carries the same in-app catcher as the activity's
+     * ([com.toolsboox.ot.LeftEdgeCatcher]), asked before the drawer: a quick level flick from the
+     * left edge is that rung (it fires at 50 dp, before the drawer's 90 dp close, so with the Hub
+     * hung on the right the flick is the rung and a slow drag toward it still only puts it away).
+     * Where the system does take the edge it cancels the touch first, and its Back is the same rung.
+     */
+    private fun closeOnDrawerSwipe(dialog: AlertDialog, hubOnRight: Boolean) {
+        val window = dialog.window ?: return
+        val inner = window.callback ?: return
+        val density = resources.displayMetrics.density
+        val distance = com.toolsboox.ot.EdgeLadder.DRAWER_SWIPE_DP * density
+        val slop = android.view.ViewConfiguration.get(requireContext()).scaledTouchSlop.toFloat()
+        window.callback = object : android.view.Window.Callback by inner {
+            private var downX = 0f
+            private var downY = 0f
+            private var drag = com.toolsboox.ot.EdgeLadder.DrawerDrag.LEAVE
+            /** The claimed drag may no longer close (a second finger came down on it). */
+            private var spent = false
+            private var velocity: android.view.VelocityTracker? = null
+
+            /** The left edge's flick on the Hub: the Hub's Back from the left — close and back. */
+            private val edgeFlick = com.toolsboox.ot.LeftEdgeCatcher(
+                where = "the Hub",
+                density = density,
+                dispatcher = { dialog.onBackPressedDispatcher },
+                deliver = { e -> inner.dispatchTouchEvent(e) },
+                landing = { x, y ->
+                    com.toolsboox.ot.LeftEdgeCatcher.Landing(standAside = inTextField(window.decorView, x, y) ||
+                        com.toolsboox.ot.LeftEdgeCatcher.standsAside(
+                            com.toolsboox.ot.LeftEdgeCatcher.hitChain(window.decorView, x, y)))
+                },
+                // The Hub's Back closes it (and goes back a place), so an echo of this swipe would
+                // reach the activity's window: guard that one as the page's catcher does (review of
+                // f0035e3b, 2026-10-12).
+                afterFire = { (activity as? MainActivity)?.guardEdgeEcho() }
+            )
+
+            private fun reset() {
+                drag = com.toolsboox.ot.EdgeLadder.DrawerDrag.LEAVE
+                spent = false
+                velocity?.recycle()
+                velocity = null
+            }
+
+            private fun close(how: String) {
+                reset()
+                Timber.i("EdgeLadder: the Hub put away by a swipe toward the %s edge (%s)",
+                    if (hubOnRight) "right" else "left", how)
+                dialog.cancel()
+            }
+
+            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                // The flick first: once made it is the ladder's rung, and the drawer forgets the drag.
+                if (edgeFlick.onTouch(event)) { reset(); return true }
+                val claimed = drag == com.toolsboox.ot.EdgeLadder.DrawerDrag.CLAIM
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        reset()
+                        downX = event.rawX
+                        downY = event.rawY
+                        if (!inTextField(window.decorView, event.rawX, event.rawY)) {
+                            drag = com.toolsboox.ot.EdgeLadder.DrawerDrag.UNDECIDED
+                            velocity = android.view.VelocityTracker.obtain().also { it.addMovement(event) }
+                        }
+                    }
+                    MotionEvent.ACTION_POINTER_DOWN -> {
+                        if (claimed) { spent = true; return true }
+                        drag = com.toolsboox.ot.EdgeLadder.DrawerDrag.LEAVE
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = event.rawX - downX
+                        val dy = event.rawY - downY
+                        if (claimed) {
+                            velocity?.addMovement(event)
+                            if (!spent && com.toolsboox.ot.EdgeLadder.drawerSwipeCloses(dx, dy, hubOnRight, distance)) close("past the distance")
+                            return true
+                        }
+                        if (drag == com.toolsboox.ot.EdgeLadder.DrawerDrag.UNDECIDED) {
+                            velocity?.addMovement(event)
+                            drag = com.toolsboox.ot.EdgeLadder.drawerDrag(dx, dy, hubOnRight, slop)
+                            if (drag == com.toolsboox.ot.EdgeLadder.DrawerDrag.CLAIM) {
+                                // The row under the finger lets go here, before its tap or hold.
+                                val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+                                inner.dispatchTouchEvent(cancel)
+                                cancel.recycle()
+                                return true
+                            }
+                        }
+                    }
+                    MotionEvent.ACTION_UP -> if (claimed) {
+                        val v = velocity
+                        v?.addMovement(event)
+                        v?.computeCurrentVelocity(1000)
+                        if (!spent && com.toolsboox.ot.EdgeLadder.drawerReleaseCloses(event.rawX - downX, event.rawY - downY,
+                                v?.xVelocity ?: 0f, hubOnRight, density)) close("on the lift")
+                        else reset()   // short of it: nothing, the Hub stays (iOS springs back)
+                        return true
+                    }
+                    MotionEvent.ACTION_CANCEL -> if (claimed) { reset(); return true }
+                    else -> if (claimed) return true
+                }
+                return inner.dispatchTouchEvent(event)
+            }
+        }
+    }
+
+    /** A visible text field under the screen point ([x], [y]) in [v]'s tree. */
+    private fun inTextField(v: View, x: Float, y: Float): Boolean {
+        if (v.visibility != View.VISIBLE) return false
+        if (v is android.widget.EditText) {
+            val loc = IntArray(2)
+            v.getLocationOnScreen(loc)
+            return x >= loc[0] && x < loc[0] + v.width && y >= loc[1] && y < loc[1] + v.height
+        }
+        if (v is ViewGroup) for (i in 0 until v.childCount) if (inTextField(v.getChildAt(i), x, y)) return true
+        return false
+    }
+
+    /**
      * A directory popover (top-left, iPad-style) grouping labelled rows under headers —
      * used for the hamburger menus on Bookshelf/Feed to list the actual books/feeds plus
      * the surfaces to jump to. Each row is (label, action).
@@ -2015,7 +2891,11 @@ abstract class ScreenFragment : Fragment() {
      */
     protected fun showDirectory(
         groups: List<Pair<String, List<Pair<String, () -> Unit>>>>,
-        subFolds: Map<String, List<Pair<String, () -> Unit>>> = emptyMap()
+        subFolds: Map<String, List<Pair<String, () -> Unit>>> = emptyMap(),
+        /** This directory is a READER'S CONTENTS — the left edge's first rung on the book (Michael
+         *  2026-10-12: "Content then shelf"): its own left-edge Back closes it and goes back to the
+         *  shelf ([com.toolsboox.ot.EdgeLadder.Ladder.contentsBack]). */
+        contents: Boolean = false,
     ) {
         val folders = mutableListOf<Folder>()
         var firstGroup = true
@@ -2030,7 +2910,7 @@ abstract class ScreenFragment : Fragment() {
                 firstGroup = false
             }
         }
-        showAccordion(folders)
+        showAccordion(folders, hub = false, contents = contents)
     }
 
     /**

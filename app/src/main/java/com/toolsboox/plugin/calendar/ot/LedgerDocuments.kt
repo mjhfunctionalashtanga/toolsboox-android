@@ -156,7 +156,7 @@ object LedgerDocuments {
      *  the same mark is the collision this vocabulary exists to prevent. */
     fun glyph(surface: String): String = when (surface) {
         WRITE -> "✍"
-        SYNTHESIZE -> "🔬"
+        SYNTHESIZE -> "❖"
         PICKINGS -> "❝"
         GRID -> "📈"
         JOT -> "⌱"
@@ -565,6 +565,49 @@ object LedgerDocuments {
     }
 
     /** Rename a document. [date] is the document's own date — it disambiguates Write's daily pages. */
+    /** Which surfaces can FILE — the ones whose indexes carry the Saber folder field. Pickings
+     *  and Text Notes stay honest by absence: a verb that silently no-ops is worse than none. */
+    fun canFile(surface: String): Boolean =
+        surface == WRITE || surface == SYNTHESIZE || surface == GRID || surface == JOT
+
+    fun folderOf(context: Context, surface: String, key: String, date: LocalDate): String = when (surface) {
+        WRITE -> WritePageStore.list(context)
+            .firstOrNull { it.key == key && (key != WritePageStore.DEFAULT_KEY || it.date == date) }?.folder.orEmpty()
+        SYNTHESIZE -> SynthPageStore.list(context).firstOrNull { it.key == key }?.folder.orEmpty()
+        GRID, JOT -> storeOf(surface)!!.list(context)
+            .firstOrNull { it.key == key }?.folder.orEmpty()
+        else -> ""
+    }
+
+    fun setFolder(context: Context, surface: String, key: String, folder: String, date: LocalDate) {
+        when (surface) {
+            WRITE -> WritePageStore.setFolder(context, key, folder, date)
+            SYNTHESIZE -> SynthPageStore.setFolder(context, key, folder)
+            GRID, JOT -> storeOf(surface)!!.setFolder(context, key, folder, date)
+        }
+    }
+
+    /** Every filing, "date|key" → folder, read once for a listing — the Notebook's detail lines
+     *  and lens are painted from this, never from per-row store reads. */
+    fun folderMap(context: Context): Map<String, String> = buildMap {
+        for (p in WritePageStore.list(context))
+            if (p.folder.isNotBlank()) put("${p.date}|${p.key}", p.folder)
+        for (p in SynthPageStore.list(context))
+            if (p.folder.isNotBlank()) put("${p.date}|${p.key}", p.folder)
+        for (surf in listOf(GRID, JOT))
+            storeOf(surf)?.list(context)?.forEach { p ->
+                if (p.folder.isNotBlank()) put("${p.date}|${p.key}", p.folder)
+            }
+    }
+
+    /** Every folder name in use across the four filing surfaces — the chooser's vocabulary. */
+    fun allFolders(context: Context): List<String> =
+        (WritePageStore.list(context).map { it.folder } +
+         SynthPageStore.list(context).map { it.folder } +
+         (storeOf(GRID)?.list(context)?.map { it.folder } ?: emptyList()) +
+         (storeOf(JOT)?.list(context)?.map { it.folder } ?: emptyList()))
+            .filter { it.isNotBlank() }.distinct().sorted()
+
     fun rename(context: Context, surface: String, key: String, name: String, date: LocalDate) {
         when (surface) {
             WRITE -> WritePageStore.rename(context, key, name, date)

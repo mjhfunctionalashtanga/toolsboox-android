@@ -35,7 +35,7 @@ class StartHourDurabilityTest {
     private fun service(): CalendarDayService {
         val moshi = Moshi.Builder()
             .add(LocaleJsonAdapter()).add(DateJsonAdapter()).add(UUIDJsonAdapter()).build()
-        return CalendarDayService().apply { this.moshi = moshi }
+        return CalendarDayService(moshi)
     }
 
     private fun root(): File = Files.createTempDirectory("start-hour").toFile()
@@ -79,7 +79,7 @@ class StartHourDurabilityTest {
     }
 
     /**
-     * The same guarantee through [CalendarDayService.load], the fallback-carrying door — its
+     * The same guarantee through [CalendarDayService.loadForWrite], the fallback-carrying door — its
      * `seedStartHour` is spent on days that DON'T exist, and must never reach one that does.
      */
     @Test
@@ -92,7 +92,7 @@ class StartHourDurabilityTest {
             year = date.year, month = date.monthValue, day = date.dayOfMonth,
             locale = Locale.US, startHour = 7))
 
-        val reopened = cds.load(root, date, 5, Locale.US)
+        val reopened = cds.loadForWrite(root, date, 5, Locale.US)!!
         assertEquals(7, reopened.startHour)
         cds.save(root, date, reopened)
         assertEquals(7, storedStartHour(root, date))
@@ -113,7 +113,7 @@ class StartHourDurabilityTest {
             year = date.year, month = date.monthValue, day = date.dayOfMonth,
             locale = Locale.US, startHour = null))
 
-        val loaded = cds.load(root, date, 5, Locale.US)
+        val loaded = cds.loadForWrite(root, date, 5, Locale.US)!!
         assertNull(loaded.startHour)
         cds.save(root, date, loaded)
         assertNull(storedStartHour(root, date))
@@ -133,7 +133,7 @@ class StartHourDurabilityTest {
 
         assertNull("precondition: no day yet", cds.loadOrNull(root, date, Locale.US))
 
-        val minted = cds.load(root, date, 7, Locale.US)
+        val minted = cds.loadForWrite(root, date, 7, Locale.US)!!
         assertEquals(7, minted.startHour)
         cds.save(root, date, minted)
         assertEquals(7, storedStartHour(root, date))

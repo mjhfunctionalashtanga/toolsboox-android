@@ -159,6 +159,11 @@ object AskBridge {
 
     // ---- grounding -------------------------------------------------------------------------
 
+    /** The same grounding [askFrom] builds, for a caller with no fragment — the send-from-any-app
+     *  card builds it before handing the passage to Ask (2026-10-10). Disk; call off the main thread. */
+    fun grounding(context: Context, selection: String?, title: String, link: String, sourceLabel: String): String =
+        runCatching { buildGrounding(context.applicationContext, selection, title, link, sourceLabel) }.getOrDefault("")
+
     /**
      * The "Where this came from:" preamble the chat injects ahead of its corpus excerpts.
      *
@@ -245,7 +250,8 @@ object AskBridge {
 
         val today = LocalDate.now()
         DayLocks.withDay(today) {
-            val day = service.load(root, today, null, Locale.getDefault())
+            // A today-file that won't read throws here, and gramToEducateMe says "Couldn't place that".
+            val day = service.loadForWriteOrThrow(root, today, null, Locale.getDefault())
             val frame = CalendarDayPageIntake.arrivalFrame(
                 "educate", day, treated.width.toFloat(), treated.height.toFloat()
             ) ?: return@withDay

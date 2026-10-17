@@ -92,7 +92,7 @@ object FeedChapters {
      * [resolve] from ever asking the feed for the real 2.0 tag.
      */
     fun quick(context: Context, entry: FeedEntry): List<Chapter> {
-        FeedCache.loadPodMeta(context, entry.id)?.let { return chaptersFrom(it) }
+        if (entry.id != 0L && entry.id != -1L) FeedCache.loadPodMeta(context, entry.id)?.let { return chaptersFrom(it) }
         return fromDescription(entry.content)
     }
 
@@ -105,7 +105,11 @@ object FeedChapters {
      * doesn't get remembered as "no chapters" forever.
      */
     fun resolve(context: Context, entry: FeedEntry): ChapterList {
-        FeedCache.loadPodMeta(context, entry.id)?.let {
+        // A stand-in entry (id -1: a resumed episode the list hadn't loaded; id 0: an ask from
+        // another device) is not ONE episode — caching under its id handed the next stand-in this
+        // one's chapters. Resolved fresh every time instead (10-12).
+        val cacheable = entry.id != 0L && entry.id != -1L
+        if (cacheable) FeedCache.loadPodMeta(context, entry.id)?.let {
             return ChapterList(entry.id, chaptersFrom(it), it.optString("source").ifBlank { "desc" })
         }
 
@@ -120,7 +124,15 @@ object FeedChapters {
             val lookup = runCatching { matchItem(feedUrl, entry) }
                 .getOrDefault(ItemLookup(reachable = false, item = null))
             if (!lookup.reachable) feedFetchFailed = true
+            // The SHOW'S COVER rides this same read (10-12) — the whole feed is already here, so
+            // the picture every row of this show draws costs no request of its own.
+            ShowCovers.remember(context, feedUrl, entry.feedTitle.ifBlank { null }, lookup.cover)
+            // …and a head that named none is not fetched again for the picture (review 10-12).
+            if (lookup.reachable && lookup.cover == null) ShowCovers.feedNamedNone(feedUrl)
             val item = lookup.item
+            // The episode's OWN art, which Miniflux drops unless the feed shipped it as an image
+            // enclosure (item-level itunes:image is not one) — kept for the player's picture.
+            item?.enclosureImage?.takeIf { it.startsWith("http") }?.let { meta.put("image", it) }
             if (item != null) {
                 if (item.chaptersUrl.isNotBlank()) meta.put("chaptersUrl", item.chaptersUrl)
                 if (item.transcriptUrl.isNotBlank()) {
@@ -141,8 +153,21 @@ object FeedChapters {
         meta.put("chapters", JSONArray().also { arr ->
             chapters.forEach { arr.put(JSONObject().put("start", it.startSec).put("title", it.title)) }
         })
-        if (!feedFetchFailed) FeedCache.savePodMeta(context, entry.id, meta)
+        if (!feedFetchFailed && cacheable) FeedCache.savePodMeta(context, entry.id, meta)
         return ChapterList(entry.id, chapters, source)
+    }
+
+    /**
+     * The picture for an episode that started without art of its own (10-12), in the approved
+     * order: its own art from the feed XML when it has some, else its show's cover — known, or
+     * asked for now — else an image from its notes. Blocking (it may read the feed's head); call
+     * off the main thread. Null when nothing names a picture.
+     */
+    fun episodeArt(context: Context, entry: FeedEntry): String? {
+        entry.enclosureImage?.takeIf { it.startsWith("http") }?.let { return it }
+        if (entry.id != 0L && entry.id != -1L) FeedCache.loadPodMeta(context, entry.id)?.optString("image")
+            ?.takeIf { it.startsWith("http") }?.let { return it }
+        return ShowCovers.find(context, entry.feedUrl, entry.feedTitle.ifBlank { null }) ?: entry.inlineImage
     }
 
     /** The Watch's door: chapters for an entry, full ladder, cached. Blocking — call on IO.
@@ -157,6 +182,7 @@ object FeedChapters {
      * Null when the feed offers none or the fetch fails — never a crash.
      */
     fun transcript(context: Context, entry: FeedEntry): String? {
+        if (entry.id == 0L || entry.id == -1L) return null   // a stand-in names no one episode (see resolve)
         FeedCache.loadTranscript(context, entry.id)?.let { return it }
         resolve(context, entry)   // makes sure the pod meta (with any transcript pointer) exists
         val meta = FeedCache.loadPodMeta(context, entry.id) ?: return null
@@ -256,12 +282,25 @@ object FeedChapters {
         val appCtx = context.applicationContext
         val player = com.toolsboox.ui.plugin.LedgerPlayer
         val session = player.session
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
         Thread {
-            val list = runCatching { resolve(appCtx, entry) }.getOrNull() ?: return@Thread
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
+            val list = runCatching { resolve(appCtx, entry) }.getOrNull()
+            // Chapters and the transcript post FIRST (review 10-12): the cover below may read
+            // the feed's head and ask iTunes, and the chapter row used to wait behind all of it.
+            if (list != null) main.post {
                 if (player.session == session) {
                     player.setChapters(list.chapters)
                     player.transcriptProvider = { runCatching { transcript(appCtx, entry) }.getOrNull() }
+                }
+            }
+            // An episode with no art of its own gets one now — the item's art from the feed XML,
+            // else its show's cover — so the transport shows it and the heartbeat writes it into
+            // the synced ListenState. A notes picture the play started with is only a stand-in:
+            // the cover outranks it and takes its place.
+            if (entry.kind == "listen" && entry.enclosureImage?.startsWith("http") != true) {
+                val art = runCatching { episodeArt(appCtx, entry) }.getOrNull()
+                if (art != null) main.post {
+                    if (player.session == session) player.adoptArt(art, over = entry.inlineImage)
                 }
             }
         }.apply { isDaemon = true }.start()
@@ -271,9 +310,10 @@ object FeedChapters {
 
     /** [matchItem]'s answer: did we REACH the feed at all (a 404 is reachable, a dead network
      *  isn't — only the latter blocks caching), and this entry's item if we found it. */
-    private data class ItemLookup(val reachable: Boolean, val item: RssItem?)
+    private data class ItemLookup(val reachable: Boolean, val item: RssItem?, val cover: String? = null)
 
-    /** Fetch the feed XML and find THIS entry's item — by audio enclosure, then link, then guid. */
+    /** Fetch the feed XML and find THIS entry's item — by audio enclosure, then link, then guid —
+     *  and the show's own cover from the channel head while the feed is in hand. */
     private fun matchItem(feedUrl: String, entry: FeedEntry): ItemLookup {
         val feed = http.newCall(Request.Builder().url(feedUrl).get().build()).execute().use { r ->
             if (!r.isSuccessful) return ItemLookup(reachable = true, item = null)
@@ -283,7 +323,7 @@ object FeedChapters {
         val item = feed.items.firstOrNull { audio.isNotBlank() && it.enclosureAudio == audio }
             ?: feed.items.firstOrNull { entry.url.isNotBlank() && it.link == entry.url }
             ?: feed.items.firstOrNull { entry.url.isNotBlank() && it.guid == entry.url }
-        return ItemLookup(reachable = true, item = item)
+        return ItemLookup(reachable = true, item = item, cover = feed.imageUrl.ifBlank { null })
     }
 
     /** The podcastindex chapters document: {"chapters":[{"startTime":s,"title":"…"}]}. */

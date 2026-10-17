@@ -1,0 +1,35 @@
+# Paths left out of the public snapshot that scripts/publish-snapshot.sh makes.
+# One pattern per line, matched from the repository root (git glob):
+#   *   stays inside one folder        **/  any folder, the root included
+#   a trailing /  that folder and everything in it          #  a note
+# The snapshot is checked by the push guard afterwards, so anything private this
+# list misses still stops it. Run scripts/publish-snapshot.sh --list to see what
+# the list matches today.
+
+# Internal working notes: session handoffs and audits. They name the Apple ID,
+# device ids, the server address and logins, and the day-to-day running of things.
+**/HANDOFF*
+**/AUDIT*
+
+# Design notes kept public unless they name personal accounts or server internals.
+# This one gives a vector-database account id and paths and state on the server.
+DESIGN-gather-verbs-2026-08-23-DRAFT.md
+
+# Assistant and editor folders, and notes for the assistant
+**/.claude/
+**/CLAUDE.md
+**/CLAUDE.local.md
+**/.idea/
+**/.vscode/
+
+# Local tooling output and machine files (normally ignored; listed in case one is added)
+**/build/
+**/.gradle/
+**/.kotlin/
+**/*.log
+**/.DS_Store
+**/local.properties
+**/*.jks
+**/*.keystore
+**/.env
+scripts/githooks/known-secret-fingerprints

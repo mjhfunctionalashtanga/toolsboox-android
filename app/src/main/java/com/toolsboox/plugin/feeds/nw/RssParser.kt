@@ -15,11 +15,28 @@ data class RssItem(
     var chaptersUrl: String = "", var transcriptUrl: String = "", var transcriptType: String = ""
 )
 
-data class RssFeed(var title: String = "", val items: MutableList<RssItem> = mutableListOf())
+data class RssFeed(
+    var title: String = "", val items: MutableList<RssItem> = mutableListOf(),
+    /** The SHOW's own picture — channel-level `itunes:image href`, else `<image><url>`, else an
+     *  Atom `<logo>`. (Before 10-12 the channel half was dropped: every image check needed an
+     *  open item, so a podcast whose episodes carry no art of their own had no picture at all.) */
+    var imageUrl: String = ""
+)
 
 /** Minimal RSS 2.0 + Atom parser (XmlPullParser) for Local Feeds — no server needed. */
 object RssParser {
-    fun parse(input: InputStream): RssFeed? = try {
+    fun parse(input: InputStream): RssFeed? = parseFeed(input, headOnly = false)
+
+    /**
+     * Just the show's cover, read from the HEAD of the feed: the channel's art always sits above
+     * the first `<item>`, so the parse stops there and the caller closes the stream — a podcast
+     * feed can run to megabytes of back catalogue, and the cover is in the first few kilobytes.
+     * Null when the head names no picture (or the XML is broken).
+     */
+    fun channelImage(input: InputStream): String? =
+        parseFeed(input, headOnly = true)?.imageUrl?.takeIf { it.startsWith("http") }
+
+    private fun parseFeed(input: InputStream, headOnly: Boolean): RssFeed? = try {
         val parser = Xml.newPullParser()
         parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
         parser.setInput(input, null)
@@ -27,15 +44,22 @@ object RssParser {
         var item: RssItem? = null
         var text = ""
         var inChannelOrFeed = false
+        // The channel's art, by preference: itunes:image (square, full size — what podcast apps
+        // draw), then the RSS 2.0 <image><url> (often a small banner), then an Atom <logo>.
+        var itunesArt = ""
+        var rssImageArt = ""
+        var logoArt = ""
+        var inChannelImage = false
         var event = parser.eventType
-        while (event != XmlPullParser.END_DOCUMENT) {
+        loop@ while (event != XmlPullParser.END_DOCUMENT) {
             when (event) {
                 XmlPullParser.START_TAG -> {
                     val name = parser.name?.lowercase() ?: ""
                     text = ""
                     when (name) {
-                        "item", "entry" -> item = RssItem()
+                        "item", "entry" -> { if (headOnly) break@loop; item = RssItem() }
                         "channel", "feed" -> inChannelOrFeed = true
+                        "image" -> if (item == null) inChannelImage = true
                         "link" -> {
                             val href = parser.getAttributeValue(null, "href")
                             if (!href.isNullOrBlank() && item != null && item!!.link.isBlank()) item!!.link = href
@@ -53,10 +77,15 @@ object RssParser {
                         }
                         // YouTube feeds carry the video art as media:thumbnail — the enclosure
                         // slot The Watch's rows and skin lean on.
-                        "media:thumbnail", "itunes:image" -> item?.let {
+                        "media:thumbnail", "itunes:image" -> {
                             val u = parser.getAttributeValue(null, "url")
                                 ?: parser.getAttributeValue(null, "href")
-                            if (!u.isNullOrBlank() && it.enclosureImage.isBlank()) it.enclosureImage = u
+                            val cur = item
+                            if (cur != null) {
+                                if (!u.isNullOrBlank() && cur.enclosureImage.isBlank()) cur.enclosureImage = u
+                            } else if (name == "itunes:image" && !u.isNullOrBlank() && itunesArt.isBlank()) {
+                                itunesArt = u.trim()
+                            }
                         }
                         else -> when {
                             name.endsWith(":chapters") -> item?.let {
@@ -96,6 +125,13 @@ object RssParser {
                             "pubdate", "published", "updated", "date" -> if (it.date.isBlank()) it.date = v
                             "item", "entry" -> { feed.items.add(it); item = null }
                         }
+                    } else if (inChannelImage) {
+                        when (name) {
+                            "url" -> if (rssImageArt.isBlank()) rssImageArt = v
+                            "image" -> inChannelImage = false
+                        }
+                    } else if (inChannelOrFeed && name == "logo" && logoArt.isBlank()) {
+                        logoArt = v
                     } else if (inChannelOrFeed && name == "title" && feed.title.isBlank()) {
                         feed.title = v
                     }
@@ -103,7 +139,8 @@ object RssParser {
             }
             event = parser.next()
         }
-        if (feed.items.isEmpty() && feed.title.isBlank()) null else feed
+        feed.imageUrl = listOf(itunesArt, rssImageArt, logoArt).firstOrNull { it.startsWith("http") }.orEmpty()
+        if (feed.items.isEmpty() && feed.title.isBlank() && feed.imageUrl.isBlank()) null else feed
     } catch (e: Exception) {
         null
     }

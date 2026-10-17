@@ -38,11 +38,12 @@ enum class Section(val label: String) {
     ARTICLES("Feed annotations"),
     FEED("Feed articles"),
     PLANNER("Planner text"),
-    MEDIA("A/V grams"),
+    MEDIA("A/V picks"),
     SECTIONS("Page sections (OCR)"),
     NOTES("Text notes"),
     ANNOTATIONS("Handwritten notes"),
-    TASKS("Tasks & events");
+    TASKS("Tasks & events"),
+    MAIL("Inbox mail");
 
     companion object {
         val ALL: Set<Section> get() = values().toSet()

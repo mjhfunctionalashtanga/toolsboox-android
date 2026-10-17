@@ -1,6 +1,7 @@
 package com.toolsboox.ui.plugin
 
 import android.content.Context
+import com.toolsboox.R
 import com.toolsboox.ot.TuckPanel
 
 /**
@@ -35,36 +36,55 @@ object LedgerPlayerRail {
         if (!LedgerPlayer.isActive) return emptyList()
         val out = mutableListOf<TuckPanel.Item>()
 
-        out += TuckPanel.Item(0, "Back 30s", glyph = "⏮") {
+        // MONOCHROME FACES, ONE WORD EACH (Michael 2026-10-11, the one panel language: "Icons lack
+        // design language"). The emoji transport (⏮ ⏸ ▶ ⏭ 🌙 ★ 📝 ⏹) drew in colour on LCD and in
+        // grey dither on e-ink; these are the house's vector faces, captioned Back 30 · Play/Pause ·
+        // Fwd 30 · Sleep · <speed> · Star ep · Note ep · Stop. The ep captions (and ringed faces)
+        // keep the moment's ★/✎ from wearing the reading Star's and Note's faces on the same column.
+        out += TuckPanel.Item(R.drawable.ic_pf_back30, "Back 30s", caption = "Back 30") {
             LedgerPlayer.skipBack(30); onChanged()
         }
         out += TuckPanel.Item(
-            0, if (LedgerPlayer.isPlaying) "Pause" else "Play",
-            glyph = if (LedgerPlayer.isPlaying) "⏸" else "▶",
+            if (LedgerPlayer.isPlaying) R.drawable.ic_pf_pause else R.drawable.ic_pf_play,
+            if (LedgerPlayer.isPlaying) "Pause" else "Play",
+            caption = if (LedgerPlayer.isPlaying) "Pause" else "Play",
         ) {
             LedgerPlayer.toggle(); onChanged()
         }
-        out += TuckPanel.Item(0, "Forward 30s", glyph = "⏭") {
+        out += TuckPanel.Item(R.drawable.ic_pf_fwd30, "Forward 30s", caption = "Fwd 30") {
             LedgerPlayer.skipForward(30); onChanged()
+        }
+        // With Tool labels off there is no caption to carry a value, so the value IS the face —
+        // the speed ("1.25×") and the time left ("12m") — never a state hidden with the words
+        // (review 2026-10-11, F6). Labels on, the faces stay the monochrome drawables.
+        val bare = !TuckPanel.labelsOn(context)
+        // The timer's caption is what's left ("12m", "end") while it runs — and boxed, it's on.
+        val sleep = LedgerPlayer.sleepLabel()
+        out += TuckPanel.Item(if (bare && sleep != null) 0 else R.drawable.ic_pf_moon, "Sleep timer",
+            glyph = if (bare && sleep != null) sleep else null,
+            caption = sleep ?: "Sleep", on = sleep != null) {
+            LedgerPlayer.cycleSleep(); onChanged()   // the box and the minutes follow at once
         }
         // Speed reads as its own value rather than a label, because the answer to "what speed am I
         // on" is the thing you want and a button marked "Speed" makes you press it to find out.
-        out += TuckPanel.Item(0, "Speed", glyph = "${LedgerPlayer.speed}×") {
+        val pace = "${LedgerPlayer.speed}×"
+        out += TuckPanel.Item(if (bare) 0 else R.drawable.ic_pf_speed, "Speed · $pace",
+            glyph = if (bare) pace else null, caption = pace) {
             LedgerPlayer.cycleSpeed(); onChanged()
         }
 
-        // ★ and 📝 only for a track that carries a capturable identity — read-aloud of a page you
+        // ★ and ✎ only for a track that carries a capturable identity — read-aloud of a page you
         // are already standing on has nothing to star that you do not already have.
         if (LedgerPlayer.capture != null) {
-            out += TuckPanel.Item(0, "Star this", glyph = "★") {
+            out += TuckPanel.Item(R.drawable.ic_pf_star_ep, "Star this", caption = "Star ep") {
                 LedgerPlayerCapture.starNow(context); onChanged()
             }
-            out += TuckPanel.Item(0, "Note on this", glyph = "📝") {
+            out += TuckPanel.Item(R.drawable.ic_pf_note_ep, "Note on this", caption = "Note ep") {
                 LedgerPlayerCapture.annotateNow(context); onChanged()
             }
         }
 
-        out += TuckPanel.Item(0, "Stop", glyph = "⏹") {
+        out += TuckPanel.Item(R.drawable.ic_pf_stop, "Stop", caption = "Stop") {
             LedgerPlayer.stop(); onChanged()
         }
         return out

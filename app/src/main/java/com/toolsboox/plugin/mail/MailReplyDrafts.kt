@@ -119,7 +119,9 @@ object MailReplyDrafts {
         val existing = list(context).firstOrNull { it.mailId == m.id }
         val next = Intent(
             mailId = m.id, subject = m.subject,
-            senderName = m.fromName, senderEmail = m.fromEmail,
+            // Who the answer goes to — on your own sent letter, the person it went to (2026-10-10).
+            senderName = MailThreads.replyName(m).takeIf { it != MailThreads.replyAddress(m) }.orEmpty(),
+            senderEmail = MailThreads.replyAddress(m),
             writeKey = existing?.writeKey.orEmpty(), writeDate = existing?.writeDate.orEmpty(),
             updatedAt = System.currentTimeMillis()
         )

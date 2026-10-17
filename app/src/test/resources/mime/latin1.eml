@@ -1,0 +1,23 @@
+Date: Fri, 11 Sep 2026 00:52:17 +0000
+From: =?ISO-8859-1?Q?Support_=C2=B7_Example_Studio?= <support@example.org>
+Message-ID: <2PRqgzhkcerrJrsPhCrFhfVlXH04ytNReZG91GY@mail.example.org>
+X-Mailer: PHPMailer 7.1.1 (https://github.com/PHPMailer/PHPMailer)
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="b1=_2PRqgzhkcerrJrsPhCrFhfVlXH04ytNReZG91GY"
+To: Sam Reader <reader@example.com>
+Subject: =?ISO-8859-1?B?Q29ycHVzOiBsYXRpbjEg4oCUIGNhZsOpIHLDqXN1bcOp?=
+ =?ISO-8859-1?B?IOaXpeacrA==?=
+
+--b1=_2PRqgzhkcerrJrsPhCrFhfVlXH04ytNReZG91GY
+Content-Type: text/plain; charset=ISO-8859-1
+Content-Transfer-Encoding: quoted-printable
+
+Caf=E9 cr=E8me
+--b1=_2PRqgzhkcerrJrsPhCrFhfVlXH04ytNReZG91GY
+Content-Type: text/html; charset=ISO-8859-1
+Content-Transfer-Encoding: quoted-printable
+
+<p>Caf=E9 cr=E8me =E0 la fran=E7aise</p>
+
+--b1=_2PRqgzhkcerrJrsPhCrFhfVlXH04ytNReZG91GY--

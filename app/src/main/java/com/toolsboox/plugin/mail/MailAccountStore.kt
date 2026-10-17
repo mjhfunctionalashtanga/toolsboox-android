@@ -107,6 +107,10 @@ object MailAccountStore {
     fun delete(context: Context, id: String) {
         save(context, all(context).filter { it.id != id })
         setPassword(context, id, "")     // drop the secret with the account
+        // …and its cached window (audit 09-10): rows nothing can reply to, load or open any more
+        // used to stay forever, doubling every letter once the same mailbox was re-added under a
+        // new id. Kept piles (starred/replied/sent) hold their own bodies and stay.
+        runCatching { InboxStore.dropAccountWindow(context.applicationContext, id) }
     }
 
     private fun passKey(id: String) = "mailpass_$id"

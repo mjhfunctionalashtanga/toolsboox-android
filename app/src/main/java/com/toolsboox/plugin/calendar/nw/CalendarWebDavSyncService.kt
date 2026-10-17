@@ -5,9 +5,6 @@ import android.os.Environment
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.squareup.moshi.Moshi
-import com.toolsboox.ot.DateJsonAdapter
-import com.toolsboox.ot.LocaleJsonAdapter
-import com.toolsboox.ot.UUIDJsonAdapter
 import com.toolsboox.plugin.calendar.da.v2.CalendarDay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -57,6 +54,11 @@ class CalendarWebDavSyncService(
 ) {
     companion object {
         private const val TAG = "CalendarWebDavSync"
+
+        /** `"updated": 1784241869732` — the one top-level timestamp; see [updatedOf]. */
+        private val UPDATED_REGEX = Regex("\"updated\"\\s*:\\s*(\\d+)")
+        private const val UPDATED_WINDOW_BYTES = 64 * 1024
+        private const val UPDATED_FULL_SCAN_MAX = 1L * 1024 * 1024
         private const val ENCRYPTED_PREFS_NAME = "ultrabridge_encrypted_prefs"
 
         // One sync pass at a time, PROCESS-wide: the periodic worker and the on-open/on-pause
@@ -136,13 +138,7 @@ class CalendarWebDavSyncService(
         /**
          * Build a Moshi instance matching the app's NetworkModule.provideMoshi().
          */
-        private fun buildMoshi(): Moshi {
-            return Moshi.Builder()
-                .add(LocaleJsonAdapter())
-                .add(DateJsonAdapter())
-                .add(UUIDJsonAdapter())
-                .build()
-        }
+        private fun buildMoshi(): Moshi = com.toolsboox.ot.LedgerMoshi.standard()
 
         /**
          * Build a sync service from application state, reading the same EncryptedSharedPreferences
@@ -302,7 +298,10 @@ class CalendarWebDavSyncService(
                         if (remoteUnchanged && localUnchanged) { skipped++; continue }
                         // Remote provably unchanged (so local already ⊇ remote from the last converge) but
                         // local changed → a plain push carries the new local edits without losing anything.
-                        if (remoteUnchanged) { if (push(local)) pushed++ else failed++; continue }
+                        // Not for a REMOVAL CARRIER (CalendarDayService.saveRemovalCarrier — markers only,
+                        // for a day this device never held): it is never ⊇ remote, so it is fetched and
+                        // merged like a changed remote, and the real day wins every day-level field.
+                        if (remoteUnchanged && !isRemovalCarrier(local.file)) { if (push(local)) pushed++ else failed++; continue }
                         // Remote changed or its mtime is unknown → fetch and merge (never blind-push).
                         val remoteBytes = webdav.download(remotePath) ?: run { failed++; continue }
                         val remoteDay = parseDay(remoteBytes)
@@ -333,10 +332,14 @@ class CalendarWebDavSyncService(
                             // landed during the merge), our merge is stale — writing it would
                             // discard that save (including erase tombstones, which then resurrect
                             // permanently). Leave local alone; the next pass merges the fresh copy.
-                            if (local.file.lastModified() != lMtime) {
-                                Timber.i("$TAG: local $remotePath changed mid-merge; deferring local write")
-                                failed++    // hold the watermark back so the next pass re-merges
-                            } else if (writeLocal(remotePath, mergedJson.toByteArray(Charsets.UTF_8))) pulled++ else failed++
+                            // Check-and-write under the day's lock (audit 09-10): a pen-up save that
+                            // landed between the mtime check and writeLocal used to be overwritten.
+                            com.toolsboox.plugin.calendar.ot.DayLocks.withDayOf(local.file) {
+                                if (local.file.lastModified() != lMtime) {
+                                    Timber.i("$TAG: local $remotePath changed mid-merge; deferring local write")
+                                    failed++    // hold the watermark back so the next pass re-merges
+                                } else if (writeLocal(remotePath, mergedJson.toByteArray(Charsets.UTF_8))) pulled++ else failed++
+                            }
                         }
                         if (!sameContent(remoteDay, merged, mergedJson)) {
                             ensureRemoteParents(remotePath)
@@ -359,6 +362,15 @@ class CalendarWebDavSyncService(
 
         runCatching { syncAttachments() }.onFailure { Timber.w(it, "$TAG: attachment sync failed") }
         runCatching { pullMedia() }.onFailure { Timber.w(it, "$TAG: media pull failed") }
+
+        // "＋ Add to this pick": the picks whose face waited for a day or a file this pass may have
+        // brought, and the adds whose Log line hadn't arrived — drained now, on their own thread so
+        // the pass never waits on a re-face (review 2026-10-16 #3, #16).
+        appContext?.let { ctx ->
+            if (com.toolsboox.plugin.feeds.ot.PickAdds.anyWaiting(ctx)) Thread {
+                com.toolsboox.plugin.feeds.ot.PickAdds.drainWaiting(ctx)
+            }.apply { isDaemon = true }.start()
+        }
 
         // The pull-side widget poke — see [wroteTodayLocally] for why the local save path's poke
         // cannot cover this. AFTER the media pull, so a stroke arriving beside a new photo never
@@ -509,6 +521,11 @@ class CalendarWebDavSyncService(
         val calendarDir = File(rootDir, "calendar/")
         if (!calendarDir.exists()) return emptyList()
 
+        val index = loadUpdatedIndex()
+        val fresh = HashMap<String, IndexedUpdated>(index.size + 64)
+        var parsed = 0
+        val started = System.currentTimeMillis()
+
         val entries = mutableListOf<LocalEntry>()
         try {
             Files.walkFileTree(Paths.get(calendarDir.toURI()), object : SimpleFileVisitor<Path>() {
@@ -516,11 +533,29 @@ class CalendarWebDavSyncService(
                     val f = file.toFile()
                     if (f.isFile && DAY_FILE_REGEX.matches(f.name)) {
                         val relative = f.absolutePath.substringAfter(rootDir.absolutePath.trimEnd('/') + "/")
-                        val updated = try {
-                            parseUpdated(f.readText(Charsets.UTF_8)) ?: f.lastModified()
-                        } catch (e: Exception) {
-                            f.lastModified()
+                        val mtime = attrs.lastModifiedTime().toMillis()
+                        val size = attrs.size()
+                        // MEMOISED, AND EXACTLY SO. `updated` is parsed out of the day JSON, so it
+                        // cannot have changed while the file's mtime AND size are both unchanged —
+                        // this reuses the previous answer rather than approximating it, and the
+                        // sync's merge semantics are untouched.
+                        //
+                        // Why it matters (ANR trace, 2026-08-24): this read the FULL TEXT of every
+                        // day file on every pass — 5,548 files on his device — purely to learn one
+                        // timestamp, and burned 36.5 seconds of CPU doing it. The app was starved
+                        // by its own bookkeeping, which is what made every other surface feel slow.
+                        val cached = index[relative]
+                        val updated = if (cached != null && cached.mtime == mtime && cached.size == size) {
+                            cached.updated
+                        } else {
+                            parsed++
+                            try {
+                                updatedOf(f) ?: mtime
+                            } catch (e: Exception) {
+                                mtime
+                            }
                         }
+                        fresh[relative] = IndexedUpdated(mtime, size, updated)
                         entries.add(LocalEntry(relative, f, updated))
                     }
                     return FileVisitResult.CONTINUE
@@ -534,7 +569,93 @@ class CalendarWebDavSyncService(
         } catch (e: java.io.IOException) {
             Timber.w(e, "$TAG: local walk failed for $calendarDir")
         }
+        // Written even on a partial walk: what was learned is still true, and the entries that were
+        // not reached simply keep their old rows (or get parsed next time).
+        saveUpdatedIndex(fresh)
+        Timber.i(
+            "$TAG: inventory ${entries.size} days, parsed $parsed, reused ${entries.size - parsed}" +
+                " in ${System.currentTimeMillis() - started}ms"
+        )
         return entries
+    }
+
+    /** One remembered answer: the file as it was, and the `updated` we parsed out of it then. */
+    private data class IndexedUpdated(val mtime: Long, val size: Long, val updated: Long)
+
+    /** Device-local, and deliberately OUTSIDE `calendar/` so the walk never sees it and the sync
+     *  never ships it. A missing or unreadable index just means everything is parsed once. */
+    private fun updatedIndexFile() = File(rootDir, ".day-updated-index.json")
+
+    private fun loadUpdatedIndex(): Map<String, IndexedUpdated> = runCatching {
+        val f = updatedIndexFile()
+        if (!f.exists()) return emptyMap()
+        val out = HashMap<String, IndexedUpdated>()
+        val arr = org.json.JSONObject(f.readText())
+        for (key in arr.keys()) {
+            val o = arr.optJSONObject(key) ?: continue
+            out[key] = IndexedUpdated(o.optLong("m"), o.optLong("s"), o.optLong("u"))
+        }
+        out
+    }.getOrDefault(emptyMap())
+
+    private fun saveUpdatedIndex(index: Map<String, IndexedUpdated>) {
+        runCatching {
+            val obj = org.json.JSONObject()
+            for ((k, v) in index) {
+                obj.put(k, org.json.JSONObject().put("m", v.mtime).put("s", v.size).put("u", v.updated))
+            }
+            val tmp = File(updatedIndexFile().absolutePath + ".tmp")
+            tmp.writeText(obj.toString())
+            if (!tmp.renameTo(updatedIndexFile())) { updatedIndexFile().writeText(obj.toString()); tmp.delete() }
+        }.onFailure { Timber.w(it, "$TAG: could not save the updated-index") }
+    }
+
+    /**
+     * The day's `updated` millis, read WITHOUT parsing the day.
+     *
+     * MEASURED ON HIS PALMA, 2026-08-24: 144 day files took **35,951 ms** — 250 ms each — because
+     * every one was fully deserialised by Moshi into a CalendarDay just to read one number. His day
+     * files run to **12.8 MB**: they carry strokes and base64 images, and building that whole object
+     * graph is both the time and a mountain of garbage, which is why the rest of the app stuttered
+     * while a "background" sync ran.
+     *
+     * `updated` is a top-level field and the ONLY `updated` anywhere in the wire (CalendarDay
+     * declares it; Stroke and the element types do not), so the first match in the text is
+     * unambiguous — there is no nested field that could shadow it. Moshi writes fields in
+     * declaration order, so it lands within the first few hundred bytes in practice; reading a
+     * 64 KB window covers that with room to spare and turns 250 ms into microseconds.
+     *
+     * The ladder is deliberate: window → whole file → give up (the caller falls back to mtime).
+     * The full Moshi parse is gone from this path entirely; nothing here needs the object.
+     */
+    private fun updatedOf(f: File): Long? {
+        UPDATED_REGEX.find(readWindow(f, UPDATED_WINDOW_BYTES))?.let {
+            return it.groupValues[1].toLongOrNull()
+        }
+        // Not in the window — rare, and only worth a whole-file scan on a file small enough that
+        // reading it is not the very cost this exists to avoid.
+        if (f.length() <= UPDATED_FULL_SCAN_MAX) {
+            UPDATED_REGEX.find(f.readText(Charsets.UTF_8))?.let {
+                return it.groupValues[1].toLongOrNull()
+            }
+        }
+        return null
+    }
+
+    /** Read at most [max] bytes of [f] as UTF-8 — a window, not the file. */
+    private fun readWindow(f: File, max: Int): String {
+        val n = minOf(max.toLong(), f.length()).toInt()
+        if (n <= 0) return ""
+        val buf = ByteArray(n)
+        f.inputStream().use { input ->
+            var off = 0
+            while (off < n) {
+                val r = input.read(buf, off, n - off)
+                if (r <= 0) break
+                off += r
+            }
+            return String(buf, 0, off, Charsets.UTF_8)
+        }
     }
 
     /**
@@ -560,6 +681,11 @@ class CalendarWebDavSyncService(
      */
     private fun parseDay(bytes: ByteArray): CalendarDay? =
         try { moshi.adapter(CalendarDay::class.java).fromJson(String(bytes, Charsets.UTF_8)) } catch (e: Throwable) { null }
+
+    /** A day minted only to carry removal markers ([CalendarDayService.saveRemovalCarrier]): small,
+     *  and stamped at the epoch. Read only when small, so a real day costs a length check. */
+    private fun isRemovalCarrier(f: java.io.File): Boolean =
+        f.length() in 1..16_384 && runCatching { parseDay(f.readBytes())?.updated?.time == 0L }.getOrDefault(false)
 
     /** Serialize a day the same way it's stored, so equal content produces equal strings. */
     private fun dayJson(day: CalendarDay): String = moshi.adapter(CalendarDay::class.java).toJson(day)

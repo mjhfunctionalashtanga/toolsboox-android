@@ -651,13 +651,122 @@ class CalendarDayPageIntake : Creator {
         }
 
         /**
+         * ALL PICKS · <scope> — the period walk's picks station (DESIGN-period-walk-2026-08-27
+         * §1): a read-only grid of the window's picks, wearing the same header furniture as the
+         * stars register above so the two stations read as siblings. Six to a row, newest first,
+         * overflow past the page foot simply not drawn (the window's tail is what the days
+         * themselves are for). The grams still LIVE on their days — this page is a POINTER; no
+         * hit-list, no settle, nothing reaches the wire.
+         */
+        fun drawPicksScoped(
+            canvas: Canvas, grams: List<ImageElement>, scopeLabel: String,
+            context: android.content.Context? = null
+        ) = drawStationGrid(canvas, grams, "ALL PICKS \u00b7 $scopeLabel", context)
+
+        /** How many cards one station page holds without overlap — six a row, six rows. Michael's
+         *  mid-build ruling (08-27): "more picks more space needed because the overlap doesn't
+         *  work" — past this, a station grows PAGES, never a denser page. */
+        const val STATION_GRID_CAPACITY = 36
+
+        /**
+         * ONE station page: the shared grid both walk stations draw (the ruling made the stars
+         * station grid-paged like the picks one — the quarters layout can't size to a period).
+         * The header arrives WHOLE because the page-per-kind rule lives in [starsStationPages].
+         */
+        fun drawStationGrid(
+            canvas: Canvas, grams: List<ImageElement>, header: String,
+            context: android.content.Context? = null
+        ) {
+            canvas.drawRect(0f, 0f, 1404f, 1872f, Creator.fillWhite)
+            val monoBold = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            val headerPaint = TextPaint().apply {
+                color = Color.BLACK; textAlign = Paint.Align.LEFT; textSize = 40f
+                typeface = monoBold; isAntiAlias = true
+            }
+            canvas.drawText(header, left, pageTitleBaseline, headerPaint)
+            val hintPaint = TextPaint().apply {
+                color = Color.argb(120, 0, 0, 0); textAlign = Paint.Align.CENTER; textSize = 26f
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.ITALIC); isAntiAlias = true
+            }
+            if (grams.isEmpty()) {
+                canvas.drawText("nothing in this window yet", 702f, 400f, hintPaint)
+                return
+            }
+            val cols = 6
+            val gap = 12f
+            val cellW = (1404f - left * 2 - gap * (cols - 1)) / cols
+            val cellH = cellW * 1.25f
+            val top0 = pageTitleBaseline + 40f
+            val cellBorder = Paint().apply {
+                color = Color.argb(150, 0, 0, 0); strokeWidth = 2f
+                style = Paint.Style.STROKE; isAntiAlias = true
+            }
+            grams.sortedByDescending { it.timestamp }.forEachIndexed { i, img ->
+                val r = i / cols
+                val c = i % cols
+                val x = left + c * (cellW + gap)
+                val y = top0 + r * (cellH + gap)
+                if (y + cellH > 1852f) return@forEachIndexed
+                val cell = RectF(x, y, x + cellW, y + cellH)
+                drawGramInCell(canvas, img, cell, context)
+                canvas.drawRect(cell, cellBorder)
+            }
+        }
+
+        /**
+         * THE STARS STATION'S PAGES — a filter-page per KIND (Michael, mid-build 08-27: "a filter
+         * or page for each: the read, the watch, the listen, the emails"), each kind chunked at
+         * [STATION_GRID_CAPACITY] so cards never overlap. Kinds with nothing in the window draw
+         * no page; an empty window still yields one page so the station exists on the walk.
+         */
+        fun starsStationPages(
+            intakeGrams: List<ImageElement>, scopeLabel: String
+        ): List<Pair<String, List<ImageElement>>> {
+            val out = mutableListOf<Pair<String, List<ImageElement>>>()
+            for (band in kinds) {
+                val g = intakeGrams.filter { normalKind(it.intakeKind) == band.kindKey }
+                    .sortedByDescending { it.timestamp }
+                if (g.isEmpty()) continue
+                val chunks = g.chunked(STATION_GRID_CAPACITY)
+                chunks.forEachIndexed { i, chunk ->
+                    val page = if (chunks.size > 1) " \u00b7 ${i + 1}" else ""
+                    out += "ALL STARS \u00b7 $scopeLabel \u00b7 ${band.title}$page" to chunk
+                }
+            }
+            if (out.isEmpty()) out += "ALL STARS \u00b7 $scopeLabel" to emptyList<ImageElement>()
+            return out
+        }
+
+        /** The picks station's pages — capacity-chunked, no kinds (a pick is a pick). */
+        fun picksStationPages(
+            picks: List<ImageElement>, scopeLabel: String
+        ): List<Pair<String, List<ImageElement>>> {
+            val sorted = picks.sortedByDescending { it.timestamp }
+            if (sorted.isEmpty()) return listOf("ALL PICKS \u00b7 $scopeLabel" to emptyList<ImageElement>())
+            val chunks = sorted.chunked(STATION_GRID_CAPACITY)
+            return chunks.mapIndexed { i, chunk ->
+                val page = if (chunks.size > 1) " \u00b7 ${i + 1}" else ""
+                "ALL PICKS \u00b7 $scopeLabel$page" to chunk
+            }
+        }
+
+        /**
          * Decode SMALL and center-crop the gram into its slot — bounds first, then an inSampleSize
          * near slot size, so a band's worth of full-page base64 decodes don't drag the page turn.
-         * One decode per slot, recycled as soon as it's on the canvas (the PickingsCover rule).
+         * One decode per slot, recycled as soon as it's on the canvas (the PickingsCover rule) —
+         * which is why the callers draw this template straight, never recorded
+         * (SurfaceFragment.drawTemplate decodesPictures: a recording keeps every decode alive).
+         *
+         * Drawn again into a zoomed frame (the settle at 16×, Michael 2026-10-12: "no loss of
+         * clarity"), a slot off the glass is skipped before anything is read, and one on it is
+         * decoded for the size it takes there ([com.toolsboox.ot.ZoomClarity.pictureDecodeTarget]).
          */
         private fun drawGramInCell(
             canvas: Canvas, img: ImageElement, cell: RectF, context: android.content.Context? = null
         ) {
+            // Nothing of the slot can show (a zoomed frame's window of the page): no read, no decode.
+            val clip = Rect()
+            if (!canvas.getClipBounds(clip) || !RectF.intersects(RectF(clip), cell)) return
             runCatching {
                 val bytes = if (context != null)
                     com.toolsboox.ot.LedgerMedia.resolveBytes(context, img.data, img.dataRef) ?: return@runCatching
@@ -667,26 +776,39 @@ class CalendarDayPageIntake : Creator {
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
                 // Decode with 2× headroom over the slot so zooming the page still reads crisply —
                 // the slots are legible at 1× now (six to a row), but a zoom should still win detail.
-                val target = maxOf(cell.width(), cell.height()) * 2f
+                // Drawn into a zoomed frame, the slot's size on the glass.
+                val target = com.toolsboox.ot.ZoomClarity.pictureDecodeTarget(
+                    maxOf(cell.width(), cell.height()), drawScale(canvas), maxOf(canvas.width, canvas.height))
                 var sample = 1
                 while (bounds.outWidth / (sample * 2) >= target && bounds.outHeight / (sample * 2) >= target) sample *= 2
                 val opts = BitmapFactory.Options().apply { inSampleSize = sample }
                 val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return@runCatching
-                // Center-crop to the slot's aspect so a card reads as a card, not a sliver.
-                val cellAspect = cell.width() / cell.height()
-                val bmpAspect = bmp.width.toFloat() / bmp.height.toFloat()
-                val src = if (bmpAspect > cellAspect) {
-                    val w = (bmp.height * cellAspect).toInt().coerceIn(1, bmp.width)
-                    val x0 = (bmp.width - w) / 2
-                    Rect(x0, 0, x0 + w, bmp.height)
-                } else {
-                    val h = (bmp.width / cellAspect).toInt().coerceIn(1, bmp.height)
-                    val y0 = (bmp.height - h) / 2
-                    Rect(0, y0, bmp.width, y0 + h)
-                }
-                canvas.drawBitmap(bmp, src, cell, gramPaint)
+                // Aspect-FIT into the slot — the pick keeps its own shape (Michael, field,
+                // 08-29: "it forces a crop shape on a gram … I would love a scalable landscape
+                // square portrait free situation instead of just portrait crop on gram picks").
+                // The old center-crop amputated a landscape pick's sides to the cell's aspect;
+                // fitted whole and centered, a wide pick reads wide, a square square, a portrait
+                // portrait — the cell's border frames the slot, not the picture's shape.
+                val scale = minOf(cell.width() / bmp.width, cell.height() / bmp.height)
+                val w = bmp.width * scale
+                val h = bmp.height * scale
+                val dst = RectF(
+                    cell.centerX() - w / 2f, cell.centerY() - h / 2f,
+                    cell.centerX() + w / 2f, cell.centerY() + h / 2f)
+                canvas.drawBitmap(bmp, null, dst, gramPaint)
                 bmp.recycle()
             }
+        }
+
+        /** Screen px per page unit [canvas] draws at: 1 into the page-space template, the zoom's own
+         *  scale when the template is drawn again through the view matrix (a software canvas, whose
+         *  matrix is the real one). */
+        @Suppress("DEPRECATION")
+        private fun drawScale(canvas: Canvas): Float {
+            val v = FloatArray(9)
+            canvas.matrix.getValues(v)
+            val s = kotlin.math.hypot(v[android.graphics.Matrix.MSCALE_X], v[android.graphics.Matrix.MSKEW_Y])
+            return if (s.isFinite() && s > 0f) s else 1f
         }
     }
 }

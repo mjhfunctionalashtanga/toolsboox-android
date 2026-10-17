@@ -39,7 +39,7 @@
             android:text="☰"
             android:textSize="20sp"
             android:textColor="@android:color/black"
-            android:background="?attr/selectableItemBackgroundBorderless"/>
+            android:background="@drawable/eink_press_bg"/>
 
         <Button
             android:id="@+id/text_notes_prev"
@@ -48,7 +48,7 @@
             android:text="‹"
             android:textSize="22sp"
             android:textColor="@android:color/black"
-            android:background="?attr/selectableItemBackgroundBorderless"/>
+            android:background="@drawable/eink_press_bg"/>
 
         <TextView
             android:id="@+id/text_notes_date"
@@ -66,7 +66,7 @@
             android:text="›"
             android:textSize="22sp"
             android:textColor="@android:color/black"
-            android:background="?attr/selectableItemBackgroundBorderless"/>
+            android:background="@drawable/eink_press_bg"/>
 
         <Button
             android:id="@+id/text_notes_list"
@@ -83,7 +83,7 @@
             android:text="👁"
             android:textSize="18sp"
             android:textColor="@android:color/black"
-            android:background="?attr/selectableItemBackgroundBorderless"/>
+            android:background="@drawable/eink_press_bg"/>
 
         <Button
             android:id="@+id/text_notes_new"
@@ -92,7 +92,7 @@
             android:text="＋"
             android:textSize="22sp"
             android:textColor="@android:color/black"
-            android:background="?attr/selectableItemBackgroundBorderless"/>
+            android:background="@drawable/eink_press_bg"/>
     </LinearLayout>
 
     <!-- The real Almanac strip, same as Mail and the Feed: notes are day-anchored, so the strip
@@ -159,6 +159,28 @@
             android:lineSpacingMultiplier="1.2"
             android:textColor="@android:color/black"
             android:textIsSelectable="true"/>
+    </ScrollView>
+
+    <!-- Bridged ink: the stroke PNGs a /notes reproduction of a Boox note carries (the note's
+         additive "images" refs). GONE for every note without them — the layout is then exactly
+         what it always was. When present it splits the column with whichever text surface is
+         up (editor or preview), both weight-1 siblings. -->
+    <ScrollView
+        android:id="@+id/text_notes_images_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:visibility="gone"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/text_notes_images"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingBottom="12dp"/>
     </ScrollView>
 </LinearLayout>
 

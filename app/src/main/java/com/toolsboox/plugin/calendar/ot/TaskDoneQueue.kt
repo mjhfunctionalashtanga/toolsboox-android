@@ -6,7 +6,6 @@ import com.toolsboox.plugin.calendar.fi.CalendarDayService
 import timber.log.Timber
 import java.io.File
 import java.time.LocalDate
-import java.util.Locale
 
 /**
  * The write-channel between the Task Checklist widget's ✓ and the day files — the fix for a live
@@ -126,12 +125,12 @@ object TaskDoneQueue {
      *    reading-log copy of one task check off together, or the unchecked twin resurfaces);
      *  • done is MONOTONIC — this only ever sets it, so a stale mark can never un-do a task.
      *
-     * The read-only guard is honored here too: a day whose file EXISTS but wouldn't load
-     * ([CalendarDayService.loadOrNull] null while [CalendarDayService.exists] true) is never
-     * saved over — [CalendarDayService.load]'s fresh-day fallback would replace the real
-     * (unreadable, maybe repairable) content with an empty day carrying one done flag. Those
-     * marks stay queued for a later drain. A mark whose day file doesn't exist at all, or whose
-     * task id is gone (deleted), is moot and dropped.
+     * The read-only guard is honored here too: a day whose file is there but wouldn't load
+     * ([CalendarDayService.DayRead.Unreadable]) is never saved over — a fresh day carrying one done
+     * flag would replace the real (unreadable, maybe repairable) content. Those marks stay queued
+     * for a later drain. A mark whose day file doesn't exist at all (or is blank — the same
+     * [CalendarDayService.DayRead.Missing] every writer sees), or whose task id is gone (deleted),
+     * is moot and dropped.
      *
      * @return the dates whose files actually changed — so the caller can tell an open day page
      *   to re-read (re-read, never save: the page's in-memory copy is the stale one now).
@@ -154,17 +153,20 @@ object TaskDoneQueue {
                 val dayDone = mutableListOf<Mark>()
                 runCatching {
                     DayLocks.withDay(date) {
-                        if (!service.exists(rootPath, date)) {
-                            // No file — the tasks these marks name cannot exist. Moot.
-                            dayDone.addAll(dayMarks)
-                            return@withDay
-                        }
-                        val day = service.loadOrNull(rootPath, date, Locale.getDefault())
-                        if (day == null) {
-                            // Exists but wouldn't load: the presenter's read-only guard case.
-                            // Saving would destroy the real content. Keep the marks and wait.
-                            Timber.w("TaskDoneQueue: day file for $date unreadable; keeping ${dayMarks.size} mark(s)")
-                            return@withDay
+                        val day = when (val r = service.read(rootPath, date)) {
+                            is CalendarDayService.DayRead.Loaded -> r.day
+                            is CalendarDayService.DayRead.Missing -> {
+                                // No file (or a blank one) — the tasks these marks name cannot
+                                // exist. Moot.
+                                dayDone.addAll(dayMarks)
+                                return@withDay
+                            }
+                            is CalendarDayService.DayRead.Unreadable -> {
+                                // There but wouldn't load: the presenter's read-only guard case.
+                                // Saving would destroy the real content. Keep the marks and wait.
+                                Timber.w("TaskDoneQueue: day file for $date unreadable; keeping ${dayMarks.size} mark(s)")
+                                return@withDay
+                            }
                         }
                         var changed = false
                         for (mark in dayMarks) {

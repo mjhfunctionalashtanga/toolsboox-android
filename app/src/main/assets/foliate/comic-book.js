@@ -1,3 +1,5 @@
+import * as CFI from './epubcfi.js'
+
 // Read series metadata from a ComicInfo.xml entry, if present.
 // Spec: https://anansi-project.github.io/docs/comicinfo/intro
 const readComicInfoXML = async ({ entries, loadBlob }) => {
@@ -73,6 +75,95 @@ const readComicBookInfo = async ({ getComment }) => {
     }
 }
 
+// THE PAGE ORDER — twin of CbzDirectory.kt (isPageName / naturalCompare / pages) and of the
+// iPad's comic-book.js + BalloonGeometry.naturalLess; Ledgable, Michael 2026-10-11, comics
+// slice 2. The balloon index names pages by their position here, so every side changes together
+// and scripts/test-comic-page-order.mjs, BalloonIndexTest and the iPad's BalloonGeometryTests pin
+// the same vectors. Was: case-sensitive extensions (a `.JPG` page vanished) and plain `.sort()`
+// (`page10` before `page2`). Now Mihon's rule, written out by hand — never a locale sort:
+//  - extensions match ASCII-case-insensitively;
+//  - runs of ASCII digits compare as numbers (leading zeros ignored; by length, then digits);
+//  - every other UTF-16 code unit compares AS ITSELF — case is NOT folded (the iPad's rule: only
+//    digit runs differ from the old `.sort()`, so fewer saved positions move, and both apps give
+//    one CBZ the same page numbers);
+//  - a name that runs out first sorts first; still equal → plain code-unit order.
+const PAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.jxl', '.avif']
+const asciiLower = s => s.replace(/[A-Z]/g, c => String.fromCharCode(c.charCodeAt(0) + 32))
+export const isPageName = name => {
+    if (name.endsWith('/')) return false
+    const tail = asciiLower(name.slice(-6))
+    return PAGE_EXTS.some(ext => tail.endsWith(ext))
+}
+const isDigit = c => c >= 48 && c <= 57
+export const naturalCompare = (a, b) => {
+    let i = 0, j = 0
+    while (i < a.length && j < b.length) {
+        const ca = a.charCodeAt(i), cb = b.charCodeAt(j)
+        if (isDigit(ca) && isDigit(cb)) {
+            let si = i; while (si < a.length && a.charCodeAt(si) === 48) si++
+            let sj = j; while (sj < b.length && b.charCodeAt(sj) === 48) sj++
+            let ei = si; while (ei < a.length && isDigit(a.charCodeAt(ei))) ei++
+            let ej = sj; while (ej < b.length && isDigit(b.charCodeAt(ej))) ej++
+            if (ei - si !== ej - sj) return ei - si < ej - sj ? -1 : 1
+            for (let k = 0; k < ei - si; k++) {
+                const da = a.charCodeAt(si + k), db = b.charCodeAt(sj + k)
+                if (da !== db) return da < db ? -1 : 1
+            }
+            i = ei; j = ej
+            continue
+        }
+        if (ca !== cb) return ca < cb ? -1 : 1
+        i++; j++
+    }
+    const ra = a.length - i, rb = b.length - j
+    if (ra !== rb) return ra < rb ? -1 : 1
+    return a < b ? -1 : a > b ? 1 : 0
+}
+export const comicPageNames = names => names.filter(isPageName).sort(naturalCompare)
+
+// THE SPINE BEFORE SLICE 2: exact-case extensions, plain code-unit `.sort()`. Kept only to read
+// the positions written under it (see comicPositions).
+export const legacyPageNames = names => names.filter(name => PAGE_EXTS.some(ext => name.endsWith(ext))).sort()
+
+/**
+ * SAVED POSITIONS SURVIVE THE NEW ORDER (Michael 2026-10-11, comics slice 2 review). A comic's
+ * reading position, bookmarks, highlights and synced spot are index-based CFIs (`/6/<2(i+1)>`,
+ * view.js getCFI), so a book whose pages the natural order renumbers — unpadded `page2`/`page10`,
+ * newly visible `.JPG` pages — would reopen on the wrong page. Only for THOSE books (the order
+ * moved; Mihon's zero-padded downloads never do, and their CFIs stay byte-for-byte as before):
+ *  - every position written from now on NAMES its page: `/6/<step>[<page name>]`, resolved by
+ *    name, so it is mapped exactly once and never again by index;
+ *  - its step stays the page's OLD index, so a reader still on the old order (the Boox fleet's
+ *    build, an older iPad) lands on the same page from a position this one synced (a page the
+ *    old order never showed uses its new index);
+ *  - a position with no name was written under the old order (this device before the update,
+ *    or an older one via the hub): its index is read in the OLD spine and mapped by file name;
+ *  - `legacyCfiOf(i)` is the unnamed CFI the old order gave page i (null for a page it never
+ *    showed) — the app matches a bookmark saved before the update against it, so that page
+ *    still reads as bookmarked instead of collecting a duplicate.
+ * Null when the order did not move. `files` is comicPageNames(names).
+ */
+export const comicPositions = (names, files) => {
+    const legacy = legacyPageNames(names)
+    if (legacy.length === files.length && legacy.every((n, i) => n === files[i])) return null
+    const now = new Map(files.map((n, i) => [n, i]))
+    const before = new Map(legacy.map((n, i) => [n, i]))
+    const esc = s => s.replace(/[\^[\](),;=]/g, '^$&')   // epubcfi.js's escape for an id
+    return {
+        cfiOf: i => `epubcfi(/6/${((before.get(files[i]) ?? i) + 1) * 2}[${esc(files[i])}])`,
+        legacyCfiOf: i => before.has(files[i]) ? `epubcfi(/6/${(before.get(files[i]) + 1) * 2})` : null,
+        resolveCFI: cfi => {
+            const parts = CFI.parse(cfi)
+            const head = (parts.parent ?? parts).shift()
+            const step = head?.at(-1)
+            let index = CFI.fake.toIndex(head)
+            if (step?.id != null && now.has(step.id)) index = now.get(step.id)
+            else if (step?.id == null && legacy[index] != null) index = now.get(legacy[index]) ?? index
+            return { index, anchor: doc => CFI.toRange(doc, parts) }
+        },
+    }
+}
+
 export const makeComicBook = async ({ entries, loadBlob, getSize, getComment }, file) => {
     const cache = new Map()
     const urls = new Map()
@@ -91,11 +182,8 @@ export const makeComicBook = async ({ entries, loadBlob, getSize, getComment }, 
         cache.delete(name)
     }
 
-    const exts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.jxl', '.avif']
-    const files = entries
-        .map(entry => entry.filename)
-        .filter(name => exts.some(ext => name.endsWith(ext)))
-        .sort()
+    const names = entries.map(entry => entry.filename)
+    const files = comicPageNames(names)
     if (!files.length) throw new Error('No supported image files in archive')
 
     const book = {}
@@ -121,12 +209,15 @@ export const makeComicBook = async ({ entries, loadBlob, getSize, getComment }, 
         book.metadata.belongsTo = { series }
     }
     book.getCover = () => loadBlob(files[0])
-    book.sections = files.map(name => ({
+    const moved = comicPositions(names, files)
+    book.sections = files.map((name, i) => ({
         id: name,
         load: () => load(name),
         unload: () => unload(name),
         size: getSize(name),
+        ...(moved ? { cfi: moved.cfiOf(i), legacyCfi: moved.legacyCfiOf(i) } : {}),
     }))
+    if (moved) book.resolveCFI = moved.resolveCFI
     book.toc = files.map(name => ({ label: name, href: name }))
     book.rendition = { layout: 'pre-paginated' }
     book.resolveHref = href => ({ index: book.sections.findIndex(s => s.id === href) })

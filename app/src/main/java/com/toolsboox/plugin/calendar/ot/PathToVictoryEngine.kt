@@ -192,7 +192,10 @@ object PathToVictoryEngine {
             // reader uses (see NotebotRegistry's add_task tool); device-local clock time drifted items.
             date = Date(day.atTime(12, 0).toInstant(ZoneOffset.UTC).toEpochMilli()),
             stage = "todo", source = "path", contactId = contactId
-        )
+        // OFFER-NEVER-MINT (Michael's ruling): plan expansion no longer silently creates tasks. Each
+        // drafted step lands as a PROPOSED candidate on the Tasks surface's Proposed shelf — same
+        // content and "path" provenance — and becomes a live task only when the reader taps Promote.
+        ).apply { proposed = true }
 
         // Group everything by target day so each day file is loaded/saved once.
         data class Pending(val text: String, val contactId: String?)
@@ -215,7 +218,8 @@ object PathToVictoryEngine {
         val created = ArrayList<LedgerItem>()
         for ((day, pendings) in byDay) {
             runCatching {
-                val cd = calendarDayService.load(root, day, null, locale)
+                // A day that won't read refuses (throws) — its tasks are not written, and not counted.
+                val cd = calendarDayService.loadForWriteOrThrow(root, day, null, locale)
                 for (p in pendings) {
                     val item = newTask(p.text, day, p.contactId)
                     cd.ledgerItems.add(item)
@@ -225,8 +229,11 @@ object PathToVictoryEngine {
                 calendarDayService.save(root, day, cd)
             }
         }
-        // Best-effort push, the same follow-through the Kanban/Ask creation paths make.
-        for (item in created) runCatching {
+        // A proposed candidate is NOT pushed to the live task mirror (CalDAV) — that would MINT the
+        // very task the Proposed shelf holds back. Promotion does the push; the day JSON still syncs,
+        // carrying [proposed] so every device shelves it too. (The gate is honest about intent even
+        // though every item here is proposed today.)
+        for (item in created) if (!item.proposed) runCatching {
             kotlinx.coroutines.runBlocking {
                 com.toolsboox.plugin.calendar.nw.LedgerTaskSync.pushTask(context, item)
             }

@@ -4,6 +4,7 @@ import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import timber.log.Timber
 import java.net.URL
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
@@ -70,6 +71,42 @@ object WeatherMoon {
         return p.getString(K_HOURLY, null)?.split(",")?.mapNotNull { it.toFloatOrNull() } ?: emptyList()
     }
 
+    /** IP-geolocation providers, tried in order until one yields a usable lat/lon. Both are HTTPS
+     *  (no cleartext) and permission-free. ipwho.is is primary; ipapi.co is the fallback for when
+     *  ipwho.is is down, rate-limited, or blocked on the device's network — so a single flaky host
+     *  no longer sinks the whole strip to moon-only. Each exposes latitude/longitude at these keys. */
+    private data class GeoProvider(val url: String, val latKey: String, val lonKey: String)
+
+    private val GEO_PROVIDERS = listOf(
+        GeoProvider("https://ipwho.is/", "latitude", "longitude"),
+        GeoProvider("https://ipapi.co/json/", "latitude", "longitude")
+    )
+
+    /** IP-locate through the provider chain; the first that answers with real coordinates wins.
+     *  Returns null (and logs why each failed) only when every provider is unreachable/blocked. */
+    private fun fetchLatLon(): Pair<Double, Double>? {
+        for (g in GEO_PROVIDERS) {
+            try {
+                val loc = JSONObject(URL(g.url).readText())
+                // ipapi.co reports rate-limiting as {"error":true,"reason":"..."} with HTTP 200.
+                if (loc.optBoolean("error", false)) {
+                    Timber.w("WeatherMoon: geolocation %s refused: %s", g.url, loc.optString("reason"))
+                    continue
+                }
+                val lat = loc.optDouble(g.latKey, Double.NaN)
+                val lon = loc.optDouble(g.lonKey, Double.NaN)
+                if (lat.isNaN() || lon.isNaN() || (lat == 0.0 && lon == 0.0)) {
+                    Timber.w("WeatherMoon: geolocation %s returned no coordinates", g.url)
+                    continue
+                }
+                return lat to lon
+            } catch (e: Exception) {
+                Timber.w("WeatherMoon: geolocation %s failed: %s", g.url, e.message)
+            }
+        }
+        return null
+    }
+
     /** Refresh by IP location. Returns true if the cache changed. Safe to call often. */
     suspend fun refresh(context: Context): Boolean = withContext(Dispatchers.IO) {
         val p = prefs(context)
@@ -77,9 +114,10 @@ object WeatherMoon {
         val fresh = System.currentTimeMillis() - p.getLong(K_FETCHED, 0L) < TTL_MS
         if (fresh && p.getString(K_DAY, null) == today && p.contains(K_SUMMARY)) return@withContext false
         try {
-            val loc = JSONObject(URL("https://ipwho.is/").readText())
-            val lat = loc.getDouble("latitude")
-            val lon = loc.getDouble("longitude")
+            val (lat, lon) = fetchLatLon() ?: run {
+                Timber.w("WeatherMoon: all geolocation providers failed; keeping last cache, moon-only")
+                return@withContext false
+            }
             val wx = JSONObject(URL(
                 "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon" +
                     "&current=temperature_2m,weather_code" +
@@ -103,8 +141,10 @@ object WeatherMoon {
                 .putString(K_DAY, today).putLong(K_FETCHED, System.currentTimeMillis())
                 .apply()
             summary != before || p.getString(K_DAY, null) != today
-        } catch (_: Exception) {
-            false   // offline / rate-limited: keep the last cache, moon phase still shows
+        } catch (e: Exception) {
+            // Forecast fetch failed after a good geolocation: keep the last cache, moon still shows.
+            Timber.w("WeatherMoon: forecast fetch failed: %s", e.message)
+            false
         }
     }
 

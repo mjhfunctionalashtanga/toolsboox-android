@@ -63,6 +63,13 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
 
         /** Sentinel pageKey: this item lives on the Text Notes screen, not a day-note surface. */
         const val PAGEKEY_TEXT_NOTES = "::text-notes"
+
+        /** The basket's answer refused by today's page (day-file guard) — iOS's line
+         *  (`DayFileWords.couldntWriteOnToday`); the answer is held for [Try again]. */
+        const val BASKET_REFUSED = "Couldn't write on today — its page won't read"
+
+        /** A door with a button stays long enough for a pen to reach it on e-ink. */
+        private const val BASKET_RETRY_MS = 8_000
     }
 
     override val view = R.layout.fragment_reading_log
@@ -178,7 +185,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         // Honour a preset origin chosen from the History menu (one-shot).
         ReadingLogSelection.origin?.let { origins.clear(); origins.add(it); ReadingLogSelection.origin = null }
 
-        adapter = ReadingEventAdapter(emptyList(), onOpen = ::openItem, onLong = ::showRhizome)
+        adapter = ReadingEventAdapter(emptyList(), onOpen = ::openItem, onLong = ::showRhizome, onMedia = ::openMedia)
         binding.readingRecycler.layoutManager = LinearLayoutManager(requireContext())
         binding.readingRecycler.adapter = adapter
         binding.readingRecycler.addItemDecoration(
@@ -274,7 +281,12 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 com.toolsboox.ot.TuckPanel.Item(0, "Origins filter", glyph = "🗂") {
                     binding.originButton.performClick()
                 },
-                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_camera, "Capture gram") {
+                // 📊 Your year… — the log read as a whole, for a span. A door in the room where
+                // the log lives (iOS wears the same glyph on the log's header row).
+                com.toolsboox.ot.TuckPanel.Item(0, com.toolsboox.plugin.calendar.ot.LedgerYear.DOOR_TITLE, glyph = "📊") {
+                    NavHostFragment.findNavController(this).navigate(R.id.action_to_year_in_ledger)
+                },
+                com.toolsboox.ot.TuckPanel.Item(R.drawable.ic_camera, "Capture pick") {
                     binding.gramButton.performClick()
                 },
                 com.toolsboox.ot.TuckPanel.Item(0, "Export", glyph = "⬆") {
@@ -305,7 +317,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             val root = documentsRoot()
             val loc = java.util.Locale.getDefault()
             val (day, pat) = withContext(Dispatchers.IO) {
-                val cd = runCatching { calendarDayService.load(root, anchor, null, loc) }.getOrNull()
+                val cd = runCatching { calendarDayService.loadForDisplay(root, anchor, null, loc) }.getOrNull()
                     ?: CalendarDay(anchor.year, anchor.monthValue, anchor.dayOfMonth, startHour = null)
                 val p = runCatching { calendarPatternService.load(root, anchor, loc) }.getOrNull()
                 cd to p
@@ -550,6 +562,9 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             com.toolsboox.plugin.chat.da.Section.ARTICLES -> LogOrigin.READ to null
             com.toolsboox.plugin.chat.da.Section.MEDIA -> LogOrigin.AV to null
             com.toolsboox.plugin.chat.da.Section.TASKS -> LogOrigin.TASK to null
+            // Mail joined the corpus 08-23 ("does it have access to the feeds (email, rss,
+            // book)?"); a matched letter reads as correspondence in the log's vocabulary.
+            com.toolsboox.plugin.chat.da.Section.MAIL -> LogOrigin.REPLY to null
         }
         val meta = if (s.section == com.toolsboox.plugin.chat.da.Section.FEED)
             listOf(s.source, s.citation).filter { it.isNotBlank() }.joinToString(" · ")
@@ -631,6 +646,10 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             "listen" to LogOrigin.LISTEN, "educate" to LogOrigin.READ
         )
 
+        // The Synthesize index's names, read once for the walk (the Log's ❖ rows).
+        val synthNames by lazy {
+            com.toolsboox.plugin.calendar.ot.SynthPageStore.list(ctx).associate { it.key to it.name }
+        }
         calendarRoot.walkTopDown()
             .filter { it.isFile && it.name.startsWith("day-") && it.name.endsWith("-v2.json") }
             .forEach { file ->
@@ -646,10 +665,14 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
 
                 // Collapse the double log (iOS parity): starring writes art-<id> and each
                 // annotation appends art-<id>-xxxx — the same article showed two or three
-                // times. One card per article URL per day; the richest (note/excerpt)
-                // absorbs the others' star flag. Books keep every highlight.
-                val mergedByUrl = LinkedHashMap<String, ReadingEvent>()
+                // times. EVERY LINE WITH ITS OWN PASSAGE KEEPS ITS ROW (design critique #5,
+                // Michael 2026-10-12: one highlight is one Log line — two passages from one
+                // article were folded into one row and the second vanished); the bare lines — a
+                // star, a "read" — fold into the article's richest row, as before. A note about
+                // the whole piece keeps its row. iOS's gatherLog takes the same rule. Books keep
+                // every highlight.
                 val passthrough = mutableListOf<ReadingEvent>()
+                val byUrl = LinkedHashMap<String, MutableList<ReadingEvent>>()
                 for (e in day.readingEvents) {
                     val u = e.url
                     // Correspondence events (source starts with "↩", wire kind stays ARTICLE
@@ -657,16 +680,38 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                     // star they answer.
                     if (e.kind != ReadingEvent.Kind.ARTICLE || u.isNullOrBlank() ||
                         e.source?.startsWith("↩") == true) { passthrough.add(e); continue }
-                    val prev = mergedByUrl[u]
-                    if (prev == null) { mergedByUrl[u] = e; continue }
-                    val richer = ((e.note ?: "") + (e.excerpt ?: "")).length >
-                        ((prev.note ?: "") + (prev.excerpt ?: "")).length
-                    val keep = if (richer) e else prev
-                    val other = if (richer) prev else e
-                    mergedByUrl[u] = keep.copy(
-                        starred = keep.starred || other.starred,
-                        published = keep.published ?: other.published
-                    )
+                    byUrl.getOrPut(u) { mutableListOf() }.add(e)
+                }
+                val mergedByUrl = LinkedHashMap<String, ReadingEvent>()
+                for ((u, group) in byUrl) {
+                    // Lines with a passage: one row each (the same passage twice is one row — the
+                    // copy that carries the note or media, not whichever came first: review
+                    // 2026-10-12 #15, the plain twin hid the note).
+                    val passages = group.filter { !it.excerpt.isNullOrBlank() }
+                        .groupBy { it.excerpt!!.replace(Regex("\\s+"), " ").trim() }.values
+                        .map { same -> same.maxByOrNull { (it.note?.length ?: 0) + 1000 * (it.attachments?.size ?: 0) } ?: same.first() }
+                    // A note about the whole piece (the highlights' Note with nothing selected,
+                    // "mfnote-…") keeps its own row too; every other passage-less line — the star,
+                    // its blurb, a "read" — folds into the article's richest row.
+                    val wholeNotes = group.filter { it.excerpt.isNullOrBlank() && it.id.startsWith("mfnote-") &&
+                        (!it.note.isNullOrBlank() || !it.attachments.isNullOrEmpty()) }
+                    val rest = group.filter { it.excerpt.isNullOrBlank() && it !in wholeNotes }
+                    val rows = passages + wholeNotes
+                    if (rows.isEmpty()) {
+                        // The old rule for a piece with no passage: one row, the richest, the
+                        // star OR'd across them.
+                        val keep = rest.maxByOrNull { (it.note ?: "").length } ?: rest.first()
+                        mergedByUrl[u] = keep.copy(starred = rest.any { it.starred },
+                            published = keep.published ?: rest.firstNotNullOfOrNull { it.published })
+                        continue
+                    }
+                    val richest = rows.maxByOrNull { ((it.note ?: "") + (it.excerpt ?: "")).length } ?: rows.first()
+                    for (e in rows) {
+                        val folded = if (e === richest) e.copy(
+                            starred = e.starred || rest.any { it.starred },
+                            published = e.published ?: rest.firstNotNullOfOrNull { it.published }) else e
+                        mergedByUrl[u + "\u0000" + e.id] = folded
+                    }
                 }
                 for (e in passthrough + mergedByUrl.values) {
                     val o = when {
@@ -682,19 +727,57 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                     }
                     val meta = listOfNotNull(e.source?.takeIf { it.isNotBlank() }, stamp(e.date), pubLabel)
                         .joinToString(" · ")
-                    val body = (e.excerpt?.takeIf { it.isNotBlank() } ?: e.note).orEmpty().trim()
-                    // Captured media rides on the event's attachments — show a photo thumb / play a memo.
-                    val photo = e.attachments?.firstOrNull { it.kind == Attachment.Kind.PHOTO }
-                    val audio = e.attachments?.firstOrNull { it.kind == Attachment.Kind.AUDIO }
+                    // The passage, then the typed note UNDER it (add-to-pick pin §6 — the note used to
+                    // hide behind the excerpt); a line with no passage reads as its note.
+                    val passage = e.excerpt?.takeIf { it.isNotBlank() }?.trim()
+                    val body = (passage ?: e.note).orEmpty().trim()
+                    val noteUnder = if (passage != null) e.note?.trim().orEmpty() else ""
+                    // Captured media rides on the event's attachments — the strip shows every one;
+                    // the detail card keeps a photo (the handwriting when there is no photo).
+                    val atts = e.attachments.orEmpty()
+                    val photo = atts.firstOrNull { it.kind == Attachment.Kind.PHOTO && !it.filename.startsWith("ink-") }
+                        ?: atts.firstOrNull { it.kind == Attachment.Kind.PHOTO }
+                    val audio = atts.firstOrNull { it.kind == Attachment.Kind.AUDIO }
+                    val media = atts.map { a ->
+                        LogMedia(a.kind, attachmentPath(a), a.duration?.toInt() ?: 0, ink = a.filename.startsWith("ink-"))
+                    }
                     put(LogItem(o, e.title.ifBlank { getString(R.string.reading_log_untitled) }, meta, body,
                         e.url, e.date.time, imagePath = photo?.let { attachmentPath(it) },
-                        audioPath = audio?.let { attachmentPath(it) }, starred = e.starred))
+                        audioPath = audio?.let { attachmentPath(it) }, starred = e.starred, eventId = e.id,
+                        note = noteUnder, media = media))
                 }
 
                 val fallback = dayDate?.atStartOfDay(ZoneId.systemDefault())?.toInstant()?.toEpochMilli() ?: 0L
 
+                // A HIGHLIGHT IS ONE ROW (iOS's gatherLog, PlannerShell.swift; review 2026-10-12
+                // R2 #6 — Michael 2026-10-12: "It goes in the day it was picked's log"): the card an
+                // article highlight placed is that highlight's line, so it gets no row of its own
+                // beside it; nor does the voice or video note that makes it sound (it rides the
+                // line's own row). Matched by the article and the passage, as the page draws them.
+                val highlighted = day.readingEvents.mapNotNull { e ->
+                    val u = e.url; val x = e.excerpt
+                    if (e.kind != ReadingEvent.Kind.ARTICLE || u.isNullOrBlank() || x.isNullOrBlank()) null
+                    else com.toolsboox.plugin.feeds.ot.ArticleKey.of(u) + "|" +
+                        com.toolsboox.plugin.feeds.ot.ArticleMarkSet.norm(com.toolsboox.plugin.calendar.ot.ArticlePickIndex.passageOf(x))
+                }.toHashSet()
+                val lineCards = if (highlighted.isEmpty()) emptyList() else day.imageElements.filter { img ->
+                    img.sourceLink.startsWith("http", ignoreCase = true) && img.cardText.isNotBlank() &&
+                        (com.toolsboox.plugin.feeds.ot.ArticleKey.of(img.sourceLink) + "|" +
+                            com.toolsboox.plugin.feeds.ot.ArticleMarkSet.norm(
+                                com.toolsboox.plugin.calendar.ot.ArticlePickIndex.passageOf(img.cardText))) in highlighted
+                }
+                val lineCardIds = lineCards.map { it.elementId }.toHashSet()
+                // Every clip that rides a line is in that line's strip already (review 2026-10-16 #9:
+                // only each card's ONE media slot was skipped, so a pick's second and third clips
+                // showed twice) — skip them all, and whatever a line card's face plays.
+                val lineClips = (lineCards.mapNotNull { it.attachmentId.ifBlank { null } } +
+                    lineCards.flatMap { c -> c.faceSlots.orEmpty().map { it.a } } +
+                    day.readingEvents.flatMap { e -> e.attachments.orEmpty().map { it.id } })
+                    .map { it.lowercase() }.toHashSet()
+
                 // AV grams are the daily video/audio "note to self" recordings — all AV.
                 for (a in day.avGrams) {
+                    if (a.id.lowercase() in lineClips) continue
                     val label = when (a.kind) {
                         Attachment.Kind.VIDEO -> getString(R.string.reading_log_av_video)
                         Attachment.Kind.AUDIO -> getString(R.string.reading_log_av_audio)
@@ -726,7 +809,18 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 for (t in day.textElements.filter { it.pageKey != "pickings" && it.text.isNotBlank() }) {
                     put(LogItem(LogOrigin.NOTE, t.text.trim(), stamp(Date(t.timestamp)), "", null, t.timestamp))
                 }
-                for (img in day.imageElements) {
+                // A highlight's line card is that line's row (above) — never a row, nor a fold, of
+                // its own. Then ❖ ONE ROW PER SYNTHESIS (synth-list-links §5): a `synthesize-*`
+                // page's cards and the pick linking to it fold into "❖ <page name>", whose Go to
+                // opens the page; every other card keeps its own row.
+                val synthFold = com.toolsboox.plugin.calendar.ot.SynthListLanding.logFold(
+                    day.imageElements.filter { it.elementId !in lineCardIds }, dayDate)
+                for (r in synthFold.rows) {
+                    val name = synthNames[r.key]?.takeIf { it.isNotBlank() } ?: r.pickName.ifBlank { "Synthesize" }
+                    put(LogItem(LogOrigin.CARD, "❖ $name", stamp(Date(r.millis)), r.text,
+                        com.toolsboox.plugin.calendar.ot.SynthSources.pageLink(r.date.toString(), r.key), r.millis))
+                }
+                for (img in synthFold.rest) {
                     put(LogItem(LogOrigin.CARD, "Card · ${img.page.ifBlank { "day" }}",
                         stamp(Date(img.timestamp)), "", null, img.timestamp))
                 }
@@ -817,9 +911,12 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 runCatching {
                     val root = documentsRoot()
                     val today = LocalDate.now()
-                    val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
-                    day.avGrams.add(att)
-                    calendarDayService.save(root, today, day)
+                    com.toolsboox.plugin.calendar.ot.DayLocks.withDay(today) {
+                        // Throws (→ logged below) rather than save a fresh day over an unreadable one.
+                        val day = calendarDayService.loadForWriteOrThrow(root, today, null, java.util.Locale.getDefault())
+                        day.avGrams.add(att)
+                        calendarDayService.save(root, today, day)
+                    }
                 }.onFailure { Timber.w(it, "failed to save A/V gram") }
             }
             load()
@@ -835,7 +932,8 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
      *  on TODAY'S Synthesize page — the Log feeds the pressure chamber directly. */
     private fun synthesizeBasket() {
         val ctx = requireContext()
-        com.toolsboox.plugin.calendar.ot.SynthEngines.pick(ctx, "Synthesize ${basket.size} items") { engine ->
+        com.toolsboox.plugin.calendar.ot.SynthEngines.pick(
+            ctx, "Synthesize ${basket.size} items", present = { showModal(it) }) { engine ->
             val creds = com.toolsboox.plugin.chat.nw.AiCreds.get(ctx)
             if (creds == null) {
                 android.widget.Toast.makeText(ctx, "Add your AI key in Ask my Ledger settings", android.widget.Toast.LENGTH_LONG).show()
@@ -862,25 +960,53 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 }.take(9000)
                 val res = chatService.run(provider, key, model, engine.prompt, material)
                 when (res) {
-                    is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok -> {
-                        val today = LocalDate.now()
-                        val day = calendarDayService.load(documentsRoot(), today, null, java.util.Locale.getDefault())
-                        val y = (day.textElements.filter { it.pageKey == "synthesize" }
-                            .maxOfOrNull { it.y } ?: 60f) + 140f
-                        day.textElements.add(com.toolsboox.da.TextElement(
-                            x = 80f, y = y.coerceAtMost(1600f), width = 1200f, height = 60f,
-                            text = "${engine.name}\n\n${res.answer.trim()}", pageKey = "synthesize"))
-                        calendarDayService.save(documentsRoot(), today, day)
-                        withContext(Dispatchers.Main) {
-                            basket.clear()
-                            android.widget.Toast.makeText(ctx, "On today's Synthesize page", android.widget.Toast.LENGTH_LONG).show()
-                        }
-                    }
+                    is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Ok ->
+                        landBasketAnswer(ctx, engine.name, res.answer.trim())
                     is com.toolsboox.plugin.chat.nw.LedgerChatService.Result.Err -> withContext(Dispatchers.Main) {
                         android.widget.Toast.makeText(ctx, "⚠ ${res.message}", android.widget.Toast.LENGTH_LONG).show()
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * The basket's answer onto today's Synthesize page. Today's file that won't read is never saved
+     * over — and the answer is NOT thrown away for it (2026-10-16 review, item 9: he had to ask
+     * again): it is held, and [Try again] writes THAT answer once the page reads, without asking
+     * the engine again. The basket is cleared only once the answer is on the page. Off the main
+     * thread; says where it went (or why not) on it.
+     */
+    private suspend fun landBasketAnswer(ctx: android.content.Context, engineName: String, answer: String) {
+        val today = LocalDate.now()
+        val attempt = runCatching {
+            com.toolsboox.plugin.calendar.ot.DayLocks.withDay(today) {
+                // The writer's door: a today-file that won't read THROWS, never saved over.
+                val day = calendarDayService.loadForWriteOrThrow(documentsRoot(), today, null, java.util.Locale.getDefault())
+                val y = (day.textElements.filter { it.pageKey == "synthesize" }
+                    .maxOfOrNull { it.y } ?: 60f) + 140f
+                day.textElements.add(com.toolsboox.da.TextElement(
+                    x = 80f, y = y.coerceAtMost(1600f), width = 1200f, height = 60f,
+                    text = "$engineName\n\n$answer", pageKey = "synthesize"))
+                calendarDayService.save(documentsRoot(), today, day)
+            }
+        }.onFailure { Timber.w(it, "the basket's answer didn't land") }
+        withContext(Dispatchers.Main) {
+            if (attempt.isSuccess) {
+                basket.clear()
+                android.widget.Toast.makeText(ctx, "On today's Synthesize page", android.widget.Toast.LENGTH_LONG).show()
+                return@withContext
+            }
+            val words = if (attempt.exceptionOrNull() is com.toolsboox.plugin.calendar.fi.CalendarDayService.UnreadableDayException)
+                BASKET_REFUSED else "Couldn't write on today's Synthesize page."
+            // (This fragment's `view` is its layout id — the standing view is requireView's.)
+            val v = if (isAdded) runCatching { requireView() }.getOrNull() else null
+            if (v != null) {
+                com.google.android.material.snackbar.Snackbar.make(v, words, BASKET_RETRY_MS)
+                    .setAction("Try again") {
+                        lifecycleScope.launch(Dispatchers.IO) { landBasketAnswer(ctx, engineName, answer) }
+                    }.show()
+            } else android.widget.Toast.makeText(ctx, words, android.widget.Toast.LENGTH_LONG).show()
         }
     }
 
@@ -892,6 +1018,9 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     private fun showRhizome(item: LogItem) {
         val ctx = requireContext()
         val rows = mutableListOf<Pair<String, () -> Unit>>()
+        // ＋ Add to this pick (add-to-pick pin §2 D4): a line whose highlight has a pick gets the Add
+        // ladder TIED to it — onto this line, the same card re-faced.
+        addToPickRow(item)?.let { rows.add(it) }
         item.day?.let { d ->
             rows.add("☀  Open its day · $d" to {
                 CalendarNavigator.toDayPage(this, d, com.toolsboox.plugin.calendar.da.v2.CalendarDay.DEFAULT_STYLE)
@@ -940,7 +1069,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             android.widget.Toast.makeText(ctx, "${basket.size} in the basket", android.widget.Toast.LENGTH_SHORT).show()
         })
         if (basket.isNotEmpty()) {
-            rows.add("⚗  Synthesize ${basket.size} selected…" to { synthesizeBasket() })
+            rows.add("❖  Synthesize ${basket.size} selected…" to { synthesizeBasket() })
             rows.add("∅  Empty the basket" to {
                 basket.clear()
                 android.widget.Toast.makeText(ctx, "Basket emptied", android.widget.Toast.LENGTH_SHORT).show()
@@ -948,7 +1077,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         }
         // ⁂ Pick — the item becomes a GRAM through the same medium chooser every pick uses
         // (handwriting / text / audio / video), landing on today's Notes page as a placed card.
-        rows.add("⁂  Pick — make it a gram" to {
+        rows.add("⁂  Pick it — a card for your Pickings" to {
             val quote = listOf(item.title.removePrefix("★ "), item.body)
                 .filter { it.isNotBlank() }.joinToString("\n\n")
             com.toolsboox.plugin.feeds.ot.FeedNoteGram.showForItem(
@@ -971,15 +1100,22 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         rows.add("❝  Send to today's Pickings" to {
             lifecycleScope.launch(Dispatchers.IO) {
                 val today = LocalDate.now()
-                val day = calendarDayService.load(documentsRoot(), today, null, java.util.Locale.getDefault())
-                day.textElements.add(com.toolsboox.da.TextElement(
-                    x = 80f, y = 120f, width = 760f, height = 60f,
-                    text = item.title.removePrefix("⭐ ") + (if (item.body.isNotBlank()) "\n" + item.body else ""),
-                    pageKey = "pickings"
-                ))
-                calendarDayService.save(documentsRoot(), today, day)
+                val wrote = com.toolsboox.plugin.calendar.ot.DayLocks.withDay(today) {
+                    // A today-file that won't read is never saved over — say so instead.
+                    val day = calendarDayService.loadForWrite(documentsRoot(), today, null, java.util.Locale.getDefault())
+                        ?: return@withDay false
+                    day.textElements.add(com.toolsboox.da.TextElement(
+                        x = 80f, y = 120f, width = 760f, height = 60f,
+                        text = item.title.removePrefix("⭐ ") + (if (item.body.isNotBlank()) "\n" + item.body else ""),
+                        pageKey = "pickings"
+                    ))
+                    calendarDayService.save(documentsRoot(), today, day)
+                    true
+                }
                 withContext(Dispatchers.Main) {
-                    android.widget.Toast.makeText(ctx, "On today's Pickings", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(ctx,
+                        if (wrote) "On today's Pickings" else "Couldn't write on today — its page won't read",
+                        android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
         })
@@ -988,6 +1124,25 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             .setItems(rows.map { it.first }.toTypedArray()) { _, which -> rows[which].second() }
             .setNegativeButton("Close", null)
             .show()
+    }
+
+    /** `＋ Add to this pick` for a line whose highlight has a pick (pin §2 D4), or null. */
+    private fun addToPickRow(item: LogItem): Pair<String, () -> Unit>? {
+        val id = item.eventId ?: return null
+        val app = requireContext().applicationContext
+        val mark = com.toolsboox.plugin.feeds.ot.PickAdds.markOfLine(app, id, item.url) ?: return null
+        return com.toolsboox.plugin.calendar.ot.AddToPickWords.ADD to {
+            val engine = com.toolsboox.plugin.feeds.ot.PickAdds(app, calendarDayService, { documentsRoot() }) { msg ->
+                com.toolsboox.plugin.feeds.ot.AddToPick.say(app, msg)
+            }
+            com.toolsboox.plugin.feeds.ot.AddToPick.showLadder(this, com.toolsboox.plugin.feeds.ot.AddToPick.Tied(
+                engine, com.toolsboox.plugin.feeds.ot.PickAdds.articleOf(mark, item.url.orEmpty()), mark) { msg ->
+                com.toolsboox.plugin.feeds.ot.AddToPick.main {
+                    msg?.let { com.toolsboox.plugin.feeds.ot.AddToPick.say(app, it) }
+                    if (isAdded) load()
+                }
+            })
+        }
     }
 
     /** A read-only detail card for one log item — title, source/date, image, full
@@ -1023,6 +1178,13 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             setPadding(0, px(12), 0, 0); setLineSpacing(0f, 1.15f)
         })
 
+        // ＋ Add to this pick — a line whose highlight has a pick (add-to-pick pin §2 D4).
+        val addRow = addToPickRow(item)
+        val addBtn = addRow?.let { (label, _) ->
+            android.widget.Button(ctx).apply { text = label; isAllCaps = false; setPadding(0, px(8), 0, 0) }
+                .also { col.addView(it) }
+        }
+
         // Add this item (A/V gram with its transcription, highlight, note…) onto a pickings board.
         val pickBtn = android.widget.Button(ctx).apply {
             text = "❝  Add to Pickings"; isAllCaps = false; setPadding(0, px(8), 0, 0)
@@ -1046,6 +1208,7 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         builder.setNegativeButton("Close", null)
         val dialog = builder.show()
         pickBtn.setOnClickListener { dialog.dismiss(); addLogItemToPickings(item) }
+        addBtn?.setOnClickListener { dialog.dismiss(); addRow.second() }
         taskBtn.setOnClickListener { dialog.dismiss(); makeTaskFromLogItem(item) }
     }
 
@@ -1101,18 +1264,26 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             // Already there? Say so and stop. Tapping "make a task" twice on the same log item —
             // or on something you'd already written by hand — used to mint a second item with a
             // different id, which nothing downstream could tell from a real second task.
-            val already = withContext(Dispatchers.IO) {
+            // null = today's file is there but won't read: nothing was written, and no task is pushed.
+            val already: Boolean? = withContext(Dispatchers.IO) {
                 runCatching {
                     val root = documentsRoot()
-                    val day = calendarDayService.load(root, today, null, java.util.Locale.getDefault())
-                    if (com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe.containsTask(day.ledgerItems, text)) {
-                        true
-                    } else {
-                        day.ledgerItems.add(task)
-                        calendarDayService.save(root, today, day)
-                        false
+                    com.toolsboox.plugin.calendar.ot.DayLocks.withDay(today) {
+                        val day = calendarDayService.loadForWrite(root, today, null, java.util.Locale.getDefault())
+                            ?: return@withDay null
+                        if (com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe.containsTask(day.ledgerItems, text)) {
+                            true
+                        } else {
+                            day.ledgerItems.add(task)
+                            calendarDayService.save(root, today, day)
+                            false
+                        }
                     }
                 }.getOrDefault(false)
+            }
+            if (already == null) {
+                android.widget.Toast.makeText(ctx, "Couldn't make the task — today's page won't read", android.widget.Toast.LENGTH_LONG).show()
+                return@launch
             }
             if (!already) {
                 withContext(Dispatchers.IO) {
@@ -1141,9 +1312,9 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
                 val transcript = item.audioPath?.let {
                     com.toolsboox.plugin.calendar.nw.Transcribe.audio(requireContext(), File(it))
                 }
-                val head = if (item.origin == LogOrigin.AV) "🎬 ${item.title.ifBlank { "A/V gram" }}" else item.title
+                val head = if (item.origin == LogOrigin.AV) "🎬 ${item.title.ifBlank { "A/V pick" }}" else item.title
                 val cardText = listOf(head, transcript ?: item.body).filter { it.isNotBlank() }.joinToString("\n\n")
-                    .ifBlank { "A/V gram" }
+                    .ifBlank { "A/V pick" }
                 com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.render(
                     cardText, null, null,
                     com.toolsboox.plugin.calendar.ot.QuoteCardRenderer.Format.SQUARE.w,
@@ -1167,6 +1338,13 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
     private fun goToSource(item: LogItem) {
         val date = item.day ?: java.time.Instant.ofEpochMilli(item.millis)
             .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        // A ❖ synthesis row names its page outright — `ledger://<date>/<key>`, the page's own day
+        // even when its pick sits on the next one (synth-list-links §5).
+        item.url?.takeIf { it.startsWith("ledger://") }?.removePrefix("ledger://")?.let { ref ->
+            val d = runCatching { LocalDate.parse(ref.substringBefore('/')) }.getOrNull()
+            val k = ref.substringAfter('/', "")
+            if (d != null && k.isNotBlank()) { CalendarNavigator.toDayNote(this, d, k); return }
+        }
         // A pageKey is the most precise door — the exact note SURFACE of its day (an OCR'd
         // section's page, a planner text's page), or the Text Notes screen for a typed note.
         item.pageKey?.let { pk ->
@@ -1190,24 +1368,59 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
             else -> {
                 val url = item.url
                 if (!url.isNullOrBlank()) {
-                    // Open the article inside the Feed Ledger's in-pane reader.
+                    // Open the article inside the Feed Ledger's in-pane reader, ON the passage
+                    // (Michael 2026-10-12, the highlights plan: "Log → the passage", one tap) and
+                    // in the text it was highlighted in (critique #7: the feed's text, Reader view or
+                    // the live page — a passage made in one isn't always in the others).
                     // id = 0 marks a server-less entry (never sent to Miniflux — item.millis
-                    // as id could mark a REAL entry read); blank content makes the reader
-                    // load the live page. The old placeholder body ("Opening from your
-                    // Ledger…") was treated as real content and just… sat there.
-                    com.toolsboox.plugin.feeds.ui.FeedSelection.pendingInPaneEntry =
-                        com.toolsboox.plugin.feeds.da.FeedEntry(
-                            id = 0L, title = item.title, feedTitle = "",
-                            url = url, author = null,
-                            content = item.body,
-                            publishedAt = java.time.Instant.ofEpochMilli(item.millis).toString(),
-                            starred = false
-                        )
-                    androidx.navigation.fragment.NavHostFragment.findNavController(this).navigate(R.id.action_to_feeds)
+                    // as id could mark a REAL entry read) unless the highlight knows its real
+                    // entry; blank content makes the reader load the live page. The line's body
+                    // is NEVER the article's content any more — that opened the excerpt alone, as
+                    // if it were the whole piece (design §4, ReadingLogFragment:1219).
+                    val nav = androidx.navigation.fragment.NavHostFragment.findNavController(this)
+                    val app = requireContext().applicationContext
+                    lifecycleScope.launch {
+                        val (entryId, view, content) = withContext(Dispatchers.IO) {
+                            val mark = item.eventId?.let { id ->
+                                runCatching {
+                                    com.toolsboox.plugin.feeds.ot.ArticleNoteStore.list(app,
+                                        com.toolsboox.plugin.feeds.ot.ArticleKey.of(url),
+                                        com.toolsboox.plugin.feeds.ot.ArticleKey.clean(url))
+                                        .firstOrNull { it.logId == id || it.id == id }
+                                }.getOrNull()
+                            }
+                            val eid = mark?.entryId ?: 0L
+                            val feedText = if (eid > 0 && mark?.view == com.toolsboox.plugin.reader.ui.BookNote.VIEW_FEED)
+                                cachedFeedText(app, eid).orEmpty() else ""
+                            Triple(eid, mark?.view, feedText)
+                        }
+                        com.toolsboox.plugin.feeds.ui.FeedSelection.pendingMarkId = item.eventId
+                        com.toolsboox.plugin.feeds.ui.FeedSelection.pendingView = view
+                        com.toolsboox.plugin.feeds.ui.FeedSelection.pendingInPaneEntry =
+                            com.toolsboox.plugin.feeds.da.FeedEntry(
+                                id = entryId, title = item.title, feedTitle = "",
+                                url = url, author = null,
+                                content = content,
+                                publishedAt = java.time.Instant.ofEpochMilli(item.millis).toString(),
+                                starred = false
+                            )
+                        runCatching { nav.navigate(R.id.action_to_feeds) }
+                    }
                 } else CalendarNavigator.toDayPage(this, date, CalendarDay.DEFAULT_STYLE)
             }
         }
     }
+
+    /** The feed's own text for entry [id] from the offline list caches, or null. */
+    private fun cachedFeedText(context: android.content.Context, id: Long): String? = runCatching {
+        File(context.filesDir, "feed-cache").listFiles()
+            ?.filter { it.isFile && it.name.startsWith("list-") && it.name.endsWith(".json") }
+            ?.asSequence()
+            ?.mapNotNull { f -> runCatching { org.json.JSONArray(f.readText()) }.getOrNull() }
+            ?.flatMap { arr -> (0 until arr.length()).mapNotNull { arr.optJSONObject(it) } }
+            ?.firstOrNull { it.optLong("id") == id }
+            ?.optString("content")?.takeIf { it.isNotBlank() }
+    }.getOrNull()
 
     /** Find a corpus-surfaced article's URL in the offline feed cache by title, then open the
      *  in-pane reader on it; falls back to the day page when the cache no longer holds it. */
@@ -1245,6 +1458,17 @@ class ReadingLogFragment @Inject constructor() : ScreenFragment() {
         if (!File(path).exists()) { showMessage(R.string.reader_capture_failed); return }
         player.startAudio(requireContext(), getString(R.string.reading_log_av_audio), null, null, path)
         player.showModal(requireContext())
+    }
+
+    /** A tap on the strip (add-to-pick pin §6): the photo / handwriting full screen, the VIDEO
+     *  played (not the audio player), the voice note through the shared transport. */
+    private fun openMedia(m: LogMedia) {
+        if (!File(m.path).exists()) { showMessage(com.toolsboox.plugin.calendar.ot.AddToPickWords.NOT_HERE_YET); return }
+        when (m.kind) {
+            Attachment.Kind.PHOTO -> openImage(m.path)
+            Attachment.Kind.VIDEO -> com.toolsboox.plugin.calendar.ot.AvPlayback.play(requireContext(), "video", File(m.path), "", "", 0)
+            Attachment.Kind.AUDIO -> toggleAudio(m.path)
+        }
     }
 
     private fun openImage(path: String) {

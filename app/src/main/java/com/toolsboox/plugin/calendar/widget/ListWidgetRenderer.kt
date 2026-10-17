@@ -131,7 +131,9 @@ object ListWidgetRenderer {
         val day = WidgetRenderer.loadCalendarDay(context, date)
         val dead = (day?.deletedItemIds.orEmpty() + day?.deletedElementIds.orEmpty()).toSet()
         val tasks = day?.ledgerItems.orEmpty()
-            .filter { it.kind == LedgerItem.Kind.TASK && it.text.isNotBlank() && it.id !in dead }
+            // A PROPOSED candidate is not a live task (offer-never-mint) — it never shows on a task
+            // widget; it waits on the Proposed shelf in the app.
+            .filter { it.kind == LedgerItem.Kind.TASK && !it.proposed && it.text.isNotBlank() && it.id !in dead }
         val undone = tasks.filter { !it.done && it.stage != "done" }
 
         val rows = mutableListOf<Row>()
@@ -160,15 +162,8 @@ object ListWidgetRenderer {
         if (undone.size < MAX_TASK_ROWS) {
             val said = HashSet<String>()
             tasks.forEach { said.add(com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe.key(it.text)) }
-            // The service's Moshi is normally field-injected; a widget process wires it by hand
-            // (the same adapters WidgetRenderer's own loader builds).
-            val svc = com.toolsboox.plugin.calendar.fi.CalendarDayService().apply {
-                moshi = com.squareup.moshi.Moshi.Builder()
-                    .add(com.toolsboox.ot.LocaleJsonAdapter())
-                    .add(com.toolsboox.ot.DateJsonAdapter())
-                    .add(com.toolsboox.ot.UUIDJsonAdapter())
-                    .build()
-            }
+            // Outside Hilt: the one factory (the ledger's Moshi + the app context).
+            val svc = com.toolsboox.plugin.calendar.fi.CalendarDayService.standalone(context)
             val root = com.toolsboox.ot.LedgerPaths.documentsRoot(context)
             val sinceFmt = DateTimeFormatter.ofPattern("MMM d")
             var d = date.minusDays(1)
@@ -186,7 +181,7 @@ object ListWidgetRenderer {
                 val f = File(File(root, "calendar/$y/$m"), "day-$y-$m-$dd-v2.json")
                 if (f.exists()) {
                     for (it in runCatching { svc.loadLedgerItems(f) }.getOrNull().orEmpty()) {
-                        if (it.kind != LedgerItem.Kind.TASK || it.done || it.stage == "done" || it.text.isBlank()) continue
+                        if (it.kind != LedgerItem.Kind.TASK || it.done || it.proposed || it.stage == "done" || it.text.isBlank()) continue
                         if (!said.add(com.toolsboox.plugin.calendar.ot.LedgerTaskDedupe.key(it.text))) continue
                         if (!divided) {
                             divided = true
@@ -274,7 +269,9 @@ object ListWidgetRenderer {
 
         val dead = (day?.deletedItemIds.orEmpty() + day?.deletedElementIds.orEmpty()).toSet()
         for (item in day?.ledgerItems.orEmpty()) {
-            if (item.text.isBlank() || item.id in dead) continue
+            // A PROPOSED candidate (offer-never-mint) is not yet a piece of the day — it waits on
+            // the Tasks surface's Proposed shelf, off the pile.
+            if (item.text.isBlank() || item.proposed || item.id in dead) continue
             val glyph = if (item.kind == LedgerItem.Kind.EVENT) "📆" else "🃏"
             out.add(PilePiece("task-${item.id}", glyph, item.text, null))
         }

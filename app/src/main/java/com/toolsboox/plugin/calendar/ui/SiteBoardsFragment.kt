@@ -307,7 +307,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             siteState.setFilter(requireContext(), id)
             loadBoards()
         },
-        onManage = { SitesSettingsDialog.show(requireContext()) { loadBoards() } },
+        onManage = { SitesSettingsDialog.show(requireContext(), present = { d -> showModal(d) }) { loadBoards() } },
     )
 
     private fun listHint(msg: String) = TextView(requireContext()).apply {
@@ -788,7 +788,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             // Share-as-gram sits ABOVE the pad with the other actions (handwriting-panel rule,
             // see LedgerTitlePad) — under the pad it was square beneath the writing hand.
             addView(TextView(ctx).apply {
-                text = "↗  Share as gram instead…"
+                text = "↗  Share as pick instead…"
                 setTextColor(Color.parseColor("#2F6F96")); textSize = 15f
                 setPadding(px(2), 0, 0, px(6))
                 setOnClickListener { shareAsGram?.invoke() }
@@ -895,7 +895,7 @@ class SiteBoardsFragment @Inject constructor() : ScreenFragment() {
             // outside must not throw away (and an outside dismiss would skip the Cancel path
             // that recycles the bitmap). Cancel and the back gesture remain the ways out.
             val shareDialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-                .setTitle("Share as gram")
+                .setTitle("Share as pick")
                 .setView(box)
                 .setPositiveButton("Share ↗") { _, _ ->
                     val baos = java.io.ByteArrayOutputStream()

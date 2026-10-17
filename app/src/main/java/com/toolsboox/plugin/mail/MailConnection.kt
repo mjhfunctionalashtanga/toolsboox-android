@@ -36,6 +36,9 @@ class MailConnection(
     private var output: OutputStream? = null
 
     fun start() {
+        // Refuse, don't warn (audit 09-10): with SSL off, LOGIN / AUTH LOGIN would send the password
+        // in the clear. Only implicit TLS (993 / 465) is supported; STARTTLS on 143 / 587 is not.
+        if (!useTLS) throw MailException("Turn on SSL/TLS for $host — Ledgable only speaks implicit TLS (IMAP 993, SMTP 465); it will not send a password in the clear.")
         val raw = Socket()
         try {
             raw.connect(InetSocketAddress(host, port), connectTimeoutMs)   // throws fast on no-route / DNS

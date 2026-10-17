@@ -180,7 +180,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
      * silently moved Publish, Bookings and the boards onto ashtanga.tech too. Now the focus is a
      * fragment-held site whose config rides on every call ([focusCfg]) — Michael's "no dominant
      * global site" — and the global active site is left exactly where the user put it. Also swings
-     * this page's space choice to the site's own, so "share as gram" from a reply lands in that
+     * this page's space choice to the site's own, so "share as pick" from a reply lands in that
      * site's space, never another site's.
      */
     private var focusedSite: LedgerSite? = null
@@ -241,7 +241,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             siteState.setFilter(requireContext(), id)
             load()
         },
-        onManage = { SitesSettingsDialog.show(requireContext()) { load() } },
+        onManage = { SitesSettingsDialog.show(requireContext(), present = { d -> showModal(d) }) { load() } },
     )
 
     /** Redraw the current tab from the cached rows (fold/unfold, no refetch). */
@@ -383,6 +383,14 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         setupActionRail(
             binding.correspondenceRail, "correspondence",
             actions = { listOf(
+                // ✉ THE DEFAULT EMAIL OUT (Michael, 09-03: "not just site selectors") — the room
+                // is the exchange with people, and not all of them live on a site. ONE ✉ COMPOSE
+                // (Michael 2026-10-11, Q2): the one compose screen types and takes the pen, so
+                // the ✍ Handwritten letter seat beside it opened the very same page and folded in.
+                // A sent letter, ink and all, is kept in Mail ▸ Sent; this room reloads on return.
+                com.toolsboox.ot.TuckPanel.Item(0, "Compose", glyph = "✉") {
+                    com.toolsboox.plugin.mail.ui.MailComposeFragment.open(this@CorrespondenceFragment)
+                },
                 com.toolsboox.ot.TuckPanel.Item(0, "Reading size", glyph = "A") {
                     binding.correspondenceTextSize.performClick()
                 },
@@ -428,7 +436,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             val root = documentsRoot()
             val loc = java.util.Locale.getDefault()
             val (day, pat) = withContext(Dispatchers.IO) {
-                val cd = runCatching { calendarDayService.load(root, navAnchor, null, loc) }.getOrNull()
+                val cd = runCatching { calendarDayService.loadForDisplay(root, navAnchor, null, loc) }.getOrNull()
                     ?: com.toolsboox.plugin.calendar.da.v2.CalendarDay(
                         navAnchor.year, navAnchor.monthValue, navAnchor.dayOfMonth, startHour = null)
                 cd to runCatching { calendarPatternService.load(root, navAnchor, loc) }.getOrNull()
@@ -525,6 +533,90 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     }
 
     /** The Replies | Community tab row + (in community) the current-space chip. Prepended to both views. */
+    /**
+     * ✉ LETTERS TO ANSWER (Michael, 09-11: "send an email to correspondence — maybe that's another
+     * thing a star does? — so I can reply from there and have my correspondences / reminders to
+     * correspond in a single place"). A STARRED letter that no sent reply of yours references yet
+     * is owed, and it sits here — above the site and Bluesky exchanges — with its reply doors until
+     * you answer it (the reply's References carries its Message-ID) or take the star off. No new
+     * store: the star is the filing, the answer is the un-filing.
+     */
+    private fun addLettersToAnswer(container: LinearLayout) {
+        val ctx = context ?: return
+        val dp = resources.displayMetrics.density
+        fun px(v: Int) = (v * dp).toInt()
+        val all = runCatching { com.toolsboox.plugin.mail.InboxStore.messages(ctx) }.getOrDefault(emptyList())
+        // ANSWERED = replied from this device OR named by a sent row's References (2026-10-10,
+        // critique C3). The References-only test never fired: no fetched letter carried its
+        // Message-ID and no sent row kept a chain, so every starred letter stayed owed forever.
+        val letters = all.filter { m ->
+            !com.toolsboox.plugin.mail.InboxStore.isSent(m.id) &&
+                com.toolsboox.plugin.mail.InboxStore.isStarred(ctx, m.id) &&
+                !com.toolsboox.plugin.mail.MailThreads.isAnswered(ctx, m)
+        }.sortedByDescending { it.date }
+        if (letters.isEmpty()) return
+        container.addView(TextView(ctx).apply {
+            text = "✉  Letters to answer · ${letters.size}"
+            textSize = 13f; setTextColor(0xFF666666.toInt()); setPadding(px(8), px(14), px(8), px(4))
+        })
+        val fmt = java.text.SimpleDateFormat("MMM d", java.util.Locale.getDefault())
+        letters.take(12).forEach { m ->
+            val row = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(px(8), px(8), px(8), px(8))
+                setBackgroundResource(android.R.drawable.list_selector_background)
+            }
+            val who = m.fromName.ifBlank { m.fromEmail }
+            row.addView(TextView(ctx).apply {
+                text = "$who — ${m.subject.ifBlank { "(no subject)" }}\n${fmt.format(java.util.Date(m.date))}  ${m.snippet.take(90)}"
+                textSize = 14f; setTextColor(0xFF000000.toInt()); maxLines = 3
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            fun door(glyph: String, desc: String, act: () -> Unit) = TextView(ctx).apply {
+                text = glyph; textSize = 20f; contentDescription = desc
+                setPadding(px(10), px(6), px(10), px(6)); setOnClickListener { act() }
+            }
+            // ↩ the reply, one tap, in the one compose screen (Michael 2026-10-11, Q2: type or
+            // write, no mode) — the ⌨ and ✍ doors here opened the same page and folded into the
+            // letter rail's own ↩. This room reloads on the way back; the answered letter leaves.
+            row.addView(door("↩", "Reply") {
+                com.toolsboox.plugin.mail.ui.MailVerbs.typeReply(this@CorrespondenceFragment, m)
+            })
+            // Tap the letter = read it in The Mail's room (Michael 2026-10-11), where every other
+            // verb lives — one tap, as before.
+            row.setOnClickListener {
+                com.toolsboox.plugin.feeds.ui.openMailRoom(NavHostFragment.findNavController(this), letterId = m.id)
+            }
+            // Hold = answered elsewhere / let it go: the star comes off and the row with it.
+            row.setOnLongClickListener {
+                com.toolsboox.plugin.mail.InboxStore.setStarred(ctx, m, false); load(); true
+            }
+            container.addView(row)
+        }
+    }
+
+    /** ✍ A new post INTO a space, from here (Michael, 09-11): Correspondence is where the exchange
+     *  lives, so it is where a new exchange starts. Typed or handwritten — the ink rides as the
+     *  post's picture. */
+    private fun addNewPostDoor(container: LinearLayout) {
+        val ctx = context ?: return
+        val cfg = focusCfg() ?: com.toolsboox.plugin.calendar.nw.LedgerCommunityBridge.config(ctx)
+        if (!cfg.ready) return
+        val dp = resources.displayMetrics.density
+        container.addView(TextView(ctx).apply {
+            text = "✍  New post in a space…"
+            textSize = 15f; setTextColor(0xFF2F6F96.toInt())
+            setPadding((8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt(), (6 * dp).toInt())
+            setOnClickListener {
+                val site = siteInFocus()
+                val siteId = site?.id ?: SiteStore.activeId(ctx)
+                val target = spaceIdFor(siteId).takeIf { it > 0L } ?: spaceId
+                showReplyDialog(0L, spaceTitleFor(siteId).ifBlank { spaceTitle }, newPostSpace = target)
+            }
+        })
+    }
+
     private fun addTabs(container: LinearLayout) {
         val ctx = requireContext()
         val dp = resources.displayMetrics.density
@@ -611,6 +703,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         // The 🌐 switcher first — All sites aggregates, a pick narrows (the Mail-inbox idiom).
         container.addView(switcherBar())
         addTabs(container)
+        addNewPostDoor(container)
+        addLettersToAnswer(container)
         // Single-site rows (null site) belong to THIS page's focused site — the same id the
         // ✓-replied / hidden markers are written under now that writes carry the focus.
         fun sid(site: LedgerSite?) = site?.id ?: siteInFocus()?.id ?: SiteStore.activeId(ctx)
@@ -750,6 +844,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         // The 🌐 switcher first — All sites aggregates, a pick narrows (the Mail-inbox idiom).
         container.addView(switcherBar())
         addTabs(container)
+        addNewPostDoor(container)
+        addLettersToAnswer(container)
         // Single-site rows (null site) belong to THIS page's focused site — the same id the
         // ✓-replied / hidden markers are written under now that writes carry the focus.
         fun sid(site: LedgerSite?) = site?.id ?: siteInFocus()?.id ?: SiteStore.activeId(ctx)
@@ -963,7 +1059,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     setPadding(0, 0, px(10), 0)
                 })
                 box.addView(TextView(ctx).apply {
-                    text = if (isVideo) "Video gram" else "Voice gram"
+                    text = if (isVideo) "Video pick" else "Voice pick"
                     textSize = 14f; setTextColor(0xFF000000.toInt())
                 })
                 box.setOnClickListener {
@@ -1144,9 +1240,17 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
     @SuppressLint("ClickableViewAccessibility")
     private fun showReplyDialog(
         feedId: Long, thread: String, replyingTo: String? = null, parentId: Long = 0,
-        provenanceDefault: String? = null, provUrl: String? = null, startText: Boolean = false
+        provenanceDefault: String? = null, provUrl: String? = null, startText: Boolean = false,
+        /** A NEW POST into this space rather than a reply (Michael, 09-12: the separate New post
+         *  dialog had its buttons under the pad and none of this surface's doors — one surface). */
+        newPostSpace: Long? = null,
     ) {
         val ctx = requireContext()
+        val isPost = newPostSpace != null
+        val titleIn = android.widget.EditText(ctx).apply {
+            hint = "Title (optional)"; setSingleLine(); textSize = 15f
+            visibility = if (isPost) View.VISIBLE else View.GONE
+        }
         val dp = resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
         val ink = InkPadView(ctx)
@@ -1266,7 +1370,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         }
 
         val gramRow = TextView(ctx).apply {
-            text = "↗  Share as gram instead…"
+            text = "↗  Share as pick instead…"
             textSize = 15f; setTextColor(0xFF2F6F96.toInt()); setPadding(px(2), px(10), 0, px(4))
             setOnClickListener { shareAsGram?.invoke() }
         }
@@ -1277,6 +1381,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             addView(tabRow)
             // With several sites configured, the compose surface NAMES where Send will land —
             // the write target is the row you tapped, chosen there, never ambient.
+            if (isPost) addView(titleIn)
             activeSiteLabel().takeIf { it.isNotBlank() }?.let { name ->
                 addView(TextView(ctx).apply {
                     text = "→  posts to 🌐 $name"
@@ -1314,7 +1419,8 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         applyMode()
 
         val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
-            .setTitle((if (parentId > 0) "Reply · " else "Reply · ") + deHtml(thread).ifBlank { "thread" }.take(28))
+            .setTitle(if (isPost) "New post · " + deHtml(thread).ifBlank { "space #$newPostSpace" }.take(28)
+                      else "Reply · " + deHtml(thread).ifBlank { "thread" }.take(28))
             .setView(box)
             .create()
 
@@ -1325,7 +1431,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         }
         actionRow.addView(actionBtn("Clear") { if (textMode) input.setText("") else ink.clear() })
         actionRow.addView(actionBtn("Cancel") { dialog.dismiss() })
-        actionRow.addView(actionBtn("Send") {
+        actionRow.addView(actionBtn(if (isPost) "Post" else "Send") {
             if (textMode) {
                 // Type mode: the typed body, plus any attached item's provenance caption.
                 // An attached IMAGE (gram/picking) rides too — switching Draw→Type must not
@@ -1341,13 +1447,15 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 lifecycleScope.launch {
                     val cfg = focusCfg()
                     val status = withContext(Dispatchers.IO) {
-                        if (attachedAvFile != null) LedgerCorrespondence.postInkReply(
+                        if (isPost) LedgerCommunityBridge.postToSpace(ctx.applicationContext, text, png, titleIn.text.toString().trim(), newPostSpace!!, cfg)
+                        else if (attachedAvFile != null) LedgerCorrespondence.postInkReply(
                             ctx, feedId, null, parentId, text,
                             attachedAvFile, attachedAvKind, attachedAvTitle, png, cfg)
                         else if (png != null) LedgerCorrespondence.postInkReply(ctx, feedId, png, parentId, text, cfg = cfg)
                         else LedgerCorrespondence.postTextReply(ctx, feedId, text, parentId, cfg = cfg)
                     }
                     android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
+                    if (isPost) { if (status == "Posted to the space") { dialog.dismiss(); load() }; return@launch }
                     if (status == "Reply posted") { markReplied("community", feedId, siteInFocus()?.id ?: SiteStore.activeId(ctx)); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
                 }
             } else {
@@ -1380,22 +1488,24 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 lifecycleScope.launch {
                     val cfg = focusCfg()
                     val status = withContext(Dispatchers.IO) {
-                        if (avFile != null) LedgerCorrespondence.postInkReply(
+                        if (isPost) LedgerCommunityBridge.postToSpace(ctx.applicationContext, cap, png, titleIn.text.toString().trim(), newPostSpace!!, cfg)
+                        else if (avFile != null) LedgerCorrespondence.postInkReply(
                             ctx, feedId, inkOnlyPng, parentId, cap, avFile, avKind, avTitle, posterPng, cfg)
                         else if (png != null) LedgerCorrespondence.postInkReply(ctx, feedId, png, parentId, cap, cfg = cfg)
                         else LedgerCorrespondence.postTextReply(ctx, feedId, cap, parentId, cfg = cfg)
                     }
+                    val posted = if (isPost) status == "Posted to the space" else status == "Reply posted"
                     // Rhizome: the reply also becomes a gram whose provenance points back here.
                     // It lands where the last gram went — a background mirror of a posted reply
                     // must not raise a chooser, so the shared memory routes it, Gram Picks
                     // standing in when the remembered place no longer exists today.
-                    if (status == "Reply posted" && saveBmp != null) withContext(Dispatchers.IO) {
+                    if (posted && saveBmp != null) withContext(Dispatchers.IO) {
                         runCatching {
                             val dest = com.toolsboox.plugin.calendar.ot.GramDestinations.inbox(ctx)
                             com.toolsboox.plugin.calendar.ot.PickingsPlacement.place(
                                 calendarDayService, documentsRoot(), saveBmp, java.time.LocalDate.now(),
                                 dest.key,
-                                sourceLink = provUrl ?: "", sourceLabel = "↩ Reply · ${deHtml(thread).take(40)}",
+                                sourceLink = provUrl ?: "", sourceLabel = (if (isPost) "✍ Post · " else "↩ Reply · ") + deHtml(thread).take(40),
                                 intakeKind = dest.kind
                             )
                         }
@@ -1407,6 +1517,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     if (inkBmp !== combined) inkBmp?.recycle()
                     if (combined !== attachedBitmap && combined !== inkBmp) combined?.recycle()
                     android.widget.Toast.makeText(ctx, status, android.widget.Toast.LENGTH_SHORT).show()
+                    if (isPost) { if (posted) { dialog.dismiss(); load() }; return@launch }
                     if (status == "Reply posted") { markReplied("community", feedId, siteInFocus()?.id ?: SiteStore.activeId(ctx)); dialog.dismiss(); afterReplyPosted("community", feedId, thread) }
                 }
             }
@@ -1464,7 +1575,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         // recycles the bitmap). Cancel and the back gesture remain the ways out.
         showGuardedModal(androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             // Names both the space AND (multi-site) the site it posts into — outward-facing.
-            .setTitle("Share as gram · $spaceTitle" +
+            .setTitle("Share as pick · $spaceTitle" +
                 activeSiteLabel().let { if (it.isBlank()) "" else " · 🌐 $it" })
             .setView(box)
             .setPositiveButton("Share ↗") { _, _ ->
@@ -1653,7 +1764,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         fun inspect(p: PickPage) {
             lifecycleScope.launch {
                 val bmp = withContext(Dispatchers.IO) {
-                    val day = runCatching { calendarDayService.load(documentsRoot(), p.date, null, java.util.Locale.getDefault()) }.getOrNull() ?: return@withContext null
+                    val day = runCatching { calendarDayService.loadOrNull(documentsRoot(), p.date, java.util.Locale.getDefault()) }.getOrNull() ?: return@withContext null
                     com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderPageToBitmap(
                         day.noteStrokes[p.key] ?: emptyList(),
                         day.imageElements.filter { it.page == p.key },
@@ -1734,7 +1845,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                     lifecycleScope.launch {
                         val thumb = withContext(Dispatchers.IO) {
                             runCatching {
-                                val day = calendarDayService.load(documentsRoot(), p.date, null, java.util.Locale.getDefault())
+                                val day = calendarDayService.loadForDisplay(documentsRoot(), p.date, null, java.util.Locale.getDefault())
                                 com.toolsboox.plugin.calendar.ot.CalendarPdfRenderer.renderPageToBitmap(
                                     day.noteStrokes[p.key] ?: emptyList(),
                                     day.imageElements.filter { it.page == p.key },
@@ -1780,7 +1891,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
         val dialog = androidx.appcompat.app.AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(ctx))
             .setTitle("Reply with Gram").setView(scroll).setNegativeButton("Cancel", null).create()
 
-        listCol.addView(TextView(ctx).apply { text = "Loading grams…"; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0) })
+        listCol.addView(TextView(ctx).apply { text = "Loading picks…"; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0) })
         lifecycleScope.launch {
             val grams = withContext(Dispatchers.IO) {
                 val out = mutableListOf<GramPick>()
@@ -1802,7 +1913,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             }
             if (!isAdded) return@launch
             listCol.removeAllViews()
-            if (grams.isEmpty()) { listCol.addView(TextView(ctx).apply { text = "No grams yet."; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0) }); return@launch }
+            if (grams.isEmpty()) { listCol.addView(TextView(ctx).apply { text = "No picks yet."; setTextColor(0xFF888888.toInt()); setPadding(px(6), px(12), px(6), 0) }); return@launch }
             for (g in grams) {
                 // Downsampled decode — 200 full-res bitmaps in one list is an OOM on e-ink RAM.
                 // The bounded pattern lives in LedgerMedia now, which also resolves a ref'd face.
@@ -1827,7 +1938,7 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
                 row.setOnClickListener {
                     dialog.dismiss()
                     val bmp = com.toolsboox.ot.LedgerMedia.resolveBitmap(ctx, g.data, g.dataRef)
-                    val cap = if (g.link.startsWith("http")) "🎴 gram · [${g.label}](${g.link})" else "🎴 gram · ${g.label}"
+                    val cap = if (g.link.startsWith("http")) "🎴 pick · [${g.label}](${g.link})" else "🎴 pick · ${g.label}"
                     onPicked("Gram · ${g.label.take(24)}", bmp, cap)
                 }
                 listCol.addView(row)
@@ -1869,13 +1980,16 @@ class CorrespondenceFragment @Inject constructor() : ScreenFragment() {
             val today = java.time.LocalDate.now()
             val durationMs = att.duration?.let { (it * 1000).toInt() }?.takeIf { it > 0 }
                 ?: withContext(Dispatchers.IO) { com.toolsboox.plugin.calendar.ot.AvPoster.durationMs(file) }
-            val title = (if (kind == "video") "🎥 Video gram · " else "🎤 Audio gram · ") + today
+            val title = (if (kind == "video") "🎥 Video pick · " else "🎤 Audio pick · ") + today
 
             val poster = withContext(Dispatchers.IO) {
                 runCatching {
-                    val day = calendarDayService.load(documentsRoot(), today, null, java.util.Locale.getDefault())
-                    day.avGrams.add(att)
-                    calendarDayService.save(documentsRoot(), today, day)
+                    com.toolsboox.plugin.calendar.ot.DayLocks.withDay(today) {
+                        // Never a fresh day saved over a today-file that won't read (throws → skipped).
+                        val day = calendarDayService.loadForWriteOrThrow(documentsRoot(), today, null, java.util.Locale.getDefault())
+                        day.avGrams.add(att)
+                        calendarDayService.save(documentsRoot(), today, day)
+                    }
                 }
                 com.toolsboox.plugin.calendar.ot.AvPoster.poster(file, att.kind, durationMs, title)
             }

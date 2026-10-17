@@ -1,45 +1,161 @@
 package com.toolsboox.plugin.chat.nw
 
 import android.content.Context
+import com.toolsboox.plugin.calendar.ot.PersonaRow
+import com.toolsboox.plugin.calendar.ot.SynthPersonas
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 /** A saved AI persona: a name + the system-prompt text that shapes Ask-my-Ledger's voice/role. */
 data class Persona(val name: String, val prompt: String)
 
 /**
  * Saved personas for Ask my Ledger. Each is a reusable system prompt; one can be active at a time
- * (or none). A prompt is not sensitive, so this lives in plain prefs.
+ * (or none). A prompt is not sensitive, so this lives in plain files.
+ *
+ * ONE SET, SYNCED (Michael, 2026-10-12, ruling 5: his personas follow him between devices — a
+ * Synthesize page answering as Spiral on the Boox answers as Spiral on the iPad). The set lives in
+ * `personas/personas.json` ([SynthPersonas] — the rows, the newer-wins merge, the tombstones and
+ * the untouched-seed rule), round-tripped through the sidecar like the page templates. Every
+ * signature here is unchanged: [all]/[upsert]/[delete] read and write the file (stamping now, then
+ * sync), [seedDefaults] is "ensure", and [activeName] stays per-device (Ask only, never synced).
+ * Every write also mirrors the legacy prefs list, so a rollback build still has his personas.
  */
 object PersonaStore {
     private const val PREFS = "ledger_personas"
     private const val KEY_LIST = "list"
     private const val KEY_ACTIVE = "active"
+    /** Set once the legacy prefs list has become the file (once per device). */
+    private const val KEY_MIGRATED = "personas_file_v1"
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, 0)
 
-    fun all(context: Context): List<Persona> = runCatching {
+    private val lock = Any()
+
+    /** The rows in memory — dropped by every write and every merge that changes them. */
+    @Volatile
+    private var cache: List<PersonaRow>? = null
+
+    private fun file(context: Context): File =
+        File(File(context.filesDir, SynthPersonas.DIR).apply { mkdirs() }, SynthPersonas.FILE)
+
+    private fun legacyList(context: Context): List<Persona> = runCatching {
         val arr = JSONArray(prefs(context).getString(KEY_LIST, "[]"))
         (0 until arr.length()).map { i ->
             val o = arr.getJSONObject(i); Persona(o.optString("name"), o.optString("prompt"))
         }
     }.getOrDefault(emptyList())
 
-    fun save(context: Context, personas: List<Persona>) {
+    /**
+     * The synced rows — live and dead. The first read on a device turns the legacy prefs list into
+     * the file ([SynthPersonas.migrate]); a file that has gone missing is rebuilt the same way from
+     * the mirror every write keeps.
+     */
+    fun rows(context: Context): List<PersonaRow> {
+        cache?.let { return it }
+        return synchronized(lock) {
+            cache ?: loadRows(context).also { cache = it }
+        }
+    }
+
+    private fun loadRows(context: Context): List<PersonaRow> {
+        val p = prefs(context)
+        val f = file(context)
+        val onDisk = if (f.exists()) runCatching { f.readText() }.getOrNull()?.let { SynthPersonas.parseOrNull(it) } else null
+        if (onDisk != null && p.getBoolean(KEY_MIGRATED, false)) return SynthPersonas.ensure(onDisk)
+        val seeded = SynthPersonas.BUILT_IN.map { it.name }.filter { p.getBoolean("seeded_$it", false) }.toSet()
+        val migrated = SynthPersonas.migrate(legacyList(context), seeded, System.currentTimeMillis())
+        val rows = if (onDisk == null) migrated else SynthPersonas.merge(onDisk, migrated)
+        writeLocked(context, rows)
+        p.edit().putBoolean(KEY_MIGRATED, true).apply()
+        return rows
+    }
+
+    /** The file (write-then-rename) + the legacy mirror + the seed markers. Under [lock]. */
+    private fun writeLocked(context: Context, rows: List<PersonaRow>) {
+        runCatching {
+            val f = file(context)
+            val tmp = File(f.parentFile, f.name + ".tmp")
+            tmp.writeText(SynthPersonas.encode(rows))
+            if (!tmp.renameTo(f)) { f.writeText(SynthPersonas.encode(rows)); tmp.delete() }
+        }
+        // The mirror: a rollback build reads the legacy list, and finds every live persona there;
+        // the markers keep it from re-seeding a built-in deleted on any device.
         val arr = JSONArray()
-        for (p in personas) arr.put(JSONObject().put("name", p.name).put("prompt", p.prompt))
-        prefs(context).edit().putString(KEY_LIST, arr.toString()).apply()
+        for (persona in SynthPersonas.live(rows)) arr.put(JSONObject().put("name", persona.name).put("prompt", persona.prompt))
+        prefs(context).edit().apply {
+            putString(KEY_LIST, arr.toString())
+            for (b in SynthPersonas.BUILT_IN) putBoolean("seeded_" + b.name, true)
+        }.apply()
+        cache = rows
+    }
+
+    private fun mutate(context: Context, change: (List<PersonaRow>) -> List<PersonaRow>) {
+        synchronized(lock) { writeLocked(context, change(rows(context))) }
+        sync(context)
+    }
+
+    fun all(context: Context): List<Persona> = SynthPersonas.live(rows(context))
+
+    /** Make the live set exactly [personas]: anything missing is deleted, anything new or changed
+     *  is written (each stamped now). */
+    fun save(context: Context, personas: List<Persona>) {
+        mutate(context) { rows ->
+            val now = System.currentTimeMillis()
+            var out = rows
+            val keep = personas.map { it.name }.toSet()
+            for (gone in SynthPersonas.live(rows).filter { it.name !in keep }) out = SynthPersonas.delete(out, gone.name, now)
+            val live = SynthPersonas.live(out).associateBy { it.name }
+            for (p in personas) if (live[p.name]?.prompt != p.prompt) out = SynthPersonas.upsert(out, p, now)
+            out
+        }
     }
 
     /** Add or replace a persona by name. */
     fun upsert(context: Context, persona: Persona) {
-        val list = all(context).filter { it.name != persona.name } + persona
-        save(context, list)
+        mutate(context) { SynthPersonas.upsert(it, persona, System.currentTimeMillis()) }
     }
 
-    fun delete(context: Context, name: String) {
-        save(context, all(context).filter { it.name != name })
+    /** Delete by name — a tombstone, so it travels. [renamedTo] = a rename's new name: a page still
+     *  in the old voice finds it there. */
+    fun delete(context: Context, name: String, renamedTo: String? = null) {
+        mutate(context) { SynthPersonas.delete(it, name, System.currentTimeMillis(), renamedTo.orEmpty()) }
         if (activeName(context) == name) setActive(context, null)
+    }
+
+    /** A live persona's prompt by exact name, or null when it isn't on this device. */
+    fun promptFor(context: Context, name: String): String? =
+        all(context).firstOrNull { it.name == name }?.prompt
+
+    /** The live name [name] stands for now (renames followed), or null when it isn't here. */
+    fun resolve(context: Context, name: String): String? = SynthPersonas.resolve(rows(context), name)
+
+    /**
+     * Round-trip the set: pull → merge → save if changed → push. On the shared sidecar thread, so
+     * it queues behind any earlier write. The write-back re-merges with the rows as they stand at
+     * that moment, so an edit made while the network was out is never clobbered. [onChanged] runs
+     * (on that thread) when the merge changed this device's set.
+     */
+    fun sync(context: Context, onChanged: (() -> Unit)? = null) {
+        val appCtx = context.applicationContext ?: context
+        com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.background {
+            val local = rows(appCtx)
+            val remoteText = com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.pull(appCtx, SynthPersonas.REMOTE)
+            val remote = remoteText?.let { SynthPersonas.parseOrNull(it) }
+            var changed = false
+            val merged = if (remote == null) local else synchronized(lock) {
+                val now = rows(appCtx)
+                val m = SynthPersonas.merge(now, remote)
+                if (m != now) { writeLocked(appCtx, m); changed = true }
+                m
+            }
+            // No write when the remote already holds the merge (review of b29cabbc: the day page
+            // syncs on the way in, and an unconditional PUT each time is a write for nothing).
+            if (remote == null || merged.toSet() != remote.toSet())
+                com.toolsboox.plugin.calendar.nw.LedgerSidecarSync.push(appCtx, SynthPersonas.REMOTE, SynthPersonas.encode(merged))
+            if (changed) onChanged?.invoke()
+        }
     }
 
     fun activeName(context: Context): String? =
@@ -58,34 +174,36 @@ object PersonaStore {
     // --- Personas that ship with the app ---------------------------------------------------------
 
     /**
-     * Put the built-in personas in place, once.
+     * Put the built-in personas in place.
      *
      * Seeded rather than hard-coded so they can be edited like any other — a persona you can't
-     * change is a lecture. Only added if absent by name, so an edited copy is never clobbered;
-     * a deleted one stays deleted (the marker is per-name).
+     * change is a lecture. With the synced set this is "ensure": every built-in with no row at all
+     * is an untouched seed (`at:0`, its text this build's), an edited copy is never clobbered, and a
+     * deleted one stays deleted — on every device, since the tombstone travels.
      */
     fun seedDefaults(context: Context) {
-        val p = prefs(context)
-        for (persona in BUILT_IN) {
-            val marker = "seeded_" + persona.name
-            if (p.getBoolean(marker, false)) continue
-            if (all(context).none { it.name == persona.name }) upsert(context, persona)
-            p.edit().putBoolean(marker, true).apply()
-        }
+        rows(context)
     }
 
     const val INTERVIEWER = "Interviewer — Rooms on Other People's Land"
     const val SYNTHESIZE = "Synthesize — what these make together"
-    const val BRAINSTORM = "Brainstorm — what to do with this"
 
-    private val BUILT_IN: List<Persona> by lazy {
-        listOf(
-            Persona(INTERVIEWER, INTERVIEWER_PROMPT),
-            Persona("Spiral — what came back around", SPIRAL_PROMPT),
-            Persona(SYNTHESIZE, SYNTHESIZE_PROMPT),
-            Persona(BRAINSTORM, BRAINSTORM_PROMPT),
-        )
-    }
+    /** The Synth loop's voice (DESIGN-synthesis-claude-2026-08-30 §6). Not offered in the persona
+     *  pickers — the correspondence summons it by name; on paper the human holds the pen. */
+    const val CORRESPONDENT = "Correspondent — writes back on the page"
+
+    const val CORRESPONDENT_PROMPT = """You are the correspondent in Michael's handwriting notebook. He writes in ink on a page; what he just wrote is transcribed for you, with the page's earlier turns when there are any. You write back ON the page, and he answers in ink. This is a correspondence on paper, not a chat.
+
+You are not a lecturer and not a summarizer of what he just wrote — he can see his own page. ANSWER THE NEWEST INK DIRECTLY, first sentence: the material marked as the turn you are answering is the assignment; everything above it is context, not a topic. Refer back to earlier turns when it sharpens the answer ("you said X — this cuts against it"), never to recap them. Press on ONE specific thing: the sharpest idea, the loose thread, the thing he circled without saying why. Short replies. A question that moves the ink forward beats three observations. When a placed card's source text is given, engage with what is IN it, in his direction of thought. If the transcription in front of you is too garbled to answer honestly, say what you could read and ask him to underline the part that matters — never muse around unreadable ink.
+
+If something on the page should plainly become a task or a note elsewhere, say so in a clause — he does the making, never you.
+
+Voice: sardonic, straightforward, kind. Short sentences. No markdown, no bullet points, no emojis. Never invent; a shrug is better than manufactured insight. End when the page should go back to him — on paper, the default is that the human holds the pen."""
+    const val BRAINSTORM = "Brainstorm — what to do with this"
+    const val SPIRAL = "Spiral — what came back around"
+
+    // The four built-ins, in order, are [SynthPersonas.BUILT_IN] — pure, so the golden fixture
+    // (convergence-fixtures/synth-voice-strings.json) pins their texts for both apps.
 
     /**
      * MISSED CONNECTIONS ARE INPUT, not a destination.
@@ -112,7 +230,7 @@ Draw on his Missed Connections as well as what he hands you — the things from 
      * notes about breathing and they don't add up yet" is a real answer, and a better one than a
      * manufactured thesis.
      */
-    private const val SYNTHESIZE_PROMPT = """You are the synthesist on Michael's own ledger. He hands you several things he gathered — pickings, highlights, notes, a page of grams — and asks what they make together.
+    const val SYNTHESIZE_PROMPT = """You are the synthesist on Michael's own ledger. He hands you several things he gathered — pickings, highlights, notes, a page of grams — and asks what they make together.
 
 Do not summarise. He collected these; he knows what each one says. A summary is the one useless answer here. Your job is the sentence that is true of them JOINTLY and of none of them alone.
 
@@ -130,7 +248,7 @@ Never invent a connection. If these things are merely about the same subject and
      * season — is what decides which one he takes, and no list of ten ideas has ever decided
      * anything.
      */
-    private const val BRAINSTORM_PROMPT = """You are brainstorming with Michael on his own ledger — not for a client, not for an audience, for him.
+    const val BRAINSTORM_PROMPT = """You are brainstorming with Michael on his own ledger — not for a client, not for an audience, for him.
 
 Do not produce a list of ten things. Anything that reads like content marketing has failed. He is a teacher and a writer with a practice, a shala, students, six books underway and a daily letter; ideas that would suit anyone suit him least.
 
@@ -148,7 +266,7 @@ Never invent material. If the seed is too thin to work from, ask for one more th
      * what he was doing underneath it. Read-aloud constraints are kept because on the Boox this
      * is spoken as often as read.
      */
-    private const val INTERVIEWER_PROMPT = """You are the interviewer helping Michael Joel Hall record his memoir, working title "Rooms on Other People's Land." Match his voice: sardonic, straightforward, kind. Short sentences. Skip saccharine openers, skip "how did that make you feel." Ask pointed, specific questions that surface texture — a detail, a name, a year, a smell, a contradiction. Continuous prose only. No markdown, no asterisks, no bullet points, no headers, no emojis — your replies may be read aloud. One question at a time. When he answers, reply in a sentence or two and press on something specific. Reference what he said earlier and pull the thread forward. Never invent names, dates, or details; "I don't know" is a complete answer.
+    const val INTERVIEWER_PROMPT = """You are the interviewer helping Michael Joel Hall record his memoir, working title "Rooms on Other People's Land." Match his voice: sardonic, straightforward, kind. Short sentences. Skip saccharine openers, skip "how did that make you feel." Ask pointed, specific questions that surface texture — a detail, a name, a year, a smell, a contradiction. Continuous prose only. No markdown, no asterisks, no bullet points, no headers, no emojis — your replies may be read aloud. One question at a time. When he answers, reply in a sentence or two and press on something specific. Reference what he said earlier and pull the thread forward. Never invent names, dates, or details; "I don't know" is a complete answer.
 
 What the book is about, so you can steer well: for most of his life the story other people told was of a man being shaped by the rooms he passed through — a chatroom, a game guild, borrowed yoga studios, someone else's brand, a platform that held his memories. But underneath all of it, every day, alone, he was doing his own practice — hours of it: sitting, breathing, lifting, moving. He was never waiting to be handed permission; he did what he wanted, come hell or high water. His teachers were muses, not bosses of his practice. The practice was never a cure for the hard things — it was the constant that ran right alongside them. He could party hard and sit for two hours the same day, and you should never push him to reconcile that. So your instinct is not "how did that room change you." It is: get the scene first, then reach for what he was doing, privately, underneath it — the thing that was already his no matter whose floor he was standing on.
 
@@ -187,7 +305,7 @@ You are reading from his own ledger — the notes, highlights, recordings and pa
      * out, this asks what a thing meant — but it is still his own material coming back, so it
      * never quizzes and never grades.
      */
-    private const val SPIRAL_PROMPT = """You are the quiet voice on Michael's own ledger, handing him back something he wrote or recorded a while ago, because it rhymes with what he has been circling lately.
+    const val SPIRAL_PROMPT = """You are the quiet voice on Michael's own ledger, handing him back something he wrote or recorded a while ago, because it rhymes with what he has been circling lately.
 
 Never quiz him. Never grade an answer. There is no right response and no score — this is not a study app and must never feel like one. Your only job is to make the thing worth looking at again.
 

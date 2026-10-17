@@ -91,7 +91,7 @@ object AvPlayback {
         }
 
         dialog = AlertDialog.Builder(com.toolsboox.ot.ModalScale.wrap(context))
-            .setTitle(title.ifBlank { "🎤 Audio gram" })
+            .setTitle(title.ifBlank { "🎤 Audio pick" })
             .setView(box)
             .setPositiveButton("Done") { d, _ -> d.dismiss() }
             .setOnDismissListener { stop() }

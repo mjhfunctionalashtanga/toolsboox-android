@@ -68,6 +68,15 @@ object MissedRhizomes {
         // null here, and a null date vanished under every filter — the whole of "no missed
         // rhizomes in 2026". So: try each shape the cache actually holds, then the first ten
         // characters as a date of last resort.
+        /** True for feeds that are Michael's own derived content, recognised by name or by the
+         *  digest's R2 host. Kept small and literal — the digest self-subscribes as
+         *  "֎ MichaelFilter — Trends & Connections", his notes ride "My Notes". */
+        fun isSelfFeed(feedTitle: String, url: String): Boolean {
+            val t = feedTitle.lowercase()
+            return "michaelfilter" in t || "trends & connections" in t || "my notes" in t ||
+                url.contains(".r2.dev/")
+        }
+
         fun published(raw: String): LocalDate? =
             runCatching {
                 java.time.OffsetDateTime.parse(raw)
@@ -88,6 +97,11 @@ object MissedRhizomes {
                 if (engaged || e.url.isBlank() || !seen.add(e.url)) continue
                 // Thrown out by hand ("Remove from corpus") — tombstoned, never re-offered.
                 if (corpusService.isExcluded(e.url)) continue
+                // Michael's OWN derived feeds — the AI digest, his notes feed — never qualify as
+                // a "missed" find: a discovery surface offering your own output back is a mirror,
+                // not a window, and a pick minted from one carries a self-referential source
+                // (08-16: "the link is to my own trends and connections on RSS").
+                if (isSelfFeed(e.feedTitle, e.url)) continue
                 val body = strip(e.content)
                 unsurfaced.add(Entry(e.title, e.url, e.feedTitle, body, published(e.publishedAt)))
             }
